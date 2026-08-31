@@ -1,0 +1,267 @@
+'use client';
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { RotateCcw } from 'lucide-react';
+import { Sidebar } from '@/components/chat/sidebar';
+import { MessageList } from '@/components/chat/message-list';
+import { Composer } from '@/components/chat/composer';
+import { Button } from '@/components/ui/button';
+import { getJson, postJson } from '@/lib/api-client';
+import { errorForInterruptedStream, errorForNetworkFailure, errorForStreamEvent, mappedError, type MappedError } from '@/lib/errors';
+import { consumeChatStream } from '@/lib/run-chat-stream';
+import { newId, pendingAssistantMessage, userMessage, type UiMessage } from '@/lib/chat-types';
+import type { Bot, ChatRequestBody, ChatResponseBody, Collection } from '@/types/weave-api';
+
+export function ChatApp() {
+  const router = useRouter();
+
+  const [bots, setBots] = useState<Bot[] | null>(null);
+  const [botsError, setBotsError] = useState<MappedError | null>(null);
+  const [collections, setCollections] = useState<Collection[] | null>(null);
+  const [collectionsError, setCollectionsError] = useState<MappedError | null>(null);
+
+  const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<UiMessage[]>([]);
+  const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
+
+  // Guards against setting state from a turn the user has since abandoned
+  // (switched bot / started a new one) while its request was in flight.
+  const activeTurnRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const [botsResult, collectionsResult] = await Promise.all([
+        getJson<Bot[]>('/api/bots'),
+        getJson<Collection[]>('/api/collections'),
+      ]);
+      if (cancelled) return;
+
+      if (botsResult.ok) {
+        setBots(botsResult.data);
+        setSelectedBotId((current) => current ?? botsResult.data[0]?.id ?? null);
+      } else {
+        setBotsError(botsResult.error);
+        if (botsResult.error.kind === 'auth_expired') {
+          router.replace('/login');
+          return;
+        }
+      }
+
+      if (collectionsResult.ok) {
+        setCollections(collectionsResult.data);
+      } else {
+        setCollectionsError(collectionsResult.error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once on mount only
+  }, []);
+
+  function updateMessage(id: string, updater: (message: UiMessage) => UiMessage) {
+    setMessages((prev) => prev.map((message) => (message.id === id ? updater(message) : message)));
+  }
+
+  // Both handlers below abandon whatever turn is currently in flight
+  // (activeTurnRef.current = null makes every one of runTurn/runFallback's
+  // `if (activeTurnRef.current !== turnId) return;` guards fire the next
+  // time that turn's promise chain resumes, so it can no longer touch
+  // `messages` for the conversation the user has since left). `sending`
+  // must be reset in the SAME place: it is only ever cleared by
+  // handleSend's own `finally` block, which is itself guarded by that same
+  // `activeTurnRef.current === turnId` check — so once a turn is
+  // abandoned here, that `finally` will see the check fail and skip
+  // `setSending(false)` forever, leaving the Composer permanently
+  // disabled. Deliberately NOT disabling these actions while `sending` is
+  // true instead (the alternative fix): abandoning an in-flight turn is
+  // the user's only way out of a slow or hung request short of reloading
+  // the page, so both must stay clickable during one — that is exactly
+  // the case this reset makes safe.
+  function handleSelectBot(botId: string) {
+    if (botId === selectedBotId) return;
+    activeTurnRef.current = null;
+    setSending(false);
+    setSelectedBotId(botId);
+    setConversationId(null);
+    setMessages([]);
+  }
+
+  function handleNewConversation() {
+    activeTurnRef.current = null;
+    setSending(false);
+    setConversationId(null);
+    setMessages([]);
+  }
+
+  const runFallback = useCallback(
+    async (turnId: string, assistantId: string, body: ChatRequestBody) => {
+      const result = await postJson<ChatResponseBody>('/api/chat', body);
+      if (activeTurnRef.current !== turnId) return;
+
+      if (!result.ok) {
+        if (result.error.kind === 'auth_expired') {
+          router.replace('/login');
+          return;
+        }
+        updateMessage(assistantId, (m) => ({ ...m, streaming: false, error: result.error }));
+        return;
+      }
+
+      setConversationId(result.data.conversation_id);
+      updateMessage(assistantId, (m) => ({
+        ...m,
+        streaming: false,
+        content: result.data.answer,
+        sources: result.data.sources ?? [],
+        trace: result.data.trace,
+        viaFallback: true,
+      }));
+    },
+    [router]
+  );
+
+  const runTurn = useCallback(
+    async (turnId: string, assistantId: string, body: ChatRequestBody) => {
+      let response: Response;
+      try {
+        response = await fetch('/api/chat/stream', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      } catch {
+        if (activeTurnRef.current !== turnId) return;
+        // Could not even reach our own server — try the non-streaming
+        // fallback once before giving up on this turn.
+        await runFallback(turnId, assistantId, body);
+        return;
+      }
+
+      if (activeTurnRef.current !== turnId) return;
+
+      if (!response.ok) {
+        const parsed = (await response.json().catch(() => null)) as MappedError | null;
+        const error = parsed ?? mappedError('unknown', null);
+
+        if (error.kind === 'auth_expired') {
+          router.replace('/login');
+          return;
+        }
+        if (error.kind === 'gateway_unreachable') {
+          await runFallback(turnId, assistantId, body);
+          return;
+        }
+        if (error.kind === 'conversation_not_found') {
+          // The id this turn was continuing no longer resolves — drop it
+          // so a retry starts a fresh conversation instead of repeating
+          // the same failure.
+          setConversationId(null);
+        }
+        updateMessage(assistantId, (m) => ({ ...m, streaming: false, error }));
+        return;
+      }
+
+      const newConversationId = response.headers.get('x-conversation-id');
+      if (newConversationId) setConversationId(newConversationId);
+
+      if (!response.body) {
+        updateMessage(assistantId, (m) => ({ ...m, streaming: false, error: mappedError('unknown', null) }));
+        return;
+      }
+
+      const outcome = await consumeChatStream(response.body, {
+        onTrace: (trace) => {
+          if (activeTurnRef.current === turnId) updateMessage(assistantId, (m) => ({ ...m, trace }));
+        },
+        onDelta: (text) => {
+          if (activeTurnRef.current === turnId) updateMessage(assistantId, (m) => ({ ...m, content: m.content + text }));
+        },
+        onSources: (sources) => {
+          if (activeTurnRef.current === turnId) updateMessage(assistantId, (m) => ({ ...m, sources }));
+        },
+      });
+
+      if (activeTurnRef.current !== turnId) return;
+
+      if (outcome.status === 'done') {
+        updateMessage(assistantId, (m) => ({ ...m, streaming: false }));
+      } else if (outcome.status === 'error') {
+        updateMessage(assistantId, (m) => ({ ...m, streaming: false, error: errorForStreamEvent(outcome.detail) }));
+      } else {
+        updateMessage(assistantId, (m) => ({ ...m, streaming: false, error: errorForInterruptedStream() }));
+      }
+    },
+    [router, runFallback]
+  );
+
+  async function handleSend() {
+    const trimmed = draft.trim();
+    if (!trimmed || !selectedBotId || sending) return;
+
+    const turnId = newId();
+    activeTurnRef.current = turnId;
+
+    const userMsg = userMessage(trimmed);
+    const assistantMsg = pendingAssistantMessage();
+    setMessages((prev) => [...prev, userMsg, assistantMsg]);
+    setDraft('');
+    setSending(true);
+
+    const body: ChatRequestBody = {
+      bot_id: selectedBotId,
+      message: trimmed,
+      ...(conversationId ? { conversation_id: conversationId } : {}),
+    };
+
+    try {
+      await runTurn(turnId, assistantMsg.id, body);
+    } catch (cause) {
+      if (activeTurnRef.current === turnId) {
+        updateMessage(assistantMsg.id, (m) => ({ ...m, streaming: false, error: errorForNetworkFailure(cause) }));
+      }
+    } finally {
+      if (activeTurnRef.current === turnId) setSending(false);
+    }
+  }
+
+  const selectedBot = bots?.find((bot) => bot.id === selectedBotId) ?? null;
+
+  return (
+    <div className="flex h-screen w-full">
+      <Sidebar
+        bots={bots}
+        botsError={botsError}
+        selectedBotId={selectedBotId}
+        onSelectBot={handleSelectBot}
+        collections={collections}
+        collectionsError={collectionsError}
+      />
+
+      <main className="flex min-w-0 flex-1 flex-col">
+        <header className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+          <div>
+            <h1 className="text-sm font-semibold">{selectedBot?.name ?? 'Kein Bot ausgewählt'}</h1>
+            {conversationId ? (
+              <p className="text-[11px] text-[var(--foreground-muted)]">Konversation: {conversationId}</p>
+            ) : null}
+          </div>
+          <Button variant="outline" size="sm" onClick={handleNewConversation} disabled={messages.length === 0}>
+            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+            Neue Konversation
+          </Button>
+        </header>
+
+        <MessageList messages={messages} />
+
+        <Composer value={draft} onChange={setDraft} onSend={handleSend} disabled={sending} botSelected={!!selectedBotId} />
+      </main>
+    </div>
+  );
+}

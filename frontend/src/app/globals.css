@@ -1,0 +1,177 @@
+@import 'tailwindcss';
+
+/*
+ * Light palette (default). Dark overrides below, twice on purpose:
+ * once for the OS-level `prefers-color-scheme` (used when the visitor has
+ * made no explicit in-app choice) and once for the manual `.dark` class
+ * toggle (src/components/chat/theme-toggle.tsx), so an explicit choice
+ * always wins over the OS setting either way.
+ */
+:root {
+  --background: #f4f5f7;
+  --surface: #ffffff;
+  --surface-muted: #eceef2;
+  --foreground: #1c2230;
+  --foreground-muted: #5b6472;
+  --border: #d9dce2;
+  --accent: #3454d1;
+  --accent-foreground: #ffffff;
+  --accent-soft: #e7ecfc;
+  --danger: #b3261e;
+  --danger-soft: #fbeae9;
+  --warning: #8a5a00;
+  --warning-soft: #fdf1dc;
+  --success: #1a7f4c;
+  --success-soft: #e4f6ec;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --background: #14161c;
+    --surface: #1c1f27;
+    --surface-muted: #23262f;
+    --foreground: #eaecf1;
+    --foreground-muted: #a2a8b6;
+    --border: #333744;
+    --accent: #7c93ff;
+    --accent-foreground: #10131c;
+    --accent-soft: #232a45;
+    --danger: #ff8a80;
+    --danger-soft: #3a2325;
+    --warning: #f2c46d;
+    --warning-soft: #382c17;
+    --success: #7cd9a8;
+    --success-soft: #17301f;
+    color-scheme: dark;
+  }
+}
+
+:root.dark {
+  --background: #14161c;
+  --surface: #1c1f27;
+  --surface-muted: #23262f;
+  --foreground: #eaecf1;
+  --foreground-muted: #a2a8b6;
+  --border: #333744;
+  --accent: #7c93ff;
+  --accent-foreground: #10131c;
+  --accent-soft: #232a45;
+  --danger: #ff8a80;
+  --danger-soft: #3a2325;
+  --warning: #f2c46d;
+  --warning-soft: #382c17;
+  --success: #7cd9a8;
+  --success-soft: #17301f;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+  text-rendering: optimizeLegibility;
+}
+
+/* A visible focus ring everywhere, not just Tailwind's default outline —
+   keyboard operability is an explicit requirement for this app (Enter to
+   send, Shift+Enter for a newline, focus must stay visible throughout). */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+/* Minimal scrollbar theming so the transcript pane doesn't look foreign
+   against the dark palette. */
+* {
+  scrollbar-color: var(--border) transparent;
+}
+
+/* Hand-rolled markdown styling for rendered assistant answers (see
+   message-bubble.tsx) — deliberately not the @tailwindcss/typography
+   plugin, to keep the dependency list small for what is a handful of
+   rules. Scoped under this class only, so it never leaks into the rest
+   of the app. */
+.prose-chat :where(p) {
+  margin: 0 0 0.6em;
+}
+.prose-chat :where(p:last-child) {
+  margin-bottom: 0;
+}
+.prose-chat :where(ul, ol) {
+  margin: 0 0 0.6em;
+  padding-left: 1.25em;
+}
+.prose-chat :where(li) {
+  margin: 0.15em 0;
+}
+.prose-chat :where(ul) {
+  list-style: disc;
+}
+.prose-chat :where(ol) {
+  list-style: decimal;
+}
+.prose-chat :where(a) {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose-chat :where(code) {
+  background: var(--surface-muted);
+  border-radius: 0.25rem;
+  padding: 0.1em 0.35em;
+  font-size: 0.85em;
+}
+.prose-chat :where(pre) {
+  background: var(--surface-muted);
+  border-radius: 0.5rem;
+  padding: 0.75em;
+  overflow-x: auto;
+  margin: 0 0 0.6em;
+}
+.prose-chat :where(pre code) {
+  background: transparent;
+  padding: 0;
+}
+.prose-chat :where(h1, h2, h3, h4) {
+  font-weight: 600;
+  margin: 0.8em 0 0.3em;
+}
+.prose-chat :where(h1:first-child, h2:first-child, h3:first-child, h4:first-child) {
+  margin-top: 0;
+}
+.prose-chat :where(blockquote) {
+  border-left: 2px solid var(--border);
+  padding-left: 0.75em;
+  margin: 0 0 0.6em;
+  color: var(--foreground-muted);
+}
+.prose-chat :where(table) {
+  border-collapse: collapse;
+  margin: 0 0 0.6em;
+}
+.prose-chat :where(th, td) {
+  border: 1px solid var(--border);
+  padding: 0.3em 0.5em;
+}

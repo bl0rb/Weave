@@ -4,7 +4,7 @@
 
 Weave-Tools ist die **Action-Layer** des Weave-Systems. Sie stellt zwei Werkzeuge — `list_collections` und `search` — sowohl als MCP-Server als auch als schlichte REST-Endpunkte bereit, damit ein externer Agent (z.B. ein n8n-Workflow) oder ein MCP-Client auf dieselben Wissensbestände zugreifen kann, die ein Mensch über Weave-Runtime durchsuchen könnte — **niemals mehr**. Der Kern des Repos ist nicht die Suche selbst (die liefert Weave-Retrieval), sondern die Frage, mit wessen Rechten ein Aufruf laufen darf, und dass diese Frage bei jedem einzelnen Aufruf serverseitig neu beantwortet wird.
 
-Dieses Repo enthaelt aktuell nur `backend/`. Eine Chat-UI (`frontend/`) ist als eigener, spaeterer Schritt geplant und bewusst noch nicht angelegt.
+Das Repo enthaelt zwei unabhaengige Deployments: `backend/` (MCP-Server + REST-Spiegel, siehe oben) und `frontend/` (eine Chat-Oberflaeche fuer Menschen). Beide teilen sich dieses eine Repo, laufen aber als getrennte Prozesse/Images und haben keine Laufzeit-Abhaengigkeit zueinander -- dieselbe Aufteilung wie in Weave-Ingest (`frontend/` + `backend/`). Siehe "Frontend (Chat-UI)" weiter unten.
 
 ## Zwei Token-Arten
 
@@ -71,6 +71,29 @@ cp backend/.env.example backend/.env
 
 **MCP-SDK**: `mcp==2.1.1` (offizielles Python-SDK, PyPI-Paket `mcp`) — Installation und Import wurden geprueft, inklusive eines echten Client-Session-Roundtrips ueber den Streamable-HTTP-Transport in-process (`backend/tests/test_mcp_server.py`). Das SDK installierte sich sauber; die "implementiere es notfalls selbst per JSON-RPC"-Ausweichoption war nicht noetig. Hinweis fuer spaetere Aenderungen: `mcp` 2.x hat `FastMCP` in `MCPServer` umbenannt und mehrere Submodule verschoben — die 1.x-`FastMCP`-API aus vielen aelteren Tutorials passt auf diese Version nicht mehr.
 
+## Frontend (Chat-UI)
+
+`frontend/` ist eine eigenstaendige Chat-Oberflaeche fuer Menschen — **kein** Client dieses Repos eigener Werkzeuge. Sie hat nichts mit `backend/` (MCP-Server + REST-Spiegel fuer `list_collections`/`search`, siehe oben) zu tun und ruft es auch nicht auf; die beiden Ordner teilen sich nur dieses eine Repo, laufen aber als voneinander unabhaengige Deployments (dieselbe Aufteilung wie in Weave-Ingest: je ein `frontend/`- und ein `backend/`-Image, getrennt gebaut und betrieben).
+
+**Wogegen sie spricht:** ausschliesslich gegen **Weave-API** (das Bot-Gateway) — `POST /v1/chat/stream` (der Hauptweg, `text/event-stream`), `POST /v1/chat` (nicht-streamender Fallback, siehe `frontend/src/components/chat/chat-app.tsx`), `GET /v1/bots`, `GET /v1/collections`. **Nicht** gegen dieses Repos eigenes `backend/` und **nicht** direkt gegen Weave-Retrieval — jede Anfrage, jeder Endpunkt-Pfad und jede Response-Form sind Feld-fuer-Feld aus Weave-APIs (und, wo Weave-API selbst nur durchreicht, Weave-Runtimes) tatsaechlichem Code uebernommen, nicht aus README-Prosa geraten (siehe die Kommentare in `frontend/src/types/weave-api.ts`).
+
+**Token-Handhabung:** Weave-APIs Personal-API-Token wird **nie** im Browser-JavaScript gehalten und nie an den Client geschickt — kein `localStorage`, kein fuer JS lesbares Cookie. `/login` schickt das eingegebene Token an eine eigene Next.js Route-Handler-Schicht (`frontend/src/app/api/**`), die es serverseitig sofort gegen `GET /v1/bots` prueft und **nur bei Erfolg** als **httpOnly**-Cookie setzt (`frontend/src/lib/session.ts`). Jede weitere UI-Aktion geht an dieselbe Route-Handler-Schicht, die das Token aus dem Cookie liest, damit serverseitig Weave-API aufruft (`frontend/src/lib/weave-api-server.ts`) und nur die Antwort zurueckgibt — beim Streaming-Endpunkt die SSE-Bytes selbst, unveraendert durchgereicht, sonst JSON. Aus Sicht des Browsers ist jede Anfrage same-origin; es gibt kein CORS und keinen Codepfad im Client-Bundle, der das Token je referenzieren koennte. Die volle Begruendung steht als Kommentar in `frontend/src/lib/weave-api-server.ts` und `frontend/src/lib/session.ts`.
+
+**Collection-Filter — bewusst nicht nachgebaut:** Weave-APIs `POST /v1/chat(/stream)`-Request-Schema (`ChatRequest`) hat kein Feld, mit dem ein Aufruf die Suche auf bestimmte Collections einschraenken koennte (im Code von Weave-API/Weave-Runtime geprueft, nicht angenommen). Die Sidebar zeigt `GET /v1/collections` deshalb nur als **Information** ("was darfst du laut deinem Team lesen") an, nie als wirksame Mehrfachauswahl — eine Auswahl, die am Gateway nichts bewirkt, waere irrefuehrend. Welche Collections ein einzelner Chat-Turn tatsaechlich durchsucht hat, steht stattdessen im Trace dieser Antwort (`trace.retrieval.collections`, ein Turn-Ergebnis, keine Anfrage-Option) und wird dort angezeigt.
+
+**Start:**
+
+```bash
+cd frontend
+npm install
+cp .env.example .env.local   # WEAVE_API_BASE_URL setzen, Default http://localhost:8004
+npm run dev                  # Entwicklung, Port 3000
+npm run build && npm start   # Produktions-Build
+npm test                     # Vitest: SSE-Parser, Fehler-Mapping, Route-Handler (gemockter fetch)
+```
+
+`WEAVE_API_BASE_URL` ist die einzige Konfiguration, die diese UI kennen muss — gelesen ausschliesslich serverseitig (Route Handlers), nie an den Browser ausgeliefert. Layout und Stack (Next.js/React/TypeScript/Tailwind, exakte Versionen in `frontend/package.json`) folgen bewusst Weave-Ingests `frontend/`, damit beide UIs auf demselben Stand bleiben; Gestaltung und Seiten sind eigenstaendig.
+
 ## Status
 
-**Phase 5** — `backend/` steht: Rechte-Aufloesung (beide Token-Arten), beide Werkzeuge (MCP + REST), Tests gruen (`backend/tests`, ausschliesslich gegen gemockte Weave-API-/Weave-Retrieval-Aufrufe — keine echten Instanzen dieser Services noetig). `frontend/` (Chat-UI) folgt als eigener Schritt.
+**Phase 5** — `backend/` steht: Rechte-Aufloesung (beide Token-Arten), beide Werkzeuge (MCP + REST), Tests gruen (`backend/tests`, ausschliesslich gegen gemockte Weave-API-/Weave-Retrieval-Aufrufe — keine echten Instanzen dieser Services noetig). `frontend/` (Chat-UI, siehe oben) steht ebenfalls: Login mit httpOnly-Cookie, Chat mit Streaming-Antwort/Belegen/Trace/Guard-Kennzeichnung, Vitest-Tests gruen, `npm run build` durchlaufend — ungetestet bleibt bisher nur der Lauf gegen eine echte Weave-API-Instanz (bislang ausschliesslich gegen einen lokalen Fake-Gateway und gemockten `fetch` verifiziert).
