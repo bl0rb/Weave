@@ -312,7 +312,7 @@
           <td class="k"><strong>Weave-Knowledge</strong></td>
           <td>Keine Oberfläche, nur <code>deploy/.env</code>. Collections kommen per Registry-Sync aus Ingest und werden hier nie gepflegt</td>
           <td>FastAPI · SQLAlchemy + Alembic · Celery (Redis-DB 1) · pgvector</td>
-          <td>Webhook-Eingang: HMAC-SHA256 über den <em>rohen</em> Rumpf, fail-closed. Die Lese-Endpunkte sind <strong>unauthentifiziert</strong> — Port 8001 gehört nicht ins offene Netz</td>
+          <td>Zwei Eingänge, zwei Verfahren: der Webhook prüft HMAC-SHA256 über den <em>rohen</em> Rumpf, die Lese-Endpunkte verlangen <code>KNOWLEDGE_API_TOKEN</code> als Bearer. Ohne gesetzten Wert <code>503</code>. <code>/health</code> bleibt frei</td>
         </tr>
         <tr>
           <td class="k"><strong>Weave-Retrieval</strong></td>
@@ -343,9 +343,9 @@
   </div>
   <p>Für die beiden optionalen Modelldienste gilt dasselbe Muster: Einstellungen nur über <code>deploy/.env</code>, Ausweis über <code>Authorization: Bearer</code> gegen <code>EMBEDDINGS_API_TOKEN</code> beziehungsweise <code>RERANKER_API_TOKEN</code> (ohne gesetzten Wert <code>503</code>, <code>/health</code> bleibt frei). Technisch FastAPI mit onnxruntime + tokenizers beziehungsweise sentence-transformers + torch. Alle <code>.env</code>-Werte entstehen aus <code>weave.yaml</code> — von Hand bearbeitet wird die Datei nicht.</p>
 
-  <div class="box danger">
-    <div class="t">Offen: Weave-Knowledges Lese-API</div>
-    <p><code>GET /api/v1/documents</code>, <code>/documents/{id}</code> und <code>/collections</code> auf Port 8001 verlangen keinerlei Ausweis — signaturgeprüft ist nur der Webhook-Eingang. Im Docker-Netz ist das folgenlos, die Compose-Datei veröffentlicht den Port aber auf dem Host. Kein Dienst der Plattform ruft diese Endpunkte auf; wer sie nicht selbst braucht, nimmt die Port-Freigabe heraus.</p>
+  <div class="box note">
+    <div class="t">Warum Knowledge zwei Verfahren nebeneinander hat</div>
+    <p>Der Webhook nimmt <em>Schreibzugriffe</em> an: ein gefälschtes <code>document.processed</code> bringt beliebiges Markdown samt Team und Collection in den Index, und die Suche vertraut, was indiziert ist. Ein Bearer-Token würde dort nur sagen „der Absender kennt ein Geheimnis“, nicht „dieser Rumpf ist unterwegs unverändert geblieben“ — deshalb HMAC über den rohen Rumpf. Die Lese-Endpunkte dagegen geben nur heraus, was schon da ist; dort genügt ein Dienst-Token, wie bei Weave-Retrieval. Beide sind fail-closed: ohne konfigurierten Wert <code>503</code>, nie <code>200</code>.</p>
   </div>
 
   <div class="box note">
@@ -510,6 +510,12 @@
     <div class="sym"><span class="var">DATABASE_URL</span>Der Dienst schreibt in eine Datei im Container</div>
     <div class="why">Fehlt bei Ingest sowohl <code>DATABASE_URL</code> als auch die vollständige Kombination aus Host, Datenbank und Benutzer, fällt der Dienst still auf eine lokale SQLite-Datei zurück. Bei Retrieval ist der SQLite-Pfad sogar die Voreinstellung: bleibt sie stehen, wird eine leere lokale Datei durchsucht.</div>
     <div class="fix"><b>Prüfen</b>Nach dem Start einmal in den Containern <code>printenv DATABASE_URL</code> lesen — steht dort <code>sqlite</code>, ist etwas falsch.</div>
+  </div>
+
+  <div class="trap">
+    <div class="sym"><span class="var">KNOWLEDGE_API_TOKEN</span>Die Lese-API antwortet 503</div>
+    <div class="why"><code>GET /api/v1/documents</code>, <code>/documents/{id}</code> und <code>/collections</code> geben den indizierten Bestand heraus — vorbei an der Team-Prüfung, durch die jede Suche geht. Ohne gesetzten Wert antworten sie deshalb <code>503</code> statt <code>200</code>: ein geschlossenes Deployment, kein kaputtes. Kein Dienst der Plattform ruft diese Routen auf, sie sind für Betrieb und Fehlersuche da.</div>
+    <div class="fix"><b>Prüfen</b>Nur setzen, wenn du die Routen brauchst. Indizierung, Webhook-Eingang und <code>/health</code> laufen so oder so weiter.</div>
   </div>
 
   <div class="trap">

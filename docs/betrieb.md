@@ -26,7 +26,7 @@ wird, worauf es gebaut ist, und womit man sich bei ihm ausweist.
 | Dienst | Verwaltung | Technik | Ausweis am Dienst |
 |---|---|---|---|
 | Weave-Ingest | **Eigene Oberfläche** — `/admin` für Nutzer, Teams, OIDC-Verbindungen, Worker-Logs, OCR-Profil und -Timeout, VL-Verbindungen; `/connections` für Webhooks, dazu `/openwebui` und `/mail`. Alles Übrige `deploy/.env` | FastAPI · SQLAlchemy + Alembic · Celery (Redis-DB 0) · PaddleOCR/PP-StructureV3 im eigenen Worker-Image · Next.js 16 + React 19 | Sitzungs-Cookie (undurchsichtig, in der DB nur als sha256) **oder** Personal-Token `pd_…`. Passwörter bcrypt mit Konto-Sperre; beliebig viele OIDC-Verbindungen (Auth-Code + PKCE); Herkunftsprüfung gegen CSRF auf jeder schreibenden Route |
-| Weave-Knowledge | Keine Oberfläche, nur `deploy/.env`. Collections kommen per Registry-Sync aus Ingest, werden hier nie gepflegt | FastAPI · SQLAlchemy + Alembic · Celery (Redis-DB 1) · pgvector | Webhook-Eingang: HMAC-SHA256 über den **rohen** Rumpf, fail-closed. Die Lese-Endpunkte sind **unauthentifiziert** — Port 8001 gehört nicht ins offene Netz (siehe Abschnitt 6) |
+| Weave-Knowledge | Keine Oberfläche, nur `deploy/.env`. Collections kommen per Registry-Sync aus Ingest, werden hier nie gepflegt | FastAPI · SQLAlchemy + Alembic · Celery (Redis-DB 1) · pgvector | Zwei Eingänge, zwei Verfahren: der Webhook prüft HMAC-SHA256 über den **rohen** Rumpf (er nimmt Schreibzugriffe an — ein Bearer würde nichts darüber sagen, ob der Rumpf unterwegs verändert wurde), die Lese-Endpunkte verlangen `KNOWLEDGE_API_TOKEN` als Bearer. Ohne gesetzten Wert `503`. `/health` bleibt frei |
 | Weave-Retrieval | Keine Oberfläche, nur `deploy/.env` | FastAPI · SQLAlchemy auf einer reinen `SELECT`-Rolle · pgvector + tsvector · RRF · Cross-Encoder über HTTP | Dienst-Token `RETRIEVAL_API_TOKEN` als Bearer, konstante-Zeit-Vergleich, `503` wenn nicht gesetzt |
 | Weave-Runtime | **Bots als YAML-Dateien** im Volume `runtime_bots`, bei jedem Aufruf frisch von der Platte gelesen — eine Änderung wirkt ohne Neustart. Keine Oberfläche; alles Übrige `deploy/.env` | FastAPI · httpx · SSE · PyYAML. Ohne Datenbank | `RUNTIME_API_TOKEN` als Bearer. Stellt seinerseits Delegations-Token aus: HMAC-SHA256, fünf Minuten, mit dem erlaubten Collection-Umfang darin |
 | Weave-API | `python -m app.cli create-user` / `create-token` im Container; keine Oberfläche. Identitäten kommen seit ADR-0006 ohnehin aus Ingest | FastAPI · SQLAlchemy + Alembic · authlib + joserfc | Personal-Token (in der DB nur als sha256) oder Sitzungs-Cookie. Angemeldet wird föderiert über Ingest — ersatzweise ein eigener OIDC-Anbieter. `INTROSPECTION_SERVICE_TOKEN` ist der Hauptschlüssel zur Token-Auflösung |
@@ -123,6 +123,7 @@ Ohne diese startet der Dienst nicht oder verweigert fail-closed die Arbeit.
 | Knowledge | `WEAVE_INGEST_BASE_URL` | Woher Markdown und Registry geholt werden |
 | Knowledge | `WEAVE_INGEST_API_TOKEN` | Admin-Token aus Ingest (Schritt 2) |
 | Knowledge | `WEAVE_INGEST_WEBHOOK_SECRET` | Prüft eingehende Events. Ohne Wert: `503` — dieser Endpunkt schreibt in den Index |
+| Knowledge *(sobald die Lese-API genutzt wird)* | `KNOWLEDGE_API_TOKEN` | Service-Auth für `/documents` und `/collections`. Ohne Wert: `503`; Indizierung, Webhook und `/health` laufen weiter |
 | Retrieval | `RETRIEVAL_API_TOKEN` | Service-Auth. Ohne Wert antwortet jeder Aufruf mit `503` |
 | Runtime | `RUNTIME_API_TOKEN` | Nimmt nur Aufrufe des Gateways an |
 | Runtime | `WEAVE_DELEGATION_SECRET` | Signiert Delegations-Token. Ohne Wert wird keines ausgestellt |
@@ -187,12 +188,14 @@ aus Host, Datenbank und Benutzer, fällt der Dienst still auf SQLite zurück. Be
 Retrieval ist der SQLite-Pfad sogar die Voreinstellung. Nach dem Start einmal
 `printenv DATABASE_URL` im Container lesen.
 
-**Weave-Knowledges Lese-API — offen für jeden, der den Port erreicht.**
-`GET /api/v1/documents`, `/documents/{id}` und `/collections` auf Port 8001
-verlangen keinerlei Ausweis; nur der Webhook-Eingang ist signaturgeprüft. Innerhalb
-des Docker-Netzes ist das folgenlos — die Compose-Datei veröffentlicht den Port
-aber auf dem Host. Kein Dienst der Plattform ruft diese Endpunkte auf; wer sie
-nicht selbst braucht, nimmt die Port-Freigabe heraus.
+**`KNOWLEDGE_API_TOKEN` — die Lese-API antwortet `503`.**
+`GET /api/v1/documents`, `/documents/{id}` und `/collections` geben den
+indizierten Bestand heraus, vorbei an der Team-Prüfung, durch die jede Suche
+geht. Ohne gesetzten Wert antworten sie deshalb `503` statt `200` — das ist ein
+geschlossenes Deployment, kein kaputtes: kein Dienst der Plattform ruft diese
+Routen auf, sie sind für Betrieb und Fehlersuche da. Setz den Wert, wenn du sie
+brauchst, und lass ihn sonst leer. `/health` und der signaturgeprüfte
+Webhook-Eingang sind davon unberührt.
 
 **`RETRIEVAL_BASE_URL` — Antworten aus dem falschen Bestand.**
 Zeigt der Wert bei Weave-Tools auf eine falsche, aber erreichbare

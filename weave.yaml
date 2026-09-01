@@ -555,6 +555,18 @@ services:
         value: 8001
         type: int
         required: false
+      KNOWLEDGE_API_TOKEN:
+        secret: true
+        env_var: WEAVE_KNOWLEDGE_API_TOKEN
+        required: false
+        comment: >
+          Guards this service's own read API (GET /documents,
+          /documents/{id}, /collections) -- the indexed corpus itself, past
+          the team/read_teams scoping every search goes through. No Weave
+          service calls those routes; they exist for operators and
+          debugging, so leaving this unset is a legitimate deployment: the
+          routes then answer 503, which is closed, not broken. /health and
+          the signed webhook ingress are unaffected either way.
       WEAVE_KNOWLEDGE_TAG:
         secret: false
         value: latest

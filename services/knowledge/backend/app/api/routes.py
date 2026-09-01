@@ -4,12 +4,17 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.auth import require_service_token
 from app.core.db import get_db
 from app.models.models import Collection, Document, DocumentStatus
 from app.schemas.collections import CollectionListResponse, CollectionSummary
 from app.schemas.documents import DocumentDetail, DocumentListResponse, DocumentSummary
 
-router = APIRouter(prefix='/api/v1')
+# Router-level, not per-endpoint: a read route added later is then
+# authenticated by default rather than by remembering to say so. The signed
+# webhook ingress (app/api/events.py) has its own router and its own,
+# stronger check -- see app/core/auth.py on why the two differ.
+router = APIRouter(prefix='/api/v1', dependencies=[Depends(require_service_token)])
 
 # Server-side cap on `limit`, same clamp-never-raise discipline Weave-Ingest
 # uses for its own list endpoints (e.g. _JOB_LIST_PAGE_LIMIT_MAX in

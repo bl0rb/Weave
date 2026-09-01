@@ -25,6 +25,21 @@ class Settings(BaseSettings):
     # every service holds its own -- never shared across services.
     secret_key: str = 'dev-only-insecure-secret-key-do-not-use-in-production'
 
+    # --- Service token for this service's own read API (app/core/auth.py,
+    # app/api/routes.py). `GET /documents`, `/documents/{id}` and
+    # `/collections` return the indexed corpus itself -- past the team and
+    # `read_teams` scoping the rest of the platform enforces -- so they are
+    # not a surface to leave open on a published port.
+    #
+    # Unset means those routes answer 503, never 200: an empty token
+    # compared against a caller's empty bearer would succeed and turn a
+    # forgotten variable into an open corpus. No Weave service calls these
+    # routes at all (they exist for operators and debugging), so leaving it
+    # unset is a perfectly reasonable deployment -- just an explicitly
+    # closed one rather than an accidentally open one. `/health` and the
+    # signed webhook ingress are unaffected.
+    knowledge_api_token: str = ''
+
     # --- Weave-Ingest client (fetching a job's markdown_url after
     # document.processed -- see contracts/events/document.processed.md). The
     # download route requires the same auth as any other Weave-Ingest API

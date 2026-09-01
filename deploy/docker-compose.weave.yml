@@ -394,6 +394,13 @@ services:
       WEAVE_INGEST_BASE_URL: http://weave-ingest-backend:8000
       WEAVE_INGEST_API_TOKEN: ${WEAVE_KNOWLEDGE_INGEST_API_TOKEN:?WEAVE_KNOWLEDGE_INGEST_API_TOKEN is required}
       WEAVE_INGEST_WEBHOOK_SECRET: ${WEAVE_KNOWLEDGE_WEBHOOK_SECRET:-}
+      # Guards THIS service's own read API (GET /api/v1/documents,
+      # /documents/{id}, /collections) -- the indexed corpus itself, past
+      # the team/read_teams scoping every search goes through. No Weave
+      # service calls those routes; they exist for operators. Unset means
+      # they answer 503, which is a closed deployment, not a broken one.
+      # /health and the signed webhook ingress are unaffected.
+      KNOWLEDGE_API_TOKEN: ${KNOWLEDGE_API_TOKEN:-}
       # --- Embedding provider: pulled in from the `x-embedding-env` anchor
       # at the top of this file (see that block's own comment), NOT
       # repeated here as six separate lines -- this is what makes it
