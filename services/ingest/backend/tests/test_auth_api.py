@@ -187,6 +187,27 @@ def test_login_oidc_only_account_rejected(client: TestClient) -> None:
     assert resp.status_code == 401
 
 
+def test_setup_writes_worker_log_entry(client: TestClient) -> None:
+    _wipe_users_and_sessions()
+    _wipe_worker_logs()
+
+    resp = client.post(
+        '/api/v1/auth/setup',
+        json={'username': 'FirstAdmin', 'email': 'first@example.com', 'password': 'SetupPassw0rd'},
+    )
+    assert resp.status_code == 200
+
+    db = _db()
+    try:
+        rows = db.scalars(select(WorkerLogEntry).where(WorkerLogEntry.logger_name == 'app.auth')).all()
+        assert len(rows) == 1
+        assert rows[0].level == 'INFO'
+        # the stored (lowercased) username, matching what the account got
+        assert rows[0].message == 'setup completed: first admin firstadmin created'
+    finally:
+        db.close()
+
+
 def test_login_failure_writes_worker_log_entry(client: TestClient) -> None:
     _wipe_worker_logs()
     _create_user(username='logfailuser', email='logfail@example.com', password='CorrectHorse1')

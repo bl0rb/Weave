@@ -326,6 +326,10 @@ def setup(payload: SetupRequest, request: Request, response: Response, db: Sessi
         is_active=True,
     )
     db.add(user)
+    # Creating the very first administrator is the one account event with no
+    # sign-in behind it, so without this line a freshly installed instance
+    # shows an empty Logs tab even though an admin account now exists.
+    _log_auth_event(db, 'INFO', f'setup completed: first admin {username} created')
     db.commit()
 
     _create_session(db, request, response, user)
