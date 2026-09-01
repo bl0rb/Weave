@@ -300,7 +300,12 @@ services:
       CELERY_MAX_TASKS_PER_CHILD: ${CELERY_MAX_TASKS_PER_CHILD:-5}
     volumes:
       - storage:/app/backend/storage:rw
-      - paddlex_models:/home/weave:rw
+      # $HOME of the worker's own user (worker.Dockerfile: uid 1000
+      # weave-ingest, ENV HOME=/home/weave-ingest) -- PaddleOCR downloads
+      # its weights into $HOME/.paddlex and $HOME/.paddleocr at first use.
+      # A volume mounted anywhere else leaves them in the container's
+      # writable layer, so every recreate re-downloads several hundred MB.
+      - paddlex_models:/home/weave-ingest:rw
     depends_on:
       weave-ingest-backend:
         condition: service_healthy
