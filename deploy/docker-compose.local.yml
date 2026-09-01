@@ -1,0 +1,74 @@
+# Local development override: builds every Weave image from the monorepo's
+# service directories instead of pulling ghcr.io/bl0rb/* (nothing has ever
+# been published there).
+#
+#   docker compose -f docker-compose.weave.yml -f docker-compose.local.yml up -d
+#
+# Paths are relative to this file (deploy/), pointing into ../services/<dienst>.
+# The OCR worker carries PaddleOCR and is several GB; it sits behind the "ocr"
+# profile so the rest of the stack comes up in a couple of minutes:
+#   docker compose ... --profile ocr up -d weave-ingest-worker
+services:
+  weave-ingest-backend:
+    build:
+      context: ../services/ingest/backend
+      dockerfile: Dockerfile
+
+  weave-ingest-worker:
+    profiles: ["ocr"]
+    build:
+      context: ../services/ingest/backend
+      dockerfile: worker.Dockerfile
+
+  weave-ingest-frontend:
+    build:
+      context: ../services/ingest/frontend
+      dockerfile: Dockerfile
+
+  weave-knowledge:
+    build: &knowledge_build
+      context: ../services/knowledge/backend
+      dockerfile: Dockerfile
+
+  weave-knowledge-worker:
+    build: *knowledge_build
+
+  weave-retrieval:
+    build:
+      context: ../services/retrieval/backend
+      dockerfile: Dockerfile
+
+  weave-embeddings:
+    build:
+      # Own service directory, Dockerfile directly at its root (no backend/
+      # subdirectory) -- NOT the same context as weave-tools-backend below.
+      context: ../services/embeddings
+      dockerfile: Dockerfile
+
+  weave-reranker:
+    build:
+      context: ../services/reranker
+      dockerfile: Dockerfile
+
+  weave-runtime:
+    build:
+      # Service root, not backend/ -- the image needs bots/ as well.
+      context: ../services/runtime
+      dockerfile: backend/Dockerfile
+
+  weave-api:
+    build:
+      context: ../services/api/backend
+      dockerfile: Dockerfile
+
+  weave-tools-backend:
+    build:
+      # Dockerfile directly at the service root (no backend/ subdirectory).
+      context: ../services/tools
+      dockerfile: Dockerfile
+
+  weave-tools-frontend:
+    build:
+      # Chat UI now lives in services/chat, Dockerfile directly at its root.
+      context: ../services/chat
+      dockerfile: Dockerfile

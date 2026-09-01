@@ -1,0 +1,51 @@
+# Beispiel-Golden-Set fuer app.services.evalharness.load_golden() /
+# app.cli's `eval`-Subcommand (siehe deren Docstrings fuer das genaue
+# Format). Rein illustrativ -- die `source_job_id`-Werte sind erfundene
+# UUIDs, keine echten Weave-Knowledge-Dokumente. Ein echtes Golden-Set wird
+# manuell gegen tatsaechlich indexierte Dokumente kuratiert (die
+# `source_job_id` steht dann im entsprechenden Weave-Ingest-Job).
+#
+# Jeder Eintrag ist {query, relevant, k}:
+#   - relevant: Liste von Relevanz-Urteilen. `source_job_id` allein markiert
+#     das GESAMTE Dokument als relevant (jeder zurueckgegebene Chunk daraus
+#     zaehlt); `source_job_id` + `contains` engt das auf einen Chunk ein,
+#     dessen Text diese Zeichenkette enthaelt (Gross-/Kleinschreibung egal).
+#   - k (optional): wie viele Rang-Positionen von search_fn(query) fuer
+#     DIESE Query ueberhaupt betrachtet werden -- sinnvoll, wenn ein Eintrag
+#     nur bis zu einer bestimmten Tiefe manuell verifiziert wurde. Fehlt k,
+#     gilt max(ks) aus dem evaluate()-Aufruf.
+
+- query: "Wie lange ist die Kündigungsfrist während der Probezeit?"
+  k: 10
+  relevant:
+    - source_job_id: "b1a7e2c4-1111-4a3b-9c2d-000000000001"
+      contains: "Kündigungsfrist beträgt während der Probezeit zwei Wochen"
+
+- query: "Wie beantrage ich Remote-Arbeit aus dem europäischen Ausland?"
+  k: 10
+  relevant:
+    # Ganzes Dokument relevant -- egal welcher Chunk daraus zurueckkommt.
+    - source_job_id: "b1a7e2c4-2222-4a3b-9c2d-000000000002"
+
+- query: "Welche Spesen kann ich bei einer Dienstreise abrechnen?"
+  k: 10
+  relevant:
+    - source_job_id: "b1a7e2c4-3333-4a3b-9c2d-000000000003"
+    - source_job_id: "b1a7e2c4-4444-4a3b-9c2d-000000000004"
+
+- query: "Wie setze ich mein VPN-Passwort zurück?"
+  k: 5
+  relevant:
+    - source_job_id: "b1a7e2c4-5555-4a3b-9c2d-000000000005"
+      contains: "VPN-Passwort im Self-Service-Portal unter Einstellungen zurücksetzen"
+
+- query: "Wie viele Urlaubstage habe ich pro Jahr und wie beantrage ich sie?"
+  k: 10
+  relevant:
+    # Zwei unterschiedliche Chunks desselben Dokuments -- Recall@k zaehlt
+    # beide separat, ein einzelner gefundener Chunk deckt nur eines der
+    # beiden Urteile ab.
+    - source_job_id: "b1a7e2c4-6666-4a3b-9c2d-000000000006"
+      contains: "30 Urlaubstage pro Kalenderjahr"
+    - source_job_id: "b1a7e2c4-6666-4a3b-9c2d-000000000006"
+      contains: "Urlaubsantrag im HR-Portal mindestens zwei Wochen im Voraus"

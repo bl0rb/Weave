@@ -1,0 +1,279 @@
+# The standard Weave Ingest deployment: prebuilt GHCR images and Docker-managed
+# named volumes, so `docker compose up -d` behaves identically on Windows,
+# macOS, Linux and a NAS -- no host directory to create, no ownership to fix.
+#
+#   plain            docker compose up -d
+#   NVIDIA GPU       docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+#   data on a share  docker compose -f docker-compose.yml -f docker-compose.nas.example.yml up -d
+#
+# Contributors who want to build the images from this checkout instead want
+# docker-compose.dev.yml (separate project name, so the two never share a
+# database volume).
+name: weave-ingest
+
+services:
+  postgres:
+    # No privilege escalation, and every capability dropped except the five
+    # the official entrypoint genuinely needs: it starts as root, chowns and
+    # chmods the data dir, then drops to uid 999 via gosu. A bare
+    # `cap_drop: ALL` makes all three fail with EPERM, so the entrypoint
+    # aborts and `restart: always` turns that into a restart loop.
+    # The Helm chart's containerSecurityContext can drop ALL and add nothing
+    # back because it pairs that with `runAsUser: 999`, so its container never
+    # enters that root branch at all. Compose keeps the caps instead of
+    # copying `user:`, because docker-compose.nas.example.yml swaps these
+    # volumes for host bind mounts -- and there a non-root uid cannot chmod
+    # PGDATA to 0700 on Docker Desktop. Caps work in both layouts.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    image: postgres:16
+    restart: always
+    container_name: weave_ingest_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-weave_ingest}
+      POSTGRES_USER: ${POSTGRES_USER:-weave_ingest}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required (run scripts/init-env.sh or set it in .env)}
+    volumes:
+      - pgdata:/var/lib/postgresql/data:rw
+    networks:
+      - weave_ingest_netbridge
+
+  redis:
+    # Same five capabilities as postgres above, for the same reason: the
+    # entrypoint chowns /data and drops to uid 999 via setpriv, both of which
+    # the Helm chart avoids needing by setting `runAsUser: 999` instead.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    image: redis:7
+    restart: always
+    container_name: weave_ingest_redis
+    # requirepass keeps Redis (Celery broker + result backend) from sitting
+    # open on the compose network. Override REDIS_PASSWORD in a .env file for
+    # anything beyond NAS dev; backend/worker REDIS_URL below must match.
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required (run scripts/init-env.sh or set it in .env)}"]
+    volumes:
+      - redisdata:/data:rw
+    networks:
+      - weave_ingest_netbridge
+
+  backend:
+    # No extra kernel privileges, no privilege escalation inside the
+    # container -- mirrors the Helm chart containerSecurityContext.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    image: ghcr.io/bl0rb/weave-ingest-backend:${WEAVE_INGEST_TAG:-latest}
+    restart: always
+    container_name: weave_ingest_backend
+    ports:
+      - "8000:8000"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-weave_ingest}
+      POSTGRES_USER: ${POSTGRES_USER:-weave_ingest}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required (run scripts/init-env.sh or set it in .env)}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required (run scripts/init-env.sh or set it in .env)}@redis:6379/0
+      # Concrete origin, not "*": the app sends credentialed CORS responses
+      # (session cookies), so a wildcard would reflect any origin back with
+      # Access-Control-Allow-Credentials. Set CORS_ORIGINS to your NAS
+      # frontend URL(s), e.g. '["https://weave-ingest.example.lan"]'.
+      CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:3000"]}
+      # Signs session cookies + the OIDC state cookie, and derives the key
+      # OIDC provider client secrets are encrypted with. The app itself
+      # refuses to start without one against this postgres-backed compose
+      # setup -- override in a .env file for anything beyond local/NAS dev.
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required (run scripts/init-env.sh or set it in .env) — it encrypts every stored OIDC/import/VL credential}
+      # Base URL the backend is reachable at; used to build the OIDC
+      # redirect_uri (`{PUBLIC_API_URL}/api/v1/auth/oidc/{slug}/callback`).
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+      OPENAI_API_BASE_URL: ${OPENAI_API_BASE_URL:-}
+      OPENAI_API_BEARER_TOKEN: ${OPENAI_API_BEARER_TOKEN:-}
+      # Self-hosted VL endpoints (vLLM/Ollama/LiteLLM) sit on private
+      # addresses, which the SSRF-safe fetcher blocks by default -- a working
+      # network route is not enough. List the host (host or host:port), e.g.
+      # '["vl.internal:8000"]' -- JSON list string, same convention as
+      # IMPORT_PRIVATE_HOST_ALLOWLIST.
+      VL_PRIVATE_HOST_ALLOWLIST: ${VL_PRIVATE_HOST_ALLOWLIST:-[]}
+      # Confluence import. A NAS-hosted internal Confluence is the textbook
+      # allowlist use case: put its hostname (host or host:port) in
+      # IMPORT_PRIVATE_HOST_ALLOWLIST, e.g. '["wiki.local:8090"]' -- JSON
+      # list string, same convention as CORS_ORIGINS. Cloud
+      # (*.atlassian.net) needs no allowlist entry.
+      IMPORT_ENABLED: ${IMPORT_ENABLED:-true}
+      IMPORT_PRIVATE_HOST_ALLOWLIST: ${IMPORT_PRIVATE_HOST_ALLOWLIST:-[]}
+      IMPORT_MAX_PAGES: ${IMPORT_MAX_PAGES:-200}
+      IMPORT_ATTACHMENT_MAX_BYTES: ${IMPORT_ATTACHMENT_MAX_BYTES:-20971520}
+      # OpenWebUI push. A NAS-/LAN-hosted OpenWebUI is the textbook allowlist
+      # use case: put its host (host or host:port) in
+      # OPENWEBUI_PRIVATE_HOST_ALLOWLIST, e.g. '["192.168.1.10:3000"]' --
+      # JSON list string, same convention as IMPORT_PRIVATE_HOST_ALLOWLIST.
+      OPENWEBUI_ENABLED: ${OPENWEBUI_ENABLED:-true}
+      OPENWEBUI_PRIVATE_HOST_ALLOWLIST: ${OPENWEBUI_PRIVATE_HOST_ALLOWLIST:-[]}
+      # Webhook delivery. A NAS-/LAN-hosted target (e.g. n8n) is the
+      # textbook allowlist use case: put its host (host or host:port) in
+      # WEBHOOK_PRIVATE_HOST_ALLOWLIST, e.g. '["192.168.1.10:5678"]' --
+      # JSON list string, same convention as IMPORT_PRIVATE_HOST_ALLOWLIST.
+      WEBHOOKS_ENABLED: ${WEBHOOKS_ENABLED:-true}
+      WEBHOOK_PRIVATE_HOST_ALLOWLIST: ${WEBHOOK_PRIVATE_HOST_ALLOWLIST:-[]}
+      WEBHOOK_MAX_PENDING_DELIVERIES_PER_USER: ${WEBHOOK_MAX_PENDING_DELIVERIES_PER_USER:-50}
+    volumes:
+      - storage:/app/backend/storage:rw
+    depends_on:
+      - postgres
+      - redis
+    # /health only answers once the entrypoint's `alembic upgrade head` has
+    # completed -- the worker gates on this (service_healthy below) so its
+    # startup recovery query never races an unmigrated schema.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 36
+      start_period: 10s
+    networks:
+      - weave_ingest_netbridge
+
+  worker:
+    # No extra kernel privileges, no privilege escalation inside the
+    # container -- mirrors the Helm chart containerSecurityContext.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    image: ghcr.io/bl0rb/weave-ingest-worker:${WEAVE_INGEST_TAG:-latest}
+    restart: always
+    container_name: weave_ingest_worker
+    mem_limit: ${WORKER_MEMORY_LIMIT:-3g}
+    cpus: ${WORKER_CPUS:-2.0}
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-weave_ingest}
+      POSTGRES_USER: ${POSTGRES_USER:-weave_ingest}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required (run scripts/init-env.sh or set it in .env)}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required (run scripts/init-env.sh or set it in .env)}@redis:6379/0
+      # The worker imports app/core/config.py (directly, and via
+      # alembic/env.py if it ever runs migrations) same as the backend, which
+      # fails fast at import time if SECRET_KEY is unset for a non-sqlite
+      # database -- set here for parity, same default as the backend's.
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required (run scripts/init-env.sh or set it in .env) — it encrypts every stored OIDC/import/VL credential}
+      PADDLE_DEFAULT_PROFILE: ${PADDLE_DEFAULT_PROFILE:-ppocrv6_tiny}
+      CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-1}
+      CELERY_PREFETCH_MULTIPLIER: ${CELERY_PREFETCH_MULTIPLIER:-1}
+      CELERY_MAX_TASKS_PER_CHILD: ${CELERY_MAX_TASKS_PER_CHILD:-5}
+      OMP_NUM_THREADS: ${OMP_NUM_THREADS:-1}
+      ONNXRUNTIME_INTRA_OP_NUM_THREADS: ${ONNXRUNTIME_INTRA_OP_NUM_THREADS:-1}
+      ONNXRUNTIME_INTER_OP_NUM_THREADS: ${ONNXRUNTIME_INTER_OP_NUM_THREADS:-1}
+      MALLOC_ARENA_MAX: ${MALLOC_ARENA_MAX:-2}
+      # Worker log capture into worker_log_entries for the admin UI's log
+      # tail (GET /api/v1/auth/admin/worker-logs); see
+      # app/workers/log_capture.py / app/core/config.py. Independent of
+      # --loglevel (CELERY_LOG_LEVEL, worker.Dockerfile): if set MORE
+      # verbose than --loglevel, log_capture.py lowers the worker's root
+      # logger floor to match while pinning the console handler(s) at
+      # --loglevel so console verbosity is unchanged.
+      WORKER_LOG_CAPTURE_LEVEL: ${WORKER_LOG_CAPTURE_LEVEL:-INFO}
+      WORKER_LOG_RETENTION_MAX_ROWS: ${WORKER_LOG_RETENTION_MAX_ROWS:-20000}
+      OPENAI_API_BASE_URL: ${OPENAI_API_BASE_URL:-}
+      OPENAI_API_BEARER_TOKEN: ${OPENAI_API_BEARER_TOKEN:-}
+      # Self-hosted VL endpoints (vLLM/Ollama/LiteLLM) sit on private
+      # addresses, which the SSRF-safe fetcher blocks by default -- a working
+      # network route is not enough. List the host (host or host:port), e.g.
+      # '["vl.internal:8000"]' -- JSON list string, same convention as
+      # IMPORT_PRIVATE_HOST_ALLOWLIST.
+      VL_PRIVATE_HOST_ALLOWLIST: ${VL_PRIVATE_HOST_ALLOWLIST:-[]}
+      # Confluence import: the crawl runs on this worker, so it needs the
+      # same IMPORT_* settings as the backend (which only validates/tests).
+      IMPORT_ENABLED: ${IMPORT_ENABLED:-true}
+      IMPORT_PRIVATE_HOST_ALLOWLIST: ${IMPORT_PRIVATE_HOST_ALLOWLIST:-[]}
+      IMPORT_MAX_PAGES: ${IMPORT_MAX_PAGES:-200}
+      IMPORT_ATTACHMENT_MAX_BYTES: ${IMPORT_ATTACHMENT_MAX_BYTES:-20971520}
+      # OpenWebUI push: the push task runs on this worker, so it needs the
+      # same OPENWEBUI_* settings as the backend (which only tests/lists).
+      OPENWEBUI_ENABLED: ${OPENWEBUI_ENABLED:-true}
+      OPENWEBUI_PRIVATE_HOST_ALLOWLIST: ${OPENWEBUI_PRIVATE_HOST_ALLOWLIST:-[]}
+      # Webhook delivery: the deliver_webhook task runs on this worker, so it
+      # needs the same WEBHOOK_* settings as the backend. The pending-cap is
+      # also enforced here, not just by the backend's POST /webhooks/send --
+      # app/workers/webhook_tasks.py's _dispatch() (the automatic
+      # job.finished/job.failed/import_run.finished hooks) checks the same
+      # cap before creating a delivery, and that runs in this worker process.
+      WEBHOOKS_ENABLED: ${WEBHOOKS_ENABLED:-true}
+      WEBHOOK_PRIVATE_HOST_ALLOWLIST: ${WEBHOOK_PRIVATE_HOST_ALLOWLIST:-[]}
+      WEBHOOK_MAX_PENDING_DELIVERIES_PER_USER: ${WEBHOOK_MAX_PENDING_DELIVERIES_PER_USER:-50}
+    volumes:
+      # Same volume as the backend: it serves the files this worker writes.
+      - storage:/app/backend/storage:rw
+      # The container home is /home/weave-ingest -- PaddleOCR caches its
+      # downloaded models there, so persisting it turns every worker restart
+      # after the first into a fast one. Docker seeds a fresh named volume
+      # from the image, ownership included, so uid 1000 owns it without any
+      # host-side chown.
+      - paddlex_models:/home/weave-ingest:rw
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - weave_ingest_netbridge
+
+  frontend:
+    # No extra kernel privileges, no privilege escalation inside the
+    # container -- mirrors the Helm chart containerSecurityContext.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    image: ghcr.io/bl0rb/weave-ingest-frontend:${WEAVE_INGEST_TAG:-latest}
+    restart: always
+    container_name: weave_ingest_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      # The URL the BROWSER calls, and the origin the CSP allows it to call
+      # (src/middleware.ts). Not the backend's PUBLIC_API_URL, which is the
+      # server-side URL for OIDC redirects -- the two only coincide when the
+      # browser and the OIDC provider reach the backend under the same name.
+      # Empty is fine and is the normal case: the frontend then derives
+      # `<page protocol>//<page hostname>:8000`. Set it only when backend and
+      # frontend do not share a host, and give it the SAME host as the page --
+      # mixing localhost and an IP makes SameSite=lax drop the session cookie.
+      WEAVE_INGEST_PUBLIC_API_URL: ${WEAVE_INGEST_PUBLIC_API_URL:-}
+    depends_on:
+      - backend
+    networks:
+      - weave_ingest_netbridge
+
+networks:
+  weave_ingest_netbridge:
+    driver: bridge
+
+# Docker-managed volumes, created as weave-ingest_<name> on first start. They
+# survive `docker compose down`; `down -v` deletes them and every document
+# with them. To put this data on a host path instead (a NAS share, a
+# dedicated disk), overlay docker-compose.nas.example.yml rather than editing
+# the targets here.
+volumes:
+  pgdata:
+  redisdata:
+  storage:
+  paddlex_models:

@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://weave.local/contracts/events/document.processed/v1",
+  "title": "document.processed Event Payload",
+  "description": "Webhook-Payload für das document.processed-Event: Weave-Ingest benachrichtigt Konsumenten über ein erfolgreich verarbeitetes Dokument",
+  "type": "object",
+  "required": [
+    "event",
+    "timestamp",
+    "job_id",
+    "document_version",
+    "content_sha256",
+    "original_filename",
+    "markdown_url",
+    "frontmatter",
+    "quality",
+    "engine",
+    "processed_at"
+  ],
+  "properties": {
+    "event": {
+      "type": "string",
+      "const": "document.processed",
+      "description": "Event-Typ als Konstante"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC-Zeitstempel des Event-Enqueuing (RFC 3339, Microsekunden-Präzision akzeptiert)"
+    },
+    "job_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Eindeutige Job-ID des verarbeiteten Dokuments; Primärschlüssel für Konsumenten-Deduplication"
+    },
+    "document_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Versionsnummer des Dokuments; inkrementiert bei Wiederverarbeitung des gleichen Uploads"
+    },
+    "previous_job_id": {
+      "oneOf": [
+        {
+          "type": "string",
+          "format": "uuid",
+          "description": "UUID des vorherigen Job, falls dies eine Wiederverarbeitung ist"
+        },
+        {
+          "type": "null",
+          "description": "null für Initial-Uploads (Standardfall)"
+        }
+      ],
+      "description": "Falls Wiederverarbeitung: UUID des Vorgänger-Job; sonst null"
+    },
+    "content_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA256-Hash (hexadezimal, 64 Zeichen) des Original-Dateiinhalts; unveränderlich, Sekundärschlüssel für Content-Deduplication"
+    },
+    "original_filename": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Vom Benutzer hochgeladener Dateiname (nur Filename, kein Pfad); z.B. 'report.pdf'"
+    },
+    "markdown_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "Vollständig qualifizierte HTTPS-URL zum Download der verarbeiteten Markdown-Datei mit YAML-Frontmatter; zeitlich begrenzt gültig"
+    },
+    "frontmatter": {
+      "$ref": "../frontmatter.schema.json",
+      "description": "YAML-Frontmatter-Objekt mit Dokument-Metadaten -- der geparste Inhalt des Frontmatter-Blocks am Anfang der unter markdown_url abrufbaren Datei. Referenziert den bestehenden, gegen die echten Konvertierungspfade getesteten Vertrag aus contracts/frontmatter.schema.json (siehe backend/tests/test_frontmatter_contract.py) statt ihn hier redundant (und potenziell abweichend) zu wiederholen."
+    },
+    "quality": {
+      "$ref": "#/$defs/quality_object",
+      "description": "Qualitäts-Assessment des verarbeiteten Dokuments"
+    },
+    "engine": {
+      "type": "string",
+      "enum": [
+        "paddleocr",
+        "mail-eml",
+        "pypdf-fallback",
+        "spreadsheet-fallback",
+        "openai_vision"
+      ],
+      "description": "Name der verwendeten Verarbeitungs-Engine -- identisch mit contracts/frontmatter.schema.json's 'engine'-Enum, da dieser Wert direkt aus dem geparsten Frontmatter übernommen wird (siehe frontmatter.engine)"
+    },
+    "processed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC-Zeitstempel des Verarbeitungsabschlusses (RFC 3339, Sekundengenauigkeit)"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "quality_object": {
+      "type": "object",
+      "required": [
+        "grade",
+        "recommendation",
+        "signals"
+      ],
+      "properties": {
+        "grade": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "A",
+                "B",
+                "C"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Qualitätsklasse: A=exzellent, B=gut, C=minderwertig aber verwertbar. null, wenn für den Job kein Quality-Gate-Ergebnis vorliegt — Konsumenten behandeln null wie 'warn'."
+        },
+        "recommendation": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "allow",
+                "warn",
+                "block"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Handlungsempfehlung für Konsumenten: allow=ohne Warnung indexieren, warn=mit Warnung indexieren, block=nicht indexieren bis überprüft. null, wenn kein Quality-Gate-Ergebnis vorliegt — wie 'warn' behandeln."
+        },
+        "signals": {
+          "$ref": "#/$defs/signals_object",
+          "description": "Rohsignale für Qualitätsbewertung"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Qualitäts-Assessment des verarbeiteten Dokuments"
+    },
+    "signals_object": {
+      "type": "object",
+      "description": "Rohsignale für Qualitätsbewertung -- exakt der Rückgabewert von app/services/quality_gate.evaluate_document_quality()['signals'] (siehe backend/tests/test_quality_gate.py); weitere Engine-spezifische Metriken sind erlaubt (additionalProperties)",
+      "properties": {
+        "ocr_confidence": {
+          "oneOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Gewichtetes Vertrauen in die OCR-Texterkennung (0.5 * Mittelwert + 0.5 * Anteil hochsicherer Lesungen); null wenn die Engine keinerlei Konfidenzwerte liefert (z.B. openai_vision, pypdf-fallback)"
+        },
+        "confidence_sample_size": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Anzahl der für ocr_confidence eingesammelten Einzel-Konfidenzwerte; 0 wenn die Engine keine liefert"
+        },
+        "structure_quality": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Struktur-Präzision aus Seitenabdeckung, Block-Reihenfolge, Tabellen- und Formel-Anteil (0 ohne page_structures)"
+        },
+        "noise_penalty": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Anteil an Wiederholung/Symbolen/Kauderwelsch im gerenderten Markdown-Text (höher = schlechter)"
+        },
+        "text_quality": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "1 - noise_penalty"
+        },
+        "field_validation": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "description": "Zählungen je Feldvalidierungs-Kategorie aus app/services/field_validation.py (IBAN/Datum/ICD-Plausibilität, verwaiste Labels, ...); leeres Objekt wenn keine Feldvalidierung lief"
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

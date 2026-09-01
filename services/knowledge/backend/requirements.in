@@ -1,0 +1,21 @@
+# Direct dependencies of the backend/worker image (see Dockerfile) and of the
+# local development environment. Hash-Lock folgt spaeter -- requirements.txt
+# is currently a plain `pip freeze` of the resolved tree, not a
+# `pip-compile --generate-hashes` lock (see requirements.txt's own header).
+#
+# Version pins for packages shared with Weave-Ingest are kept identical to
+# backend/requirements.in there, so the two services stay on the same
+# fastapi/sqlalchemy/celery/etc. major.minor across the Weave system.
+fastapi==0.141.1
+uvicorn[standard]==0.52.3
+pydantic==2.13.4
+pydantic-settings==2.14.2
+sqlalchemy==2.0.51
+psycopg[binary]==3.3.4
+pgvector==0.5.0
+alembic==1.19.1
+celery==5.6.3
+redis==6.2.0
+pytest==9.1.1
+httpx==0.28.1
+PyYAML==6.0.3

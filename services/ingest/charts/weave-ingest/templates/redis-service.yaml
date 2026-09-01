@@ -1,0 +1,18 @@
+{{- if .Values.redis.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "weave-ingest.fullname" . }}-redis
+  labels:
+    {{- include "weave-ingest.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  ports:
+    - port: {{ .Values.redis.port }}
+      targetPort: redis
+      protocol: TCP
+      name: redis
+  selector:
+    {{- include "weave-ingest.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+{{- end }}

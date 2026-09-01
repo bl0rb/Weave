@@ -1,0 +1,167 @@
+{{- if .Values.backend.enabled }}
+{{- if not .Values.database.useExternal }}
+{{- fail "database.useExternal must be true. This chart supports only external PostgreSQL." }}
+{{- end }}
+{{- include "weave-ingest.requireSecretKey" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "weave-ingest.fullname" . }}-backend
+  labels:
+    {{- include "weave-ingest.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  replicas: {{ ternary .Values.autoscaling.backend.minReplicas .Values.backend.replicaCount .Values.autoscaling.backend.enabled }}
+  selector:
+    matchLabels:
+      {{- include "weave-ingest.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        {{- include "weave-ingest.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: backend
+        {{- with .Values.global.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.global.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "weave-ingest.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.backend.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: backend
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          {{- with .Values.backend.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "database.passwordSecret.name is required" .Values.database.passwordSecret.name }}
+                  key: {{ required "database.passwordSecret.key is required" .Values.database.passwordSecret.key }}
+            - name: DATABASE_URL
+              value: postgresql+psycopg://{{ required "database.user is required" .Values.database.user }}:$(DATABASE_PASSWORD)@{{ required "database.host is required" .Values.database.host }}:{{ .Values.database.port }}/{{ required "database.database is required" .Values.database.database }}
+            - name: DATABASE_SCHEMA
+              value: {{ .Values.database.schema | quote }}
+            {{- if include "weave-ingest.redisAuthEffective" . }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weave-ingest.redisAuthSecretName" . }}
+                  key: {{ include "weave-ingest.redisAuthSecretKey" . }}
+            {{- end }}
+            - name: REDIS_URL
+              value: {{ include "weave-ingest.redisUrl" . | quote }}
+            - name: CORS_ORIGINS
+              value: {{ .Values.backend.corsOrigins | quote }}
+            - name: TRUSTED_PROXY_IPS
+              value: {{ .Values.backend.trustedProxyIps | quote }}
+            - name: TRUSTED_PROXY_HOPS
+              value: {{ .Values.backend.trustedProxyHops | quote }}
+            {{- if include "weave-ingest.secretKeyEffective" . }}
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weave-ingest.secretKeySecretName" . }}
+                  key: {{ include "weave-ingest.secretKeySecretKey" . }}
+            {{- end }}
+            - name: PUBLIC_API_URL
+              value: {{ include "weave-ingest.publicApiUrl" . | quote }}
+            - name: RUN_ALEMBIC_ON_STARTUP
+              value: {{ .Values.backend.runAlembicOnStartup | quote }}
+            {{- if .Values.backend.maxUploadBytes }}
+            - name: MAX_UPLOAD_BYTES
+              value: {{ .Values.backend.maxUploadBytes | quote }}
+            {{- end }}
+            {{- if .Values.mail.maxMessageBytes }}
+            - name: MAX_MAIL_MESSAGE_BYTES
+              value: {{ .Values.mail.maxMessageBytes | quote }}
+            {{- end }}
+            - name: IMPORT_ENABLED
+              value: {{ .Values.importer.enabled | quote }}
+            - name: IMPORT_PRIVATE_HOST_ALLOWLIST
+              value: {{ .Values.importer.privateHostAllowlist | toJson | quote }}
+            # int64: Helm parses large YAML numbers as float64 and | quote
+            # would render 20971520 as "2.097152e+07", which the app's int
+            # settings reject.
+            - name: IMPORT_MAX_PAGES
+              value: {{ .Values.importer.maxPages | int64 | quote }}
+            - name: IMPORT_ATTACHMENT_MAX_BYTES
+              value: {{ .Values.importer.attachmentMaxBytes | int64 | quote }}
+            - name: IMPORT_RUN_MAX_TOTAL_BYTES
+              value: {{ .Values.importer.runMaxTotalBytes | int64 | quote }}
+            - name: OPENWEBUI_ENABLED
+              value: {{ .Values.openwebui.enabled | quote }}
+            - name: OPENWEBUI_PRIVATE_HOST_ALLOWLIST
+              value: {{ .Values.openwebui.privateHostAllowlist | toJson | quote }}
+            - name: WEBHOOKS_ENABLED
+              value: {{ .Values.webhooks.enabled | quote }}
+            - name: WEBHOOK_PRIVATE_HOST_ALLOWLIST
+              value: {{ .Values.webhooks.privateHostAllowlist | toJson | quote }}
+            # int64: Helm parses large YAML numbers as float64 and | quote
+            # would render 50 as "5e+01", which the app's int settings
+            # reject.
+            - name: WEBHOOK_MAX_PENDING_DELIVERIES_PER_USER
+              value: {{ .Values.webhooks.maxPendingPerUser | int64 | quote }}
+            # Admin "test VL connection" probe (POST /auth/admin/vl-connections/
+            # {id}/test) runs here; the OCR call using the same endpoint runs
+            # on the worker, which sets this too.
+            - name: VL_PRIVATE_HOST_ALLOWLIST
+              value: {{ .Values.vl.privateHostAllowlist | toJson | quote }}
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          volumeMounts:
+            - name: shared-storage
+              mountPath: /app/backend/storage
+      volumes:
+        # Always mount shared-storage: the backend runs as non-root and cannot
+        # create /app/backend/storage inside the root-owned image filesystem.
+        - name: shared-storage
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ default (printf "%s-storage" (include "weave-ingest.fullname" .)) .Values.persistence.existingClaim }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.backend.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.backend.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.backend.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

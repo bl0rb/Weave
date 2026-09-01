@@ -1,0 +1,954 @@
+# Weave Platform Deployment Stack
+#
+# Composite Docker Compose configuration for the full Weave microservice
+# platform: Weave-Ingest, Weave-Knowledge, Weave-Retrieval, Weave-Runtime,
+# Weave-Tools, and Weave-API -- plus two optional, CPU-only model services
+# (weave-embeddings, weave-reranker; both live in this monorepo's
+# services/ directory, each in its own top-level service folder alongside
+# services/tools and services/chat) that let Weave-Knowledge and
+# Weave-Retrieval swap their fake/none provider defaults for real,
+# self-hosted embedding + reranking, without calling out to any external
+# API. See docs/betrieb.md section 7 ("Echte Provider") for the full,
+# command-by-command walkthrough.
+#
+# Status: All six services wired up. See docs/adr/0001 (queue topology),
+# docs/adr/0002 (auth strategy), docs/adr/0003 (secrets strategy),
+# docs/adr/0004 (data ownership) and docs/adr/0005 (the one named
+# exception to 0004 -- Weave-Retrieval's read-only access to
+# Weave-Knowledge's chunk store).
+#
+# Startup:
+#   docker compose -f deploy/docker-compose.weave.yml up -d
+#
+# This stack uses:
+# - PostgreSQL with pgvector extension for embeddings (Weave-Knowledge)
+# - Redis for caching and message brokering (Celery, Weave-Ingest +
+#   Weave-Knowledge only -- see docs/adr/0001; none of Weave-Retrieval,
+#   Weave-Runtime, Weave-Tools, Weave-API use Redis)
+# - Six Weave services, several with more than one container (backend +
+#   worker, or backend + frontend)
+#
+# ---------------------------------------------------------------------------
+# SHARED SECRETS -- READ THIS FIRST
+# ---------------------------------------------------------------------------
+# Several env vars below are NOT per-service: the exact same value MUST be
+# set on every service listed for it, because one side signs/issues and
+# the other side verifies. A mismatch is not a crash -- it is a silent(ish)
+# 401/503 at the service boundary that looks like a completely unrelated
+# configuration problem unless you already know which secret is shared.
+#
+#   WEAVE_DELEGATION_SECRET
+#     Shared by: weave-runtime (issuer, mints a delegation token per n8n
+#     bot turn) and weave-tools-backend (verifier, checks the token's HMAC
+#     before letting a delegated caller through). See
+#     contracts/n8n-flow.md.
+#     If they differ: EVERY delegation token Weave-Runtime issues fails
+#     Weave-Tools' signature check. Weave-Tools returns one generic error
+#     for this (by design -- see the contract's "niemals unterscheiden"
+#     rule), so it just looks like every n8n-provider bot turn is broken.
+#
+#   INTROSPECTION_SERVICE_TOKEN
+#     Shared by: weave-tools-backend (caller, resolves a raw Personal-Token
+#     into an identity) and weave-api (verifier of
+#     POST /internal/tokens/introspect).
+#     If they differ, or if weave-api doesn't have it set at all: weave-api
+#     answers 401/503 to Weave-Tools' introspection call, so every
+#     Personal-Token-authenticated MCP/REST call into Weave-Tools that
+#     needs scope resolution fails -- typically surfacing as Weave-Tools'
+#     own fail-closed 503 (unconfigured/rejected upstream dependency).
+#
+#   RETRIEVAL_API_TOKEN
+#     Shared by: weave-retrieval (verifier) and EVERY caller of it --
+#     weave-runtime, weave-tools-backend, and weave-api all present this
+#     same static bearer token to weave-retrieval's require_service_token.
+#     If any one of them has a different value (or none): that specific
+#     caller gets 401 (wrong token) or 503 (weave-retrieval itself has an
+#     empty RETRIEVAL_API_TOKEN, refusing to compare against anything) from
+#     every call it makes to Weave-Retrieval.
+#
+#   RUNTIME_API_TOKEN
+#     Shared by: weave-runtime (verifier) and weave-api (caller, proxies
+#     GET /v1/bots and friends through to it).
+#     If they differ: weave-api's calls into Weave-Runtime's
+#     /internal/bots surface fail with 401/503.
+#
+# Each is defined ONCE below as a compose variable (resolved from your
+# `deploy/.env`, see deploy/README.md) and simply referenced by name in
+# every service that needs it -- there is no separate "define" step beyond
+# using the identical ${VAR_NAME} in each place. Generate every one of
+# these with e.g. `openssl rand -hex 32`; never reuse one shared secret's
+# value for another (they protect different trust boundaries).
+#
+# Two more pairs of this same shape exist ONLY once you opt into the real
+# model services below (weave-embeddings/weave-reranker) instead of the
+# fake/none defaults -- NOT listed above because with those defaults
+# neither service is ever called, so there is nothing to mismatch out of
+# the box:
+#   EMBEDDING_API_KEY (sent by weave-knowledge/weave-retrieval) must equal
+#   weave-embeddings' own EMBEDDINGS_API_TOKEN once EMBEDDING_BASE_URL
+#   points at it; RERANK_API_KEY (weave-retrieval) must equal
+#   weave-reranker's own RERANKER_API_TOKEN once RERANK_BASE_URL points at
+#   it. See docs/betrieb.md section 7.
+# ---------------------------------------------------------------------------
+#
+# EMBEDDING_* IS SHARED BY CONSTRUCTION, NOT JUST BY CONVENTION
+# ---------------------------------------------------------------------------
+# `x-embedding-env` below is a Compose "extension field" (the `x-` prefix
+# means the Compose engine itself ignores it) holding every EMBEDDING_*
+# variable exactly once, as a YAML anchor (`&embedding-env`). Every service
+# that must embed with the SAME model/dimension Weave-Knowledge indexed
+# with -- weave-knowledge, weave-knowledge-worker, weave-retrieval --
+# pulls the whole block in with a single `<<: *embedding-env` merge key
+# instead of repeating six `${EMBEDDING_...}` lines per service. This is
+# the Compose Specification's own documented pattern for exactly this
+# problem ("Fragments", compose-spec.io) -- it is not a Weave-specific
+# trick, and it means these three services literally cannot drift from
+# each other's EMBEDDING_* values by editing only one of the three blocks;
+# the only way to change any one of them is to change the shared anchor,
+# which changes all three at once.
+# ---------------------------------------------------------------------------
+
+x-embedding-env: &embedding-env
+  # 'fake' is a deterministic, dependency-free provider -- no real
+  # embedding endpoint, network access, or API key needed for a first
+  # boot, and the whole hybrid-search chain (index -> vector search ->
+  # RRF fusion) works end to end against it. Left as the default here even
+  # though this repo now ships a real, self-hosted alternative
+  # (weave-embeddings, below) on purpose: flipping EMBEDDING_PROVIDER to
+  # 'openai' automatically on every upgrade of this file would silently
+  # make an EXISTING deployment's already-indexed vectors incompatible
+  # with newly-embedded queries the moment the containers restart (a
+  # provider/model change is only safe together with the migration +
+  # full reindex documented in docs/betrieb.md section 7) -- switching
+  # providers is therefore always a deliberate, documented operator
+  # action, never a side effect of updating this compose file.
+  EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-fake}
+  EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
+  EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+  EMBEDDING_MODEL: ${EMBEDDING_MODEL:-fake-embed}
+  # 1536 matches settings.embedding_dimension's own default in both
+  # Weave-Knowledge and Weave-Retrieval (so this default is a no-op
+  # either way) -- NOT the 384 dimensions of the real, prescribed model
+  # (intfloat/multilingual-e5-small, served by weave-embeddings below).
+  # Set this to 384 alongside EMBEDDING_MODEL/EMBEDDING_PROVIDER when
+  # switching to it -- see docs/betrieb.md section 7 for reading the
+  # authoritative value back from weave-embeddings' own GET /health
+  # rather than trusting this number blind.
+  EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-1536}
+  EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-64}
+
+name: weave-ingest
+
+services:
+  # --- Infrastructure Services ---
+
+  postgres:
+    # PostgreSQL with pgvector extension for vector embeddings.
+    # Uses pgvector/pgvector:pg16 instead of postgres:16 to support
+    # embedding storage for Weave-Knowledge without re-provisioning.
+    #
+    # Database initialization: three databases now live on this one
+    # cluster (docs/adr/0004):
+    #   - weave_ingest    (Weave-Ingest backend + worker) -- created by the
+    #     base image itself, since it's $POSTGRES_DB below.
+    #   - weave_knowledge (Weave-Knowledge -- chunk store + embeddings)
+    #   - weave_api       (Weave-API -- users, tokens, conversations)
+    # plus the `weave_retrieval_ro` read-only role docs/adr/0005 specifies
+    # for Weave-Retrieval's shared access to weave_knowledge. All of this
+    # is created by ./postgres-init/01-create-databases.sh, mounted below
+    # -- see that file, and deploy/README.md's "Database initialization",
+    # for exactly what it runs and its one-time-only caveat.
+    #
+    # Security context mirrors the PaddleDoc pattern (no privilege escalation,
+    # minimal capabilities for chown/chmod during startup).
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    image: pgvector/pgvector:pg16
+    restart: always
+    container_name: weave_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-weave_ingest}
+      POSTGRES_USER: ${POSTGRES_USER:-weave}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      # Consumed only by 01-create-databases.sh (the CREATE ROLE statement)
+      # -- not a Postgres/image-native variable. Must be the SAME value
+      # weave-retrieval's own DATABASE_URL uses below (RETRIEVAL_DB_PASSWORD),
+      # since that init script is what actually sets this role's password.
+      RETRIEVAL_DB_PASSWORD: ${RETRIEVAL_DB_PASSWORD:?RETRIEVAL_DB_PASSWORD is required}
+    volumes:
+      - pgdata:/var/lib/postgresql/data:rw
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-weave}"]
+      interval: 5s
+      timeout: 5s
+      retries: 36
+      start_period: 10s
+    networks:
+      - weave_netbridge
+
+  redis:
+    # Redis for Celery broker/result backend and caching. Only Weave-Ingest
+    # (DB 0) and Weave-Knowledge (DB 1) use this -- Weave-Retrieval,
+    # Weave-Runtime, Weave-Tools and Weave-API are all stateless HTTP
+    # services with no Celery worker of their own. Same security context as
+    # PostgreSQL.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    image: redis:7
+    restart: always
+    container_name: weave_redis
+    command:
+      - redis-server
+      - --save
+      - "60"
+      - "1"
+      - --loglevel
+      - warning
+      - --requirepass
+      - ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    volumes:
+      - redisdata:/data:rw
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 36
+    networks:
+      - weave_netbridge
+
+  # --- Weave-Ingest ---
+
+  weave-ingest-backend:
+    # REST API backend for document ingestion, processing orchestration,
+    # and administration. Depends on PostgreSQL (schema, auth) and Redis
+    # (Celery broker, caching, session state).
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    image: ghcr.io/bl0rb/weave-ingest-backend:${WEAVE_INGEST_TAG:-latest}
+    restart: always
+    container_name: weave_ingest_backend
+    ports:
+      - ${BACKEND_PORT:-8000}:8000
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-weave_ingest}
+      POSTGRES_USER: ${POSTGRES_USER:-weave}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required — it encrypts sessions and stored credentials}
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:3000"]}
+    volumes:
+      - storage:/app/backend/storage:rw
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 36
+      start_period: 10s
+    networks:
+      - weave_netbridge
+
+  weave-ingest-worker:
+    # Celery worker for async task processing (document extraction, cleanup,
+    # format conversion). Mirrors the backend environment to ensure parity
+    # in config loading and dependency versions.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    image: ghcr.io/bl0rb/weave-ingest-worker:${WEAVE_INGEST_TAG:-latest}
+    restart: always
+    container_name: weave_ingest_worker
+    mem_limit: ${WORKER_MEMORY_LIMIT:-3g}
+    cpus: ${WORKER_CPUS:-2.0}
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-weave_ingest}
+      POSTGRES_USER: ${POSTGRES_USER:-weave}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required — it encrypts sessions and stored credentials}
+      CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-1}
+      CELERY_PREFETCH_MULTIPLIER: ${CELERY_PREFETCH_MULTIPLIER:-1}
+      CELERY_MAX_TASKS_PER_CHILD: ${CELERY_MAX_TASKS_PER_CHILD:-5}
+    volumes:
+      - storage:/app/backend/storage:rw
+      - paddlex_models:/home/weave:rw
+    depends_on:
+      weave-ingest-backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - weave_netbridge
+
+  weave-ingest-frontend:
+    # SPA frontend (React/Next.js) for document upload, job monitoring,
+    # and result browsing. Calls the backend API.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    image: ghcr.io/bl0rb/weave-ingest-frontend:${WEAVE_INGEST_TAG:-latest}
+    restart: always
+    container_name: weave_ingest_frontend
+    ports:
+      - ${FRONTEND_PORT:-3000}:3000
+    environment:
+      WEAVE_INGEST_PUBLIC_API_URL: ${WEAVE_INGEST_PUBLIC_API_URL:-}
+    depends_on:
+      - weave-ingest-backend
+    networks:
+      - weave_netbridge
+
+  # --- Weave-Knowledge (Index Pipeline + Chunk Store) ---
+  # Build context lives in this monorepo's services/knowledge/backend
+  # directory (relative to deploy/, where this file lives):
+  #   docker build -f ../services/knowledge/backend/Dockerfile -t ghcr.io/bl0rb/weave-knowledge ../services/knowledge/backend
+
+  weave-knowledge:
+    # Index-Pipeline backend: consumes document.processed events from
+    # Weave-Ingest (webhook), fetches each job's markdown, chunks + embeds
+    # it, and persists to its own `weave_knowledge` database with pgvector
+    # (docs/adr/0004: one database per service). REDIS_URL uses logical DB
+    # 1, never Weave-Ingest's DB 0 (docs/adr/0001).
+    #
+    # `documents`/`chunks`/`collections` in this database ARE, despite
+    # living only here, read directly by Weave-Retrieval -- docs/adr/0005's
+    # one named exception to "no shared tables". That does not change
+    # anything about THIS service (it is still the only writer, still runs
+    # the only Alembic migrations here) -- it only means the schema this
+    # container's migrations produce is also a contract, see
+    # contracts/chunk-store.md.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    image: ghcr.io/bl0rb/weave-knowledge:${WEAVE_KNOWLEDGE_TAG:-latest}
+    restart: always
+    container_name: weave_knowledge
+    ports:
+      - ${KNOWLEDGE_PORT:-8001}:8000
+    environment:
+      # This service's Settings only reads a single DATABASE_URL (unlike
+      # Weave-Ingest, which also accepts split POSTGRES_HOST/PORT/DB/USER/
+      # PASSWORD fields) -- built here from the same shared postgres
+      # credentials as Weave-Ingest, just against the weave_knowledge
+      # database instead.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-weave}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:${POSTGRES_PORT:-5432}/weave_knowledge
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/1
+      SECRET_KEY: ${WEAVE_KNOWLEDGE_SECRET_KEY:?WEAVE_KNOWLEDGE_SECRET_KEY is required}
+      # Weave-Knowledge needs a real Weave-Ingest API access (a personal
+      # token of a dedicated service user) to fetch a job's markdown_url --
+      # see contracts/events/document.processed.md's markdown_url section.
+      WEAVE_INGEST_BASE_URL: http://weave-ingest-backend:8000
+      WEAVE_INGEST_API_TOKEN: ${WEAVE_KNOWLEDGE_INGEST_API_TOKEN:?WEAVE_KNOWLEDGE_INGEST_API_TOKEN is required}
+      WEAVE_INGEST_WEBHOOK_SECRET: ${WEAVE_KNOWLEDGE_WEBHOOK_SECRET:-}
+      # --- Embedding provider: pulled in from the `x-embedding-env` anchor
+      # at the top of this file (see that block's own comment), NOT
+      # repeated here as six separate lines -- this is what makes it
+      # structurally impossible for this service's EMBEDDING_* to drift
+      # from weave-retrieval's own copy below, since both merge in the
+      # exact same anchor. A vector comparison across two different
+      # embedding spaces (a mismatched model or dimension) is not just
+      # less accurate, it is meaningless -- see docs/betrieb.md section 5.
+      <<: *embedding-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      weave-ingest-backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 36
+      start_period: 10s
+    networks:
+      - weave_netbridge
+
+  weave-knowledge-worker:
+    # Celery worker consuming the `weave.knowledge.index` queue (docs/adr/0001:
+    # every service gets its own named queue on the shared Redis instance).
+    # Same image as weave-knowledge -- only the command differs, mirroring
+    # how weave-ingest-worker/weave-ingest-backend split today.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    image: ghcr.io/bl0rb/weave-knowledge:${WEAVE_KNOWLEDGE_TAG:-latest}
+    restart: always
+    container_name: weave_knowledge_worker
+    command: ["celery", "-A", "app.workers.tasks", "worker", "--loglevel=info", "-Q", "weave.knowledge.index"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-weave}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:${POSTGRES_PORT:-5432}/weave_knowledge
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/1
+      SECRET_KEY: ${WEAVE_KNOWLEDGE_SECRET_KEY:?WEAVE_KNOWLEDGE_SECRET_KEY is required}
+      WEAVE_INGEST_BASE_URL: http://weave-ingest-backend:8000
+      WEAVE_INGEST_API_TOKEN: ${WEAVE_KNOWLEDGE_INGEST_API_TOKEN:?WEAVE_KNOWLEDGE_INGEST_API_TOKEN is required}
+      # Same shared `x-embedding-env` anchor as weave-knowledge above --
+      # the worker is what actually calls the embedding provider during
+      # indexing, so it needs the identical values, not just "similar" ones.
+      <<: *embedding-env
+    depends_on:
+      weave-knowledge:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - weave_netbridge
+
+  # --- Weave-Retrieval (Hybrid Search: pgvector + tsvector, RRF fusion) ---
+  # Build context lives in this monorepo's services/retrieval/backend
+  # directory:
+  #   docker build -f ../services/retrieval/backend/Dockerfile -t ghcr.io/bl0rb/weave-retrieval ../services/retrieval/backend
+
+  weave-retrieval:
+    # Owns NO schema of its own: `documents`/`chunks`/`collections` are the
+    # shared read-model docs/adr/0005 documents -- DATABASE_URL below
+    # points at Weave-Knowledge's OWN `weave_knowledge` database, but
+    # through the dedicated `weave_retrieval_ro` role (SELECT-only,
+    # created by postgres-init/01-create-databases.sh), never through
+    # Weave-Knowledge's write credentials. No Alembic runs from this
+    # container, ever, against this database.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    image: ghcr.io/bl0rb/weave-retrieval:${WEAVE_RETRIEVAL_TAG:-latest}
+    restart: always
+    container_name: weave_retrieval
+    ports:
+      - ${RETRIEVAL_PORT:-8002}:8000
+    environment:
+      DATABASE_URL: postgresql+psycopg://${RETRIEVAL_DB_USER:-weave_retrieval_ro}:${RETRIEVAL_DB_PASSWORD:?RETRIEVAL_DB_PASSWORD is required}@postgres:${POSTGRES_PORT:-5432}/weave_knowledge
+      # Static bearer token every caller of THIS service presents -- see
+      # the file header's RETRIEVAL_API_TOKEN entry for who all shares it
+      # (weave-runtime, weave-tools-backend, weave-api).
+      RETRIEVAL_API_TOKEN: ${RETRIEVAL_API_TOKEN:?RETRIEVAL_API_TOKEN is required}
+      # Same shared `x-embedding-env` anchor weave-knowledge (+worker) use
+      # above -- MUST resolve to the identical model/dimension weave-
+      # knowledge indexed chunks with, since embedding a query in a
+      # different space than the stored vectors makes the pgvector
+      # cosine-distance comparison meaningless, not just less accurate.
+      # The anchor is what makes "identical" structural rather than
+      # merely a convention someone has to remember to keep in sync.
+      <<: *embedding-env
+      # 'none' skips reranking entirely -- RRF-fused results go out as-is,
+      # trimmed to SEARCH_FINAL_K. RERANK_* is deliberately NOT part of the
+      # shared `x-embedding-env` anchor above: unlike EMBEDDING_*, only
+      # this ONE service ever needs it (Weave-Knowledge never reranks
+      # anything), so there is no second consumer to keep in sync with.
+      # Point RERANK_BASE_URL at this repo's own weave-reranker service
+      # below (http://weave-reranker:8000) with RERANK_PROVIDER=api for a
+      # real, self-hosted reranker, or at a hosted Cohere/jina.ai-
+      # compatible endpoint instead -- see docs/betrieb.md section 7.
+      RERANK_PROVIDER: ${RERANK_PROVIDER:-none}
+      RERANK_BASE_URL: ${RERANK_BASE_URL:-}
+      RERANK_API_KEY: ${RERANK_API_KEY:-}
+      RERANK_MODEL: ${RERANK_MODEL:-}
+      SEARCH_TOP_K: ${SEARCH_TOP_K:-20}
+      SEARCH_FINAL_K: ${SEARCH_FINAL_K:-5}
+      RRF_K: ${RRF_K:-60}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      weave-knowledge:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 36
+      start_period: 10s
+    networks:
+      - weave_netbridge
+
+  # --- Weave-Embeddings / Weave-Reranker (self-hosted CPU model services) ---
+  # Both live in this monorepo's services/ directory, each its OWN
+  # top-level service folder (a sibling of services/tools and
+  # services/chat, not inside either) with its own Dockerfile/.venv/
+  # deployment, Dockerfile directly at that folder's root -- NOT the same
+  # image as weave-tools-backend/-frontend below:
+  #   docker build -f ../services/embeddings/Dockerfile -t ghcr.io/bl0rb/weave-embeddings ../services/embeddings
+  #   docker build -f ../services/reranker/Dockerfile -t ghcr.io/bl0rb/weave-reranker ../services/reranker
+  #
+  # Both start and serve GET /health like any other service here, but nei-
+  # ther is on the critical path of the fake/none-provider default: nothing
+  # calls either one unless an operator points EMBEDDING_BASE_URL/
+  # RERANK_BASE_URL at it AND flips EMBEDDING_PROVIDER/RERANK_PROVIDER away
+  # from that default (see `x-embedding-env` above and weave-retrieval's
+  # RERANK_* block) -- no `depends_on` from weave-knowledge/weave-retrieval
+  # points at either one for exactly that reason: making the rest of the
+  # stack wait on these two would turn an opt-in feature into a hard
+  # dependency of the default boot path. See docs/betrieb.md section 7 for
+  # the full switch-over walkthrough (empty vs. already-populated database).
+
+  weave-embeddings:
+    # OpenAI-compatible /v1/embeddings for intfloat/multilingual-e5-small --
+    # the one embedding model Matze prescribed. NOT available in fastembed
+    # 0.8.0 (checked experimentally: TextEmbedding.list_supported_models()
+    # lists 30 dense models, and the only e5-family entry among them is the
+    # larger multilingual-e5-large) -- so this image runs the model's own
+    # official ONNX export directly through onnxruntime instead of
+    # fastembed. See services/embeddings/README.md's "Modellwahl" for
+    # the full experiment, the dimension/file-size/CPU-latency findings,
+    # and the "input_type" query-vs-passage prefix contract this service
+    # implements on top of the plain OpenAI request shape.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    image: ghcr.io/bl0rb/weave-embeddings:${WEAVE_EMBEDDINGS_TAG:-latest}
+    restart: always
+    container_name: weave_embeddings
+    ports:
+      - ${EMBEDDINGS_PORT:-8006}:8000
+    environment:
+      EMBEDDINGS_MODEL: ${EMBEDDINGS_MODEL:-intfloat/multilingual-e5-small}
+      # Empty, not `:?...is required` like most other service tokens in
+      # this file, on purpose: this service's own require_api_token
+      # answers 503 to every /v1/embeddings|/v1/models call while this is
+      # unset (see services/embeddings/app/core/auth.py), rather than
+      # crashing -- so this container starts cleanly as part of the
+      # stack's default boot (where nothing calls it anyway, see the
+      # section comment above) instead of a missing token here blocking
+      # `docker compose up` for the ENTIRE stack. Set this, and the
+      # matching EMBEDDING_API_KEY in `x-embedding-env` above, together --
+      # see docs/betrieb.md section 7.
+      EMBEDDINGS_API_TOKEN: ${EMBEDDINGS_API_TOKEN:-}
+      EMBEDDINGS_BATCH_SIZE: ${EMBEDDINGS_BATCH_SIZE:-32}
+      EMBEDDINGS_THREADS: ${EMBEDDINGS_THREADS:-0}
+      EMBEDDINGS_MAX_INPUTS: ${EMBEDDINGS_MAX_INPUTS:-256}
+      EMBEDDINGS_NORMALIZE: ${EMBEDDINGS_NORMALIZE:-true}
+    volumes:
+      # Named volume, never baked into the image -- the ~448MiB ONNX
+      # download (see that service's README "Erster Start") must survive a
+      # container recreation, or every restart re-downloads it from
+      # HuggingFace from scratch.
+      - embeddings_models:/models:rw
+    healthcheck:
+      # GET /health answers 200 immediately even mid-download (`warm:
+      # false`, `status: "starting"` -- see services/embeddings/app/
+      # main.py's own docstring for why: a healthcheck must never mistake
+      # a slow first-time model download for a dead process and restart
+      # it mid-download), so this only ever proves liveness, never
+      # readiness. start_period is generous anyway as defense in depth for
+      # a slow first pull of the ~448MiB ONNX weights on a constrained
+      # network; a caller that needs actual readiness should poll this
+      # same endpoint's own `warm`/`status` fields, not the container
+      # healthcheck.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 300s
+    networks:
+      - weave_netbridge
+
+  weave-reranker:
+    # Cohere/Jina-shaped POST /rerank for BAAI/bge-reranker-v2-m3 -- the
+    # one rerank model Matze prescribed. Also NOT available in fastembed
+    # 0.8.0 (checked experimentally: TextCrossEncoder.list_supported_models()
+    # lists exactly 6 cross-encoders, none of them this one -- only the
+    # smaller, older BAAI/bge-reranker-base), so this image loads it
+    # through sentence-transformers' CrossEncoder (CPU-only torch) instead.
+    # See services/reranker/README.md's "Warum nicht fastembed" for the
+    # full experiment, the ~2.3GB weight size and measured CPU-latency
+    # findings, and "Betriebshinweis" for what happens to search quality
+    # (silently, not an error) if this service is down or misconfigured
+    # while weave-retrieval's RERANK_PROVIDER=api.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    image: ghcr.io/bl0rb/weave-reranker:${WEAVE_RERANKER_TAG:-latest}
+    restart: always
+    container_name: weave_reranker
+    ports:
+      - ${RERANKER_PORT:-8007}:8000
+    environment:
+      RERANKER_MODEL: ${RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}
+      # Empty, not `:?...is required` -- same reasoning as weave-embeddings'
+      # EMBEDDINGS_API_TOKEN above: POST /rerank answers 503 per request
+      # while this is unset (see services/reranker/app/main.py's own
+      # startup warning) rather than the container refusing to start at
+      # all. Set this, and weave-retrieval's matching RERANK_API_KEY
+      # above, together -- see docs/betrieb.md section 7.
+      RERANKER_API_TOKEN: ${RERANKER_API_TOKEN:-}
+      RERANKER_BATCH_SIZE: ${RERANKER_BATCH_SIZE:-16}
+      RERANKER_THREADS: ${RERANKER_THREADS:-4}
+      RERANKER_MAX_DOCUMENTS: ${RERANKER_MAX_DOCUMENTS:-50}
+    volumes:
+      # Named volume for the ~2.3GB model weights (see that service's
+      # README "Docker") -- without it, every container recreation
+      # re-downloads them from HuggingFace from scratch.
+      - reranker_models:/data/model-cache:rw
+    healthcheck:
+      # This image ships no HEALTHCHECK of its own (unlike weave-embeddings'
+      # Dockerfile), so it is defined here instead -- same liveness-only
+      # shape and reasoning as weave-embeddings' own healthcheck above (GET
+      # /health answers immediately regardless of model-load state). The
+      # start_period here is roughly double weave-embeddings' own: the
+      # FIRST start downloads ~2.3GB of weights, about 5x weave-embeddings'
+      # ~448MiB ONNX download, which can take several minutes on a
+      # constrained network.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 600s
+    networks:
+      - weave_netbridge
+
+  # --- Weave-Runtime (LLM Executor + Agentic Loop) ---
+  # Build context is this monorepo's services/runtime SERVICE ROOT, not
+  # services/runtime/backend -- `bots/` lives at that service's root, as a
+  # sibling of `backend/`, and the Dockerfile COPYs it in from there:
+  #   docker build -f ../services/runtime/backend/Dockerfile -t ghcr.io/bl0rb/weave-runtime ../services/runtime
+
+  weave-runtime:
+    # Stateless: no database, no Redis (see the redis service comment
+    # above). Calls out to Weave-Retrieval for search and to an LLM
+    # provider for generation; can also delegate an entire chat turn to an
+    # n8n agent flow (contracts/n8n-flow.md) using a
+    # short-lived, signed delegation token.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    image: ghcr.io/bl0rb/weave-runtime:${WEAVE_RUNTIME_TAG:-latest}
+    restart: always
+    container_name: weave_runtime
+    ports:
+      - ${RUNTIME_PORT:-8003}:8000
+    environment:
+      # Static bearer token every caller of THIS service presents (today:
+      # weave-api's gateway). See the file header's RUNTIME_API_TOKEN entry.
+      RUNTIME_API_TOKEN: ${RUNTIME_API_TOKEN:?RUNTIME_API_TOKEN is required}
+      # Weave-Runtime is the CALLER here -- RETRIEVAL_API_TOKEN is what
+      # THIS service presents to Weave-Retrieval, the SAME shared value
+      # documented in the file header, not a value this service invents.
+      RETRIEVAL_BASE_URL: http://weave-retrieval:8000
+      RETRIEVAL_API_TOKEN: ${RETRIEVAL_API_TOKEN:?RETRIEVAL_API_TOKEN is required}
+      RETRIEVAL_TIMEOUT_SECONDS: ${RETRIEVAL_TIMEOUT_SECONDS:-10}
+      # 'fake' is a deterministic, dependency-free provider -- no real LLM
+      # API key or outbound network access needed for a first boot. Point
+      # at a real provider (openai, anthropic, a self-hosted model) for an
+      # actual deployment.
+      LLM_PROVIDER: ${LLM_PROVIDER:-fake}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_DEFAULT_MODEL: ${LLM_DEFAULT_MODEL:-}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60}
+      # 'rules': deterministic keyword/heuristic intent router. 'llm':
+      # delegates classification to LLM_PROVIDER above.
+      ROUTER_MODE: ${ROUTER_MODE:-rules}
+      # Symmetric secret -- see the file header's WEAVE_DELEGATION_SECRET
+      # entry. Weave-Runtime is the ISSUER side (mint_delegation_token);
+      # Weave-Tools below is the verifier.
+      WEAVE_DELEGATION_SECRET: ${WEAVE_DELEGATION_SECRET:?WEAVE_DELEGATION_SECRET is required}
+      DELEGATION_TOKEN_TTL_SECONDS: ${DELEGATION_TOKEN_TTL_SECONDS:-300}
+      # JSON list of webhook base URLs an n8n-provider bot's webhook_url
+      # must start with, checked once at bot-YAML load time (SSRF guard).
+      # Empty (default) disables n8n bots outright.
+      N8N_ALLOWED_BASE_URLS: ${N8N_ALLOWED_BASE_URLS:-[]}
+      # Forwarded verbatim to n8n as `tools_base_url` so a flow needs no
+      # separate configuration of where Weave-Tools lives.
+      TOOLS_BASE_URL: ${TOOLS_BASE_URL:-http://weave-tools-backend:8000}
+      # Default already matches the image's WORKDIR-relative layout
+      # (see that Dockerfile) -- listed here only for discoverability.
+      BOTS_DIR: ./bots
+    volumes:
+      # Named volume over the image's baked-in `bots/` directory. Docker
+      # seeds a brand-new empty named volume from the image's own content
+      # at that path on first mount, so this starts out with the two
+      # bundled example bots (bots/general-assistant.yaml,
+      # bots/legal-support.yaml) -- edit/add files here for a real bot
+      # roster. BOTS_DIR is re-read from disk on every call (no in-process
+      # cache), so an edit takes effect without a restart.
+      - runtime_bots:/app/bots:rw
+    depends_on:
+      weave-retrieval:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 36
+      start_period: 10s
+    networks:
+      - weave_netbridge
+
+  # --- Weave-API (Unified Public Gateway) ---
+  # Build context lives in this monorepo's services/api/backend directory:
+  #   docker build -f ../services/api/backend/Dockerfile -t ghcr.io/bl0rb/weave-api ../services/api/backend
+
+  weave-api:
+    # The one service besides Weave-Ingest and Weave-Knowledge that owns a real
+    # schema + runs its own Alembic migrations at startup (see its
+    # entrypoint.sh, RUN_ALEMBIC_ON_STARTUP default true) -- `users`,
+    # `api_tokens`, `conversations`, `messages` in its own `weave_api`
+    # database (docs/adr/0004), never shared with any other service.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    image: ghcr.io/bl0rb/weave-api:${WEAVE_API_TAG:-latest}
+    restart: always
+    container_name: weave_api
+    ports:
+      - ${API_PORT:-8004}:8000
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-weave}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:${POSTGRES_PORT:-5432}/weave_api
+      # Own SECRET_KEY per docs/adr/0003 -- never the same value as
+      # SECRET_KEY/WEAVE_KNOWLEDGE_SECRET_KEY above.
+      SECRET_KEY: ${WEAVE_API_SECRET_KEY:?WEAVE_API_SECRET_KEY is required}
+      # Weave-API is the CALLER of both services below -- both tokens are
+      # the SAME shared values documented in the file header, verified by
+      # weave-runtime/weave-retrieval respectively, not values this
+      # service invents.
+      RUNTIME_BASE_URL: http://weave-runtime:8000
+      RUNTIME_API_TOKEN: ${RUNTIME_API_TOKEN:?RUNTIME_API_TOKEN is required}
+      RETRIEVAL_BASE_URL: http://weave-retrieval:8000
+      RETRIEVAL_API_TOKEN: ${RETRIEVAL_API_TOKEN:?RETRIEVAL_API_TOKEN is required}
+      # Weave-API is the VERIFIER here (POST /internal/tokens/introspect) --
+      # see the file header's INTROSPECTION_SERVICE_TOKEN entry.
+      # Treat like a master key: whoever holds it can resolve the identity
+      # behind ANY Personal-Token in this database.
+      INTROSPECTION_SERVICE_TOKEN: ${INTROSPECTION_SERVICE_TOKEN:?INTROSPECTION_SERVICE_TOKEN is required}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-30}
+      HISTORY_MAX_MESSAGES: ${HISTORY_MAX_MESSAGES:-20}
+      # --- OIDC browser-session login (OPTIONAL, additive -- see
+      # services/api/.env.example and services/api/backend/app/core/config.py).
+      # This adds a
+      # browser-based OIDC login ON TOP of the Personal-API-Token/CLI path
+      # already covered by INTROSPECTION_SERVICE_TOKEN above -- it never
+      # replaces it. Weave-API itself considers OIDC ENABLED exactly when
+      # OIDC_ISSUER and OIDC_CLIENT_ID are BOTH non-empty; left empty (the
+      # default here), every /v1/auth/oidc/* and /v1/auth/logout endpoint
+      # 404s as if it had never been registered, this stack starts exactly
+      # as it did before this block existed, and every machine caller
+      # using a Personal-API-Token is completely unaffected either way.
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      # Sent as `redirect_uri` on both the authorize request and the token
+      # exchange -- MUST equal, byte-for-byte, the redirect URI registered
+      # with the OIDC provider (Keycloak/Entra/...) for this client, or the
+      # provider rejects the code exchange outright. That registered value
+      # lives OUTSIDE this compose file (in the provider's own client
+      # config), so there is nothing here to cross-check it against --
+      # see deploy/README.md's "SSO einrichten".
+      OIDC_REDIRECT_URL: ${OIDC_REDIRECT_URL:-}
+      OIDC_SCOPES: ${OIDC_SCOPES:-openid email profile}
+      OIDC_TEAM_CLAIM: ${OIDC_TEAM_CLAIM:-}
+      # Cross-origin post-login handoff: weave-tools-frontend (or any other
+      # UI on a different origin than this gateway) asks to be redirected
+      # back to ITSELF after login via `return_to` instead of relying on
+      # this gateway's own session cookie, which the UI's origin would
+      # never see. JSON list of UI origins this gateway is willing to hand
+      # a fresh one-time session code to on every login -- empty (the
+      # default) disables the handoff outright, `return_to` is always
+      # ignored, gateway behaviour unchanged.
+      #
+      # THE most likely OIDC misconfiguration in this stack: the UI's own
+      # callback URL (weave-tools-frontend's public origin, i.e. its own
+      # APP_BASE_URL, plus /api/auth/sso/callback -- see that service's
+      # src/lib/sso.ts) must appear here EXACTLY (scheme/host/port), and it
+      # must also match one of THIS gateway's own OIDC_REDIRECT_URL-style
+      # constraints from the UI's perspective (see weave-tools-frontend's
+      # WEAVE_API_PUBLIC_BASE_URL below). If the UI's callback URL is
+      # missing here, this produces no error: `return_to` is silently
+      # ignored and the user lands on THIS gateway after logging in
+      # instead of back in the UI, with nothing telling anyone why.
+      OIDC_POST_LOGIN_ALLOWED_URLS: ${OIDC_POST_LOGIN_ALLOWED_URLS:-[]}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      weave-runtime:
+        condition: service_healthy
+      weave-retrieval:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 36
+      start_period: 10s
+    networks:
+      - weave_netbridge
+
+  # --- Weave-Tools (MCP + REST Tool Surface for delegated/scoped access) ---
+  # Build context (backend) is this monorepo's services/tools directory,
+  # Dockerfile directly at its root:
+  #   docker build -f ../services/tools/Dockerfile -t ghcr.io/bl0rb/weave-tools-backend ../services/tools
+  # Build context (frontend) is the chat UI's own services/chat directory,
+  # Dockerfile directly at its root:
+  #   docker build -f ../services/chat/Dockerfile -t ghcr.io/bl0rb/weave-tools-frontend ../services/chat
+
+  weave-tools-backend:
+    # This block runs the REST mirror (app/main.py: /health +
+    # /api/v1/tools/*). The image also bundles a SEPARATE ASGI app, the
+    # MCP server (app/mcp_server.py, streamable-HTTP transport at /mcp) --
+    # it is its own uvicorn process by design (see that module's
+    # docstring), not something this container also serves. Run it as an
+    # additional container from this SAME image with the CMD overridden,
+    # e.g.:
+    #   uvicorn app.mcp_server:mcp_app --host 0.0.0.0 --port 8000
+    # (see this monorepo's root README's "MCP-Server" section). Not started here because,
+    # unlike the REST surface (which needs its own TOOLS_API_TOKEN gate),
+    # the MCP surface authenticates every call solely via the
+    # Authorization header a caller already carries -- so whether to run
+    # it at all depends on whether any MCP client (n8n's MCP node, Claude,
+    # ...) actually needs one in this deployment.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    image: ghcr.io/bl0rb/weave-tools-backend:${WEAVE_TOOLS_TAG:-latest}
+    restart: always
+    container_name: weave_tools_backend
+    ports:
+      - ${TOOLS_PORT:-8005}:8000
+    environment:
+      # Gates the REST surface only (X-Tools-Service-Token header, NOT the
+      # MCP server -- see above). A deployment-level "may this caller reach
+      # Weave-Tools' REST API at all" secret, e.g. an n8n HTTP-node
+      # credential -- not shared with any other service in THIS compose
+      # file, so it is not in the file header's shared-secrets list.
+      TOOLS_API_TOKEN: ${TOOLS_API_TOKEN:?TOOLS_API_TOKEN is required}
+      # Weave-Tools is the CALLER here (resolves a raw Personal-Token via
+      # Weave-API) -- INTROSPECTION_SERVICE_TOKEN is the SAME shared value
+      # documented in the file header, verified by weave-api above.
+      WEAVE_API_BASE_URL: http://weave-api:8000
+      INTROSPECTION_SERVICE_TOKEN: ${INTROSPECTION_SERVICE_TOKEN:?INTROSPECTION_SERVICE_TOKEN is required}
+      WEAVE_API_TIMEOUT_SECONDS: ${WEAVE_API_TIMEOUT_SECONDS:-10}
+      # Both scope-resolution paths' onward calls (list_collections,
+      # search) -- RETRIEVAL_API_TOKEN is the SAME shared value documented
+      # in the file header, verified by weave-retrieval above.
+      RETRIEVAL_BASE_URL: http://weave-retrieval:8000
+      RETRIEVAL_API_TOKEN: ${RETRIEVAL_API_TOKEN:?RETRIEVAL_API_TOKEN is required}
+      RETRIEVAL_TIMEOUT_SECONDS: ${RETRIEVAL_TIMEOUT_SECONDS:-10}
+      # Symmetric secret -- see the file header's WEAVE_DELEGATION_SECRET
+      # entry. Weave-Tools is the VERIFIER side; weave-runtime above is the
+      # issuer.
+      WEAVE_DELEGATION_SECRET: ${WEAVE_DELEGATION_SECRET:?WEAVE_DELEGATION_SECRET is required}
+      DELEGATION_TOKEN_TTL_SECONDS: ${DELEGATION_TOKEN_TTL_SECONDS:-300}
+    depends_on:
+      weave-api:
+        condition: service_healthy
+      weave-retrieval:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 36
+      start_period: 10s
+    networks:
+      - weave_netbridge
+
+  weave-tools-frontend:
+    # Next.js chat UI (services/chat). Talks ONLY to Weave-API (the
+    # gateway) -- never directly to Weave-Retrieval or weave-tools-backend
+    # above.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    image: ghcr.io/bl0rb/weave-tools-frontend:${WEAVE_TOOLS_FRONTEND_TAG:-latest}
+    restart: always
+    container_name: weave_tools_frontend
+    ports:
+      - ${TOOLS_FRONTEND_PORT:-3001}:3000
+    environment:
+      # Read server-side only (Next.js Route Handlers), never shipped to
+      # the browser.
+      WEAVE_API_BASE_URL: http://weave-api:8000
+      # --- SSO login button (OPTIONAL; src/lib/sso.ts). Weave-API exposes
+      # no runtime "is OIDC configured?" check (an unconfigured deployment
+      # 404s its /v1/auth/oidc/* router on purpose -- see that block
+      # above), so this app tracks the setting itself and the two sides
+      # must be kept in sync by whoever deploys this stack.
+      #
+      # Set to "true" if and only if weave-api's own OIDC_ISSUER and
+      # OIDC_CLIENT_ID above are BOTH set. Purely cosmetic either way: it
+      # only controls whether the "Mit SSO anmelden" button appears on
+      # /login -- the Personal-Token login stays completely unaffected.
+      # If this is "true" while weave-api is actually unconfigured, the
+      # button just 404s on click (annoying, not unsafe); the actual
+      # security boundary is weave-api's own OIDC_POST_LOGIN_ALLOWED_URLS,
+      # not this flag.
+      WEAVE_API_OIDC_ENABLED: ${WEAVE_API_OIDC_ENABLED:-}
+      # Weave-API's BROWSER-reachable origin -- where the SSO button
+      # itself navigates to (GET /v1/auth/oidc/login), deliberately
+      # separate from WEAVE_API_BASE_URL above (this container's own
+      # server-to-server address, which may be an internal-only Docker
+      # service name a real browser could never reach). Falls back to
+      # WEAVE_API_BASE_URL when unset, which is fine only where both
+      # really are the same reachable address (e.g. local dev).
+      #
+      # See weave-api's OIDC_POST_LOGIN_ALLOWED_URLS comment above: this
+      # app's own public origin (its APP_BASE_URL, not set in this compose
+      # file -- see deploy/README.md's "SSO einrichten") plus
+      # /api/auth/sso/callback is the exact URL that must appear in that
+      # list, or the post-login handoff back to this UI silently fails.
+      WEAVE_API_PUBLIC_BASE_URL: ${WEAVE_API_PUBLIC_BASE_URL:-}
+    depends_on:
+      - weave-api
+    networks:
+      - weave_netbridge
+
+networks:
+  weave_netbridge:
+    driver: bridge
+    name: weave_netbridge
+
+# Docker-managed named volumes, created as weave-ingest_<name> on first start.
+# They persist through `docker compose down` (use `down -v` to remove).
+# For host-based storage (NAS, dedicated disk), create a docker-compose.override.yml
+# overlay or migrate to Kubernetes persistent volumes.
+volumes:
+  pgdata:
+  redisdata:
+  storage:
+  paddlex_models:
+  runtime_bots:
+  # ~448MiB (weave-embeddings' ONNX export) and ~2.3GB (weave-reranker's
+  # sentence-transformers weights) respectively -- see those two services'
+  # own comments above. Both are populated lazily on first start; an
+  # unused `docker compose up` (fake/none provider defaults) still creates
+  # the volumes, just leaves them at whatever HuggingFace put there on that
+  # container's own first boot.
+  embeddings_models:
+  reranker_models:

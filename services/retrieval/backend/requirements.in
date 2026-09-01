@@ -1,0 +1,25 @@
+# Direct dependencies of the backend image (see Dockerfile) and of the
+# local development environment. Hash-Lock folgt spaeter -- requirements.txt
+# is currently a plain `pip freeze` of the resolved tree, not a
+# `pip-compile --generate-hashes` lock (see requirements.txt's own header).
+#
+# Version pins shared with Weave-Knowledge (fastapi/sqlalchemy/pydantic/
+# pydantic-settings/psycopg/pgvector/pytest/httpx/PyYAML/uvicorn) are kept
+# identical to that service's backend/requirements.in -- Weave-Retrieval
+# reads the very same weave_knowledge database rows (see
+# contracts/chunk-store.md), so drift between the two
+# services' SQLAlchemy/pgvector/psycopg versions could silently change how a
+# `vector` column round-trips. No celery/redis/alembic here: this service
+# has no worker queue (search is synchronous, see README) and owns no
+# schema of its own to migrate (it is the read-only side of the shared
+# chunk-store contract, never the writer).
+fastapi==0.141.1
+uvicorn[standard]==0.52.3
+pydantic==2.13.4
+pydantic-settings==2.14.2
+sqlalchemy==2.0.51
+psycopg[binary]==3.3.4
+pgvector==0.5.0
+pytest==9.1.1
+httpx==0.28.1
+PyYAML==6.0.3

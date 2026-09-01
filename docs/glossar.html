@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Weave Glossar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+  :root {
+    --bg: #F5F7F9;
+    --surface: #FFFFFF;
+    --surface-2: #EBEEF3;
+    --ink: #131922;
+    --muted: #56606F;
+    --faint: #8A93A2;
+    --line: #DDE2E9;
+    --line-soft: #E8EBF0;
+
+    --accent: #3B5BA5;
+    --accent-soft: rgba(59, 91, 165, 0.10);
+
+    --c-ingest:    #3B5BA5;
+    --c-knowledge: #3E7C63;
+    --c-retrieval: #7A4E8C;
+    --c-runtime:   #B0532F;
+    --c-api:       #396E8C;
+    --c-ops:       #8A6B1E;
+
+    --code-bg: #EBEEF3;
+    --shadow: 0 1px 2px rgba(19,25,34,.04), 0 6px 18px rgba(19,25,34,.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #11151C;
+      --surface: #191E27;
+      --surface-2: #212832;
+      --ink: #E8ECF2;
+      --muted: #98A2B1;
+      --faint: #6C7684;
+      --line: #2E3641;
+      --line-soft: #242B35;
+
+      --accent: #8AA5E6;
+      --accent-soft: rgba(138, 165, 230, 0.13);
+
+      --c-ingest:    #8AA5E6;
+      --c-knowledge: #6FB598;
+      --c-retrieval: #B98FCE;
+      --c-runtime:   #E28C63;
+      --c-api:       #74AECE;
+      --c-ops:       #D0AC5A;
+
+      --code-bg: #212832;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 18px rgba(0,0,0,.22);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #11151C;
+    --surface: #191E27;
+    --surface-2: #212832;
+    --ink: #E8ECF2;
+    --muted: #98A2B1;
+    --faint: #6C7684;
+    --line: #2E3641;
+    --line-soft: #242B35;
+
+    --accent: #8AA5E6;
+    --accent-soft: rgba(138, 165, 230, 0.13);
+
+    --c-ingest:    #8AA5E6;
+    --c-knowledge: #6FB598;
+    --c-retrieval: #B98FCE;
+    --c-runtime:   #E28C63;
+    --c-api:       #74AECE;
+    --c-ops:       #D0AC5A;
+
+    --code-bg: #212832;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 18px rgba(0,0,0,.22);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Inter", system-ui, -apple-system, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 880px; margin: 0 auto; padding: 56px 24px 96px; }
+
+  /* ── Kopf ─────────────────────────────────────────── */
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .72rem;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 16px;
+  }
+  h1 {
+    font-family: "Newsreader", Georgia, serif;
+    font-size: clamp(2.4rem, 6vw, 3.4rem);
+    font-weight: 500;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .lede {
+    margin: 18px 0 0;
+    max-width: 60ch;
+    font-size: 1.05rem;
+    color: var(--muted);
+  }
+
+  /* ── Suchfeld + Chips ─────────────────────────────── */
+  .controls { margin-top: 32px; }
+
+  .search {
+    position: relative;
+    display: block;
+  }
+  .search input {
+    width: 100%;
+    font-family: inherit;
+    font-size: 0.95rem;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px 16px 12px 40px;
+    outline: none;
+  }
+  .search input::placeholder { color: var(--faint); }
+  .search input:focus-visible {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .search svg {
+    position: absolute;
+    left: 14px; top: 50%;
+    transform: translateY(-50%);
+    width: 15px; height: 15px;
+    stroke: var(--faint);
+    fill: none;
+    stroke-width: 1.8;
+    pointer-events: none;
+  }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
+  }
+  .chip {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .72rem;
+    letter-spacing: .04em;
+    color: var(--muted);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 5px 12px;
+    cursor: pointer;
+    transition: border-color .15s, color .15s, background .15s;
+  }
+  .chip:hover { border-color: var(--faint); color: var(--ink); }
+  .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .chip[aria-pressed="true"] {
+    color: var(--surface);
+    background: var(--ink);
+    border-color: var(--ink);
+  }
+  .chip .swatch {
+    display: inline-block;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    margin-right: 7px;
+    vertical-align: 1px;
+    background: var(--sw, var(--muted));
+  }
+
+  .count {
+    margin-top: 14px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .74rem;
+    color: var(--faint);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── Abschnitte ───────────────────────────────────── */
+  section { margin-top: 48px; }
+  section[hidden] { display: none; }
+
+  .sec-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--sc, var(--accent));
+    margin-bottom: 0;
+  }
+  .sec-head h2 {
+    font-family: "Newsreader", Georgia, serif;
+    font-size: 1.5rem;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    margin: 0;
+    flex: 1;
+  }
+  .sec-head .svc {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .7rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--sc, var(--accent));
+    white-space: nowrap;
+  }
+
+  .table-scroll { overflow-x: auto; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0;
+  }
+  tbody tr {
+    border-bottom: 1px solid var(--line-soft);
+  }
+  tbody tr:last-child { border-bottom: none; }
+  tr[hidden] { display: none; }
+
+  th {
+    text-align: left;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .68rem;
+    font-weight: 500;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--faint);
+    padding: 12px 0 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  th.c-term { width: 30%; min-width: 190px; }
+
+  td { padding: 16px 0; vertical-align: top; }
+  td.c-term { padding-right: 24px; }
+  td.c-def { color: var(--muted); }
+
+  .term {
+    font-family: "Newsreader", Georgia, serif;
+    font-size: 1.12rem;
+    font-weight: 600;
+    color: var(--ink);
+    line-height: 1.25;
+    display: block;
+  }
+  .form {
+    display: block;
+    margin-top: 5px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .74rem;
+    color: var(--sc, var(--accent));
+    word-break: break-word;
+  }
+
+  .weave {
+    display: block;
+    margin-top: 8px;
+    padding-left: 12px;
+    border-left: 2px solid var(--sc, var(--accent));
+    color: var(--ink);
+    font-size: .92rem;
+  }
+  .weave b {
+    font-weight: 600;
+    color: var(--sc, var(--accent));
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .72rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    display: block;
+    margin-bottom: 2px;
+  }
+
+  code {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .84em;
+    background: var(--code-bg);
+    border-radius: 4px;
+    padding: .1em .36em;
+  }
+
+  .empty {
+    margin-top: 40px;
+    padding: 32px;
+    text-align: center;
+    color: var(--muted);
+    background: var(--surface);
+    border: 1px dashed var(--line);
+    border-radius: 10px;
+  }
+  .empty[hidden] { display: none; }
+
+  footer {
+    margin-top: 72px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line-soft);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .74rem;
+    color: var(--faint);
+  }
+
+  @media (max-width: 620px) {
+    .wrap { padding: 36px 16px 72px; }
+    th.c-term, td.c-term { width: auto; min-width: 0; }
+    table, tbody, tr, td, th { display: block; }
+    thead { display: none; }
+    td.c-term { padding: 0 0 6px; }
+    td.c-def { padding: 0 0 18px; }
+    tbody tr { padding: 14px 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+
+<div class="wrap">
+
+  <header>
+    <p class="eyebrow">Nachschlagewerk · Weave</p>
+    <h1>Weave Glossar</h1>
+    <p class="lede">Jeder Begriff, der in diesem Projekt gefallen ist — erst allgemein erklärt, dann übersetzt in das, was er konkret in Weave tut. Nach Dienst gruppiert und durchsuchbar.</p>
+
+    <div class="controls">
+      <label class="search">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 L14 14"/></svg>
+        <input type="search" id="q" placeholder="Begriff suchen — z. B. RRF, Guard, HNSW …" aria-label="Begriffe durchsuchen" autocomplete="off">
+      </label>
+      <div class="chips" role="group" aria-label="Nach Bereich filtern">
+        <button class="chip" data-cat="all" aria-pressed="true">Alle</button>
+        <button class="chip" data-cat="ingest"    style="--sw: var(--c-ingest)"><span class="swatch"></span>Dokumente</button>
+        <button class="chip" data-cat="knowledge" style="--sw: var(--c-knowledge)"><span class="swatch"></span>Index</button>
+        <button class="chip" data-cat="retrieval" style="--sw: var(--c-retrieval)"><span class="swatch"></span>Suche</button>
+        <button class="chip" data-cat="runtime"   style="--sw: var(--c-runtime)"><span class="swatch"></span>Bot</button>
+        <button class="chip" data-cat="api"       style="--sw: var(--c-api)"><span class="swatch"></span>Rechte</button>
+        <button class="chip" data-cat="ops"       style="--sw: var(--c-ops)"><span class="swatch"></span>Betrieb</button>
+      </div>
+      <p class="count" id="count"></p>
+    </div>
+  </header>
+
+  <!-- ══════════ DOKUMENTE ══════════ -->
+  <section data-cat="ingest" style="--sc: var(--c-ingest)">
+    <div class="sec-head">
+      <h2>Dokumente &amp; Aufbereitung</h2>
+      <span class="svc">Weave-Ingest</span>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th class="c-term">Begriff</th><th class="c-def">Bedeutung</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="c-term"><span class="term">OCR</span><span class="form">Optical Character Recognition</span></td>
+            <td class="c-def">Aus Pixeln wird Text: Software erkennt Buchstaben in Scans, Fotos und PDFs ohne Textebene.
+              <span class="weave"><b>In Weave</b>PaddleOCR verarbeitet PDF, DOCX, PPTX, XLSX, Bilder und E-Mails. Was hier falsch gelesen wird, kann später keine Suche mehr reparieren — deshalb hängt am Ende ein Quality-Gate.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Layout-Analyse</span><span class="form">PP-StructureV3</span></td>
+            <td class="c-def">Erkennt nicht nur Zeichen, sondern <em>Rollen</em>: Was ist Überschrift, was Tabelle, was Fußnote — und wo auf der Seite steht es.
+              <span class="weave"><b>In Weave</b>Diese Blockstruktur wird zu echtem Markdown mit Überschriftenhierarchie und Tabellen. Genau davon lebt das Chunking später: ohne Struktur bliebe nur Fließtext.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">YAML-Frontmatter</span><span class="form">--- … --- am Dateianfang</span></td>
+            <td class="c-def">Ein Metadatenblock über dem eigentlichen Text, in YAML notiert und von Werkzeugen maschinell lesbar.
+              <span class="weave"><b>In Weave</b>Der Datenvertrag zwischen Ingest und Knowledge: <code>source</code>, <code>content_sha256</code>, <code>document_version</code>, <code>engine</code>, <code>team</code>, <code>collection</code>. Ein Vertragstest prüft, dass alle Verarbeitungswege dieselben Felder liefern.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Content-Hash</span><span class="form">SHA-256</span></td>
+            <td class="c-def">Ein kurzer Fingerabdruck des Inhalts. Gleicher Inhalt ergibt immer denselben Hash, jede Änderung einen völlig anderen.
+              <span class="weave"><b>In Weave</b>Erkennt unveränderte Re-Uploads (die gar nicht erst verarbeitet werden) und dient zusammen mit der Job-ID als Idempotenz-Schlüssel für Events.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Versionskette</span><span class="form">previous_job_id</span></td>
+            <td class="c-def">Jede neue Fassung eines Dokuments zeigt auf ihren Vorgänger, statt ihn zu überschreiben. So bleibt die Historie nachvollziehbar.
+              <span class="weave"><b>In Weave</b>Lädt jemand eine geänderte Datei hoch, entsteht Version N+1. Der Index ersetzt daraufhin die Chunks der Vorversion — in derselben Transaktion, damit nie beide gleichzeitig auffindbar sind.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Supersede</span><span class="form">status = superseded</span></td>
+            <td class="c-def">Das geordnete Ablösen einer Vorversion: sie wird nicht gelöscht, aber als überholt markiert und aus der Suche genommen.
+              <span class="weave"><b>In Weave</b>Verhindert den klassischen RAG-Fehler, dass ein Bot aus einer alten Vertragsfassung zitiert, weil deren Chunks noch im Index lagen.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Quality-Gate</span><span class="form">A · B · C → allow · warn · block</span></td>
+            <td class="c-def">Eine automatische Note für die Verarbeitungsqualität, berechnet aus OCR-Konfidenz, erkannter Struktur und Textrauschen (Wiederholungen, Sonderzeichen, unlesbare Zeichenfolgen).
+              <span class="weave"><b>In Weave</b>Dokumente mit Empfehlung <code>block</code> werden erst gar nicht indiziert. Fehlt die Bewertung ausnahmsweise, gilt das bewusst wie <code>warn</code> — nie wie <code>allow</code>.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Collection</span><span class="form">slug · read_teams</span></td>
+            <td class="c-def">Eine benannte Sammlung von Dokumenten mit einer Liste von Teams, die sie lesen dürfen.
+              <span class="weave"><b>In Weave</b>Der Slug wandert bis in die Chunk-Metadaten, die Zugriffsliste bewusst <em>nicht</em>: sie lebt in einer Registry. Deshalb kostet ein Rechteentzug kein Neuindizieren und wirkt sofort.</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ══════════ INDEX ══════════ -->
+  <section data-cat="knowledge" style="--sc: var(--c-knowledge)">
+    <div class="sec-head">
+      <h2>Chunking &amp; Index</h2>
+      <span class="svc">Weave-Knowledge</span>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th class="c-term">Begriff</th><th class="c-def">Bedeutung</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="c-term"><span class="term">Chunk</span></td>
+            <td class="c-def">Ein Textstück als kleinste Einheit, die gesucht und dem Sprachmodell gezeigt wird. Zu groß macht Treffer unpräzise, zu klein reißt den Sinn auseinander.
+              <span class="weave"><b>In Weave</b>Standardmäßig rund 3 000 Zeichen mit 200 Zeichen Überlappung, damit ein Satz an der Schnittkante nicht verlorengeht.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Strukturbewusstes Chunking</span></td>
+            <td class="c-def">Schneiden an inhaltlichen Grenzen statt nach Zeichenzahl — an Überschriften und Absätzen, nicht mitten in einer Tabelle.
+              <span class="weave"><b>In Weave</b>Überschriftenpfad, Seitenmarker und Confluence-Breadcrumb wandern in die Metadaten. Tabellen und Code-Blöcke bleiben unteilbar, weil eine halbe Tabelle nichts mehr aussagt.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Embedding</span><span class="form">Vektor, z. B. 1536 Zahlen</span></td>
+            <td class="c-def">Ein Text, übersetzt in eine lange Zahlenreihe. Texte mit ähnlicher Bedeutung landen dabei nah beieinander — auch ohne ein gemeinsames Wort.
+              <span class="weave"><b>In Weave</b>Deshalb findet „Wie lange muss ich kündigen?" einen Abschnitt über Fristen. Der Modellname wird pro Chunk gespeichert; nur passend eingebettete Chunks werden durchsucht.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Dimension</span></td>
+            <td class="c-def">Wie viele Zahlen ein Vektor hat. Eine Eigenschaft des Embedding-Modells, keine freie Einstellung.
+              <span class="weave"><b>In Weave</b>Ein Wechsel der Dimension bedeutet Migration <em>und</em> Reindex — deshalb steht sie in den Settings und wird von der Migration gelesen, statt fest im Code zu stehen.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">pgvector</span></td>
+            <td class="c-def">Eine Postgres-Erweiterung, die Vektoren als echten Spaltentyp kennt und Ähnlichkeit direkt in SQL berechnen kann.
+              <span class="weave"><b>In Weave</b>Der Grund, warum keine zweite Datenbank nötig ist: Vektoren, Volltext und Metadaten liegen in einer Tabelle und werden in <em>einer</em> Abfrage gefiltert.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Cosine-Distanz</span><span class="form">Operator &lt;=&gt;</span></td>
+            <td class="c-def">Misst den <em>Winkel</em> zwischen zwei Vektoren, nicht ihre Länge — es zählt die Richtung der Bedeutung, nicht die Textmenge.
+              <span class="weave"><b>In Weave</b>Das Standardmaß für Text-Embeddings und der Grund, warum der Index mit <code>vector_cosine_ops</code> angelegt ist: Index und Abfrage müssen dasselbe Maß benutzen, sonst wird er ignoriert.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">HNSW-Index</span><span class="form">Hierarchical Navigable Small World</span></td>
+            <td class="c-def">Ein mehrstöckiger Graph über allen Vektoren. Die Suche springt oben grob in die richtige Gegend und verfeinert nach unten — statt alles zu vergleichen.
+              <span class="weave"><b>In Weave</b>Ohne diesen Index läse jede Ähnlichkeitssuche die komplette Chunk-Tabelle. Genau das fand der Review: der Index war beschrieben, aber nicht angelegt.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">ANN</span><span class="form">Approximate Nearest Neighbour</span></td>
+            <td class="c-def">Näherungssuche: Man verzichtet bewusst auf die Garantie, den allerbesten Treffer zu finden, und gewinnt dafür enorm an Tempo.
+              <span class="weave"><b>In Weave</b>Ein fairer Tausch, weil ohnehin 20 Kandidaten geholt und danach neu sortiert werden — ob Platz 19 exakt stimmt, ändert das Ergebnis nicht.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">tsvector &amp; GIN-Index</span></td>
+            <td class="c-def">Postgres' Volltext-Werkzeuge: <code>tsvector</code> ist der auf Wortstämme normalisierte Text, der GIN-Index macht ihn schnell durchsuchbar.
+              <span class="weave"><b>In Weave</b>Wird beim Schreiben automatisch mitgeführt (generierte Spalte) und bildet den zweiten Suchpfad neben den Vektoren — den, der Aktenzeichen und Paragraphen findet.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Reindex</span></td>
+            <td class="c-def">Bestehende Chunks neu einbetten, ohne sie neu zu schneiden — nötig bei einem Wechsel des Embedding-Modells.
+              <span class="weave"><b>In Weave</b>Als eigener CLI-Befehl umgesetzt, weil Neu-Chunken teuer und selten nötig ist, Neu-Einbetten aber regelmäßig ansteht.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Registry &amp; Spiegel</span></td>
+            <td class="c-def">Eine Tabelle, die Daten aus einem anderen Dienst nachführt, statt sie gemeinsam zu besitzen. Der Spiegel darf kurz hinterherhinken.
+              <span class="weave"><b>In Weave</b>Die Collection-Registry wird von Ingest gespiegelt: alle 60 Sekunden turnusmäßig, bei einer Rechteänderung sofort per signiertem Event.</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ══════════ SUCHE ══════════ -->
+  <section data-cat="retrieval" style="--sc: var(--c-retrieval)">
+    <div class="sec-head">
+      <h2>Suche &amp; Messung</h2>
+      <span class="svc">Weave-Retrieval</span>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th class="c-term">Begriff</th><th class="c-def">Bedeutung</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="c-term"><span class="term">RAG</span><span class="form">Retrieval-Augmented Generation</span></td>
+            <td class="c-def">Erst in eigenen Dokumenten suchen, die Fundstellen ins Prompt legen, dann das Modell antworten lassen. So antwortet es aus deinen Daten statt aus dem Gedächtnis.
+              <span class="weave"><b>In Weave</b>Bewusst <em>nicht</em> der Standardweg jeder Anfrage, sondern ein Werkzeug hinter dem Router — die zentrale Architekturentscheidung des ganzen Systems.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Hybrid Search</span></td>
+            <td class="c-def">Zwei Suchverfahren parallel laufen lassen und die Ergebnisse verschmelzen: semantische Vektorsuche und wörtliche Volltextsuche.
+              <span class="weave"><b>In Weave</b>Die Vektorsuche versteht Umschreibungen, die Volltextsuche findet „§ 12 Absatz 3" und „Kundennummer 4711". Jede allein hätte eine systematische Schwäche.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">BM25 / Volltextsuche</span></td>
+            <td class="c-def">Klassische Stichwortsuche mit Gewichtung: seltene Wörter zählen mehr als häufige, und ein Wort in einem kurzen Text wiegt schwerer als im langen.
+              <span class="weave"><b>In Weave</b>Über Postgres' <code>websearch_to_tsquery</code> und <code>ts_rank</code> umgesetzt — kein zusätzlicher Suchserver nötig.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">RRF</span><span class="form">1 / (k + Rang), k = 60</span></td>
+            <td class="c-def">Reciprocal Rank Fusion verschmilzt zwei Trefferlisten über die <em>Plätze</em> statt über die Punktzahlen — denn ein Vektor-Score und ein BM25-Score sind schlicht nicht vergleichbar. Jede Liste steuert pro Treffer <code>1/(k+Rang)</code> bei, die Summe entscheidet.
+              <span class="weave"><b>In Weave</b>Was in <em>beiden</em> Listen vorkommt, steigt dadurch nach oben — ein Treffer, der semantisch <em>und</em> wörtlich passt, schlägt einen, der nur eines von beidem tut.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Reranker</span><span class="form">Cross-Encoder</span></td>
+            <td class="c-def">Ein Modell, das Frage und Textstück <em>gemeinsam</em> liest und bewertet, wie gut sie zueinander passen. Viel genauer als der Vektorvergleich, aber zu langsam für den ganzen Bestand.
+              <span class="weave"><b>In Weave</b>Deshalb die Reihenfolge: grob 20 Kandidaten holen, dann genau bewerten, 5 behalten. Fällt der Reranker aus, liefert die Suche die RRF-Reihenfolge — sie scheitert nie am Reranker.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">top_k / final_k</span><span class="form">20 → 5</span></td>
+            <td class="c-def">Zwei Stellschrauben: wie viele Kandidaten die Suche holt, und wie viele nach dem Reranking übrig bleiben und ins Prompt wandern.
+              <span class="weave"><b>In Weave</b>Pro Bot einstellbar. <code>final_k</code> größer als <code>top_k</code> wird abgelehnt — ein Reranker kann eine Menge nur verkleinern.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Metadaten-Filter</span></td>
+            <td class="c-def">Einschränken, <em>bevor</em> gesucht wird — nach Team, Abteilung, Sprache, Collection.
+              <span class="weave"><b>In Weave</b>Wichtiger als der perfekte Embedding-Algorithmus und zugleich die Zugriffsgrenze: gefiltert wird in SQL vor dem Ranking, nie nachträglich am Ergebnis.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Eval-Harness</span></td>
+            <td class="c-def">Ein Messaufbau für Suchqualität: dieselben Fragen, dieselbe Messlatte, vor und nach jeder Änderung.
+              <span class="weave"><b>In Weave</b>Als CLI mit <code>--min-recall</code>-Schwelle umgesetzt. Ohne so etwas ist jede Änderung an der Suche Bauchgefühl — man merkt Verschlechterungen erst bei den Nutzern.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Golden-Set</span><span class="form">YAML</span></td>
+            <td class="c-def">Eine handgepflegte Liste aus Fragen und den Dokumenten, die als richtige Antwort gelten — die Wahrheit, gegen die gemessen wird.
+              <span class="weave"><b>In Weave</b>Je Eintrag eine Frage plus die erwarteten Quellen. Der Aufwand liegt im Pflegen dieser Liste; das ist der eigentliche Preis für messbare Suchqualität.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Recall@k</span></td>
+            <td class="c-def">Von allen richtigen Dokumenten: Welcher Anteil taucht in den ersten <em>k</em> Treffern auf? Bei 3 richtigen Dokumenten und 2 davon in den Top 5 ist Recall@5 gleich 0,67.
+              <span class="weave"><b>In Weave</b>Die wichtigste Kennzahl, denn was die Suche nicht findet, kann das Modell nicht zitieren — ein Ausfall, den keine noch so gute Antwortformulierung heilt.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">MRR</span><span class="form">Mean Reciprocal Rank</span></td>
+            <td class="c-def">Für jede Frage <code>1 / Position des ersten richtigen Treffers</code>, gemittelt über alle Fragen. Platz 1 gibt 1,0, Platz 2 gibt 0,5, Platz 4 nur noch 0,25.
+              <span class="weave"><b>In Weave</b>Misst nicht nur <em>ob</em>, sondern <em>wie weit oben</em> gefunden wird — relevant, weil nur die besten fünf Chunks ins Prompt kommen.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Hit@1</span></td>
+            <td class="c-def">Wie oft ist gleich der erste Treffer richtig? Die strengste und zugleich anschaulichste Kennzahl.
+              <span class="weave"><b>In Weave</b>Der beste Indikator dafür, ob der Reranker seine Arbeit tut — er soll genau diesen ersten Platz verbessern.</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ══════════ BOT ══════════ -->
+  <section data-cat="runtime" style="--sc: var(--c-runtime)">
+    <div class="sec-head">
+      <h2>Bot &amp; Antwort</h2>
+      <span class="svc">Weave-Runtime</span>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th class="c-term">Begriff</th><th class="c-def">Bedeutung</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="c-term"><span class="term">Bot-MVP</span><span class="form">V1 → V2 → V3</span></td>
+            <td class="c-def">Die kleinste Ausbaustufe, die schon echten Nutzen bringt — bewusst vor allem Weiteren fertiggestellt, statt gleich das Vollbild zu bauen.
+              <span class="weave"><b>In Weave</b>V1: Frage → belegte Antwort. V2: Werkzeuge und Aktionen. V3: Planer und Gedächtnis. Agentic RAG steht bewusst ganz hinten — erst wenn die Messung eine Lücke zeigt.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Intent-Router</span></td>
+            <td class="c-def">Ein Vorschalter, der zuerst bestimmt, <em>welche Art</em> Anfrage vorliegt, und erst danach den passenden Weg wählt.
+              <span class="weave"><b>In Weave</b>Fünf Absichten: <code>conversational</code>, <code>knowledge</code>, <code>document</code>, <code>action</code>, <code>complex</code>. Nur <code>knowledge</code> löst eine Suche aus — „Hallo" braucht keine Vektordatenbank.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Bot als Konfiguration</span><span class="form">YAML statt Code</span></td>
+            <td class="c-def">Ein Bot ist eine Datei mit Modell, Anweisung, Wissensquellen und Rechten — kein eigenes Programm.
+              <span class="weave"><b>In Weave</b>Ein neuer Fachbot ist eine neue YAML-Datei auf derselben Laufzeit: kein Deployment, kein Code-Review, keine zweite Betriebsumgebung.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">System-Prompt</span></td>
+            <td class="c-def">Die Grundanweisung, die vor jedem Gespräch steht und Rolle sowie Tonfall festlegt — für den Nutzer unsichtbar.
+              <span class="weave"><b>In Weave</b>Pro Bot in der YAML. Die gefundenen Textstellen kommen als klar abgegrenzter, nummerierter Kontextblock dazu — getrennt von den Anweisungen, damit Dokumenteninhalt nicht als Befehl gelesen wird.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Response-Guard</span></td>
+            <td class="c-def">Die letzte Prüfung, bevor eine Antwort das System verlässt: Erfüllt sie die Bedingungen, die für diesen Bot gelten?
+              <span class="weave"><b>In Weave</b>Verlangt ein Bot Belege und die Suche liefert nichts, geht die konfigurierte Auskunft „dazu finde ich nichts Belegtes" hinaus — statt einer flüssig formulierten, aber unbelegten Antwort. Das gilt auch im Streaming.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">no_context / no_collections</span></td>
+            <td class="c-def">Die zwei Gründe, aus denen der Guard greift: nichts gefunden — oder gar nicht erst gesucht, weil keine Sammlung freigegeben war.
+              <span class="weave"><b>In Weave</b>Der zweite Fall ist eine Sicherheitsgrenze: ein Bot mit Collection-Beschränkung sucht nie ohne wirksame Grenze, auch nicht „vorsichtshalber".</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Trace</span></td>
+            <td class="c-def">Ein Begleitprotokoll zur Antwort: welche Absicht erkannt wurde, ob gesucht wurde, wie viele Treffer es gab, wie lange jeder Schritt dauerte.
+              <span class="weave"><b>In Weave</b>Fester Teil jeder Antwort. Ohne ihn ist bei einer schlechten Antwort nicht unterscheidbar, ob der Router, die Suche oder das Modell danebenlag.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">LLM-Provider-Abstraktion</span></td>
+            <td class="c-def">Eine dünne Zwischenschicht, hinter der das konkrete Sprachmodell austauschbar ist.
+              <span class="weave"><b>In Weave</b>OpenAI-kompatible Endpunkte, dazu ein deterministischer Fake-Provider für Tests — so laufen alle Tests ohne API-Schlüssel, ohne Kosten und mit immer gleichem Ergebnis.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">SSE / Streaming</span><span class="form">text/event-stream</span></td>
+            <td class="c-def">Server-Sent Events: eine offene HTTP-Verbindung, über die der Server Häppchen nachschiebt. So erscheint die Antwort Wort für Wort statt nach Sekunden am Stück.
+              <span class="weave"><b>In Weave</b>Die Reihenfolge ist garantiert: erst der Trace, dann die Text-Häppchen, dann die Quellen, dann das Ende. Rechte, Suche und Guard laufen vollständig <em>vor</em> dem ersten Zeichen.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">n8n</span></td>
+            <td class="c-def">Ein Werkzeug, in dem Automatisierungen als Ablaufdiagramm zusammengeklickt werden — inklusive Agenten, die selbst entscheiden, welchen Schritt sie als Nächstes tun.
+              <span class="weave"><b>In Weave</b>Ein Bot kann statt eines Modells einen n8n-Flow als Provider haben. Der Flow bekommt ein kurzlebiges Token mit genau den Leserechten des Fragenden — und sucht damit über Weave-Tools zurück.</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ══════════ RECHTE ══════════ -->
+  <section data-cat="api" style="--sc: var(--c-api)">
+    <div class="sec-head">
+      <h2>Rechte &amp; Sicherheit</h2>
+      <span class="svc">Weave-API · Weave-Tools</span>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th class="c-term">Begriff</th><th class="c-def">Bedeutung</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="c-term"><span class="term">Harte Grenze</span><span class="form">allowed_teams · allowed_collections</span></td>
+            <td class="c-def">Eine Einschränkung, die der Server selbst setzt und die der Aufrufer nicht weglassen kann — im Gegensatz zu einem Filter, den man einfach nicht mitschickt.
+              <span class="weave"><b>In Weave</b>Wird als SQL-Bedingung vor dem Ranking erzwungen. Ein Filter kann innerhalb der Grenze verfeinern, sie aber nie erweitern.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Sentinel</span><span class="form">__none__</span></td>
+            <td class="c-def">Ein reservierter Sonderwert, der einen Fall ausdrückt, für den es keinen echten Wert gibt.
+              <span class="weave"><b>In Weave</b>Steht für „Dokumente ganz ohne Collection". Nötig, weil <code>IN (…)</code> in SQL niemals auf NULL passt — ohne den Sentinel wäre der gesamte Altbestand still aus jeder Suche verschwunden.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Delegations-Token</span></td>
+            <td class="c-def">Ein kurzlebiger Ausweis, den ein Dienst für einen anderen ausstellt und in den er den erlaubten Umfang gleich hineinschreibt und mitsigniert.
+              <span class="weave"><b>In Weave</b>Runtime stellt ihn für n8n und MCP aus: fünf Minuten gültig, die lesbaren Collections eingebettet. Damit kann der Agent nie mehr sehen als der Mensch, für den er arbeitet.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">HMAC-SHA256</span></td>
+            <td class="c-def">Eine Prüfsumme mit geteiltem Geheimnis. Nur wer das Geheimnis kennt, kann sie erzeugen — also belegt sie Herkunft und Unverändertheit zugleich.
+              <span class="weave"><b>In Weave</b>Signiert Webhook-Zustellungen und Delegations-Token. Geprüft wird immer über den <em>rohen</em> Body: neu zusammengesetztes JSON hätte eine andere Signatur.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Constant-time-Vergleich</span><span class="form">hmac.compare_digest</span></td>
+            <td class="c-def">Ein Vergleich, der immer gleich lange dauert. Ein normaler Vergleich bricht beim ersten falschen Zeichen ab — aus diesem Zeitunterschied lässt sich ein Geheimnis Zeichen für Zeichen erraten.
+              <span class="weave"><b>In Weave</b>Pflicht bei jedem Token- und Signaturvergleich.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Token-Introspection</span></td>
+            <td class="c-def">Ein Dienst fragt beim Identitätsdienst nach: Gehört dieses Token zu jemandem, und zu wem?
+              <span class="weave"><b>In Weave</b>So prüft der MCP-Dienst Rechte, ohne die Nutzerdatenbank mitzulesen. Die Antwort verrät nie, <em>warum</em> ein Token ungültig ist — sonst wäre sie ein Orakel zum Ausprobieren.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">MCP</span><span class="form">Model Context Protocol</span></td>
+            <td class="c-def">Ein offener Standard, über den ein Sprachmodell externe Werkzeuge und Daten anspricht — ein einheitlicher Stecker statt einer Sonderlösung je Anbindung.
+              <span class="weave"><b>In Weave</b>Bietet <code>list_collections</code> und <code>search</code> an. Entscheidend: der Umfang kommt aus dem Token, nie aus den Werkzeug-Argumenten — sonst könnte das Modell sich selbst Zugriff erteilen.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">SSRF</span><span class="form">Server-Side Request Forgery</span></td>
+            <td class="c-def">Ein Angreifer bringt den Server dazu, eine Adresse <em>seiner</em> Wahl aufzurufen — und erreicht so interne Dienste, die von außen unerreichbar wären.
+              <span class="weave"><b>In Weave</b>Zwei Vorkehrungen: Adressen werden lokal aus der Konfiguration gebaut statt aus Fremddaten übernommen, und n8n-Webhook-URLs müssen schon beim Laden der Bot-Datei zu einer Allowlist passen.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">IDOR</span><span class="form">Insecure Direct Object Reference</span></td>
+            <td class="c-def">Ein Objekt wird allein über seine ID herausgegeben, ohne zu prüfen, ob der Anfragende es sehen darf. Wer IDs durchprobiert, liest fremde Daten.
+              <span class="weave"><b>In Weave</b>Gespräche sind in der Abfrage selbst an ihren Eigentümer gebunden — ein fremdes Gespräch ergibt 404, nicht 403: auch die Existenz bleibt geheim.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Prompt-Injection</span></td>
+            <td class="c-def">In einem Dokument oder einer Webseite stehen Anweisungen, die das Modell als Befehl liest — obwohl sie nur Inhalt sind.
+              <span class="weave"><b>In Weave</b>Der Grund für die klare Trennung zwischen Anweisungsteil und nummeriertem Kontextblock im Prompt: gefundene Textstellen sind Daten, nicht Aufträge.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Rate-Limit</span><span class="form">Fixed Window</span></td>
+            <td class="c-def">Höchstens N Anfragen je Zeitfenster. „Fixed Window" heißt: der Zähler springt zum Fenstergrenzwert zurück — einfach, aber an der Grenze kurz doppelt so durchlässig.
+              <span class="weave"><b>In Weave</b>Pro Nutzer im Gateway, mit <code>Retry-After</code> in der Antwort. Bewusst prozesslokal für den Anfang, mit dokumentierter Grenze bei mehreren Instanzen.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Fernet &amp; HKDF</span></td>
+            <td class="c-def">Fernet verschlüsselt Daten im Ruhezustand; HKDF leitet aus einem Hauptschlüssel getrennte Teilschlüssel je Zweck ab, sodass ein Leck nicht alles betrifft.
+              <span class="weave"><b>In Weave</b>Schützt gespeicherte Zugangsdaten. Bekannte Schwachstelle des Erbes: der Hauptschlüssel war nicht rotierbar — das ADR zur Secrets-Strategie löst es über eine versionierte Schlüsselliste.</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ══════════ BETRIEB ══════════ -->
+  <section data-cat="ops" style="--sc: var(--c-ops)">
+    <div class="sec-head">
+      <h2>Betrieb &amp; Handwerk</h2>
+      <span class="svc">dienstübergreifend</span>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th class="c-term">Begriff</th><th class="c-def">Bedeutung</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="c-term"><span class="term">Celery, Broker, Queue</span></td>
+            <td class="c-def">Arbeit, die zu lange für eine HTTP-Antwort dauert, wandert als Auftrag in eine Warteschlange (den Broker, hier Redis) und wird von Worker-Prozessen abgearbeitet.
+              <span class="weave"><b>In Weave</b>OCR und Indexierung laufen so. Jeder Dienst hat eine eigene benannte Queue — sonst würden sich die Worker gegenseitig die Aufträge wegnehmen.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Idempotenz</span></td>
+            <td class="c-def">Dieselbe Aktion mehrfach ausführen, ohne dass mehr passiert als beim ersten Mal.
+              <span class="weave"><b>In Weave</b>Über den Schlüssel <code>job_id:content_sha256</code>: ein doppelt zugestelltes Event erzeugt kein zweites Dokument, sondern wird als Wiederholung erkannt.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">At-least-once</span></td>
+            <td class="c-def">Eine Zustellgarantie: die Nachricht kommt mindestens einmal an — bei Wiederholungen möglicherweise öfter. „Genau einmal" ist verteilt kaum ehrlich zu haben.
+              <span class="weave"><b>In Weave</b>Genau deshalb liegt die Idempotenz beim Empfänger. Der Sender darf ruhig doppelt liefern.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Alembic-Migration</span></td>
+            <td class="c-def">Schemaänderungen als versionierte, aufeinander aufbauende Skripte statt handgeschriebener SQL-Befehle auf dem Server.
+              <span class="weave"><b>In Weave</b>Jede Migration muss auf SQLite (Tests) und Postgres (Betrieb) laufen — und gegen eine <em>gefüllte</em> Tabelle, nicht nur gegen eine leere.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">ADR</span><span class="form">Architecture Decision Record</span></td>
+            <td class="c-def">Eine kurze Notiz zu einer Architekturentscheidung: Kontext, Entscheidung, Konsequenzen, verworfene Alternativen.
+              <span class="weave"><b>In Weave</b>Vier Stück in <code>docs/adr/</code>. Sie beantworten die Frage, die in einem Jahr am teuersten wird: „Warum eigentlich so?"</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Read-Model &amp; Single Writer</span></td>
+            <td class="c-def">Genau ein Dienst darf schreiben, andere lesen dieselben Daten mit. Das vermeidet Schreibkonflikte, ohne alles durch eine API zu zwängen.
+              <span class="weave"><b>In Weave</b>Knowledge schreibt den Chunk-Store, Retrieval liest ihn nur — weil Vektor- und Volltextsuche zwingend in der Datenbank laufen müssen. Als Vertrag dokumentiert.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Vertragstest</span></td>
+            <td class="c-def">Ein Test, der nicht Verhalten prüft, sondern die vereinbarte <em>Form</em> — gegen ein Schema, das beide Seiten teilen.
+              <span class="weave"><b>In Weave</b>Prüft das Frontmatter aller Verarbeitungswege gegen ein JSON-Schema. Die Lücke, die er nicht schließt: dass jeder Dienst gegen sein eigenes Bild des Nachbarn testet — genau da schlug der Registry-Fehler zu.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Webhook</span></td>
+            <td class="c-def">Statt regelmäßig nachzufragen, ruft der Sender bei einem Ereignis von sich aus eine hinterlegte Adresse auf.
+              <span class="weave"><b>In Weave</b>Trägt <code>document.processed</code> und <code>collection.updated</code> — signiert, mit Wiederholung bei Fehlern und einem Auslieferungsprotokoll.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">OpenAI-kompatibler Shim</span></td>
+            <td class="c-def">Ein Adapter, der ein fremdes System so aussehen lässt wie die OpenAI-Schnittstelle — dann funktionieren alle vorhandenen Clients ohne Anpassung.
+              <span class="weave"><b>In Weave</b><code>POST /v1/chat/completions</code>, wobei der Modellname die Bot-ID ist. So spricht Open WebUI direkt mit Weave, ohne dass Weave eine eigene Oberfläche bräuchte.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Dokumenten-Compiler</span></td>
+            <td class="c-def">Ein Bild aus dem Übersetzerbau: Aus vielen Eingabeformaten entsteht eine einzige, saubere Zwischenform, auf der alles Weitere aufsetzt.
+              <span class="weave"><b>In Weave</b>Die Rolle von Weave-Ingest. PDF, Office, Mail und Confluence gehen hinein, strukturiertes Markdown mit Metadaten kommt heraus — die einzige Form, die alle anderen Dienste kennen müssen.</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <p class="empty" id="empty" hidden>Kein Begriff passt zu dieser Suche.</p>
+
+  <footer>Weave Glossar · Stand 31.08.2026 · 63 Begriffe aus Ingest, Knowledge, Retrieval, Runtime, API und Tools</footer>
+</div>
+
+<script>
+(function () {
+  var q = document.getElementById('q');
+  var countEl = document.getElementById('count');
+  var emptyEl = document.getElementById('empty');
+  var chips = Array.prototype.slice.call(document.querySelectorAll('.chip'));
+  var sections = Array.prototype.slice.call(document.querySelectorAll('section[data-cat]'));
+  var rows = Array.prototype.slice.call(document.querySelectorAll('tbody tr'));
+  var total = rows.length;
+  var cat = 'all';
+
+  rows.forEach(function (row) {
+    row._text = (row.textContent || '').toLowerCase();
+  });
+
+  function apply() {
+    var needle = (q.value || '').trim().toLowerCase();
+    var shown = 0;
+
+    sections.forEach(function (sec) {
+      var secOn = (cat === 'all' || sec.getAttribute('data-cat') === cat);
+      var visibleHere = 0;
+
+      Array.prototype.forEach.call(sec.querySelectorAll('tbody tr'), function (row) {
+        var match = secOn && (!needle || row._text.indexOf(needle) !== -1);
+        row.hidden = !match;
+        if (match) { visibleHere++; shown++; }
+      });
+
+      sec.hidden = visibleHere === 0;
+    });
+
+    emptyEl.hidden = shown !== 0;
+    countEl.textContent = (shown === total)
+      ? total + ' Begriffe'
+      : shown + ' von ' + total + ' Begriffen';
+  }
+
+  q.addEventListener('input', apply);
+
+  chips.forEach(function (chip) {
+    chip.addEventListener('click', function () {
+      cat = chip.getAttribute('data-cat');
+      chips.forEach(function (c) {
+        c.setAttribute('aria-pressed', String(c === chip));
+      });
+      apply();
+    });
+  });
+
+  apply();
+})();
+</script>
+</body>
+</html>

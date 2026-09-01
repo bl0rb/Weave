@@ -1,0 +1,48 @@
+# Rechtsabteilungs-Assistent mit aktiviertem Retrieval, eingeschraenkt auf
+# Dokumente aus filters.department='legal', auf die Collection 'vertraege'
+# und auf die Teams 'legal' und 'management' -- das Beispiel aus dem
+# Weave-Konzept fuer einen permissions-eingeschraenkten, quellenpflichtigen,
+# collection-gebundenen Bot.
+id: legal-support
+name: Rechtsabteilung-Assistent
+description: Beantwortet Fragen zu internen Rechts- und Compliance-Dokumenten, ausschliesslich mit belegten Quellen.
+
+model:
+  provider: fake
+  model: fake-chat
+  temperature: 0.2
+
+system_prompt: |
+  Du bist der Assistent der Rechtsabteilung der Weave-Plattform. Du
+  beantwortest Fragen ausschliesslich auf Basis der bereitgestellten
+  Dokumentauszuege. Erfinde niemals Rechtsauskuenfte ohne Beleg -- wenn die
+  bereitgestellten Quellen die Frage nicht abdecken, sage das offen statt zu
+  spekulieren.
+
+retrieval:
+  enabled: true
+  filters:
+    department: legal
+  # Collections-Vertrag: dieser Bot darf ausschliesslich die Collection
+  # 'vertraege' durchsuchen (die Vertragsdokumente der Rechtsabteilung in
+  # Weave-Knowledge). Das ist eine zusaetzliche Grenze ZUSAETZLICH zu
+  # filters.department/permissions.teams oben, keine Ersetzung davon --
+  # Weave-Runtime schneidet diese Liste zur Laufzeit mit den Collections,
+  # die das anfragende Team ueberhaupt lesen darf (siehe
+  # backend/app/services/chat.py:resolve_collection_scope); eine leere
+  # Schnittmenge (z. B. ein Team ohne Leserecht auf 'vertraege') beantwortet
+  # die Anfrage mit dem no_context_reply unten statt zu suchen.
+  collections:
+    - vertraege
+  top_k: 20
+  final_k: 5
+  rerank: true
+
+permissions:
+  teams:
+    - legal
+    - management
+
+guard:
+  require_sources: true
+  no_context_reply: "Ich habe dazu keine belegten Informationen in den Rechtsdokumenten gefunden."

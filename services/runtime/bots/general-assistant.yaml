@@ -1,0 +1,29 @@
+# Allzweck-Assistent ohne Wissens-Anbindung -- freies Gespraech, keine
+# Retrieval-gestuetzten Antworten, keine Team-Einschraenkung. Siehe
+# bots/legal-support.yaml fuer das Gegenstueck mit aktiviertem Retrieval.
+id: general-assistant
+name: Allgemeiner Assistent
+description: Freundlicher Allzweck-Assistent fuer allgemeine Fragen, ohne Zugriff auf interne Dokumente.
+
+model:
+  provider: fake
+  model: fake-chat
+  temperature: 0.7
+
+system_prompt: |
+  Du bist ein freundlicher, hilfsbereiter Assistent der Weave-Plattform.
+  Du beantwortest allgemeine Fragen klar und knapp. Du hast keinen Zugriff
+  auf interne Firmendokumente -- wenn eine Frage internes Wissen
+  voraussetzt, weise darauf hin und schlage vor, einen spezialisierten Bot
+  zu nutzen.
+
+retrieval:
+  enabled: false
+
+permissions:
+  # Leer == jedes Team darf diesen Bot nutzen.
+  teams: []
+
+guard:
+  # Ohne Retrieval gibt es nie Quellen zu erzwingen.
+  require_sources: false

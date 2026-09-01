@@ -1,17 +1,172 @@
 name: PR CI
 
+# Monorepo-wide PR CI: one job per service, each gated by a paths-filter so
+# only the services actually touched by a change run their tests. Test
+# commands and tool versions below are copied verbatim from each service's
+# own former stand-alone pr-ci.yml (services/*/.github/workflows/pr-ci.yml,
+# now deleted) -- they intentionally still differ from each other (Python
+# version, --require-hashes vs. not, extra build/audit steps) because each
+# service's own Dockerfile/requirements dictate that, not this file.
 on:
   pull_request:
   push:
     branches:
       - main
+  # Lets services/ingest/.github/workflows/publish-ghcr-images.yml keep
+  # calling this file as its release gate (`uses: ./.github/workflows/pr-ci.yml`,
+  # always resolved relative to the repo root) -- unique to Weave-Ingest's
+  # own former workflow, kept here so that reference stays intact.
+  workflow_call:
 
 permissions:
   contents: read
 
 jobs:
-  backend-tests:
-    name: Backend Tests
+  changes:
+    name: Detect Changed Services
+    runs-on: ubuntu-latest
+    outputs:
+      ingest: ${{ steps.filter.outputs.ingest }}
+      knowledge: ${{ steps.filter.outputs.knowledge }}
+      retrieval: ${{ steps.filter.outputs.retrieval }}
+      runtime: ${{ steps.filter.outputs.runtime }}
+      api: ${{ steps.filter.outputs.api }}
+      tools: ${{ steps.filter.outputs.tools }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Filter changed paths
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            ingest:
+              - 'services/ingest/**'
+            knowledge:
+              - 'services/knowledge/**'
+            retrieval:
+              - 'services/retrieval/**'
+            runtime:
+              - 'services/runtime/**'
+            api:
+              - 'services/api/**'
+            tools:
+              - 'services/tools/**'
+
+  ingest:
+    name: Weave-Ingest
+    needs: changes
+    if: needs.changes.outputs.ingest == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: services/ingest/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: services/ingest/frontend
+
+      # Fails the build on a known-vulnerable dependency instead of leaving it
+      # to whoever happens to run `npm audit` by hand.
+      - name: Audit frontend dependencies
+        run: npm audit --audit-level=high
+        working-directory: services/ingest/frontend
+
+      - name: Lint frontend
+        run: npm run lint
+        working-directory: services/ingest/frontend
+
+      - name: Build frontend
+        run: npm run build
+        working-directory: services/ingest/frontend
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: services/ingest/backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install --require-hashes -r services/ingest/backend/requirements.txt
+
+      - name: Run backend test suite
+        run: pytest -q services/ingest/backend/tests
+
+      # Same intent as the frontend audit: a CVE in a pinned dependency should
+      # turn the build red, not wait to be noticed.
+      - name: Audit backend dependencies
+        run: |
+          python -m pip install pip-audit==2.10.1
+          pip-audit --strict --requirement services/ingest/backend/requirements.txt
+
+      # The compose files have no fallback secrets any more, so generate a
+      # throwaway set first. Doubles as a smoke test for the script itself.
+      - name: Generate throwaway secrets
+        run: ./scripts/init-env.sh
+        working-directory: services/ingest
+
+      # Every combination a user can actually run, overlays included -- an
+      # overlay that no longer matches a service name in the base file is a
+      # silent no-op, not an error, so it has to be checked as a pair.
+      - name: Validate docker-compose files
+        working-directory: services/ingest
+        run: |
+          docker compose -f docker-compose.yml config -q
+          docker compose -f docker-compose.dev.yml config -q
+          docker compose -f docker-compose.yml -f docker-compose.gpu.yml config -q
+          docker compose -f docker-compose.dev.yml -f docker-compose.gpu.yml config -q
+          docker compose -f docker-compose.yml -f docker-compose.nas.example.yml config -q
+
+      - name: Build backend image
+        run: docker build -f backend/Dockerfile -t weave-ingest-backend:ci backend
+        working-directory: services/ingest
+
+      - name: Build frontend image
+        run: docker build -f frontend/Dockerfile -t weave-ingest-frontend:ci frontend
+        working-directory: services/ingest
+
+      - name: Install Helm
+        run: |
+          curl -fsSL https://get.helm.sh/helm-v3.16.2-linux-amd64.tar.gz -o helm.tgz
+          echo "9318379b847e333460d33d291d4c088156299a26cd93d570a7f5d0c36e50b5bb  helm.tgz" | sha256sum -c -
+          tar -xzf helm.tgz
+          sudo mv linux-amd64/helm /usr/local/bin/helm
+          helm version --short
+
+      - name: Lint Helm chart
+        run: helm lint charts/weave-ingest
+        working-directory: services/ingest
+
+      - name: Render Helm chart
+        working-directory: services/ingest
+        run: |
+          helm template test charts/weave-ingest \
+            -f charts/weave-ingest/examples/nas-cpu-external-postgres.yaml \
+            --set auth.secretKey.value=ci-render-check-secret > /dev/null
+
+      - name: Render Helm chart fails without SECRET_KEY
+        working-directory: services/ingest
+        run: |
+          if helm template test charts/weave-ingest \
+               -f charts/weave-ingest/examples/nas-cpu-external-postgres.yaml > /dev/null 2>&1; then
+            echo "expected render to fail when auth.required=true and no SECRET_KEY is set"
+            exit 1
+          fi
+
+  knowledge:
+    name: Weave-Knowledge
+    needs: changes
+    if: needs.changes.outputs.knowledge == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -23,10 +178,109 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: services/knowledge/backend/requirements.txt
 
       - name: Install backend dependencies
-        run: python -m pip install -r backend/requirements.txt
+        run: python -m pip install -r services/knowledge/backend/requirements.txt
 
       - name: Run backend test suite
-        run: pytest -q backend/tests
+        run: pytest -q services/knowledge/backend/tests
+
+  retrieval:
+    name: Weave-Retrieval
+    needs: changes
+    if: needs.changes.outputs.retrieval == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/retrieval/backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install -r services/retrieval/backend/requirements.txt
+
+      - name: Run backend test suite
+        run: pytest -q services/retrieval/backend/tests
+
+  runtime:
+    name: Weave-Runtime
+    needs: changes
+    if: needs.changes.outputs.runtime == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/runtime/backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install -r services/runtime/backend/requirements.txt
+
+      - name: Run backend test suite
+        run: pytest -q services/runtime/backend/tests
+
+      # Build context is the service root, not backend/ -- see
+      # services/runtime/backend/Dockerfile's own comment (bots/ is a
+      # sibling of backend/ within the service root, and has to be
+      # reachable from the build context).
+      - name: Build backend image
+        run: docker build -f services/runtime/backend/Dockerfile -t weave-runtime-backend:ci services/runtime
+
+  api:
+    name: Weave-API
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/api/backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install -r services/api/backend/requirements.txt
+
+      - name: Run backend test suite
+        run: pytest -q services/api/backend/tests
+
+  tools:
+    name: Weave-Tools
+    needs: changes
+    if: needs.changes.outputs.tools == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/tools/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install -r services/tools/requirements.txt
+
+      - name: Run backend test suite
+        run: pytest -q services/tools/tests

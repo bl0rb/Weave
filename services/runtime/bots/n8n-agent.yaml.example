@@ -1,0 +1,97 @@
+# Beispiel-Bot fuer den n8n-Agentenflow-Provider -- siehe contracts/n8n-flow.md
+# fuer den vollstaendigen Vertrag: was der n8n-Webhook empfaengt, was er
+# zurueckgeben muss, wie er die Anfrage-Signatur prueft, wie er selbst mit
+# dem Delegations-Token gegen Weave-Tools sucht, samt einem ausformulierten
+# Beispiel-Ablauf.
+#
+# ABSICHTLICH mit der Endung ".yaml.example", NICHT ".yaml": botconfig.py's
+# list_bots() liest nur *.yaml/*.yml (siehe backend/app/services/botconfig.py,
+# backend/tests/test_botconfig.py:test_list_bots_ignores_non_yaml_files) --
+# diese Datei wird deshalb von KEINEM Aufruf dieses Service' als echter Bot
+# geladen, solange sie so heisst. Das ist beabsichtigt, nicht nur eine
+# Formalitaet: selbst mit einer echten webhook_url unten wuerde das Laden
+# standardmaessig an N8N_ALLOWED_BASE_URLS scheitern (Default: leer -- jeder
+# n8n-Bot ist deaktiviert, bis ein Operator das explizit setzt; siehe
+# backend/app/core/config.py). Zum tatsaechlichen Aktivieren:
+#
+#   1. webhook_url unten einkommentieren und auf den echten Webhook DIESES
+#      n8n-Flows setzen.
+#   2. dessen Basis-URL in N8N_ALLOWED_BASE_URLS eintragen (.env) -- z. B.
+#      N8N_ALLOWED_BASE_URLS=["https://n8n.internal.example.com/webhook/"]
+#   3. WEAVE_DELEGATION_SECRET setzen (identisch mit Weave-Tools' eigenem
+#      WEAVE_DELEGATION_SECRET) und TOOLS_BASE_URL auf die von n8n aus
+#      erreichbare Weave-Tools-URL.
+#   4. diese Datei nach bots/n8n-agent.yaml kopieren (Endung ".example"
+#      entfernen) -- erst dann erscheint der Bot in list_bots()/GET
+#      /internal/bots.
+
+id: n8n-agent
+name: n8n-Agentenflow
+description: >-
+  Delegiert Wissenssuche und Aktionen an einen n8n-Agentenflow statt an ein
+  direktes LLM -- siehe contracts/n8n-flow.md fuer den vollstaendigen
+  Vertrag.
+
+model:
+  # provider MUSS 'n8n' sein, wenn unten ein n8n:-Block steht -- und
+  # umgekehrt (siehe backend/app/schemas/bot.py's
+  # BotConfig._n8n_block_matches_provider).
+  provider: n8n
+  # Pflichtfeld auf ModelConfig, aber fuer einen n8n-Bot rein informativ:
+  # welches Modell der n8n-Flow INTERN tatsaechlich aufruft, ist Sache des
+  # Flows selbst, nicht dieser Konfiguration. Taucht im Chat-Trace nie auf
+  # -- `trace.model` bleibt bei einem n8n-Bot immer `null`, unabhaengig
+  # davon, was hier steht (siehe backend/app/services/chat.py's
+  # `_run_n8n_turn`).
+  model: n8n-agent-flow
+
+system_prompt: |
+  (Wird bei diesem Bot NIE an ein LLM geschickt -- der n8n-Flow bringt sein
+  eigenes Prompting/Verhalten mit, adressiert ueber `bot_id` in jedem
+  Webhook-Aufruf. Trotzdem ein Pflichtfeld auf BotConfig; hier rein
+  dokumentarisch, damit ein Operator den Zweck des Bots versteht, ohne den
+  n8n-Flow selbst oeffnen zu muessen.)
+  Du bist ein Assistent, der ueber einen n8n-Agentenflow Wissenssuche in
+  Weave-Knowledge und Aktionen ueber Weave-Tools ausfuehrt.
+
+n8n:
+  # ACHTUNG: absichtlich auskommentiert. Ohne einen echten String-Wert
+  # validiert diese Datei nicht (webhook_url ist Pflicht auf N8nConfig,
+  # siehe backend/app/schemas/bot.py) -- und selbst mit einem validiert sie
+  # nur, wenn dessen Basis-URL in N8N_ALLOWED_BASE_URLS steht (SSRF-Schutz,
+  # geprueft beim Laden dieser Datei, nicht erst beim ersten Aufruf; siehe
+  # backend/app/services/botconfig.py:_validate_n8n_webhook_allowlist).
+  # Beides bewusst: die URL steht zwar in dieser YAML-Datei (Konfiguration,
+  # kein Nutzer-Input), soll aber trotzdem nicht dazu fuehren, dass dieser
+  # Dienst in ein beliebiges Netz ruft, nur weil irgendeine Bot-Datei das
+  # so vorsieht.
+  # webhook_url: "https://n8n.internal.example.com/webhook/weave-agent"
+  timeout_seconds: 120
+
+retrieval:
+  # Weave-Runtime selbst ruft bei einem n8n-Bot NIE retrieval_client.search()
+  # direkt auf -- das erledigt der n8n-Flow selbst, ueber Weave-Tools
+  # (MCP oder REST), authentifiziert mit dem Delegations-Token. `collections`
+  # unten grenzt trotzdem ein, welche Collections ueberhaupt in den Scope
+  # dieses Tokens aufgenommen werden (backend/app/services/chat.py's
+  # `resolve_collection_scope`, fuer n8n-Bots unveraendert wiederverwendet).
+  # `enabled: false` bleibt bewusst so -- es soll keinen direkten
+  # Weave-Retrieval-Aufruf DURCH DIESE PIPELINE SELBST suggerieren, den es
+  # fuer einen n8n-Bot nie gibt.
+  enabled: false
+  collections:
+    - vertraege
+
+permissions:
+  # Leer == jedes Team darf diesen Bot nutzen; ein Operator kann das wie bei
+  # jedem anderen Bot einschraenken (siehe bots/legal-support.yaml).
+  teams: []
+
+guard:
+  # Greift NACH einem n8n-Aufruf, wenn require_sources=true und n8n selbst
+  # keine sources zurueckgibt (backend/app/services/chat.py's
+  # `_run_n8n_turn`) -- unabhaengig vom Collections-Scope oben, der nur in
+  # das Delegations-Token einfliesst, nicht in eine eigene Vorab-Pruefung
+  # dieser Pipeline (siehe dortiges Docstring fuer die Begruendung).
+  require_sources: true
+  no_context_reply: "Der Agentenflow hat dazu keine belegten Informationen gefunden."

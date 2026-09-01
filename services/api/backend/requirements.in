@@ -1,0 +1,33 @@
+# Direct dependencies of the backend image (see Dockerfile) and of the
+# local development environment. Hash-Lock folgt spaeter -- requirements.txt
+# is currently a plain `pip freeze` of the resolved tree, not a
+# `pip-compile --generate-hashes` lock (see requirements.txt's own header),
+# same as Weave-Retrieval and Weave-Knowledge at this stage.
+#
+# Version pins shared with the other Weave services (fastapi/sqlalchemy/
+# pydantic/pydantic-settings/psycopg/alembic/pytest/httpx) are kept
+# identical to their backend/requirements.in so the whole Weave system
+# stays on the same major.minor across services. No celery/redis here on
+# purpose (ADR-0004 / task): Weave-API has no background worker queue --
+# every request it serves is synchronous (auth/ratelimit lookup, DB read,
+# or a live proxy call to Weave-Runtime).
+fastapi==0.141.1
+uvicorn[standard]==0.52.3
+pydantic==2.13.4
+pydantic-settings==2.14.2
+sqlalchemy==2.0.51
+psycopg[binary]==3.3.4
+alembic==1.19.1
+httpx==0.28.1
+pytest==9.1.1
+
+# --- OIDC browser-session login at this gateway (app/api/auth.py,
+# app/services/oidc.py, ADR-0002). Same pins as Weave-Ingest's own
+# requirements.in -- authlib supplies the state/PKCE (S256 code-challenge)
+# machinery for the authorize redirect, joserfc verifies the ID token's
+# signature (against the provider's JWKS) and standard claims. `cryptography`
+# is pulled in transitively by authlib (RSA/EC signature verification) --
+# not imported directly by this codebase, so it's left unpinned here and
+# just frozen wherever pip resolves it into requirements.txt.
+authlib==1.7.2
+joserfc==1.7.4

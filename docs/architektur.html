@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Weave Gesamtarchitektur</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --color-paper:       #f8fafc;
+      --color-paper-2:     #f1f5f9;
+      --color-ink:         #0f172a;
+      --color-muted:       #475569;
+      --color-soft:        #64748b;
+      --color-rule:        rgba(15,23,42,0.12);
+      --color-accent:      #4f46e5;
+      --color-accent-tint: rgba(79,70,229,0.08);
+      --color-link:        #2e5aa8;
+      --font-sans:  'Inter', system-ui, sans-serif;
+      --font-serif: 'Instrument Serif', 'Times New Roman', serif;
+      --font-mono:  'Geist Mono', ui-monospace, Menlo, monospace;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      min-height: 100vh;
+      padding: 3rem 2rem;
+      color: var(--color-ink);
+    }
+
+    .container { max-width: 1240px; margin: 0 auto; }
+
+    .header { margin-bottom: 2.5rem; }
+
+    .header-eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.75rem;
+    }
+
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.75rem, 3vw + 1rem, 2.5rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+      margin-bottom: 0.5rem;
+    }
+
+    .subtitle {
+      font-size: 1rem;
+      line-height: 1.55;
+      color: var(--color-muted);
+      max-width: 60ch;
+    }
+
+    .diagram-container { background: transparent; border: none; padding: 0; overflow-x: auto; }
+    svg { width: 100%; min-width: 900px; display: block; }
+
+    .cards {
+      display: grid;
+      grid-template-columns: 1.1fr 1fr 0.95fr;
+      gap: 1rem;
+      margin-top: 1.5rem;
+    }
+    @media (max-width: 900px) { .cards { grid-template-columns: 1fr; } }
+
+    .card {
+      background: #ffffff;
+      border-radius: 6px;
+      border: 1px solid var(--color-rule);
+      padding: 1.25rem;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      margin-bottom: 0.875rem;
+      padding-bottom: 0.875rem;
+      border-bottom: 1px solid rgba(15,23,42,0.08);
+    }
+
+    .card-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .card-dot.ink    { background: var(--color-ink); }
+    .card-dot.muted  { background: var(--color-muted); }
+    .card-dot.accent { background: var(--color-accent); }
+
+    .card h3 {
+      font-size: 0.875rem;
+      font-weight: 600;
+      letter-spacing: -0.005em;
+    }
+
+    .card ul { list-style: none; color: var(--color-muted); font-size: 0.8125rem; line-height: 1.55; }
+    .card li { margin-bottom: 0.3rem; padding-left: 0.875rem; position: relative; }
+    .card li::before {
+      content: '—';
+      position: absolute;
+      left: 0;
+      color: rgba(15,23,42,0.25);
+      font-size: 0.75rem;
+    }
+    .card code {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--color-ink);
+    }
+
+    .footer {
+      margin-top: 2rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid rgba(15,23,42,0.10);
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+      color: var(--color-soft);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <div class="header">
+      <p class="header-eyebrow">Architektur · 31.08.2026</p>
+      <h1>Weave Gesamtarchitektur</h1>
+      <p class="subtitle">Sechs Dienste in zwei Pipelines: offline kompiliert Weave-Ingest Dokumente in einen durchsuchbaren Chunk-Store, online entscheidet der Router pro Anfrage, ob dafür überhaupt gesucht werden muss.</p>
+    </div>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="weave-arch-title weave-arch-desc">
+        <title id="weave-arch-title">Weave Gesamtarchitektur</title>
+        <desc id="weave-arch-desc">Offline nimmt Weave-Ingest Dokumente entgegen und meldet sie per Event an Weave-Knowledge, das Chunks und Vektoren in einen Postgres-Chunk-Store schreibt. Online nimmt Weave-API Anfragen entgegen und reicht sie an Weave-Runtime, das nur für Wissensfragen Weave-Retrieval aufruft, welches den Chunk-Store lesend durchsucht; Weave-Tools ist geplant.</desc>
+
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#475569"/>
+          </marker>
+          <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#4f46e5"/>
+          </marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/>
+          </marker>
+        </defs>
+
+        <!-- Background -->
+        <rect width="100%" height="100%" fill="#f8fafc"/>
+
+        <!-- ============ ZONES (before arrows and nodes) ============ -->
+        <rect x="48" y="80" width="1032" height="136" rx="8" fill="rgba(15,23,42,0.02)" stroke="rgba(15,23,42,0.10)" stroke-width="0.8"/>
+        <rect x="64" y="84" width="228" height="12" rx="2" fill="#f8fafc"/>
+        <text x="72" y="93" fill="rgba(15,23,42,0.40)" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">OFFLINE · INGESTION-PIPELINE</text>
+
+        <rect x="48" y="312" width="1032" height="256" rx="8" fill="rgba(15,23,42,0.02)" stroke="rgba(15,23,42,0.10)" stroke-width="0.8"/>
+        <rect x="64" y="316" width="188" height="12" rx="2" fill="#f8fafc"/>
+        <text x="72" y="325" fill="rgba(15,23,42,0.40)" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">ONLINE · BOT-PIPELINE</text>
+
+        <!-- ============ ARROWS (before boxes) ============ -->
+
+        <!-- A1: Quellen -> Ingest -->
+        <line x1="264" y1="148" x2="336" y2="148" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <rect x="276" y="128" width="48" height="12" rx="2" fill="#f8fafc"/>
+        <text x="300" y="137" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">DATEIEN</text>
+
+        <!-- A2: Ingest -> Knowledge (webhook event) -->
+        <line x1="528" y1="148" x2="600" y2="148" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+        <rect x="544" y="128" width="40" height="12" rx="2" fill="#f8fafc"/>
+        <text x="564" y="137" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">EVENT</text>
+
+        <!-- A3: Knowledge -> Store -->
+        <line x1="792" y1="148" x2="864" y2="148" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <rect x="808" y="128" width="40" height="12" rx="2" fill="#f8fafc"/>
+        <text x="828" y="137" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">INDEX</text>
+
+        <!-- V1: Store -> Retrieval (read-only, vertical) -->
+        <line x1="960" y1="184" x2="960" y2="344" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <rect x="972" y="256" width="60" height="12" rx="2" fill="#f8fafc"/>
+        <text x="1002" y="265" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">READ-ONLY</text>
+
+        <!-- B1: Clients -> API -->
+        <line x1="264" y1="380" x2="336" y2="380" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+        <rect x="280" y="360" width="40" height="12" rx="2" fill="#f8fafc"/>
+        <text x="300" y="369" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">HTTPS</text>
+
+        <!-- B2: API -> Runtime -->
+        <line x1="528" y1="380" x2="600" y2="380" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+        <rect x="544" y="360" width="40" height="12" rx="2" fill="#f8fafc"/>
+        <text x="564" y="369" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">CHAT</text>
+
+        <!-- B3: Runtime -> Retrieval -->
+        <line x1="792" y1="380" x2="864" y2="380" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+        <rect x="804" y="360" width="48" height="12" rx="2" fill="#f8fafc"/>
+        <text x="828" y="369" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SEARCH</text>
+
+        <!-- D1: Runtime -> Tools (planned) -->
+        <line x1="696" y1="416" x2="696" y2="472" stroke="#475569" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+        <rect x="708" y="436" width="52" height="12" rx="2" fill="#f8fafc"/>
+        <text x="734" y="445" fill="#64748b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PHASE 5</text>
+
+        <!-- ============ ANNOTATION CALLOUT ============ -->
+        <path d="M 1120 484 Q 940 460 764 420" fill="none" stroke="rgba(15,23,42,0.40)" stroke-width="1" stroke-dasharray="4,3"/>
+        <circle cx="764" cy="418" r="2" fill="#0f172a"/>
+        <text x="1240" y="478" fill="#0f172a" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="end">Nicht jede Anfrage</text>
+        <text x="1240" y="500" fill="#0f172a" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="end">braucht RAG.</text>
+
+        <!-- ============ NODES ============ -->
+
+        <!-- N1 Quellen (input) -->
+        <rect x="72" y="112" width="192" height="72" rx="6" fill="#f8fafc"/>
+        <rect x="72" y="112" width="192" height="72" rx="6" fill="rgba(71,85,105,0.10)" stroke="#64748b" stroke-width="1"/>
+        <rect x="80" y="120" width="36" height="12" rx="2" fill="transparent" stroke="rgba(100,116,139,0.40)" stroke-width="0.8"/>
+        <text x="98" y="129" fill="#64748b" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">INPUT</text>
+        <text x="168" y="152" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Quellen</text>
+        <text x="168" y="170" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Upload · Mail · Confluence</text>
+
+        <!-- N2 Weave-Ingest (FOCAL) -->
+        <rect x="336" y="112" width="192" height="72" rx="6" fill="#f8fafc"/>
+        <rect x="336" y="112" width="192" height="72" rx="6" fill="rgba(79,70,229,0.08)" stroke="#4f46e5" stroke-width="1"/>
+        <rect x="344" y="120" width="24" height="12" rx="2" fill="transparent" stroke="rgba(79,70,229,0.40)" stroke-width="0.8"/>
+        <text x="356" y="129" fill="#4f46e5" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">P1</text>
+        <text x="432" y="152" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Ingest</text>
+        <text x="432" y="170" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8000 · OCR → Markdown</text>
+
+        <!-- N3 Weave-Knowledge -->
+        <rect x="600" y="112" width="192" height="72" rx="6" fill="#f8fafc"/>
+        <rect x="600" y="112" width="192" height="72" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+        <rect x="608" y="120" width="24" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+        <text x="620" y="129" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">P2</text>
+        <text x="696" y="152" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Knowledge</text>
+        <text x="696" y="170" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8001 · Chunks + Vektoren</text>
+
+        <!-- N4 Chunk-Store (store) -->
+        <rect x="864" y="112" width="192" height="72" rx="6" fill="#f8fafc"/>
+        <rect x="864" y="112" width="192" height="72" rx="6" fill="rgba(15,23,42,0.05)" stroke="#475569" stroke-width="1"/>
+        <rect x="872" y="120" width="36" height="12" rx="2" fill="transparent" stroke="rgba(71,85,105,0.50)" stroke-width="0.8"/>
+        <text x="890" y="129" fill="#475569" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">STORE</text>
+        <text x="960" y="152" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Chunk-Store</text>
+        <text x="960" y="170" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Postgres · pgvector</text>
+
+        <!-- N5 Clients (input) -->
+        <rect x="72" y="344" width="192" height="72" rx="6" fill="#f8fafc"/>
+        <rect x="72" y="344" width="192" height="72" rx="6" fill="rgba(71,85,105,0.10)" stroke="#64748b" stroke-width="1"/>
+        <rect x="80" y="352" width="36" height="12" rx="2" fill="transparent" stroke="rgba(100,116,139,0.40)" stroke-width="0.8"/>
+        <text x="98" y="361" fill="#64748b" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">INPUT</text>
+        <text x="168" y="384" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Clients</text>
+        <text x="168" y="402" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Open WebUI · REST</text>
+
+        <!-- N6 Weave-API -->
+        <rect x="336" y="344" width="192" height="72" rx="6" fill="#f8fafc"/>
+        <rect x="336" y="344" width="192" height="72" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+        <rect x="344" y="352" width="24" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+        <text x="356" y="361" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">P4</text>
+        <text x="432" y="384" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-API</text>
+        <text x="432" y="402" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8004 · Auth · Verlauf</text>
+
+        <!-- N7 Weave-Runtime (FOCAL) -->
+        <rect x="600" y="344" width="192" height="72" rx="6" fill="#f8fafc"/>
+        <rect x="600" y="344" width="192" height="72" rx="6" fill="rgba(79,70,229,0.08)" stroke="#4f46e5" stroke-width="1"/>
+        <rect x="608" y="352" width="24" height="12" rx="2" fill="transparent" stroke="rgba(79,70,229,0.40)" stroke-width="0.8"/>
+        <text x="620" y="361" fill="#4f46e5" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">P4</text>
+        <text x="696" y="384" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Runtime</text>
+        <text x="696" y="402" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8003 · Router · LLM</text>
+
+        <!-- N8 Weave-Retrieval -->
+        <rect x="864" y="344" width="192" height="72" rx="6" fill="#f8fafc"/>
+        <rect x="864" y="344" width="192" height="72" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+        <rect x="872" y="352" width="24" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+        <text x="884" y="361" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">P3</text>
+        <text x="960" y="384" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Retrieval</text>
+        <text x="960" y="402" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8002 · Hybrid · Rerank</text>
+
+        <!-- N9 Weave-Tools (optional / planned) -->
+        <rect x="600" y="472" width="192" height="72" rx="6" fill="#f8fafc"/>
+        <rect x="600" y="472" width="192" height="72" rx="6" fill="rgba(15,23,42,0.02)" stroke="rgba(15,23,42,0.20)" stroke-width="1" stroke-dasharray="4,3"/>
+        <rect x="608" y="480" width="24" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.20)" stroke-width="0.8"/>
+        <text x="620" y="489" fill="#64748b" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">P5</text>
+        <text x="696" y="512" fill="#64748b" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Tools</text>
+        <text x="696" y="530" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">REST · MCP · Mail</text>
+
+        <!-- ============ LEGEND ============ -->
+        <line x1="48" y1="632" x2="1232" y2="632" stroke="rgba(15,23,42,0.10)" stroke-width="0.8"/>
+        <text x="48" y="656" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGENDE</text>
+
+        <rect x="152" y="646" width="14" height="10" rx="2" fill="rgba(79,70,229,0.08)" stroke="#4f46e5" stroke-width="1"/>
+        <text x="172" y="655" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Kern der Architektur</text>
+
+        <rect x="352" y="646" width="14" height="10" rx="2" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+        <text x="372" y="655" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Dienst, umgesetzt</text>
+
+        <rect x="552" y="646" width="14" height="10" rx="2" fill="rgba(15,23,42,0.02)" stroke="rgba(15,23,42,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+        <text x="572" y="655" fill="#475569" font-size="9" font-family="'Inter', sans-serif">geplant</text>
+
+        <line x1="752" y1="651" x2="766" y2="651" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+        <text x="772" y="655" fill="#475569" font-size="9" font-family="'Inter', sans-serif">HTTP-Aufruf</text>
+
+        <line x1="952" y1="651" x2="966" y2="651" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <text x="972" y="655" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Daten / Index</text>
+      </svg>
+    </div>
+
+    <div class="cards">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-dot accent"></span>
+          <h3>Offline: Dokumente werden kompiliert</h3>
+        </div>
+        <ul>
+          <li>Weave-Ingest (früher PaddleDoc) macht aus PDF, Office, Bildern, Mail und Confluence strukturiertes Markdown mit YAML-Frontmatter, Versionskette und Quality-Gate</li>
+          <li>Nur bestandene Dokumente lösen das Webhook-Event <code>document.processed</code> aus — Grade C mit Empfehlung „block" wird gar nicht erst indiziert</li>
+          <li>Weave-Knowledge chunkt strukturbewusst (Überschriften, Seitenmarker, Tabellen bleiben ganz), reichert Metadaten an und schreibt Vektoren</li>
+          <li>Eine neue Dokumentversion ersetzt die Chunks der Vorversion in derselben Transaktion</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-dot ink"></span>
+          <h3>Online: Anfragen werden geroutet</h3>
+        </div>
+        <ul>
+          <li>Der Intent-Router entscheidet pro Anfrage: Smalltalk, Wissensfrage, Dokument, Aktion oder mehrstufig — nur Wissensfragen lösen eine Suche aus</li>
+          <li>Weave-Retrieval sucht hybrid (Vektor + Volltext), fusioniert per RRF und rerankt auf die besten fünf Treffer</li>
+          <li>Das Team des Anfragenden ist eine harte Grenze in der Datenbankabfrage — nicht ein Filter danach</li>
+          <li>Ohne Belege antwortet der Bot mit dem konfigurierten Hinweis statt mit einer unbelegten Antwort</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-dot muted"></span>
+          <h3>Stand</h3>
+        </div>
+        <ul>
+          <li>Fünf Dienste laufen, 1 252 Tests grün</li>
+          <li>Bots sind YAML-Dateien, keine neuen Deployments</li>
+          <li>Gechattet wird heute über Open WebUI oder REST gegen Weave-API — eine eigene Chat-Oberfläche gibt es nicht</li>
+          <li>Wissenssammlungen entstehen über Metadaten (<code>department</code>, <code>team</code>, <code>tags</code>); benannte Knowledge-Bases fehlen noch</li>
+          <li>Offen außerdem: Weave-Tools und die OIDC-Anmeldung</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="footer">
+      <span>Weave · Gesamtarchitektur nach Phase 4</span>
+      <span>31.08.2026</span>
+    </div>
+
+  </div>
+</body>
+</html>

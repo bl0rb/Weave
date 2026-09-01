@@ -1,0 +1,21 @@
+# Direct dependencies of the backend image (see Dockerfile) and of the
+# local development environment. Hash-Lock folgt spaeter -- requirements.txt
+# is currently a plain `pip freeze` of the resolved tree, not a
+# `pip-compile --generate-hashes` lock (see requirements.txt's own header),
+# same as Weave-Retrieval's/Weave-Knowledge's backend/requirements.in.
+#
+# fastapi/pydantic/pydantic-settings/pytest/httpx/PyYAML pins are kept
+# identical to Weave-Retrieval's backend/requirements.in -- no reason for
+# these to drift between sibling services without cause. Deliberately NO
+# sqlalchemy/alembic/celery/redis here: Weave-Runtime is the stateless
+# bot-orchestrator (see README's "Nicht-Ziele") -- it owns no schema to
+# migrate and no task queue to run, only synchronous HTTP calls out to
+# Weave-Retrieval or an LLM provider (httpx) and YAML bot configs (PyYAML, see
+# app/services/botconfig.py).
+fastapi==0.141.1
+uvicorn[standard]==0.52.3
+pydantic==2.13.4
+pydantic-settings==2.14.2
+httpx==0.28.1
+PyYAML==6.0.3
+pytest==9.1.1

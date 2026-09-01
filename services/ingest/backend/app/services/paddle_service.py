@@ -1,0 +1,1915 @@
+import base64
+from collections.abc import Sequence
+from datetime import datetime, timezone
+import html
+import importlib.util
+import json as _json
+import logging
+import platform
+import re
+import time
+from io import BytesIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import cast
+
+from celery.exceptions import TimeoutError as CeleryTimeoutError
+from fastapi import HTTPException, status
+from pypdf import PdfReader, PdfWriter
+from redis import Redis
+from sqlalchemy.orm import Session
+import yaml
+
+from app.core.config import settings
+from app.models.models import VlConnection
+from app.services import safe_fetch as safe_fetch_module
+from app.services.quality_gate import evaluate_document_quality
+from app.services.form_latex import normalize_form_latex
+from app.services.field_validation import validate_document
+from app.services.mail_ingest import (
+    _parse_bytes as _parse_eml_bytes,
+    _walk_tree,
+    _render_body,
+    _extract_envelope,
+)
+
+logger = logging.getLogger(__name__)
+
+_RUNTIME_SETTINGS_KEY = 'paddle:runtime_settings'
+_DEFAULT_PROFILE_ID = 'ppocrv6_tiny'
+_PDF_CHUNK_PAGE_SIZE = 6
+_PADDLE_VL_PIPELINES: dict[tuple[str, str], object] = {}
+_PDF_CHUNK_PAGE_SIZE_BY_PROFILE: dict[str, int] = {
+    'ppocrv6_medium_structurev3': 2,
+    'ppocrv6_medium': 2,
+    'ppocrv6_small_structurev3': 4,
+    'ppocrv6_small': 4,
+    'ppocrv6_tiny_structurev3': 6,
+    'ppocrv6_tiny': 8,
+    # OpenAI vision: always 1 page per request (vision API constraint)
+    'openai_vision': 1,
+}
+
+_PADDLE_PROFILES: dict[str, dict[str, str]] = {
+    'ppocrv6_tiny': {
+        'value': 'ppocrv6_tiny',
+        'label': 'PP-OCRv6 tiny det + rec',
+        'description': 'Fastest OCR preset (det+rec) for CPU-first deployments with minimal memory usage.',
+        'pipeline': 'ppstructurev3',
+        'text_detection_model_name': 'PP-OCRv6_tiny_det',
+        'text_recognition_model_name': 'PP-OCRv6_tiny_rec',
+        'use_table_recognition': 'false',
+    },
+    'ppocrv6_tiny_structurev3': {
+        'value': 'ppocrv6_tiny_structurev3',
+        'label': 'PP-StructureV3 + PP-OCRv6 tiny det + rec',
+        'description': 'Tiny det+rec with PP-StructureV3 layout parsing for tables/blocks.',
+        'pipeline': 'ppstructurev3',
+        'text_detection_model_name': 'PP-OCRv6_tiny_det',
+        'text_recognition_model_name': 'PP-OCRv6_tiny_rec',
+        'use_table_recognition': 'true',
+    },
+    'ppocrv6_small': {
+        'value': 'ppocrv6_small',
+        'label': 'PP-OCRv6 small det + rec',
+        'description': 'Balanced OCR preset (det+rec) using the PP-OCRv6 small models.',
+        'pipeline': 'ppstructurev3',
+        'text_detection_model_name': 'PP-OCRv6_small_det',
+        'text_recognition_model_name': 'PP-OCRv6_small_rec',
+        'use_table_recognition': 'false',
+    },
+    'ppocrv6_small_structurev3': {
+        'value': 'ppocrv6_small_structurev3',
+        'label': 'PP-StructureV3 + PP-OCRv6 small det + rec',
+        'description': 'Small det+rec with PP-StructureV3 for richer structured output.',
+        'pipeline': 'ppstructurev3',
+        'text_detection_model_name': 'PP-OCRv6_small_det',
+        'text_recognition_model_name': 'PP-OCRv6_small_rec',
+        'use_table_recognition': 'true',
+    },
+    'ppocrv6_medium': {
+        'value': 'ppocrv6_medium',
+        'label': 'PP-OCRv6 medium det + rec',
+        'description': 'Higher-accuracy OCR preset (det+rec) with larger CPU footprint than small/tiny.',
+        'pipeline': 'ppstructurev3',
+        'text_detection_model_name': 'PP-OCRv6_medium_det',
+        'text_recognition_model_name': 'PP-OCRv6_medium_rec',
+        'use_table_recognition': 'false',
+    },
+    'ppocrv6_medium_structurev3': {
+        'value': 'ppocrv6_medium_structurev3',
+        'label': 'PP-StructureV3 + PP-OCRv6 medium det + rec',
+        'description': 'Best structure quality preset: medium det+rec plus PP-StructureV3 for layouts/tables.',
+        'pipeline': 'ppstructurev3',
+        'text_detection_model_name': 'PP-OCRv6_medium_det',
+        'text_recognition_model_name': 'PP-OCRv6_medium_rec',
+        'use_table_recognition': 'true',
+    },
+    'paddlevl_1_6_0_9b': {
+        'value': 'paddlevl_1_6_0_9b',
+        'label': 'PaddleOCR-VL 1.6 (0.9B)',
+        'description': 'Vision-language parsing profile for richer document understanding on GPU-enabled deployments.',
+        'pipeline': 'paddlevl',
+        'use_table_recognition': 'true',
+        'text_detection_model_name': 'PaddleOCR-VL-1.6-0.9B',
+        'text_recognition_model_name': 'PaddleOCR-VL-1.6-0.9B',
+    },
+    'openai_vision': {
+        'value': 'openai_vision',
+        'label': 'OpenAI-compatible Vision API',
+        'description': 'Sends each PDF page as a base64 image to any OpenAI-compatible vision endpoint. Configure OPENAI_API_BASE_URL and OPENAI_API_BEARER_TOKEN.',
+        'pipeline': 'openai_vision',
+    },
+}
+# Every static preset is a 'kind': 'ocr' entry, set in one place rather than
+# repeated per literal above -- distinguishes them from the 'kind': 'vl'
+# entries get_paddle_capabilities appends per enabled VlConnection (see
+# resolve_profile_selection / the 'vl:<connection_id>' profile_id contract).
+for _profile in _PADDLE_PROFILES.values():
+    _profile['kind'] = 'ocr'
+del _profile
+
+# Prefix marking a profile_id as "use this admin-configured VlConnection
+# instead of a static preset" (value shape: 'vl:<connection_id>') -- see
+# get_paddle_capabilities, resolve_profile_selection, and
+# effective_pipeline_profile_id below, plus app/api/benchmarks.py's variant
+# generation, whose settings shape this mirrors.
+_VL_PROFILE_PREFIX = 'vl:'
+
+
+def _default_runtime_settings() -> dict[str, str | int]:
+    return {
+        'default_profile': settings.paddle_default_profile,
+        'timeout_seconds': settings.paddle_timeout_seconds,
+    }
+
+
+def _redis_client() -> Redis:
+    return Redis.from_url(settings.redis_url, decode_responses=True)
+
+
+def _runtime_platform_label() -> str:
+    return f"{platform.system().lower()}-{platform.machine().lower()}"
+
+
+def _has_torch() -> bool:
+    return importlib.util.find_spec('torch') is not None
+
+
+def _has_paddle() -> bool:
+    return importlib.util.find_spec('paddle') is not None
+
+
+def _has_cuda() -> bool:
+    try:
+        import paddle  # noqa: PLC0415
+
+        if paddle.is_compiled_with_cuda() and paddle.device.cuda.device_count() > 0:
+            return True
+    except Exception:
+        pass
+
+    try:
+        import torch  # noqa: PLC0415
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
+
+
+def _runtime_capability() -> dict:
+    cuda_available = _has_cuda()
+    info: dict = {
+        'torch_available': _has_torch(),
+        'paddle_available': _has_paddle(),
+        'cuda_available': cuda_available,
+        'selected_device': 'gpu' if cuda_available else 'cpu',
+        'platform': _runtime_platform_label(),
+    }
+    if not cuda_available:
+        info['no_cuda_reason'] = 'CUDA is unavailable in this deployment; OCR runtime will use CPU'
+    return info
+
+
+def get_runtime_capability() -> dict:
+    return _runtime_capability()
+
+
+def _paddleocr_available() -> bool:
+    return importlib.util.find_spec('paddleocr') is not None
+
+
+def is_paddle_available() -> bool:
+    return _paddleocr_available()
+
+
+def _fallback_pdf_to_markdown(source: Path) -> str:
+    reader = PdfReader(str(source))
+    sections: list[str] = []
+    for index, page in enumerate(reader.pages, start=1):
+        text = (page.extract_text() or '').strip()
+        if not text:
+            continue
+        sections.append(f'## Page {index}\n\n{text}')
+
+    if not sections:
+        raise RuntimeError('PDF fallback extraction produced no text')
+    return '\n\n'.join(sections)
+
+
+def _pdf_page_count(source: Path) -> int:
+    reader = PdfReader(str(source))
+    return len(reader.pages)
+
+
+def _to_markdown_table(headers: list[str], rows: list[list[str]]) -> str:
+    if not headers:
+        return ''
+    header_line = '| ' + ' | '.join(headers) + ' |'
+    divider_line = '| ' + ' | '.join(['---'] * len(headers)) + ' |'
+    body_lines = ['| ' + ' | '.join(row) + ' |' for row in rows]
+    return '\n'.join([header_line, divider_line, *body_lines])
+
+
+def _fallback_spreadsheet_to_markdown(source: Path) -> tuple[str, int, int]:
+    import pandas as pd  # noqa: PLC0415
+
+    suffix = source.suffix.lower()
+    engine = 'xlrd' if suffix == '.xls' else None
+    sheets = pd.read_excel(source, sheet_name=None, dtype=str, engine=engine)
+
+    sections: list[str] = []
+    sheet_count = 0
+    row_count = 0
+
+    for sheet_name, frame in sheets.items():
+        if frame is None:
+            continue
+        frame = frame.fillna('')
+        headers = [str(col).strip() or f'col_{index + 1}' for index, col in enumerate(frame.columns.tolist())]
+        rows = [[str(value).replace('\n', ' ').strip() for value in record] for record in frame.values.tolist()]
+
+        if not headers and not rows:
+            continue
+
+        table_md = _to_markdown_table(headers, rows)
+        sections.append(f'## Sheet: {sheet_name}\n\n{table_md}'.strip())
+        sheet_count += 1
+        row_count += len(rows)
+
+    if not sections:
+        raise RuntimeError('Spreadsheet fallback extraction produced no rows')
+
+    return '\n\n---\n\n'.join(sections), sheet_count, row_count
+
+
+def _clean_block_text(value: str) -> str:
+    return re.sub(r'\s+', ' ', value or '').strip()
+
+
+# A3: PaddleOCR-VL emits five different codepoints for what is really only
+# two checkbox states -- measured across 9 documents: 30x '□', 53x
+# '☐', 32x '☒', 6x '☑'. Retrieval on "is this checked" is
+# impossible against five spellings, so every glyph collapses to plain-text
+# `[x]` / `[ ]` here, independent of block label (see its call site in
+# _render_block_content).
+#
+# U+25CB ('○', a hollow circle) is deliberately NOT in this map: in the
+# measured data it only ever shows up as a mis-recognized digit, never as a
+# checkbox glyph. Don't "helpfully" add it back without re-measuring --
+# doing so would turn real numbers into false checkboxes.
+_CHECKBOX_MAP: dict[str, str] = {
+    '☒': '[x]',  # ☒ BALLOT BOX WITH X
+    '☑': '[x]',  # ☑ BALLOT BOX WITH CHECK
+    '⊠': '[x]',  # ⊠ SQUARED TIMES
+    '□': '[ ]',  # □ WHITE SQUARE
+    '☐': '[ ]',  # ☐ BALLOT BOX
+    '▢': '[ ]',  # ▢ WHITE SQUARE WITH ROUNDED CORNERS
+}
+
+# The LaTeX rendering PaddleOCR-VL uses for a checked box in form fields
+# (`$ \checkmark $`). Handled here rather than by form_latex.py's generic
+# LaTeX flattening: turning a checkmark into `[x]` is a checkbox-semantics
+# decision, not a generic "simplify this LaTeX span" one.
+_CHECKMARK_LATEX_RE = re.compile(r'\$\s*\\checkmark\s*\$')
+
+
+def _normalize_checkbox_glyphs(text: str) -> str:
+    """Unify every checkbox spelling PaddleOCR-VL emits into `[x]` / `[ ]`.
+
+    Runs ahead of `normalize_form_latex` (see _render_block_content) so this
+    fixed, well-measured substitution can never be affected by however that
+    still-evolving normalizer ends up treating a `$ \\checkmark $` span.
+    """
+    if not text:
+        return text
+    result = _CHECKMARK_LATEX_RE.sub('[x]', text)
+    for glyph, replacement in _CHECKBOX_MAP.items():
+        if glyph in result:
+            result = result.replace(glyph, replacement)
+    return result
+
+
+_TABLE_ROW_RE = re.compile(r'<tr[^>]*>(.*?)</tr>', re.DOTALL | re.IGNORECASE)
+# Backreference (`</t\1>`) so an opening `<td>` can't be closed by a stray
+# `</th>` or vice versa -- P1's `format_block_content=True` output carries
+# presentational attributes on both (`<td style='text-align: center; ...'>`),
+# which this still matches via `[^>]*`.
+_TABLE_CELL_RE = re.compile(r'<t([dh])([^>]*)>(.*?)</t\1>', re.DOTALL | re.IGNORECASE)
+_COLSPAN_RE = re.compile(r'colspan\s*=\s*["\']?(\d+)', re.IGNORECASE)
+
+# Checkbox glyphs are already normalised to these two tokens by
+# _normalize_checkbox_glyphs, which runs on the whole block content before
+# _render_block_content ever reaches the table branch -- see
+# _first_row_is_header below, which keys off exactly these tokens.
+_HEADER_OPTION_TOKENS = frozenset({'[x]', '[ ]'})
+
+
+def _table_row_cells(row_html: str) -> tuple[list[str], bool]:
+    """Extract one `<tr>`'s cell texts.
+
+    `colspan` is expanded into extra blank cells so a spanning cell doesn't
+    shift every column after it out of alignment with rows that don't span
+    (measured need: bug 4). `rowspan` is deliberately left alone -- full
+    rowspan support isn't required, and the spanned cell's content is still
+    kept exactly once rather than dropped, which is all "ohne Inhalte zu
+    verlieren" asks for.
+    """
+    cells: list[str] = []
+    has_th = False
+    for tag, attrs, body in _TABLE_CELL_RE.findall(row_html):
+        if tag.lower() == 'h':
+            has_th = True
+        cell_text = re.sub(r'<[^>]+>', '', body)
+        cell_text = html.unescape(cell_text)
+        # PaddleOCR-VL sometimes emits a literal two-character '\n' inside a
+        # cell (measured 39x) instead of a real line break -- e.g. a label
+        # and a parenthetical clarification stacked on separate visual
+        # lines. A real newline would be harmless here (the \s+ collapse
+        # below folds it to a space); this literal backslash-n is NOT
+        # whitespace, so it survives untouched and corrupts the row once
+        # written into a GFM table cell (bug 2). `<br>` is chosen over a
+        # plain space because collapsing distinct lines into one sentence
+        # would blur content that was visually and semantically separate.
+        cell_text = cell_text.replace('\\n', '<br>')
+        cell_text = re.sub(r'\s+', ' ', cell_text).strip()
+        # A bare '|' would otherwise be read as a new column boundary (bug 3).
+        cell_text = cell_text.replace('|', '\\|')
+        cell_text = cell_text or ' '
+        colspan_match = _COLSPAN_RE.search(attrs)
+        span = max(int(colspan_match.group(1)), 1) if colspan_match else 1
+        cells.append(cell_text)
+        cells.extend([' '] * (span - 1))
+    return cells, has_th
+
+
+def _first_row_is_header(rows: list[list[str]], first_row_has_th: bool) -> bool:
+    """Decide whether `rows[0]` is a real header or the first data row
+    (bug 1).
+
+    Two shapes measured in the actual data are structurally identical
+    without this check: a form's label/value row (`Nachname: | Cicekli`,
+    where treating it as a header would turn "Cicekli" into a column name
+    and delete it from the data) and a genuine option-header row
+    (`... beigefuegt: | Ja | Nein`) with no `<th>` either. What tells them
+    apart is what sits under columns 2..N in every *other* row: for the
+    option-header shape, that's a checkbox mark (already normalised to
+    '[x]'/'[ ]' upstream) or blank in every row -- a form never repeats the
+    literal string 'Ja'/'Nein' as a *value*. For the label/value shape,
+    those columns hold arbitrary data (names, dates, ...), which fails the
+    check and correctly keeps it out of the header.
+
+    Honest failure modes, accepted rather than chased further:
+      - A genuine header whose columns are words (not checkbox marks) is
+        missed. Falls back to a blank synthetic header, so no data is lost
+        -- the would-be header row just prints as an ordinary data row too.
+      - A coincidental table where columns 2..N are blank in every row is
+        misclassified as a header (blank cells don't fail the check, since
+        an all-blank option column is indistinguishable from
+        "nobody checked either box").
+    """
+    if first_row_has_th:
+        return True
+    if len(rows) < 2 or len(rows[0]) < 2:
+        return False
+    saw_marker = False
+    for col in range(1, len(rows[0])):
+        for row in rows[1:]:
+            cell = row[col].strip() if col < len(row) else ''
+            if cell in _HEADER_OPTION_TOKENS:
+                saw_marker = True
+            elif cell != '':
+                return False
+    return saw_marker
+
+
+def _html_table_to_markdown(table_html: str) -> str:
+    """Convert a simple HTML table to a GitHub Flavored Markdown table.
+
+    Returns '' when the markup has no parseable `<tr>` rows -- callers must
+    not fall back to the raw HTML in that case (bug 5: that fallback used
+    to leak `<table ...>` straight into the generated markdown).
+    """
+    rows: list[list[str]] = []
+    first_row_has_th = False
+    for row_match in _TABLE_ROW_RE.finditer(table_html):
+        cells, has_th = _table_row_cells(row_match.group(1))
+        if not cells:
+            continue
+        if not rows:
+            first_row_has_th = has_th
+        rows.append(cells)
+
+    if not rows:
+        return ''
+
+    # Align all rows to the width of the widest row.
+    max_cols = max(len(row) for row in rows)
+    rows = [row + [' '] * (max_cols - len(row)) for row in rows]
+
+    def md_row(cells: list[str]) -> str:
+        return '| ' + ' | '.join(cells) + ' |'
+
+    if _first_row_is_header(rows, first_row_has_th):
+        header, data_rows = rows[0], rows[1:]
+    else:
+        # GFM still requires a header line; emit a blank one rather than
+        # promoting a data row, and keep every row -- including this one
+        # -- in the data section so nothing measured gets lost.
+        header, data_rows = [' '] * max_cols, rows
+
+    lines = [md_row(header), '| ' + ' | '.join(['---'] * max_cols) + ' |']
+    lines.extend(md_row(row) for row in data_rows)
+    return '\n'.join(lines)
+
+
+# A block whose content already opens with its own ATX heading marker. With
+# `format_block_content=True` (see `_paddlevl_to_structure`) PaddleOCR-VL puts
+# a real hierarchy there itself -- `#` on the document title, `##`/`###` on
+# nested section titles.
+_ATX_HEADING_RE = re.compile(r'^#{1,6}\s+\S')
+
+
+def _render_heading(cleaned: str, *, fallback_level: int) -> str:
+    """Render a title block, keeping a heading level the engine already chose.
+
+    Without `format_block_content` every title block arrives as bare text and
+    the only thing we can do is stamp one flat level on all of them -- which
+    is why untuned output has 105 `##` and not a single `#`, leaving
+    hierarchical chunking exactly one level to work with. When the engine does
+    supply a level, prefixing our own on top would produce `## # Title`, so
+    take what it gives.
+    """
+    if _ATX_HEADING_RE.match(cleaned):
+        return cleaned
+    return f'{"#" * fallback_level} {cleaned}'
+
+
+def _render_block_content(label: str, content: str, page_number: int) -> str:
+    # LLM-generated blocks already contain valid Markdown — return verbatim.
+    if label == 'llm_markdown':
+        return (content or '').strip()
+
+    # A3 + B1, both label-independent: checkbox glyphs and form-field LaTeX
+    # artifacts (underlined blanks, arrays, ICD codes, ...) show up on
+    # ordinary 'text' blocks too -- 3 of the 16 LaTeX-carrying blocks
+    # measured have label 'text', so gating either step behind a label
+    # branch below would silently miss them.
+    normalised = _normalize_checkbox_glyphs(content or '')
+    normalised, _latex_hits = normalize_form_latex(normalised)
+    cleaned = _clean_block_text(normalised)
+
+    if label in {'paragraph_title', 'doc_title'} and cleaned:
+        return _render_heading(cleaned, fallback_level=2)
+    if label in {'text', 'paragraph', 'content'} and cleaned:
+        return cleaned
+    if label == 'table_title' and cleaned:
+        return _render_heading(cleaned, fallback_level=3)
+    if label == 'table':
+        if cleaned and '<table' in cleaned.lower():
+            # Trust this fully, including an empty result: falling through
+            # to the `cleaned` passthrough below on '' used to leak the raw
+            # `<table ...>` markup straight into the generated markdown
+            # (bug 5) whenever no `<tr>` row could be parsed out of it.
+            return _html_table_to_markdown(cleaned)
+        if cleaned:
+            return cleaned
+        return ''
+    if label in {'figure', 'image'}:
+        # Filled-in forms carry signatures and handwriting inside figure/image
+        # regions -- keep the placeholder (downstream systems and tests rely
+        # on it) but don't discard whatever content the block actually held.
+        if cleaned:
+            return f'*[Figure on page {page_number}]* {cleaned}'
+        return f'*[Figure on page {page_number}]*'
+    if label in {'header', 'footer', 'footnote', 'aside_text', 'reference'}:
+        if cleaned:
+            return f'> {cleaned}'
+        return ''
+    if cleaned:
+        return cleaned
+    return ''
+
+
+def _build_rag_frontmatter(
+    source_name: str,
+    page_count: int,
+    profile_label: str,
+    metadata: dict[str, object] | None = None,
+) -> str:
+    """Render the YAML frontmatter block prepended to every generated
+    markdown document (both the PP-StructureV3 path and the pypdf/spreadsheet
+    fallback paths -- see `_fallback_convert_with_frontmatter`).
+
+    `metadata` carries everything the caller already knows about this
+    conversion: the worker (app/workers/tasks.py) enriches it from the Job
+    row (job_id, document_version, content_sha256, previous_job_id,
+    uploaded_by, team, tags, original_filename, collection_slug,
+    collection_name) before calling convert_to_markdown_with_details;
+    profile_id/engine/used_fallback are set by this module's own call sites,
+    which are the only ones that actually know which pipeline/fallback ran.
+
+    yaml.safe_dump (never f-string interpolation) so attacker-controlled
+    values (filenames, emails, tags, ...) can't break out of the YAML block
+    or inject sibling keys -- same discipline as
+    app/services/confluence_markdown.render_frontmatter.
+    """
+    metadata = metadata or {}
+
+    mode = str(metadata.get('mode') or 'single')
+    email = str(metadata.get('email') or '')
+    department = str(metadata.get('department') or '')
+    original_filename = str(metadata.get('original_filename') or '')
+    document_version = metadata.get('document_version')
+    tags = metadata.get('tags')
+    used_fallback = bool(metadata.get('used_fallback'))
+
+    # source_name is the UUID filename on disk -- useless as a citation target
+    # in RAG. original_filename (when the caller supplies it) is the name the
+    # user actually uploaded, so it's added right after `source` rather than
+    # replacing it, keeping existing consumers of `source` unaffected.
+    data: dict[str, object] = {
+        'source': source_name,
+    }
+    if original_filename:
+        data['original_filename'] = original_filename
+    data['pages'] = page_count
+    data['profile'] = profile_label
+    data['profile_id'] = metadata.get('profile_id')
+    data['mode'] = mode
+    if email:
+        data['email'] = email
+    if department:
+        data['department'] = department
+    # Collections contract (see README.md's "Collections" section): the
+    # collection's slug -- its stable cross-service identity, never the
+    # display name -- and, alongside it, the display name itself. Both
+    # optional: absent entirely for a job that was never uploaded through a
+    # collection (see app/workers/tasks.py's metadata assembly).
+    if metadata.get('collection_slug'):
+        data['collection'] = metadata['collection_slug']
+    if metadata.get('collection_name'):
+        data['collection_name'] = metadata['collection_name']
+    data['job_id'] = metadata.get('job_id')
+    data['document_version'] = document_version if isinstance(document_version, int) else 1
+    data['content_sha256'] = metadata.get('content_sha256')
+    if metadata.get('previous_job_id'):
+        data['previous_job_id'] = metadata['previous_job_id']
+    if metadata.get('uploaded_by'):
+        data['uploaded_by'] = metadata['uploaded_by']
+    if metadata.get('team'):
+        data['team'] = metadata['team']
+    if isinstance(tags, list) and tags:
+        data['tags'] = tags
+    data['processed_at'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    data['engine'] = metadata.get('engine')
+    if used_fallback:
+        data['used_fallback'] = True
+
+    dumped = yaml.safe_dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    return f'---\n{dumped}---\n'
+
+
+def _prepend_frontmatter(frontmatter: str, body: str) -> str:
+    """Join a `_build_rag_frontmatter` block with the document body WITHOUT
+    the extra '---' a plain `'\\n\\n---\\n\\n'.join([frontmatter, body])`
+    would add (A8): the frontmatter already ends in its own closing '---\\n'
+    YAML delimiter, so treating it as just another list item to join
+    doubles up -- measured as 8 `^---$` lines across 6 pages before this
+    fix (2 real YAML delimiters + 6 redundant join separators, one per
+    page). `body` may be empty, in which case the frontmatter is the whole
+    document.
+    """
+    if not body:
+        return frontmatter.strip()
+    return (frontmatter.rstrip('\n') + '\n\n' + body).strip()
+
+
+# A5 probe: measures whether the active engine emits per-block coordinates,
+# which a geometric label/value pairing for form fields would need.
+#
+# Measured against paddleocr 3.7.0 / PaddleOCR-VL 1.6 on a six-page scanned
+# form: every one of the 115 blocks carried BOTH `block_bbox` and
+# `block_polygon_points`. The probe stays in place because that is one engine
+# at one version -- the ppocrv6/PP-StructureV3 profiles and any future
+# pipeline version emit their own shapes, and `keys_seen` is what tells us
+# which. Note the plural: a block carrying two geometry keys must report both,
+# otherwise the probe hides exactly the richer shape it exists to find.
+_BLOCK_BBOX_KEY_CANDIDATES: tuple[str, ...] = (
+    'block_bbox', 'block_polygon_points', 'bbox', 'block_box', 'box',
+    'layout_bbox', 'coordinate', 'coordinates', 'poly', 'polygon',
+)
+
+
+def _is_usable_bbox_value(value: object) -> bool:
+    """True if `value` looks like real per-block geometry: a flat sequence of
+    at least 4 numbers (x0, y0, x1, y1, ...), or a polygon of at least 3
+    [x, y]/(x, y) points.
+
+    Deliberately tolerant on both shape and length: since the actual schema
+    PaddleOCR-VL uses (if any) is exactly what this probe is trying to find
+    out, over-fitting to one guessed format would just make the probe blind
+    to whichever format is really in use. `bool` is excluded from "numeric"
+    despite being an int subclass in Python, so a stray True/False can never
+    be mistaken for a coordinate. Never raises -- broken/unexpected shapes
+    simply count as "not usable".
+    """
+    try:
+        if not isinstance(value, (list, tuple)) or len(value) == 0:
+            return False
+
+        def _is_number(item: object) -> bool:
+            return isinstance(item, (int, float)) and not isinstance(item, bool)
+
+        if all(_is_number(item) for item in value):
+            return len(value) >= 4
+
+        def _is_point(item: object) -> bool:
+            return (
+                isinstance(item, (list, tuple))
+                and len(item) == 2
+                and all(_is_number(coord) for coord in item)
+            )
+
+        if all(_is_point(item) for item in value):
+            return len(value) >= 3
+
+        return False
+    except Exception:
+        return False
+
+
+def _find_usable_bbox_keys(block: dict) -> list[str]:
+    """Return EVERY bbox-candidate key on `block` that carries a usable value
+    (see `_is_usable_bbox_value`), in candidate order; empty if none do.
+
+    All of them, not just the first: PaddleOCR-VL puts `block_bbox` and
+    `block_polygon_points` on the same block, and stopping at the first match
+    would report only the rectangle and leave the polygon undiscovered.
+    """
+    return [
+        key for key in _BLOCK_BBOX_KEY_CANDIDATES
+        if key in block and _is_usable_bbox_value(block[key])
+    ]
+
+
+# B2: module-level on/off switch for repeated-boilerplate suppression --
+# a plain constant rather than a config system, since this is the kind of
+# thing that might need a quick global revert if some consumer turns out to
+# need every repeated header/footer/page-number on every page.
+_DEDUPLICATE_REPEATED_BOILERPLATE = True
+
+# Labels this applies to. Measured boilerplate (80x footer address, 47+6x
+# "Seite X von Y", 42x "> Versicherungsnummer", ...) all comes from these
+# three -- never from 'text', where the same suppression would risk
+# collapsing genuinely distinct field values.
+_BOILERPLATE_DEDUP_LABELS = frozenset({'header', 'footer', 'number'})
+
+# Digit runs fold to '#' so "Seite 2 von 6" and "Seite 3 von 6" compare
+# equal. Only ever applied to header/footer/number content (see
+# _BOILERPLATE_DEDUP_LABELS) -- doing this on ordinary text would collapse
+# an IBAN, a claim number, or a date into a false duplicate of an unrelated
+# one.
+_DIGIT_RUN_RE = re.compile(r'\d+')
+
+
+def _boilerplate_key(content: str) -> str:
+    """Normalize a header/footer/number block's raw content for repeat
+    detection across pages: whitespace-collapsed, lowercased, digit runs
+    folded to '#'.
+    """
+    return _DIGIT_RUN_RE.sub('#', _clean_block_text(content).lower())
+
+
+# B3: module-level on/off switch for geometric label/value pairing -- same
+# pattern as _DEDUPLICATE_REPEATED_BOILERPLATE (B2): a plain constant so a
+# quick global revert is one line away if some consumer needs the old
+# one-block-per-line output back.
+_PAIR_LABEL_VALUE_GEOMETRY = True
+
+# Labels that can be the LABEL half of a pair. Deliberately narrow (mirrors
+# _render_block_content's own 'text'/'paragraph'/'content' passthrough
+# group) -- a paragraph_title or table cell ending in ':' is not a form
+# field waiting for a value next to it.
+_LABEL_VALUE_LABEL_LABELS = frozenset({'text', 'paragraph', 'content'})
+
+# Labels that can be the VALUE half of a pair. Formula labels are included
+# on top of the plain-text ones because that is the measured failure mode
+# (groups.json page 2: "Buchungsdatum:" is a 'text' block, but its value,
+# "20 01 2026", is an 'inline_formula' block) -- excluding formulas would
+# make the whole feature a no-op on the real data.
+_LABEL_VALUE_VALUE_LABELS = frozenset({'text', 'paragraph', 'content', 'inline_formula', 'display_formula'})
+
+# Vertical overlap a value candidate must share with the label, as a
+# fraction of the LABEL's own height. 50% is chosen as the loosest
+# threshold that still tells "same form line" apart from "next line down":
+# measured label blocks are one text line tall (~25-30px in groups.json),
+# so anything sharing less than half of that band is a different row, not
+# a value sitting beside this label.
+_LABEL_VALUE_MIN_OVERLAP_RATIO = 0.5
+
+# Maximum horizontal gap allowed between a label's right edge and a value
+# candidate's left edge, as a fraction of the page's estimated width (the
+# widest block x1 seen on the page -- the real page width isn't threaded
+# this deep into the pipeline, so the blocks themselves are the only
+# available proxy for it). Calibrated against groups.json page 2: the real
+# "Buchungsdatum:" value sits 125px to its right (10.5% of the ~1191px
+# page), while the second date column two columns over -- which trap 3
+# requires NOT be picked up -- sits 531px away (44.6%). 25% sits cleanly
+# between the two, rejecting the cross-column jump while keeping the real
+# pair.
+_LABEL_VALUE_MAX_GAP_RATIO = 0.25
+
+
+def _label_value_is_label_text(rendered: str) -> bool:
+    """True when `rendered` (already cleaned/normalized) is a bare
+    'Something:' label.
+
+    This single check is what defeats trap 1 (side-by-side labels, e.g.
+    'Nachname:' immediately followed by 'Vorname:' in the same form row): a
+    block ending in ':' is excluded from being anyone's VALUE, so a naive
+    "nearest block to the right" search can never swallow one label as
+    another's value.
+    """
+    return rendered.rstrip().endswith(':')
+
+
+def _extract_bbox_rect(block: dict, bbox_keys: list[str]) -> tuple[float, float, float, float] | None:
+    """Reduce whichever geometry key(s) `_find_usable_bbox_keys` found on
+    `block` to a single (x0, y0, x1, y1) rectangle for the label/value
+    pairing geometry (B3).
+
+    Prefers a flat bbox (already validated by `_is_usable_bbox_value` as
+    >= 4 numbers) since it already IS the rectangle; falls back to the
+    bounding box of a polygon of points. `bbox_keys` is candidate-ordered
+    (see `_BLOCK_BBOX_KEY_CANDIDATES`) so a flat `block_bbox` wins over a
+    `block_polygon_points` on the same block when both are present.
+    """
+    for key in bbox_keys:
+        items = list(block[key])
+        if all(isinstance(item, (int, float)) and not isinstance(item, bool) for item in items):
+            x0, y0, x1, y1 = items[0], items[1], items[2], items[3]
+            return float(x0), float(y0), float(x1), float(y1)
+        xs = [float(point[0]) for point in items]
+        ys = [float(point[1]) for point in items]
+        if xs and ys:
+            return min(xs), min(ys), max(xs), max(ys)
+    return None
+
+
+def _pair_label_value_blocks(records: list[dict]) -> list[str]:
+    """Fold decoupled 'Label:' / value block pairs into single
+    'Label: Wert' lines (B3), for one page's already-rendered,
+    already-boilerplate-filtered blocks.
+
+    `records` items are {'label', 'rendered', 'bbox'} in document order;
+    'bbox' is an (x0, y0, x1, y1) tuple or None. A block with no bbox can
+    never be matched as either half of a pair -- it just passes through
+    unchanged, which is the required fallback for engines/older jobs that
+    don't emit block geometry at all.
+
+    Deliberately conservative, per the brief: "a wrong pairing is worse
+    than no pairing." A label with no value inside the vertical-overlap /
+    max-gap window is emitted unchanged (trap 2: a value with no nearby
+    label is likewise left standalone, never reached for from afar), and
+    every value is consumed by at most one label (first-come by document
+    order -- there is exactly one label per value in every measured case,
+    so no ordering scheme has been observed to matter).
+    """
+    page_width = max((r['bbox'][2] for r in records if r['bbox']), default=0.0)
+    max_gap = page_width * _LABEL_VALUE_MAX_GAP_RATIO
+
+    value_indices = [
+        i for i, r in enumerate(records)
+        if r['bbox'] is not None
+        and r['label'] in _LABEL_VALUE_VALUE_LABELS
+        and not _label_value_is_label_text(r['rendered'])
+    ]
+    # Every OTHER label ("Something:") on the page with geometry -- used
+    # below to stop a label reaching PAST a nearer label for a value that
+    # is really the nearer label's. Without this, "Nachname: Vorname: Peter"
+    # with Nachname's own field left blank (no value block emitted for it
+    # at all) lets 'Nachname:' steal 'Peter' just because it is still
+    # within the generic gap budget -- a wrong pairing, which is exactly
+    # what the brief calls worse than no pairing.
+    label_positions = [
+        record['bbox']
+        for record in records
+        if record['bbox'] is not None
+        and record['label'] in _LABEL_VALUE_LABEL_LABELS
+        and _label_value_is_label_text(record['rendered'])
+    ]
+    used_values: set[int] = set()
+    paired_into: dict[int, int] = {}  # label index -> its value's index
+
+    for i, record in enumerate(records):
+        if record['bbox'] is None or record['label'] not in _LABEL_VALUE_LABEL_LABELS:
+            continue
+        if not _label_value_is_label_text(record['rendered']):
+            continue
+
+        lx0, ly0, lx1, ly1 = record['bbox']
+        label_height = ly1 - ly0
+        if label_height <= 0:
+            continue
+
+        best_value: int | None = None
+        best_gap = 0.0
+        for j in value_indices:
+            if j in used_values:
+                continue
+            vx0, vy0, vx1, vy1 = records[j]['bbox']
+            if vx0 <= lx1:
+                continue  # not to the label's right (trap 1/3 guard)
+            overlap = min(ly1, vy1) - max(ly0, vy0)
+            if overlap < label_height * _LABEL_VALUE_MIN_OVERLAP_RATIO:
+                continue  # different form row
+            gap = vx0 - lx1
+            if gap > max_gap:
+                continue  # too far -- likely a different column (trap 3)
+            if any(
+                lx1 <= mx0 < vx0
+                and min(ly1, my1) - max(ly0, my0) >= label_height * _LABEL_VALUE_MIN_OVERLAP_RATIO
+                for mx0, my0, mx1, my1 in label_positions
+                if (mx0, my0, mx1, my1) != record['bbox']
+            ):
+                continue  # a nearer label sits between this label and the value
+            if best_value is None or gap < best_gap:
+                best_value, best_gap = j, gap
+
+        if best_value is not None:
+            paired_into[i] = best_value
+            used_values.add(best_value)
+
+    parts: list[str] = []
+    for i, record in enumerate(records):
+        if i in used_values:
+            continue  # folded into its label's line below
+        if i in paired_into:
+            parts.append(f"{record['rendered']} {records[paired_into[i]]['rendered']}".strip())
+        else:
+            parts.append(record['rendered'])
+    return parts
+
+
+def _convert_structure_to_markdown(
+    page_structures: list[dict],
+    source_name: str = '',
+    profile_label: str = '',
+    metadata: dict[str, object] | None = None,
+) -> tuple[str, dict]:
+    sections: list[str] = []
+    block_count = 0
+    labels: dict[str, int] = {}
+    page_count = len(page_structures)
+    bbox_blocks_total = 0
+    bbox_blocks_with_bbox = 0
+    bbox_keys_seen: set[str] = set()
+    # B2: tracked across the whole document (not reset per page) -- the
+    # point is exactly to catch the SAME header/footer/number repeating on
+    # every page and keep only its first occurrence.
+    seen_boilerplate: set[str] = set()
+
+    frontmatter = _build_rag_frontmatter(source_name, page_count, profile_label, metadata=metadata)
+
+    for page_index, page in enumerate(page_structures, start=1):
+        page_blocks = page.get('parsing_res_list', []) or []
+        # Rendered blocks kept for this page, geometry attached (B3 needs the
+        # whole page assembled before it can look for a value to a label's
+        # right -- unlike boilerplate dedup above, pairing can't be decided
+        # block-by-block as the loop goes).
+        page_records: list[dict] = []
+
+        ordered_blocks = sorted(
+            page_blocks,
+            key=lambda item: (
+                item.get('block_order') is None,
+                item.get('block_order') if item.get('block_order') is not None else 10**9,
+                item.get('block_id', 10**9),
+            ),
+        )
+
+        for block in ordered_blocks:
+            label = str(block.get('block_label') or 'unknown')
+            labels[label] = labels.get(label, 0) + 1
+            # Counted over every block on the page (not just the ones that end
+            # up with rendered content below) -- this is a probe into what the
+            # pipeline emits, independent of what _render_block_content keeps.
+            bbox_blocks_total += 1
+            block_bbox_keys = _find_usable_bbox_keys(block)
+            block_bbox_rect = None
+            if block_bbox_keys:
+                bbox_blocks_with_bbox += 1
+                bbox_keys_seen.update(block_bbox_keys)
+                block_bbox_rect = _extract_bbox_rect(block, block_bbox_keys)
+            block_content = str(block.get('block_content') or '')
+            rendered = _render_block_content(
+                label=label,
+                content=block_content,
+                page_number=page_index,
+            )
+            if rendered and _DEDUPLICATE_REPEATED_BOILERPLATE and label in _BOILERPLATE_DEDUP_LABELS:
+                boilerplate_key = _boilerplate_key(block_content)
+                if boilerplate_key in seen_boilerplate:
+                    # Repeat of a header/footer/number already emitted on an
+                    # earlier page -- drop it instead of stamping it onto
+                    # every page again (B2).
+                    rendered = ''
+                else:
+                    seen_boilerplate.add(boilerplate_key)
+            if rendered:
+                page_records.append({'label': label, 'rendered': rendered, 'bbox': block_bbox_rect})
+                block_count += 1
+
+        if _PAIR_LABEL_VALUE_GEOMETRY:
+            page_parts = _pair_label_value_blocks(page_records)
+        else:
+            page_parts = [record['rendered'] for record in page_records]
+
+        if page_parts:
+            page_header = f'<!-- page:{page_index}/{page_count} -->'
+            sections.append(page_header + '\n\n' + '\n\n'.join(page_parts))
+
+    body = ('\n\n---\n\n'.join(sections)).strip()
+    markdown = _prepend_frontmatter(frontmatter, body)
+    if not markdown or markdown == frontmatter.strip():
+        raise RuntimeError('Structured PP-Structure conversion produced empty markdown')
+    return markdown, {
+        'page_count': page_count,
+        'block_count': block_count,
+        'block_labels': labels,
+        'bbox_coverage': {
+            'blocks_total': bbox_blocks_total,
+            'blocks_with_bbox': bbox_blocks_with_bbox,
+            'keys_seen': sorted(bbox_keys_seen),
+        },
+    }
+
+
+def _adaptive_pdf_chunk_page_size(
+    source: Path,
+    profile_id: str,
+    total_pages: int,
+    capability: dict,
+) -> tuple[int, dict[str, int | str | bool]]:
+    default_chunk = _PDF_CHUNK_PAGE_SIZE_BY_PROFILE.get(profile_id, _PDF_CHUNK_PAGE_SIZE)
+    file_size_mb = source.stat().st_size / (1024 * 1024)
+    cpu_only = bool(capability.get('selected_device') == 'cpu')
+
+    # Keep quality profile, but reduce chunk size for risky large PDFs on CPU to lower peak memory.
+    adaptive_chunk = default_chunk
+    if cpu_only and profile_id.startswith('ppocrv6_medium'):
+        if total_pages >= 20 or file_size_mb >= 30:
+            adaptive_chunk = 1
+        elif total_pages >= 12 or file_size_mb >= 18:
+            adaptive_chunk = min(adaptive_chunk, 2)
+    elif cpu_only and profile_id.startswith('ppocrv6_small'):
+        if total_pages >= 40 or file_size_mb >= 45:
+            adaptive_chunk = min(adaptive_chunk, 2)
+        elif total_pages >= 24 or file_size_mb >= 28:
+            adaptive_chunk = min(adaptive_chunk, 3)
+
+    adaptive_chunk = max(1, adaptive_chunk)
+    return adaptive_chunk, {
+        'enabled': adaptive_chunk != default_chunk,
+        'chunk_page_size': adaptive_chunk,
+        'default_chunk_page_size': default_chunk,
+        'total_pages': total_pages,
+        'file_size_mb': int(file_size_mb),
+        'cpu_only': cpu_only,
+    }
+
+
+def _paddleocr_to_structure(
+    source: Path,
+    profile_id: str,
+    profile: dict[str, str],
+    capability: dict,
+) -> tuple[list[dict], dict]:
+    from paddleocr import PPStructureV3  # noqa: PLC0415
+
+    use_table_recognition = profile.get('use_table_recognition', 'false').lower() == 'true'
+
+    pipeline = PPStructureV3(
+        use_doc_orientation_classify=False,
+        use_doc_unwarping=False,
+        use_textline_orientation=False,
+        use_formula_recognition=False,
+        use_table_recognition=use_table_recognition,
+        use_seal_recognition=False,
+        use_chart_recognition=False,
+        text_detection_model_name=profile['text_detection_model_name'],
+        text_recognition_model_name=profile['text_recognition_model_name'],
+        engine='onnxruntime',
+        device='cpu',
+    )
+    page_structures: list[dict] = []
+    raw_outputs: list[dict] = []
+
+    def _collect_results(pred_results: list) -> None:
+        for result in pred_results:
+            result_json = cast(dict, result.json)
+            result_markdown = cast(dict, result.markdown)
+            res_payload = cast(dict | None, result_json.get('res'))
+            if not res_payload:
+                continue
+            page_structures.append(res_payload)
+            raw_outputs.append({
+                'json': result_json,
+                'markdown': result_markdown,
+            })
+
+    chunking_meta: dict[str, int | str | bool] = {'enabled': False, 'chunk_page_size': _PDF_CHUNK_PAGE_SIZE}
+
+    if source.suffix.lower() == '.pdf':
+        reader = PdfReader(str(source))
+        total_pages = len(reader.pages)
+        if total_pages == 0:
+            raise RuntimeError('PDF has no pages to process')
+
+        chunk_page_size, chunking_meta = _adaptive_pdf_chunk_page_size(
+            source=source,
+            profile_id=profile_id,
+            total_pages=total_pages,
+            capability=capability,
+        )
+
+        with TemporaryDirectory(prefix='weave_ingest_pdf_chunks_') as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            for chunk_start in range(0, total_pages, chunk_page_size):
+                chunk_end = min(chunk_start + chunk_page_size, total_pages)
+                writer = PdfWriter()
+                for page_index in range(chunk_start, chunk_end):
+                    writer.add_page(reader.pages[page_index])
+
+                chunk_path = tmpdir_path / f'chunk_{chunk_start + 1}_{chunk_end}.pdf'
+                with chunk_path.open('wb') as handle:
+                    writer.write(handle)
+
+                chunk_results = list(pipeline.predict(str(chunk_path)))
+                if not chunk_results:
+                    raise RuntimeError(
+                        f'PaddleOCR PP-StructureV3 produced no results for PDF chunk {chunk_start + 1}-{chunk_end}'
+                    )
+                _collect_results(chunk_results)
+    else:
+        results = list(pipeline.predict(str(source)))
+        if not results:
+            raise RuntimeError('PaddleOCR PP-StructureV3 produced no results')
+        _collect_results(results)
+
+    if not page_structures:
+        raise RuntimeError('PaddleOCR PP-StructureV3 returned no structured pages')
+
+    return page_structures, {
+        'raw_outputs': raw_outputs,
+        'pdf_chunking': chunking_meta,
+    }
+
+
+_OPENAI_VISION_DEFAULT_SYSTEM_PROMPT = (
+    'You are a precise document OCR and layout extraction assistant. '
+    'Given an image of a document page, extract all text and structure faithfully. '
+    'Return only well-structured Markdown. '
+    'Preserve headings, bullet lists, numbered lists, and tables (as GFM tables). '
+    'Do not add commentary, preamble, or explanation outside the Markdown.'
+)
+
+
+def _call_vision_chat_api(
+    *,
+    api_base: str,
+    bearer_token: str,
+    model_name: str,
+    system_prompt: str,
+    image_b64: str,
+    page_num: int,
+    connection_label: str,
+) -> str:
+    """POST one page image to an OpenAI-compatible /v1/chat/completions
+    endpoint and return the extracted Markdown. Shared by
+    `_openai_vision_to_structure` (explicit params rather than a closure over
+    `settings`/`profile` so the same code path serves both the env-based
+    profile and an admin-configured VlConnection override).
+
+    `connection_label` (the VlConnection's admin-assigned name, or a generic
+    label for the env-based profile -- see `_openai_vision_to_structure`) is
+    what error messages raised here show the caller. `api_base` itself is a
+    secret-adjacent, admin-configured value (may point at an internal/VPC-only
+    host) that regular team members must never see: raised RuntimeErrors
+    propagate straight into `job.error_message` / `processing_info.execution`
+    (job detail response, `_fallback_convert_with_frontmatter`'s
+    fallback_reason) and the benchmark report/export (`_variant_metrics_from_job`
+    reads `job.error_message` verbatim) -- both readable by any teammate who
+    can see the job/run, not just admins. The full `api_base` is logged here
+    instead, for operators with worker log access.
+    """
+    payload = {
+        'model': model_name,
+        'messages': [
+            {'role': 'system', 'content': system_prompt},
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'image_url',
+                        'image_url': {'url': f'data:image/png;base64,{image_b64}'},
+                    },
+                    {
+                        'type': 'text',
+                        'text': f'Extract the full text and layout of page {page_num} as Markdown.',
+                    },
+                ],
+            },
+        ],
+        'max_tokens': 4096,
+    }
+    try:
+        response = _vl_chat_completion(api_base, bearer_token, payload, timeout=120)
+    except safe_fetch_module.SafeFetchError as exc:
+        # SafeFetchError embeds the URL it was fetching, and api_base may be an
+        # internal/VPC-only host that must not reach job.error_message or the
+        # log stream (see the api_base note in this function's docstring). The
+        # detail goes to the chained exception; the message stays label-only.
+        logger.warning('VL endpoint "%s" unreachable', connection_label)
+        raise RuntimeError(f'VL endpoint "{connection_label}" unreachable') from exc
+
+    if response.status_code >= 400:
+        error_body = response.body.decode(errors='replace')
+        logger.warning(
+            'VL endpoint "%s" returned HTTP %s for page %s: %s',
+            connection_label, response.status_code, page_num, error_body[:400],
+        )
+        raise RuntimeError(
+            f'VL endpoint "{connection_label}" returned HTTP {response.status_code} '
+            f'for page {page_num}: {error_body[:400]}'
+        )
+
+    try:
+        body = _json.loads(response.body.decode())
+    except ValueError as exc:
+        logger.warning('VL endpoint "%s" returned invalid JSON for page %s', connection_label, page_num)
+        raise RuntimeError(
+            f'VL endpoint "{connection_label}" returned invalid JSON for page {page_num}'
+        ) from exc
+
+    choices = body.get('choices') or []
+    if not choices:
+        logger.warning('VL endpoint "%s" returned no choices for page %s', connection_label, page_num)
+        raise RuntimeError(f'VL endpoint "{connection_label}" returned no choices for page {page_num}')
+    content = (choices[0].get('message') or {}).get('content') or ''
+    return content.strip()
+
+
+# Cap on a VL response body. A page of extracted Markdown is far smaller;
+# this only stops a hostile/broken endpoint from streaming unbounded data
+# into the worker.
+_VL_MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+
+
+def _vl_chat_completion(
+    api_base: str,
+    bearer_token: str,
+    payload: dict,
+    timeout: float,
+) -> 'safe_fetch_module.SafeFetchResponse':
+    """POST a chat-completion request to a VL endpoint through safe_fetch.
+
+    Routed through safe_fetch rather than urlopen so these outbound calls get
+    the same treatment as every other admin-supplied URL in this codebase:
+    the connection is pinned to the validated IP (no DNS rebinding), every
+    redirect hop is re-checked, the Authorization header is dropped if a hop
+    leaves the original origin, and cloud-metadata addresses stay blocked no
+    matter what. Self-hosted endpoints on private networks -- the normal case
+    here -- are permitted via VL_PRIVATE_HOST_ALLOWLIST.
+    """
+    return safe_fetch_module.safe_fetch(
+        f'{api_base}/v1/chat/completions',
+        method='POST',
+        headers={
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {bearer_token}',
+        },
+        body=_json.dumps(payload).encode(),
+        timeout=timeout,
+        max_bytes=_VL_MAX_RESPONSE_BYTES,
+        allowed_private_hosts=frozenset(settings.vl_private_host_allowlist),
+    )
+
+
+def _page_to_base64_png(pdf_path: Path, page_index: int) -> str:
+    import pypdfium2 as pdfium  # noqa: PLC0415
+
+    doc = pdfium.PdfDocument(str(pdf_path))
+    page = doc[page_index]
+    bitmap = page.render(scale=2.0)  # 144 dpi — good quality / reasonable token cost
+    pil_image = bitmap.to_pil()
+    import io  # noqa: PLC0415
+    buf = io.BytesIO()
+    pil_image.save(buf, format='PNG')
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def _openai_vision_to_structure(
+    source: Path,
+    profile: dict[str, str],
+    *,
+    vl_override: dict[str, str] | None = None,
+) -> tuple[list[dict], dict]:
+    """Convert a document to structured pages by sending each page as a base64
+    PNG to an OpenAI-compatible vision endpoint.
+
+    Absent `vl_override`, requires:
+        OPENAI_API_BASE_URL  – e.g. https://api.openai.com or http://localhost:11434
+        OPENAI_API_BEARER_TOKEN – API key / bearer token
+
+    `vl_override` (base_url/api_key/model/system_prompt, all optional keys)
+    lets an admin-configured VlConnection (see app/api/benchmarks.py,
+    app/workers/tasks.py) take priority over the env-based profile on a
+    per-job basis, without touching the env-based path when absent (`None`
+    is a no-op -- byte-identical to the pre-override behavior).
+
+    The endpoint is expected to be compatible with the OpenAI chat-completions API
+    (POST /v1/chat/completions). The model name falls back to the profile's
+    'vision_model' key, then 'gpt-4o'.
+    """
+    try:
+        from pypdf import PdfReader  # noqa: PLC0415
+        import pypdfium2  # noqa: F401,PLC0415
+    except ImportError as exc:
+        raise RuntimeError(
+            f'pypdfium2 is required for the OpenAI vision pipeline: {exc}'
+        ) from exc
+
+    api_base = ((vl_override or {}).get('base_url') or settings.openai_api_base_url or '').rstrip('/')
+    bearer_token = (vl_override or {}).get('api_key') or settings.openai_api_bearer_token or ''
+    if not api_base:
+        raise RuntimeError(
+            'OPENAI_API_BASE_URL is not configured. '
+            'Set it via environment variable before using the openai_vision profile.'
+        )
+    if not bearer_token:
+        raise RuntimeError(
+            'OPENAI_API_BEARER_TOKEN is not configured. '
+            'Set it via environment variable before using the openai_vision profile.'
+        )
+
+    model_name = (vl_override or {}).get('model') or profile.get('vision_model') or 'gpt-4o'
+    system_prompt = ((vl_override or {}).get('system_prompt') or '').strip() or _OPENAI_VISION_DEFAULT_SYSTEM_PROMPT
+    # Shown to any teammate who can see the job/benchmark run (error
+    # messages, fallback_reason, report/export -- see _call_vision_chat_api's
+    # docstring); the connection's admin-assigned name, never its base_url.
+    # No VlConnection is attached on the env-based (non-benchmark) path, so
+    # there's no name to borrow -- fall back to a generic, non-secret label.
+    connection_label = (vl_override or {}).get('name') or 'OpenAI vision (env-configured)'
+
+    def _call_vision_api(image_b64: str, page_num: int) -> str:
+        return _call_vision_chat_api(
+            api_base=api_base,
+            bearer_token=bearer_token,
+            model_name=model_name,
+            system_prompt=system_prompt,
+            image_b64=image_b64,
+            page_num=page_num,
+            connection_label=connection_label,
+        )
+
+    suffix = source.suffix.lower()
+    page_structures: list[dict] = []
+    raw_outputs: list[dict] = []
+
+    if suffix == '.pdf':
+        reader = PdfReader(str(source))
+        total_pages = len(reader.pages)
+        if total_pages == 0:
+            raise RuntimeError('PDF has no pages to process')
+
+        for page_index in range(total_pages):
+            page_num = page_index + 1
+            image_b64 = _page_to_base64_png(source, page_index)
+            markdown_text = _call_vision_api(image_b64, page_num)
+            # Wrap output in the same page_structures schema the rest of the pipeline expects
+            page_structures.append({
+                'parsing_res_list': [
+                    {
+                        'block_label': 'llm_markdown',
+                        'block_content': markdown_text,
+                        'block_order': 0,
+                        'block_id': 0,
+                    }
+                ]
+            })
+            raw_outputs.append({'page': page_num, 'markdown': markdown_text})
+    else:
+        # For non-PDF files (images) render directly
+        with source.open('rb') as fh:
+            image_b64 = base64.b64encode(fh.read()).decode()
+        markdown_text = _call_vision_api(image_b64, 1)
+        page_structures.append({
+            'parsing_res_list': [
+                {
+                    'block_label': 'llm_markdown',
+                    'block_content': markdown_text,
+                    'block_order': 0,
+                    'block_id': 0,
+                }
+            ]
+        })
+        raw_outputs.append({'page': 1, 'markdown': markdown_text})
+
+    if not page_structures:
+        raise RuntimeError('OpenAI vision pipeline returned no structured pages')
+
+    return page_structures, {
+        'raw_outputs': raw_outputs,
+        'pdf_chunking': {'enabled': False, 'chunk_page_size': 1},
+        'vision_model': model_name,
+        'api_base': api_base,
+    }
+
+
+def test_vl_connection(
+    base_url: str,
+    model: str,
+    api_key: str,
+    system_prompt: str,
+    timeout_seconds: float = 20.0,
+) -> dict[str, object]:
+    """Probe an OpenAI-compatible vision endpoint with one minimal,
+    text-only chat-completion request (no image) -- just enough to confirm
+    the endpoint is reachable and the credential is accepted, without the
+    cost/latency of a real page render. Used by
+    POST /api/v1/auth/admin/vl-connections/{id}/test.
+
+    Goes through safe_fetch like every other outbound call to an
+    admin-supplied URL; private endpoints (self-hosted vLLM/Ollama/etc.) are
+    permitted via VL_PRIVATE_HOST_ALLOWLIST, while DNS-rebinding protection,
+    per-hop redirect checks and the unconditional cloud-metadata block stay
+    in force.
+
+    The result deliberately reports only status and latency, never the remote
+    response body: echoing it back would turn this endpoint into a probe for
+    mapping internal services from the outside.
+    """
+    normalized_base = (base_url or '').rstrip('/')
+    payload = {
+        'model': model,
+        'messages': [
+            {'role': 'system', 'content': system_prompt or _OPENAI_VISION_DEFAULT_SYSTEM_PROMPT},
+            {'role': 'user', 'content': 'Reply with a single word to confirm connectivity.'},
+        ],
+        'max_tokens': 16,
+    }
+    started = time.monotonic()
+    try:
+        response = _vl_chat_completion(normalized_base, api_key, payload, timeout=timeout_seconds)
+    except safe_fetch_module.SafeFetchError as exc:
+        # Covers unreachable hosts, blocked/private targets and size caps.
+        latency_ms = int((time.monotonic() - started) * 1000)
+        # Same reasoning as _call_vision_chat_api: the URL stays out of the
+        # log stream, which the admin Logs tab renders.
+        logger.warning('VL connection test failed: endpoint unreachable or not permitted')
+        return {'ok': False, 'detail': 'Endpoint unreachable or not permitted', 'latency_ms': latency_ms}
+    except Exception as exc:  # pragma: no cover - defensive catch-all
+        latency_ms = int((time.monotonic() - started) * 1000)
+        logger.warning('VL connection test raised %s', type(exc).__name__)
+        return {'ok': False, 'detail': 'Connection test failed', 'latency_ms': latency_ms}
+
+    latency_ms = int((time.monotonic() - started) * 1000)
+
+    if response.status_code >= 400:
+        # Body intentionally logged, not returned -- see the docstring.
+        logger.warning(
+            'VL connection test returned HTTP %s: %s',
+            response.status_code, response.body.decode(errors='replace')[:400],
+        )
+        return {'ok': False, 'detail': f'HTTP {response.status_code}', 'latency_ms': latency_ms}
+
+    return {'ok': True, 'detail': 'Connected', 'latency_ms': latency_ms}
+
+
+def _paddlevl_to_structure(
+    source: Path,
+    capability: dict,
+) -> tuple[list[dict], dict]:
+    from paddleocr import PaddleOCRVL  # noqa: PLC0415
+
+    device = 'gpu' if capability.get('selected_device') == 'gpu' else 'cpu'
+    pipeline_key = ('v1.6', device)
+    cached_pipeline = _PADDLE_VL_PIPELINES.get(pipeline_key)
+    if cached_pipeline is None:
+        cached_pipeline = PaddleOCRVL(pipeline_version='v1.6', device=device)
+        _PADDLE_VL_PIPELINES[pipeline_key] = cached_pipeline
+    pipeline = cast(PaddleOCRVL, cached_pipeline)
+
+    # `format_block_content=True` is the one predict() parameter measured to
+    # change what lands in `parsing_res_list`: title blocks arrive with the
+    # heading level the pipeline itself assigned (`#` document title, `##`/
+    # `###` sections) instead of bare text, so `_render_heading` can keep a
+    # real hierarchy rather than flattening everything to `##`. Table blocks
+    # additionally gain presentational HTML attributes, which
+    # `_html_table_to_markdown` already strips.
+    #
+    # Measured on a six-page scanned form, nine parameter sets against one
+    # input, and deliberately NOT set here:
+    #   temperature / top_p        -- byte-identical output; this pipeline
+    #                                 already decodes greedily
+    #   max_pixels                 -- byte-identical on this input; unproven
+    #   merge_layout_blocks        -- byte-identical
+    #   markdown_ignore_labels     -- only shapes PaddleOCR's own markdown
+    #                                 rendering, which this module does not
+    #                                 consume; header/footer blocks stay in
+    #                                 `parsing_res_list` regardless
+    # None of them changed the number of LaTeX-carrying blocks (16 in every
+    # run), so the formula artefacts cannot be configured away here.
+    results = list(pipeline.predict(str(source), format_block_content=True))
+    if not results:
+        raise RuntimeError('PaddleOCR-VL produced no results')
+
+    page_structures: list[dict] = []
+    raw_outputs: list[dict] = []
+
+    for result in results:
+        result_json = cast(dict, getattr(result, 'json', {}) or {})
+        res_payload = cast(dict | None, result_json.get('res')) if isinstance(result_json, dict) else None
+        if not isinstance(res_payload, dict):
+            continue
+        page_structures.append(res_payload)
+        raw_outputs.append({'json': result_json})
+
+    if not page_structures:
+        raise RuntimeError('PaddleOCR-VL returned no structured pages')
+
+    return page_structures, {
+        'raw_outputs': raw_outputs,
+        'pdf_chunking': {'enabled': False, 'chunk_page_size': 1},
+    }
+
+
+def get_paddle_status() -> tuple[str, str | None, dict | None]:
+    try:
+        from app.workers.tasks import probe_paddle
+
+        task = probe_paddle.delay()
+        payload = cast(dict[str, str | None], task.get(timeout=12))
+        status_name = payload.get('status')
+        runtime_fields = {k: v for k, v in payload.items() if k not in ('status', 'detail')}
+        if status_name in {'running', 'failed', 'stopped'}:
+            return status_name, payload.get('detail'), runtime_fields or None
+        return 'failed', 'Unexpected probe payload from worker', None
+    except CeleryTimeoutError:
+        return 'stopped', 'Worker unavailable or Paddle probe timed out', None
+    except Exception as exc:  # pragma: no cover
+        return 'failed', str(exc), None
+
+
+def get_paddle_settings() -> dict[str, str | int]:
+    defaults = _default_runtime_settings()
+    try:
+        payload = _redis_client().hgetall(_RUNTIME_SETTINGS_KEY)
+    except Exception:
+        payload = {}
+
+    if not payload:
+        return defaults
+
+    runtime = dict(defaults)
+    if payload.get('default_profile'):
+        runtime['default_profile'] = payload['default_profile']
+    timeout_value = payload.get('timeout_seconds')
+    if timeout_value is not None:
+        try:
+            runtime['timeout_seconds'] = max(1, int(timeout_value))
+        except ValueError:
+            runtime['timeout_seconds'] = defaults['timeout_seconds']
+    return runtime
+
+
+def update_paddle_settings(*, default_profile: str, timeout_seconds: int) -> None:
+    selected_profile = default_profile.strip() if default_profile.strip() in _PADDLE_PROFILES else _DEFAULT_PROFILE_ID
+    payload = {
+        'default_profile': selected_profile,
+        'timeout_seconds': str(timeout_seconds),
+    }
+    try:
+        _redis_client().hset(_RUNTIME_SETTINGS_KEY, mapping=payload)
+    except Exception:
+        settings.paddle_default_profile = payload['default_profile']
+        settings.paddle_timeout_seconds = timeout_seconds
+
+
+def get_paddle_capabilities(
+    vl_connections: Sequence[VlConnection] = (),
+) -> dict[str, list[dict[str, str]]]:
+    """Static presets (unchanged, 'kind': 'ocr') plus one dynamic 'kind':
+    'vl' entry per already-enabled VlConnection the caller passes in --
+    static entries always first, per the profile_id contract used across
+    upload/collections-start/restart/mail/import (see
+    resolve_profile_selection).
+
+    Takes already-loaded connections rather than a db session/query itself:
+    this module has never had a DB dependency (Redis for runtime settings,
+    nothing else), and callers (routes.py's /paddle/capabilities endpoint
+    and its restart-time profile validator) already need a Session for
+    other things, so loading the enabled-connections list is cheapest done
+    once there and handed in -- see routes.py's _enabled_vl_connections.
+    """
+    profile_order = [
+        'ppocrv6_tiny',
+        'ppocrv6_tiny_structurev3',
+        'ppocrv6_small',
+        'ppocrv6_small_structurev3',
+        'ppocrv6_medium',
+        'ppocrv6_medium_structurev3',
+        'paddlevl_1_6_0_9b',
+        'openai_vision',
+    ]
+    profiles = [
+        _PADDLE_PROFILES[profile_id]
+        for profile_id in profile_order
+        if profile_id in _PADDLE_PROFILES
+    ]
+    profiles.extend(
+        {
+            'value': f'{_VL_PROFILE_PREFIX}{connection.id}',
+            'label': f'VL: {connection.name}',
+            'description': f'{connection.model} — vision-language connection',
+            'kind': 'vl',
+        }
+        for connection in vl_connections
+    )
+    return {'profiles': profiles}
+
+
+def _vl_connection_settings(db: Session, connection_id: str) -> tuple[dict[str, str], VlConnection | None]:
+    """Shared lookup behind resolve_profile_selection and
+    vl_settings_for_worker: settings fields always carry vl_connection_id
+    (even when the connection is missing/disabled) plus variant_label when
+    the connection still exists, so a caller either raises on a bad
+    connection (resolve_profile_selection, for API endpoints) or lets
+    process_job's own disabled/missing-connection check fail just that one
+    job later (vl_settings_for_worker, for background workers -- see its
+    docstring)."""
+    connection = db.get(VlConnection, connection_id)
+    fields: dict[str, str] = {'vl_connection_id': connection_id}
+    if connection is not None:
+        fields['variant_label'] = connection.name
+    return fields, connection
+
+
+def resolve_profile_selection(db: Session, profile_id: str | None) -> dict[str, str]:
+    """Translates a client-supplied profile_id into the extra
+    processing_info.settings fields it implies, mirroring the shape
+    app/api/benchmarks.py's variant generation writes for its 'vl' variant
+    (vl_connection_id + a human-readable label under 'variant_label') -- see
+    app/workers/tasks.py's vl_override build (~line 335) for the consumer,
+    which only needs settings.vl_connection_id to work unchanged.
+
+    Static preset ids (the _PADDLE_PROFILES keys) need no extra settings
+    and return {}. An unrecognized *static-looking* id also returns {},
+    deliberately un-validated -- exactly today's behavior
+    (paddle_service._resolve_profile silently clamps it to the default
+    profile downstream; upload_document has never validated profile_id, and
+    this must not become stricter for that path). Only a
+    'vl:<connection_id>' selection is strictly checked here, because an
+    unknown/disabled connection has no equivalent silent fallback the way a
+    bad static id falls back to a default OCR preset: raises 422 in that
+    case, matching the wording already used for unknown static profiles
+    (see routes.py's restart_job validator).
+    """
+    if not isinstance(profile_id, str) or not profile_id.startswith(_VL_PROFILE_PREFIX):
+        return {}
+    connection_id = profile_id[len(_VL_PROFILE_PREFIX):]
+    fields, connection = _vl_connection_settings(db, connection_id)
+    if connection is None or not connection.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown profile '{profile_id}'",
+        )
+    return {'profile_id': profile_id, **fields}
+
+
+def vl_settings_for_worker(db: Session, profile_id: str | None) -> dict[str, str]:
+    """Non-raising counterpart to resolve_profile_selection for Celery
+    workers (app/workers/import_tasks.py's attachment-OCR dispatch), which
+    must never abort a whole run/page over an HTTP-shaped exception --
+    workers in this codebase deliberately stay fastapi-free (see
+    app/workers/openwebui_tasks.py's "instead of raising HTTPException"
+    house rule). The connection was already validated once, at request time
+    (import_routes.py's create_import_run calls resolve_profile_selection);
+    if it has since been deleted/disabled, this still returns
+    vl_connection_id so process_job's own disabled-connection check
+    (tasks.py ~335) fails just that one child job with its normal clear
+    message, instead of silently dropping the selection."""
+    if not isinstance(profile_id, str) or not profile_id.startswith(_VL_PROFILE_PREFIX):
+        return {}
+    connection_id = profile_id[len(_VL_PROFILE_PREFIX):]
+    fields, _connection = _vl_connection_settings(db, connection_id)
+    return {'profile_id': profile_id, **fields}
+
+
+def effective_pipeline_profile_id(profile_id: str | None) -> str | None:
+    """The real OCR/VL pipeline id to hand to process_job.delay /
+    convert_to_markdown_with_details -- a 'vl:<connection_id>' selection
+    always resolves to 'openai_vision' (the same real profile
+    app/api/benchmarks.py's vl variant spec uses), matching the
+    settings.vl_connection_id the worker's vl_override build already reads
+    unchanged (tasks.py ~335). The stored settings.profile_id stays the
+    display value ('vl:<connection_id>', see resolve_profile_selection) --
+    this function is only for the argument passed to the Celery task /
+    conversion call, never for what's persisted."""
+    if isinstance(profile_id, str) and profile_id.startswith(_VL_PROFILE_PREFIX):
+        return 'openai_vision'
+    return profile_id
+
+
+def _resolve_profile(profile_id: str | None) -> tuple[str, dict[str, str]]:
+    requested_profile = (profile_id or '').strip() or cast(str, get_paddle_settings()['default_profile'])
+    if requested_profile not in _PADDLE_PROFILES:
+        requested_profile = _DEFAULT_PROFILE_ID
+    return requested_profile, _PADDLE_PROFILES[requested_profile]
+
+
+def _eml_to_markdown(
+    source: Path,
+    selected_profile_id: str,
+    selected_profile: dict[str, str],
+    metadata: dict[str, object] | None = None,
+) -> tuple[str, int]:
+    """Convert a .eml (RFC-822 email) file to markdown.
+
+    Returns (markdown_content, page_count_for_attachments).
+    The function:
+    1. Parses the email envelope and body
+    2. Renders the body (HTML or plain text) to markdown
+    3. For each attachment, if supported, processes it through the conversion pipeline
+    4. Combines them all into one markdown document
+
+    This is used as a first-class document handler (not tied to mail ingestion),
+    so it uses the standard frontmatter/versioning like any other document type.
+    """
+    from app.services.confluence_markdown import html_to_markdown
+
+    # Read and parse the .eml file
+    raw_eml = source.read_bytes()
+    msg = _parse_eml_bytes(raw_eml)
+    envelope = _extract_envelope(msg)
+    chosen_body, leaves = _walk_tree(msg)
+
+    sections: list[str] = []
+    total_attachment_pages = 0
+
+    # Render the email body
+    if chosen_body is not None:
+        content_type = chosen_body.get_content_type()
+        if content_type == 'text/html':
+            html_content = chosen_body.get_content()
+            if not isinstance(html_content, str):
+                html_content = html_content.decode('utf-8', errors='replace')
+            # Use the same HTML->markdown conversion as mail_ingest
+            rendered, _images, _links = html_to_markdown(html_content, base_url='', capture_attachments=False)
+        else:
+            text_content = chosen_body.get_content()
+            rendered = text_content if isinstance(text_content, str) else text_content.decode('utf-8', errors='replace')
+
+        if rendered.strip():
+            sections.append(rendered.strip())
+
+    # Process attachments
+    for leaf in leaves:
+        if leaf.outcome != 'job':
+            # Skip inline and skipped attachments
+            if leaf.outcome == 'skipped' and leaf.skip_reason:
+                sections.append(f'(skipped: {leaf.filename} — {leaf.skip_reason})')
+            continue
+
+        # This is a job-outcome attachment — process it through the pipeline
+        try:
+            # Write the attachment to a temporary file
+            temp_file = Path(source.parent) / f'_temp_attachment_{leaf.index}_{leaf.filename}'
+            temp_file.write_bytes(leaf.content)
+
+            try:
+                # Recursively convert the attachment using the same profile
+                attachment_md, attachment_details = convert_to_markdown_with_details(
+                    str(temp_file),
+                    profile_id=selected_profile_id,
+                    metadata=metadata,
+                )
+
+                # Extract just the body (strip frontmatter)
+                parts = attachment_md.split('---\n', 2)
+                if len(parts) >= 3:
+                    attachment_body = parts[2].strip()
+                else:
+                    attachment_body = attachment_md.strip()
+
+                # Add as an attachment section
+                if attachment_body:
+                    sections.append(f'## Attachment: {leaf.filename}\n\n{attachment_body}')
+
+                # Sum up pages
+                if isinstance(attachment_details.get('page_count'), int):
+                    total_attachment_pages += attachment_details['page_count']
+            finally:
+                temp_file.unlink(missing_ok=True)
+        except Exception as exc:
+            # If attachment conversion fails, log it as skipped
+            sections.append(f'(skipped: {leaf.filename} — conversion error: {str(exc)[:50]})')
+
+    # Combine all sections
+    body = '\n\n---\n\n'.join(sections) if sections else '(empty email)'
+
+    # page_count is 1 for the email body + sum of attachment pages
+    page_count = max(1, total_attachment_pages)
+
+    return body, page_count
+
+
+def _fallback_convert_with_frontmatter(
+    source: Path,
+    suffix: str,
+    selected_profile_id: str,
+    selected_profile: dict[str, str],
+    metadata: dict[str, object] | None,
+    fallback_reason: str,
+    capability: dict,
+) -> tuple[str, dict]:
+    """Shared pypdf/spreadsheet fallback body for both call sites in
+    `convert_to_markdown_with_details` (PaddleOCR unavailable, and the
+    primary PP-StructureV3 path raising). Prepends the same RAG frontmatter
+    the successful path emits -- with used_fallback: true and the applicable
+    fallback engine -- so fallback output is never missing the header that
+    `PUT /jobs/{id}/save` and downstream RAG ingestion both expect.
+    `suffix` must be '.pdf', '.xls', or '.xlsx'.
+    """
+    engine = 'pypdf-fallback' if suffix == '.pdf' else 'spreadsheet-fallback'
+    frontmatter_metadata = {
+        **(metadata or {}),
+        'profile_id': selected_profile_id,
+        'engine': engine,
+        'used_fallback': True,
+    }
+
+    extra: dict[str, object] = {}
+    if suffix == '.pdf':
+        body = _fallback_pdf_to_markdown(source)
+        page_count = _pdf_page_count(source)
+    else:
+        body, sheet_count, row_count = _fallback_spreadsheet_to_markdown(source)
+        page_count = max(1, sheet_count)
+        extra = {'sheet_count': sheet_count, 'row_count': row_count}
+
+    frontmatter = _build_rag_frontmatter(
+        source.name, page_count, selected_profile['label'], metadata=frontmatter_metadata
+    )
+    markdown = _prepend_frontmatter(frontmatter, body)
+    quality_gate = evaluate_document_quality(markdown, field_validation=validate_document(markdown))
+    return markdown, {
+        'engine': engine,
+        'used_fallback': True,
+        'fallback_reason': fallback_reason,
+        'profile_id': selected_profile_id,
+        'profile_label': selected_profile['label'],
+        'page_count': page_count,
+        **extra,
+        'quality_gate': quality_gate,
+        **capability,
+    }
+
+
+def convert_to_markdown_with_details(
+    input_path: str,
+    profile_id: str | None = None,
+    metadata: dict[str, object] | None = None,
+    vl_override: dict[str, str] | None = None,
+) -> tuple[str, dict]:
+    source = Path(input_path).resolve()
+    if not source.exists():
+        raise FileNotFoundError(f'Input file not found: {source}')
+
+    selected_profile_id, selected_profile = _resolve_profile(profile_id)
+    capability = _runtime_capability()
+    suffix = source.suffix.lower()
+
+    # .eml (email) files are processed directly without PaddleOCR dependency
+    if suffix == '.eml':
+        try:
+            body, page_count = _eml_to_markdown(source, selected_profile_id, selected_profile, metadata)
+            frontmatter_metadata = {
+                **(metadata or {}),
+                'profile_id': selected_profile_id,
+                'engine': 'mail-eml',
+                'used_fallback': False,
+            }
+            frontmatter = _build_rag_frontmatter(
+                source.name, page_count, selected_profile['label'], metadata=frontmatter_metadata
+            )
+            markdown = _prepend_frontmatter(frontmatter, body)
+            quality_gate = evaluate_document_quality(markdown, field_validation=validate_document(markdown))
+            return markdown, {
+                'engine': 'mail-eml',
+                'used_fallback': False,
+                'profile_id': selected_profile_id,
+                'profile_label': selected_profile['label'],
+                'page_count': page_count,
+                'quality_gate': quality_gate,
+                **capability,
+            }
+        except Exception as exc:
+            raise RuntimeError(f'Failed to convert .eml file: {exc}') from exc
+
+    if not _paddleocr_available():
+        if suffix in {'.pdf', '.xls', '.xlsx'}:
+            return _fallback_convert_with_frontmatter(
+                source, suffix, selected_profile_id, selected_profile, metadata,
+                'PaddleOCR is not installed in this worker image', capability,
+            )
+        raise RuntimeError('PaddleOCR is not installed in this worker image')
+
+    try:
+        selected_pipeline = selected_profile.get('pipeline', 'ppstructurev3')
+        converter = 'ppstructure-json-to-rag-markdown'
+        if selected_pipeline == 'openai_vision':
+            page_structures, extraction_meta = _openai_vision_to_structure(
+                source, selected_profile, vl_override=vl_override
+            )
+            converter = 'openai-vision-to-rag-markdown'
+        elif selected_pipeline == 'paddlevl':
+            page_structures, extraction_meta = _paddlevl_to_structure(source, capability)
+            converter = 'paddlevl-json-to-rag-markdown'
+        else:
+            page_structures, extraction_meta = _paddleocr_to_structure(
+                source,
+                selected_profile_id,
+                selected_profile,
+                capability,
+            )
+        frontmatter_metadata = {
+            **(metadata or {}),
+            'profile_id': selected_profile_id,
+            'engine': 'paddleocr',
+            'used_fallback': False,
+        }
+        markdown, block_stats = _convert_structure_to_markdown(
+            page_structures,
+            source_name=source.name,
+            profile_label=selected_profile['label'],
+            metadata=frontmatter_metadata,
+        )
+        quality_gate = evaluate_document_quality(
+            markdown,
+            page_structures=page_structures,
+            raw_outputs=cast(list[dict], extraction_meta.get('raw_outputs', [])),
+            block_stats=block_stats,
+            field_validation=validate_document(markdown),
+        )
+        return markdown, {
+            'engine': 'paddleocr',
+            'used_fallback': False,
+            'profile_id': selected_profile_id,
+            'profile_label': selected_profile['label'],
+            'page_count': block_stats['page_count'],
+            'profile': selected_profile,
+            'structure': {
+                'page_count': block_stats['page_count'],
+                'block_count': block_stats['block_count'],
+                'block_labels': block_stats['block_labels'],
+                'bbox_coverage': block_stats['bbox_coverage'],
+            },
+            'quality_gate': quality_gate,
+            'pdf_chunking': extraction_meta.get('pdf_chunking'),
+            'converter': converter,
+            **capability,
+        }
+    except Exception as exc:
+        suffix = source.suffix.lower()
+        if suffix in {'.pdf', '.xls', '.xlsx'}:
+            return _fallback_convert_with_frontmatter(
+                source, suffix, selected_profile_id, selected_profile, metadata, str(exc), capability,
+            )
+        raise
+
+
+def convert_to_markdown(input_path: str, profile_id: str | None = None) -> str:
+    markdown, _ = convert_to_markdown_with_details(input_path, profile_id=profile_id)
+    return markdown

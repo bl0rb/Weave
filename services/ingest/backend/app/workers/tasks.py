@@ -1,0 +1,550 @@
+from pathlib import Path
+import logging
+import uuid
+from datetime import datetime, timedelta, timezone
+
+from celery.signals import worker_process_init, worker_ready
+from redis import Redis
+from sqlalchemy import select, update
+
+from app.core.config import settings
+from app.database.session import SessionLocal, engine
+from app.models.models import ImportRun, ImportRunStatus, Job, JobStatus, Team, User, VlConnection
+from app.services.paddle_service import (
+    convert_to_markdown_with_details,
+    get_paddle_settings,
+    get_runtime_capability,
+    is_paddle_available,
+)
+# Module-object import (security.decrypt_vl_api_key) rather than a
+# from-import: matches import_tasks.py's late-binding convention for
+# security.decrypt_import_credential, keeping the helper monkeypatchable in
+# tests.
+from app.services import security
+from app.services.storage import build_result_path, ensure_storage_dirs
+from app.workers import webhook_tasks
+from app.workers.celery_app import celery_app
+
+
+logger = logging.getLogger(__name__)
+
+
+@worker_process_init.connect
+def _reset_db_pool_after_fork(sender=None, **kwargs) -> None:  # pragma: no cover
+    """Drop inherited DB pool references in every freshly forked pool child.
+
+    The prefork master touches the database in the worker_ready recovery hook
+    below, which leaves an open (possibly TLS) connection in the module-level
+    engine's pool. Children forked afterwards (steady churn under
+    CELERY_MAX_TASKS_PER_CHILD) inherit that socket, and two processes
+    multiplexing one TLS stream corrupt it -- psycopg then fails with
+    "SSL error: decryption failed or bad record mac". dispose(close=False)
+    forgets the inherited connections without closing them (they still belong
+    to the parent), so each child lazily opens its own fresh pool.
+    """
+    engine.dispose(close=False)
+
+
+_RECOVERY_LOCK_KEY = 'worker:recovery:startup-lock'
+_STALE_RUNNING_RETRY_AFTER = timedelta(minutes=2)
+_LOWER_PROFILE_RETRY_MAP = {
+    'ppocrv6_medium_structurev3': 'ppocrv6_small_structurev3',
+    'ppocrv6_small_structurev3': 'ppocrv6_tiny_structurev3',
+    'ppocrv6_medium': 'ppocrv6_tiny',
+    'ppocrv6_small': 'ppocrv6_tiny',
+}
+
+
+def _resolve_upload_path(job: Job, storage_folder: str | None, job_id: str) -> Path:
+    uploads_root = settings.uploads_dir.resolve()
+    configured = Path(job.upload_path).resolve()
+    suffix = configured.suffix or Path(job.original_filename).suffix or '.pdf'
+
+    if configured.is_relative_to(uploads_root):
+        target = configured
+    else:
+        target = (uploads_root / (storage_folder or 'inbox') / f'{job_id}{suffix}').resolve()
+
+    if target.exists():
+        return target
+
+    if job.upload_content is None:
+        raise FileNotFoundError(f'Input file not found: {target}')
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(job.upload_content)
+    return target
+
+
+def _resolve_result_path(job: Job, storage_folder: str | None, job_id: str) -> Path:
+    results_root = settings.results_dir.resolve()
+    if isinstance(job.result_path, str):
+        configured = Path(job.result_path).resolve()
+        if configured.is_relative_to(results_root):
+            target = configured
+        else:
+            target = build_result_path(storage_folder or 'single', job_id)
+    else:
+        target = build_result_path(storage_folder or 'single', job_id)
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def _normalize_execution_page_count(details: dict, upload_path: Path) -> dict:
+    normalized = {**details}
+    if isinstance(normalized.get('page_count'), int):
+        return normalized
+
+    structure = normalized.get('structure') if isinstance(normalized.get('structure'), dict) else {}
+    structure_page_count = structure.get('page_count') if isinstance(structure.get('page_count'), int) else None
+    if structure_page_count is not None:
+        normalized['page_count'] = structure_page_count
+        return normalized
+
+    # For single-file non-PDF uploads (images, office docs converted to one stream),
+    # expose at least a stable page_count value for UI consistency.
+    if upload_path.suffix.lower() != '.pdf':
+        normalized['page_count'] = 1
+
+    return normalized
+
+
+def _try_acquire_recovery_lock() -> tuple[Redis | None, str | None]:
+    """Acquire a short-lived distributed lock for startup recovery."""
+    token = str(uuid.uuid4())
+    client = Redis.from_url(settings.redis_url, decode_responses=True)
+    acquired = client.set(_RECOVERY_LOCK_KEY, token, nx=True, ex=120)
+    if acquired:
+        return client, token
+    return None, None
+
+
+def _release_recovery_lock(client: Redis | None, token: str | None) -> None:
+    if not client or not token:
+        return
+    try:
+        current = client.get(_RECOVERY_LOCK_KEY)
+        if current == token:
+            client.delete(_RECOVERY_LOCK_KEY)
+    except Exception:
+        # Lock has an expiry and will self-heal; no hard failure required here.
+        pass
+
+
+def requeue_running_jobs_after_restart() -> int:
+    """Requeue jobs that were RUNNING when the worker/container died.
+
+    This makes processing resilient across worker restarts and hard kills.
+    """
+    db = SessionLocal()
+    to_restart: list[tuple[str, str | None, str | None, str | None, str | None]] = []
+    runs_to_requeue: list[tuple[str, int]] = []
+    stale_run_cutoff = datetime.now(timezone.utc) - timedelta(seconds=settings.import_stale_run_seconds)
+    try:
+        # Import runs whose worker died without redelivery (hard-limit kill /
+        # lost message): stale 'running' runs are replayed with their previous
+        # chunk_seq -- the stale-lease reclaim in import_confluence makes that
+        # safe, and a live run's fresh heartbeat makes the replay a no-op.
+        # Stale 'pending' runs (creation message lost / send_task failed --
+        # their updated_at is the creation time, untouched until the first
+        # claim) are replayed with their CURRENT seq: the normal claim path
+        # accepts pending status directly, and its chunk_seq guard makes a
+        # duplicate creation message a no-op.
+        stale_runs = db.scalars(
+            select(ImportRun)
+            .where(ImportRun.status.in_([ImportRunStatus.PENDING, ImportRunStatus.RUNNING]))
+            .where(ImportRun.updated_at < stale_run_cutoff)
+        ).all()
+        runs_to_requeue = [
+            (run.id, run.chunk_seq if run.status == ImportRunStatus.PENDING else run.chunk_seq - 1)
+            for run in stale_runs
+        ]
+
+        running_jobs = db.scalars(select(Job).where(Job.status == JobStatus.RUNNING)).all()
+        for job in running_jobs:
+            info = job.processing_info if isinstance(job.processing_info, dict) else {}
+            # Named job_settings (not `settings`): shadowing the module-level
+            # settings would make the cutoff computation above an UnboundLocalError.
+            job_settings = info.get('settings') if isinstance(info.get('settings'), dict) else {}
+
+            profile_id = job_settings.get('profile_id') if isinstance(job_settings.get('profile_id'), str) else None
+            mode = job_settings.get('mode') if isinstance(job_settings.get('mode'), str) else None
+            email = job_settings.get('email') if isinstance(job_settings.get('email'), str) else None
+            department = job_settings.get('department') if isinstance(job_settings.get('department'), str) else None
+
+            execution = info.get('execution') if isinstance(info.get('execution'), dict) else {}
+            info['execution'] = {
+                **execution,
+                'status': 'requeued',
+                'detail': 'Job was running during worker restart and has been requeued.',
+            }
+
+            job.processing_info = {
+                **info,
+                'settings': job_settings,
+            }
+            job.status = JobStatus.PENDING
+            job.error_message = None
+            to_restart.append((job.id, profile_id, mode, email, department))
+
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+    for job_id, profile_id, mode, email, department in to_restart:
+        process_job.delay(job_id, profile_id, mode, email, department)
+
+    for run_id, replay_seq in runs_to_requeue:
+        # By name so this module keeps zero imports from import_tasks at call
+        # time; running runs replay with the PREVIOUS seq (reclaim path),
+        # pending runs with their current seq (normal claim path).
+        celery_app.send_task('import_confluence', args=[run_id, replay_seq])
+        logger.warning('Requeued stale import run %s at chunk_seq %s', run_id, replay_seq)
+
+    return len(to_restart) + len(runs_to_requeue)
+
+
+@worker_ready.connect
+def _recover_jobs_on_worker_ready(sender=None, **kwargs) -> None:  # pragma: no cover
+    lock_client: Redis | None = None
+    lock_token: str | None = None
+    try:
+        lock_client, lock_token = _try_acquire_recovery_lock()
+        if not lock_client:
+            logger.info('Skipping startup recovery; another worker instance is handling it.')
+            return
+        restarted = requeue_running_jobs_after_restart()
+        if restarted:
+            logger.warning('Recovered %s RUNNING job(s) after worker restart', restarted)
+    except Exception as exc:
+        logger.exception('Failed to recover RUNNING jobs after worker restart: %s', exc)
+    finally:
+        _release_recovery_lock(lock_client, lock_token)
+
+    # Kickstart the confluence-refresh self-re-enqueue chain (see
+    # app/workers/refresh_tasks.py's module docstring for the full design).
+    # Deliberately NOT gated on the recovery lock above -- that one is a
+    # one-shot startup action and releases (or expires) in seconds, whereas
+    # the refresh chain must be revived by ANY future restart if it ever
+    # died. confluence_refresh_tick is itself the single source of truth for
+    # whether a chain is already alive (its own long-lived NX lock, checked
+    # on every call including this token-less kickstart), so a redundant
+    # send from a simultaneous multi-replica startup is a harmless no-op.
+    try:
+        celery_app.send_task('confluence_refresh_tick', args=[None])
+    except Exception:
+        logger.exception('Failed to kickstart the confluence-refresh tick chain')
+
+    # Kickstart the session-cleanup self-re-enqueue chain (see
+    # app/workers/session_cleanup_tasks.py's module docstring) -- same
+    # not-gated-on-the-recovery-lock reasoning as the confluence-refresh
+    # kickstart above: session_cleanup_tick owns its own long-lived NX lock
+    # and is itself the single source of truth for whether a chain is
+    # already alive, so a redundant send here is a harmless no-op.
+    try:
+        celery_app.send_task('session_cleanup_tick', args=[None])
+    except Exception:
+        logger.exception('Failed to kickstart the session-cleanup tick chain')
+
+
+@celery_app.task(name='process_job', bind=True, acks_late=True, reject_on_worker_lost=True)
+def process_job(
+    self,
+    job_id: str,
+    profile_id: str | None = None,
+    mode: str | None = None,
+    email: str | None = None,
+    department: str | None = None,
+) -> None:
+    ensure_storage_dirs()
+    db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        # Normal claim path: only PENDING jobs should become RUNNING.
+        claimed = db.execute(
+            update(Job)
+            .where(Job.id == job_id)
+            .where(Job.status == JobStatus.PENDING)
+            .values(
+                status=JobStatus.RUNNING,
+                error_message=None,
+                updated_at=now,
+            )
+        )
+
+        # Recovery path for acks_late redelivery: if a previous worker died,
+        # the job may still be RUNNING in DB. Only reclaim it when stale.
+        if not claimed.rowcount:
+            stale_cutoff = now - _STALE_RUNNING_RETRY_AFTER
+            claimed = db.execute(
+                update(Job)
+                .where(Job.id == job_id)
+                .where(Job.status == JobStatus.RUNNING)
+                .where(Job.updated_at < stale_cutoff)
+                .values(
+                    status=JobStatus.RUNNING,
+                    error_message=None,
+                    updated_at=now,
+                )
+            )
+
+        if not claimed.rowcount:
+            return
+
+        db.commit()
+        job = db.get(Job, job_id)
+        if job is None:
+            return
+
+        delivery_info = self.request.delivery_info if isinstance(self.request.delivery_info, dict) else {}
+        is_redelivered = bool(delivery_info.get('redelivered'))
+        effective_profile_id = profile_id
+
+        # Do not auto-downgrade profile after worker-loss redelivery.
+        # Mark job failed with guidance so users can explicitly retry with a lower profile.
+        if is_redelivered and isinstance(profile_id, str):
+            suggested = _LOWER_PROFILE_RETRY_MAP.get(profile_id)
+            if suggested and suggested != profile_id:
+                warning_detail = (
+                    f'Worker-loss redelivery detected for profile {profile_id}. '
+                    f'Automatic fallback is disabled. Retry manually with lower profile {suggested}.'
+                )
+                job.status = JobStatus.FAILED
+                job.error_message = warning_detail
+                existing = job.processing_info if isinstance(job.processing_info, dict) else {}
+                settings = existing.get('settings') if isinstance(existing.get('settings'), dict) else {}
+                runtime = existing.get('runtime') if isinstance(existing.get('runtime'), dict) else {}
+                job.processing_info = {
+                    **existing,
+                    'settings': {
+                        **settings,
+                        'requested_profile_id': profile_id,
+                        'profile_id': profile_id,
+                    },
+                    'runtime': runtime,
+                    'execution': {
+                        'status': 'failed',
+                        'warning': warning_detail,
+                        'error': warning_detail,
+                        'suggested_profile_id': suggested,
+                        'profile_id': profile_id,
+                    },
+                }
+                db.commit()
+                logger.warning('Stopping redelivered job %s for manual retry: %s -> %s', job_id, profile_id, suggested)
+                try:
+                    webhook_tasks.dispatch_job_event(db, job, 'job.failed')
+                except Exception:  # pragma: no cover - webhooks must never break job completion
+                    logger.exception('webhook dispatch failed for job %s (job.failed)', job_id)
+                return
+
+        runtime = get_paddle_settings()
+        capability = get_runtime_capability()
+        existing_info = job.processing_info if isinstance(job.processing_info, dict) else {}
+        existing_settings = existing_info.get('settings') if isinstance(existing_info.get('settings'), dict) else {}
+
+        # Benchmark variant jobs (see app/api/benchmarks.py) stamp
+        # vl_connection_id into settings at creation time; every other job
+        # leaves it unset and vl_override stays None, which is a no-op for
+        # every non-openai_vision profile and byte-identical to the
+        # env-based openai_vision path when it IS the profile.
+        vl_connection_id = existing_settings.get('vl_connection_id') if isinstance(existing_settings, dict) else None
+        vl_override: dict[str, str] | None = None
+        if vl_connection_id:
+            vl_conn = db.get(VlConnection, vl_connection_id)
+            if vl_conn is None or not vl_conn.enabled:
+                job.status = JobStatus.FAILED
+                job.error_message = 'VL connection is no longer available'
+                job.processing_info = {
+                    **job.processing_info,
+                    'execution': {'status': 'failed', 'error': job.error_message},
+                }
+                db.commit()
+                try:
+                    webhook_tasks.dispatch_job_event(db, job, 'job.failed')
+                except Exception:  # pragma: no cover - webhooks must never break job completion
+                    logger.exception('webhook dispatch failed for job %s (job.failed)', job_id)
+                return
+            vl_override = {
+                'base_url': vl_conn.base_url,
+                'api_key': security.decrypt_vl_api_key(vl_conn.api_key_encrypted),
+                'model': vl_conn.model,
+                'system_prompt': vl_conn.system_prompt,
+                # Used by paddle_service to label user-facing error messages
+                # (job.error_message, benchmark report/export) instead of the
+                # admin-configured base_url -- see
+                # paddle_service._call_vision_chat_api's docstring.
+                'name': vl_conn.name,
+            }
+
+        # Callers translate a 'vl:<connection_id>' selection into the real
+        # pipeline id before dispatch (effective_pipeline_profile_id), so this
+        # task's profile_id parameter never carries the vl: form. The vl:
+        # selection recorded in settings at creation time is the job's
+        # user-facing profile identity (jobs table, detail page, restart's
+        # previous_profile_id audit) and must survive the RUNNING transition —
+        # vl_override resolution reads settings.vl_connection_id either way.
+        existing_profile = (
+            existing_settings.get('profile_id')
+            if isinstance(existing_settings.get('profile_id'), str)
+            else None
+        )
+        keep_vl_identity = bool(existing_profile) and existing_profile.startswith('vl:')
+
+        execution_payload = {'status': 'running', 'started_at': now.isoformat()}
+        job.processing_info = {
+            'settings': {
+                **existing_settings,
+                'default_profile': runtime.get('default_profile'),
+                'requested_profile_id': existing_profile if keep_vl_identity else profile_id,
+                'profile_id': existing_profile if keep_vl_identity else effective_profile_id,
+                'timeout_seconds': runtime.get('timeout_seconds'),
+                'mode': mode,
+                'email': email,
+                'department': department,
+            },
+            'runtime': capability,
+            'execution': execution_payload,
+        }
+        db.commit()
+
+        upload_path = _resolve_upload_path(job, existing_settings.get('storage_folder') if isinstance(existing_settings.get('storage_folder'), str) else None, job_id)
+        if str(upload_path) != job.upload_path:
+            job.upload_path = str(upload_path)
+            db.commit()
+
+        # Enrich the frontmatter metadata with everything the DB already
+        # knows about this job -- job identity/version/hash/lineage plus the
+        # uploader's identity -- so _build_rag_frontmatter can render it
+        # without paddle_service needing its own DB access. profile_id and
+        # engine are deliberately NOT set here: only paddle_service knows
+        # which pipeline/fallback actually ran for this conversion.
+        owner_username: str | None = None
+        team_name: str | None = None
+        if job.owner_id:
+            owner = db.get(User, job.owner_id)
+            if owner is not None:
+                owner_username = owner.username
+                if owner.team_id:
+                    owner_team = db.get(Team, owner.team_id)
+                    team_name = owner_team.name if owner_team is not None else None
+
+        # Collection identity (see app/api/routes.py's upload_document_to_
+        # collection/start_collection_processing, which stamp both into
+        # processing_info.settings) -- only set when the job actually belongs
+        # to a collection, so _build_rag_frontmatter's 'collection'/
+        # 'collection_name' fields stay absent for ordinary single uploads.
+        collection_slug = existing_settings.get('collection_slug')
+        collection_name = existing_settings.get('collection_name')
+
+        markdown, details = convert_to_markdown_with_details(
+            str(upload_path),
+            profile_id=effective_profile_id,
+            vl_override=vl_override,
+            metadata={
+                'mode': mode or 'single',
+                'email': email or '',
+                'department': department or '',
+                'job_id': job.id,
+                'original_filename': job.original_filename,
+                'document_version': job.document_version,
+                'content_sha256': job.content_sha256,
+                'previous_job_id': job.previous_job_id,
+                'uploaded_by': owner_username,
+                'team': team_name,
+                'tags': sorted(tag.name for tag in job.tags),
+                'collection_slug': collection_slug if isinstance(collection_slug, str) else None,
+                'collection_name': collection_name if isinstance(collection_name, str) else None,
+            },
+        )
+        details = _normalize_execution_page_count(details, upload_path)
+        info = job.processing_info if isinstance(job.processing_info, dict) else {}
+        settings = info.get('settings') if isinstance(info.get('settings'), dict) else {}
+        storage_folder = settings.get('storage_folder') if isinstance(settings.get('storage_folder'), str) else None
+        result_path = _resolve_result_path(job, storage_folder, job_id)
+        # On the crash-recovery/requeue path the object may already exist from a
+        # prior attempt. Mountpoint-for-S3 has no rename/append and does not
+        # reliably support overwrite-in-place, so delete-then-create is the
+        # robust pattern regardless of whether the allow-overwrite mount flag is set.
+        result_path.unlink(missing_ok=True)
+        result_path.write_text(markdown, encoding='utf-8')
+
+        finished_now = datetime.now(timezone.utc)
+        job.status = JobStatus.FINISHED
+        job.result_path = str(result_path)
+        job.result_markdown = markdown
+        existing = job.processing_info if isinstance(job.processing_info, dict) else {}
+        job.processing_info = {
+            **existing,
+            'execution': {
+                'status': 'finished',
+                **details,
+                'started_at': now.isoformat(),
+                'finished_at': finished_now.isoformat(),
+                'duration_seconds': round((finished_now - now).total_seconds(), 3),
+            },
+        }
+        job.error_message = None
+        db.commit()
+        try:
+            webhook_tasks.dispatch_job_event(db, job, 'job.finished')
+        except Exception:  # pragma: no cover - webhooks must never break job completion
+            logger.exception('webhook dispatch failed for job %s (job.finished)', job_id)
+        # document.processed (contracts/events/document.processed.md) rides
+        # alongside job.finished -- same per-task opt-in, own try/except so a
+        # failure here can never mask (or get masked by) the job.finished
+        # dispatch above, and never fires for job.failed.
+        try:
+            webhook_tasks.dispatch_job_event(db, job, 'document.processed')
+        except Exception:  # pragma: no cover - webhooks must never break job completion
+            logger.exception('webhook dispatch failed for job %s (document.processed)', job_id)
+    except Exception as exc:  # pragma: no cover
+        job = db.get(Job, job_id)
+        if job is not None:
+            failed_now = datetime.now(timezone.utc)
+            job.status = JobStatus.FAILED
+            job.error_message = str(exc)
+            existing = job.processing_info if isinstance(job.processing_info, dict) else {}
+            job.processing_info = {
+                **existing,
+                'execution': {
+                    'status': 'failed',
+                    'error': str(exc),
+                    'started_at': now.isoformat(),
+                    'finished_at': failed_now.isoformat(),
+                    'duration_seconds': round((failed_now - now).total_seconds(), 3),
+                },
+            }
+            db.commit()
+            try:
+                webhook_tasks.dispatch_job_event(db, job, 'job.failed')
+            except Exception:  # pragma: no cover - webhooks must never break job completion
+                logger.exception('webhook dispatch failed for job %s (job.failed)', job_id)
+    finally:
+        db.close()
+
+
+@celery_app.task(name='probe_paddle')
+def probe_paddle() -> dict[str, str | None]:
+    if is_paddle_available():
+        return {'status': 'running', 'detail': None, **get_runtime_capability()}
+    return {
+        'status': 'stopped',
+        'detail': 'PaddleOCR package not available in worker image',
+        **get_runtime_capability(),
+    }
+
+
+# The worker entrypoint is `celery -A app.workers.tasks`, so any task module
+# must be imported from here to register with the app.
+import app.workers.import_tasks  # noqa: E402,F401  (registers import_confluence)
+import app.workers.openwebui_tasks  # noqa: E402,F401  (registers push_openwebui)
+import app.workers.refresh_tasks  # noqa: E402,F401  (registers confluence_refresh_tick)
+import app.workers.session_cleanup_tasks  # noqa: E402,F401  (registers session_cleanup_tick)
+# webhook_tasks (registers deliver_webhook) is already imported above (as
+# `webhook_tasks`, module-object style) for the completion hooks' own use --
+# no separate registration-only import needed here, unlike the three above.

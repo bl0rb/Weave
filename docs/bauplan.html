@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Weave Bauplan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #F4F5F7;
+    --surface: #FDFDFE;
+    --surface-2: #EBEDF1;
+    --ink: #1B2430;
+    --muted: #5C6675;
+    --line: #D8DCE3;
+    --line-soft: #E4E7EC;
+
+    --accent: #3B5BA5;          /* Indigo — Leitfarbe */
+    --accent-ink: #2E477F;
+
+    --t-ingest: #3B5BA5;        /* Indigo */
+    --t-knowledge: #3E7C63;     /* Verdigris */
+    --t-retrieval: #7A4E8C;     /* Purpur */
+    --t-runtime: #B0532F;       /* Krapprot */
+    --t-tools: #A07A22;         /* Ocker */
+    --t-api: #396E8C;           /* Petrol */
+
+    --ok: #3E7C63;
+    --warn: #A07A22;
+    --risk: #A44A3F;
+
+    --chip-ink: #FFFFFF;
+    --code-bg: #EBEDF1;
+    --shadow: 0 1px 2px rgba(27,36,48,.05), 0 4px 14px rgba(27,36,48,.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #151922;
+      --surface: #1D232E;
+      --surface-2: #242B38;
+      --ink: #E8EAF0;
+      --muted: #9AA3B2;
+      --line: #333C4B;
+      --line-soft: #2A3240;
+
+      --accent: #7D9AE0;
+      --accent-ink: #A7BDF0;
+
+      --t-ingest: #7D9AE0;
+      --t-knowledge: #6FB598;
+      --t-retrieval: #B287C7;
+      --t-runtime: #E08A63;
+      --t-tools: #D2AC55;
+      --t-api: #6FA8C9;
+
+      --ok: #6FB598;
+      --warn: #D2AC55;
+      --risk: #DB8078;
+
+      --chip-ink: #151922;
+      --code-bg: #242B38;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.25);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #151922;
+    --surface: #1D232E;
+    --surface-2: #242B38;
+    --ink: #E8EAF0;
+    --muted: #9AA3B2;
+    --line: #333C4B;
+    --line-soft: #2A3240;
+
+    --accent: #7D9AE0;
+    --accent-ink: #A7BDF0;
+
+    --t-ingest: #7D9AE0;
+    --t-knowledge: #6FB598;
+    --t-retrieval: #B287C7;
+    --t-runtime: #E08A63;
+    --t-tools: #D2AC55;
+    --t-api: #6FA8C9;
+
+    --ok: #6FB598;
+    --warn: #D2AC55;
+    --risk: #DB8078;
+
+    --chip-ink: #151922;
+    --code-bg: #242B38;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.25);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    margin: 0;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; padding: 48px 24px 96px; }
+
+  h1, h2, h3 {
+    font-family: "Bricolage Grotesque", "IBM Plex Sans", sans-serif;
+    text-wrap: balance;
+    margin: 0;
+  }
+  h1 { font-size: clamp(2.1rem, 5vw, 3rem); font-weight: 700; line-height: 1.08; letter-spacing: -0.015em; }
+  h2 { font-size: 1.45rem; font-weight: 650; letter-spacing: -0.01em; }
+  h3 { font-size: 1.05rem; font-weight: 600; }
+  p { margin: 0; }
+  a { color: var(--accent); }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .74rem;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 14px;
+  }
+  .eyebrow .arrow { color: var(--muted); }
+
+  header.hero { margin-bottom: 20px; }
+  .hero p.lede { margin-top: 18px; max-width: 62ch; font-size: 1.06rem; color: var(--muted); }
+  .hero .meta {
+    display: flex; flex-wrap: wrap; gap: 8px 20px;
+    margin-top: 22px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .76rem; color: var(--muted);
+  }
+
+  /* Fadenleiste unter dem Header — die sechs Services als Kettfäden */
+  .threads { display: flex; gap: 6px; margin: 26px 0 0; height: 6px; }
+  .threads span { flex: 1; border-radius: 3px; }
+
+  section { margin-top: 64px; }
+  .section-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 8px; }
+  .section-head .no {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .78rem; color: var(--muted);
+  }
+  .section-sub { color: var(--muted); max-width: 68ch; margin-bottom: 24px; }
+
+  /* Leitidee */
+  .thesis { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .thesis .card {
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-radius: 10px;
+    padding: 18px 20px;
+    box-shadow: var(--shadow);
+  }
+  .thesis .card h3 { margin-bottom: 6px; }
+  .thesis .card p { font-size: .92rem; color: var(--muted); }
+
+  /* Architektur-Diagramm */
+  .arch { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 12px; padding: 24px; box-shadow: var(--shadow); }
+  .lane { margin-bottom: 4px; }
+  .lane + .lane { margin-top: 26px; padding-top: 26px; border-top: 1px dashed var(--line); }
+  .lane-label {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .72rem; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 14px;
+  }
+  .flow-scroll { overflow-x: auto; padding-bottom: 6px; }
+  .flow { display: flex; align-items: stretch; gap: 0; min-width: max-content; }
+  .node {
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 14px;
+    min-width: 108px;
+    display: flex; flex-direction: column; justify-content: center; gap: 2px;
+  }
+  .node .nm { font-weight: 600; font-size: .88rem; line-height: 1.3; }
+  .node .rl { font-size: .74rem; color: var(--muted); line-height: 1.35; }
+  .node.svc { border-left: 4px solid var(--th, var(--accent)); }
+  .node.io { background: transparent; border-style: dashed; }
+  .conn {
+    align-self: center;
+    color: var(--muted);
+    padding: 0 8px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .8rem;
+    white-space: nowrap;
+  }
+  .branch { display: flex; flex-direction: column; gap: 8px; justify-content: center; }
+
+  /* Service-Karten */
+  .services { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+  .svc-card {
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-radius: 10px;
+    padding: 18px 20px 20px;
+    box-shadow: var(--shadow);
+    border-top: 4px solid var(--th, var(--accent));
+  }
+  .svc-card .svc-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+  .svc-card h3 { font-family: "IBM Plex Mono", monospace; font-weight: 500; font-size: .95rem; }
+  .svc-card .tag {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .68rem; letter-spacing: .06em;
+    color: var(--th, var(--accent));
+    white-space: nowrap;
+  }
+  .svc-card p { font-size: .9rem; color: var(--muted); }
+  .svc-card .basis { margin-top: 10px; font-size: .8rem; font-family: "IBM Plex Mono", monospace; color: var(--ink); background: var(--code-bg); border-radius: 6px; padding: 6px 10px; display: inline-block; }
+
+  /* Checklisten */
+  .phase {
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    margin-top: 22px;
+    overflow: hidden;
+  }
+  .phase-head {
+    display: flex; align-items: center; gap: 14px;
+    padding: 16px 22px;
+    border-bottom: 1px solid var(--line-soft);
+    border-left: 4px solid var(--th, var(--accent));
+  }
+  .phase-head .ph-no {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .78rem; color: var(--th, var(--accent));
+    white-space: nowrap;
+  }
+  .phase-head h3 { flex: 1; }
+  .phase-head .count {
+    font-family: "IBM Plex Mono", monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: .78rem; color: var(--muted);
+    white-space: nowrap;
+  }
+  .phase-head .bar { width: 84px; height: 4px; border-radius: 2px; background: var(--surface-2); overflow: hidden; }
+  .phase-head .bar i { display: block; height: 100%; width: 0%; background: var(--th, var(--accent)); transition: width .25s ease; }
+
+  ul.tasks { list-style: none; margin: 0; padding: 8px 10px; }
+  .tasks li { border-radius: 8px; }
+  .tasks li + li { margin-top: 2px; }
+  .tasks label {
+    display: grid; grid-template-columns: 20px 1fr; gap: 12px;
+    padding: 10px 12px; cursor: pointer; border-radius: 8px;
+  }
+  .tasks label:hover { background: var(--surface-2); }
+  .tasks input[type="checkbox"] {
+    appearance: none; -webkit-appearance: none;
+    width: 18px; height: 18px; margin-top: 3px;
+    border: 1.5px solid var(--line);
+    border-radius: 5px;
+    background: var(--surface);
+    cursor: pointer; position: relative;
+    flex-shrink: 0;
+  }
+  .tasks input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .tasks input[type="checkbox"]:checked { background: var(--th, var(--accent)); border-color: var(--th, var(--accent)); }
+  .tasks input[type="checkbox"]:checked::after {
+    content: ""; position: absolute; left: 5px; top: 1.5px;
+    width: 4px; height: 9px;
+    border: solid var(--chip-ink); border-width: 0 2px 2px 0;
+    transform: rotate(42deg);
+  }
+  .tasks .txt { font-size: .94rem; line-height: 1.55; }
+  .tasks .txt .why { display: block; font-size: .82rem; color: var(--muted); margin-top: 1px; }
+  .tasks input:checked ~ .txt { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--line); text-decoration-thickness: 1px; }
+  .tasks input:checked ~ .txt .why { text-decoration: none; }
+  code, .mono {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .85em;
+    background: var(--code-bg);
+    border-radius: 4px;
+    padding: .08em .35em;
+  }
+  .tasks input:checked ~ .txt code { background: transparent; padding-inline: 0; }
+
+  .total {
+    display: flex; align-items: center; gap: 16px;
+    margin-top: 10px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .8rem; color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .total .bar { flex: 1; height: 5px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+  .total .bar i { display: block; height: 100%; width: 0%; background: var(--accent); transition: width .25s ease; }
+
+  /* Risiken */
+  .risks { display: grid; gap: 10px; }
+  .risk-item {
+    display: grid; grid-template-columns: 10px 1fr; gap: 14px;
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-radius: 10px;
+    padding: 14px 18px;
+  }
+  .risk-item .dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 8px; background: var(--risk); }
+  .risk-item.warn .dot { background: var(--warn); }
+  .risk-item .txt { font-size: .92rem; }
+  .risk-item .txt strong { display: block; font-weight: 600; }
+  .risk-item .txt span { color: var(--muted); font-size: .88rem; }
+
+  /* MVP-Staffelung */
+  .mvp { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .mvp .card {
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-radius: 10px;
+    padding: 18px 20px;
+    box-shadow: var(--shadow);
+  }
+  .mvp .v {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .74rem; letter-spacing: .1em;
+    color: var(--accent);
+    margin-bottom: 8px;
+  }
+  .mvp ul { margin: 8px 0 0; padding-left: 18px; font-size: .9rem; color: var(--muted); }
+  .mvp li + li { margin-top: 4px; }
+  .mvp .card h3 { font-size: 1rem; }
+
+  footer {
+    margin-top: 72px; padding-top: 24px;
+    border-top: 1px solid var(--line-soft);
+    font-size: .82rem; color: var(--muted);
+    font-family: "IBM Plex Mono", monospace;
+  }
+
+  @media (max-width: 640px) {
+    .wrap { padding: 32px 16px 72px; }
+    section { margin-top: 48px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .phase-head .bar i, .total .bar i { transition: none; }
+  }
+</style>
+</head>
+<body>
+
+
+<div class="wrap">
+
+  <header class="hero">
+    <div class="eyebrow">PaddleDoc <span class="arrow">→</span> Weave &nbsp;·&nbsp; Transformationsplan</div>
+    <h1>Weave Bauplan</h1>
+    <p class="lede">PaddleDoc wird nicht ersetzt — es wird zum Dokumenten-Compiler eines modularen Bot-Systems. Sechs Services, zwei Pipelines, ein Prinzip: RAG ist ein Werkzeug des Bots, nicht der Bot selbst.</p>
+    <div class="meta">
+      <span>Stand: 31.08.2026 · Phasen 0–4.5 vollständig · 1 776 Tests grün über sechs Dienste</span>
+      <span>Basis: PaddleDoc-Codeanalyse (Backend · Pipeline · Frontend · Infra)</span>
+      <span>Quelle: new_apps.md</span>
+    </div>
+    <div class="threads" aria-hidden="true">
+      <span style="background:var(--t-ingest)"></span>
+      <span style="background:var(--t-knowledge)"></span>
+      <span style="background:var(--t-retrieval)"></span>
+      <span style="background:var(--t-runtime)"></span>
+      <span style="background:var(--t-tools)"></span>
+      <span style="background:var(--t-api)"></span>
+    </div>
+  </header>
+
+  <section>
+    <div class="section-head"><span class="no">01</span><h2>Leitideen</h2></div>
+    <p class="section-sub">Drei Architektur-Entscheidungen aus dem Konzept, die alles Weitere bestimmen.</p>
+    <div class="thesis">
+      <div class="card">
+        <h3>Nicht jede Anfrage braucht RAG</h3>
+        <p>Ein Intent-Router steht vor dem Retrieval: conversational, knowledge, document, action, complex. Nur der knowledge-Pfad ruft die Suche auf — das spart massiv Retrieval-Aufrufe.</p>
+      </div>
+      <div class="card">
+        <h3>PaddleDoc bleibt</h3>
+        <p>Es löst eine andere Aufgabe als der Bot: Dokumente → strukturiertes Markdown + Metadaten. Als Weave-Ingest wird es zum eigenständigen Ingestion-Service mit Event-Ausgang.</p>
+      </div>
+      <div class="card">
+        <h3>Bot = Konfiguration</h3>
+        <p>Bots sind YAML-Definitionen (Modell, System-Prompt, Knowledge-Bases, Tools, Permissions) auf einer gemeinsamen Runtime — legal-support, hr-support, it-support ohne neuen Code.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="no">02</span><h2>Zielarchitektur</h2></div>
+    <p class="section-sub">Zwei getrennte Pipelines: offline kompiliert Weave-Ingest Dokumente in den Vector Store, online beantwortet die Runtime Anfragen — mit Retrieval als optionalem Schritt.</p>
+    <div class="arch">
+      <div class="lane">
+        <div class="lane-label">Offline · Ingestion-Pipeline</div>
+        <div class="flow-scroll">
+          <div class="flow">
+            <div class="node io"><span class="nm">Dokumente</span><span class="rl">Upload · Mail · Confluence · API</span></div>
+            <span class="conn">→</span>
+            <div class="node svc" style="--th:var(--t-ingest)"><span class="nm">Weave-Ingest</span><span class="rl">OCR · Markdown + Frontmatter · Quality Gate · Versionierung</span></div>
+            <span class="conn">→ event</span>
+            <div class="node svc" style="--th:var(--t-knowledge)"><span class="nm">Weave-Knowledge</span><span class="rl">Chunking · Enrichment · Embeddings</span></div>
+            <span class="conn">→</span>
+            <div class="node io"><span class="nm">Postgres + pgvector</span><span class="rl">Chunks · Vektoren · Fulltext</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="lane">
+        <div class="lane-label">Online · Bot-Pipeline</div>
+        <div class="flow-scroll">
+          <div class="flow">
+            <div class="node io"><span class="nm">User</span><span class="rl">Web · Teams · Slack · REST</span></div>
+            <span class="conn">→</span>
+            <div class="node svc" style="--th:var(--t-api)"><span class="nm">Weave-API</span><span class="rl">Auth · Rate Limit · Conversations · Guardrails</span></div>
+            <span class="conn">→</span>
+            <div class="node svc" style="--th:var(--t-runtime)"><span class="nm">Weave-Runtime</span><span class="rl">Intent-Router · Planner · LLM · Response Guard</span></div>
+            <span class="conn">⇄</span>
+            <div class="branch">
+              <div class="node svc" style="--th:var(--t-retrieval)"><span class="nm">Weave-Retrieval</span><span class="rl">Hybrid Search · Fusion · Reranker</span></div>
+              <div class="node svc" style="--th:var(--t-tools)"><span class="nm">Weave-Tools</span><span class="rl">REST · MCP · E-Mail · CRM</span></div>
+            </div>
+            <span class="conn">→</span>
+            <div class="node io"><span class="nm">Antwort</span><span class="rl">answer + sources + trace</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="no">03</span><h2>Die sechs Services</h2></div>
+    <p class="section-sub">Alle sechs Repos existieren bereits als leere Git-Repositories. Nur Weave-Ingest startet mit Code — dem kompletten PaddleDoc.</p>
+    <div class="services">
+      <div class="svc-card" style="--th:var(--t-ingest)">
+        <div class="svc-head"><h3>Weave-Ingest</h3><span class="tag">Dokumenten-Compiler</span></div>
+        <p>PDF, DOCX, PPTX, XLSX, Bilder, EML und Confluence → strukturiertes Markdown mit YAML-Frontmatter, Content-Hash-Versionierung, A/B/C-Quality-Gates, Webhooks. Behält Frontend, Mail-Ingestion, Benchmarks und Importe.</p>
+        <div class="basis">Basis: PaddleDoc (komplett)</div>
+      </div>
+      <div class="svc-card" style="--th:var(--t-knowledge)">
+        <div class="svc-head"><h3>Weave-Knowledge</h3><span class="tag">Index-Pipeline</span></div>
+        <p>Konsumiert das <code>document.processed</code>-Event: strukturbewusstes Chunking (Headings, Seitenmarker, Breadcrumbs), Metadata-Enrichment, Embeddings, Schreiben in Postgres + pgvector. Ersetzt den bisherigen OpenWebUI-Push.</p>
+        <div class="basis">Basis: neu · Muster aus Ingest</div>
+      </div>
+      <div class="svc-card" style="--th:var(--t-retrieval)">
+        <div class="svc-head"><h3>Weave-Retrieval</h3><span class="tag">Hybrid Search</span></div>
+        <p>Ein Endpoint: Query rein, Top-Chunks raus. Vector Search + BM25/Fulltext parallel, Rank-Fusion, Reranking (top_k 20 → final 5). Metadaten-Filter (Team, Department, Kunde, Sprache) sind first-class.</p>
+        <div class="basis">Basis: neu</div>
+      </div>
+      <div class="svc-card" style="--th:var(--t-runtime)">
+        <div class="svc-head"><h3>Weave-Runtime</h3><span class="tag">Bot-Orchestrator</span></div>
+        <p>Intent-Router entscheidet pro Anfrage: direkte Antwort, Retrieval, Dokument-Verarbeitung, Tool oder Workflow. Bots als YAML-Konfiguration, LLM-Provider-Abstraktion, Response Guard mit Quellenangaben.</p>
+        <div class="basis">Basis: neu · VL-Connections aus Ingest</div>
+      </div>
+      <div class="svc-card" style="--th:var(--t-tools)">
+        <div class="svc-head"><h3>Weave-Tools</h3><span class="tag">Action-Layer</span></div>
+        <p>MCP-Dienst und REST-Spiegel mit rechte-gebundener Suche, dazu die Chat-Oberfläche. Der Umfang kommt aus dem Token, nie aus den Werkzeug-Argumenten. Offen bleiben die handelnden Werkzeuge: E-Mail, CRM, Web.</p>
+        <div class="basis">Teilweise umgesetzt · Phase 4.5c/d</div>
+      </div>
+      <div class="svc-card" style="--th:var(--t-api)">
+        <div class="svc-head"><h3>Weave-API</h3><span class="tag">Bot-Gateway</span></div>
+        <p><code>POST /v1/chat</code> mit bot_id, conversation_id, message → answer, sources, trace. Auth (OIDC + API-Tokens), Rate-Limiting, Conversation State. Open WebUI dockt hier als Dev-Oberfläche an.</p>
+        <div class="basis">Basis: neu · Auth-Muster aus Ingest</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="no">04</span><h2>Arbeitspakete</h2></div>
+    <p class="section-sub">Sechs Phasen in Abhängigkeitsreihenfolge. Haken bleiben lokal im Browser gespeichert.</p>
+    <div class="total"><span id="total-count">0/0 erledigt</span><div class="bar"><i id="total-bar"></i></div></div>
+
+    <div class="phase" style="--th:var(--t-ingest)" data-phase="p0">
+      <div class="phase-head">
+        <span class="ph-no">Phase 0</span>
+        <h3>Fundament &amp; Verträge</h3>
+        <span class="count">0/0</span>
+        <div class="bar"><i></i></div>
+      </div>
+      <ul class="tasks">
+        <li><label><input type="checkbox" data-id="p0-readme" checked><span class="txt">Die sechs README-Stubs füllen: Zweck, Verantwortung und Abgrenzung pro Service<span class="why">Alle Repos existieren, enthalten aber nur den Titel.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p0-frontmatter" checked><span class="txt">Frontmatter-Schema als versionierten Datenvertrag festschreiben (JSON Schema in Weave-Ingest)<span class="why">Felder existieren bereits: source, content_sha256, document_version, previous_job_id, profile, engine, team, tags, processed_at u. a. — Knowledge validiert dagegen.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p0-event" checked><span class="txt">Event-Kontrakt <code>document.processed</code> definieren: Payload mit Markdown, Frontmatter, Quality-Grade, Versionskette; Idempotenz-Schlüssel <code>job_id + content_sha256</code><span class="why">Webhook-Delivery ist heute nicht idempotent — Dedup muss beim Konsumenten liegen.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p0-queue" checked><span class="txt">Queue-Topologie entscheiden: gemeinsames Redis mit benannten Queues pro Service vs. Redis pro Service<span class="why">PaddleDoc nutzt heute eine einzige Default-Celery-Queue — beim Split braucht es explizites Routing.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p0-auth" checked><span class="txt">Auth-Strategie festlegen: zentrales OIDC (Keycloak/Entra) für Menschen, API-Token-Muster aus PaddleDoc für Maschinen, Service-zu-Service-Auth definieren</span></label></li>
+        <li><label><input type="checkbox" data-id="p0-secrets" checked><span class="txt">Secrets-Strategie: Fernet+HKDF-Muster übernehmen, aber eigener <code>SECRET_KEY</code> pro Service und Rotationskonzept<span class="why">In PaddleDoc invalidiert eine Key-Rotation alle verschlüsselten Credentials — das darf sich nicht auf sechs Services vervielfachen.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p0-db" checked><span class="txt">Eigene Datenbank (oder eigenes Schema) pro Service festlegen — keine geteilten Tabellen zwischen Services<span class="why">Ingest behält sein Alembic-Schema; Knowledge bekommt ein eigenes für Chunks/Embeddings.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p0-compose" checked><span class="txt">Skeleton <code>docker-compose.weave.yml</code>: postgres (pgvector-Image), redis, weave-ingest, weave-knowledge, weave-retrieval, weave-runtime, weave-api<span class="why">Service-Definitionen, Security-Context und Volume-Layout aus PaddleDoc übernehmen.</span></span></label></li>
+      </ul>
+    </div>
+
+    <div class="phase" style="--th:var(--t-ingest)" data-phase="p1">
+      <div class="phase-head">
+        <span class="ph-no">Phase 1</span>
+        <h3>Weave-Ingest — PaddleDoc-Migration</h3>
+        <span class="count">0/0</span>
+        <div class="bar"><i></i></div>
+      </div>
+      <ul class="tasks">
+        <li><label><input type="checkbox" data-id="p1-copy" checked><span class="txt">PaddleDoc-Code (Backend, Worker, Frontend, Helm-Chart) nach Weave-Ingest übernehmen; Namespace, Images und Branding umziehen<span class="why">Images heißen heute ghcr.io/bl0rb/paddledoc-*.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p1-scope" checked><span class="txt">Scope schärfen: <code>push_openwebui</code>-Task deprecaten — Downstream-Verteilung übernimmt künftig Weave-Knowledge über das Event<span class="why">Mail-Ingestion, Confluence-Import und Benchmarks bleiben: das sind Ingestion-Quellen.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p1-event" checked><span class="txt"><code>document.processed</code>-Event auf der bestehenden Webhook-Infrastruktur implementieren (HMAC-SHA256 und Retry existieren bereits)</span></label></li>
+        <li><label><input type="checkbox" data-id="p1-quality" checked><span class="txt">Quality-Gate-Empfehlung (allow/warn/block) im Event-Payload durchreichen<span class="why">Damit Knowledge Grade-C-Dokumente gar nicht erst indiziert.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p1-openapi" checked><span class="txt">API-Vertrag v1 einfrieren und als OpenAPI-Spez exportieren: /upload, /jobs, /export, /mail/messages, /import<span class="why">Weave-API und Knowledge programmieren gegen diesen Vertrag, nicht gegen den Code.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p1-frontmatter" checked><span class="txt">Frontmatter-Konsistenz absichern: Vertragstest, der alle Engines (paddleocr, mail-eml, pypdf-fallback, spreadsheet-fallback, openai_vision) gegen das Schema prüft<span class="why">engine/used_fallback werden heute vom Aufrufer gesetzt — bekannter Inkonsistenz-Punkt.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p1-ops" checked><span class="txt">Betriebslücken aus dem Gap-Check schließen: Session-Cleanup-Job, Orphaned-File-Audit, explizite DB-Pool-Parameter (pool_size, max_overflow, pool_recycle)</span></label></li>
+      </ul>
+    </div>
+
+    <div class="phase" style="--th:var(--t-knowledge)" data-phase="p2">
+      <div class="phase-head">
+        <span class="ph-no">Phase 2</span>
+        <h3>Weave-Knowledge — Chunking &amp; Index</h3>
+        <span class="count">0/0</span>
+        <div class="bar"><i></i></div>
+      </div>
+      <ul class="tasks">
+        <li><label><input type="checkbox" data-id="p2-skeleton" checked><span class="txt">Service-Skeleton nach Ingest-Muster: FastAPI + Celery + Alembic, eigenes DB-Schema (documents, chunks, embeddings)</span></label></li>
+        <li><label><input type="checkbox" data-id="p2-consume" checked><span class="txt"><code>document.processed</code> idempotent konsumieren: <code>content_sha256</code> als Dedup-Key, Grade-C/block überspringen</span></label></li>
+        <li><label><input type="checkbox" data-id="p2-chunker" checked><span class="txt">Strukturbewusster Chunker: ATX-Headings, <code>&lt;!-- page:N --&gt;</code>-Marker und GFM-Tabellen aus dem Ingest-Markdown respektieren; Confluence-Breadcrumbs in Chunk-Metadaten übernehmen<span class="why">Die Struktur ist im Markdown bereits vorhanden — der Chunker muss sie nur nutzen statt blind nach Tokens zu schneiden.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p2-meta" checked><span class="txt">Metadata-Enrichment: Frontmatter → Chunk-Metadaten (team/tenant, department, document_type, language, version, page, source)<span class="why">„Suche nur in department=legal und customer_id=4711" ist wichtiger als der perfekte Embedding-Algorithmus.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p2-embed" checked><span class="txt">Embedding-Provider-Abstraktion (OpenAI-kompatibel + lokal), Batch-Verarbeitung, Modellname in Chunk-Metadaten speichern</span></label></li>
+        <li><label><input type="checkbox" data-id="p2-pgvector" checked><span class="txt">pgvector-Schema plus <code>tsvector</code>-Spalte für Fulltext gleich mit anlegen — eine Tabelle bedient später beide Suchpfade</span></label></li>
+        <li><label><input type="checkbox" data-id="p2-version" checked><span class="txt">Versionswechsel behandeln: bei Version N+1 alte Chunks des Dokuments atomar ersetzen (Versionskette aus Ingest nutzen)</span></label></li>
+        <li><label><input type="checkbox" data-id="p2-reindex" checked><span class="txt">Re-Index-Kommando für Embedding-Modellwechsel (alle Chunks neu einbetten, ohne neu zu chunken)</span></label></li>
+      </ul>
+    </div>
+
+    <div class="phase" style="--th:var(--t-retrieval)" data-phase="p3">
+      <div class="phase-head">
+        <span class="ph-no">Phase 3</span>
+        <h3>Weave-Retrieval — Hybrid Search</h3>
+        <span class="count">0/0</span>
+        <div class="bar"><i></i></div>
+      </div>
+      <ul class="tasks">
+        <li><label><input type="checkbox" data-id="p3-api" checked><span class="txt">Retrieval-API: <code>POST /search</code> mit query, filters, top_k — Antwort mit Chunks, Scores und Quell-Metadaten (document, page, version)</span></label></li>
+        <li><label><input type="checkbox" data-id="p3-hybrid" checked><span class="txt">Vector Search (pgvector) und BM25/Fulltext (tsvector) parallel ausführen<span class="why">Reine Vektorsuche versagt bei „§ 12 Absatz 3" oder „Kundennummer 4711" — die Kombination ist robuster.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p3-fusion" checked><span class="txt">Rank-Fusion implementieren (Reciprocal Rank Fusion als Baseline)</span></label></li>
+        <li><label><input type="checkbox" data-id="p3-rerank" checked><span class="txt">Reranker-Stufe konfigurierbar (Cross-Encoder oder API): top_k 20 → final_k 5</span></label></li>
+        <li><label><input type="checkbox" data-id="p3-filter" checked><span class="txt">Metadaten-Filter first-class im Query-Pfad: team, department, customer, language, document_type — vor der Suche, nicht danach<span class="why">Das ist zugleich die Zugriffsgrenze: Retrieval darf nur sehen, was der anfragende Bot sehen darf.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p3-eval" checked><span class="txt">Evaluation-Harness: goldene Frage-Antwort-Paare, Recall/MRR messen — vor jedem Umbau der Suche laufen lassen</span></label></li>
+      </ul>
+    </div>
+
+    <div class="phase" style="--th:var(--t-runtime)" data-phase="p4">
+      <div class="phase-head">
+        <span class="ph-no">Phase 4</span>
+        <h3>Weave-Runtime + Weave-API — Bot-MVP (V1)</h3>
+        <span class="count">0/0</span>
+        <div class="bar"><i></i></div>
+      </div>
+      <ul class="tasks">
+        <li><label><input type="checkbox" data-id="p4-chat" checked><span class="txt">Weave-API: <code>POST /v1/chat</code> {bot_id, conversation_id, message} → {answer, sources, trace} plus /bots, /bots/{id}, /conversations/{id}<span class="why">Umgesetzt inkl. OpenAI-kompatiblem /v1/chat/completions-Shim; der /documents-Upload-Proxy wandert zum document-Pfad in Phase 5.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p4-auth" checked><span class="txt">Auth und Rate-Limiting im Gateway: OIDC-Sessions und API-Token-Muster aus Ingest übernehmen<span class="why">API-Tokens (sha256, Ablauf, CLI), Rate-Limit und OIDC-SSO umgesetzt — beide Wege führen zum selben Konto und Limit.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p4-state" checked><span class="txt">Conversation State in Postgres: users, bots, conversations, messages</span></label></li>
+        <li><label><input type="checkbox" data-id="p4-router" checked><span class="txt">Intent-Router: conversational / knowledge / document / action / complex — Start mit kleinem Modell oder Regelwerk, Ausgabe {intent, confidence, needs_retrieval, needs_tool}<span class="why">Nur der knowledge-Pfad ruft Weave-Retrieval; „Hallo" geht direkt zum LLM.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p4-botconfig" checked><span class="txt">Bot-als-YAML: model, system_prompt, retrieval (knowledge_bases, top_k, rerank, final_k), tools, permissions — geladen von der Runtime</span></label></li>
+        <li><label><input type="checkbox" data-id="p4-llm" checked><span class="txt">LLM-Provider-Abstraktion: VL-Connection-Verwaltung aus PaddleDoc als Vorlage (OpenAI-kompatible Endpoints, verschlüsselte Keys)<span class="why">Provider-Abstraktion + FakeLLM umgesetzt; Keys kommen aus der Env — DB-verschlüsselte Connection-Verwaltung nach VL-Muster bei Bedarf später.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p4-guard" checked><span class="txt">Response Guard + Quellenpflicht: Antworten im knowledge-Pfad tragen sources (document, page) aus den Chunk-Metadaten</span></label></li>
+        <li><label><input type="checkbox" data-id="p4-openwebui" checked><span class="txt">Open WebUI als Dev-/Testoberfläche gegen Weave-API anbinden — daneben stellen, nicht in den Kern</span></label></li>
+      </ul>
+    </div>
+
+    <div class="phase" style="--th:var(--t-api)" data-phase="p45">
+      <div class="phase-head">
+        <span class="ph-no">Phase 4.5</span>
+        <h3>Collections, Streaming, MCP &amp; Chat-Oberfläche</h3>
+        <span class="count">0/0</span>
+        <div class="bar"><i></i></div>
+      </div>
+      <ul class="tasks">
+        <li><label><input type="checkbox" data-id="p45-collections" checked><span class="txt">Collections als benannte Entität mit Zugriffsliste (<code>slug</code>, <code>name</code>, <code>read_teams</code>) durch alle fünf Dienste<span class="why">Der Slug wandert bis in die Chunk-Metadaten, die Zugriffsliste bewusst nicht — sie lebt in einer Registry, damit ein Rechteentzug kein Neuindizieren kostet.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p45-registry" checked><span class="txt">Registry-Spiegel in Weave-Knowledge: 60-Sekunden-Tick plus sofortiges <code>collection.updated</code>-Event bei Rechteänderung</span></label></li>
+        <li><label><input type="checkbox" data-id="p45-boundary" checked><span class="txt"><code>allowed_collections</code> als harte SQL-Grenze vor dem Ranking, Bot-Scope als Schnittmenge aus Bot- und Nutzerrechten<span class="why">Leere Schnittmenge heißt: gar nicht erst suchen. Der Sentinel <code>__none__</code> hält den Altbestand sichtbar, statt ihn beim Anlegen der ersten Collection lautlos zu entfernen.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p45-streaming" checked><span class="txt">SSE-Streaming von Runtime bis in den OpenAI-Shim; Rechte, Suche und Guard laufen vollständig vor dem ersten Zeichen</span></label></li>
+        <li><label><input type="checkbox" data-id="p45-models" checked><span class="txt"><code>GET /v1/models</code> — Open WebUI füllt seine Bot-Auswahl jetzt selbst</span></label></li>
+        <li><label><input type="checkbox" data-id="p45-token" checked><span class="txt">Delegations-Token: HMAC-signiert, fünf Minuten gültig, erlaubter Collection-Umfang eingebettet<span class="why">Aussteller und Prüfer schlagen ohne Geheimnis hart fehl — ein leerer HMAC-Schlüssel erzeugt sonst gültige Signaturen.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p45-mcp" checked><span class="txt">MCP-Dienst mit <code>list_collections</code> und <code>search</code>: Umfang immer serverseitig aus der Identität, Argumente können nur einschränken</span></label></li>
+        <li><label><input type="checkbox" data-id="p45-n8n" checked><span class="txt">n8n als Bot-Provider mit signiertem Request und SSRF-Allowlist; von n8n gemeldete Quellen werden gegen den Umfang geprüft<span class="why">Quellen aus einem Flow sind eine Behauptung, keine Berechtigung — was außerhalb liegt, wird verworfen und im Trace gezählt.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p45-ui" checked><span class="txt">Chat-Oberfläche in Weave-Tools: Streaming, Quellenkarten, Trace-Panel; Token bleibt serverseitig im httpOnly-Cookie</span></label></li>
+        <li><label><input type="checkbox" data-id="p45-filter" checked><span class="txt">Collection-Filter pro Anfrage — greift erst nach der Rechte-Schnittmenge und kann nie erweitern<span class="why">Eigener Guard-Grund, damit „deine Auswahl passt nicht" von „du darfst nichts" unterscheidbar ist.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p45-oidc" checked><span class="txt">OIDC-Anmeldung im Gateway mit Cross-Origin-Übergabe an die Oberfläche<span class="why">Zuordnung nur über den OIDC-Subject, nie über die E-Mail — sonst wäre eine Kontoübernahme über eine gleiche Adresse möglich. Einmal-Code, 60 Sekunden, serverseitig getauscht.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p45-deploy" checked><span class="txt">Deploy-Stack vollständig: alle sechs Dienste, geteilte Geheimnisse an einer Stelle, Init-Skript für die drei Datenbanken und die Read-only-Rolle</span></label></li>
+      </ul>
+    </div>
+
+    <div class="phase" style="--th:var(--t-tools)" data-phase="p5">
+      <div class="phase-head">
+        <span class="ph-no">Phase 5</span>
+        <h3>Weave-Tools &amp; Ausbau (V2/V3)</h3>
+        <span class="count">0/0</span>
+        <div class="bar"><i></i></div>
+      </div>
+      <ul class="tasks">
+        <li><label><input type="checkbox" data-id="p5-registry"><span class="txt">Tool-Registry: REST, MCP, E-Mail, CRM, Web — mit Berechtigungen pro Bot aus der YAML-Konfiguration</span></label></li>
+        <li><label><input type="checkbox" data-id="p5-dispatch"><span class="txt">Router-Anbindung: action-Intents an Weave-Tools dispatchen, Ergebnis in die LLM-Antwort einweben (V2)</span></label></li>
+        <li><label><input type="checkbox" data-id="p5-docpath"><span class="txt">document-Pfad: „Fass dieses PDF zusammen" → Direktverarbeitung über Weave-Ingest ohne RAG-Index</span></label></li>
+        <li><label><input type="checkbox" data-id="p5-planner"><span class="txt">Planner/Executor für complex-Intents: mehrstufige Aufgaben über RAG + Tools + Memory (V3)</span></label></li>
+        <li><label><input type="checkbox" data-id="p5-memory"><span class="txt">Memory über die einzelne Conversation hinaus (V3)</span></label></li>
+        <li><label><input type="checkbox" data-id="p5-agentic"><span class="txt">Erst jetzt bewerten: Agentic RAG, GraphRAG, Multi-Agent — nur wenn die Evaluation aus Phase 3 echte Lücken zeigt</span></label></li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="no">05</span><h2>Risiken &amp; offene Entscheidungen</h2></div>
+    <p class="section-sub">Aus der Codeanalyse — Kopplungspunkte in PaddleDoc, die der Service-Schnitt aktiv auflösen muss.</p>
+    <div class="risks">
+      <div class="risk-item">
+        <span class="dot"></span>
+        <div class="txt"><strong>Eine Celery-Queue für alles</strong><span>Alle Tasks laufen heute über eine Default-Queue in Redis. Beim Split braucht jeder Service explizites Queue-Routing oder eigene Broker — sonst konsumieren sich die Worker gegenseitig die Tasks weg.</span></div>
+      </div>
+      <div class="risk-item">
+        <span class="dot"></span>
+        <div class="txt"><strong>SECRET_KEY ist nicht rotierbar</strong><span>Fernet-verschlüsselte Credentials (OIDC, Confluence, VL-Keys) hängen an einem Key, dessen Rotation alles invalidiert. Vor dem Split pro Service klären, sonst vererbt sich das Problem sechsfach.</span></div>
+      </div>
+      <div class="risk-item">
+        <span class="dot"></span>
+        <div class="txt"><strong>Sichtbarkeits-Filter stecken in &gt;10 Query-Helfern</strong><span>Team-/Owner-Sichtbarkeit ist tief im Ingest-Backend verwoben. Entscheidung nötig: Zugriffskontrolle im Gateway (Weave-API) zentralisieren und Metadaten-Filter im Retrieval erzwingen — nicht in jedem Service neu implementieren.</span></div>
+      </div>
+      <div class="risk-item warn">
+        <span class="dot"></span>
+        <div class="txt"><strong>Webhook-Delivery ist nicht idempotent</strong><span>Job-Verarbeitung dedupliziert per Content-Hash, die Auslieferung nicht. Weave-Knowledge muss doppelte Events verkraften — Idempotenz gehört in den Konsumenten (Phase 2).</span></div>
+      </div>
+      <div class="risk-item warn">
+        <span class="dot"></span>
+        <div class="txt"><strong>Frontmatter-Konsistenz über fünf Engines</strong><span>paddleocr, mail-eml, pypdf-fallback, spreadsheet-fallback und openai_vision müssen identische Frontmatter liefern; engine/used_fallback setzt heute der Aufrufer. Der Vertragstest aus Phase 1 ist die Absicherung.</span></div>
+      </div>
+      <div class="risk-item warn">
+        <span class="dot"></span>
+        <div class="txt"><strong>Betriebslücken im Bestand</strong><span>Kein Session-Cleanup-Job, kein Orphaned-File-Audit, DB-Pooling auf Defaults, Worker-Logs auf 20.000 Zeilen gedeckelt. Vor dem Multiplizieren auf sechs Services in Ingest beheben.</span></div>
+      </div>
+      <div class="risk-item warn">
+        <span class="dot"></span>
+        <div class="txt"><strong>GPU-Worker nicht überall portierbar</strong><span>Die GPU-Variante (paddlevl_1_6_0_9b) braucht NVIDIA-Runtime; das PaddleOCR-Modell-Volume ist groß. Bleibt ein Ingest-internes Deployment-Detail — darf nie zur Voraussetzung für andere Services werden.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="no">06</span><h2>MVP-Staffelung</h2></div>
+    <p class="section-sub">Bewusst klein anfangen — Postgres + pgvector statt Kafka, Milvus und Elasticsearch am ersten Tag.</p>
+    <div class="mvp">
+      <div class="card">
+        <div class="v">V1 · Phasen 0–4</div>
+        <h3>Frage → belegte Antwort</h3>
+        <ul>
+          <li>Ingest → Knowledge → pgvector</li>
+          <li>Chat-API mit Router</li>
+          <li>Hybrid Retrieval + Reranker</li>
+          <li>Antwort mit Quellen und Trace</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="v">V2 · Phase 5</div>
+        <h3>Router mit Aktionen</h3>
+        <ul>
+          <li>Tools hinter action-Intents</li>
+          <li>Dokument-Direktpfad im Chat</li>
+          <li>Mehrere Bots als YAML-Konfigurationen</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="v">V3 · danach</div>
+        <h3>Planner &amp; Memory</h3>
+        <ul>
+          <li>Mehrstufige complex-Workflows</li>
+          <li>Memory über Conversations hinaus</li>
+          <li>Agentic RAG nur bei belegtem Bedarf</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    Weave Bauplan · erstellt aus der Analyse von PaddleDoc (FastAPI + Celery + Next.js, 25+ Migrationen, 40+ API-Routen) und new_apps.md
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  var STORE_KEY = "weave-bauplan-tasks";
+  var state = {};
+  try {
+    var raw = localStorage.getItem(STORE_KEY);
+    if (raw) state = JSON.parse(raw) || {};
+  } catch (e) { state = {}; }
+
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('.tasks input[type="checkbox"]'));
+
+  function save() {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) { /* privat/blockiert — ok */ }
+  }
+
+  function refresh() {
+    var totalDone = 0;
+    document.querySelectorAll(".phase").forEach(function (phase) {
+      var inputs = phase.querySelectorAll('input[type="checkbox"]');
+      var done = phase.querySelectorAll('input[type="checkbox"]:checked').length;
+      totalDone += done;
+      var count = phase.querySelector(".count");
+      if (count) count.textContent = done + "/" + inputs.length;
+      var bar = phase.querySelector(".bar i");
+      if (bar) bar.style.width = (inputs.length ? (100 * done / inputs.length) : 0) + "%";
+    });
+    var totalCount = document.getElementById("total-count");
+    var totalBar = document.getElementById("total-bar");
+    if (totalCount) totalCount.textContent = totalDone + "/" + boxes.length + " erledigt";
+    if (totalBar) totalBar.style.width = (boxes.length ? (100 * totalDone / boxes.length) : 0) + "%";
+  }
+
+  boxes.forEach(function (box) {
+    var id = box.getAttribute("data-id");
+    if (id && Object.prototype.hasOwnProperty.call(state, id)) box.checked = !!state[id];
+    box.addEventListener("change", function () {
+      if (!id) return;
+      state[id] = box.checked;
+      save();
+      refresh();
+    });
+  });
+
+  refresh();
+})();
+</script>
+</body>
+</html>

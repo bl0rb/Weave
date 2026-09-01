@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://weave.local/contracts/frontmatter/v1",
+  "title": "Weave Ingest Frontmatter v1",
+  "description": "Datenvertrag für YAML-Frontmatter in Markdown-Dokumenten, die von Weave-Ingest erzeugt werden",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "source",
+    "pages",
+    "profile",
+    "profile_id",
+    "mode",
+    "job_id",
+    "document_version",
+    "content_sha256",
+    "processed_at",
+    "engine"
+  ],
+  "properties": {
+    "source": {
+      "type": "string",
+      "description": "Dateiname oder URL der Quelle (UUID-Dateiname auf der Festplatte, wird bei Upload durch original_filename ergänzt)"
+    },
+    "original_filename": {
+      "type": "string",
+      "description": "Ursprünglicher Name der vom Benutzer hochgeladenen Datei"
+    },
+    "pages": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Anzahl der Seiten/Blätter im Quelldokument"
+    },
+    "profile": {
+      "type": "string",
+      "description": "Lesbare Bezeichnung des verwendeten OCR/VL-Profils (z.B. 'PP-OCRv6 tiny det + rec')"
+    },
+    "profile_id": {
+      "type": "string",
+      "description": "Eindeutige Kennung des OCR/VL-Profils (z.B. 'ppocrv6_tiny', 'openai_vision', 'vl:<connection_id>')"
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "single",
+        "collection",
+        "import"
+      ],
+      "description": "Verarbeitungsmodus: 'single' für Einzeldokument-Upload, 'collection' für einen über POST /collections/{id}/start gestarteten Sammel-Upload, 'import' für Confluence-Import"
+    },
+    "email": {
+      "type": "string",
+      "description": "E-Mail-Adresse (nur bei Mail-Dateien oder entsprechenden Imports)"
+    },
+    "department": {
+      "type": "string",
+      "description": "Abteilung oder Organisationseinheit"
+    },
+    "collection": {
+      "type": "string",
+      "description": "Slug der Collection, der dieses Dokument zugeordnet ist (siehe Weave-Ingest Collections-Registry, GET /api/v1/collections/registry) -- die stabile, dienstübergreifende Kennung, niemals der Anzeigename"
+    },
+    "collection_name": {
+      "type": "string",
+      "description": "Anzeigename der Collection zum Zeitpunkt der Verarbeitung (nur informativ; für Zugriffsentscheidungen ist ausschließlich der Slug in `collection` maßgeblich)"
+    },
+    "job_id": {
+      "type": "string",
+      "description": "Eindeutige Kennung des Verarbeitungsauftrags"
+    },
+    "document_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Versionsnummer des Dokuments (für Versionskontrolle bei wiederholtem Upload)"
+    },
+    "content_sha256": {
+      "type": "string",
+      "description": "SHA-256-Hash des Originaldokuments zur Duplikaterkennung"
+    },
+    "previous_job_id": {
+      "type": "string",
+      "description": "Kennung des vorherigen Verarbeitungsauftrags (bei Neuverarbeitung desselben Dokuments)"
+    },
+    "uploaded_by": {
+      "type": "string",
+      "description": "Benutzername des Dokumentuploader"
+    },
+    "team": {
+      "type": "string",
+      "description": "Name des Teams, dem der Uploader angehört"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Array von Verschlagwortungen/Markierungen für das Dokument"
+    },
+    "processed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Zeitstempel der Verarbeitung im Format ISO-8601 (UTC)"
+    },
+    "engine": {
+      "type": "string",
+      "enum": [
+        "paddleocr",
+        "mail-eml",
+        "pypdf-fallback",
+        "spreadsheet-fallback",
+        "openai_vision"
+      ],
+      "description": "OCR/Konvertierungs-Engine, die verwendet wurde"
+    },
+    "used_fallback": {
+      "type": "boolean",
+      "const": true,
+      "description": "Nur wenn true: gibt an, dass ein Fallback-Engine statt des primären Pipelines verwendet wurde"
+    },
+    "title": {
+      "type": "string",
+      "description": "Seitentitel (Confluence-Import)"
+    },
+    "confluence_page_id": {
+      "type": "string",
+      "description": "Eindeutige Kennung der Confluence-Seite"
+    },
+    "confluence_version": {
+      "type": "integer",
+      "description": "Versionsnummer im Confluence-System"
+    },
+    "imported_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Zeitstempel des Imports im Format ISO-8601 (UTC)"
+    },
+    "import_run": {
+      "type": "string",
+      "description": "Eindeutige Kennung des Confluence-Import-Laufs"
+    },
+    "space": {
+      "type": "string",
+      "description": "Confluence-Space-Schlüssel"
+    },
+    "confluence_path": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Array von Seitentiteln vom Space-Root bis zur direkten Parent-Seite (Breadcrumb-Pfad)"
+    },
+    "parent_title": {
+      "type": "string",
+      "description": "Titel der direkten Parent-Seite (letztes Element von confluence_path)"
+    },
+    "depth": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Hierarchie-Tiefe: Anzahl der Ancestor-Seiten"
+    },
+    "is_navigation": {
+      "type": "boolean",
+      "const": true,
+      "description": "Nur wenn true: Seite ist eine Navigationseite (ToC, Children-Makro) mit hohem Link-Anteil"
+    },
+    "children_titles": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "description": "Objekt, das pro Child-Seite eine Liste ihrer Titel enthält (nur bei Confluence-Parents)"
+    }
+  }
+}

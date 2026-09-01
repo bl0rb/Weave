@@ -1,0 +1,66 @@
+backend:
+  replicaCount: 3
+  runAlembicOnStartup: false
+
+worker:
+  replicaCount: 5
+  paddleDefaultProfile: ppocrv6_tiny
+
+autoscaling:
+  backend:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 12
+    targetCPUUtilizationPercentage: 65
+  worker:
+    enabled: true
+    minReplicas: 5
+    maxReplicas: 30
+    targetCPUUtilizationPercentage: 75
+
+migrationJob:
+  enabled: true
+
+database:
+  type: postgresdb
+  useExternal: true
+  host: your-postgres-host.example.com
+  port: 5432
+  database: weave_ingest
+  schema: public
+  user: weave_ingest
+  passwordSecret:
+    name: weave-ingest-db-secret
+    key: password
+
+redis:
+  enabled: false
+  host: your-redis-host.example.com
+  port: 6379
+  # auth stays off by default for external redis (back-compatible). To turn
+  # it on, set redis.auth.password, or point redis.auth.existingSecret at a
+  # secret (key "password") you manage separately -- see the chart README's
+  # "Redis authentication" section.
+
+frontend:
+  enabled: true
+  replicaCount: 2
+  apiUrl: https://api.your-domain.example.com
+
+ingress:
+  frontend:
+    enabled: true
+    className: nginx
+    hosts:
+      - host: app.your-domain.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+  backend:
+    enabled: true
+    className: nginx
+    hosts:
+      - host: api.your-domain.example.com
+        paths:
+          - path: /
+            pathType: Prefix

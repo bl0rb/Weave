@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Weave Betriebshandbuch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  :root {
+    --bg: #F4F6F8;
+    --surface: #FFFFFF;
+    --surface-2: #E9EDF2;
+    --ink: #101720;
+    --muted: #515C6B;
+    --faint: #86909E;
+    --line: #DCE1E8;
+    --line-soft: #E7EBF0;
+
+    --accent: #2F5AA8;
+    --accent-soft: rgba(47, 90, 168, 0.09);
+
+    --danger: #A6412F;
+    --danger-soft: rgba(166, 65, 47, 0.08);
+    --danger-line: rgba(166, 65, 47, 0.28);
+
+    --warn: #8A6410;
+    --warn-soft: rgba(138, 100, 16, 0.09);
+
+    --ok: #2F6B4F;
+
+    --code-bg: #EDF0F4;
+    --term-bg: #131A24;
+    --term-ink: #DCE3EC;
+    --term-dim: #6F7D8F;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0F141B;
+      --surface: #171E27;
+      --surface-2: #1F2731;
+      --ink: #E7ECF3;
+      --muted: #9BA6B4;
+      --faint: #6C7684;
+      --line: #2C3641;
+      --line-soft: #232B35;
+
+      --accent: #7FA3E8;
+      --accent-soft: rgba(127, 163, 232, 0.13);
+
+      --danger: #E08A75;
+      --danger-soft: rgba(224, 138, 117, 0.11);
+      --danger-line: rgba(224, 138, 117, 0.32);
+
+      --warn: #D3A94F;
+      --warn-soft: rgba(211, 169, 79, 0.11);
+
+      --ok: #6FB795;
+
+      --code-bg: #1F2731;
+      --term-bg: #0A0F15;
+      --term-ink: #DCE3EC;
+      --term-dim: #6F7D8F;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0F141B;
+    --surface: #171E27;
+    --surface-2: #1F2731;
+    --ink: #E7ECF3;
+    --muted: #9BA6B4;
+    --faint: #6C7684;
+    --line: #2C3641;
+    --line-soft: #232B35;
+
+    --accent: #7FA3E8;
+    --accent-soft: rgba(127, 163, 232, 0.13);
+
+    --danger: #E08A75;
+    --danger-soft: rgba(224, 138, 117, 0.11);
+    --danger-line: rgba(224, 138, 117, 0.32);
+
+    --warn: #D3A94F;
+    --warn-soft: rgba(211, 169, 79, 0.11);
+
+    --ok: #6FB795;
+
+    --code-bg: #1F2731;
+    --term-bg: #0A0F15;
+    --term-ink: #DCE3EC;
+    --term-dim: #6F7D8F;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Inter", system-ui, sans-serif;
+    font-size: 15.5px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; padding: 52px 24px 96px; }
+
+  h1, h2, h3 {
+    font-family: "Archivo", system-ui, sans-serif;
+    margin: 0;
+    text-wrap: balance;
+    letter-spacing: -0.018em;
+  }
+  h1 { font-size: clamp(2.1rem, 5vw, 2.9rem); font-weight: 700; line-height: 1.06; }
+  h2 { font-size: 1.42rem; font-weight: 650; }
+  h3 { font-size: 1.02rem; font-weight: 600; }
+  p { margin: 0 0 12px; }
+  p:last-child { margin-bottom: 0; }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .72rem; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--accent); margin: 0 0 14px;
+  }
+  .lede { margin-top: 16px; max-width: 62ch; font-size: 1.03rem; color: var(--muted); }
+
+  .meta {
+    display: flex; flex-wrap: wrap; gap: 6px 18px;
+    margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line-soft);
+    font-family: "IBM Plex Mono", monospace; font-size: .74rem; color: var(--faint);
+  }
+
+  /* Inhalt */
+  nav.toc {
+    margin-top: 34px; padding: 18px 22px;
+    background: var(--surface); border: 1px solid var(--line-soft); border-radius: 10px;
+  }
+  nav.toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 32px; font-size: .92rem; }
+  @media (max-width: 620px) { nav.toc ol { columns: 1; } }
+  nav.toc li { margin-bottom: 4px; break-inside: avoid; }
+  nav.toc a { color: var(--ink); text-decoration: none; border-bottom: 1px solid transparent; }
+  nav.toc a:hover { border-bottom-color: var(--accent); color: var(--accent); }
+
+  section { margin-top: 52px; scroll-margin-top: 20px; }
+  .sec-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; }
+  .sec-head .no {
+    font-family: "IBM Plex Mono", monospace; font-size: .8rem;
+    color: var(--accent); font-weight: 500;
+  }
+  section > p { max-width: 70ch; color: var(--muted); }
+
+  /* Tabellen */
+  .t-scroll { overflow-x: auto; margin: 18px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+  th {
+    text-align: left; font-family: "IBM Plex Mono", monospace;
+    font-size: .68rem; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--faint); padding: 0 14px 8px 0; border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  td { padding: 11px 14px 11px 0; vertical-align: top; border-bottom: 1px solid var(--line-soft); color: var(--muted); }
+  tr:last-child td { border-bottom: none; }
+  td.k { color: var(--ink); }
+  td strong { color: var(--ink); font-weight: 600; }
+
+  code, .mono {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .855em;
+    background: var(--code-bg);
+    border-radius: 4px; padding: .1em .36em;
+    word-break: break-word;
+  }
+  th code, td code { background: transparent; padding: 0; }
+  td code { color: var(--ink); font-weight: 500; }
+
+  /* Terminal */
+  pre {
+    margin: 14px 0; padding: 16px 18px;
+    background: var(--term-bg); color: var(--term-ink);
+    border-radius: 9px; overflow-x: auto;
+    font-family: "IBM Plex Mono", monospace; font-size: .82rem; line-height: 1.65;
+  }
+  pre .c { color: var(--term-dim); }
+  pre .p { color: #7FA3E8; }
+
+  /* Hinweisboxen */
+  .box {
+    margin: 18px 0; padding: 16px 20px;
+    border-radius: 9px; border: 1px solid var(--line);
+    background: var(--surface); font-size: .93rem;
+  }
+  .box .t {
+    font-family: "IBM Plex Mono", monospace; font-size: .7rem;
+    letter-spacing: .12em; text-transform: uppercase;
+    margin-bottom: 7px; font-weight: 600;
+  }
+  .box.danger { background: var(--danger-soft); border-color: var(--danger-line); }
+  .box.danger .t { color: var(--danger); }
+  .box.warn { background: var(--warn-soft); border-color: rgba(138,100,16,.25); }
+  .box.warn .t { color: var(--warn); }
+  .box.note { background: var(--accent-soft); border-color: rgba(47,90,168,.22); }
+  .box.note .t { color: var(--accent); }
+  .box p { color: var(--ink); }
+
+  /* Stille Fallen */
+  .trap {
+    display: grid; grid-template-columns: 1fr; gap: 4px;
+    padding: 15px 0; border-bottom: 1px solid var(--line-soft);
+  }
+  .trap:last-child { border-bottom: none; }
+  .trap .sym { font-weight: 600; color: var(--ink); font-size: .96rem; }
+  .trap .sym .var {
+    font-family: "IBM Plex Mono", monospace; font-size: .8rem;
+    color: var(--danger); background: var(--danger-soft);
+    border-radius: 4px; padding: .12em .4em; margin-right: 8px; font-weight: 500;
+  }
+  .trap .why { color: var(--muted); font-size: .91rem; }
+  .trap .fix { font-size: .89rem; color: var(--ink); }
+  .trap .fix b {
+    font-family: "IBM Plex Mono", monospace; font-size: .68rem;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--ok);
+    margin-right: 7px; font-weight: 600;
+  }
+
+  ol.steps { counter-reset: s; list-style: none; padding: 0; margin: 18px 0; }
+  ol.steps > li {
+    counter-increment: s; position: relative;
+    padding: 0 0 20px 42px; margin: 0;
+    border-left: 1px solid var(--line);
+  }
+  ol.steps > li:last-child { border-left-color: transparent; padding-bottom: 0; }
+  ol.steps > li::before {
+    content: counter(s);
+    position: absolute; left: -13px; top: 0;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--surface); border: 1px solid var(--line);
+    color: var(--accent); font-family: "IBM Plex Mono", monospace;
+    font-size: .76rem; font-weight: 600;
+    display: flex; align-items: center; justify-content: center;
+  }
+  ol.steps h3 { margin-bottom: 4px; }
+  ol.steps p { color: var(--muted); font-size: .93rem; }
+
+  footer {
+    margin-top: 68px; padding-top: 22px; border-top: 1px solid var(--line-soft);
+    font-family: "IBM Plex Mono", monospace; font-size: .74rem; color: var(--faint);
+  }
+  @media (max-width: 620px) { .wrap { padding: 34px 16px 72px; } }
+</style>
+</head>
+<body>
+
+
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">Betrieb · Weave-Plattform</p>
+  <h1>Weave Betriebshandbuch</h1>
+  <p class="lede">Was du setzen musst, damit die sechs Dienste zusammenspielen — und vor allem: welche falschen Werte nichts kaputt machen, sondern nur dafür sorgen, dass es leise nicht funktioniert.</p>
+  <div class="meta">
+    <span>Stand 01.09.2026</span>
+    <span>149 Einstellungen · 14 davon Pflicht</span>
+    <span>aus den <code>config.py</code> der Dienste erhoben</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <ol>
+    <li><a href="#dienste">Die sechs Dienste</a></li>
+    <li><a href="#start">Lokal starten</a></li>
+    <li><a href="#bootstrap">Erstinbetriebnahme</a></li>
+    <li><a href="#pflicht">Pflichtwerte</a></li>
+    <li><a href="#geteilt">Geteilte Werte</a></li>
+    <li><a href="#fallen">Stille Fallen</a></li>
+    <li><a href="#echt">Echte Provider</a></li>
+    <li><a href="#sso">SSO einrichten</a></li>
+    <li><a href="#agenten">n8n und MCP</a></li>
+    <li><a href="#pruefen">Selbsttest</a></li>
+  </ol>
+</nav>
+
+<!-- ══════════ 1 ══════════ -->
+<section id="dienste">
+  <div class="sec-head"><span class="no">01</span><h2>Die sechs Dienste</h2></div>
+  <p>Zwei Pipelines: offline verwandelt Ingest Dokumente in durchsuchbare Chunks, online beantwortet die Runtime Anfragen. Jeder Dienst hat eine eigene Datenbank — mit einer dokumentierten Ausnahme.</p>
+  <div class="t-scroll">
+    <table>
+      <thead><tr><th>Dienst</th><th>Port</th><th>Datenbank</th><th>Aufgabe</th></tr></thead>
+      <tbody>
+        <tr><td class="k"><strong>Weave-Ingest</strong></td><td><code>8000</code></td><td><code>weave_ingest</code></td><td>OCR, Markdown + Frontmatter, Quality-Gate, besitzt die Collections</td></tr>
+        <tr><td class="k"><strong>Weave-Knowledge</strong></td><td><code>8001</code></td><td><code>weave_knowledge</code></td><td>Chunking, Embeddings, schreibt den Chunk-Store, spiegelt die Collection-Registry</td></tr>
+        <tr><td class="k"><strong>Weave-Retrieval</strong></td><td><code>8002</code></td><td>liest <code>weave_knowledge</code></td><td>Hybride Suche; Lese-Autorität für Collections. Einziger Dienst ohne eigene DB — siehe ADR-0005</td></tr>
+        <tr><td class="k"><strong>Weave-Runtime</strong></td><td><code>8003</code></td><td>keine</td><td>Intent-Router, Bots als YAML, LLM, n8n, stellt Delegations-Token aus</td></tr>
+        <tr><td class="k"><strong>Weave-API</strong></td><td><code>8004</code></td><td><code>weave_api</code></td><td>Gateway und Identitäts-Autorität: Nutzer, Tokens, Sitzungen, Gespräche</td></tr>
+        <tr><td class="k"><strong>Weave-Tools</strong></td><td><code>8005</code> · <code>3001</code></td><td>keine</td><td>MCP-Dienst mit rechte-gebundener Suche; Chat-Oberfläche</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="box note">
+    <div class="t">Warum Retrieval fremd mitliest</div>
+    <p>pgvector-Ähnlichkeit und tsvector-Ranking müssen als SQL <em>in</em> der Datenbank laufen. Ein API-Umweg würde Weave-Knowledge zwingen, die halbe Suche selbst zu bauen. Deshalb: Knowledge schreibt, Retrieval liest read-only über eine eigene Rolle mit ausschließlich <code>SELECT</code>. Das Schema ist dadurch ein Vertrag (<code>contracts/chunk-store.md</code>).</p>
+  </div>
+</section>
+
+<!-- ══════════ 2 ══════════ -->
+<section id="start">
+  <div class="sec-head"><span class="no">02</span><h2>Lokal starten</h2></div>
+  <p>Die Compose-Datei zeigt auf Registry-Images, die nie veröffentlicht wurden. Das Override baut alle sechs Dienste aus diesem Monorepo (<code>services/&lt;dienst&gt;</code>).</p>
+  <pre><span class="c"># Geheimnisse erzeugen (12 Pflichtwerte, siehe Abschnitt 04)</span>
+<span class="p">cd</span> deploy
+<span class="p">cp</span> .env.example .env   <span class="c"># und die Werte füllen</span>
+
+<span class="c"># Bauen und starten — ohne OCR-Worker, der ist mehrere GB groß</span>
+<span class="p">docker compose</span> -f docker-compose.weave.yml -f docker-compose.local.yml up -d --build
+
+<span class="c"># OCR-Worker nachziehen, wenn du wirklich Dokumente verarbeiten willst</span>
+<span class="p">docker compose</span> -f docker-compose.weave.yml -f docker-compose.local.yml \
+  --profile ocr up -d weave-ingest-worker</pre>
+  <p>Beenden mit <code>down</code>; die Daten bleiben in den Volumes. Erst <code>down -v</code> löscht auch die Datenbanken.</p>
+  <div class="box warn">
+    <div class="t">Port 3000</div>
+    <p>Das Ingest-Frontend will Port 3000. Ist der belegt, setze <code>FRONTEND_PORT</code> auf einen freien Port — sonst bricht der Start des ganzen Stacks mit <code>address already in use</code> ab.</p>
+  </div>
+</section>
+
+<!-- ══════════ 3 ══════════ -->
+<section id="bootstrap">
+  <div class="sec-head"><span class="no">03</span><h2>Erstinbetriebnahme</h2></div>
+  <p>Zwei Tokens entstehen erst, wenn der Stack schon läuft — das ist ein Henne-Ei-Problem, das sich nur in dieser Reihenfolge auflösen lässt.</p>
+  <ol class="steps">
+    <li>
+      <h3>Ersten Administrator in Weave-Ingest anlegen</h3>
+      <p>Über die Setup-Seite des Ingest-Frontends. Der erste Nutzer wird automatisch Administrator.</p>
+    </li>
+    <li>
+      <h3>Dort einen persönlichen API-Token erzeugen</h3>
+      <p>In den Einstellungen. Dieser Token muss zu einem <strong>Administrator</strong> gehören: Weave-Knowledge holt die Collection-Registry über einen Admin-Endpunkt, weil sie die komplette Zugriffskarte des Systems ausgibt.</p>
+    </li>
+    <li>
+      <h3>Token eintragen und Knowledge neu starten</h3>
+      <p>Als <code>WEAVE_KNOWLEDGE_INGEST_API_TOKEN</code> in die <code>.env</code>, dann <code>docker compose … restart weave-knowledge weave-knowledge-worker</code>. Bis dahin läuft der Registry-Sync in ein 401 und die Collection-Rechte bleiben leer.</p>
+    </li>
+    <li>
+      <h3>Webhook-Verbindung in Ingest anlegen</h3>
+      <p>Damit verarbeitete Dokumente überhaupt bei Knowledge ankommen. Das Secret dieser Verbindung muss identisch zu <code>WEAVE_KNOWLEDGE_WEBHOOK_SECRET</code> sein, sonst weist Knowledge jedes Event mit 401 ab.</p>
+    </li>
+    <li>
+      <h3>Nutzer für die Chat-Oberfläche anlegen</h3>
+      <p>Rein tokenbasiert, kein Passwort nötig. Der Token wird genau einmal angezeigt.</p>
+      <pre><span class="p">docker compose</span> exec weave-api python -m app.cli \
+  create-user --username matze --team legal</pre>
+    </li>
+  </ol>
+</section>
+
+<!-- ══════════ 4 ══════════ -->
+<section id="pflicht">
+  <div class="sec-head"><span class="no">04</span><h2>Pflichtwerte</h2></div>
+  <p>Ohne diese startet der jeweilige Dienst nicht oder verweigert fail-closed die Arbeit. Alles andere hat brauchbare Voreinstellungen.</p>
+  <div class="t-scroll">
+    <table>
+      <thead><tr><th>Dienst</th><th>Variable</th><th>Wofür</th></tr></thead>
+      <tbody>
+        <tr><td class="k">Ingest</td><td><code>SECRET_KEY</code></td><td>Verschlüsselt gespeicherte Zugangsdaten. Pflicht, sobald die Datenbank nicht SQLite ist</td></tr>
+        <tr><td class="k">Ingest</td><td><code>REDIS_URL</code></td><td>Celery-Broker für die OCR-Verarbeitung — logische DB <code>0</code></td></tr>
+        <tr><td class="k">Ingest</td><td><code>CORS_ORIGINS</code></td><td>Erlaubte Frontend-Herkunft. Zugleich der CSRF-Schutz</td></tr>
+        <tr><td class="k">Knowledge</td><td><code>WEAVE_INGEST_BASE_URL</code></td><td>Woher Markdown und Registry geholt werden</td></tr>
+        <tr><td class="k">Knowledge</td><td><code>WEAVE_INGEST_API_TOKEN</code></td><td>Admin-Token aus Ingest (Schritt 2 oben)</td></tr>
+        <tr><td class="k">Knowledge</td><td><code>WEAVE_INGEST_WEBHOOK_SECRET</code></td><td>Prüft eingehende Events. Ohne Wert: <code>503</code> — dieser Endpunkt schreibt in den Index</td></tr>
+        <tr><td class="k">Retrieval</td><td><code>RETRIEVAL_API_TOKEN</code></td><td>Service-Auth. Ohne Wert antwortet jeder Aufruf mit <code>503</code></td></tr>
+        <tr><td class="k">Runtime</td><td><code>RUNTIME_API_TOKEN</code></td><td>Nimmt nur Aufrufe des Gateways an</td></tr>
+        <tr><td class="k">Runtime</td><td><code>WEAVE_DELEGATION_SECRET</code></td><td>Signiert Delegations-Token. Ohne Wert wird keines ausgestellt</td></tr>
+        <tr><td class="k">API</td><td><code>INTROSPECTION_SERVICE_TOKEN</code></td><td>Erlaubt anderen Diensten, Tokens prüfen zu lassen</td></tr>
+        <tr><td class="k">Tools</td><td><code>TOOLS_API_TOKEN</code></td><td>Service-Auth der REST-Oberfläche</td></tr>
+        <tr><td class="k">Tools</td><td><code>WEAVE_DELEGATION_SECRET</code></td><td>Prüft Delegations-Token. Ohne Wert: <code>503</code></td></tr>
+        <tr><td class="k">Tools</td><td><code>INTROSPECTION_SERVICE_TOKEN</code></td><td>Fragt Weave-API, wem ein Token gehört</td></tr>
+        <tr><td class="k">Tools</td><td><code>RETRIEVAL_API_TOKEN</code></td><td>Sucht im Auftrag des Aufrufers</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ══════════ 5 ══════════ -->
+<section id="geteilt">
+  <div class="sec-head"><span class="no">05</span><h2>Geteilte Werte</h2></div>
+  <p>Diese sieben müssen in mehreren Diensten <strong>zeichengleich</strong> stehen. Sie sind die häufigste Fehlerquelle beim Aufsetzen — und die Symptome zeigen selten auf die Ursache.</p>
+  <div class="t-scroll">
+    <table>
+      <thead><tr><th>Wert</th><th>Wer</th><th>Bei Abweichung</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="k"><code>WEAVE_DELEGATION_SECRET</code></td>
+          <td>Runtime <span style="color:var(--faint)">stellt aus</span><br>Tools <span style="color:var(--faint)">prüft</span></td>
+          <td>Jeder n8n- und MCP-Aufruf scheitert. Fehlt er ganz: beide Seiten verweigern hart statt unsigniert zu arbeiten</td>
+        </tr>
+        <tr>
+          <td class="k"><code>INTROSPECTION_SERVICE_TOKEN</code></td>
+          <td>API <span style="color:var(--faint)">prüft</span><br>Tools <span style="color:var(--faint)">weist vor</span></td>
+          <td>MCP kann niemanden mehr identifizieren, jede Anfrage wird abgewiesen</td>
+        </tr>
+        <tr>
+          <td class="k"><code>RETRIEVAL_API_TOKEN</code></td>
+          <td>Retrieval <span style="color:var(--faint)">besitzt</span><br>Runtime · API · Tools</td>
+          <td>Retrieval antwortet 401, die Aufrufer melden 502 — sieht aus wie ein Ausfall, ist eine Fehlkonfiguration</td>
+        </tr>
+        <tr>
+          <td class="k"><code>RUNTIME_API_TOKEN</code></td>
+          <td>Runtime <span style="color:var(--faint)">besitzt</span><br>API</td>
+          <td>Jeder Chat endet in 502. Das Gateway prüft den Wert bewusst nicht selbst</td>
+        </tr>
+        <tr>
+          <td class="k"><code>WEAVE_INGEST_WEBHOOK_SECRET</code></td>
+          <td>Ingest <span style="color:var(--faint)">Webhook-Verbindung</span><br>Knowledge</td>
+          <td>Events werden mit 401 abgewiesen — verarbeitete Dokumente erscheinen nie im Index</td>
+        </tr>
+        <tr>
+          <td class="k"><code>EMBEDDING_MODEL</code><br><code>EMBEDDING_PROVIDER</code></td>
+          <td>Knowledge <span style="color:var(--faint)">indiziert</span><br>Retrieval <span style="color:var(--faint)">sucht</span></td>
+          <td><strong>Kein Fehler.</strong> Die Vektorsuche liefert kommentarlos nichts, weil nur Chunks mit exakt passendem Modellnamen durchsucht werden</td>
+        </tr>
+        <tr>
+          <td class="k"><code>EMBEDDING_DIMENSION</code></td>
+          <td>Knowledge <span style="color:var(--faint)">Spaltenbreite</span><br>Retrieval</td>
+          <td>Ändern heißt: neue Migration <em>und</em> vollständiger Reindex. Ein reiner Variablen-Wechsel genügt nie</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="box note">
+    <div class="t">Ohne Geheimnisse im Klartext prüfen</div>
+    <p>Vergleiche Fingerabdrücke statt Werte — so landet nichts in der Historie oder im Log:</p>
+    <pre><span class="p">for</span> c <span class="p">in</span> weave_runtime weave_tools_backend; <span class="p">do</span>
+  <span class="p">echo</span> -n "$c: "
+  <span class="p">docker exec</span> $c printenv WEAVE_DELEGATION_SECRET | shasum | cut -c1-8
+<span class="p">done</span>
+<span class="c"># Zwei gleiche Zeilen = gut.</span></pre>
+  </div>
+</section>
+
+<!-- ══════════ 6 ══════════ -->
+<section id="fallen">
+  <div class="sec-head"><span class="no">06</span><h2>Stille Fallen</h2></div>
+  <p>Der wichtigste Abschnitt. Bei allen folgenden Fehlern stürzt nichts ab, es erscheint keine Fehlermeldung — es funktioniert einfach nicht, oder schlimmer: es funktioniert scheinbar.</p>
+
+  <div class="trap">
+    <div class="sym"><span class="var">EMBEDDING_MODEL</span>Die Suche findet nie etwas</div>
+    <div class="why">Die Vektorsuche vergleicht ausschließlich Chunks, deren gespeicherter Modellname exakt dem konfigurierten entspricht. Weicht Retrieval von Knowledge ab, ist das Ergebnis eine leere Liste — nicht ein Fehler.</div>
+    <div class="fix"><b>Prüfen</b>Beide Werte vergleichen; der Volltextpfad funktioniert derweil weiter, was den Fehler verschleiert.</div>
+  </div>
+
+  <div class="trap">
+    <div class="sym"><span class="var">EMBEDDING_PROVIDER</span>Der Index enthält Attrappen</div>
+    <div class="why">Die Voreinstellung ist <code>fake</code>. Vergisst man sie produktiv, indiziert der Dienst klaglos weiter — aber mit deterministischen Pseudo-Vektoren, die keinerlei Bedeutung tragen. Die Suche „läuft", liefert nur Unsinn.</div>
+    <div class="fix"><b>Prüfen</b>Gilt genauso für <code>LLM_PROVIDER</code>: bleibt er auf <code>fake</code>, antwortet jeder Bot mit Platzhaltertext, der bei flüchtigem Lesen wie eine Antwort aussieht.</div>
+  </div>
+
+  <div class="trap">
+    <div class="sym"><span class="var">DATABASE_URL</span>Der Dienst schreibt in eine Datei im Container</div>
+    <div class="why">Fehlt bei Ingest sowohl <code>DATABASE_URL</code> als auch die vollständige Kombination aus Host, Datenbank und Benutzer, fällt der Dienst still auf eine lokale SQLite-Datei zurück. Bei Retrieval ist der SQLite-Pfad sogar die Voreinstellung: bleibt sie stehen, wird eine leere lokale Datei durchsucht.</div>
+    <div class="fix"><b>Prüfen</b>Nach dem Start einmal in den Containern <code>printenv DATABASE_URL</code> lesen — steht dort <code>sqlite</code>, ist etwas falsch.</div>
+  </div>
+
+  <div class="trap">
+    <div class="sym"><span class="var">RETRIEVAL_BASE_URL</span>Antworten aus dem falschen Bestand</div>
+    <div class="why">Zeigt der Wert bei Weave-Tools auf eine falsche, aber erreichbare Retrieval-Instanz, gibt es keinerlei Warnung — es kommen einfach Treffer aus einem anderen Korpus zurück.</div>
+    <div class="fix"><b>Prüfen</b>Besonders heikel, wenn Test- und Produktivumgebung nebeneinander laufen.</div>
+  </div>
+
+  <div class="trap">
+    <div class="sym"><span class="var">REDIS_URL</span>Aufträge verschwinden</div>
+    <div class="why">Jeder Dienst hat laut ADR-0001 eine eigene logische Redis-Datenbank: Ingest <code>0</code>, Knowledge <code>1</code>. Kopiert man die URL eines Dienstes zum anderen, kollidieren Warteschlangen und Sperren — ohne Fehlermeldung. Bei Ingest kommt hinzu: fällt Redis aus, gibt das Rate-Limit still auf und lässt alles durch.</div>
+    <div class="fix"><b>Prüfen</b>Die Zahl am Ende der URL muss sich zwischen den Diensten unterscheiden.</div>
+  </div>
+
+  <div class="trap">
+    <div class="sym"><span class="var">CORS_ORIGINS</span>Anmelden ist unmöglich</div>
+    <div class="why">Der Wert steuert nicht nur CORS, sondern auch die Herkunftsprüfung gegen CSRF. Fehlt die echte Frontend-Adresse, werden <em>alle</em> schreibenden Anfragen mit 403 abgewiesen — auch der Login. Erwartet wird ein JSON-Array, nicht eine kommagetrennte Liste.</div>
+    <div class="fix"><b>Format</b><code>CORS_ORIGINS='["https://app.example.com"]'</code></div>
+  </div>
+
+  <div class="trap">
+    <div class="sym"><span class="var">PUBLIC_API_URL</span>Downloads zeigen ins Leere</div>
+    <div class="why">Stimmt der Wert nicht mit der von außen erreichbaren Adresse überein, schlägt der OIDC-Login mit einem Redirect-Mismatch beim Provider fehl — und die Download-Links in Webhook-Payloads Richtung Knowledge zeigen auf eine falsche Adresse. Ingest selbst merkt davon nichts.</div>
+    <div class="fix"><b>Prüfen</b>Muss der Adresse entsprechen, unter der Browser und Nachbardienste den Dienst wirklich erreichen.</div>
+  </div>
+
+  <div class="trap">
+    <div class="sym"><span class="var">OIDC_ISSUER</span>SSO ist unsichtbar statt kaputt</div>
+    <div class="why">OIDC gilt genau dann als aktiviert, wenn Issuer <em>und</em> Client-ID gesetzt sind. Ist nur eines von beiden gefüllt, bleiben sämtliche Anmelderouten unregistriert und antworten mit 404 — kein Fehler, nur ein Feature, das scheinbar nicht existiert.</div>
+    <div class="fix"><b>Prüfen</b>Ebenso: eine leere <code>OIDC_POST_LOGIN_ALLOWED_URLS</code> bedeutet, dass jedes <code>return_to</code> still ignoriert wird und der Nutzer nach dem Login auf dem Gateway landet statt in der Oberfläche.</div>
+  </div>
+
+  <div class="trap">
+    <div class="sym"><span class="var">PADDLE_DEFAULT_PROFILE</span>Ein Tippfehler fällt nie auf</div>
+    <div class="why">Ein unbekannter Profilname wird kommentarlos auf die Voreinstellung zurückgesetzt — kein Log, kein Fehler. Die Verarbeitung läuft mit dem falschen Profil weiter.</div>
+    <div class="fix"><b>Prüfen</b>Nach einer Profiländerung stichprobenweise die <code>profile</code>-Angabe im erzeugten Frontmatter kontrollieren.</div>
+  </div>
+
+  <div class="trap">
+    <div class="sym"><span class="var">UPLOADS_DIR</span> <span class="var">RESULTS_DIR</span>Der Worker findet die Datei nicht</div>
+    <div class="why">API-Container und OCR-Worker müssen auf dasselbe Volume zeigen — einer schreibt, der andere liest. Unterschiedliche Pfade führen zu Datei-nicht-gefunden im Worker statt zu einem Konfigurationsfehler. Ohne persistentes Volume sind Uploads nach einem Neustart weg.</div>
+    <div class="fix"><b>Prüfen</b>Beide Container müssen dasselbe Volume an denselben Pfad mounten.</div>
+  </div>
+</section>
+
+<!-- ══════════ 7 ══════════ -->
+<section id="echt">
+  <div class="sec-head"><span class="no">07</span><h2>Echte Provider</h2></div>
+  <p>Voreingestellt laufen Embeddings, LLM und Reranker als Attrappen: die Kette funktioniert vollständig, ohne Schlüssel und ohne Kosten. Für den echten Betrieb sind es drei Blöcke.</p>
+  <div class="t-scroll">
+    <table>
+      <thead><tr><th>Wofür</th><th>Variablen</th><th>Wo</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="k"><strong>Embeddings</strong></td>
+          <td><code>EMBEDDING_PROVIDER=openai</code><br><code>EMBEDDING_BASE_URL</code> · <code>EMBEDDING_API_KEY</code><br><code>EMBEDDING_MODEL</code> · <code>EMBEDDING_DIMENSION</code></td>
+          <td>Knowledge <strong>und</strong> Retrieval — zeichengleich</td>
+        </tr>
+        <tr>
+          <td class="k"><strong>Sprachmodell</strong></td>
+          <td><code>LLM_PROVIDER=openai</code><br><code>LLM_BASE_URL</code> · <code>LLM_API_KEY</code> · <code>LLM_DEFAULT_MODEL</code></td>
+          <td>nur Runtime</td>
+        </tr>
+        <tr>
+          <td class="k"><strong>Reranker</strong></td>
+          <td><code>RERANK_PROVIDER=api</code><br><code>RERANK_BASE_URL</code> · <code>RERANK_API_KEY</code> · <code>RERANK_MODEL</code></td>
+          <td>nur Retrieval</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="box warn">
+    <div class="t">Reranker degradiert leise</div>
+    <p>Fällt der Reranker aus oder ist er falsch konfiguriert, scheitert die Suche nicht — sie liefert die unrerankte Reihenfolge zurück. Das ist gewollt (eine Suche darf nie am Reranker sterben), heißt aber: eine kaputte Reranker-Konfiguration merkst du nur an schlechteren Ergebnissen, nicht an einem Fehler. Im Trace steht <code>rerank_error</code>.</p>
+  </div>
+  <div class="box danger">
+    <div class="t">Modellwechsel bei Embeddings</div>
+    <p>Ein anderes Embedding-Modell macht den bestehenden Index unbrauchbar — die alten Vektoren liegen in einem anderen Raum. Nach dem Wechsel gehört ein vollständiger Reindex dazu: <code>python -m app.cli reindex</code> in Weave-Knowledge. Ändert sich zusätzlich die Dimension, braucht es vorher eine Migration.</p>
+  </div>
+</section>
+
+<!-- ══════════ 8 ══════════ -->
+<section id="sso">
+  <div class="sec-head"><span class="no">08</span><h2>SSO einrichten</h2></div>
+  <p>Personal-Tokens bleiben für Maschinen der Weg; OIDC ist für Menschen. Beide führen zum selben Konto und demselben Limit.</p>
+  <div class="t-scroll">
+    <table>
+      <thead><tr><th>Variable</th><th>Bedeutung</th></tr></thead>
+      <tbody>
+        <tr><td class="k"><code>OIDC_ISSUER</code></td><td>Basis-URL des Providers. Zusammen mit der Client-ID schaltet sie OIDC überhaupt erst frei</td></tr>
+        <tr><td class="k"><code>OIDC_CLIENT_ID</code><br><code>OIDC_CLIENT_SECRET</code></td><td>Zugangsdaten der registrierten Anwendung</td></tr>
+        <tr><td class="k"><code>OIDC_REDIRECT_URL</code></td><td>Muss beim Provider zeichengleich hinterlegt sein</td></tr>
+        <tr><td class="k"><code>OIDC_TEAM_CLAIM</code></td><td>Aus welchem Claim das Team gelesen wird. Leer heißt: Nutzer ohne Team — und damit ohne lesbare Collections</td></tr>
+        <tr><td class="k"><code>OIDC_POST_LOGIN_ALLOWED_URLS</code></td><td>Erlaubte Rücksprungziele. Nur hier eintragen, was du wirklich kontrollierst</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="box note">
+    <div class="t">Warum die Rücksprung-Allowlist so eng sein muss</div>
+    <p>Nach erfolgreichem Login hängt das Gateway einen einmaligen Übergabe-Code an die Rücksprung-Adresse. Wer dort einen fremden Eintrag unterbringt, bekommt diesen Code — und damit eine gültige Sitzung. Die Prüfung vergleicht Schema, Host und Port exakt und lehnt Backslashes, Steuerzeichen und kodierte Pfadsprünge ab, weil Browser URLs anders lesen als Python.</p>
+  </div>
+  <div class="box warn">
+    <div class="t">Zuordnung über den Subject, nicht die E-Mail</div>
+    <p>Konten werden ausschließlich über den OIDC-Subject verknüpft. Das ist Absicht: Bei einer Zuordnung über die E-Mail-Adresse könnte sich jemand mit derselben Adresse bei einem anderen Provider auf ein bestehendes Konto aufschalten.</p>
+  </div>
+</section>
+
+<!-- ══════════ 9 ══════════ -->
+<section id="agenten">
+  <div class="sec-head"><span class="no">09</span><h2>n8n und MCP</h2></div>
+  <p>Beide bekommen exakt die Leserechte des Menschen, der gerade fragt — über ein kurzlebiges, signiertes Delegations-Token, in dem der erlaubte Collection-Umfang eingebettet ist.</p>
+  <div class="t-scroll">
+    <table>
+      <thead><tr><th>Variable</th><th>Dienst</th><th>Bedeutung</th></tr></thead>
+      <tbody>
+        <tr><td class="k"><code>WEAVE_DELEGATION_SECRET</code></td><td>Runtime · Tools</td><td>Signiert und prüft das Token. Zeichengleich, sonst geht nichts</td></tr>
+        <tr><td class="k"><code>DELEGATION_TOKEN_TTL_SECONDS</code></td><td>Runtime</td><td>Gültigkeit, Vorgabe 300 Sekunden</td></tr>
+        <tr><td class="k"><code>TOOLS_BASE_URL</code></td><td>Runtime</td><td>Wird dem Flow mitgegeben, damit er zurückfindet</td></tr>
+        <tr><td class="k"><code>N8N_ALLOWED_BASE_URLS</code></td><td>Runtime</td><td>Erlaubte Webhook-Adressen. Leer heißt: n8n-Bots sind abgeschaltet</td></tr>
+        <tr><td class="k"><code>TOOLS_API_TOKEN</code></td><td>Tools</td><td>Muss im Flow als eigene Zugangsdaten hinterlegt werden — ein Service-Geheimnis gehört nicht in einen Payload</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="box note">
+    <div class="t">Die Regel dahinter</div>
+    <p>Der erlaubte Umfang wird immer serverseitig aus der Identität abgeleitet. Ein Collection-Name aus einem Tool-Argument oder einer Modell-Ausgabe kann nur einschränken, nie erlauben. Und was ein Flow als Quelle zurückmeldet, ist eine Behauptung: Weave prüft jede gemeldete Quelle gegen den signierten Umfang und verwirft, was nicht passt — sichtbar im Trace als <code>dropped_sources</code>.</p>
+  </div>
+  <div class="box warn">
+    <div class="t">Die Webhook-Allowlist greift beim Laden</div>
+    <p>Eine Bot-Datei mit einer nicht erlaubten Adresse lässt sich gar nicht erst laden — der Fehler kommt beim Start, nicht beim ersten Aufruf. Das ist Absicht: Eine Konfigurationsdatei soll den Dienst nicht in beliebige Netze rufen lassen können.</p>
+  </div>
+</section>
+
+<!-- ══════════ 10 ══════════ -->
+<section id="pruefen">
+  <div class="sec-head"><span class="no">10</span><h2>Selbsttest</h2></div>
+  <p>Läuft die Kette wirklich? Diese Reihenfolge prüft sie von außen nach innen — jeder Schritt setzt den vorherigen voraus.</p>
+  <pre><span class="c"># 1 — Alle Dienste erreichbar</span>
+<span class="p">for</span> p <span class="p">in</span> 8001 8002 8003 8004 8005; <span class="p">do</span> curl -s localhost:$p/health; <span class="p">done</span>
+curl -s localhost:8000/api/v1/health   <span class="c"># Ingest hat einen eigenen Pfad</span>
+
+<span class="c"># 2 — Gateway erreicht die Runtime (leere Liste = Bots werden nicht geladen)</span>
+curl -s -H "Authorization: Bearer $TOKEN" localhost:8004/v1/bots
+
+<span class="c"># 3 — Was darf dieser Nutzer lesen?</span>
+curl -s -H "Authorization: Bearer $TOKEN" localhost:8004/v1/collections
+
+<span class="c"># 4 — Eine echte Antwort samt Trace</span>
+curl -s -X POST localhost:8004/v1/chat \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"bot_id":"general-assistant","message":"Hallo"}'</pre>
+  <div class="box note">
+    <div class="t">Wie man die Antwort liest</div>
+    <p>Der <code>trace</code> sagt, wo es klemmt. <code>intent: conversational</code> bei einer Wissensfrage heißt: Der Router hat sie nicht als solche erkannt. <code>guard.reason: no_collections</code> heißt: Der Nutzer hat kein Team oder keine freigegebene Collection. <code>retrieval.candidates: 0</code> bei vorhandenen Dokumenten heißt fast immer: Die Embedding-Einstellungen von Knowledge und Retrieval passen nicht zusammen.</p>
+  </div>
+  <div class="t-scroll">
+    <table>
+      <thead><tr><th>Symptom</th><th>Wahrscheinliche Ursache</th></tr></thead>
+      <tbody>
+        <tr><td class="k">Chat antwortet <code>502</code></td><td><code>RUNTIME_API_TOKEN</code> weicht zwischen API und Runtime ab</td></tr>
+        <tr><td class="k">Bot findet nie etwas</td><td>Embedding-Modell oder -Provider unterscheiden sich zwischen Knowledge und Retrieval</td></tr>
+        <tr><td class="k">Antworten beginnen mit <code>[fake-llm]</code></td><td><code>LLM_PROVIDER</code> steht noch auf <code>fake</code></td></tr>
+        <tr><td class="k">Dokumente erscheinen nicht im Index</td><td>Webhook-Verbindung fehlt, oder das Secret weicht ab (Knowledge-Log zeigt 401)</td></tr>
+        <tr><td class="k">Collections bleiben leer</td><td>Registry-Sync scheitert — der Ingest-Token gehört keinem Administrator</td></tr>
+        <tr><td class="k">MCP antwortet <code>503</code></td><td><code>WEAVE_DELEGATION_SECRET</code> oder <code>TOOLS_API_TOKEN</code> nicht gesetzt</td></tr>
+        <tr><td class="k">Login schlägt mit <code>403</code> fehl</td><td>Frontend-Adresse fehlt in <code>CORS_ORIGINS</code></td></tr>
+        <tr><td class="k">SSO-Routen antworten <code>404</code></td><td>Nur eines von Issuer und Client-ID gesetzt</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<footer>Weave Betriebshandbuch · Stand 01.09.2026 · erhoben aus den <code>config.py</code> der sechs Dienste und an einem laufenden Stack gegengeprüft</footer>
+
+</div>
+</body>
+</html>

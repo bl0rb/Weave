@@ -1,0 +1,7 @@
+from tests.conftest import client
+
+
+def test_health_returns_healthy():
+    resp = client.get('/health')
+    assert resp.status_code == 200
+    assert resp.json() == {'status': 'healthy'}

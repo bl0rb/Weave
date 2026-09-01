@@ -1,0 +1,70 @@
+name: Publish GHCR Helm Chart
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Chart/app version to publish (for example 0.2.0)"
+        required: true
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  CHART_PATH: charts/weave-ingest
+  OCI_REPO: ghcr.io/bl0rb/charts
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish-chart:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set chart version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "value=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Helm
+        shell: bash
+        run: |
+          curl -fsSL https://get.helm.sh/helm-v3.16.2-linux-amd64.tar.gz -o helm.tgz
+          echo "9318379b847e333460d33d291d4c088156299a26cd93d570a7f5d0c36e50b5bb  helm.tgz" | sha256sum -c -
+          tar -xzf helm.tgz
+          sudo mv linux-amd64/helm /usr/local/bin/helm
+          helm version --short
+
+      - name: Log in to GHCR for Helm OCI
+        shell: bash
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} --username "${{ github.actor }}" --password-stdin
+
+      - name: Package chart
+        id: package
+        shell: bash
+        run: |
+          PACKAGE_OUTPUT=$(helm package "${{ env.CHART_PATH }}" \
+            --version "${{ steps.version.outputs.value }}" \
+            --app-version "${{ steps.version.outputs.value }}")
+          echo "$PACKAGE_OUTPUT"
+          PACKAGE_FILE=$(echo "$PACKAGE_OUTPUT" | sed -n 's/^Successfully packaged chart and saved it to: //p' | xargs -n1 basename)
+          echo "file=${PACKAGE_FILE}" >> "$GITHUB_OUTPUT"
+
+      - name: Push chart to GHCR OCI
+        shell: bash
+        run: |
+          helm push "${{ steps.package.outputs.file }}" "oci://${{ env.OCI_REPO }}"

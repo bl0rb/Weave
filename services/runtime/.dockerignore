@@ -1,0 +1,17 @@
+# Build context is the repo root (see backend/Dockerfile's own comment) --
+# the Dockerfile only COPYs backend/requirements.txt, backend/app and
+# bots/, so everything below is host-local state that would otherwise be
+# streamed to the docker daemon on every build.
+.venv
+backend/.venv
+backend/tests
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.coverage
+htmlcov
+.git
+.github
+.env
+.env.*
+!.env.example

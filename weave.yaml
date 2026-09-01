@@ -1,0 +1,925 @@
+# =============================================================================
+# weave.yaml -- declarative configuration for the Weave platform
+# =============================================================================
+#
+# Single source of truth for every environment variable that flows into
+# deploy/docker-compose.weave.yml (via deploy/.env, see `render` below), for
+# the nine services this monorepo builds: ingest, knowledge, retrieval,
+# runtime, api, tools, chat, embeddings, reranker.
+#
+# Read alongside docs/betrieb.md sections 4-6, which this file operationalizes:
+#   - section 4 "Pflichtwerte"     -> `required: true` entries below
+#   - section 5 "Geteilte Werte"   -> the `shared:` block below
+#   - section 6 "Stille Fallen"    -> the inline comments explaining WHY a
+#                                     value matters and what happens silently
+#                                     if it drifts or is left at its default
+#
+# Two commands, both in scripts/weave_config.py:
+#   python scripts/weave_config.py render   -> writes deploy/.env
+#   python scripts/weave_config.py check    -> validates an existing .env
+#                                               (deploy/.env by default) and
+#                                               exits non-zero on any finding
+#
+# --- How a value is expressed here ------------------------------------------
+#
+# `secret: true`   -- the value is NEVER written into this file (it is
+#                      versioned!). Only `env_var` is given here: the name of
+#                      an OS/CI environment variable render/check will read
+#                      the actual value from at run time. Set it however you
+#                      like -- direnv, a password manager's shell integration,
+#                      `export $(cat secrets.env | xargs)`, a CI secret store.
+#                      Missing + `required: true` is a hard error in `render`.
+#
+# `secret: false`  -- a plain, non-sensitive default (a provider name, a
+#                      dimension, a port, a JSON list of allowed origins)
+#                      lives right here as `value:`. It can still be
+#                      overridden per machine by exporting an environment
+#                      variable of the SAME name as the rendered key before
+#                      running `render` (e.g. `FRONTEND_PORT=3002` when 3000
+#                      is already taken locally) -- the export wins.
+#
+# `type:` one of string (default) | int | float | bool | json_list.
+#   json_list values are rendered as compact JSON (`["a","b"]`), matching
+#   what every Weave service's pydantic-settings list field expects.
+#
+# --- shared: values that must be character-identical across services -------
+#
+# Every entry under `shared` lists its `targets`: the (service, variable
+# name) pairs that must all resolve to the exact same value. Most targets
+# share the SAME variable name (e.g. WEAVE_DELEGATION_SECRET in both runtime
+# and tools) -- for those, `render` writes exactly one line into deploy/.env
+# and every referencing service reads that one line via docker compose's
+# single shared .env namespace, so they cannot drift *within a
+# render-generated deploy/.env*. A few targets use DIFFERENT variable names
+# for the same underlying secret across services (EMBEDDING_API_KEY on the
+# knowledge/retrieval side vs. EMBEDDINGS_API_TOKEN on the embeddings side) --
+# for those, `render` mirrors the one resolved value into every distinct
+# name. Either way: `render` guarantees a shared value is computed once and
+# appears correctly in every place that needs it; `check` guarantees that an
+# EXISTING deploy/.env (or split per-service .env files, see
+# `--service-env` in scripts/weave_config.py) has not since drifted --
+# because a bare `uvicorn` process per service (see any services/*/.env.example
+# header) reads its OWN .env file, with nothing structurally preventing
+# drift the way one shared deploy/.env does.
+#
+# This file never runs anything and never talks to a running stack -- it is
+# pure data, read only by scripts/weave_config.py.
+#
+# --- Scope: one Pflichtwert this file does NOT track -------------------
+# docs/betrieb.md section 4 also lists Knowledge's WEAVE_INGEST_BASE_URL as
+# required. It is deliberately absent below: docker-compose.weave.yml
+# hardcodes it to the internal DNS name `http://weave-ingest-backend:8000`
+# rather than referencing a ${VAR} at all, so within THIS compose-driven
+# deployment path it can never be missing or misconfigured -- there is
+# nothing for `render`/`check` to manage. It only becomes a real,
+# independently-set value again in the bare-process deployment mode (each
+# service run directly via its own services/*/.env, see
+# services/knowledge/.env.example) that this file does not model.
+
+shared:
+
+  # --- Postgres cluster credentials -----------------------------------------
+  # Not called out in docs/betrieb.md section 5 (that section is about
+  # application-level secrets between the nine services) but structurally
+  # identical: one Postgres cluster, several consumers that each build their
+  # own connection string from the same three values. A mismatch here is
+  # loud, not silent (connection refused / password authentication failed) --
+  # still listed here because "loud but confusing" is exactly the kind of
+  # mismatch this file exists to make impossible in the first place.
+  POSTGRES_DB:
+    secret: false
+    value: weave_ingest
+    type: string
+    # Not one of docs/betrieb.md section 4's Pflichtwerte -- it has a safe,
+    # working default matching compose's own inline ${POSTGRES_DB:-weave_ingest}
+    # fallback, so leaving it unset in a rendered deploy/.env is not an
+    # error, just relies on that fallback matching.
+    required: false
+    targets:
+      - {service: postgres, var: POSTGRES_DB}
+      - {service: ingest, var: POSTGRES_DB}
+    comment: >
+      The postgres image creates this database on first boot ($POSTGRES_DB);
+      Weave-Ingest is the only service that connects to it BY this name (via
+      its split POSTGRES_HOST/PORT/DB/USER/PASSWORD fields). Weave-Knowledge
+      and Weave-API each own their OWN database (weave_knowledge, weave_api,
+      created by deploy/postgres-init/01-create-databases.sh) and never read
+      this variable at all.
+
+  POSTGRES_USER:
+    secret: false
+    value: weave
+    type: string
+    # Same reasoning as POSTGRES_DB above: has a safe default, not one of
+    # docs/betrieb.md section 4's Pflichtwerte.
+    required: false
+    targets:
+      - {service: postgres, var: POSTGRES_USER}
+      - {service: ingest, var: POSTGRES_USER}
+      - {service: knowledge, var: POSTGRES_USER}
+      - {service: api, var: POSTGRES_USER}
+    comment: >
+      The one Postgres role every writer (Ingest, Knowledge, API) connects
+      as. Weave-Retrieval deliberately does NOT use this -- it connects as
+      the separate, read-only RETRIEVAL_DB_USER below (ADR-0005).
+
+  POSTGRES_PORT:
+    secret: false
+    value: 5432
+    type: int
+    required: false
+    targets:
+      - {service: ingest, var: POSTGRES_PORT}
+      - {service: knowledge, var: POSTGRES_PORT}
+      - {service: api, var: POSTGRES_PORT}
+    comment: >
+      NOTE: changing this does NOT change the port the postgres container
+      actually listens on (5432 inside the network either way -- the
+      `postgres` service block in docker-compose.weave.yml never reads this
+      variable itself). It only changes what its three clients try to
+      connect to -- so in practice this must stay 5432 unless the compose
+      file is also changed to remap the server's own listening port.
+
+  POSTGRES_PASSWORD:
+    secret: true
+    env_var: WEAVE_POSTGRES_PASSWORD
+    required: true
+    targets:
+      - {service: postgres, var: POSTGRES_PASSWORD}
+      - {service: ingest, var: POSTGRES_PASSWORD}
+      - {service: knowledge, var: POSTGRES_PASSWORD}
+      - {service: api, var: POSTGRES_PASSWORD}
+    comment: >
+      Same role as POSTGRES_USER above, so the same four consumers. Generate
+      with `openssl rand -hex 32`.
+
+  REDIS_PASSWORD:
+    secret: true
+    env_var: WEAVE_REDIS_PASSWORD
+    required: true
+    targets:
+      - {service: redis, var: REDIS_PASSWORD}
+      - {service: ingest, var: REDIS_PASSWORD}
+      - {service: knowledge, var: REDIS_PASSWORD}
+    comment: >
+      Redis `--requirepass`, shared by the two services that actually use
+      Celery against it (ADR-0001: Ingest on logical DB 0, Knowledge on
+      logical DB 1 -- Retrieval/Runtime/Tools/API have no Celery worker and
+      never touch Redis at all).
+
+  RETRIEVAL_DB_PASSWORD:
+    secret: true
+    env_var: WEAVE_RETRIEVAL_DB_PASSWORD
+    required: true
+    targets:
+      - {service: postgres, var: RETRIEVAL_DB_PASSWORD}
+      - {service: retrieval, var: RETRIEVAL_DB_PASSWORD}
+    comment: >
+      Password for the SELECT-only `weave_retrieval_ro` Postgres role
+      (ADR-0005). postgres-init/01-create-databases.sh's CREATE ROLE
+      statement sets it from the SAME variable this docker-compose.weave.yml
+      passes to the postgres container's own environment -- and
+      Weave-Retrieval's own DATABASE_URL must present the identical
+      password back, or every query against weave_knowledge fails auth.
+
+  # --- The 14 required, 4 of them additionally shared cross-service tokens
+  # from docs/betrieb.md section 4/5 --------------------------------------
+
+  WEAVE_DELEGATION_SECRET:
+    secret: true
+    env_var: WEAVE_DELEGATION_SECRET
+    required: true
+    targets:
+      - {service: runtime, var: WEAVE_DELEGATION_SECRET}
+      - {service: tools, var: WEAVE_DELEGATION_SECRET}
+    comment: >
+      Runtime mints a delegation token per n8n bot turn (issuer); Tools
+      verifies its HMAC before letting a delegated caller through
+      (contracts/n8n-flow.md). Drift: every delegation token Weave-Runtime
+      issues fails Weave-Tools' signature check -- surfaced as Tools' own
+      generic 401 (the verifier deliberately never distinguishes "wrong
+      signature" from "expired" from "malformed", see services/tools' own
+      README), so it just looks like every n8n-provider bot turn is broken.
+      Left unset on either side: that side fails closed (mint refuses, or
+      Tools answers 503) rather than ever signing/accepting with an empty
+      secret.
+
+  INTROSPECTION_SERVICE_TOKEN:
+    secret: true
+    env_var: INTROSPECTION_SERVICE_TOKEN
+    required: true
+    targets:
+      - {service: api, var: INTROSPECTION_SERVICE_TOKEN}
+      - {service: tools, var: INTROSPECTION_SERVICE_TOKEN}
+    comment: >
+      Tools calls API's POST /internal/tokens/introspect to resolve a raw
+      Personal-Token into an identity; API verifies this token on that
+      route. Drift, or API not having it set at all: API answers 401/503 to
+      Tools' introspection call, so every Personal-Token-authenticated
+      MCP/REST call into Tools that needs scope resolution fails --
+      typically surfacing as Tools' own fail-closed 503. Treat like a
+      master key: whoever holds it can resolve the identity behind ANY
+      Personal-Token in API's database.
+
+  RETRIEVAL_API_TOKEN:
+    secret: true
+    env_var: RETRIEVAL_API_TOKEN
+    required: true
+    targets:
+      - {service: retrieval, var: RETRIEVAL_API_TOKEN}
+      - {service: runtime, var: RETRIEVAL_API_TOKEN}
+      - {service: api, var: RETRIEVAL_API_TOKEN}
+      - {service: tools, var: RETRIEVAL_API_TOKEN}
+    comment: >
+      Retrieval is the verifier; runtime, api and tools are all callers that
+      present this same static bearer token. If any ONE of them has a
+      different value (or none): that specific caller gets 401 from
+      Retrieval, surfaced upward as a 502 that looks like Retrieval itself
+      is down. If Retrieval's own value is empty, it refuses EVERY caller
+      with 503 rather than comparing against an empty token.
+
+  RUNTIME_API_TOKEN:
+    secret: true
+    env_var: RUNTIME_API_TOKEN
+    required: true
+    targets:
+      - {service: runtime, var: RUNTIME_API_TOKEN}
+      - {service: api, var: RUNTIME_API_TOKEN}
+    comment: >
+      Runtime verifies it on every route; API's gateway presents it when
+      proxying GET /v1/bots and friends. Drift: API's calls into Runtime's
+      /internal/bots surface fail with 401/503 -- every chat turn ends in a
+      502 from API's own gateway.
+
+  WEAVE_KNOWLEDGE_WEBHOOK_SECRET:
+    secret: true
+    env_var: WEAVE_KNOWLEDGE_WEBHOOK_SECRET
+    required: true
+    targets:
+      # The rendered .env key is WEAVE_KNOWLEDGE_WEBHOOK_SECRET (prefixed to
+      # avoid colliding with Ingest's own, unrelated settings in the same
+      # flat namespace) -- docker-compose.weave.yml maps it to
+      # WEAVE_INGEST_WEBHOOK_SECRET inside the knowledge container itself.
+      - {service: knowledge, var: WEAVE_KNOWLEDGE_WEBHOOK_SECRET}
+    manual_targets:
+      - >
+        Weave-Ingest: this side is NOT an environment variable at all -- it
+        is the secret of a webhook connection created through Ingest's own
+        admin UI (docs/betrieb.md section 3, step 4). `render`/`check`
+        cannot see or set it; after generating this value, paste it into
+        that webhook connection by hand and keep it in sync manually if it
+        is ever rotated here.
+    comment: >
+      Verifies the X-Weave-Ingest-Signature header on an inbound
+      document.processed/collection.updated event. Left unset on the
+      Knowledge side: the event route answers 503 rather than accepting an
+      unsigned event that would otherwise let a forged sender inject
+      arbitrary markdown/team/collection data into the index. If the two
+      sides drift: every event is rejected with 401 and processed documents
+      simply never appear in the index -- no error surfaced to whoever
+      uploaded the document in Ingest.
+
+  # --- The embedding-model triple: what docs/betrieb.md section 5 calls out
+  # as "kein Fehler. Vektorsuche liefert kommentarlos nichts" (provider +
+  # model) and a separate row for the vector column width (dimension).
+  # Mirrored via docker-compose.weave.yml's `x-embedding-env` YAML anchor,
+  # which is why EMBEDDING_BASE_URL/API_KEY/BATCH_SIZE are grouped in here
+  # too even though their own drift is loud (connection/auth errors), not
+  # silent -- keeping the whole provider config atomic avoids having to
+  # remember which subset "really" needs to match.
+
+  EMBEDDING_PROVIDER:
+    secret: false
+    value: fake
+    type: string
+    required: false
+    targets:
+      - {service: knowledge, var: EMBEDDING_PROVIDER}
+      - {service: retrieval, var: EMBEDDING_PROVIDER}
+    comment: >
+      'fake' is the deterministic, dependency-free default -- the entire
+      hybrid-search chain works end to end with no API key and no network
+      access. Left at 'fake' deliberately even after switching on the
+      self-hosted weave-embeddings service until BOTH sides are moved
+      together (docs/betrieb.md section 7): flipping only one side makes
+      vector search silently return nothing, not an error.
+
+  EMBEDDING_MODEL:
+    secret: false
+    value: fake-embed
+    type: string
+    required: false
+    targets:
+      - {service: knowledge, var: EMBEDDING_MODEL}
+      - {service: retrieval, var: EMBEDDING_MODEL}
+    comment: >
+      Vector search compares only chunks whose stored model name matches
+      this EXACTLY. If Retrieval's value drifts from what Knowledge indexed
+      with, the result is an empty list, not an error -- the full-text leg
+      of hybrid search keeps working and masks it completely.
+
+  EMBEDDING_DIMENSION:
+    secret: false
+    value: 1536
+    type: int
+    required: false
+    targets:
+      - {service: knowledge, var: EMBEDDING_DIMENSION}
+      - {service: retrieval, var: EMBEDDING_DIMENSION}
+    comment: >
+      1536 is a no-op default matching both services' own settings.py
+      default -- NOT the 384 dimensions of the prescribed real model
+      (intfloat/multilingual-e5-small, served by weave-embeddings). Must
+      match the actual pgvector column width Knowledge's Alembic migration
+      created; changing it needs a migration AND a full reindex, never a
+      bare env-var flip (docs/betrieb.md section 7.4/7.5). `check` also
+      verifies this against EMBEDDING_MODEL for a short list of models with
+      a publicly fixed dimension (see scripts/weave_config.py).
+
+  EMBEDDING_BASE_URL:
+    secret: false
+    value: ""
+    type: string
+    required: false
+    targets:
+      - {service: knowledge, var: EMBEDDING_BASE_URL}
+      - {service: retrieval, var: EMBEDDING_BASE_URL}
+    comment: >
+      Empty means the 'fake' provider (no outbound call at all). Point both
+      at http://weave-embeddings:8000 together when switching providers.
+
+  EMBEDDING_BATCH_SIZE:
+    secret: false
+    value: 64
+    type: int
+    required: false
+    targets:
+      - {service: knowledge, var: EMBEDDING_BATCH_SIZE}
+      - {service: retrieval, var: EMBEDDING_BATCH_SIZE}
+    comment: "How many texts go into one embedding-provider call."
+
+  EMBEDDING_API_KEY:
+    secret: true
+    env_var: WEAVE_EMBEDDING_API_KEY
+    required: false
+    targets:
+      - {service: knowledge, var: EMBEDDING_API_KEY}
+      - {service: retrieval, var: EMBEDDING_API_KEY}
+      - {service: embeddings, var: EMBEDDINGS_API_TOKEN}
+    comment: >
+      One of the two conditional pairs docs/betrieb.md section 5 calls out:
+      only relevant once EMBEDDING_BASE_URL points at weave-embeddings --
+      until then neither side is ever called, so there is nothing to
+      mismatch. Note the target variable name differs on the embeddings
+      side (EMBEDDINGS_API_TOKEN, plural) -- `render` mirrors the identical
+      value into all three names regardless of the name difference.
+
+  # --- The second conditional pair: reranker credential -----------------
+  RERANK_API_KEY:
+    secret: true
+    env_var: WEAVE_RERANK_API_KEY
+    required: false
+    targets:
+      - {service: retrieval, var: RERANK_API_KEY}
+      - {service: reranker, var: RERANKER_API_TOKEN}
+    comment: >
+      Only relevant once RERANK_BASE_URL points at weave-reranker AND
+      RERANK_PROVIDER=api. Unlike a wrong EMBEDDING_API_KEY, a wrong value
+      here is NOT loud: the reranker degrades silently on any failure
+      (including 401), so search keeps working with the unreranked RRF
+      order and the only trace is `rerank_error: true` in the response
+      trace (docs/betrieb.md section 7).
+
+# =============================================================================
+# services: everything that is NOT shared -- one service's own knobs.
+# =============================================================================
+# Structured the same way as `shared` entries (secret/value/env_var/type/
+# required/comment), just without `targets` -- the rendered variable name is
+# always the dict key itself, and it only ever lands in this one service's
+# environment.
+
+services:
+
+  ingest:
+    settings:
+      SECRET_KEY:
+        secret: true
+        env_var: WEAVE_INGEST_SECRET_KEY
+        required: true
+        comment: >
+          Signs session cookies and the OIDC state cookie, and derives the
+          key that encrypts stored OIDC client secrets (ADR-0003: one
+          SECRET_KEY per service, never shared). Required as soon as the
+          database is not sqlite; generate once and never rotate casually --
+          rotation invalidates every session and makes stored client
+          secrets unreadable.
+      CORS_ORIGINS:
+        secret: false
+        value: ["http://localhost:3000"]
+        type: json_list
+        required: true
+        comment: >
+          Also the CSRF origin check, not just CORS -- missing the real
+          frontend origin here rejects ALL write requests with 403,
+          including login itself.
+      PUBLIC_API_URL:
+        secret: false
+        value: "http://localhost:8000"
+        type: string
+        required: false
+        comment: >
+          Backend-side URL used to build the OIDC redirect_uri. Must be
+          reachable by the OIDC provider, not necessarily by the browser.
+      WEAVE_INGEST_PUBLIC_API_URL:
+        secret: false
+        value: ""
+        type: string
+        required: false
+        comment: >
+          Browser-reachable backend URL, handed to the frontend. Empty lets
+          the frontend derive `<page protocol>//<page hostname>:8000`, which
+          is right only when backend and frontend share a host.
+      BACKEND_PORT:
+        secret: false
+        value: 8000
+        type: int
+        required: false
+        comment: "Host port for weave-ingest-backend."
+      FRONTEND_PORT:
+        secret: false
+        value: 3000
+        type: int
+        required: false
+        comment: >
+          Host port for weave-ingest-frontend. Bump this (not BACKEND_PORT)
+          if something else on the host already holds 3000 -- the whole
+          stack's `up` fails otherwise.
+      WORKER_MEMORY_LIMIT:
+        secret: false
+        value: "3g"
+        type: string
+        required: false
+        comment: "Container mem_limit for the OCR Celery worker."
+      WORKER_CPUS:
+        secret: false
+        value: 2.0
+        type: float
+        required: false
+        comment: "Container cpus limit for the OCR Celery worker."
+      CELERY_WORKER_CONCURRENCY:
+        secret: false
+        value: 1
+        type: int
+        required: false
+        comment: "Celery worker process concurrency."
+      CELERY_PREFETCH_MULTIPLIER:
+        secret: false
+        value: 1
+        type: int
+        required: false
+      CELERY_MAX_TASKS_PER_CHILD:
+        secret: false
+        value: 5
+        type: int
+        required: false
+        comment: >
+          Worker child recycled after this many tasks -- bounds slow memory
+          growth from repeated OCR calls.
+      WEAVE_INGEST_TAG:
+        secret: false
+        value: latest
+        type: string
+        required: false
+        comment: "Image tag for ghcr.io/bl0rb/weave-ingest-{backend,worker,frontend}."
+
+  knowledge:
+    settings:
+      WEAVE_KNOWLEDGE_SECRET_KEY:
+        secret: true
+        env_var: WEAVE_KNOWLEDGE_SECRET_KEY
+        required: false
+        comment: >
+          ADR-0003: this service's own SECRET_KEY, never shared with
+          another service even though the variable name (unlike Ingest's
+          plain SECRET_KEY) is prefixed to avoid any accidental confusion
+          in a shared .env namespace.
+      WEAVE_KNOWLEDGE_INGEST_API_TOKEN:
+        secret: true
+        env_var: WEAVE_KNOWLEDGE_INGEST_API_TOKEN
+        required: true
+        comment: >
+          MANUAL, not generatable ahead of time: must be a personal API
+          token belonging to an ADMINISTRATOR of the running Weave-Ingest
+          instance (docs/betrieb.md section 3, steps 1-3) -- Knowledge uses
+          it to pull Ingest's admin-only collection registry. Rendered here
+          as WEAVE_INGEST_API_TOKEN inside the container.
+      KNOWLEDGE_PORT:
+        secret: false
+        value: 8001
+        type: int
+        required: false
+      WEAVE_KNOWLEDGE_TAG:
+        secret: false
+        value: latest
+        type: string
+        required: false
+
+  retrieval:
+    settings:
+      RETRIEVAL_DB_USER:
+        secret: false
+        value: weave_retrieval_ro
+        type: string
+        required: false
+        comment: >
+          FOOTGUN: this default must match the role name
+          deploy/postgres-init/01-create-databases.sh hard-codes in its
+          `CREATE ROLE weave_retrieval_ro ...` statement -- that script has
+          no variable of its own for the role NAME (only
+          RETRIEVAL_DB_PASSWORD is templated in). Changing this value
+          without also editing that script points Retrieval at a role that
+          does not exist.
+      RERANK_PROVIDER:
+        secret: false
+        value: none
+        type: string
+        required: false
+        comment: >
+          'none' skips reranking entirely -- RRF-fused results go out
+          as-is. Set to 'api' together with RERANK_BASE_URL/RERANK_MODEL
+          and the shared RERANK_API_KEY above to use a real reranker.
+      RERANK_BASE_URL:
+        secret: false
+        value: ""
+        type: string
+        required: false
+      RERANK_MODEL:
+        secret: false
+        value: ""
+        type: string
+        required: false
+      SEARCH_TOP_K:
+        secret: false
+        value: 20
+        type: int
+        required: false
+        comment: >
+          Candidates pulled per leg (vector + fulltext) before RRF fusion.
+          Once RERANK_PROVIDER=api, ALL of these go to the reranker in one
+          call -- `check` flags SEARCH_TOP_K > RERANKER_MAX_DOCUMENTS
+          because the reranker then answers 413 and every search silently
+          falls back to the unreranked order (docs/betrieb.md section 7).
+      SEARCH_FINAL_K:
+        secret: false
+        value: 5
+        type: int
+        required: false
+      RRF_K:
+        secret: false
+        value: 60
+        type: int
+        required: false
+        comment: "Reciprocal Rank Fusion smoothing constant, 60 per the original paper."
+      RETRIEVAL_PORT:
+        secret: false
+        value: 8002
+        type: int
+        required: false
+      WEAVE_RETRIEVAL_TAG:
+        secret: false
+        value: latest
+        type: string
+        required: false
+
+  runtime:
+    settings:
+      LLM_PROVIDER:
+        secret: false
+        value: fake
+        type: string
+        required: false
+        comment: >
+          'fake' answers every chat turn with deterministic placeholder
+          text -- no API key, no outbound network access needed. Left on
+          'fake' means every bot's real answer starts with "[fake-llm]"
+          (docs/betrieb.md section 6) -- forgetting to flip this in
+          production is silent in the sense that nothing errors, just
+          obviously wrong once a human reads a reply.
+      LLM_BASE_URL:
+        secret: false
+        value: ""
+        type: string
+        required: false
+      LLM_API_KEY:
+        secret: true
+        env_var: WEAVE_RUNTIME_LLM_API_KEY
+        required: false
+        comment: "Only meaningful once LLM_PROVIDER is a real provider."
+      LLM_DEFAULT_MODEL:
+        secret: false
+        value: ""
+        type: string
+        required: false
+      LLM_TIMEOUT_SECONDS:
+        secret: false
+        value: 60
+        type: float
+        required: false
+      RETRIEVAL_TIMEOUT_SECONDS:
+        secret: false
+        value: 10
+        type: float
+        required: false
+        comment: >
+          Runtime's own timeout calling Retrieval. Also present on the
+          tools service below with the same default -- see that service's
+          own comment.
+      ROUTER_MODE:
+        secret: false
+        value: rules
+        type: string
+        required: false
+        comment: "'rules': deterministic keyword router. 'llm': delegates classification to LLM_PROVIDER."
+      DELEGATION_TOKEN_TTL_SECONDS:
+        secret: false
+        value: 300
+        type: int
+        required: false
+        comment: >
+          How long a minted delegation token stays valid. Also present,
+          with the same default, on the tools service below -- not one of
+          docs/betrieb.md's must-match-exactly values (the token carries
+          its own `exp` claim, verified against it independently on each
+          side), but keeping both at the same number avoids a confusing
+          "why is runtime's idea of the TTL different from tools'" question
+          later.
+      N8N_ALLOWED_BASE_URLS:
+        secret: false
+        value: []
+        type: json_list
+        required: false
+        comment: >
+          SSRF guard, checked once when a bot YAML file is loaded. Empty
+          (default) disables n8n-provider bots outright: no webhook_url can
+          ever start-with-match against nothing.
+      TOOLS_BASE_URL:
+        secret: false
+        value: "http://weave-tools-backend:8000"
+        type: string
+        required: false
+        comment: "Forwarded verbatim to n8n as `tools_base_url` in every webhook call."
+      RUNTIME_PORT:
+        secret: false
+        value: 8003
+        type: int
+        required: false
+      WEAVE_RUNTIME_TAG:
+        secret: false
+        value: latest
+        type: string
+        required: false
+
+  api:
+    settings:
+      WEAVE_API_SECRET_KEY:
+        secret: true
+        env_var: WEAVE_API_SECRET_KEY
+        required: false
+        comment: "ADR-0003: this service's own SECRET_KEY, never shared."
+      RATE_LIMIT_PER_MINUTE:
+        secret: false
+        value: 30
+        type: int
+        required: false
+      HISTORY_MAX_MESSAGES:
+        secret: false
+        value: 20
+        type: int
+        required: false
+      OIDC_ISSUER:
+        secret: false
+        value: ""
+        type: string
+        required: false
+        comment: >
+          OIDC counts as enabled exactly when this AND OIDC_CLIENT_ID are
+          both non-empty. Set only one and every /v1/auth/oidc/* route
+          404s, as if OIDC had never been wired in at all -- no error
+          naming the missing half (docs/betrieb.md section 6).
+      OIDC_CLIENT_ID:
+        secret: false
+        value: ""
+        type: string
+        required: false
+      OIDC_CLIENT_SECRET:
+        secret: true
+        env_var: WEAVE_API_OIDC_CLIENT_SECRET
+        required: false
+      OIDC_REDIRECT_URL:
+        secret: false
+        value: ""
+        type: string
+        required: false
+        comment: >
+          Must equal, byte-for-byte, the redirect URI registered with the
+          OIDC provider, or the provider rejects the code exchange outright.
+      OIDC_SCOPES:
+        secret: false
+        value: "openid email profile"
+        type: string
+        required: false
+      OIDC_TEAM_CLAIM:
+        secret: false
+        value: ""
+        type: string
+        required: false
+        comment: "Empty means every OIDC-provisioned user's team stays null."
+      OIDC_POST_LOGIN_ALLOWED_URLS:
+        secret: false
+        value: []
+        type: json_list
+        required: false
+        comment: >
+          Cross-origin post-login handoff allowlist. Empty (default)
+          disables the handoff outright -- `return_to` is always ignored.
+          List only UI origins trusted as much as this gateway's own
+          frontend; each entry gets a fresh one-time session code on every
+          login. Should include the chat service's own callback origin
+          (its APP_BASE_URL + /api/auth/sso/callback) whenever
+          chat.WEAVE_API_OIDC_ENABLED is turned on below -- `render`/`check`
+          do not cross-validate this against the chat service (it is a
+          list of arbitrary UI origins, not a single fixed value), so keep
+          the two in sync by hand.
+      API_PORT:
+        secret: false
+        value: 8004
+        type: int
+        required: false
+      WEAVE_API_TAG:
+        secret: false
+        value: latest
+        type: string
+        required: false
+
+  tools:
+    settings:
+      TOOLS_API_TOKEN:
+        secret: true
+        env_var: TOOLS_API_TOKEN
+        required: true
+        comment: >
+          Gates the REST mirror only (X-Tools-Service-Token header), never
+          the MCP server. A deployment-level "may this caller reach
+          Weave-Tools' REST API at all" secret -- e.g. n8n's own static
+          HTTP-node credential -- not shared with any other service in this
+          stack (also see docs/betrieb.md section 9: it must additionally
+          be entered into the n8n flow's own credentials store, which lives
+          outside this file entirely).
+      WEAVE_API_TIMEOUT_SECONDS:
+        secret: false
+        value: 10
+        type: float
+        required: false
+      RETRIEVAL_TIMEOUT_SECONDS:
+        secret: false
+        value: 10
+        type: float
+        required: false
+        comment: "Tools' own timeout calling Retrieval. See runtime's identical setting."
+      DELEGATION_TOKEN_TTL_SECONDS:
+        secret: false
+        value: 300
+        type: int
+        required: false
+        comment: "See runtime's own DELEGATION_TOKEN_TTL_SECONDS comment."
+      TOOLS_PORT:
+        secret: false
+        value: 8005
+        type: int
+        required: false
+      WEAVE_TOOLS_TAG:
+        secret: false
+        value: latest
+        type: string
+        required: false
+
+  chat:
+    settings:
+      WEAVE_API_OIDC_ENABLED:
+        secret: false
+        value: ""
+        type: string
+        required: false
+        comment: >
+          Purely cosmetic: only controls whether the "Mit SSO anmelden"
+          button appears on /login. Set to "true" if and only if
+          api.OIDC_ISSUER and api.OIDC_CLIENT_ID above are BOTH set --
+          `render`/`check` do not enforce this pairing (see the note on
+          api.OIDC_POST_LOGIN_ALLOWED_URLS above), a mismatch just makes
+          the button 404 on click, never a security issue.
+      WEAVE_API_PUBLIC_BASE_URL:
+        secret: false
+        value: ""
+        type: string
+        required: false
+        comment: >
+          Browser-reachable origin of Weave-API, separate from its
+          container-internal address -- where the SSO button itself
+          navigates to.
+      TOOLS_FRONTEND_PORT:
+        secret: false
+        value: 3001
+        type: int
+        required: false
+      WEAVE_TOOLS_FRONTEND_TAG:
+        secret: false
+        value: latest
+        type: string
+        required: false
+
+  embeddings:
+    settings:
+      EMBEDDINGS_MODEL:
+        secret: false
+        value: "intfloat/multilingual-e5-small"
+        type: string
+        required: false
+        comment: >
+          The one model prescribed for this service (docs/betrieb.md
+          section 7.1) -- not available in fastembed 0.8.0, served through
+          this service's own ONNX export + onnxruntime instead. Swapping to
+          a structurally different model needs code changes in
+          services/embeddings/app/services/encoder.py, not just this value.
+      EMBEDDINGS_BATCH_SIZE:
+        secret: false
+        value: 32
+        type: int
+        required: false
+      EMBEDDINGS_THREADS:
+        secret: false
+        value: 0
+        type: int
+        required: false
+        comment: "0 = automatic (os.cpu_count() at load time)."
+      EMBEDDINGS_MAX_INPUTS:
+        secret: false
+        value: 256
+        type: int
+        required: false
+      EMBEDDINGS_NORMALIZE:
+        secret: false
+        value: true
+        type: bool
+        required: false
+      EMBEDDINGS_PORT:
+        secret: false
+        value: 8006
+        type: int
+        required: false
+      WEAVE_EMBEDDINGS_TAG:
+        secret: false
+        value: latest
+        type: string
+        required: false
+
+  reranker:
+    settings:
+      RERANKER_MODEL:
+        secret: false
+        value: "BAAI/bge-reranker-v2-m3"
+        type: string
+        required: false
+        comment: >
+          The one model prescribed for this service (docs/betrieb.md
+          section 7.1) -- not available in fastembed 0.8.0, served through
+          sentence-transformers/torch instead.
+      RERANKER_BATCH_SIZE:
+        secret: false
+        value: 16
+        type: int
+        required: false
+      RERANKER_THREADS:
+        secret: false
+        value: 4
+        type: int
+        required: false
+      RERANKER_MAX_DOCUMENTS:
+        secret: false
+        value: 50
+        type: int
+        required: false
+        comment: >
+          Hard cap on documents scored per /rerank call. See
+          retrieval.SEARCH_TOP_K's comment -- `check` flags the pair
+          whenever retrieval.SEARCH_TOP_K exceeds this AND
+          retrieval.RERANK_PROVIDER is 'api'.
+      RERANKER_PORT:
+        secret: false
+        value: 8007
+        type: int
+        required: false
+      WEAVE_RERANKER_TAG:
+        secret: false
+        value: latest
+        type: string
+        required: false

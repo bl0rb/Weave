@@ -1,22 +1,35 @@
+# Root ignore patterns shared by every service in this monorepo. Genuinely
+# service-specific patterns live in that service's own .gitignore instead
+# (see services/ingest/.gitignore, services/chat/.gitignore) rather than
+# being duplicated here across every service.
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .pytest_cache/
 .mypy_cache/
-.env
-# Any .env variant (.env.local, .env.bak-*, ...) carries real secrets; only
-# the placeholder-filled example belongs in the repository.
-.env.*
-!.env.example
 venv/
-backend/.venv/
 .venv/
 
-# Downloaded model weights (e.g. reranker/.cache/'s BAAI/bge-reranker-v2-m3,
-# ~2.3 GB) -- fetched fresh from the Hugging Face Hub on first load
-# (app/services/model.py), never committed.
+# Node.js / Next.js
+node_modules/
+.next/
+
+# Downloaded model weights and other cached downloads (e.g. services/reranker's
+# .cache/ holding BAAI/bge-reranker-v2-m3, ~2.3 GB; services/embeddings' ONNX
+# export) -- fetched fresh on first start, never committed.
 .cache/
+
+# Local/test databases (SQLite files created by test runs or local dev)
+*.db
+
+# Secrets -- any .env variant (.env.local, .env.bak-*, ...) carries real
+# secrets; only the placeholder-filled example belongs in the repository.
+.env
+.env.*
+!.env.example
 
 .DS_Store
 
