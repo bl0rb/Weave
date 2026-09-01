@@ -8,6 +8,7 @@ sie brauchen keinen Server und keine Abhängigkeiten außer Webfonts.
 | Datei | Was drinsteht |
 |---|---|
 | [architektur.html](architektur.html) | Gesamtschaubild: die Dienste, beide Pipelines, Datenflüsse und Umsetzungsstand |
+| [architektur-detail.html](architektur-detail.html) | Alle neun Dienste im Detail plus der zeitliche Ablauf einer Wissensfrage |
 | [bauplan.html](bauplan.html) | Der Transformationsplan von PaddleDoc zu Weave, mit abhakbaren Arbeitspaketen je Phase |
 | [glossar.html](glossar.html) | 63 Fachbegriffe, je allgemein erklärt und auf ihre konkrete Rolle in Weave übersetzt |
 | [betriebshandbuch.html](betriebshandbuch.html) | Variablen, Erstinbetriebnahme, stille Fehlkonfigurationen, Selbsttest |

@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Weave Architektur und Ablauf</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap">
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --paper:#f8fafc; --paper2:#f1f5f9; --ink:#0f172a; --muted:#475569; --faint:#64748b;
+    --rule:rgba(15,23,42,0.12); --rule-soft:rgba(15,23,42,0.07);
+    --accent:#4f46e5; --link:#2e5aa8;
+    --font-sans:'Inter',system-ui,sans-serif; --font-serif:'Instrument Serif','Times New Roman',serif;
+    --font-mono:'Geist Mono',ui-monospace,Menlo,monospace;
+  }
+  body{font-family:var(--font-sans);background:var(--paper);color:var(--ink);
+       padding:3rem 2rem 5rem;line-height:1.6}
+  .container{max-width:1240px;margin:0 auto}
+  .eyebrow{font-family:var(--font-mono);font-size:.68rem;font-weight:500;letter-spacing:.18em;
+           text-transform:uppercase;color:var(--muted);margin-bottom:.75rem}
+  h1{font-family:var(--font-serif);font-size:clamp(1.9rem,3vw + 1rem,2.7rem);font-weight:400;
+     letter-spacing:-.02em;line-height:1.1;margin-bottom:.6rem}
+  .subtitle{font-size:1rem;line-height:1.55;color:var(--muted);max-width:60ch}
+  .meta{display:flex;flex-wrap:wrap;gap:6px 20px;margin-top:1.2rem;padding-top:1rem;
+        border-top:1px solid var(--rule-soft);font-family:var(--font-mono);
+        font-size:.72rem;color:var(--faint)}
+  figure{margin:3.5rem 0 0}
+  figcaption{margin-bottom:1rem}
+  figcaption .n{font-family:var(--font-mono);font-size:.7rem;letter-spacing:.14em;
+                text-transform:uppercase;color:var(--accent);display:block;margin-bottom:.4rem}
+  figcaption h2{font-family:var(--font-serif);font-size:1.5rem;font-weight:400;
+                letter-spacing:-.01em;margin-bottom:.4rem}
+  figcaption p{font-size:.94rem;color:var(--muted);max-width:72ch}
+  .frame{overflow-x:auto;padding-bottom:.4rem}
+  svg{width:100%;min-width:1000px;display:block}
+  .notes{display:grid;grid-template-columns:1.05fr 1fr .95fr;gap:1rem;margin-top:1.5rem}
+  @media(max-width:900px){.notes{grid-template-columns:1fr}}
+  .card{background:#fff;border:1px solid var(--rule);border-radius:6px;padding:1.1rem 1.25rem}
+  .card h3{font-size:.85rem;font-weight:600;margin-bottom:.7rem;padding-bottom:.7rem;
+           border-bottom:1px solid var(--rule-soft);display:flex;align-items:center;gap:.55rem}
+  .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+  .card ul{list-style:none;font-size:.82rem;line-height:1.55;color:var(--muted)}
+  .card li{margin-bottom:.35rem;padding-left:.9rem;position:relative}
+  .card li::before{content:'—';position:absolute;left:0;color:rgba(15,23,42,.25);font-size:.75rem}
+  code{font-family:var(--font-mono);font-size:.8em;color:var(--ink)}
+  footer{margin-top:3rem;padding-top:1.4rem;border-top:1px solid var(--rule-soft);
+         font-family:var(--font-mono);font-size:.72rem;color:var(--faint)}
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <p class="eyebrow">Weave · Architektur und Ablauf</p>
+    <h1>Wie eine Frage zu einer belegten Antwort wird</h1>
+    <p class="subtitle">Zwei Blicke auf dasselbe System: erst die Topologie aller neun Dienste und der geteilten Mitte, dann der zeitliche Ablauf einer einzelnen Wissensfrage — samt der Stellen, an denen Rechte geprüft werden.</p>
+    <div class="meta">
+      <span>Stand 01.09.2026</span><span>9 Dienste · 3 Datenbanken · 2 CPU-Modelle</span>
+      <span>lokal verifiziert</span>
+    </div>
+  </header>
+
+  <figure>
+    <figcaption>
+      <span class="n">Abbildung 1 · Architektur</span>
+      <h2>Drei Zonen, eine geteilte Mitte</h2>
+      <p>Oben wird kompiliert, unten geantwortet — und beide greifen auf dieselbe Mitte zu. Weave-Knowledge schreibt in Postgres, Weave-Retrieval liest dieselbe Datenbank nur lesend, weil pgvector-Ähnlichkeit und Volltext-Ranking als SQL <em>in</em> der Datenbank laufen müssen. Die beiden Modelldienste bedienen beide Pipelines: einmal für Passagen beim Indizieren, einmal für die Suchanfrage.</p>
+    </figcaption>
+    <div class="frame">
+      <svg viewBox="0 0 1560 964" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="arch-title arch-desc">
+        <title id="arch-title">Weave Architektur im Detail</title>
+        <desc id="arch-desc">Drei Zonen: oben die Ingestion von den Quellen ueber Weave-Ingest und den OCR-Worker zu Weave-Knowledge und dessen Index-Worker; in der Mitte die gemeinsam genutzten Speicher Redis und Postgres samt der beiden CPU-Modelldienste fuer Embeddings und Reranking; unten die Anfragestrecke von den Clients ueber Weave-API und Weave-Runtime zu Weave-Retrieval, dazu Weave-Tools als MCP-Zugang sowie n8n und ein externer LLM-Endpunkt.</desc>
+        <defs>
+          <marker id="arch-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#475569"/></marker>
+          <marker id="arch-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#4f46e5"/></marker>
+          <marker id="arch-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker>
+        </defs>
+        <rect width="100%" height="100%" fill="#f8fafc"/>
+<rect x="48" y="88" width="1440" height="232" rx="8" fill="rgba(15,23,42,0.02)" stroke="rgba(15,23,42,0.10)" stroke-width="0.8"/>
+<rect x="64" y="92" width="248" height="12" rx="2" fill="#f8fafc"/>
+<text x="72" y="101" fill="rgba(15,23,42,0.40)" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">OFFLINE · DOKUMENTE WERDEN KOMPILIERT</text>
+<rect x="48" y="384" width="1440" height="128" rx="8" fill="rgba(15,23,42,0.02)" stroke="rgba(15,23,42,0.10)" stroke-width="0.8"/>
+<rect x="64" y="388" width="268" height="12" rx="2" fill="#f8fafc"/>
+<text x="72" y="397" fill="rgba(15,23,42,0.40)" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">GETEILTE MITTE · SPEICHER UND CPU-MODELLE</text>
+<rect x="48" y="576" width="1440" height="280" rx="8" fill="rgba(15,23,42,0.02)" stroke="rgba(15,23,42,0.10)" stroke-width="0.8"/>
+<rect x="64" y="580" width="228" height="12" rx="2" fill="#f8fafc"/>
+<text x="72" y="589" fill="rgba(15,23,42,0.40)" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">ONLINE · ANFRAGE WIRD GEROUTET</text>
+<line x1="248" y1="156" x2="304" y2="156" stroke="#475569" stroke-width="1.2" marker-end="url(#arch-arrow)"/>
+<rect x="248" y="136" width="52" height="12" rx="2" fill="#f8fafc"/>
+<text x="274" y="145" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">DATEIEN</text>
+<line x1="400" y1="192" x2="400" y2="224" stroke="#475569" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arch-arrow)"/>
+<rect x="412" y="200" width="32" height="12" rx="2" fill="#f8fafc"/>
+<text x="416" y="209" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">JOB</text>
+<line x1="496" y1="156" x2="800" y2="156" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arch-arrow-link)"/>
+<rect x="624" y="136" width="44" height="12" rx="2" fill="#f8fafc"/>
+<text x="646" y="145" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">EVENT</text>
+<line x1="896" y1="192" x2="896" y2="224" stroke="#475569" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arch-arrow)"/>
+<rect x="908" y="200" width="32" height="12" rx="2" fill="#f8fafc"/>
+<text x="912" y="209" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">JOB</text>
+<path d="M 400,296 V 348 Q 400,356 392,356 H 168 Q 160,356 160,364 V 416" fill="none" stroke="#475569" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arch-arrow)"/>
+<rect x="256" y="336" width="44" height="12" rx="2" fill="#f8fafc"/>
+<text x="278" y="345" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">QUEUE</text>
+<line x1="896" y1="296" x2="896" y2="416" stroke="#475569" stroke-width="1.2" marker-end="url(#arch-arrow)"/>
+<rect x="908" y="348" width="44" height="12" rx="2" fill="#f8fafc"/>
+<text x="912" y="357" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">INDEX</text>
+<path d="M 992,260 V 332 Q 992,340 1000,340 H 1136 Q 1144,340 1144,348 V 416" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arch-arrow-link)"/>
+<rect x="1040" y="320" width="52" height="12" rx="2" fill="#f8fafc"/>
+<text x="1066" y="329" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PASSAGE</text>
+<line x1="248" y1="644" x2="304" y2="644" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arch-arrow-link)"/>
+<rect x="252" y="624" width="44" height="12" rx="2" fill="#f8fafc"/>
+<text x="274" y="633" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">HTTPS</text>
+<line x1="496" y1="644" x2="552" y2="644" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arch-arrow-link)"/>
+<rect x="504" y="624" width="36" height="12" rx="2" fill="#f8fafc"/>
+<text x="522" y="633" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">CHAT</text>
+<line x1="744" y1="644" x2="800" y2="644" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arch-arrow-link)"/>
+<rect x="748" y="624" width="48" height="12" rx="2" fill="#f8fafc"/>
+<text x="772" y="633" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SEARCH</text>
+<line x1="896" y1="608" x2="896" y2="488" stroke="#475569" stroke-width="1.2" marker-end="url(#arch-arrow)"/>
+<rect x="908" y="540" width="64" height="12" rx="2" fill="#f8fafc"/>
+<text x="912" y="549" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">READ-ONLY</text>
+<path d="M 864,608 V 556 Q 864,548 872,548 H 1136 Q 1144,548 1144,540 V 488" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arch-arrow-link)"/>
+<rect x="980" y="528" width="44" height="12" rx="2" fill="#f8fafc"/>
+<text x="1002" y="537" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">QUERY</text>
+<path d="M 992,628 V 576 Q 992,568 1000,568 H 1384 Q 1392,568 1392,560 V 488" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arch-arrow-link)"/>
+<rect x="1168" y="548" width="48" height="12" rx="2" fill="#f8fafc"/>
+<text x="1192" y="557" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">RERANK</text>
+<path d="M 616,760 V 736 Q 616,728 608,728 H 408 Q 400,728 400,720 V 680" fill="none" stroke="#475569" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arch-arrow)"/>
+<rect x="488" y="708" width="36" height="12" rx="2" fill="#f8fafc"/>
+<text x="506" y="717" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">WER?</text>
+<path d="M 680,760 V 712 Q 680,704 688,704 H 920 Q 928,704 928,696 V 680" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arch-arrow-link)"/>
+<rect x="780" y="684" width="48" height="12" rx="2" fill="#f8fafc"/>
+<text x="804" y="693" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SEARCH</text>
+<path d="M 600,680 V 744 Q 600,752 608,752 H 1384 Q 1392,752 1392,760 V 760" fill="none" stroke="#475569" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arch-arrow)"/>
+<rect x="980" y="732" width="32" height="12" rx="2" fill="#f8fafc"/>
+<text x="996" y="741" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">LLM</text>
+<line x1="1048" y1="788" x2="744" y2="788" stroke="#475569" stroke-width="1.2" marker-end="url(#arch-arrow)"/>
+<rect x="860" y="768" width="68" height="12" rx="2" fill="#f8fafc"/>
+<text x="894" y="777" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">MCP · REST</text>
+<rect x="72" y="120" width="176" height="72" rx="6" fill="#f8fafc"/>
+<rect x="72" y="120" width="176" height="72" rx="6" fill="rgba(71,85,105,0.10)" stroke="#64748b" stroke-width="1"/>
+<rect x="80" y="128" width="56" height="12" rx="2" fill="transparent" stroke="#64748b" stroke-opacity="0.4" stroke-width="0.8"/>
+<text x="108" y="137" fill="#64748b" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">INPUT</text>
+<text x="160" y="162" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Quellen</text>
+<text x="160" y="179" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">PDF · Mail · Confluence</text>
+<rect x="304" y="120" width="192" height="72" rx="6" fill="#f8fafc"/>
+<rect x="304" y="120" width="192" height="72" rx="6" fill="rgba(79,70,229,0.08)" stroke="#4f46e5" stroke-width="1"/>
+<rect x="312" y="128" width="32" height="12" rx="2" fill="transparent" stroke="#4f46e5" stroke-opacity="0.4" stroke-width="0.8"/>
+<text x="328" y="137" fill="#4f46e5" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">P1</text>
+<text x="400" y="162" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Ingest</text>
+<text x="400" y="179" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8000 · OCR → Markdown</text>
+<rect x="304" y="224" width="192" height="72" rx="6" fill="#f8fafc"/>
+<rect x="304" y="224" width="192" height="72" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="312" y="232" width="64" height="12" rx="2" fill="transparent" stroke="#0f172a" stroke-opacity="0.4" stroke-width="0.8"/>
+<text x="344" y="241" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">WORKER</text>
+<text x="400" y="266" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">OCR-Worker</text>
+<text x="400" y="283" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">PaddleOCR · Celery</text>
+<rect x="800" y="120" width="192" height="72" rx="6" fill="#f8fafc"/>
+<rect x="800" y="120" width="192" height="72" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="808" y="128" width="32" height="12" rx="2" fill="transparent" stroke="#0f172a" stroke-opacity="0.4" stroke-width="0.8"/>
+<text x="824" y="137" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">P2</text>
+<text x="896" y="162" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Knowledge</text>
+<text x="896" y="179" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8001 · Chunking</text>
+<rect x="800" y="224" width="192" height="72" rx="6" fill="#f8fafc"/>
+<rect x="800" y="224" width="192" height="72" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="808" y="232" width="64" height="12" rx="2" fill="transparent" stroke="#0f172a" stroke-opacity="0.4" stroke-width="0.8"/>
+<text x="840" y="241" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">WORKER</text>
+<text x="896" y="266" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Index-Worker</text>
+<text x="896" y="283" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">weave.knowledge.index</text>
+<rect x="72" y="416" width="176" height="72" rx="6" fill="#f8fafc"/>
+<rect x="72" y="416" width="176" height="72" rx="6" fill="rgba(15,23,42,0.05)" stroke="#475569" stroke-width="1"/>
+<rect x="80" y="424" width="56" height="12" rx="2" fill="transparent" stroke="#475569" stroke-opacity="0.4" stroke-width="0.8"/>
+<text x="108" y="433" fill="#475569" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">QUEUE</text>
+<text x="160" y="458" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Redis</text>
+<text x="160" y="475" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">je Dienst eine DB</text>
+<rect x="800" y="416" width="192" height="72" rx="6" fill="#f8fafc"/>
+<rect x="800" y="416" width="192" height="72" rx="6" fill="rgba(15,23,42,0.05)" stroke="#475569" stroke-width="1"/>
+<rect x="808" y="424" width="56" height="12" rx="2" fill="transparent" stroke="#475569" stroke-opacity="0.4" stroke-width="0.8"/>
+<text x="836" y="433" fill="#475569" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">STORE</text>
+<text x="896" y="458" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Postgres</text>
+<text x="896" y="475" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">pgvector 384 · tsvector</text>
+<rect x="1048" y="416" width="192" height="72" rx="6" fill="#f8fafc"/>
+<rect x="1048" y="416" width="192" height="72" rx="6" fill="rgba(46,90,168,0.06)" stroke="#2e5aa8" stroke-width="1"/>
+<rect x="1056" y="424" width="40" height="12" rx="2" fill="transparent" stroke="#2e5aa8" stroke-opacity="0.4" stroke-width="0.8"/>
+<text x="1076" y="433" fill="#2e5aa8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">CPU</text>
+<text x="1144" y="458" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Embeddings</text>
+<text x="1144" y="475" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">e5-small · :8006</text>
+<rect x="1296" y="416" width="192" height="72" rx="6" fill="#f8fafc"/>
+<rect x="1296" y="416" width="192" height="72" rx="6" fill="rgba(46,90,168,0.06)" stroke="#2e5aa8" stroke-width="1"/>
+<rect x="1304" y="424" width="40" height="12" rx="2" fill="transparent" stroke="#2e5aa8" stroke-opacity="0.4" stroke-width="0.8"/>
+<text x="1324" y="433" fill="#2e5aa8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">CPU</text>
+<text x="1392" y="458" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Reranker</text>
+<text x="1392" y="475" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">bge-v2-m3 · :8007</text>
+<rect x="72" y="608" width="176" height="72" rx="6" fill="#f8fafc"/>
+<rect x="72" y="608" width="176" height="72" rx="6" fill="rgba(71,85,105,0.10)" stroke="#64748b" stroke-width="1"/>
+<rect x="80" y="616" width="56" height="12" rx="2" fill="transparent" stroke="#64748b" stroke-opacity="0.4" stroke-width="0.8"/>
+<text x="108" y="625" fill="#64748b" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">INPUT</text>
+<text x="160" y="650" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Clients</text>
+<text x="160" y="667" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Chat-UI · Open WebUI</text>
+<rect x="304" y="608" width="192" height="72" rx="6" fill="#f8fafc"/>
+<rect x="304" y="608" width="192" height="72" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="312" y="616" width="32" height="12" rx="2" fill="transparent" stroke="#0f172a" stroke-opacity="0.4" stroke-width="0.8"/>
+<text x="328" y="625" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">P4</text>
+<text x="400" y="650" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-API</text>
+<text x="400" y="667" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8004 · Auth · Verlauf</text>
+<rect x="552" y="608" width="192" height="72" rx="6" fill="#f8fafc"/>
+<rect x="552" y="608" width="192" height="72" rx="6" fill="rgba(79,70,229,0.08)" stroke="#4f46e5" stroke-width="1"/>
+<rect x="560" y="616" width="32" height="12" rx="2" fill="transparent" stroke="#4f46e5" stroke-opacity="0.4" stroke-width="0.8"/>
+<text x="576" y="625" fill="#4f46e5" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">P4</text>
+<text x="648" y="650" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Runtime</text>
+<text x="648" y="667" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8003 · Intent-Router</text>
+<rect x="800" y="608" width="192" height="72" rx="6" fill="#f8fafc"/>
+<rect x="800" y="608" width="192" height="72" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="808" y="616" width="32" height="12" rx="2" fill="transparent" stroke="#0f172a" stroke-opacity="0.4" stroke-width="0.8"/>
+<text x="824" y="625" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">P3</text>
+<text x="896" y="650" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Retrieval</text>
+<text x="896" y="667" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8002 · Hybrid + RRF</text>
+<rect x="552" y="760" width="192" height="72" rx="6" fill="#f8fafc"/>
+<rect x="552" y="760" width="192" height="72" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="560" y="768" width="32" height="12" rx="2" fill="transparent" stroke="#0f172a" stroke-opacity="0.4" stroke-width="0.8"/>
+<text x="576" y="777" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">P5</text>
+<text x="648" y="802" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Tools</text>
+<text x="648" y="819" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8005 · MCP · Rechte</text>
+<rect x="1048" y="760" width="192" height="72" rx="6" fill="#f8fafc"/>
+<rect x="1048" y="760" width="192" height="72" rx="6" fill="rgba(15,23,42,0.03)" stroke="rgba(15,23,42,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+<rect x="1056" y="768" width="40" height="12" rx="2" fill="transparent" stroke="#64748b" stroke-opacity="0.4" stroke-width="0.8"/>
+<text x="1076" y="777" fill="#64748b" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">EXT</text>
+<text x="1144" y="802" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">n8n</text>
+<text x="1144" y="819" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Agenten-Flow</text>
+<rect x="1296" y="760" width="192" height="72" rx="6" fill="#f8fafc"/>
+<rect x="1296" y="760" width="192" height="72" rx="6" fill="rgba(15,23,42,0.03)" stroke="rgba(15,23,42,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+<rect x="1304" y="768" width="40" height="12" rx="2" fill="transparent" stroke="#64748b" stroke-opacity="0.4" stroke-width="0.8"/>
+<text x="1324" y="777" fill="#64748b" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">EXT</text>
+<text x="1392" y="802" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">LLM-Endpunkt</text>
+<text x="1392" y="819" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">OpenAI-kompatibel</text>
+<line x1="48" y1="892" x2="1512" y2="892" stroke="rgba(15,23,42,0.10)" stroke-width="0.8"/>
+<text x="48" y="916" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGENDE</text>
+<rect x="152" y="906" width="14" height="10" rx="2" fill="rgba(79,70,229,0.08)" stroke="#4f46e5" stroke-width="1"/>
+<text x="172" y="915" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Kern: Compiler und Router</text>
+<rect x="392" y="906" width="14" height="10" rx="2" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<text x="412" y="915" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Dienst</text>
+<rect x="536" y="906" width="14" height="10" rx="2" fill="rgba(46,90,168,0.06)" stroke="#2e5aa8" stroke-width="1"/>
+<text x="556" y="915" fill="#475569" font-size="9" font-family="'Inter', sans-serif">CPU-Modell</text>
+<rect x="696" y="906" width="14" height="10" rx="2" fill="rgba(15,23,42,0.05)" stroke="#475569" stroke-width="1"/>
+<text x="716" y="915" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Speicher</text>
+<rect x="836" y="906" width="14" height="10" rx="2" fill="rgba(15,23,42,0.03)" stroke="rgba(15,23,42,0.30)" stroke-width="1" stroke-dasharray="3,3"/>
+<text x="856" y="915" fill="#475569" font-size="9" font-family="'Inter', sans-serif">extern</text>
+<line x1="960" y1="911" x2="974" y2="911" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arch-arrow-link)"/>
+<text x="980" y="915" fill="#475569" font-size="9" font-family="'Inter', sans-serif">HTTP-Aufruf</text>
+<line x1="1120" y1="911" x2="1134" y2="911" stroke="#475569" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arch-arrow)"/>
+<text x="1140" y="915" fill="#475569" font-size="9" font-family="'Inter', sans-serif">asynchron / optional</text>
+
+      </svg>
+    </div>
+  </figure>
+
+  <div class="notes">
+    <div class="card">
+      <h3><span class="dot" style="background:var(--accent)"></span>Was oben passiert</h3>
+      <ul>
+        <li>Der OCR-Worker macht aus PDF, Mail und Confluence strukturiertes Markdown mit Metadaten</li>
+        <li>Nur bestandene Dokumente lösen das signierte <code>document.processed</code>-Event aus</li>
+        <li>Der Index-Worker chunkt strukturbewusst und lässt jede Passage einbetten</li>
+        <li>Eine neue Version ersetzt die Chunks der alten in derselben Transaktion</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="dot" style="background:var(--link)"></span>Was die Mitte trägt</h3>
+      <ul>
+        <li>Postgres hält drei Datenbanken; der Chunk-Store trägt Vektoren <em>und</em> Volltext-Index</li>
+        <li>Redis gibt jedem Dienst eine eigene logische Datenbank, damit Warteschlangen sich nicht überschneiden</li>
+        <li>Die Modelldienste sprechen dieselbe Schnittstelle wie ein externer Anbieter — austauschbar</li>
+        <li>Dieselbe Modellangabe muss beim Indizieren und beim Suchen gelten, sonst findet die Suche nichts</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="dot" style="background:var(--muted)"></span>Was unten entscheidet</h3>
+      <ul>
+        <li>Der Router bestimmt zuerst die Art der Anfrage — nur Wissensfragen suchen überhaupt</li>
+        <li>Weave-Tools leiht Agenten die Rechte des Fragenden über ein kurzlebiges signiertes Token</li>
+        <li>n8n und MCP-Clients sehen nie mehr als der Mensch dahinter</li>
+        <li>Das Sprachmodell ist austauschbar und wird erst nach dem Router überhaupt gefragt</li>
+      </ul>
+    </div>
+  </div>
+
+  <figure>
+    <figcaption>
+      <span class="n">Abbildung 2 · Ablauf</span>
+      <h2>Eine Wissensfrage, von links nach rechts und wieder zurück</h2>
+      <p>Die Zeit läuft nach unten. Auffällig ist, wo <em>nicht</em> gearbeitet wird: Rechte und Absicht klärt die Runtime, bevor irgendjemand sucht — und ob eine Antwort überhaupt hinausgeht, entscheidet ganz am Ende der Guard. Findet die Suche nichts, geht der konfigurierte Hinweis raus statt einer flüssig formulierten, aber unbelegten Antwort.</p>
+    </figcaption>
+    <div class="frame">
+      <svg viewBox="0 0 1360 880" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="seq-title seq-desc">
+        <title id="seq-title">Ablauf einer Wissensfrage</title>
+        <desc id="seq-desc">Zeitlicher Ablauf ueber fuenf Beteiligte: die Chat-Oberflaeche fragt Weave-API, das an Weave-Runtime weiterreicht; dort werden Bot, Rechte und Absicht bestimmt, danach sucht Weave-Retrieval und laesst dabei die Anfrage einbetten und die Treffer neu bewerten; am Ende entscheidet ein Guard, ob eine belegte Antwort oder ein Hinweis ohne Quellen zurueckgeht.</desc>
+        <defs>
+          <marker id="seq-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#475569"/></marker>
+          <marker id="seq-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#4f46e5"/></marker>
+          <marker id="seq-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker>
+        </defs>
+        <rect width="100%" height="100%" fill="#f8fafc"/>
+<rect x="112" y="64" width="176" height="56" rx="6" fill="#f8fafc"/>
+<rect x="112" y="64" width="176" height="56" rx="6" fill="rgba(71,85,105,0.10)" stroke="#64748b" stroke-width="1"/>
+<rect x="120" y="72" width="64" height="12" rx="2" fill="transparent" stroke="#64748b" stroke-opacity="0.4" stroke-width="0.8"/>
+<text x="152" y="81" fill="#64748b" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">CLIENT</text>
+<text x="200" y="98" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Chat-Oberfläche</text>
+<text x="200" y="113" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Browser</text>
+<line x1="200" y1="120" x2="200" y2="792" stroke="rgba(15,23,42,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<rect x="352" y="64" width="176" height="56" rx="6" fill="#f8fafc"/>
+<rect x="352" y="64" width="176" height="56" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="360" y="72" width="32" height="12" rx="2" fill="transparent" stroke="#0f172a" stroke-opacity="0.4" stroke-width="0.8"/>
+<text x="376" y="81" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">P4</text>
+<text x="440" y="98" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-API</text>
+<text x="440" y="113" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8004</text>
+<line x1="440" y1="120" x2="440" y2="792" stroke="rgba(15,23,42,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<rect x="592" y="64" width="176" height="56" rx="6" fill="#f8fafc"/>
+<rect x="592" y="64" width="176" height="56" rx="6" fill="rgba(79,70,229,0.08)" stroke="#4f46e5" stroke-width="1"/>
+<rect x="600" y="72" width="32" height="12" rx="2" fill="transparent" stroke="#4f46e5" stroke-opacity="0.4" stroke-width="0.8"/>
+<text x="616" y="81" fill="#4f46e5" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">P4</text>
+<text x="680" y="98" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Runtime</text>
+<text x="680" y="113" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8003</text>
+<line x1="680" y1="120" x2="680" y2="792" stroke="rgba(15,23,42,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<rect x="832" y="64" width="176" height="56" rx="6" fill="#f8fafc"/>
+<rect x="832" y="64" width="176" height="56" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="840" y="72" width="32" height="12" rx="2" fill="transparent" stroke="#0f172a" stroke-opacity="0.4" stroke-width="0.8"/>
+<text x="856" y="81" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">P3</text>
+<text x="920" y="98" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Retrieval</text>
+<text x="920" y="113" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8002</text>
+<line x1="920" y1="120" x2="920" y2="792" stroke="rgba(15,23,42,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<rect x="1072" y="64" width="176" height="56" rx="6" fill="#f8fafc"/>
+<rect x="1072" y="64" width="176" height="56" rx="6" fill="rgba(46,90,168,0.06)" stroke="#2e5aa8" stroke-width="1"/>
+<rect x="1080" y="72" width="40" height="12" rx="2" fill="transparent" stroke="#2e5aa8" stroke-opacity="0.4" stroke-width="0.8"/>
+<text x="1100" y="81" fill="#2e5aa8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">CPU</text>
+<text x="1160" y="98" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Modelldienste</text>
+<text x="1160" y="113" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8006 · :8007</text>
+<line x1="1160" y1="120" x2="1160" y2="792" stroke="rgba(15,23,42,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<rect x="436" y="180" width="8" height="540" fill="rgba(15,23,42,0.06)" stroke="#475569" stroke-width="0.8"/>
+<rect x="676" y="224" width="8" height="460" fill="rgba(15,23,42,0.06)" stroke="#475569" stroke-width="0.8"/>
+<rect x="916" y="312" width="8" height="300" fill="rgba(15,23,42,0.06)" stroke="#475569" stroke-width="0.8"/>
+<rect x="1156" y="356" width="8" height="44" fill="rgba(15,23,42,0.06)" stroke="#475569" stroke-width="0.8"/>
+<rect x="1156" y="488" width="8" height="44" fill="rgba(15,23,42,0.06)" stroke="#475569" stroke-width="0.8"/>
+<line x1="204" y1="180" x2="436" y2="180" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#seq-arrow-link)"/>
+<rect x="276" y="160" width="84" height="12" rx="2" fill="#f8fafc"/>
+<text x="318" y="169" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">POST /v1/chat</text>
+<line x1="444" y1="224" x2="676" y2="224" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#seq-arrow-link)"/>
+<rect x="496" y="204" width="128" height="12" rx="2" fill="#f8fafc"/>
+<text x="560" y="213" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">/internal/chat + Team</text>
+<path d="M 684,268 H 724 V 296 H 690" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#seq-arrow)"/>
+<text x="732" y="286" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.06em">Bot laden · Rechte · Intent-Router</text>
+<line x1="684" y1="356" x2="916" y2="356" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#seq-arrow-link)"/>
+<rect x="720" y="336" width="156" height="12" rx="2" fill="#f8fafc"/>
+<text x="798" y="345" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">search  allowed_collections</text>
+<line x1="924" y1="400" x2="1156" y2="400" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#seq-arrow-link)"/>
+<rect x="972" y="380" width="136" height="12" rx="2" fill="#f8fafc"/>
+<text x="1040" y="389" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">embed  input_type=query</text>
+<line x1="1156" y1="444" x2="924" y2="444" stroke="#475569" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#seq-arrow)"/>
+<rect x="1004" y="424" width="72" height="12" rx="2" fill="#f8fafc"/>
+<text x="1040" y="433" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">384-Vektor</text>
+<line x1="924" y1="488" x2="1156" y2="488" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#seq-arrow-link)"/>
+<rect x="976" y="468" width="128" height="12" rx="2" fill="#f8fafc"/>
+<text x="1040" y="477" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">rerank  20 Kandidaten</text>
+<line x1="1156" y1="532" x2="924" y2="532" stroke="#475569" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#seq-arrow)"/>
+<rect x="996" y="512" width="84" height="12" rx="2" fill="#f8fafc"/>
+<text x="1038" y="521" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">Relevanzwerte</text>
+<line x1="916" y1="576" x2="684" y2="576" stroke="#475569" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#seq-arrow)"/>
+<rect x="752" y="556" width="96" height="12" rx="2" fill="#f8fafc"/>
+<text x="800" y="565" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">Top-5 + Quellen</text>
+<rect x="416" y="612" width="288" height="132" rx="4" fill="rgba(15,23,42,0.02)" stroke="rgba(15,23,42,0.22)" stroke-width="1"/>
+<rect x="416" y="612" width="40" height="16" rx="2" fill="#f8fafc" stroke="rgba(15,23,42,0.22)" stroke-width="1"/>
+<text x="436" y="624" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.12em">ALT</text>
+<text x="464" y="624" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.04em">[Quellen gefunden]</text>
+<line x1="676" y1="648" x2="444" y2="648" stroke="#4f46e5" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#seq-arrow-accent)"/>
+<rect x="508" y="628" width="104" height="12" rx="2" fill="#f8fafc"/>
+<text x="560" y="637" fill="#4f46e5" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">Antwort + Quellen</text>
+<line x1="424" y1="668" x2="696" y2="668" stroke="rgba(15,23,42,0.20)" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="428" y="684" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.04em">[keine Quellen]</text>
+<line x1="676" y1="716" x2="444" y2="716" stroke="#475569" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#seq-arrow)"/>
+<rect x="492" y="696" width="136" height="12" rx="2" fill="#f8fafc"/>
+<text x="560" y="705" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">Guard-Text · sources=[]</text>
+<line x1="436" y1="760" x2="204" y2="760" stroke="#475569" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#seq-arrow)"/>
+<rect x="236" y="740" width="168" height="12" rx="2" fill="#f8fafc"/>
+<text x="320" y="749" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SSE: trace → Deltas → Quellen</text>
+<line x1="48" y1="820" x2="1312" y2="820" stroke="rgba(15,23,42,0.10)" stroke-width="0.8"/>
+<text x="48" y="844" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGENDE</text>
+<line x1="152" y1="839" x2="166" y2="839" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#seq-arrow-link)"/>
+<text x="172" y="843" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Aufruf</text>
+<line x1="280" y1="839" x2="294" y2="839" stroke="#475569" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#seq-arrow)"/>
+<text x="300" y="843" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Antwort</text>
+<line x1="420" y1="839" x2="434" y2="839" stroke="#4f46e5" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#seq-arrow-accent)"/>
+<text x="440" y="843" fill="#475569" font-size="9" font-family="'Inter', sans-serif">belegte Antwort — der Erfolgsfall</text>
+<rect x="740" y="834" width="14" height="10" rx="2" fill="rgba(15,23,42,0.06)" stroke="#475569" stroke-width="0.8"/>
+<text x="760" y="843" fill="#475569" font-size="9" font-family="'Inter', sans-serif">hält gerade die Kontrolle</text>
+
+      </svg>
+    </div>
+  </figure>
+
+  <footer>Weave · erzeugt aus dem laufenden System und gegen dessen Verträge geprüft</footer>
+</div>
+</body>
+</html>
