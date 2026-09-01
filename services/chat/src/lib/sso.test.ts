@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SSO_CALLBACK_PATH, buildSsoLoginUrl, isSsoLoginEnabled } from '@/lib/sso';
+import {
+  SSO_CALLBACK_PATH,
+  buildSsoLoginUrl,
+  buildWeaveLoginUrl,
+  isSsoLoginEnabled,
+  isWeaveLoginEnabled,
+} from '@/lib/sso';
 
 describe('isSsoLoginEnabled — this app\'s OWN setting, since Weave-API exposes no runtime OIDC-config flag', () => {
   afterEach(() => {
@@ -67,5 +73,63 @@ describe('buildSsoLoginUrl', () => {
     expect(url.startsWith('http://localhost:8004/v1/auth/oidc/login?')).toBe(true);
     const expectedQuery = new URLSearchParams({ return_to: `http://localhost:3000${SSO_CALLBACK_PATH}` }).toString();
     expect(url).toBe(`http://localhost:8004/v1/auth/oidc/login?${expectedQuery}`);
+  });
+});
+
+
+describe('isWeaveLoginEnabled — the federated login through Weave-Ingest', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('is false when WEAVE_API_INGEST_LOGIN_ENABLED is unset (the button stays hidden)', () => {
+    vi.stubEnv('WEAVE_API_INGEST_LOGIN_ENABLED', '');
+    expect(isWeaveLoginEnabled()).toBe(false);
+  });
+
+  it('is true for "true" and "1", case-insensitively', () => {
+    vi.stubEnv('WEAVE_API_INGEST_LOGIN_ENABLED', 'TRUE');
+    expect(isWeaveLoginEnabled()).toBe(true);
+    vi.stubEnv('WEAVE_API_INGEST_LOGIN_ENABLED', '1');
+    expect(isWeaveLoginEnabled()).toBe(true);
+  });
+
+  it('fails closed for anything else', () => {
+    vi.stubEnv('WEAVE_API_INGEST_LOGIN_ENABLED', 'yes');
+    expect(isWeaveLoginEnabled()).toBe(false);
+  });
+
+  it('is independent of the OIDC flag — the two are alternatives, not a pair', () => {
+    vi.stubEnv('WEAVE_API_OIDC_ENABLED', 'true');
+    vi.stubEnv('WEAVE_API_INGEST_LOGIN_ENABLED', '');
+    expect(isSsoLoginEnabled()).toBe(true);
+    expect(isWeaveLoginEnabled()).toBe(false);
+  });
+});
+
+describe('buildWeaveLoginUrl', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('points at the gateway\'s federated-login route with this app\'s own callback as return_to', () => {
+    vi.stubEnv('WEAVE_API_PUBLIC_BASE_URL', 'http://gateway.example:8004');
+    vi.stubEnv('APP_BASE_URL', 'http://chat.example:3001');
+
+    const url = new URL(buildWeaveLoginUrl());
+
+    expect(url.origin).toBe('http://gateway.example:8004');
+    expect(url.pathname).toBe('/v1/auth/ingest/login');
+    expect(url.searchParams.get('return_to')).toBe(`http://chat.example:3001${SSO_CALLBACK_PATH}`);
+  });
+
+  it('ends at the same callback route the OIDC flow uses — both hand over a one-time code', () => {
+    vi.stubEnv('WEAVE_API_PUBLIC_BASE_URL', 'http://gateway.example:8004');
+    vi.stubEnv('APP_BASE_URL', 'http://chat.example:3001');
+
+    const federated = new URL(buildWeaveLoginUrl()).searchParams.get('return_to');
+    const oidc = new URL(buildSsoLoginUrl()).searchParams.get('return_to');
+
+    expect(federated).toBe(oidc);
   });
 });

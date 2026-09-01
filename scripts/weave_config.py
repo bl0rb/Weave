@@ -16,9 +16,11 @@ supports two subcommands:
         default) for the contradictions docs/betrieb.md section 4-7
         describes: shared values that have drifted, required values that
         are missing, SEARCH_TOP_K exceeding RERANKER_MAX_DOCUMENTS, an
-        EMBEDDING_DIMENSION that does not match a known embedding model, and
-        a CORS_ORIGINS that names a different port than the one the Ingest
-        frontend is actually published on.
+        EMBEDDING_DIMENSION that does not match a known embedding model, a
+        CORS_ORIGINS that names a different port than the one the Ingest
+        frontend is actually published on, and a half-configured federated
+        login (the four settings across three services that have to agree
+        before anyone can sign in to the chat with their Ingest account).
         Exits non-zero on any finding. Never prints a secret's actual value
         -- only a short fingerprint, so the check's output itself is safe to
         paste into a chat or a ticket.
@@ -439,6 +441,69 @@ def check(
                     f"Einrichtung und Login sind unmoeglich "
                     f"(docs/betrieb.md Abschnitt 6)."
                 ))
+
+    # --- 6) the federated-login chain -------------------------------------
+    # Four settings across three services have to agree before a person can
+    # sign in to the chat with their Weave-Ingest account. Every way of
+    # getting it half-right fails quietly: a 404 on click, a 503 on the
+    # exchange, or -- the nastiest -- a login that succeeds and then drops
+    # the user on the gateway instead of back in the chat.
+    handoff_callback = lookup("ingest", "HANDOFF_CALLBACK_URL")
+    ingest_login_url = lookup("api", "INGEST_LOGIN_URL")
+    ingest_api_url = lookup("api", "INGEST_API_URL")
+    handoff_secret = lookup("ingest", "HANDOFF_SECRET")
+    if handoff_callback or ingest_login_url:
+        if not handoff_callback:
+            findings.append(Finding(
+                "api.INGEST_LOGIN_URL ist gesetzt, ingest.HANDOFF_CALLBACK_URL aber "
+                "nicht: Weave-Ingest weiss dann nicht, wohin es den Anmeldecode "
+                "zurueckgeben soll, und antwortet auf den ganzen Handoff mit 404."
+            ))
+        if not ingest_login_url:
+            findings.append(Finding(
+                "ingest.HANDOFF_CALLBACK_URL ist gesetzt, api.INGEST_LOGIN_URL aber "
+                "nicht: die Anmeldung ueber Weave-Ingest wird nie gestartet, der "
+                "Knopf im Chat fuehrt ins 404."
+            ))
+        if not ingest_api_url:
+            findings.append(Finding(
+                "api.INGEST_API_URL ist leer: Weave-API kann den Anmeldecode nicht "
+                "einloesen, die Anmeldung endet mit 404."
+            ))
+        if not handoff_secret:
+            findings.append(Finding(
+                "WEAVE_HANDOFF_SECRET ist nicht gesetzt, obwohl der Login-Handoff "
+                "konfiguriert ist: Weave-Ingest lehnt jede Einloesung mit 503 ab "
+                "(fail-closed -- ein leeres Secret waere ein offenes "
+                "Identitaets-Orakel)."
+            ))
+        if (lookup("chat", "WEAVE_API_INGEST_LOGIN_ENABLED") or "").strip().lower() not in ("true", "1"):
+            findings.append(Finding(
+                "chat.WEAVE_API_INGEST_LOGIN_ENABLED steht nicht auf 'true': der "
+                "Knopf 'Mit Weave anmelden' erscheint nicht, obwohl die Anmeldung "
+                "dahinter funktioniert."
+            ))
+
+        app_base = (lookup("chat", "CHAT_APP_BASE_URL") or "").rstrip("/")
+        allowed_raw = lookup("api", "OIDC_POST_LOGIN_ALLOWED_URLS")
+        if app_base and allowed_raw:
+            expected_callback = f"{app_base}/api/auth/sso/callback"
+            try:
+                allowed = json.loads(allowed_raw)
+            except json.JSONDecodeError:
+                findings.append(Finding(
+                    f"api.OIDC_POST_LOGIN_ALLOWED_URLS ist kein gueltiges JSON-Array "
+                    f"({allowed_raw})."
+                ))
+            else:
+                if isinstance(allowed, list) and expected_callback not in allowed:
+                    findings.append(Finding(
+                        f"api.OIDC_POST_LOGIN_ALLOWED_URLS enthaelt {expected_callback!r} "
+                        f"nicht. Die Anmeldung gelingt dann und laesst den Nutzer "
+                        f"trotzdem auf dem Gateway statt zurueck im Chat -- ohne "
+                        f"Fehlermeldung, weil ein nicht erlaubtes return_to "
+                        f"absichtlich still ignoriert wird."
+                    ))
 
     return findings
 

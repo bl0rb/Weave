@@ -398,6 +398,77 @@ def test_check_flags_cors_origins_that_is_not_json(tmp_path, config_path):
 
 
 # ---------------------------------------------------------------------------
+# check: the federated-login chain
+# ---------------------------------------------------------------------------
+
+COMPLETE_LOGIN_CHAIN = (
+    "HANDOFF_CALLBACK_URL=http://localhost:8004/v1/auth/ingest/callback\n"
+    "INGEST_LOGIN_URL=http://localhost:3002/login\n"
+    "INGEST_API_URL=http://weave-ingest-backend:8000\n"
+    "HANDOFF_SECRET=s3cret\n"
+    "WEAVE_API_INGEST_LOGIN_ENABLED=true\n"
+    "CHAT_APP_BASE_URL=http://localhost:3001\n"
+    'OIDC_POST_LOGIN_ALLOWED_URLS=["http://localhost:3001/api/auth/sso/callback"]\n'
+)
+
+
+def _chain_env(tmp_path: Path, body: str) -> Path:
+    env_file = tmp_path / "deploy.env"
+    env_file.write_text("SHARED_SECRET=x\nALPHA_ONLY_SECRET=y\n" + body, encoding="utf-8")
+    return env_file
+
+
+def test_check_passes_on_a_complete_login_chain(tmp_path, config_path):
+    findings = wc.check(config_path, _chain_env(tmp_path, COMPLETE_LOGIN_CHAIN))
+
+    assert [f.message for f in findings] == []
+
+
+def test_check_says_nothing_when_the_login_chain_is_switched_off(tmp_path, config_path):
+    findings = wc.check(config_path, _chain_env(tmp_path, ""))
+
+    assert [f.message for f in findings] == []
+
+
+def test_check_flags_a_missing_handoff_secret(tmp_path, config_path):
+    body = COMPLETE_LOGIN_CHAIN.replace("HANDOFF_SECRET=s3cret\n", "")
+
+    messages = [f.message for f in wc.check(config_path, _chain_env(tmp_path, body))]
+
+    assert any("WEAVE_HANDOFF_SECRET" in m and "503" in m for m in messages)
+
+
+def test_check_flags_a_callback_url_without_a_login_url(tmp_path, config_path):
+    body = COMPLETE_LOGIN_CHAIN.replace("INGEST_LOGIN_URL=http://localhost:3002/login\n", "")
+
+    messages = [f.message for f in wc.check(config_path, _chain_env(tmp_path, body))]
+
+    assert any("INGEST_LOGIN_URL" in m for m in messages)
+
+
+def test_check_flags_a_hidden_button(tmp_path, config_path):
+    body = COMPLETE_LOGIN_CHAIN.replace("WEAVE_API_INGEST_LOGIN_ENABLED=true", "WEAVE_API_INGEST_LOGIN_ENABLED=")
+
+    messages = [f.message for f in wc.check(config_path, _chain_env(tmp_path, body))]
+
+    assert any("WEAVE_API_INGEST_LOGIN_ENABLED" in m for m in messages)
+
+
+def test_check_flags_a_chat_callback_missing_from_the_allowlist(tmp_path, config_path):
+    # The nastiest half-configuration: the login WORKS and still leaves the
+    # user on the gateway, because an unlisted return_to is ignored on
+    # purpose rather than reported.
+    body = COMPLETE_LOGIN_CHAIN.replace(
+        'OIDC_POST_LOGIN_ALLOWED_URLS=["http://localhost:3001/api/auth/sso/callback"]',
+        'OIDC_POST_LOGIN_ALLOWED_URLS=["http://elsewhere.example/cb"]',
+    )
+
+    messages = [f.message for f in wc.check(config_path, _chain_env(tmp_path, body))]
+
+    assert any("OIDC_POST_LOGIN_ALLOWED_URLS" in m and "sso/callback" in m for m in messages)
+
+
+# ---------------------------------------------------------------------------
 # check: never leaks a secret's actual value
 # ---------------------------------------------------------------------------
 

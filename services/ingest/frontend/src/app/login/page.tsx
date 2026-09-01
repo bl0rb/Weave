@@ -9,10 +9,31 @@ import type { ListResponse, PublicProvider, SetupStatusResponse } from '@/lib/au
 import { Button } from '@/components/ui/button';
 import { AuthField, AuthPageSpinner, AuthShell, FormError } from '@/components/auth/auth-card';
 
+/**
+ * Where a completed sign-in continues when another Weave service sent the
+ * user here (`?handoff=1`): the backend mints a one-time code and redirects
+ * the browser onward to the one callback URL it is configured with. `state`
+ * is opaque to us — it belongs to the service that started the flow, which
+ * compares it against its own signed cookie.
+ */
+function handoffStartUrl(state: string | null): string {
+  const query = state ? `?${new URLSearchParams({ state }).toString()}` : '';
+  return `${resolveApiBaseUrl()}/api/v1/auth/handoff/start${query}`;
+}
+
+interface Handoff {
+  state: string | null;
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [checking, setChecking] = useState(true);
   const [providers, setProviders] = useState<PublicProvider[]>([]);
+  // Read from window.location rather than useSearchParams() on purpose:
+  // this is one client component with no Suspense boundary around it, and
+  // useSearchParams() would force one (it opts the route out of static
+  // prerendering). The value is only ever needed after mount anyway.
+  const [handoff, setHandoff] = useState<Handoff | null>(null);
 
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
@@ -24,6 +45,25 @@ export default function LoginPage() {
     let cancelled = false;
 
     (async () => {
+      const params = new URLSearchParams(window.location.search);
+      const requestedHandoff =
+        params.get('handoff') === '1' ? { state: params.get('handoff_state') } : null;
+      if (!cancelled) setHandoff(requestedHandoff);
+
+      if (requestedHandoff) {
+        // Already signed in here? Then there is nothing to ask: continue
+        // straight back to whoever sent us. This is what makes a second
+        // Weave app feel like part of the same session rather than a
+        // second login.
+        try {
+          await apiJson('/api/v1/auth/me', { skipAuthRedirect: true });
+          window.location.assign(handoffStartUrl(requestedHandoff.state));
+          return;
+        } catch {
+          // Not signed in (or backend unreachable) — show the form.
+        }
+      }
+
       try {
         const status = await apiJson<SetupStatusResponse>('/api/v1/auth/setup-status', {
           skipAuthRedirect: true,
@@ -66,8 +106,9 @@ export default function LoginPage() {
         body: JSON.stringify({ identifier, password }),
         skipAuthRedirect: true,
       });
-      // Session cookie is set by the response — enter the app.
-      window.location.assign('/');
+      // Session cookie is set by the response — enter the app, or hand the
+      // freshly authenticated session back to whoever sent us here.
+      window.location.assign(handoff ? handoffStartUrl(handoff.state) : '/');
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         setError('Invalid credentials');
@@ -82,15 +123,34 @@ export default function LoginPage() {
     }
   }
 
-  /** OIDC must be a full-page navigation so the IdP redirect chain works. */
+  /** OIDC must be a full-page navigation so the IdP redirect chain works.
+   * The handoff request rides along, so a person sent here by another
+   * Weave app can sign in with ANY configured provider and still end up
+   * back there — that is the whole point of routing every login through
+   * this one page. */
   function loginWithProvider(slug: string) {
-    window.location.assign(`${resolveApiBaseUrl()}/api/v1/auth/oidc/${slug}/authorize`);
+    const params = new URLSearchParams();
+    if (handoff) {
+      params.set('handoff', '1');
+      if (handoff.state) params.set('handoff_state', handoff.state);
+    }
+    const query = params.toString();
+    window.location.assign(
+      `${resolveApiBaseUrl()}/api/v1/auth/oidc/${slug}/authorize${query ? `?${query}` : ''}`,
+    );
   }
 
   if (checking) return <AuthPageSpinner />;
 
   return (
-    <AuthShell title="Sign in" subtitle="Welcome back — sign in to your Weave Ingest workspace.">
+    <AuthShell
+      title="Sign in"
+      subtitle={
+        handoff
+          ? 'Sign in once — you will be taken straight back to where you came from.'
+          : 'Welcome back — sign in to your Weave Ingest workspace.'
+      }
+    >
       <form onSubmit={onSubmit} className="flex flex-col gap-4">
         <AuthField
           id="identifier"

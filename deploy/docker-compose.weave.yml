@@ -258,6 +258,24 @@ services:
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required — it encrypts sessions and stored credentials}
       PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
       CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:3000"]}
+      # --- Identity provider for the rest of the platform (OPTIONAL).
+      # Weave-API borrows this service's users, teams and OIDC connections
+      # rather than configuring identity a second time; see that service's
+      # INGEST_LOGIN_URL block below and app/api/auth.py's
+      # "cross-service login handoff" section here.
+      #
+      # HANDOFF_CALLBACK_URL is the ONE address a handoff code may be
+      # delivered to -- Weave-API's callback, BROWSER-reachable, since a
+      # browser follows this redirect. A fixed value on purpose: it leaves
+      # this service with no open-redirect surface at all. Empty (the
+      # default) disables the handoff with a 404.
+      HANDOFF_CALLBACK_URL: ${HANDOFF_CALLBACK_URL:-}
+      # Symmetric secret -- the same value as weave-api's
+      # INGEST_HANDOFF_SECRET. Empty while the handoff is enabled makes the
+      # exchange answer 503, never an unauthenticated 200: an empty secret
+      # would compare equal to every caller's empty header and turn this
+      # into an open identity oracle.
+      HANDOFF_SECRET: ${HANDOFF_SECRET:-}
     volumes:
       - storage:/app/backend/storage:rw
     depends_on:
@@ -797,6 +815,25 @@ services:
       # ignored and the user lands on THIS gateway after logging in
       # instead of back in the UI, with nothing telling anyone why.
       OIDC_POST_LOGIN_ALLOWED_URLS: ${OIDC_POST_LOGIN_ALLOWED_URLS:-[]}
+      # --- Federated login via Weave-Ingest (RECOMMENDED, and the
+      # alternative to the OIDC block above -- configure one or the other).
+      # This gateway then has no identity of its own: whoever can sign in
+      # at Weave-Ingest -- with a local password or any OIDC connection an
+      # admin created there -- can sign in to the chat, and users, teams
+      # and providers stay administered in exactly one place.
+      #
+      # INGEST_LOGIN_URL is BROWSER-reachable (the page a person is sent
+      # to, i.e. the Ingest FRONTEND's /login); INGEST_API_URL is this
+      # container's own server-to-server address for redeeming the handoff
+      # code afterwards, which is why it may be an internal service name no
+      # browser could resolve. Both empty (the default) makes
+      # /v1/auth/ingest/* 404 exactly like an unconfigured OIDC.
+      INGEST_LOGIN_URL: ${INGEST_LOGIN_URL:-}
+      INGEST_API_URL: ${INGEST_API_URL:-http://weave-ingest-backend:8000}
+      # Symmetric secret -- the same value as weave-ingest-backend's
+      # HANDOFF_SECRET above. Without it the exchange goes out
+      # unauthenticated and the callback answers 503 rather than trying.
+      INGEST_HANDOFF_SECRET: ${INGEST_HANDOFF_SECRET:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -929,6 +966,19 @@ services:
       # /api/auth/sso/callback is the exact URL that must appear in that
       # list, or the post-login handoff back to this UI silently fails.
       WEAVE_API_PUBLIC_BASE_URL: ${WEAVE_API_PUBLIC_BASE_URL:-}
+      # This UI's own BROWSER-reachable origin. It is what the login links
+      # send along as `return_to`, so it must match one entry of weave-api's
+      # OIDC_POST_LOGIN_ALLOWED_URLS exactly (that entry being this value
+      # plus /api/auth/sso/callback) -- deliberately configured rather than
+      # derived from a request's Host header, which is spoofable and would
+      # make this app's return_to move around per request.
+      APP_BASE_URL: ${CHAT_APP_BASE_URL:-http://localhost:3001}
+      # Shows the "Mit Weave anmelden" button -- the federated login. Set
+      # to "true" if and only if weave-api's own INGEST_LOGIN_URL and
+      # INGEST_API_URL are both set. Same cosmetic-only nature as
+      # WEAVE_API_OIDC_ENABLED above: a mismatch means the button 404s at
+      # the gateway, never anything unsafe.
+      WEAVE_API_INGEST_LOGIN_ENABLED: ${WEAVE_API_INGEST_LOGIN_ENABLED:-}
     depends_on:
       - weave-api
     networks:

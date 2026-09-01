@@ -398,6 +398,23 @@ shared:
 # always the dict key itself, and it only ever lands in this one service's
 # environment.
 
+  WEAVE_HANDOFF_SECRET:
+    secret: true
+    env_var: WEAVE_HANDOFF_SECRET
+    required: false
+    targets:
+      - {service: ingest, var: HANDOFF_SECRET}
+      - {service: api, var: INGEST_HANDOFF_SECRET}
+    comment: >
+      Authenticates Weave-API when it redeems a Weave-Ingest login-handoff
+      code for the identity behind it (the federated login: the chat's
+      users, teams and OIDC connections all come from Weave-Ingest). The
+      code itself travels through the browser in a URL and is worth nothing
+      without this secret -- which is exactly why it must never be empty
+      while ingest.HANDOFF_CALLBACK_URL is set: Weave-Ingest answers 503
+      rather than comparing every caller's empty header equal and handing
+      out identities to anyone holding a code.
+
 services:
 
   ingest:
@@ -443,6 +460,22 @@ services:
           Browser-reachable backend URL, handed to the frontend. Empty lets
           the frontend derive `<page protocol>//<page hostname>:8000`, which
           is right only when backend and frontend share a host.
+      HANDOFF_CALLBACK_URL:
+        secret: false
+        value: ""
+        type: string
+        required: false
+        comment: >
+          Makes this service the platform's identity provider. The ONE
+          address a login-handoff code may be delivered to: Weave-API's
+          `/v1/auth/ingest/callback`, browser-reachable (a browser follows
+          this redirect), e.g.
+          http://localhost:8004/v1/auth/ingest/callback. Fixed rather than
+          request-supplied on purpose -- that leaves no open-redirect
+          surface here at all. Empty disables the handoff with a 404; set
+          it together with api.INGEST_LOGIN_URL, api.INGEST_API_URL,
+          chat.WEAVE_API_INGEST_LOGIN_ENABLED and the shared
+          WEAVE_HANDOFF_SECRET, or the chain is broken at one end.
       BACKEND_PORT:
         secret: false
         value: 8000
@@ -754,6 +787,30 @@ services:
           do not cross-validate this against the chat service (it is a
           list of arbitrary UI origins, not a single fixed value), so keep
           the two in sync by hand.
+      INGEST_LOGIN_URL:
+        secret: false
+        value: ""
+        type: string
+        required: false
+        comment: >
+          Federated login, the recommended alternative to configuring
+          OIDC_ISSUER/OIDC_CLIENT_ID above: this gateway keeps no identity
+          of its own and sends people to Weave-Ingest's login page
+          instead, so whoever can sign in there -- password or any OIDC
+          connection an admin created there -- can sign in to the chat.
+          BROWSER-reachable, i.e. the Ingest FRONTEND's /login (e.g.
+          http://localhost:3002/login), not its API.
+      INGEST_API_URL:
+        secret: false
+        value: "http://weave-ingest-backend:8000"
+        type: string
+        required: false
+        comment: >
+          This container's own server-to-server address for Weave-Ingest,
+          used to redeem the handoff code. May be an internal service name
+          no browser could resolve -- which is exactly why it is separate
+          from INGEST_LOGIN_URL above. Federated login counts as enabled
+          only when BOTH are non-empty.
       API_PORT:
         secret: false
         value: 8004
@@ -830,6 +887,28 @@ services:
           Browser-reachable origin of Weave-API, separate from its
           container-internal address -- where the SSO button itself
           navigates to.
+      WEAVE_API_INGEST_LOGIN_ENABLED:
+        secret: false
+        value: ""
+        type: string
+        required: false
+        comment: >
+          Purely cosmetic, exactly like WEAVE_API_OIDC_ENABLED above: only
+          controls whether the "Mit Weave anmelden" button appears. Set to
+          "true" if and only if api.INGEST_LOGIN_URL and api.INGEST_API_URL
+          are both set. A mismatch makes the button 404 on click, never a
+          security issue.
+      CHAT_APP_BASE_URL:
+        secret: false
+        value: "http://localhost:3001"
+        type: string
+        required: false
+        comment: >
+          This UI's own browser-reachable origin, sent along as `return_to`
+          on both login paths. api.OIDC_POST_LOGIN_ALLOWED_URLS must
+          contain exactly this value plus `/api/auth/sso/callback`, or the
+          login succeeds and then silently drops the user on the gateway
+          instead of back in the chat.
       TOOLS_FRONTEND_PORT:
         secret: false
         value: 3001

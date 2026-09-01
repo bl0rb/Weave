@@ -1016,3 +1016,30 @@ class WebhookDelivery(Base):
     connection: Mapped[WebhookConnection | None] = relationship(back_populates='deliveries')
     job: Mapped[Job | None] = relationship(back_populates='webhook_deliveries')
     owner: Mapped[User | None] = relationship(back_populates='webhook_deliveries')
+
+
+class LoginHandoffCode(Base):
+    """One-time code that hands an identity authenticated HERE over to
+    Weave-API, so the chat UI can rely on this service's users, teams and
+    OIDC connections instead of keeping a second account world of its own.
+
+    Same never-store-the-raw-value discipline as Session and ApiToken
+    above: only sha256(code) is persisted. This code is the one credential
+    in the platform that deliberately travels in a URL query string -- the
+    place most likely to end up in somebody's access log -- so it is built
+    to be worthless the moment it has been used: single-use (`used_at`,
+    claimed under a conditional UPDATE so two concurrent exchanges cannot
+    both win), valid for about a minute, and useless on its own to anyone
+    who does not also hold the shared handoff secret.
+    """
+
+    __tablename__ = 'login_handoff_codes'
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

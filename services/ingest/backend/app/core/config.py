@@ -92,6 +92,34 @@ class Settings(BaseSettings):
     # redirect_uri (`{public_api_url}/api/v1/auth/oidc/{slug}/callback`).
     public_api_url: str = 'http://localhost:8000'
 
+    # --- Cross-service login handoff (app/api/auth.py's /auth/handoff/*) ---
+    #
+    # This service is the platform's identity provider: Weave-API -- and
+    # through it the chat UI -- has no user database of its own and asks
+    # here instead, so users, teams and OIDC connections are administered
+    # in exactly one place.
+    #
+    # HANDOFF_CALLBACK_URL is the ONE address a handoff code may ever be
+    # delivered to (Weave-API's `/v1/auth/ingest/callback`). It is a fixed
+    # configuration value on purpose, never anything a request can steer:
+    # that leaves this service with no open-redirect surface at all, and
+    # keeps the URL-allowlist parsing -- the part that is genuinely easy to
+    # get wrong -- on Weave-API's side alone, where the variable target
+    # (which chat instance to return to) actually belongs. Empty disables
+    # the whole handoff surface with a 404, exactly like an unconfigured
+    # OIDC provider.
+    handoff_callback_url: str = ''
+    # Shared with Weave-API (WEAVE_HANDOFF_SECRET there too). Presented by
+    # Weave-API when it exchanges a code for the identity behind it; must
+    # be non-empty whenever the handoff is enabled, or the exchange fails
+    # closed with a 503 rather than comparing every caller's empty header
+    # equal and turning into an open identity oracle.
+    handoff_secret: str = ''
+    # How long a freshly minted handoff code stays valid. Seconds: the code
+    # is redeemed by a redirect that happens immediately, so this only has
+    # to cover the browser hop, not any human hesitation.
+    handoff_code_ttl_seconds: int = 60
+
     # --- Confluence import (app/services/confluence*.py, safe_fetch,
     # app/workers/import_tasks.py). The caps are hard server-side clamps:
     # client-supplied values can only lower them, never raise them.

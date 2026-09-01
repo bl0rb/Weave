@@ -1,4 +1,9 @@
-import { isSsoLoginEnabled, buildSsoLoginUrl } from '@/lib/sso';
+import {
+  isSsoLoginEnabled,
+  buildSsoLoginUrl,
+  isWeaveLoginEnabled,
+  buildWeaveLoginUrl,
+} from '@/lib/sso';
 import { LoginForm } from './login-form';
 
 interface LoginPageProps {
@@ -22,6 +27,13 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const rawError = Array.isArray(params.error) ? params.error[0] : params.error;
 
   const ssoLoginUrl = isSsoLoginEnabled() ? buildSsoLoginUrl() : null;
+  const weaveLoginUrl = isWeaveLoginEnabled() ? buildWeaveLoginUrl() : null;
 
-  return <LoginForm ssoLoginUrl={ssoLoginUrl} ssoError={rawError ?? null} />;
+  return (
+    <LoginForm
+      weaveLoginUrl={weaveLoginUrl}
+      ssoLoginUrl={ssoLoginUrl}
+      ssoError={rawError ?? null}
+    />
+  );
 }

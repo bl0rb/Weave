@@ -10,6 +10,7 @@ leak into another.
 """
 
 import time
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,8 +19,19 @@ from joserfc.jwk import KeySet, RSAKey
 from sqlalchemy import select
 
 import app.api.auth as auth_module
+from app.core.config import settings
 from app.main import app
-from app.models.models import AuthProvider, Job, JobStatus, Session as SessionModel, User, UserRole, WorkerLogEntry
+from app.models.models import (
+    AuthProvider,
+    Job,
+    JobStatus,
+    LoginHandoffCode,
+    Session as SessionModel,
+    Team,
+    User,
+    UserRole,
+    WorkerLogEntry,
+)
 from app.services.security import encrypt_client_secret, hash_password, rate_limiter
 from conftest import BROWSER_HEADERS, TestingSessionLocal
 
@@ -1033,3 +1045,209 @@ def test_admin_worker_logs_filters_by_level_floor_and_worker(client: TestClient)
     resp = client.get('/api/v1/auth/admin/worker-logs', params={'q': 'SIGKILL'})
     assert resp.status_code == 200
     assert resp.json()['total'] == 1
+
+
+# --- cross-service login handoff ----------------------------------------------
+#
+# The chain the chat UI logs in through: a session HERE (however it was
+# obtained) becomes a one-time code, and Weave-API redeems that code for the
+# identity behind it. See app/api/auth.py's own section comment.
+
+HANDOFF_CALLBACK = 'http://weave-api.test/v1/auth/ingest/callback'
+HANDOFF_SECRET = 'shared-handoff-secret'
+
+
+@pytest.fixture()
+def handoff_enabled(monkeypatch):
+    monkeypatch.setattr(settings, 'handoff_callback_url', HANDOFF_CALLBACK)
+    monkeypatch.setattr(settings, 'handoff_secret', HANDOFF_SECRET)
+    return None
+
+
+def _code_from_redirect(response) -> str:
+    assert response.status_code == 302, response.text
+    location = response.headers['location']
+    assert location.startswith(HANDOFF_CALLBACK)
+    return parse_qs(urlsplit(location).query)['code'][0]
+
+
+def _start_handoff(client: TestClient) -> str:
+    return _code_from_redirect(
+        client.get('/api/v1/auth/handoff/start', follow_redirects=False)
+    )
+
+
+def _exchange(client: TestClient, code: str, *, secret: str | None = HANDOFF_SECRET):
+    headers = {} if secret is None else {'X-Weave-Handoff-Secret': secret}
+    return client.post('/api/v1/auth/handoff/exchange', json={'code': code}, headers=headers)
+
+
+def test_handoff_start_is_404_while_unconfigured(client: TestClient) -> None:
+    _create_user(username='handoffoff', email='handoffoff@example.com', password='CorrectHorse1')
+    _login(client, 'handoffoff', 'CorrectHorse1')
+
+    resp = client.get('/api/v1/auth/handoff/start', follow_redirects=False)
+
+    assert resp.status_code == 404
+
+
+def test_handoff_start_requires_a_session(client: TestClient, handoff_enabled) -> None:
+    client.cookies.clear()
+
+    resp = client.get('/api/v1/auth/handoff/start', follow_redirects=False)
+
+    assert resp.status_code == 401
+
+
+def test_handoff_round_trip_carries_username_email_team_and_admin_bit(
+    client: TestClient, handoff_enabled
+) -> None:
+    db = _db()
+    try:
+        team = Team(name='rechtsabteilung')
+        db.add(team)
+        db.commit()
+        team_id = team.id
+    finally:
+        db.close()
+    user = _create_user(
+        username='handoffuser', email='handoff@example.com', password='CorrectHorse1', role=UserRole.ADMIN
+    )
+    db = _db()
+    try:
+        db.query(User).filter(User.id == user.id).update({'team_id': team_id})
+        db.commit()
+    finally:
+        db.close()
+    _login(client, 'handoffuser', 'CorrectHorse1')
+
+    resp = _exchange(client, _start_handoff(client))
+
+    assert resp.status_code == 200
+    body = resp.json()
+    # `subject` is this service's user id -- the one identifier an admin
+    # cannot change out from under the consuming service.
+    assert body['subject'] == user.id
+    assert body['username'] == 'handoffuser'
+    assert body['email'] == 'handoff@example.com'
+    # the team NAME, because that is what a collection's read_teams matches
+    assert body['team'] == 'rechtsabteilung'
+    assert body['is_admin'] is True
+
+
+def test_handoff_reports_no_team_for_a_user_without_one(client: TestClient, handoff_enabled) -> None:
+    _create_user(username='teamless', email='teamless@example.com', password='CorrectHorse1')
+    _login(client, 'teamless', 'CorrectHorse1')
+
+    body = _exchange(client, _start_handoff(client)).json()
+
+    assert body['team'] is None
+    assert body['is_admin'] is False
+
+
+def test_handoff_code_cannot_be_redeemed_twice(client: TestClient, handoff_enabled) -> None:
+    _create_user(username='replayuser', email='replay@example.com', password='CorrectHorse1')
+    _login(client, 'replayuser', 'CorrectHorse1')
+    code = _start_handoff(client)
+
+    assert _exchange(client, code).status_code == 200
+    # The code travels in a URL and will sit in access logs; a second
+    # redemption must be worthless.
+    assert _exchange(client, code).status_code == 401
+
+
+def test_handoff_code_expires(client: TestClient, handoff_enabled, monkeypatch) -> None:
+    monkeypatch.setattr(settings, 'handoff_code_ttl_seconds', 0)
+    _create_user(username='expireduser', email='expired@example.com', password='CorrectHorse1')
+    _login(client, 'expireduser', 'CorrectHorse1')
+
+    assert _exchange(client, _start_handoff(client)).status_code == 401
+
+
+def test_handoff_exchange_rejects_a_wrong_or_missing_secret(client: TestClient, handoff_enabled) -> None:
+    _create_user(username='secretuser', email='secret@example.com', password='CorrectHorse1')
+    _login(client, 'secretuser', 'CorrectHorse1')
+    code = _start_handoff(client)
+
+    assert _exchange(client, code, secret=None).status_code == 401
+    assert _exchange(client, code, secret='not-the-secret').status_code == 401
+    # ...and the code survived both attempts, so a wrong guess cannot be
+    # used to burn somebody else's login.
+    assert _exchange(client, code).status_code == 200
+
+
+def test_handoff_exchange_fails_closed_without_a_configured_secret(
+    client: TestClient, handoff_enabled, monkeypatch
+) -> None:
+    _create_user(username='nosecret', email='nosecret@example.com', password='CorrectHorse1')
+    _login(client, 'nosecret', 'CorrectHorse1')
+    code = _start_handoff(client)
+    monkeypatch.setattr(settings, 'handoff_secret', '')
+
+    # An empty secret would compare equal to every caller's empty header and
+    # turn this endpoint into an open identity oracle -- 503, never 200.
+    resp = _exchange(client, code, secret=None)
+
+    assert resp.status_code == 503
+
+
+def test_handoff_exchange_rejects_a_deactivated_user(client: TestClient, handoff_enabled) -> None:
+    user = _create_user(username='goneuser', email='gone@example.com', password='CorrectHorse1')
+    _login(client, 'goneuser', 'CorrectHorse1')
+    code = _start_handoff(client)
+
+    db = _db()
+    try:
+        db.query(User).filter(User.id == user.id).update({'is_active': False})
+        db.commit()
+    finally:
+        db.close()
+
+    assert _exchange(client, code).status_code == 401
+
+
+def test_handoff_start_writes_a_worker_log_entry(client: TestClient, handoff_enabled) -> None:
+    _wipe_worker_logs()
+    _create_user(username='loggeduser', email='logged@example.com', password='CorrectHorse1')
+    _login(client, 'loggeduser', 'CorrectHorse1')
+    _exchange(client, _start_handoff(client))
+
+    db = _db()
+    try:
+        messages = [
+            row.message
+            for row in db.scalars(select(WorkerLogEntry).where(WorkerLogEntry.logger_name == 'app.auth')).all()
+        ]
+    finally:
+        db.close()
+    assert 'login handoff started for user loggeduser' in messages
+    assert 'login handoff redeemed for user loggeduser' in messages
+
+
+def test_handoff_echoes_the_callers_state_untouched(client: TestClient, handoff_enabled) -> None:
+    # The caller compares this against its own signed cookie; without it a
+    # forged callback URL could sign a victim's browser into somebody
+    # else's account.
+    _create_user(username='stateuser', email='state@example.com', password='CorrectHorse1')
+    _login(client, 'stateuser', 'CorrectHorse1')
+
+    resp = client.get(
+        '/api/v1/auth/handoff/start', params={'state': 'opaque-state-123'}, follow_redirects=False
+    )
+
+    assert resp.status_code == 302
+    assert parse_qs(urlsplit(resp.headers['location']).query)['state'] == ['opaque-state-123']
+
+
+def test_handoff_stores_only_the_hash_of_the_code(client: TestClient, handoff_enabled) -> None:
+    _create_user(username='hashuser', email='hash@example.com', password='CorrectHorse1')
+    _login(client, 'hashuser', 'CorrectHorse1')
+    code = _start_handoff(client)
+
+    db = _db()
+    try:
+        rows = db.scalars(select(LoginHandoffCode)).all()
+        stored = {row.code_hash for row in rows}
+    finally:
+        db.close()
+    assert code not in stored

@@ -489,7 +489,60 @@ mit `RERANK_PROVIDER=api` sollte `scores.rerank` gesetzt sein und
 
 ---
 
-## 8. SSO einrichten
+## 8. Anmeldung einrichten
+
+Es gibt zwei Wege, und du entscheidest dich für einen.
+
+### 8.1 Empfohlen: eine Anmeldung für alles
+
+Weave-Ingest ist der Identitätsdienst der Plattform (ADR-0006). Dort verwaltet
+ein Administrator lokale Benutzer, Teams **und** beliebig viele
+OIDC-Verbindungen — mit Oberfläche und Testknopf. Weave-API führt dann keine
+eigene Kontenwelt: Wer sich bei Ingest anmelden kann, kann sich am Chat
+anmelden, egal womit.
+
+Vier Werte müssen zusammenpassen:
+
+| Variable | Dienst | Wert (lokal) |
+|---|---|---|
+| `HANDOFF_CALLBACK_URL` | Ingest | `http://localhost:8004/v1/auth/ingest/callback` |
+| `INGEST_LOGIN_URL` | API | `http://localhost:3002/login` |
+| `INGEST_API_URL` | API | `http://weave-ingest-backend:8000` |
+| `WEAVE_HANDOFF_SECRET` | beide | einmal erzeugen, geteilt |
+
+Dazu im Chat `WEAVE_API_INGEST_LOGIN_ENABLED=true` (zeigt den Knopf) und in
+`OIDC_POST_LOGIN_ALLOWED_URLS` die eigene Rücksprungadresse
+(`CHAT_APP_BASE_URL` + `/api/auth/sso/callback`). `weave_config.py check` prüft
+die ganze Kette — jede halbe Konfiguration versagt sonst leise.
+
+Beachte die beiden Adressarten: `INGEST_LOGIN_URL` ist die **Seite im Browser**
+(das Frontend), `INGEST_API_URL` die **containerinterne** Adresse, unter der
+Weave-API den Code einlöst. In einer echten Installation sind das verschiedene
+Namen.
+
+Der Ablauf: Der Chat schickt zur Ingest-Anmeldeseite. Ist dort schon eine
+Sitzung offen, geht es sofort weiter — sonst meldet sich die Person an, mit
+Passwort oder einem beliebigen OIDC-Anbieter. Zurück kommt ein **Einmal-Code**,
+den Weave-API server-zu-server gegen das geteilte Secret einlöst. Der Code
+reist durch eine URL und ist deshalb absichtlich für sich genommen wertlos:
+einmalig, eine Minute gültig, ohne Secret nicht einlösbar.
+
+Zwei Dinge, die still schiefgehen:
+
+- **Das Team entscheidet über die Collections.** Weave-API liest bei jeder
+  Anmeldung Team und Admin-Rechte neu aus Ingest. Der Teamname muss
+  *zeichengleich* in `read_teams` der Collection stehen — sonst meldet sich
+  jemand erfolgreich an und findet nichts.
+- **Der Anzeigename folgt einer Umbenennung nicht.** Verknüpft wird über die
+  Ingest-Benutzer-ID; existiert in `weave_api` schon ein Konto mit demselben
+  Namen (etwa aus `app.cli create-user`), bekommt das neue einen Zähler
+  angehängt. Wer den Namen behalten will, löscht vorher das alte Konto.
+- **Abmelden gilt nur lokal.** Wer sich aus dem Chat abmeldet, bleibt bei
+  Ingest angemeldet — der nächste Klick auf „Mit Weave anmelden" führt ohne
+  Rückfrage wieder hinein. Das ist bei einer gemeinsamen Anmeldung überall so;
+  wirklich abmelden heißt, das auch bei Ingest zu tun.
+
+### 8.2 Alternative: OIDC direkt am Gateway
 
 | Variable | Bedeutung |
 |---|---|

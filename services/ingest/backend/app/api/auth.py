@@ -14,6 +14,7 @@ doc:
                              `dependencies=[Depends(require_admin)]`.
 """
 
+import hmac
 import json
 import logging
 import secrets
@@ -42,6 +43,7 @@ from app.models.models import (
     ApiToken,
     AuthProvider,
     Job,
+    LoginHandoffCode,
     Session as SessionModel,
     Team,
     User,
@@ -58,6 +60,8 @@ from app.schemas.auth import (
     ApiTokenListResponse,
     ApiTokenResponse,
     ClaimOwnerlessRequest,
+    HandoffExchangeRequest,
+    HandoffExchangeResponse,
     ClaimOwnerlessResponse,
     LoginRequest,
     OrphanedFileEntry,
@@ -559,7 +563,19 @@ def list_public_providers(db: Session = Depends(get_db)) -> ProvidersPublicRespo
 
 
 @router_public.get('/oidc/{slug}/authorize')
-def oidc_authorize(slug: str, request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
+def oidc_authorize(
+    slug: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    handoff: bool = False,
+    handoff_state: str | None = Query(default=None, max_length=256),
+) -> RedirectResponse:
+    """`handoff=1` means this login was started from another Weave service
+    (the chat UI, via Weave-API): the callback then ends in a one-time code
+    for that service instead of a redirect into this app's own frontend.
+    The flag rides in the SIGNED state cookie rather than in the provider's
+    `state` round-trip, so an IdP -- or anyone who can reach the callback
+    URL -- cannot turn an ordinary login into a handoff."""
     enforce_rate_limit(request)
 
     provider = db.scalar(select(AuthProvider).where(AuthProvider.slug == slug, AuthProvider.enabled.is_(True)))
@@ -597,7 +613,16 @@ def oidc_authorize(slug: str, request: Request, db: Session = Depends(get_db)) -
     )
 
     redirect_response = RedirectResponse(url=f'{authorization_endpoint}?{query}', status_code=status.HTTP_302_FOUND)
-    state_payload = json.dumps({'slug': slug, 'state': state, 'nonce': nonce, 'code_verifier': code_verifier})
+    state_payload = json.dumps(
+        {
+            'slug': slug,
+            'state': state,
+            'nonce': nonce,
+            'code_verifier': code_verifier,
+            'handoff': bool(handoff) and _handoff_enabled(),
+            'handoff_state': handoff_state,
+        }
+    )
     redirect_response.set_cookie(
         key=_OIDC_STATE_COOKIE,
         value=sign_value(state_payload),
@@ -885,11 +910,165 @@ def oidc_callback(
 
     _log_auth_event(db, 'INFO', f'oidc login succeeded: provider={slug} user={user.username} {login_diagnostic}')
 
-    redirect_target = settings.cors_origins[0] if settings.cors_origins else '/'
-    redirect_response = RedirectResponse(url=redirect_target, status_code=status.HTTP_302_FOUND)
+    # `handoff` was decided by oidc_authorize and has been inside a signed
+    # cookie ever since, so it is exactly what THIS service put there.
+    if state_payload.get('handoff') is True and _handoff_enabled():
+        handoff_state = state_payload.get('handoff_state')
+        redirect_response = _issue_handoff_redirect(
+            db, user, state=handoff_state if isinstance(handoff_state, str) else None
+        )
+    else:
+        redirect_target = settings.cors_origins[0] if settings.cors_origins else '/'
+        redirect_response = RedirectResponse(url=redirect_target, status_code=status.HTTP_302_FOUND)
     redirect_response.delete_cookie(key=_OIDC_STATE_COOKIE, path=_OIDC_STATE_COOKIE_PATH)
+    # Set in both cases: after a handoff the user is signed in HERE too, so
+    # following a link into this app afterwards does not ask again.
     _create_session(db, request, redirect_response, user)
     return redirect_response
+
+
+# --- cross-service login handoff -----------------------------------------------
+#
+# Two steps, and the split is the point.
+#
+#   1. The browser, already signed in here, is sent to HANDOFF_CALLBACK_URL
+#      carrying a one-time code (`/handoff/start`, or the tail of the OIDC
+#      callback above when the login began at the chat).
+#   2. Weave-API redeems that code server-to-server (`/handoff/exchange`),
+#      holding the shared secret, and gets the identity behind it.
+#
+# The code alone is therefore worth nothing: whoever reads it out of an
+# access log or a Referer header still cannot exchange it without the
+# secret, and cannot use it twice. Weave-API then mints its OWN one-time
+# code for the last hop into the chat UI -- the same pattern, one link
+# further along the chain (services/api/backend/app/api/auth.py's
+# SessionExchangeCode).
+
+_HANDOFF_SECRET_HEADER = 'X-Weave-Handoff-Secret'
+
+
+def _handoff_enabled() -> bool:
+    return bool(settings.handoff_callback_url)
+
+
+def _issue_handoff_redirect(db: Session, user: User, state: str | None = None) -> RedirectResponse:
+    """Mint a one-time code for `user` and send the browser to the
+    configured callback with it.
+
+    The target is `settings.handoff_callback_url` and nothing else -- no
+    part of the request can influence it -- so there is no open redirect to
+    get wrong here, and none of the URL-parsing subtleties Weave-API's own
+    `return_to` allowlist has to survive (see `_has_unambiguous_url_syntax`
+    there: a WHATWG parser reads `https://evil.example\\@allowed.host` as a
+    request to evil.example, an RFC 3986 one does not).
+
+    `state` is opaque here and echoed back untouched. This service makes no
+    decision on it: it belongs to the caller that started the flow, which
+    compares it against its own signed cookie to know that this callback
+    answers a login IT started -- without which a forged callback URL could
+    sign a victim's browser into the attacker's account. Echoing it is safe
+    precisely because the destination is fixed."""
+    raw_code = generate_token(32)
+    now = datetime.now(timezone.utc)
+    db.add(
+        LoginHandoffCode(
+            code_hash=hash_session_token(raw_code),
+            user_id=user.id,
+            created_at=now,
+            expires_at=now + timedelta(seconds=settings.handoff_code_ttl_seconds),
+        )
+    )
+    db.commit()
+    params = {'code': raw_code}
+    if state:
+        params['state'] = state
+    separator = '&' if urlsplit(settings.handoff_callback_url).query else '?'
+    return RedirectResponse(
+        url=f'{settings.handoff_callback_url}{separator}{urlencode(params)}',
+        status_code=status.HTTP_302_FOUND,
+    )
+
+
+@router_authenticated.get('/handoff/start')
+def handoff_start(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    state: str | None = Query(default=None, max_length=256),
+) -> RedirectResponse:
+    """Step 1. Requires an ordinary session here, so it does not care in the
+    slightest HOW that session came about -- a local password, any of the
+    configured OIDC providers, a future third method. That is the whole
+    reason the chat can accept every login this service supports without
+    knowing that any of them exist."""
+    enforce_rate_limit(request)
+    if not _handoff_enabled():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Login handoff is not configured')
+    _log_auth_event(db, 'INFO', f'login handoff started for user {user.username}')
+    return _issue_handoff_redirect(db, user, state=state)
+
+
+@router_public.post('/handoff/exchange', response_model=HandoffExchangeResponse)
+def handoff_exchange(
+    payload: HandoffExchangeRequest, request: Request, db: Session = Depends(get_db)
+) -> HandoffExchangeResponse:
+    """Step 2, service to service. Never reachable from a browser in any
+    useful way: it needs the shared secret in a header, which a
+    cross-origin page cannot obtain."""
+    enforce_rate_limit(request)
+    if not _handoff_enabled():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Login handoff is not configured')
+
+    secret = settings.handoff_secret
+    if not secret:
+        # Fail closed. With an empty secret every caller's (equally empty)
+        # header would compare equal and this endpoint would hand out
+        # identities to anyone holding a code -- the failure mode is an
+        # open identity oracle, not a broken feature, so it must never be
+        # reachable by forgetting a variable.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='service misconfigured'
+        )
+    if not hmac.compare_digest(request.headers.get(_HANDOFF_SECRET_HEADER, ''), secret):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid handoff credentials')
+
+    now = datetime.now(timezone.utc)
+    entry = db.scalar(
+        select(LoginHandoffCode).where(LoginHandoffCode.code_hash == hash_session_token(payload.code))
+    )
+    # One generic 401 for every failure below (unknown code, already
+    # redeemed, expired, user since deactivated): a caller that got this
+    # far already has the secret, but there is still nothing useful to tell
+    # it apart from "no".
+    if entry is None or entry.used_at is not None or aware_utc(entry.expires_at) <= now:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid or expired handoff code')
+
+    # Single use is decided by the database, not by the check above: two
+    # exchanges of the same code arriving together both pass it, and
+    # exactly one of them gets rowcount 1 here.
+    claimed = db.execute(
+        update(LoginHandoffCode)
+        .where(LoginHandoffCode.id == entry.id, LoginHandoffCode.used_at.is_(None))
+        .values(used_at=now)
+    ).rowcount
+    db.commit()
+    if claimed != 1:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid or expired handoff code')
+
+    user = db.get(User, entry.user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid or expired handoff code')
+
+    team = db.get(Team, user.team_id) if user.team_id else None
+    _log_auth_event(db, 'INFO', f'login handoff redeemed for user {user.username}')
+    db.commit()
+    return HandoffExchangeResponse(
+        subject=user.id,
+        username=user.username,
+        email=user.email,
+        team=team.name if team else None,
+        is_admin=user.role == UserRole.ADMIN,
+    )
 
 
 # --- admin: users --------------------------------------------------------------

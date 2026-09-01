@@ -284,3 +284,30 @@ class ApiTokenResponse(BaseModel):
 
 class ApiTokenListResponse(BaseModel):
     items: list[ApiTokenResponse]
+
+
+# --- cross-service login handoff ---------------------------------------------
+
+class HandoffExchangeRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=512)
+
+
+class HandoffExchangeResponse(BaseModel):
+    """The identity behind a redeemed handoff code.
+
+    `subject` is this service's own user id and is what the consuming
+    service must key its local account on -- never `username` or `email`,
+    both of which an admin can change here without meaning to hand the
+    account to somebody else.
+
+    `team` is the team's NAME, not its id: that is the exact string a
+    collection's `read_teams` entry is matched against (see
+    contracts/chunk-store.md), so passing anything else would silently
+    grant nothing.
+    """
+
+    subject: str
+    username: str
+    email: str
+    team: str | None = None
+    is_admin: bool

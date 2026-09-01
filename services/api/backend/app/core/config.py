@@ -167,5 +167,34 @@ class Settings(BaseSettings):
     # third party's.
     oidc_post_login_allowed_urls: list[str] = []
 
+    # --- Federated login via Weave-Ingest (app/api/auth.py's
+    # /v1/auth/ingest/login + /callback, app/services/ingest_identity.py).
+    #
+    # The alternative to the single statically-configured OIDC provider
+    # above, and the one an operator should normally pick: instead of
+    # configuring an identity provider HERE a second time, this gateway
+    # borrows Weave-Ingest's -- which already has admin-managed local
+    # users, teams, and a whole TABLE of OIDC connections with a test
+    # button. Whoever can sign in there can then sign in to the chat, by
+    # whichever method, without this service learning that any of those
+    # methods exist.
+    #
+    # INGEST_LOGIN_URL is BROWSER-reachable (the login page a person is
+    # sent to); INGEST_API_URL is this container's own server-to-server
+    # address for redeeming the code afterwards. They are separate because
+    # in a real deployment they usually are: an internal Docker service
+    # name no browser could resolve, versus a public URL.
+    #
+    # Enabled exactly when both are non-empty -- otherwise
+    # /v1/auth/ingest/* answers 404, exactly like an unconfigured OIDC.
+    ingest_login_url: str = ''
+    ingest_api_url: str = ''
+    # Shared with Weave-Ingest (HANDOFF_SECRET there). Presented on the
+    # server-to-server exchange; without it a leaked code out of an access
+    # log would be enough to impersonate the person it was issued for.
+    # Missing while the rest is configured is a 503, never a silent
+    # unauthenticated attempt.
+    ingest_handoff_secret: str = ''
+
 
 settings = Settings()

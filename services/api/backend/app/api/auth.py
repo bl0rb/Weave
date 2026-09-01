@@ -18,11 +18,20 @@ the provider's JWKS) rather than inventing something new -- see
 app/services/oidc.py for the discovery/token-exchange/validation helpers
 this router calls.
 
-Every endpoint below 404s outright (`require_oidc_enabled`, applied at the
-router level) unless BOTH `OIDC_ISSUER` and `OIDC_CLIENT_ID` are configured
--- an unconfigured deployment must look exactly like this router was never
-mounted at all, not like a feature that exists but always fails, and
+This gateway has TWO browser login methods, and an operator picks one:
+the statically-configured OIDC provider described above, or -- the
+recommended one -- federating to Weave-Ingest, which already administers
+local users, teams and a whole table of OIDC connections (see the
+"federated login via Weave-Ingest" section further down).
+
+With NEITHER configured the whole router 404s
+(`require_browser_login_enabled`, applied at the router level): an
+unconfigured deployment must look exactly like this router was never
+mounted, not like a feature that exists but always fails, and
 Personal-API-Tokens remain the only way in (README's OIDC-setup section).
+The routes of each individual method additionally gate on THEIR own
+method being configured, so enabling one never exposes the other's; the
+shared tail (`/session/exchange`, `/logout`) serves whichever is on.
 
 Security properties, all deliberately NOT abbreviated relative to
 Weave-Ingest's own template:
@@ -102,6 +111,7 @@ browser-side JavaScript:
    it would have handled a Personal-API-Token.
 """
 
+import hmac
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -129,6 +139,7 @@ from app.core.security import (
 from app.models.models import Session as SessionModel
 from app.models.models import SessionExchangeCode, User
 from app.schemas.auth import SessionExchangeRequest, SessionExchangeResponse
+from app.services.ingest_identity import IngestIdentity, IngestIdentityError, exchange_handoff_code
 from app.services.oidc import (
     OIDCError,
     exchange_code_for_tokens,
@@ -175,18 +186,41 @@ def oidc_enabled() -> bool:
     return bool(settings.oidc_issuer and settings.oidc_client_id)
 
 
+def ingest_login_enabled() -> bool:
+    """Federated login is configured exactly when both a browser-reachable
+    Weave-Ingest login URL and a server-to-server API URL are set (see
+    app/core/config.py) -- same all-or-nothing rule as `oidc_enabled()`."""
+    return bool(settings.ingest_login_url and settings.ingest_api_url)
+
+
 def require_oidc_enabled() -> None:
-    """Router-level dependency: every route below 404s, exactly as if it
-    were never registered at all, unless `oidc_enabled()` -- see module
-    docstring. Deliberately re-evaluated on every request (not cached at
-    import/startup time) so tests can toggle `settings.oidc_issuer`/
-    `oidc_client_id` per-test against the one shared app instance
-    (tests/conftest.py) without needing a process restart."""
+    """Per-route dependency on the `/oidc/*` endpoints: they 404 exactly as
+    if they were never registered unless `oidc_enabled()`. Deliberately
+    re-evaluated on every request (not cached at import/startup time) so
+    tests can toggle `settings.oidc_issuer`/`oidc_client_id` per-test
+    against the one shared app instance (tests/conftest.py) without
+    needing a process restart."""
     if not oidc_enabled():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
 
 
-router = APIRouter(prefix='/v1/auth', tags=['auth'], dependencies=[Depends(require_oidc_enabled)])
+def require_ingest_login_enabled() -> None:
+    """The same, for the `/ingest/*` endpoints."""
+    if not ingest_login_enabled():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+
+def require_browser_login_enabled() -> None:
+    """Router-level dependency: with no browser login method configured at
+    all, nothing under /v1/auth exists -- including the shared
+    `/session/exchange` and `/logout`, which have nothing to serve. Either
+    method being configured is enough to expose that shared tail; the
+    method-specific routes still gate on their own."""
+    if not (oidc_enabled() or ingest_login_enabled()):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+
+router = APIRouter(prefix='/v1/auth', tags=['auth'], dependencies=[Depends(require_browser_login_enabled)])
 
 
 def _is_https_request(request: Request) -> bool:
@@ -423,21 +457,27 @@ def _resolve_return_to(candidate: str | None) -> str | None:
     return None
 
 
-def _append_code_param(return_to: str, code: str) -> str:
-    """`<return_to>?code=<code>`, preserving any query string `return_to`
-    already carries (merged in, not clobbered) rather than assuming it has
-    none -- the contract only ever names the no-existing-query case
-    explicitly, but a UI's own landing route is free to have one."""
-    split = urlsplit(return_to)
+def _append_query(url: str, params: dict[str, str]) -> str:
+    """`url` with `params` merged into its query string -- preserving what
+    it already carries rather than clobbering it, since a UI's own landing
+    route (or an operator's login URL) is free to have a query of its
+    own."""
+    split = urlsplit(url)
     query_pairs = parse_qsl(split.query, keep_blank_values=True)
-    query_pairs.append(('code', code))
+    query_pairs.extend(params.items())
     return urlunsplit((split.scheme, split.netloc, split.path, urlencode(query_pairs), split.fragment))
+
+
+def _append_code_param(return_to: str, code: str) -> str:
+    """`<return_to>?code=<code>`. The contract only ever names the
+    no-existing-query case explicitly; `_append_query` covers both."""
+    return _append_query(return_to, {'code': code})
 
 
 # --- public: OIDC login/callback + logout -------------------------------------
 
 
-@router.get('/oidc/login')
+@router.get('/oidc/login', dependencies=[Depends(require_oidc_enabled)])
 def oidc_login(request: Request, return_to: str | None = None) -> RedirectResponse:
     """Starts the authorization-code + PKCE dance: fetches the provider's
     discovery document, generates `state`/`nonce`/PKCE `code_verifier`,
@@ -494,7 +534,7 @@ def oidc_login(request: Request, return_to: str | None = None) -> RedirectRespon
     return redirect_response
 
 
-@router.get('/oidc/callback')
+@router.get('/oidc/callback', dependencies=[Depends(require_oidc_enabled)])
 def oidc_callback(
     request: Request,
     db: Session = Depends(get_db),
@@ -668,6 +708,204 @@ def oidc_callback(
         # does for the success `redirect_response` right above.
         error_response = JSONResponse(status_code=exc.status_code, content={'detail': exc.detail}, headers=exc.headers)
         error_response.delete_cookie(key=_OIDC_STATE_COOKIE, path=_OIDC_STATE_COOKIE_PATH)
+        return error_response
+
+
+# --- public: federated login via Weave-Ingest ---------------------------------
+#
+# The recommended alternative to the single OIDC provider configured above.
+# Weave-Ingest already administers local users, teams, and a whole table of
+# OIDC connections; rather than asking an operator to configure identity a
+# second time here -- and a person to hold a second account -- this gateway
+# borrows that one. The consequence is the point: whatever sign-in methods
+# exist over there, including ones added later, work for the chat UI
+# immediately, and this service never learns that any of them exist.
+#
+# The chain, three hops and two one-time codes:
+#
+#   1. GET /v1/auth/ingest/login  -- browser leaves for Weave-Ingest's login
+#      page. `return_to` is resolved against the allowlist HERE, before the
+#      browser goes anywhere, and stored in a signed cookie together with a
+#      `state` the callback will have to echo.
+#   2. Weave-Ingest signs the person in (password, any OIDC connection, ...)
+#      and redirects back to /v1/auth/ingest/callback with a one-time code,
+#      which this service redeems server-to-server for the identity behind
+#      it (app/services/ingest_identity.py).
+#   3. From there it rejoins the existing path exactly: a SessionExchangeCode
+#      for the UI, redeemed by POST /v1/auth/session/exchange below.
+#
+# The `state` echo is not ceremony. Without it, anyone who could get a
+# victim's browser to fetch this callback with a code of their own choosing
+# would silently sign that browser into THEIR account -- and everything the
+# victim then typed into the chat would land in the attacker's conversation
+# history.
+
+_INGEST_STATE_COOKIE = 'weave_api_ingest_state'
+# Scoped like the OIDC state cookie above: these two endpoints only.
+_INGEST_STATE_COOKIE_PATH = '/v1/auth/ingest'
+_INGEST_STATE_TTL = timedelta(minutes=10)
+# Namespace for `User.oidc_subject` when the identity came from Weave-Ingest
+# rather than from a directly-configured OIDC provider. Keeps the two kinds
+# of subject from ever colliding in that unique column, and makes the origin
+# of an account readable straight out of the database.
+_INGEST_SUBJECT_PREFIX = 'weave-ingest:'
+
+
+def _provision_ingest_user(db: Session, identity: IngestIdentity) -> User:
+    """The local mirror of a Weave-Ingest account, keyed on that service's
+    user id and nothing else.
+
+    Team and the admin bit are re-read on every single login: they are
+    Weave-Ingest's to decide, and a change there -- moving somebody into a
+    team, revoking admin -- must take effect on their next sign-in without
+    anybody remembering to touch this database.
+
+    `username` deliberately does NOT follow along after the first login.
+    It is unique here and may have been suffixed on creation to avoid a
+    collision; re-syncing it would either fail or quietly rename the wrong
+    account. It is a display name here, never an identity."""
+    subject = _INGEST_SUBJECT_PREFIX + identity.subject
+    user = db.scalar(select(User).where(User.oidc_subject == subject))
+    if user is None:
+        user = User(
+            username=_generate_unique_username(db, identity.username),
+            team=identity.team,
+            is_admin=identity.is_admin,
+            oidc_subject=subject,
+            disabled=False,
+        )
+        db.add(user)
+        try:
+            db.commit()
+        except IntegrityError:
+            # Two callbacks for the same identity racing their first login:
+            # take the row that won rather than surfacing a 500.
+            db.rollback()
+            user = db.scalar(select(User).where(User.oidc_subject == subject))
+            if user is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT, detail='Account could not be provisioned'
+                )
+        return user
+
+    if user.team != identity.team or user.is_admin != identity.is_admin:
+        user.team = identity.team
+        user.is_admin = identity.is_admin
+        db.commit()
+    return user
+
+
+@router.get('/ingest/login', dependencies=[Depends(require_ingest_login_enabled)])
+def ingest_login(request: Request, return_to: str | None = None) -> RedirectResponse:
+    """Step 1. `return_to` is resolved against OIDC_POST_LOGIN_ALLOWED_URLS
+    right here rather than at the callback -- same reasoning as
+    `oidc_login` above: a later allowlist change must not retroactively
+    change where an in-flight login lands."""
+    resolved_return_to = _resolve_return_to(return_to)
+    state = generate_token(32)
+
+    redirect_response = RedirectResponse(
+        url=_append_query(settings.ingest_login_url, {'handoff': '1', 'handoff_state': state}),
+        status_code=status.HTTP_302_FOUND,
+    )
+    state_payload = json.dumps({'state': state, 'return_to': resolved_return_to})
+    redirect_response.set_cookie(
+        key=_INGEST_STATE_COOKIE,
+        value=sign_value(state_payload),
+        httponly=True,
+        samesite='lax',
+        secure=_is_https_request(request),
+        path=_INGEST_STATE_COOKIE_PATH,
+        max_age=int(_INGEST_STATE_TTL.total_seconds()),
+    )
+    return redirect_response
+
+
+@router.get('/ingest/callback', dependencies=[Depends(require_ingest_login_enabled)])
+def ingest_callback(
+    request: Request,
+    db: Session = Depends(get_db),
+    code: str | None = None,
+    state: str | None = None,
+) -> RedirectResponse:
+    """Step 2. Every exit from here clears the state cookie -- a stale one
+    would make the next attempt fail on a mismatch that has nothing to do
+    with that attempt (same discipline as `oidc_callback` above)."""
+    try:
+        if not settings.ingest_handoff_secret:
+            # Without the secret the exchange below would go out
+            # unauthenticated and be rejected anyway; say so plainly
+            # instead of reporting it as a failed login.
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='service misconfigured'
+            )
+
+        raw_state_cookie = request.cookies.get(_INGEST_STATE_COOKIE)
+        if not raw_state_cookie:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Missing login state')
+        unsigned = unsign_value(raw_state_cookie)
+        if unsigned is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid login state')
+        try:
+            state_payload = json.loads(unsigned)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid login state')
+        if not isinstance(state_payload, dict):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid login state')
+
+        expected_state = state_payload.get('state')
+        if (
+            not state
+            or not isinstance(expected_state, str)
+            or not hmac.compare_digest(expected_state, state)
+        ):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Login state mismatch')
+        if not code:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Missing handoff code')
+
+        try:
+            identity = exchange_handoff_code(code)
+        except IngestIdentityError as exc:
+            # The reason stays in this service's log, never in the
+            # response: unknown code, replayed code and wrong shared secret
+            # must look identical from outside.
+            logger.warning('ingest handoff exchange failed: %s', exc)
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Login failed')
+
+        user = _provision_ingest_user(db, identity)
+        if user.disabled:
+            # Disabled HERE, independently of Weave-Ingest -- this gateway
+            # keeps its own kill switch.
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Account is disabled')
+
+        logger.info('ingest federated login succeeded for user %s', user.id)
+
+        # `return_to` was resolved by ingest_login before it went into the
+        # signed cookie; the signature just verified proves it is untouched.
+        return_to = state_payload.get('return_to')
+        if isinstance(return_to, str) and return_to:
+            raw_exchange_code = generate_exchange_code()
+            now = datetime.now(timezone.utc)
+            db.add(
+                SessionExchangeCode(
+                    user_id=user.id,
+                    code_hash=hash_exchange_code(raw_exchange_code),
+                    created_at=now,
+                    expires_at=now + _EXCHANGE_CODE_TTL,
+                )
+            )
+            db.commit()
+            redirect_target = _append_code_param(return_to, raw_exchange_code)
+        else:
+            redirect_target = _POST_LOGIN_REDIRECT
+
+        redirect_response = RedirectResponse(url=redirect_target, status_code=status.HTTP_302_FOUND)
+        redirect_response.delete_cookie(key=_INGEST_STATE_COOKIE, path=_INGEST_STATE_COOKIE_PATH)
+        _create_session(db, request, redirect_response, user)
+        return redirect_response
+    except HTTPException as exc:
+        error_response = JSONResponse(status_code=exc.status_code, content={'detail': exc.detail}, headers=exc.headers)
+        error_response.delete_cookie(key=_INGEST_STATE_COOKIE, path=_INGEST_STATE_COOKIE_PATH)
         return error_response
 
 

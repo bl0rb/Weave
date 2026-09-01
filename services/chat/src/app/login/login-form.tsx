@@ -21,6 +21,14 @@ const DEFAULT_SSO_ERROR_MESSAGE =
   'Die Anmeldung über SSO ist fehlgeschlagen. Bitte versuche es erneut oder melde dich mit deinem Personal-Token an.';
 
 interface LoginFormProps {
+  /** Weave-API's own GET /v1/auth/ingest/login URL (src/lib/sso.ts's
+   * `buildWeaveLoginUrl`), or `null` when this deployment has no
+   * federated login configured. When present this is the PRIMARY action:
+   * it leads to Weave-Ingest's own sign-in page, where a person uses
+   * whatever method the admin set up for them — a password or any
+   * configured OIDC connection — and comes back signed in here. The token
+   * form below stays for scripts and for anyone who prefers it. */
+  weaveLoginUrl: string | null;
   /** Weave-API's own GET /v1/auth/oidc/login URL (src/lib/sso.ts's
    * `buildSsoLoginUrl`), or `null` when this deployment's own
    * `WEAVE_API_OIDC_ENABLED` setting says the gateway has no OIDC
@@ -35,10 +43,13 @@ interface LoginFormProps {
 }
 
 /**
- * /login — the only page that ever asks for the raw Weave-API token, PLUS
- * (when `ssoLoginUrl` is non-null) a link into the cross-origin SSO
- * handoff (see /api/auth/sso/callback's own docstring for the full
- * contract that starts). Submits the Personal-API-Token to our OWN server
+ * /login — the only page that ever asks for the raw Weave-API token, plus
+ * up to two links into the cross-origin handoff (see
+ * /api/auth/sso/callback's own docstring for the full contract that
+ * starts): `weaveLoginUrl`, the federated login through Weave-Ingest, and
+ * `ssoLoginUrl`, a gateway pointed straight at one OIDC provider. Both end
+ * at the same callback with a one-time code; an operator configures one or
+ * the other, so in practice at most one appears. Submits the Personal-API-Token to our OWN server
  * (POST /api/session/login), which proves the token against Weave-API's
  * GET /v1/bots and only then sets the httpOnly cookie — see that Route
  * Handler and src/lib/session.ts for why the token is handled that way.
@@ -48,7 +59,7 @@ interface LoginFormProps {
  * top-level navigation to Weave-API's own origin — never a `fetch()` —
  * since it has to carry the browser through a real OIDC redirect dance.
  */
-export function LoginForm({ ssoLoginUrl, ssoError }: LoginFormProps) {
+export function LoginForm({ weaveLoginUrl, ssoLoginUrl, ssoError }: LoginFormProps) {
   const router = useRouter();
   const [token, setToken] = useState('');
   const [pending, setPending] = useState(false);
@@ -100,11 +111,27 @@ export function LoginForm({ ssoLoginUrl, ssoError }: LoginFormProps) {
         <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-sm sm:p-8">
           <h1 className="text-lg font-semibold">Anmelden</h1>
           <p className="mt-1 text-sm text-[var(--foreground-muted)]">
-            Melde dich mit deinem persönlichen Weave-API-Token an. Es wird ausschließlich serverseitig als
-            httpOnly-Cookie gespeichert — nie im Browser-JavaScript.
+            {weaveLoginUrl
+              ? 'Melde dich mit deinem Weave-Konto an — demselben, mit dem du dich auch bei Weave Ingest anmeldest.'
+              : 'Melde dich mit deinem persönlichen Weave-API-Token an. Es wird ausschließlich serverseitig als httpOnly-Cookie gespeichert — nie im Browser-JavaScript.'}
           </p>
 
-          <form onSubmit={onSubmit} className="mt-6 flex flex-col gap-4">
+          {weaveLoginUrl ? (
+            <>
+              <a href={weaveLoginUrl} className={cn(buttonVariants(), 'mt-6 w-full')}>
+                <LogIn className="h-4 w-4" aria-hidden="true" />
+                Mit Weave anmelden
+              </a>
+
+              <div className="my-5 flex items-center gap-3 text-xs text-[var(--foreground-muted)]" aria-hidden="true">
+                <span className="h-px flex-1 bg-[var(--border)]" />
+                oder mit einem Token
+                <span className="h-px flex-1 bg-[var(--border)]" />
+              </div>
+            </>
+          ) : null}
+
+          <form onSubmit={onSubmit} className={cn('flex flex-col gap-4', weaveLoginUrl ? '' : 'mt-6')}>
             <div>
               <label htmlFor="token" className="mb-1.5 block text-sm font-medium">
                 Personal-API-Token
@@ -114,7 +141,9 @@ export function LoginForm({ ssoLoginUrl, ssoError }: LoginFormProps) {
                 name="token"
                 type="password"
                 autoComplete="off"
-                autoFocus
+                // Not focused when there is a primary button above it: the
+                // keyboard should land on the action most people want.
+                autoFocus={!weaveLoginUrl}
                 required
                 value={token}
                 onChange={(e) => setToken(e.target.value)}

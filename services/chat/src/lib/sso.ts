@@ -104,3 +104,40 @@ export function buildSsoLoginUrl(): string {
   const query = new URLSearchParams({ return_to: returnTo });
   return `${resolveWeaveApiPublicBaseUrl()}/v1/auth/oidc/login?${query.toString()}`;
 }
+
+
+/**
+ * Whether the "Mit Weave anmelden" button appears — the federated login
+ * that sends people to Weave-Ingest's own sign-in page (Weave-API's
+ * `/v1/auth/ingest/login`).
+ *
+ * This is the login an operator should normally enable: Weave-Ingest
+ * already administers local users, teams and a table of OIDC connections,
+ * so whoever can sign in there can sign in here, by whichever method, and
+ * neither this app nor the gateway needs to know that any of those methods
+ * exist. `isSsoLoginEnabled` above stays for a deployment that points the
+ * gateway straight at one OIDC provider instead; the two are alternatives,
+ * not a pair.
+ *
+ * Same shape and same reasoning as that flag: this app's OWN setting, read
+ * live per request, kept in sync by whoever deploys the two together (set
+ * it if and only if Weave-API's own `INGEST_LOGIN_URL` and
+ * `INGEST_API_URL` are set). A mismatch fails the same harmless way — the
+ * button appears and a click 404s at the gateway before anything happens.
+ */
+export function isWeaveLoginEnabled(): boolean {
+  const raw = process.env.WEAVE_API_INGEST_LOGIN_ENABLED?.trim().toLowerCase();
+  return raw === 'true' || raw === '1';
+}
+
+/**
+ * The URL that button points at: Weave-API's GET /v1/auth/ingest/login,
+ * carrying the same `return_to` contract `buildSsoLoginUrl` uses — both
+ * flows converge on this app's one callback route, because both end in a
+ * one-time code this app's own backend exchanges for a session.
+ */
+export function buildWeaveLoginUrl(): string {
+  const returnTo = `${resolveAppBaseUrl()}${SSO_CALLBACK_PATH}`;
+  const query = new URLSearchParams({ return_to: returnTo });
+  return `${resolveWeaveApiPublicBaseUrl()}/v1/auth/ingest/login?${query.toString()}`;
+}

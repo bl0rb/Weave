@@ -273,7 +273,7 @@
     <li><a href="#geteilt">Geteilte Werte</a></li>
     <li><a href="#fallen">Stille Fallen</a></li>
     <li><a href="#echt">Echte Provider</a></li>
-    <li><a href="#sso">SSO einrichten</a></li>
+    <li><a href="#sso">Anmeldung einrichten</a></li>
     <li><a href="#agenten">n8n und MCP</a></li>
     <li><a href="#pruefen">Selbsttest</a></li>
   </ol>
@@ -543,8 +543,33 @@
 
 <!-- ══════════ 8 ══════════ -->
 <section id="sso">
-  <div class="sec-head"><span class="no">08</span><h2>SSO einrichten</h2></div>
-  <p>Personal-Tokens bleiben für Maschinen der Weg; OIDC ist für Menschen. Beide führen zum selben Konto und demselben Limit.</p>
+  <div class="sec-head"><span class="no">08</span><h2>Anmeldung einrichten</h2></div>
+  <p>Personal-Tokens bleiben für Maschinen der Weg; für Menschen gibt es zwei Möglichkeiten, und du entscheidest dich für eine.</p>
+
+  <h3>Empfohlen: eine Anmeldung für alles</h3>
+  <p>Weave-Ingest ist der Identitätsdienst der Plattform. Dort verwaltet ein Administrator lokale Benutzer, Teams <em>und</em> beliebig viele OIDC-Verbindungen — mit Oberfläche und Testknopf. Weave-API führt dann keine eigene Kontenwelt: Wer sich bei Ingest anmelden kann, kann sich am Chat anmelden, egal womit. Neue Anmeldearten gelten sofort mit, ohne dass Gateway oder Chat davon erfahren.</p>
+  <div class="t-scroll">
+    <table>
+      <thead><tr><th>Variable</th><th>Dienst</th><th>Bedeutung</th></tr></thead>
+      <tbody>
+        <tr><td class="k"><code>HANDOFF_CALLBACK_URL</code></td><td>Ingest</td><td>Die eine Adresse, an die ein Anmeldecode übergeben werden darf — browser-erreichbar. Fest konfiguriert, nie aus der Anfrage: so entsteht hier gar keine Open-Redirect-Fläche</td></tr>
+        <tr><td class="k"><code>INGEST_LOGIN_URL</code></td><td>API</td><td>Die Anmeldeseite im <em>Browser</em> (das Ingest-Frontend), nicht dessen API</td></tr>
+        <tr><td class="k"><code>INGEST_API_URL</code></td><td>API</td><td>Die <em>containerinterne</em> Adresse, unter der der Code eingelöst wird. In einer echten Installation ein anderer Name als oben</td></tr>
+        <tr><td class="k"><code>WEAVE_HANDOFF_SECRET</code></td><td>beide</td><td>Geteilt. Fehlt es, antwortet der Tausch mit <code>503</code> — nie unauthentifiziert</td></tr>
+        <tr><td class="k"><code>WEAVE_API_INGEST_LOGIN_ENABLED</code></td><td>Chat</td><td>Zeigt den Knopf „Mit Weave anmelden“. Rein kosmetisch</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="box note">
+    <div class="t">Warum der Code durch die URL reisen darf</div>
+    <p>Der Einmal-Code steht in einer Rücksprung-Adresse — genau der Stelle, an der ein Geheimnis am ehesten in einem Zugriffsprotokoll landet. Deshalb ist er so gebaut, dass er dort nichts wert ist: einmalig, etwa eine Minute gültig, und ohne das geteilte Secret nicht einlösbar. Eingelöst wird server-zu-server, nie im Browser.</p>
+  </div>
+  <div class="box warn">
+    <div class="t">Das Team entscheidet über die Collections</div>
+    <p>Weave-API liest Team und Admin-Rechte bei <em>jeder</em> Anmeldung neu aus Ingest — eine Änderung dort wirkt beim nächsten Anmelden. Der Teamname muss zeichengleich in <code>read_teams</code> der Collection stehen, sonst meldet sich jemand erfolgreich an und findet nichts. Der Anzeigename folgt einer Umbenennung dagegen nicht: verknüpft wird über die Ingest-Benutzer-ID.</p>
+  </div>
+
+  <h3>Alternative: OIDC direkt am Gateway</h3>
   <div class="t-scroll">
     <table>
       <thead><tr><th>Variable</th><th>Bedeutung</th></tr></thead>
@@ -628,6 +653,8 @@ curl -s -X POST localhost:8004/v1/chat \
         <tr><td class="k">Login schlägt mit <code>403</code> fehl</td><td>Frontend-Adresse fehlt in <code>CORS_ORIGINS</code></td></tr>
         <tr><td class="k">Browser meldet Access-Control-Fehler, Preflight <code>400</code></td><td><code>CORS_ORIGINS</code> nennt nicht den Port aus <code>FRONTEND_PORT</code></td></tr>
         <tr><td class="k">SSO-Routen antworten <code>404</code></td><td>Nur eines von Issuer und Client-ID gesetzt</td></tr>
+        <tr><td class="k">„Mit Weave anmelden“ endet im <code>404</code></td><td><code>HANDOFF_CALLBACK_URL</code> oder <code>INGEST_LOGIN_URL</code> fehlt — die Kette ist an einem Ende offen</td></tr>
+        <tr><td class="k">Anmeldung klappt, landet aber auf dem Gateway</td><td>Die Rücksprungadresse des Chats fehlt in <code>OIDC_POST_LOGIN_ALLOWED_URLS</code>; ein nicht erlaubtes <code>return_to</code> wird absichtlich still ignoriert</td></tr>
       </tbody>
     </table>
   </div>

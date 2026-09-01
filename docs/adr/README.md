@@ -11,6 +11,7 @@ Dieses Verzeichnis enthält die Architektur-Entscheidungen der Weave-Plattform. 
 | [0003](0003-secrets-strategie.md) | Secrets- und Credentials-Verwaltungsstrategie | angenommen | 2026-08-31 |
 | [0004](0004-datenhaltung.md) | Datenhaltungs- und Schemastrategie | angenommen | 2026-08-31 |
 | [0005](0005-geteiltes-read-model.md) | Geteiltes Read-Model fuer den Chunk-Store | angenommen | 2026-08-31 |
+| [0006](0006-foederierte-anmeldung.md) | Weave-Ingest als Identitaetsanbieter der Plattform | angenommen | 2026-09-01 |
 
 ## Format
 
@@ -39,3 +40,6 @@ Ein Postgres-Cluster, aber separate Datenbank pro Service. Kein Sharing von Tabe
 
 ### 0005: Geteiltes Read-Model für den Chunk-Store
 Bewusste, einmalige Ausnahme zu ADR-0004: Weave-Retrieval liest `documents`/`chunks`/`collections` read-only direkt aus Weave-Knowledges Datenbank, statt über dessen API. Grund: pgvector-KNN und tsvector-Ranking müssen als SQL in der Datenbank laufen. Eigene DB-Rolle mit reinen SELECT-Rechten; das Schema wird zum Vertrag zwischen beiden Services (`contracts/chunk-store.md`).
+
+### 0006: Weave-Ingest als Identitätsanbieter
+Weave-API führt keine eigene Kontenwelt mehr, sondern föderiert an Weave-Ingest: dort liegen lokale Benutzer, Teams und eine ganze Tabelle von OIDC-Verbindungen samt Oberfläche. Der Chat schickt zum Anmelden dorthin und bekommt die Identität über einen einmaligen, server-zu-server eingelösten Code zurück. Ein Administrator pflegt Konten an einer Stelle; jede Anmeldeart, die Weave-Ingest kennt, gilt damit auch für den Chat.
