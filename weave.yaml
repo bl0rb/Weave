@@ -421,7 +421,11 @@ services:
         comment: >
           Also the CSRF origin check, not just CORS -- missing the real
           frontend origin here rejects ALL write requests with 403,
-          including login itself.
+          including login itself. Must name the port the browser actually
+          loads the frontend from, i.e. FRONTEND_PORT: overriding that one
+          alone (a local 3000 collision) makes every request fail the
+          preflight with 400 'Disallowed CORS origin'. `check` flags the
+          mismatch for an all-localhost origin list.
       PUBLIC_API_URL:
         secret: false
         value: "http://localhost:8000"

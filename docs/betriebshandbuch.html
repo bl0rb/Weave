@@ -476,6 +476,8 @@
     <div class="sym"><span class="var">CORS_ORIGINS</span>Anmelden ist unmöglich</div>
     <div class="why">Der Wert steuert nicht nur CORS, sondern auch die Herkunftsprüfung gegen CSRF. Fehlt die echte Frontend-Adresse, werden <em>alle</em> schreibenden Anfragen mit 403 abgewiesen — auch der Login. Erwartet wird ein JSON-Array, nicht eine kommagetrennte Liste.</div>
     <div class="fix"><b>Format</b><code>CORS_ORIGINS='["https://app.example.com"]'</code></div>
+    <div class="why">Lokal hängt der Wert an <code>FRONTEND_PORT</code>: verschiebt man nur den Port, weil 3000 belegt ist, weist der Backend-Dienst schon den Preflight mit <code>400 Disallowed CORS origin</code> ab und liefert danach ein 401 ohne CORS-Header. Die Browser-Konsole zeigt einen Access-Control-Fehler, obwohl die Ursache der Port ist.</div>
+    <div class="fix"><b>Prüfen</b>Beide Werte zusammen setzen: <code>FRONTEND_PORT=3002 CORS_ORIGINS='["http://localhost:3002"]'</code>. <code>weave_config.py check</code> meldet den Widerspruch.</div>
   </div>
 
   <div class="trap">
@@ -624,6 +626,7 @@ curl -s -X POST localhost:8004/v1/chat \
         <tr><td class="k">Collections bleiben leer</td><td>Registry-Sync scheitert — der Ingest-Token gehört keinem Administrator</td></tr>
         <tr><td class="k">MCP antwortet <code>503</code></td><td><code>WEAVE_DELEGATION_SECRET</code> oder <code>TOOLS_API_TOKEN</code> nicht gesetzt</td></tr>
         <tr><td class="k">Login schlägt mit <code>403</code> fehl</td><td>Frontend-Adresse fehlt in <code>CORS_ORIGINS</code></td></tr>
+        <tr><td class="k">Browser meldet Access-Control-Fehler, Preflight <code>400</code></td><td><code>CORS_ORIGINS</code> nennt nicht den Port aus <code>FRONTEND_PORT</code></td></tr>
         <tr><td class="k">SSO-Routen antworten <code>404</code></td><td>Nur eines von Issuer und Client-ID gesetzt</td></tr>
       </tbody>
     </table>

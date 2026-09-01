@@ -15,8 +15,10 @@ supports two subcommands:
         Validates an existing rendered configuration (deploy/.env by
         default) for the contradictions docs/betrieb.md section 4-7
         describes: shared values that have drifted, required values that
-        are missing, SEARCH_TOP_K exceeding RERANKER_MAX_DOCUMENTS, and an
-        EMBEDDING_DIMENSION that does not match a known embedding model.
+        are missing, SEARCH_TOP_K exceeding RERANKER_MAX_DOCUMENTS, an
+        EMBEDDING_DIMENSION that does not match a known embedding model, and
+        a CORS_ORIGINS that names a different port than the one the Ingest
+        frontend is actually published on.
         Exits non-zero on any finding. Never prints a secret's actual value
         -- only a short fingerprint, so the check's output itself is safe to
         paste into a chat or a ticket.
@@ -54,6 +56,20 @@ KNOWN_EMBEDDING_DIMENSIONS: dict[str, int] = {
     "text-embedding-3-large": 3072,
     "text-embedding-ada-002": 1536,
 }
+
+
+# Hosts for which `check` treats a CORS origin as "this machine" -- see the
+# CORS_ORIGINS/FRONTEND_PORT check below.
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]")
+
+
+def _split_origin(origin: str) -> tuple[str, str]:
+    """Split an origin into (host, port); port is '' when none is given."""
+    netloc = origin.split("://", 1)[-1].split("/", 1)[0]
+    host, sep, port = netloc.rpartition(":")
+    if not sep or (host.startswith("[") and not host.endswith("]")):
+        return netloc, ""
+    return host, port
 
 
 class ConfigError(Exception):
@@ -389,6 +405,40 @@ def check(
                 f"vollstaendigen Reindex (docs/betrieb.md Abschnitt 7.4/7.5), "
                 f"kein reiner Env-Var-Flip."
             ))
+
+    # --- 5) CORS_ORIGINS vs the port the frontend is published on -----------
+    # CORS_ORIGINS is Ingest's CSRF origin check as well, so it has to name
+    # the exact origin the browser loaded the frontend from -- and that
+    # origin's port is FRONTEND_PORT, which operators routinely override on
+    # a machine where 3000 is already taken, without thinking of CORS.
+    # Only checked for an all-localhost origin list: as soon as one origin
+    # names a real host, the frontend sits behind a reverse proxy and
+    # FRONTEND_PORT says nothing about the port the browser sees.
+    frontend_port = lookup("ingest", "FRONTEND_PORT")
+    origins_raw = lookup("ingest", "CORS_ORIGINS")
+    if frontend_port and origins_raw:
+        try:
+            origins = json.loads(origins_raw)
+        except json.JSONDecodeError:
+            origins = None
+            findings.append(Finding(
+                f"ingest.CORS_ORIGINS ist kein gueltiges JSON-Array "
+                f"({origins_raw}) -- pydantic-settings verweigert den Start."
+            ))
+        if isinstance(origins, list) and origins:
+            parsed = [_split_origin(str(o)) for o in origins]
+            all_local = all(host in LOCAL_HOSTS for host, _port in parsed)
+            hits_port = any(port == str(frontend_port) for _host, port in parsed)
+            if all_local and not hits_port:
+                findings.append(Finding(
+                    f"ingest.CORS_ORIGINS ({origins_raw}) nennt nicht den Port, "
+                    f"auf dem das Frontend veroeffentlicht wird "
+                    f"(ingest.FRONTEND_PORT = {frontend_port}). Der Browser "
+                    f"bekommt dann auf jede Anfrage 'Disallowed CORS origin' "
+                    f"(Preflight 400, danach ein 401 ohne CORS-Header); "
+                    f"Einrichtung und Login sind unmoeglich "
+                    f"(docs/betrieb.md Abschnitt 6)."
+                ))
 
     return findings
 

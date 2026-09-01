@@ -181,6 +181,13 @@ echte Adresse, werden *alle* schreibenden Anfragen mit 403 abgewiesen, auch der
 Login. Erwartet wird ein JSON-Array:
 `CORS_ORIGINS='["https://app.example.com"]'`
 
+Lokal hängt der Wert an `FRONTEND_PORT`: wer nur den Port verschiebt, weil 3000
+belegt ist, bekommt im Browser `Disallowed CORS origin` (Preflight 400) und
+danach ein 401 ohne CORS-Header — die Konsole zeigt dann einen
+Access-Control-Fehler, obwohl das eigentliche Problem der Port ist. Beide Werte
+zusammen setzen: `FRONTEND_PORT=3002 CORS_ORIGINS='["http://localhost:3002"]'`.
+`weave_config.py check` meldet diesen Widerspruch.
+
 **`PUBLIC_API_URL` — Downloads zeigen ins Leere.**
 Stimmt der Wert nicht mit der von außen erreichbaren Adresse überein, schlägt
 der OIDC-Login mit Redirect-Mismatch fehl und Download-Links in

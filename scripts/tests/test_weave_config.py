@@ -341,6 +341,63 @@ def test_check_passes_dimension_matching_known_model(tmp_path, config_path):
 
 
 # ---------------------------------------------------------------------------
+# check: CORS_ORIGINS vs FRONTEND_PORT
+# ---------------------------------------------------------------------------
+
+def _cors_env(tmp_path: Path, body: str) -> Path:
+    env_file = tmp_path / "deploy.env"
+    env_file.write_text(
+        "SHARED_SECRET=x\nALPHA_ONLY_SECRET=y\n" + body, encoding="utf-8"
+    )
+    return env_file
+
+
+def test_check_flags_cors_origins_missing_the_published_frontend_port(
+    tmp_path, config_path
+):
+    env_file = _cors_env(
+        tmp_path,
+        'FRONTEND_PORT=3002\nCORS_ORIGINS=["http://localhost:3000"]\n',
+    )
+    findings = wc.check(config_path, env_file)
+    messages = [f.message for f in findings]
+    assert any("CORS_ORIGINS" in m and "FRONTEND_PORT" in m for m in messages)
+
+
+def test_check_passes_when_cors_origins_names_the_published_port(
+    tmp_path, config_path
+):
+    env_file = _cors_env(
+        tmp_path,
+        'FRONTEND_PORT=3002\nCORS_ORIGINS=["http://localhost:3002"]\n',
+    )
+    findings = wc.check(config_path, env_file)
+    messages = [f.message for f in findings]
+    assert not any("CORS_ORIGINS" in m for m in messages)
+
+
+def test_check_ignores_cors_origins_behind_a_reverse_proxy(tmp_path, config_path):
+    # A real hostname means the browser never sees FRONTEND_PORT -- the ports
+    # legitimately differ, so the check must stay quiet.
+    env_file = _cors_env(
+        tmp_path,
+        'FRONTEND_PORT=3000\nCORS_ORIGINS=["https://app.example.com"]\n',
+    )
+    findings = wc.check(config_path, env_file)
+    messages = [f.message for f in findings]
+    assert not any("CORS_ORIGINS" in m for m in messages)
+
+
+def test_check_flags_cors_origins_that_is_not_json(tmp_path, config_path):
+    env_file = _cors_env(
+        tmp_path, "FRONTEND_PORT=3000\nCORS_ORIGINS=http://localhost:3000\n"
+    )
+    findings = wc.check(config_path, env_file)
+    messages = [f.message for f in findings]
+    assert any("CORS_ORIGINS" in m and "JSON" in m for m in messages)
+
+
+# ---------------------------------------------------------------------------
 # check: never leaks a secret's actual value
 # ---------------------------------------------------------------------------
 
