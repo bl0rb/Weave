@@ -1,0 +1,39 @@
+# Direct dependencies of this service's image (see Dockerfile) and of the
+# local development environment. Hash-Lock folgt spaeter -- requirements.txt
+# is currently a plain `pip freeze` of the resolved tree, not a
+# `pip-compile --generate-hashes` lock, same as Weave-Retrieval's and
+# Weave-Knowledge's own backend/requirements.in.
+#
+# fastapi/uvicorn/pydantic/pydantic-settings/pytest/httpx pins are kept
+# identical to Weave-Retrieval's/Weave-Knowledge's backend/requirements.in
+# where this service shares them, purely to avoid gratuitous version drift
+# across the Weave repos -- there is no runtime coupling (this service
+# never imports from either of those repos).
+#
+# Deliberately NOT here: fastembed. It was installed temporarily while
+# investigating whether it supports intfloat/multilingual-e5-small (see
+# app/services/encoder.py's module docstring and this repo's README) --
+# it does not, so this service never imports it, and pulling in fastembed's
+# own extra dependencies (loguru, mmh3, pillow, py-rust-stemmers, requests)
+# for a library this service doesn't call would be dead weight in the
+# image. onnxruntime + tokenizers + huggingface_hub below are used
+# directly instead.
+fastapi==0.141.1
+uvicorn[standard]==0.52.3
+pydantic==2.13.4
+pydantic-settings==2.14.2
+pytest==9.1.1
+httpx==0.28.1
+
+# --- Model inference (app/services/encoder.py) -----------------------------
+# onnxruntime: CPU inference for the model's own pre-exported ONNX graph.
+# tokenizers: the Rust-backed HuggingFace tokenizer library, loads the
+#   model's own tokenizer.json directly (no `transformers` dependency).
+# huggingface_hub: downloads the two files this service actually needs
+#   (onnx/model.onnx, onnx/tokenizer.json) from the model's HF repo, and
+#   caches them under EMBEDDINGS_CACHE_DIR.
+# numpy: mean-pooling/normalization math over the model's raw output.
+onnxruntime==1.29.0
+tokenizers==0.23.1
+huggingface_hub==1.29.0
+numpy==2.5.2

@@ -13,6 +13,11 @@ venv/
 backend/.venv/
 .venv/
 
+# Downloaded model weights (e.g. reranker/.cache/'s BAAI/bge-reranker-v2-m3,
+# ~2.3 GB) -- fetched fresh from the Hugging Face Hub on first load
+# (app/services/model.py), never committed.
+.cache/
+
 .DS_Store
 
 # Temporary build / test artefacts (session logs, scratch files)
