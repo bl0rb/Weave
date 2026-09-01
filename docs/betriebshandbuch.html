@@ -296,6 +296,58 @@
       </tbody>
     </table>
   </div>
+  <h3>Dieselben Dienste aus Betreibersicht</h3>
+  <p>Wo etwas eingestellt wird, worauf es gebaut ist, und womit man sich bei ihm ausweist.</p>
+  <div class="t-scroll">
+    <table>
+      <thead><tr><th>Dienst</th><th>Verwaltung</th><th>Technik</th><th>Ausweis am Dienst</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="k"><strong>Weave-Ingest</strong></td>
+          <td><strong>Eigene Oberfläche.</strong> <code>/admin</code> für Nutzer, Teams, OIDC-Verbindungen, Worker-Logs, OCR-Profil und -Timeout, VL-Verbindungen; <code>/connections</code> für Webhooks, dazu <code>/openwebui</code> und <code>/mail</code>. Alles Übrige <code>deploy/.env</code></td>
+          <td>FastAPI · SQLAlchemy + Alembic · Celery (Redis-DB 0) · PaddleOCR/PP-StructureV3 im eigenen Worker-Image · Next.js 16 + React 19</td>
+          <td>Sitzungs-Cookie (undurchsichtig, in der DB nur als sha256) <em>oder</em> Personal-Token <code>pd_…</code>. Passwörter bcrypt mit Konto-Sperre; beliebig viele OIDC-Verbindungen (Auth-Code + PKCE); Herkunftsprüfung gegen CSRF auf jeder schreibenden Route</td>
+        </tr>
+        <tr>
+          <td class="k"><strong>Weave-Knowledge</strong></td>
+          <td>Keine Oberfläche, nur <code>deploy/.env</code>. Collections kommen per Registry-Sync aus Ingest und werden hier nie gepflegt</td>
+          <td>FastAPI · SQLAlchemy + Alembic · Celery (Redis-DB 1) · pgvector</td>
+          <td>Webhook-Eingang: HMAC-SHA256 über den <em>rohen</em> Rumpf, fail-closed. Die Lese-Endpunkte sind <strong>unauthentifiziert</strong> — Port 8001 gehört nicht ins offene Netz</td>
+        </tr>
+        <tr>
+          <td class="k"><strong>Weave-Retrieval</strong></td>
+          <td>Keine Oberfläche, nur <code>deploy/.env</code></td>
+          <td>FastAPI · SQLAlchemy auf einer reinen <code>SELECT</code>-Rolle · pgvector + tsvector · RRF · Cross-Encoder über HTTP</td>
+          <td>Dienst-Token <code>RETRIEVAL_API_TOKEN</code> als Bearer, konstante-Zeit-Vergleich, <code>503</code> wenn nicht gesetzt</td>
+        </tr>
+        <tr>
+          <td class="k"><strong>Weave-Runtime</strong></td>
+          <td><strong>Bots als YAML-Dateien</strong> im Volume <code>runtime_bots</code>, bei jedem Aufruf frisch von der Platte gelesen — eine Änderung wirkt ohne Neustart. Keine Oberfläche; alles Übrige <code>deploy/.env</code></td>
+          <td>FastAPI · httpx · SSE · PyYAML. Ohne Datenbank</td>
+          <td><code>RUNTIME_API_TOKEN</code> als Bearer. Stellt seinerseits Delegations-Token aus: HMAC-SHA256, fünf Minuten, mit dem erlaubten Collection-Umfang darin</td>
+        </tr>
+        <tr>
+          <td class="k"><strong>Weave-API</strong></td>
+          <td><code>python -m app.cli create-user</code> / <code>create-token</code> im Container; keine Oberfläche. Identitäten kommen seit ADR-0006 ohnehin aus Ingest</td>
+          <td>FastAPI · SQLAlchemy + Alembic · authlib + joserfc</td>
+          <td>Personal-Token (in der DB nur als sha256) oder Sitzungs-Cookie. Angemeldet wird föderiert über Ingest — ersatzweise ein eigener OIDC-Anbieter. <code>INTROSPECTION_SERVICE_TOKEN</code> ist der Hauptschlüssel zur Token-Auflösung</td>
+        </tr>
+        <tr>
+          <td class="k"><strong>Weave-Tools</strong></td>
+          <td>Keine Oberfläche für Einstellungen, beide Teile nur <code>deploy/.env</code></td>
+          <td>MCP-Dienst: FastAPI + <code>mcp</code>. Chat: Next.js 16 + React 19, spricht ausschließlich mit 8004</td>
+          <td><strong>Zwei getrennte Ausweise pro Aufruf:</strong> <code>X-Tools-Service-Token</code> beantwortet „darf dieses Deployment hier überhaupt anfragen“, <code>Authorization</code> „wessen Rechte gelten für genau diesen Aufruf“. Nie im selben Header, sonst ginge beides zusammen nicht</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Für die beiden optionalen Modelldienste gilt dasselbe Muster: Einstellungen nur über <code>deploy/.env</code>, Ausweis über <code>Authorization: Bearer</code> gegen <code>EMBEDDINGS_API_TOKEN</code> beziehungsweise <code>RERANKER_API_TOKEN</code> (ohne gesetzten Wert <code>503</code>, <code>/health</code> bleibt frei). Technisch FastAPI mit onnxruntime + tokenizers beziehungsweise sentence-transformers + torch. Alle <code>.env</code>-Werte entstehen aus <code>weave.yaml</code> — von Hand bearbeitet wird die Datei nicht.</p>
+
+  <div class="box danger">
+    <div class="t">Offen: Weave-Knowledges Lese-API</div>
+    <p><code>GET /api/v1/documents</code>, <code>/documents/{id}</code> und <code>/collections</code> auf Port 8001 verlangen keinerlei Ausweis — signaturgeprüft ist nur der Webhook-Eingang. Im Docker-Netz ist das folgenlos, die Compose-Datei veröffentlicht den Port aber auf dem Host. Kein Dienst der Plattform ruft diese Endpunkte auf; wer sie nicht selbst braucht, nimmt die Port-Freigabe heraus.</p>
+  </div>
+
   <div class="box note">
     <div class="t">Warum Retrieval fremd mitliest</div>
     <p>pgvector-Ähnlichkeit und tsvector-Ranking müssen als SQL <em>in</em> der Datenbank laufen. Ein API-Umweg würde Weave-Knowledge zwingen, die halbe Suche selbst zu bauen. Deshalb: Knowledge schreibt, Retrieval liest read-only über eine eigene Rolle mit ausschließlich <code>SELECT</code>. Das Schema ist dadurch ein Vertrag (<code>contracts/chunk-store.md</code>).</p>

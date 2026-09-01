@@ -20,6 +20,27 @@ gegengeprüft. Diese Datei ist die maßgebliche Fassung.
 | Weave-API | 8004 | `weave_api` | Gateway und Identitäts-Autorität: Nutzer, Tokens, Sitzungen, Gespräche |
 | Weave-Tools | 8005 / 3001 | keine | MCP-Dienst mit rechte-gebundener Suche; Chat-Oberfläche |
 
+Dieselben sechs Dienste noch einmal, aus Betreibersicht: wo etwas eingestellt
+wird, worauf es gebaut ist, und womit man sich bei ihm ausweist.
+
+| Dienst | Verwaltung | Technik | Ausweis am Dienst |
+|---|---|---|---|
+| Weave-Ingest | **Eigene Oberfläche** — `/admin` für Nutzer, Teams, OIDC-Verbindungen, Worker-Logs, OCR-Profil und -Timeout, VL-Verbindungen; `/connections` für Webhooks, dazu `/openwebui` und `/mail`. Alles Übrige `deploy/.env` | FastAPI · SQLAlchemy + Alembic · Celery (Redis-DB 0) · PaddleOCR/PP-StructureV3 im eigenen Worker-Image · Next.js 16 + React 19 | Sitzungs-Cookie (undurchsichtig, in der DB nur als sha256) **oder** Personal-Token `pd_…`. Passwörter bcrypt mit Konto-Sperre; beliebig viele OIDC-Verbindungen (Auth-Code + PKCE); Herkunftsprüfung gegen CSRF auf jeder schreibenden Route |
+| Weave-Knowledge | Keine Oberfläche, nur `deploy/.env`. Collections kommen per Registry-Sync aus Ingest, werden hier nie gepflegt | FastAPI · SQLAlchemy + Alembic · Celery (Redis-DB 1) · pgvector | Webhook-Eingang: HMAC-SHA256 über den **rohen** Rumpf, fail-closed. Die Lese-Endpunkte sind **unauthentifiziert** — Port 8001 gehört nicht ins offene Netz (siehe Abschnitt 6) |
+| Weave-Retrieval | Keine Oberfläche, nur `deploy/.env` | FastAPI · SQLAlchemy auf einer reinen `SELECT`-Rolle · pgvector + tsvector · RRF · Cross-Encoder über HTTP | Dienst-Token `RETRIEVAL_API_TOKEN` als Bearer, konstante-Zeit-Vergleich, `503` wenn nicht gesetzt |
+| Weave-Runtime | **Bots als YAML-Dateien** im Volume `runtime_bots`, bei jedem Aufruf frisch von der Platte gelesen — eine Änderung wirkt ohne Neustart. Keine Oberfläche; alles Übrige `deploy/.env` | FastAPI · httpx · SSE · PyYAML. Ohne Datenbank | `RUNTIME_API_TOKEN` als Bearer. Stellt seinerseits Delegations-Token aus: HMAC-SHA256, fünf Minuten, mit dem erlaubten Collection-Umfang darin |
+| Weave-API | `python -m app.cli create-user` / `create-token` im Container; keine Oberfläche. Identitäten kommen seit ADR-0006 ohnehin aus Ingest | FastAPI · SQLAlchemy + Alembic · authlib + joserfc | Personal-Token (in der DB nur als sha256) oder Sitzungs-Cookie. Angemeldet wird föderiert über Ingest — ersatzweise ein eigener OIDC-Anbieter. `INTROSPECTION_SERVICE_TOKEN` ist der Hauptschlüssel zur Token-Auflösung |
+| Weave-Tools | Keine Oberfläche für Einstellungen, beide Teile nur `deploy/.env` | MCP-Dienst: FastAPI + `mcp`. Chat: Next.js 16 + React 19, spricht ausschließlich mit 8004 | **Zwei getrennte Ausweise pro Aufruf:** `X-Tools-Service-Token` beantwortet „darf dieses Deployment hier überhaupt anfragen", `Authorization` „wessen Rechte gelten für genau diesen Aufruf". Nie im selben Header, sonst ginge beides zusammen nicht |
+
+Für die beiden optionalen Modelldienste gilt dasselbe Muster: Einstellungen nur
+über `deploy/.env`, Ausweis über `Authorization: Bearer` gegen
+`EMBEDDINGS_API_TOKEN` bzw. `RERANKER_API_TOKEN` (ohne gesetzten Wert `503`,
+`/health` bleibt frei). Technisch FastAPI mit onnxruntime + tokenizers
+beziehungsweise sentence-transformers + torch.
+
+Alle `.env`-Werte entstehen aus `weave.yaml` (Abschnitt 11) — von Hand
+bearbeitet wird die Datei nicht.
+
 Weave-Retrieval liest die Datenbank von Weave-Knowledge read-only mit, weil
 pgvector-Ähnlichkeit und tsvector-Ranking als SQL *in* der Datenbank laufen
 müssen. Knowledge schreibt, Retrieval liest über eine Rolle mit ausschließlich
@@ -165,6 +186,13 @@ Fehlt bei Ingest sowohl `DATABASE_URL` als auch die vollständige Kombination
 aus Host, Datenbank und Benutzer, fällt der Dienst still auf SQLite zurück. Bei
 Retrieval ist der SQLite-Pfad sogar die Voreinstellung. Nach dem Start einmal
 `printenv DATABASE_URL` im Container lesen.
+
+**Weave-Knowledges Lese-API — offen für jeden, der den Port erreicht.**
+`GET /api/v1/documents`, `/documents/{id}` und `/collections` auf Port 8001
+verlangen keinerlei Ausweis; nur der Webhook-Eingang ist signaturgeprüft. Innerhalb
+des Docker-Netzes ist das folgenlos — die Compose-Datei veröffentlicht den Port
+aber auf dem Host. Kein Dienst der Plattform ruft diese Endpunkte auf; wer sie
+nicht selbst braucht, nimmt die Port-Freigabe heraus.
 
 **`RETRIEVAL_BASE_URL` — Antworten aus dem falschen Bestand.**
 Zeigt der Wert bei Weave-Tools auf eine falsche, aber erreichbare
