@@ -626,3 +626,22 @@ def test_search_pipeline_reports_source_collection_for_scope_verification(db):
     assert collection_by_chunk_id[seeded.support_chunk.id] == 'support-docs'
     assert collection_by_chunk_id[seeded.eng_chunk.id] == 'eng-docs'
     assert collection_by_chunk_id[seeded.legacy_chunk.id] is None
+
+
+def test_cosine_distance_expression_is_typed_as_float():
+    """Regression: the Postgres vector leg was broken for every real query.
+
+    Without an explicit return type, SQLAlchemy infers the `<=>` result
+    type from the left operand (Vector) and hands the returned distance --
+    a plain float -- to pgvector's result processor, which tries to parse
+    it as a '[1,2,3]' literal and raises "'float' object is not
+    subscriptable". The whole suite runs on SQLite, whose fallback computes
+    cosine in Python and never builds this expression, so nothing caught it
+    until the stack ran against real Postgres.
+    """
+    from sqlalchemy import Float, bindparam
+
+    from app.models.models import Chunk
+
+    expr = Chunk.embedding.op('<=>', return_type=Float)(bindparam('v'))
+    assert isinstance(expr.type, Float), f'expected Float, got {expr.type!r}'

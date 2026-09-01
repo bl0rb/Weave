@@ -41,7 +41,7 @@ import re
 import time
 from dataclasses import dataclass
 
-from sqlalchemy import Select, Text, bindparam, cast, func, literal_column, or_, select
+from sqlalchemy import Float, Select, Text, bindparam, cast, func, literal_column, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import array as pg_array
 from sqlalchemy.orm import Session
@@ -326,7 +326,14 @@ def vector_search(
     # every actual INSERT into this column already goes through, instead of
     # leaving the driver to guess how to adapt a raw `list[float]`.
     query_vec_param = bindparam('query_vec', query_vec, type_=Chunk.embedding.type)
-    distance = Chunk.embedding.op('<=>')(query_vec_param)
+    # type_=Float is load-bearing: without it SQLAlchemy infers the
+    # expression's type from the left operand (Vector) and runs the returned
+    # DISTANCE -- an ordinary float -- through pgvector's own result
+    # processor, which tries to parse it as a '[1,2,3]' vector literal and
+    # dies with "'float' object is not subscriptable". The SQLite fallback
+    # computes cosine in Python and never touches this path, which is why
+    # the test suite stayed green while every real Postgres query failed.
+    distance = Chunk.embedding.op('<=>', return_type=Float)(query_vec_param)
     stmt = (
         select(Chunk, distance.label('distance'))
         .join(Document, Chunk.document_id == Document.id)

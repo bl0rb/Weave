@@ -135,7 +135,23 @@ def serialize(value: Any, value_type: str) -> str:
     therefore docker compose's variable substitution) should carry."""
     if value_type == "json_list":
         if isinstance(value, str):
-            return value  # already a raw override string, e.g. from os.environ
+            # A raw override string, e.g. from os.environ. Validate it: a
+            # shell that sourced a previous .env strips the quotes, turning
+            # ["http://x"] into [http://x] -- which is not JSON, and which
+            # pydantic-settings rejects at container start with a stack
+            # trace that names the field but not the cause. Failing here
+            # says what actually happened.
+            try:
+                json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f'Override ist kein gueltiges JSON: {value!r}. '
+                    f'Eine Liste muss als JSON-Array mit Anfuehrungszeichen '
+                    f'geschrieben werden, z.B. \'["http://localhost:3000"]\'. '
+                    f'(Tipp: beim Uebernehmen aus einer .env entfernt die '
+                    f'Shell die Anfuehrungszeichen.)'
+                ) from exc
+            return value
         return json.dumps(value, separators=(",", ":"))
     if value_type == "bool":
         if isinstance(value, str):
