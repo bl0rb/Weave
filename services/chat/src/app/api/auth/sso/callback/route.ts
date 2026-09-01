@@ -52,7 +52,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const { sessionToken, expiresAt } = await exchangeSessionCode(code);
 
     const redirectResponse = NextResponse.redirect(new URL('/', request.url));
-    setSessionCookie(redirectResponse, sessionToken, {
+    setSessionCookie(request, redirectResponse, sessionToken, {
       kind: 'session',
       maxAgeSeconds: secondsUntil(expiresAt),
     });

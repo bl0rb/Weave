@@ -3,12 +3,21 @@ import { NextRequest } from 'next/server';
 import { POST } from '@/app/api/session/login/route';
 import { SESSION_COOKIE_NAME } from '@/lib/session';
 
-function loginRequest(body: unknown): NextRequest {
-  return new NextRequest('http://localhost/api/session/login', {
+function loginRequest(body: unknown, init: { url?: string; headers?: Record<string, string> } = {}): NextRequest {
+  return new NextRequest(init.url ?? 'http://localhost/api/session/login', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...(init.headers ?? {}) },
     body: JSON.stringify(body),
   });
+}
+
+/** A Weave-API that accepts any token — for the cookie-attribute tests
+ * below, which care about the response's Set-Cookie, not the exchange. */
+function stubAcceptingWeaveApi(): void {
+  vi.stubGlobal('fetch', async () => new Response('[]', {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  }));
 }
 
 describe('POST /api/session/login', () => {
@@ -53,6 +62,42 @@ describe('POST /api/session/login', () => {
     expect(rawBody).not.toContain(TOKEN);
     const body = await res.json();
     expect(body).toEqual({ ok: true });
+  });
+
+  // The cookie is useless if the browser refuses to store it: Safari drops
+  // a `Secure` cookie that arrives over plain http even on localhost, which
+  // turns a 200 here into a login that silently never happens. NODE_ENV is
+  // 'production' inside the container regardless of the scheme, so the flag
+  // has to follow the request — see isSecureRequest in @/lib/session.
+  it('over plain http, sets the session cookie WITHOUT Secure', async () => {
+    stubAcceptingWeaveApi();
+
+    const res = await POST(loginRequest({ token: 'a-token' }));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('set-cookie')).not.toMatch(/Secure/i);
+  });
+
+  it('behind a TLS-terminating proxy (x-forwarded-proto: https), sets it WITH Secure', async () => {
+    stubAcceptingWeaveApi();
+
+    const res = await POST(
+      loginRequest({ token: 'a-token' }, { headers: { 'x-forwarded-proto': 'https' } })
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('set-cookie')).toMatch(/Secure/i);
+  });
+
+  it('reads only the ORIGINAL scheme out of a proxy chain', async () => {
+    stubAcceptingWeaveApi();
+
+    const res = await POST(
+      loginRequest({ token: 'a-token' }, { headers: { 'x-forwarded-proto': 'https,http' } })
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('set-cookie')).toMatch(/Secure/i);
   });
 
   it('on an invalid token (401 from Weave-API), answers 401 and sets no cookie', async () => {

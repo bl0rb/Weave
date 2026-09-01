@@ -50,7 +50,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     await response.json().catch(() => null as Bot[] | null);
 
     const ok = NextResponse.json({ ok: true });
-    setSessionCookie(ok, token, { kind: 'bearer' });
+    setSessionCookie(request, ok, token, { kind: 'bearer' });
     return ok;
   } catch (cause) {
     // weaveApiFetch only ever throws for a transport-level failure (no
