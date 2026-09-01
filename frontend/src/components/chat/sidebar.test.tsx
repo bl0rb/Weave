@@ -41,6 +41,9 @@ describe('Sidebar accessibility', () => {
         onSelectBot={() => {}}
         collections={null}
         collectionsError={null}
+        selectedCollections={[]}
+        onToggleCollection={() => {}}
+        onClearCollections={() => {}}
       />
     );
     const loading = screen.getByText('Bots werden geladen…');
@@ -56,6 +59,9 @@ describe('Sidebar accessibility', () => {
         onSelectBot={() => {}}
         collections={null}
         collectionsError={null}
+        selectedCollections={[]}
+        onToggleCollection={() => {}}
+        onClearCollections={() => {}}
       />
     );
     const loading = screen.getByText('Collections werden geladen…');
@@ -71,9 +77,96 @@ describe('Sidebar accessibility', () => {
         onSelectBot={() => {}}
         collections={[]}
         collectionsError={null}
+        selectedCollections={[]}
+        onToggleCollection={() => {}}
+        onClearCollections={() => {}}
       />
     );
     const empty = screen.getByText('Für dich sind keine Bots verfügbar.');
     expect(empty.closest('[aria-live="polite"]')).not.toBeNull();
+  });
+});
+
+const COLLECTIONS = [
+  { slug: 'legal-2026', name: 'Legal 2026', description: null, public: false },
+  { slug: 'hr-docs', name: 'HR Docs', description: null, public: true },
+];
+
+describe('Sidebar collection filter', () => {
+  beforeEach(() => {
+    window.matchMedia =
+      window.matchMedia ??
+      ((() => ({
+        matches: false,
+        media: '',
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      })) as unknown as typeof window.matchMedia);
+  });
+
+  afterEach(() => cleanup());
+
+  it('marks a selected collection as pressed and calls onToggleCollection with its slug when clicked', () => {
+    const onToggleCollection = vi.fn();
+    render(
+      <Sidebar
+        bots={[]}
+        botsError={null}
+        selectedBotId={null}
+        onSelectBot={() => {}}
+        collections={COLLECTIONS}
+        collectionsError={null}
+        selectedCollections={['hr-docs']}
+        onToggleCollection={onToggleCollection}
+        onClearCollections={() => {}}
+      />
+    );
+
+    const legal = screen.getByRole('button', { name: /Legal 2026/ });
+    const hr = screen.getByRole('button', { name: /HR Docs/ });
+    expect(legal.getAttribute('aria-pressed')).toBe('false');
+    expect(hr.getAttribute('aria-pressed')).toBe('true');
+
+    legal.click();
+    expect(onToggleCollection).toHaveBeenCalledWith('legal-2026');
+  });
+
+  it('only shows "Auswahl aufheben" once something is selected, and it clears the selection', () => {
+    const onClearCollections = vi.fn();
+    const { rerender } = render(
+      <Sidebar
+        bots={[]}
+        botsError={null}
+        selectedBotId={null}
+        onSelectBot={() => {}}
+        collections={COLLECTIONS}
+        collectionsError={null}
+        selectedCollections={[]}
+        onToggleCollection={() => {}}
+        onClearCollections={onClearCollections}
+      />
+    );
+    expect(screen.queryByText('Auswahl aufheben')).toBeNull();
+
+    rerender(
+      <Sidebar
+        bots={[]}
+        botsError={null}
+        selectedBotId={null}
+        onSelectBot={() => {}}
+        collections={COLLECTIONS}
+        collectionsError={null}
+        selectedCollections={['legal-2026']}
+        onToggleCollection={() => {}}
+        onClearCollections={onClearCollections}
+      />
+    );
+    const clearButton = screen.getByText('Auswahl aufheben');
+    clearButton.click();
+    expect(onClearCollections).toHaveBeenCalledOnce();
   });
 });

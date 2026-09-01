@@ -16,9 +16,26 @@ interface SidebarProps {
   onSelectBot: (botId: string) => void;
   collections: Collection[] | null;
   collectionsError: MappedError | null;
+  /** Slugs currently selected as this turn's collection FILTER — empty
+   * means no filter (search everything the bot/team combination already
+   * allows), never "filter to nothing". See ChatRequestBody.collections's
+   * own docstring in types/weave-api.ts. */
+  selectedCollections: string[];
+  onToggleCollection: (slug: string) => void;
+  onClearCollections: () => void;
 }
 
-export function Sidebar({ bots, botsError, selectedBotId, onSelectBot, collections, collectionsError }: SidebarProps) {
+export function Sidebar({
+  bots,
+  botsError,
+  selectedBotId,
+  onSelectBot,
+  collections,
+  collectionsError,
+  selectedCollections,
+  onToggleCollection,
+  onClearCollections,
+}: SidebarProps) {
   const router = useRouter();
 
   async function logout() {
@@ -91,18 +108,29 @@ export function Sidebar({ bots, botsError, selectedBotId, onSelectBot, collectio
         </section>
 
         <section className="mt-6">
-          <h2 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">
-            <BookOpen className="h-3.5 w-3.5" aria-hidden="true" />
-            Collections
-          </h2>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h2 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">
+              <BookOpen className="h-3.5 w-3.5" aria-hidden="true" />
+              Collections
+            </h2>
+            {selectedCollections.length > 0 ? (
+              <button
+                type="button"
+                onClick={onClearCollections}
+                className="text-[11px] font-medium text-[var(--accent)] hover:underline"
+              >
+                Auswahl aufheben
+              </button>
+            ) : null}
+          </div>
 
           <p className="mb-2 flex items-start gap-1.5 text-[11px] text-[var(--foreground-muted)]">
             <Info className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
             <span>
-              Nur Information, keine Auswahl: Diese Liste zeigt, welche Collections du laut deinem Team lesen darfst
-              — sie vergibt keine zusätzlichen Rechte. Weave-API nimmt aktuell keinen Collection-Filter je
-              Chat-Anfrage entgegen; welche Collections ein Turn tatsächlich durchsucht hat, steht stattdessen im
-              Trace der jeweiligen Antwort.
+              Wähle eine oder mehrere Collections, um die Suche für deine nächste Nachricht darauf einzuschränken.
+              Das ist eine reine EINSCHRÄNKUNG, keine Rechtevergabe — sichtbar bleibt immer nur, was du laut deinem
+              Team ohnehin lesen darfst. Keine Auswahl = kein Filter = alles, was dir erlaubt ist. Welche
+              Collections ein Turn tatsächlich durchsucht hat, steht zusätzlich im Trace der jeweiligen Antwort.
             </span>
           </p>
 
@@ -116,16 +144,28 @@ export function Sidebar({ bots, botsError, selectedBotId, onSelectBot, collectio
               <p className="text-xs text-[var(--foreground-muted)]">Für dich sind keine Collections lesbar.</p>
             ) : (
               <ul className="flex flex-wrap gap-1.5">
-                {collections.map((collection) => (
-                  <li
-                    key={collection.slug}
-                    title={collection.description ?? collection.slug}
-                    className="rounded-md border border-[var(--border)] bg-[var(--surface-muted)] px-2 py-1 text-[11px]"
-                  >
-                    {collection.name}
-                    {collection.public ? <span className="ml-1 text-[var(--foreground-muted)]">(öffentlich)</span> : null}
-                  </li>
-                ))}
+                {collections.map((collection) => {
+                  const active = selectedCollections.includes(collection.slug);
+                  return (
+                    <li key={collection.slug}>
+                      <button
+                        type="button"
+                        onClick={() => onToggleCollection(collection.slug)}
+                        aria-pressed={active}
+                        title={collection.description ?? collection.slug}
+                        className={cn(
+                          'rounded-md border px-2 py-1 text-[11px] transition-colors',
+                          active
+                            ? 'border-[var(--accent)] bg-[var(--accent-soft)]'
+                            : 'border-[var(--border)] bg-[var(--surface-muted)] hover:bg-[var(--surface)]'
+                        )}
+                      >
+                        {collection.name}
+                        {collection.public ? <span className="ml-1 text-[var(--foreground-muted)]">(öffentlich)</span> : null}
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>

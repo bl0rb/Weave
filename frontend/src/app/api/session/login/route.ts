@@ -34,7 +34,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const response = await weaveApiFetch('/v1/bots', token);
+    const response = await weaveApiFetch('/v1/bots', { kind: 'bearer', value: token });
 
     if (response.status === 401) {
       return NextResponse.json(mappedError('invalid_token', null), { status: 401 });
@@ -50,7 +50,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     await response.json().catch(() => null as Bot[] | null);
 
     const ok = NextResponse.json({ ok: true });
-    setSessionCookie(ok, token);
+    setSessionCookie(ok, token, { kind: 'bearer' });
     return ok;
   } catch (cause) {
     // weaveApiFetch only ever throws for a transport-level failure (no

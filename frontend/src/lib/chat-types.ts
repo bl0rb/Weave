@@ -1,4 +1,4 @@
-import type { ChatTrace, Source } from '@/types/weave-api';
+import type { ChatRequestBody, ChatTrace, Source } from '@/types/weave-api';
 import type { MappedError } from '@/lib/errors';
 
 /** One transcript entry as the UI renders it — a superset of what any
@@ -33,4 +33,29 @@ export function userMessage(content: string): UiMessage {
 
 export function pendingAssistantMessage(): UiMessage {
   return { id: newId(), role: 'assistant', content: '', streaming: true, sources: null, trace: null, error: null, viaFallback: false };
+}
+
+/**
+ * Builds the outgoing `ChatRequestBody` for one turn — pulled out of
+ * chat-app.tsx so the "empty selection means no filter at all, not an
+ * explicit empty one" rule (see `ChatRequestBody.collections`'s own
+ * docstring in types/weave-api.ts) is a plain, directly-testable function
+ * rather than something only exercisable through a full component render.
+ * `collections` is omitted from the returned object entirely whenever
+ * `selectedCollections` is empty — never sent as `[]`, which Weave-API's
+ * own contract treats as a real, if unusual, "matches nothing" filter.
+ */
+export function buildChatRequestBody(params: {
+  botId: string;
+  message: string;
+  conversationId: string | null;
+  selectedCollections: string[];
+}): ChatRequestBody {
+  const { botId, message, conversationId, selectedCollections } = params;
+  return {
+    bot_id: botId,
+    message,
+    ...(conversationId ? { conversation_id: conversationId } : {}),
+    ...(selectedCollections.length > 0 ? { collections: selectedCollections } : {}),
+  };
 }

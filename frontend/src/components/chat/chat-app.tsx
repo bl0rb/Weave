@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { getJson, postJson } from '@/lib/api-client';
 import { errorForInterruptedStream, errorForNetworkFailure, errorForStreamEvent, mappedError, type MappedError } from '@/lib/errors';
 import { consumeChatStream } from '@/lib/run-chat-stream';
-import { newId, pendingAssistantMessage, userMessage, type UiMessage } from '@/lib/chat-types';
+import { buildChatRequestBody, newId, pendingAssistantMessage, userMessage, type UiMessage } from '@/lib/chat-types';
 import type { Bot, ChatRequestBody, ChatResponseBody, Collection } from '@/types/weave-api';
 
 export function ChatApp() {
@@ -20,6 +20,15 @@ export function ChatApp() {
   const [botsError, setBotsError] = useState<MappedError | null>(null);
   const [collections, setCollections] = useState<Collection[] | null>(null);
   const [collectionsError, setCollectionsError] = useState<MappedError | null>(null);
+  // The sidebar's Collections selection, now a real per-request FILTER
+  // (see ChatRequestBody.collections's own docstring in
+  // types/weave-api.ts) — empty means "no filter", not "filter to
+  // nothing". Deliberately NOT reset on bot switch / new conversation: it
+  // represents what the user wants to search, independent of which bot or
+  // conversation that happens in — a slug the next bot's own scope has no
+  // use for is silently dropped server-side, exactly like any other
+  // out-of-scope filter entry (contracts/internal-chat.md).
+  const [selectedCollections, setSelectedCollections] = useState<string[]>([]);
 
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -98,6 +107,14 @@ export function ChatApp() {
     setSending(false);
     setConversationId(null);
     setMessages([]);
+  }
+
+  function handleToggleCollection(slug: string) {
+    setSelectedCollections((prev) => (prev.includes(slug) ? prev.filter((s) => s !== slug) : [...prev, slug]));
+  }
+
+  function handleClearCollections() {
+    setSelectedCollections([]);
   }
 
   const runFallback = useCallback(
@@ -214,11 +231,12 @@ export function ChatApp() {
     setDraft('');
     setSending(true);
 
-    const body: ChatRequestBody = {
-      bot_id: selectedBotId,
+    const body = buildChatRequestBody({
+      botId: selectedBotId,
       message: trimmed,
-      ...(conversationId ? { conversation_id: conversationId } : {}),
-    };
+      conversationId,
+      selectedCollections,
+    });
 
     try {
       await runTurn(turnId, assistantMsg.id, body);
@@ -242,6 +260,9 @@ export function ChatApp() {
         onSelectBot={handleSelectBot}
         collections={collections}
         collectionsError={collectionsError}
+        selectedCollections={selectedCollections}
+        onToggleCollection={handleToggleCollection}
+        onClearCollections={handleClearCollections}
       />
 
       <main className="flex min-w-0 flex-1 flex-col">

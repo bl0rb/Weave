@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { requireSessionToken } from '@/lib/require-session';
+import { requireSessionCredential } from '@/lib/require-session';
 import { GatewayError, weaveApiFetch } from '@/lib/weave-api-server';
 import { errorForHttpStatus, errorForNetworkFailure } from '@/lib/errors';
 import type { ChatRequestBody } from '@/types/weave-api';
@@ -39,7 +39,7 @@ export const dynamic = 'force-dynamic';
  *    (run-chat-stream.ts) is what tells those apart.
  */
 export async function POST(request: NextRequest): Promise<Response> {
-  const session = requireSessionToken(request);
+  const session = requireSessionCredential(request);
   if ('response' in session) return session.response;
 
   let body: ChatRequestBody;
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   let upstream: Response;
   try {
-    upstream = await weaveApiFetch('/v1/chat/stream', session.token, {
+    upstream = await weaveApiFetch('/v1/chat/stream', session.credential, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

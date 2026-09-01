@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { requireSessionToken } from '@/lib/require-session';
+import { requireSessionCredential } from '@/lib/require-session';
 import { GatewayError, weaveApiFetchJson } from '@/lib/weave-api-server';
 import { errorForHttpStatus, errorForNetworkFailure } from '@/lib/errors';
 import type { ChatRequestBody, ChatResponseBody } from '@/types/weave-api';
@@ -12,7 +12,7 @@ import type { ChatRequestBody, ChatResponseBody } from '@/types/weave-api';
  * as the default — see the chat client's own retry logic.
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  const session = requireSessionToken(request);
+  const session = requireSessionCredential(request);
   if ('response' in session) return session.response;
 
   let body: ChatRequestBody;
@@ -27,7 +27,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const result = await weaveApiFetchJson<ChatResponseBody>('/v1/chat', session.token, {
+    const result = await weaveApiFetchJson<ChatResponseBody>('/v1/chat', session.credential, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

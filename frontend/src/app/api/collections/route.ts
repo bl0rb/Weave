@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { requireSessionToken } from '@/lib/require-session';
+import { requireSessionCredential } from '@/lib/require-session';
 import { GatewayError, weaveApiFetchJson } from '@/lib/weave-api-server';
 import { errorForHttpStatus, errorForNetworkFailure } from '@/lib/errors';
 import type { Collection } from '@/types/weave-api';
@@ -15,11 +15,11 @@ import type { Collection } from '@/types/weave-api';
  * selection to send back — it has no field for one.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const session = requireSessionToken(request);
+  const session = requireSessionCredential(request);
   if ('response' in session) return session.response;
 
   try {
-    const collections = await weaveApiFetchJson<Collection[]>('/v1/collections', session.token);
+    const collections = await weaveApiFetchJson<Collection[]>('/v1/collections', session.credential);
     return NextResponse.json(collections);
   } catch (cause) {
     if (cause instanceof GatewayError) {

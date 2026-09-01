@@ -4,13 +4,22 @@ import type { GuardTrace } from '@/types/weave-api';
 const REASON_TEXT: Record<string, string> = {
   no_context: 'Es wurden keine passenden Belege in den durchsuchbaren Collections gefunden.',
   no_collections: 'Für diese Anfrage steht keine Collection zur Verfügung, die dieser Bot durchsuchen darf.',
+  // Deliberately distinct from "no_collections" above (see
+  // contracts/internal-chat.md): here the bot/team combination DID have a
+  // non-empty readable scope — it was this caller's own sidebar selection
+  // that narrowed it to nothing. Unlike "no_collections", that is fixable
+  // by the caller alone, so the message names the fix directly.
+  filter_excluded_all:
+    'Deine Collection-Auswahl in der Seitenleiste schließt alle Collections aus, die dieser Bot für dich durchsuchen dürfte. Auswahl aufheben, um wieder alles zu durchsuchen, was dir erlaubt ist.',
 };
 
 /**
- * Flags a guard-substituted reply as exactly that — Weave-Runtime's fixed
- * `no_context_reply` text standing in for a real, source-backed answer —
- * so it is never mistaken for an ordinary answer. Rendered ABOVE the
- * message text, not folded into it.
+ * Flags a guard-substituted reply as exactly that — a fixed text standing
+ * in for a real, source-backed answer (Weave-Runtime's `no_context_reply`
+ * for "no_context"/"no_collections", or its own separate fixed text for
+ * "filter_excluded_all" — contracts/internal-chat.md) — so it is never
+ * mistaken for an ordinary answer. Rendered ABOVE the message text, not
+ * folded into it.
  */
 export function GuardBanner({ guard }: { guard: GuardTrace }) {
   if (!guard.triggered) return null;

@@ -57,6 +57,15 @@ export function TracePanel({ trace }: { trace: ChatTrace }) {
               ) : (
                 <> · keine Collection durchsucht</>
               )}
+              {trace.retrieval.requested_collections ? (
+                <>
+                  {' '}
+                  · eigener Filter:{' '}
+                  {trace.retrieval.requested_collections.length > 0
+                    ? trace.retrieval.requested_collections.join(', ')
+                    : '(Auswahl passt auf keine Collection)'}
+                </>
+              ) : null}
             </div>
           ) : (
             <div>Kein Retrieval-Aufruf für diesen Turn.</div>

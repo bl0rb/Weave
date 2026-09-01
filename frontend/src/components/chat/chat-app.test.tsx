@@ -127,3 +127,78 @@ describe('ChatApp turn lifecycle', () => {
     await waitFor(() => expect(textarea.disabled).toBe(false));
   });
 });
+
+const COLLECTIONS = [
+  { slug: 'legal-2026', name: 'Legal 2026', description: null, public: false },
+  { slug: 'hr-docs', name: 'HR Docs', description: null, public: false },
+];
+
+describe('ChatApp collection filter', () => {
+  beforeEach(() => {
+    window.matchMedia =
+      window.matchMedia ??
+      ((() => ({
+        matches: false,
+        media: '',
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      })) as unknown as typeof window.matchMedia);
+    Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? vi.fn();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  function mockFetch() {
+    return vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/api/bots')) return Promise.resolve(jsonResponse(BOTS));
+      if (url.endsWith('/api/collections')) return Promise.resolve(jsonResponse(COLLECTIONS));
+      // The turn's outcome is irrelevant to these tests — only the request
+      // body sent to /api/chat/stream is under test — so it is left
+      // pending forever, exactly like the lifecycle tests above.
+      if (url.endsWith('/api/chat/stream')) return new Promise<Response>(() => {});
+      throw new Error(`unexpected fetch to ${url}`);
+    });
+  }
+
+  async function sendMessage(fetchMock: ReturnType<typeof mockFetch>, text: string) {
+    const textarea = (await screen.findByPlaceholderText('Nachricht schreiben…')) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: text } });
+    fireEvent.click(screen.getByRole('button', { name: 'Nachricht senden' }));
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([req]) => String(req).endsWith('/api/chat/stream'))).toBe(true);
+    });
+    const [, init] = fetchMock.mock.calls.find(([req]) => String(req).endsWith('/api/chat/stream'))!;
+    return JSON.parse((init as RequestInit).body as string);
+  }
+
+  it('sends the sidebar collection selection as the request filter', async () => {
+    const fetchMock = mockFetch();
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<ChatApp />);
+    await screen.findByRole('button', { name: /Bot A/ });
+    fireEvent.click(screen.getByRole('button', { name: /Legal 2026/ }));
+
+    const body = await sendMessage(fetchMock, 'Was gilt hier?');
+    expect(body.collections).toEqual(['legal-2026']);
+  });
+
+  it('sends no collections field at all when the selection is empty', async () => {
+    const fetchMock = mockFetch();
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<ChatApp />);
+    await screen.findByRole('button', { name: /Bot A/ });
+
+    const body = await sendMessage(fetchMock, 'Was gilt hier?');
+    expect(body).not.toHaveProperty('collections');
+  });
+});

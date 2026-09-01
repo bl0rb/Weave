@@ -72,6 +72,15 @@ export interface RetrievalTrace {
   /** Collection slugs actually authorized for this call's search; may
    * contain the sentinel "__none__" for uncollected legacy documents. */
   collections: string[];
+  /** `ChatRequestBody.collections` mirrored back unchanged — what THIS
+   * caller asked to filter to, as opposed to `collections` above (what was
+   * actually searched after that filter was applied on top of the
+   * caller's own read-authority). `null`/absent means no filter was sent
+   * on this turn — see contracts/internal-chat.md's own field of the same
+   * name. Optional here (rather than `| null` required) so every existing
+   * trace literal in this codebase's own tests, written before this field
+   * existed, stays valid without needing an update. */
+  requested_collections?: string[] | null;
 }
 
 export interface GuardTrace {
@@ -80,8 +89,13 @@ export interface GuardTrace {
    * "no_context": retrieval ran but found nothing usable.
    * "no_collections": caller/bot share no readable collection at all —
    * retrieval never even ran.
+   * "filter_excluded_all": caller/bot DID share a non-empty readable
+   * scope, but THIS turn's own `collections` filter (see
+   * `RetrievalTrace.requested_collections` above) narrowed it to nothing
+   * — a situation the caller can fix by lifting their own filter, unlike
+   * "no_collections" which no selection change can fix.
    */
-  reason: 'no_context' | 'no_collections' | null;
+  reason: 'no_context' | 'no_collections' | 'filter_excluded_all' | null;
 }
 
 /**
@@ -140,9 +154,21 @@ export interface ChatResponseBody {
 /** POST /v1/chat and /v1/chat/stream request body (this UI never sends
  * `context` — Weave-API's README mentions it as accepted input, but no
  * schema field or downstream use of it exists in the actual code read for
- * this task, so nothing is invented here). */
+ * this task, so nothing is invented here).
+ *
+ * `collections`, field-for-field Weave-API's own `ChatRequest.collections`
+ * (backend/app/schemas/chat.py there): a per-request FILTER, never a
+ * grant — it can only narrow this caller's own read-authority
+ * (bot's configured collections ∩ this caller's team-readable
+ * collections, resolved entirely server-side), never widen it, and a
+ * slug outside that authority is silently dropped rather than surfacing
+ * an error. Omitted entirely (not sent as `[]` or `null`) whenever the
+ * sidebar's selection is empty, so "no selection" means byte-for-byte the
+ * same "no filter, see everything you're allowed to" behaviour this UI
+ * always had — see src/lib/chat-types.ts's `buildChatRequestBody`. */
 export interface ChatRequestBody {
   bot_id: string;
   message: string;
   conversation_id?: string;
+  collections?: string[];
 }
