@@ -90,6 +90,15 @@ spec:
             {{- end }}
             - name: REDIS_URL
               value: {{ include "weave-ingest.redisUrl" . | quote }}
+            - name: PORTAL_KNOWLEDGE_BASE_URL
+              value: {{ .Values.portal.knowledgeBaseUrl | quote }}
+            {{- if .Values.portal.knowledgeWebhookSecret.existingSecret }}
+            - name: PORTAL_KNOWLEDGE_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.portal.knowledgeWebhookSecret.existingSecret | quote }}
+                  key: {{ .Values.portal.knowledgeWebhookSecret.existingSecretKey | quote }}
+            {{- end }}
             - name: PADDLE_DEFAULT_PROFILE
               value: {{ .Values.worker.paddleDefaultProfile | quote }}
             {{- if .Values.worker.modelCache.enabled }}
@@ -145,7 +154,7 @@ spec:
             - name: WEBHOOKS_ENABLED
               value: {{ .Values.webhooks.enabled | quote }}
             - name: WEBHOOK_PRIVATE_HOST_ALLOWLIST
-              value: {{ .Values.webhooks.privateHostAllowlist | toJson | quote }}
+              value: {{ concat .Values.webhooks.privateHostAllowlist .Values.portal.privateHostAllowlist | uniq | toJson | quote }}
             # int64: Helm parses large YAML numbers as float64 and | quote
             # would render 50 as "5e+01", which the app's int settings
             # reject.

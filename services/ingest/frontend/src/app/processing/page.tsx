@@ -1,9 +1,5 @@
-import { ProcessingOverview } from '@/components/dashboard/processing-overview';
+import { ProcessingActivity } from '@/components/portal/activity';
 
 export default function ProcessingPage() {
-  return (
-    <main className="min-h-screen">
-      <ProcessingOverview />
-    </main>
-  );
+  return <ProcessingActivity />;
 }

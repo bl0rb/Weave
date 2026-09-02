@@ -1,8 +1,14 @@
 # Vertragsindex
 
+Der Veröffentlichungsvertrag [`document.released`](events/document.released.md) ist der einzige reguläre Indexierungsimpuls; `document.processed` bestätigt nur die Verarbeitung und wartet auf eine manuelle Freigabe.
+
 `contracts/` liegt zentral in der Wurzel dieses Monorepos, nicht mehr in einem einzelnen Dienst-Verzeichnis. Alle formalen Datenverträge zwischen den sechs Diensten (`services/ingest`, `services/knowledge`, `services/retrieval`, `services/runtime`, `services/api`, `services/tools`) sammeln sich hier, jeder unabhängig versioniert. Ein Verweis auf einen Vertrag ist deshalb immer relativ zur Repo-Wurzel, z.B. `contracts/chunk-store.md` — nie relativ zu einem einzelnen Dienst.
 
-Sieben Verträge liegen aktuell hier:
+Die Verträge umfassen:
+
+### `indexing-status.md`
+
+Die signierte, begrenzte Statusabfrage für konkrete Freigaben: Knowledge bestätigt Snapshot-Identität, aktive Indexierung und gespeicherte Embeddings; Ingest prüft vorher die Dokumentrechte des angemeldeten Nutzers. Der Portalstatus trennt Zustellung, Indexierung, Verfügbarkeit und Ausfälle. [Vertrag lesen](indexing-status.md).
 
 ### `frontmatter.schema.json`
 

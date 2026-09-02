@@ -171,7 +171,7 @@ Since chart 1.1.0 a `SECRET_KEY` is required — the chart refuses to render wit
 
 ## Core Features
 
-- Upload via drag and drop or file picker (PDF, DOCX, PPTX, XLSX, XLS, PNG, JPG, JPEG)
+- Upload via drag and drop or file picker (PDF, DOCX, PPTX, XLSX, XLS, PNG, JPG, JPEG, EML)
 - **Content-hash document versioning**: same-named uploads within a team become version chains with full history; identical content is deduplicated
 - Job lifecycle `PENDING -> RUNNING -> FINISHED / FAILED` with adaptive live updates, owner attribution on every row
 - Folder tree navigation, tags, search and filtering, date ranges, status chips and a job-type filter (single file / collection / Confluence import / mail)
@@ -180,7 +180,7 @@ Since chart 1.1.0 a `SECRET_KEY` is required — the chart refuses to render wit
 - **JSON export per job** — metadata, uploader, processing details, and markdown in one file
 - **VL Benchmark** with per-variant metrics and side-by-side markdown comparison; the same VL connections double as selectable processing profiles for regular uploads
 - **Personal API tokens** for programmatic access (created on the Settings page, shown once, stored hashed)
-- **Mail ingestion** — POST a raw RFC-822 email, body renders to Markdown, attachments become regular jobs; idempotent by content hash, with a Mail UI and manual `.eml` upload
+- **Individual email uploads** — upload `.eml` files in the knowledge portal; body and supported attachments form one document, reviewed and released like other files. The separate Mail API has been removed.
 - **Confluence import** with hierarchy-aware frontmatter, an opt-in hierarchy-as-tags toggle, and an "Edit & run again" action that reopens a past run's settings
 - Jobs can be re-run with a different profile from either the jobs table or the job detail page
 - **Worker logs in the admin console** — level/worker/text filters, auto-refresh, tracebacks — alongside a Logs tab entry for every sign-in (OIDC and local)
@@ -193,18 +193,19 @@ Since chart 1.1.0 a `SECRET_KEY` is required — the chart refuses to render wit
 
 ### Navigation
 
-The sidebar is grouped by intent:
-
-- **Workspace** — Home (personal overview), Processing (the team's work center, with a collapsible submenu for **File Task**, **Jobs**, and **Imports**), and **Mail API** (messages ingested programmatically)
-- **Analyze & connect** — **VL Benchmark** and **Connections**
+The main navigation follows the knowledge workflow: **Übersicht**, **Wissensbereiche**, **Quelle hinzufügen**, **Verarbeitung**, **Prüfen & freigeben**, and **Chat**. Administration opens the inventory of all knowledge areas, owners, reader teams, and processing counts. Technical tools are under **Administration → Werkzeuge**; Confluence connections are also linked from the source form.
 
 ### Home (`/`)
 
-A personal "what do I do now" landing page: a **New File Task** call to action, a **Needs attention** section (your own failed jobs first, with a counter), **Your recent jobs**, and a slim one-line stats summary. The live service readout (Paddle service, queue depth, containers, worker nodes, GPU/CPU runtime) lives in a compact, expandable **System status** card — with honest degradation: if the backend becomes unreachable, it marks data as "last known" instead of pretending it is current.
+The 1–2–3 journey starts with **Wissensbereich anlegen**, which opens `/knowledge/new` directly. Saving continues to source selection with that area preselected. Repeated header actions are omitted when the same action appears in the empty state.
+
+### Sources (`/sources/new`)
+
+Choose the knowledge area, files or Confluence, and a processing profile. **Standard – schnell** maps to StructureV3 tiny, **Gründlich – komplexe Dokumente** to StructureV3 medium; enabled VL connections are also offered. Confluence page text is imported directly and the profile applies to supported attachments. On upload completion the form is replaced by a brief result and two next steps: add more sources or inspect processing. Email files use this same flow.
 
 ### Processing (`/processing`)
 
-The team's work center: stat tiles (running/finished/failed, pages processed), a type-distribution bar with four clickable cards (single file, multiple files, Confluence import, mail) that jump to the jobs list pre-filtered, and recent jobs attributed to their owner. Starting new work happens via the **File Task** and **New import** actions, centered under the header.
+Search and filter waiting, running, finished and failed jobs, including older jobs without an area. Visibility follows the existing owner/team/admin boundary. Polling runs only while the tab is visible. Processing, manual approval, handoff and indexing are distinct states; finished processing never claims completed indexing. See [Wissensportal](../../docs/wissensportal.md).
 
 ### File Task (`/processing/new`)
 
@@ -220,11 +221,9 @@ Browse all jobs with folder tree, All/Running/Completed/Failed filter chips with
 
 Review metadata, quality gate, and processing info; preview or edit markdown (an "Edit markdown" toolbar button jumps straight into edit mode); download the result as Markdown or JSON; re-run with a different profile. The **Versions** table shows the full history of the document — who uploaded which version when, with content hashes — and links to every prior version.
 
-### Mail API (`/mail`)
+### Email uploads
 
-Reads like an inbox: a search bar, sender/subject/parts summary on the left, date and status on the right, with the remaining filters tucked behind a Filters toggle. It shows email messages ingested programmatically via `POST /api/v1/mail/messages`; manual `.eml` upload lives on the Processing page alongside regular file uploads (drag and drop or file picker), producing a normal job. See [API Quickstart](#api-quickstart) below for programmatic ingestion.
-
-Open a message to see the full envelope, the body rendered as Markdown, and a parts table — every attachment links to its OCR job, with per-part downloads and a raw `.eml` download for the whole message. The page polls while any attachment job is still processing. Attachment jobs carry a "from mail" badge back to their source message on the Jobs list and Job Detail pages.
+Upload individual `.eml` files through `/sources/new`. Supported attachments are processed into the same Markdown document; unsupported or failed attachments are marked as skipped. Review and release the whole result. The separate `/api/v1/mail/*` API and inbox are removed; existing database rows and attachment jobs remain. See [Email file uploads](../../docs/integrations/mail-ingestion.md).
 
 ### Imports (`/imports`)
 
@@ -242,7 +241,7 @@ The report compares duration, pages, output size, quality grade, and errors per 
 
 Every user configures the external systems their account talks to, in two groups of tabs: **External services** (Confluence — create, test, rename, delete import sources and their auto-refresh interval; OpenWebUI — connection CRUD and recent-push history) and **AI models** (**VL Models** — administrators get the full CRUD panel, everyone else a read-only list of the enabled connections so they can see what a File Task or benchmark can run against).
 
-**OpenWebUI push is deprecated.** Distribution to downstream consumers is moving to the [`document.processed`](../../contracts/events/document.processed.md) webhook event instead — same connection/delivery/retry machinery as the existing Webhooks tab, fired alongside `job.finished` for every successful job. Weave-Knowledge is the primary consumer.
+**Portal publication is explicit.** `document.processed` acknowledges authenticated processing with `awaiting_release`; Weave-Knowledge indexes only the immutable, owner/admin-approved [`document.released`](../../contracts/events/document.released.md) snapshot. Delivery status is not index completion.
 
 ### Settings (`/settings`)
 
@@ -296,21 +295,7 @@ curl -H "Authorization: Bearer $TOKEN" -o result.json \
   http://localhost:8000/api/v1/jobs/<job_id>/export.json
 ```
 
-Mail ingestion (since v1.3.0) takes the raw `.eml` bytes as the request body — no multipart encoding needed:
-
-```bash
-# POST a raw email; 201 on first ingest, 200 (replayed:true) if those exact
-# bytes were already ingested — either way the response has the message id
-curl -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: message/rfc822" \
-  --data-binary @quarterly-report.eml \
-  http://localhost:8000/api/v1/mail/messages
-
-# Poll until every attachment job is terminal, then fetch the aggregated export
-curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/mail/messages/<message_id>
-curl -H "Authorization: Bearer $TOKEN" -o mail-export.json \
-  http://localhost:8000/api/v1/mail/messages/<message_id>/export.json
-```
+For individual email files, use the same collection upload and per-job start flow as the portal. See [Email file uploads](../../docs/integrations/mail-ingestion.md).
 
 Browser-style session login works too (`POST /api/v1/auth/login` with a cookie jar); token management endpoints themselves always require a session.
 
@@ -324,9 +309,6 @@ Common endpoints:
 - `PUT /api/v1/jobs/{id}/save` — edit markdown (creates an edit version)
 - `POST /api/v1/benchmarks` — start a benchmark run; `GET /api/v1/benchmarks/{id}/report` for the comparison
 - `GET /api/v1/vl-connections` — enabled VL connections (id, name, model)
-- `POST /api/v1/mail/messages` — ingest a raw RFC-822 email (`Content-Type: message/rfc822`, or `multipart/form-data` with a `file` part); parses the message, converts the body to markdown, and OCRs each supported attachment as its own job. Idempotent by content hash: replaying the same bytes returns the existing message (200) instead of reprocessing; a new message is 201. See [docs/integrations/mail-ingestion.md](../../docs/integrations/mail-ingestion.md).
-- `GET /api/v1/mail/messages` / `GET /api/v1/mail/messages/{id}` — list/detail (filters: `q`, `message_id`, `sha256`, `source`, `from_date`/`to_date`)
-- `GET /api/v1/mail/messages/{id}/export.json` — envelope + body markdown + every attachment's OCR markdown in one call, for n8n/Bedrock AgentCore-style polling consumers
 - `POST /api/v1/auth/tokens` / `GET` / `DELETE /api/v1/auth/tokens/{id}` — API token management (session only)
 - `GET /api/v1/auth/admin/worker-logs` — worker logs (admin)
 - `GET /api/v1/stats`, `GET /api/v1/health`, `GET /api/v1/paddle/status`, `GET /api/v1/paddle/capabilities`
@@ -365,7 +347,7 @@ flowchart LR
 
 Since v1.2.1, the simplest integration is a **personal API token**: create one under Settings for a dedicated Weave Ingest user and set a single `Authorization: Bearer pd_...` header on every HTTP Request node — no login node, no cookie forwarding. Use `/export.json` to get markdown plus metadata (hash, version, quality grade) in one call.
 
-**Mail ingestion (since v1.3.0)** gives n8n a second, even simpler pattern: an HTTP Request node with `Bearer pd_...` auth, method `POST`, URL `{base}/api/v1/mail/messages?source=n8n`, and the body set to **binary data** with content type `message/rfc822` — straight from an IMAP/Email-Trigger node's raw output, no attachment decoding or base64 handling on the n8n side. `id` in the response (200 and 201 are both success — 200 just means "already known") feeds the same poll-then-fetch pattern, ending at `GET .../{id}/export.json` for the body markdown plus every attachment's OCR markdown in one call.
+Portal-backed RAG ingestion requires an explicit manual `document.released` snapshot after processing. Downloading an export or receiving `document.processed` does not grant publication. The former mail-specific HTTP integration is retired.
 
 n8n URL choice:
 

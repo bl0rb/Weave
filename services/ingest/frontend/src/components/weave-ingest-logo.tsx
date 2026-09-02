@@ -1,40 +1,33 @@
 /**
- * The Weave Ingest mark: two crossed paddles behind a document page, on the
- * emerald gradient tile. Single source of truth for the in-app brand —
- * the favicon/app icons (src/app/icon.svg, apple-icon.png, favicon.ico)
- * are exports of this same artwork.
+ * The Weave mark is a small woven swatch. Alternating crossings make the
+ * over-under structure readable even at favicon size without forming a figure.
  */
 export function WeaveIngestLogo({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 64 64" className={className} aria-hidden="true">
-      <defs>
-        <linearGradient id="pdlogo-bg" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#10b981" />
-          <stop offset="1" stopColor="#047857" />
-        </linearGradient>
-      </defs>
-      <rect width="64" height="64" rx="14" fill="url(#pdlogo-bg)" />
-      <g transform="rotate(32 32 32)">
-        <rect x="29.9" y="6" width="4.2" height="34" rx="2.1" fill="#065f46" />
-        <path
-          d="M32 38 c5.6 0 8 4.4 8 9.3 c0 5.9 -3.7 10 -8 10 c-4.3 0 -8 -4.1 -8 -10 c0 -4.9 2.4 -9.3 8 -9.3 Z"
-          fill="#065f46"
-        />
-        <rect x="28.4" y="3.4" width="7.2" height="3.8" rx="1.9" fill="#065f46" />
+      <rect width="64" height="64" rx="15" fill="#0f8a64" />
+      <g fill="#bfe7d4">
+        <rect x="12" y="8" width="8" height="48" rx="4" />
+        <rect x="28" y="8" width="8" height="48" rx="4" />
+        <rect x="44" y="8" width="8" height="48" rx="4" />
       </g>
-      <g transform="rotate(-32 32 32)">
-        <rect x="29.9" y="6" width="4.2" height="34" rx="2.1" fill="#a7f3d0" />
-        <path
-          d="M32 38 c5.6 0 8 4.4 8 9.3 c0 5.9 -3.7 10 -8 10 c-4.3 0 -8 -4.1 -8 -10 c0 -4.9 2.4 -9.3 8 -9.3 Z"
-          fill="#a7f3d0"
-        />
-        <rect x="28.4" y="3.4" width="7.2" height="3.8" rx="1.9" fill="#a7f3d0" />
+      <g fill="#f7fcf9">
+        <rect x="8" y="12" width="48" height="8" rx="4" />
+        <rect x="8" y="28" width="48" height="8" rx="4" />
+        <rect x="8" y="44" width="48" height="8" rx="4" />
       </g>
-      <path d="M21 17 a3 3 0 0 1 3 -3 h11 l8 8 v20 a3 3 0 0 1 -3 3 H24 a3 3 0 0 1 -3 -3 Z" fill="#ffffff" />
-      <path d="M35 14 l8 8 h-6 a2 2 0 0 1 -2 -2 Z" fill="#a7f3d0" />
-      <rect x="25" y="24" width="9" height="2.6" rx="1.3" fill="#059669" />
-      <rect x="25" y="29.5" width="13" height="2.6" rx="1.3" fill="#059669" />
-      <rect x="25" y="35" width="10" height="2.6" rx="1.3" fill="#059669" />
+      <g fill="#bfe7d4">
+        <rect x="12" y="12" width="8" height="8" />
+        <rect x="44" y="12" width="8" height="8" />
+        <rect x="28" y="28" width="8" height="8" />
+        <rect x="12" y="44" width="8" height="8" />
+        <rect x="44" y="44" width="8" height="8" />
+      </g>
+      <g stroke="#0b6f52" strokeWidth="1" opacity=".28">
+        <path d="M12 11.5h8M12 20.5h8M44 11.5h8M44 20.5h8" />
+        <path d="M28 27.5h8M28 36.5h8" />
+        <path d="M12 43.5h8M12 52.5h8M44 43.5h8M44 52.5h8" />
+      </g>
     </svg>
   );
 }

@@ -12,6 +12,7 @@ available on a plain direct call, so the self-re-enqueue retry path
 broker/worker at all.
 """
 
+import hashlib
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import patch
@@ -89,6 +90,10 @@ def _make_document(db, **overrides) -> Document:
         status=DocumentStatus.PENDING,
     )
     defaults.update(overrides)
+    stored_frontmatter = dict(defaults['frontmatter'])
+    stored_frontmatter.setdefault('_weave_release_id', str(uuid.uuid4()))
+    stored_frontmatter.setdefault('_weave_markdown_sha256', 'b' * 64)
+    defaults['frontmatter'] = stored_frontmatter
     document = Document(**defaults)
     db.add(document)
     db.commit()
@@ -110,13 +115,15 @@ def test_index_document_end_to_end_success():
         db.close()
 
     markdown = _sample_markdown(SAMPLE_FRONTMATTER)
-    with patch('app.workers.tasks.ingest_client.fetch_markdown', return_value=markdown) as mock_fetch:
+    with patch('app.workers.tasks.ingest_client.fetch_released_markdown', return_value=markdown) as mock_fetch:
         index_document(str(document.id))
 
     # FINDING 3: the fetch is keyed off source_job_id, never markdown_url --
     # see test_index_document_never_fetches_the_stored_markdown_url_uses_job_id
     # below for an end-to-end test of why.
-    mock_fetch.assert_called_once_with(document.source_job_id)
+    mock_fetch.assert_called_once_with(
+        document.frontmatter['_weave_release_id'], document.frontmatter['_weave_markdown_sha256']
+    )
 
     provider = FakeEmbeddingProvider()
     db = TestingSessionLocal()
@@ -163,9 +170,11 @@ def test_index_document_reruns_cleanly_without_duplicate_chunks():
         db.close()
 
     markdown = _sample_markdown(SAMPLE_FRONTMATTER)
-    with patch('app.workers.tasks.ingest_client.fetch_markdown', return_value=markdown):
+    with patch('app.workers.tasks.ingest_client.fetch_released_markdown', return_value=markdown) as mock_fetch:
         index_document(str(document.id))
         index_document(str(document.id))
+
+    mock_fetch.assert_called_once()
 
     db = TestingSessionLocal()
     try:
@@ -177,6 +186,35 @@ def test_index_document_reruns_cleanly_without_duplicate_chunks():
     finally:
         db.close()
 
+
+def test_index_document_cannot_copy_foreign_release_keys_from_snapshot():
+    db = TestingSessionLocal()
+    try:
+        document = _make_document(db, frontmatter=SAMPLE_FRONTMATTER)
+        release_id = document.frontmatter['_weave_release_id']
+        release_sha256 = document.frontmatter['_weave_markdown_sha256']
+    finally:
+        db.close()
+
+    downloaded_frontmatter = {
+        **SAMPLE_FRONTMATTER,
+        '_weave_release_id': str(uuid.uuid4()),
+        '_weave_markdown_sha256': '0' * 64,
+    }
+    markdown = _sample_markdown(downloaded_frontmatter)
+    with patch('app.workers.tasks.ingest_client.fetch_released_markdown', return_value=markdown):
+        index_document(str(document.id))
+
+    db = TestingSessionLocal()
+    try:
+        refreshed = db.get(Document, document.id)
+        assert refreshed.frontmatter['_weave_release_id'] == release_id
+        assert refreshed.frontmatter['_weave_markdown_sha256'] == release_sha256
+        chunk = db.query(Chunk).filter_by(document_id=document.id).order_by(Chunk.chunk_index).first()
+        assert chunk.meta['_weave_release_id'] == release_id
+        assert chunk.meta['_weave_markdown_sha256'] == release_sha256
+    finally:
+        db.close()
 
 # --- Supersede ------------------------------------------------------------------
 
@@ -200,7 +238,7 @@ def test_index_document_supersedes_previous_version_in_same_transaction():
         db.close()
 
     markdown = _sample_markdown(SAMPLE_FRONTMATTER)
-    with patch('app.workers.tasks.ingest_client.fetch_markdown', return_value=markdown):
+    with patch('app.workers.tasks.ingest_client.fetch_released_markdown', return_value=markdown):
         index_document(str(v2_id))
 
     db = TestingSessionLocal()
@@ -216,6 +254,20 @@ def test_index_document_supersedes_previous_version_in_same_transaction():
     finally:
         db.close()
 
+    # A queued task for the retired lineage version may arrive after the new
+    # version committed. It must not fetch or republish the old snapshot.
+    with patch('app.workers.tasks.ingest_client.fetch_released_markdown') as mock_fetch:
+        index_document(str(v1_id))
+    mock_fetch.assert_not_called()
+
+    db = TestingSessionLocal()
+    try:
+        retired = db.get(Document, v1_id)
+        assert retired.status == DocumentStatus.SUPERSEDED
+        assert db.query(Chunk).filter_by(document_id=v1_id).count() == 0
+    finally:
+        db.close()
+
 
 def test_index_document_with_unknown_previous_job_id_is_a_noop_for_supersede():
     db = TestingSessionLocal()
@@ -227,7 +279,7 @@ def test_index_document_with_unknown_previous_job_id_is_a_noop_for_supersede():
         db.close()
 
     markdown = _sample_markdown(SAMPLE_FRONTMATTER)
-    with patch('app.workers.tasks.ingest_client.fetch_markdown', return_value=markdown):
+    with patch('app.workers.tasks.ingest_client.fetch_released_markdown', return_value=markdown):
         index_document(str(document.id))  # must not raise
 
     db = TestingSessionLocal()
@@ -237,6 +289,38 @@ def test_index_document_with_unknown_previous_job_id_is_a_noop_for_supersede():
     finally:
         db.close()
 
+
+def test_failed_release_fetch_leaves_previous_version_active():
+    db = TestingSessionLocal()
+    try:
+        previous = _make_document(
+            db, source_job_id=str(uuid.uuid4()), status=DocumentStatus.INDEXED, chunk_count=1,
+            indexed_at=datetime.now(timezone.utc),
+        )
+        db.add(Chunk(
+            document_id=previous.id, chunk_index=0, text='previous', heading_path=[], char_count=8, meta={},
+        ))
+        current = _make_document(
+            db, source_job_id=str(uuid.uuid4()), previous_job_id=previous.source_job_id,
+        )
+        previous_id, current_id = previous.id, current.id
+        db.commit()
+    finally:
+        db.close()
+
+    with patch(
+        'app.workers.tasks.ingest_client.fetch_released_markdown',
+        side_effect=ingest_client.PermanentFetchError('snapshot unavailable'),
+    ):
+        index_document(str(current_id))
+
+    db = TestingSessionLocal()
+    try:
+        assert db.get(Document, previous_id).status == DocumentStatus.INDEXED
+        assert db.query(Chunk).filter_by(document_id=previous_id).count() == 1
+        assert db.get(Document, current_id).status == DocumentStatus.FAILED
+    finally:
+        db.close()
 
 # --- FINDING 3: fetch is keyed off source_job_id, never the stored markdown_url --
 
@@ -262,10 +346,12 @@ def test_index_document_never_fetches_the_stored_markdown_url_uses_job_id(monkey
     job_id = str(uuid.uuid4())
     markdown = _sample_markdown(SAMPLE_FRONTMATTER)
 
+    release_frontmatter = dict(SAMPLE_FRONTMATTER)
+    release_frontmatter['_weave_markdown_sha256'] = hashlib.sha256(markdown.encode('utf-8')).hexdigest()
     db = TestingSessionLocal()
     try:
         document = _make_document(
-            db, source_job_id=job_id, frontmatter=SAMPLE_FRONTMATTER,
+            db, source_job_id=job_id, frontmatter=release_frontmatter,
             markdown_url=f'https://weave.local/api/v1/jobs/{job_id}/download/../../../admin',
         )
     finally:
@@ -278,7 +364,7 @@ def test_index_document_never_fetches_the_stored_markdown_url_uses_job_id(monkey
 
     mock_get.assert_called_once()
     requested_url = mock_get.call_args[0][0]
-    assert requested_url == f'https://weave.local/api/v1/jobs/{job_id}/download'
+    assert requested_url == f'https://weave.local/api/v1/portal/releases/{document.frontmatter["_weave_release_id"]}/download'
     assert '..' not in requested_url
 
     db = TestingSessionLocal()
@@ -290,28 +376,32 @@ def test_index_document_never_fetches_the_stored_markdown_url_uses_job_id(monkey
         db.close()
 
 
-def test_index_document_ssrf_guard_marks_failed_without_any_fetch(monkeypatch):
-    """A job_id that doesn't resolve to a clean URL under
-    settings.weave_ingest_base_url (defense-in-depth -- app/schemas/events.py's
-    UUID pattern validation should already prevent this at webhook-receipt
-    time, see FINDING 2) is rejected by _validate_markdown_url before any
-    request is made."""
-    monkeypatch.setattr(settings, 'weave_ingest_base_url', 'https://weave.local')
+def test_index_document_legacy_without_release_metadata_is_a_noop(monkeypatch):
+    """A stale legacy task cannot publish content after the release cutover."""
     db = TestingSessionLocal()
     try:
-        document = _make_document(db, source_job_id='../../../etc/passwd')
+        document = Document(
+            source_job_id=str(uuid.uuid4()), content_sha256='a' * 64, engine='paddleocr',
+            frontmatter={}, tags=[], processed_at=datetime.now(timezone.utc),
+            status=DocumentStatus.INDEXED,
+        )
+        db.add(document)
+        db.commit()
+        db.refresh(document)
     finally:
         db.close()
 
-    with patch('app.services.ingest_client.httpx.get') as mock_get:
+    with patch('app.services.ingest_client.httpx.get') as mock_get, patch(
+        'app.workers.tasks.ingest_client.fetch_released_markdown'
+    ) as mock_fetch:
         index_document(str(document.id))
     mock_get.assert_not_called()
+    mock_fetch.assert_not_called()
 
     db = TestingSessionLocal()
     try:
         refreshed = db.get(Document, document.id)
-        assert refreshed.status == DocumentStatus.FAILED
-        assert refreshed.error
+        assert refreshed.status == DocumentStatus.INDEXED
         assert db.query(Chunk).filter_by(document_id=document.id).count() == 0
     finally:
         db.close()
@@ -329,7 +419,7 @@ def test_transient_fetch_error_reenqueues_with_backoff_and_bumps_attempts():
 
     with (
         patch(
-            'app.workers.tasks.ingest_client.fetch_markdown',
+            'app.workers.tasks.ingest_client.fetch_released_markdown',
             side_effect=ingest_client.TransientFetchError('boom'),
         ) as mock_fetch,
         patch.object(tasks_module.celery_app, 'send_task') as mock_send_task,
@@ -361,7 +451,7 @@ def test_transient_fetch_error_backoff_grows_on_later_attempts():
         db.close()
 
     with (
-        patch('app.workers.tasks.ingest_client.fetch_markdown', side_effect=ingest_client.TransientFetchError('boom')),
+        patch('app.workers.tasks.ingest_client.fetch_released_markdown', side_effect=ingest_client.TransientFetchError('boom')),
         patch.object(tasks_module.celery_app, 'send_task') as mock_send_task,
     ):
         index_document(str(document.id))
@@ -385,7 +475,7 @@ def test_transient_fetch_error_exhausts_retries_and_marks_failed():
 
     with (
         patch(
-            'app.workers.tasks.ingest_client.fetch_markdown',
+            'app.workers.tasks.ingest_client.fetch_released_markdown',
             side_effect=ingest_client.TransientFetchError('still down'),
         ),
         patch.object(tasks_module.celery_app, 'send_task') as mock_send_task,
@@ -416,7 +506,7 @@ def test_permanent_fetch_error_marks_failed_immediately_no_retry():
 
     with (
         patch(
-            'app.workers.tasks.ingest_client.fetch_markdown',
+            'app.workers.tasks.ingest_client.fetch_released_markdown',
             side_effect=ingest_client.PermanentFetchError('bad token'),
         ),
         patch.object(tasks_module.celery_app, 'send_task') as mock_send_task,
@@ -430,6 +520,27 @@ def test_permanent_fetch_error_marks_failed_immediately_no_retry():
         refreshed = db.get(Document, document.id)
         assert refreshed.status == DocumentStatus.FAILED
         assert 'bad token' in refreshed.error
+    finally:
+        db.close()
+
+
+def test_unexpected_failure_does_not_overwrite_concurrent_indexed_status():
+    db = TestingSessionLocal()
+    try:
+        document = _make_document(db)
+        document_id = document.id
+
+        concurrent_db = TestingSessionLocal()
+        try:
+            concurrent = concurrent_db.get(Document, document_id)
+            concurrent.status = DocumentStatus.INDEXED
+            concurrent_db.commit()
+        finally:
+            concurrent_db.close()
+
+        tasks_module._mark_unexpected_failure(db, str(document_id), 'late worker error')
+        db.expire_all()
+        assert db.get(Document, document_id).status == DocumentStatus.INDEXED
     finally:
         db.close()
 

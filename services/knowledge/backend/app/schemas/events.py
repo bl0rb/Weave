@@ -1,7 +1,6 @@
-"""Pydantic shape of an inbound `document.processed` webhook body (see
-contracts/events/document.processed.md + .schema.json). Used by
-app/api/events.py to validate a signature-verified payload before it is
-persisted.
+"""Pydantic shapes of inbound `document.processed` and `document.released`
+webhook bodies (see the event contracts). Used by app/api/events.py to
+validate signature-verified payloads before handling them.
 
 Deliberately tolerant: `extra='ignore'` on every model here, since the
 contract's own versioning section promises new optional top-level or
@@ -17,6 +16,7 @@ contracts/frontmatter.schema.json.
 from __future__ import annotations
 
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -50,10 +50,10 @@ class DocumentQuality(BaseModel):
     signals: dict = Field(default_factory=dict)
 
 
-class DocumentProcessedEvent(BaseModel):
+class _DocumentEventBase(BaseModel):
     model_config = ConfigDict(extra='ignore')
 
-    event: Literal['document.processed']
+    event: str
     job_id: str = Field(pattern=_UUID_PATTERN)
     document_version: int
     previous_job_id: str | None = None
@@ -64,3 +64,20 @@ class DocumentProcessedEvent(BaseModel):
     quality: DocumentQuality
     engine: str
     processed_at: str
+
+
+class DocumentProcessedEvent(_DocumentEventBase):
+    event: Literal['document.processed']
+
+
+class DocumentReleasedEvent(_DocumentEventBase):
+    """Signed, immutable release notification.
+
+    The release identifiers are deliberately separate from the processed
+    event's content hash.  The release snapshot is what Knowledge may
+    publish, and its hash is checked again after the authenticated download.
+    """
+
+    event: Literal['document.released']
+    release_id: UUID
+    markdown_sha256: str = Field(pattern=_SHA256_HEX_PATTERN)

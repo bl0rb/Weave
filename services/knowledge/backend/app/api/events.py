@@ -1,6 +1,6 @@
-"""Inbound webhook consumer for two Weave-Ingest event types, delivered over
-the same signed webhook route: `document.processed` (see
-contracts/events/document.processed.md + .schema.json) and
+"""Inbound webhook consumer for three Weave-Ingest event types, delivered over
+the same signed webhook route: `document.processed`, `document.released` (see
+contracts/events/document.released.md) and
 `collection.updated` (see _handle_collection_updated below for the
 rationale -- there is no separate contract doc for it, it carries no
 document-shaped payload at all).
@@ -18,16 +18,17 @@ exactly:
    verification step for this whole route.
 2. Parse the envelope. `event == 'collection.updated'` is handled by
    _handle_collection_updated (immediate registry resync, see its
-   docstring) and returns before any of the document.processed-specific
-   steps below run. `event == 'document.processed'` continues through
-   steps 3-5. Any other event type is silently ignored (204), not an error
+   docstring) and returns before any document-specific steps below run.
+   `event == 'document.processed'` is acknowledged as `awaiting_release`
+   without persistence. `event == 'document.released'`
+   continues through steps 3-5. Any other event type is silently ignored (204), not an error
    (a webhook connection can be subscribed to more than one event).
-3. Idempotency: `event_key = f'{job_id}:{content_sha256}'` is inserted into
+3. Idempotency: `event_key = f'release:{release_id}'` is inserted into
    `ingest_events` inside the SAME transaction as the Document upsert below
    (via `db.flush()`, not a separate `db.commit()`) -- a unique-constraint
-   violation means this exact (job_id, content_sha256) pair was already
-   processed, so nothing else in this request runs: no Document
-   create/update, no Celery task, just `{'status': 'duplicate'}` (200).
+   violation means this exact release was already
+   processed, so no Document is created or updated. A pending Document is
+   re-enqueued before `{'status': 'duplicate'}` (200); an indexed one is not.
    Weave-Ingest delivers at-least-once, so a redelivered event is the
    expected common case, not an error.
 4. `quality.recommendation == 'block'` -> the Document is created/updated
@@ -37,8 +38,8 @@ exactly:
 5. Otherwise: Document upsert (source_job_id unique) with status='pending'
    and `weave.knowledge.index_document` enqueued for it (202).
 
-Two concurrent document.processed events for the SAME job_id but DIFFERENT
-content_sha256 both have distinct event_keys, so both pass step 3's dedup
+Two concurrent document.released events for the SAME job_id but DIFFERENT
+release_id values both have distinct event_keys, so both pass step 3's dedup
 check -- and both can see "no existing Document for this job_id" before
 either has committed. Only one of their INSERTs can win
 documents.source_job_id's own unique constraint; the loser's `db.commit()`
@@ -80,6 +81,7 @@ import hmac
 import json
 import logging
 from datetime import datetime, timezone
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
@@ -91,7 +93,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.db import SessionLocal, get_db
 from app.models.models import Collection, Document, DocumentStatus, IngestEvent
-from app.schemas.events import DocumentProcessedEvent
+from app.schemas.events import DocumentReleasedEvent
 from app.services.collection_sync import CollectionSyncError, sync_collections
 from app.workers.tasks import index_document
 
@@ -101,6 +103,9 @@ router = APIRouter(prefix='/api/v1/events')
 
 _SIGNATURE_HEADER = 'X-Weave-Ingest-Signature'
 _SIGNATURE_PREFIX = 'sha256='
+_RELEASE_ID_KEY = '_weave_release_id'
+_MARKDOWN_SHA256_KEY = '_weave_markdown_sha256'
+_RELEASE_METADATA_KEYS = {_RELEASE_ID_KEY, _MARKDOWN_SHA256_KEY}
 
 # Document columns copied straight off the event's top-level fields plus a
 # few denormalized out of `frontmatter` -- see app/models/models.py's
@@ -165,13 +170,13 @@ def _ensure_collection_known(slug: str) -> None:
             sync_collections(sync_db)
         except CollectionSyncError:
             logger.warning(
-                'document.processed event: collection %r is not in the local registry mirror and the '
+                'document.released event: collection %r is not in the local registry mirror and the '
                 'lazy reload failed; indexing the document anyway', slug, exc_info=True,
             )
             return
         if sync_db.get(Collection, slug) is None:
             logger.warning(
-                'document.processed event: collection %r is still unknown after a registry reload '
+                'document.released event: collection %r is still unknown after a registry reload '
                 '(not created upstream yet, or already renamed/removed there); indexing the document anyway',
                 slug,
             )
@@ -181,7 +186,7 @@ def _ensure_collection_known(slug: str) -> None:
 
 def _handle_collection_updated(db: Session) -> Response:
     """Handles an inbound `collection.updated` event: Weave-Ingest sends
-    this over the SAME signed webhook route as `document.processed`
+    this over the SAME signed webhook route as the document events
     whenever its `collections` table changes (created/renamed/deleted, or
     -- the case this exists for -- an ACL edit such as `read_teams` shrinking
     to revoke a team's read access). Triggers an immediate
@@ -192,8 +197,8 @@ def _handle_collection_updated(db: Session) -> Response:
     now a fallback, not the primary freshness mechanism).
 
     Deliberately NOT run through the `ingest_events` idempotency ledger that
-    `document.processed` uses below (see IngestEvent's docstring and step 3
-    above): that ledger's dedup key is `(job_id, content_sha256)`, and this
+    `document.released` uses below (see IngestEvent's docstring and step 3
+    above): that ledger's dedup key is `release:<release_id>`, and this
     event type carries neither -- it names no document and no job at all,
     only "the registry may have changed, go re-fetch the whole thing". A
     redelivered `collection.updated` (Weave-Ingest's at-least-once delivery
@@ -240,7 +245,46 @@ async def _read_raw_body(request: Request) -> bytes:
     return await request.body()
 
 
-def _upsert_document(db: Session, event: DocumentProcessedEvent, frontmatter: dict, recommendation: str) -> tuple[Document, bool]:
+def _canonicalize_release_frontmatter(frontmatter: dict, event: DocumentReleasedEvent) -> dict:
+    """Keep producer supplied metadata while owning the reserved keys.
+
+    Release identity is trusted only from the signed top-level event.  A
+    stale or forged copy nested in frontmatter must never become provenance.
+    """
+    canonical = {
+        key: value for key, value in frontmatter.items() if key not in _RELEASE_METADATA_KEYS
+    }
+    canonical[_RELEASE_ID_KEY] = str(event.release_id)
+    canonical[_MARKDOWN_SHA256_KEY] = event.markdown_sha256
+    return canonical
+
+
+def _stored_release_metadata(document: Document) -> tuple[str, str] | None:
+    """Return validated release metadata, or None for a legacy row.
+
+    A partially present or malformed reserved value is treated as unsafe by
+    the caller, rather than being mistaken for a legacy document.
+    """
+    frontmatter = document.frontmatter or {}
+    if not isinstance(frontmatter, dict):
+        raise ValueError('stored frontmatter is invalid')
+    present = _RELEASE_METADATA_KEYS.intersection(frontmatter)
+    if not present:
+        return None
+    release_id = frontmatter.get(_RELEASE_ID_KEY)
+    markdown_sha256 = frontmatter.get(_MARKDOWN_SHA256_KEY)
+    if not isinstance(release_id, str) or not isinstance(markdown_sha256, str):
+        raise ValueError('stored release metadata is incomplete')
+    try:
+        normalized_release_id = str(UUID(release_id))
+    except (ValueError, AttributeError):
+        raise ValueError('stored release_id is invalid')
+    if len(markdown_sha256) != 64 or any(char not in '0123456789abcdef' for char in markdown_sha256):
+        raise ValueError('stored markdown_sha256 is invalid')
+    return normalized_release_id, markdown_sha256
+
+
+def _upsert_document(db: Session, event: DocumentReleasedEvent, frontmatter: dict, recommendation: str) -> tuple[Document, bool]:
     """Create-or-update the Document row for `event.job_id`, applying every
     field this event carries. Returns `(document, is_new)` -- `is_new`
     tells the caller whether this call issued an INSERT (and can therefore
@@ -253,6 +297,16 @@ def _upsert_document(db: Session, event: DocumentProcessedEvent, frontmatter: di
     if is_new:
         document = Document(source_job_id=event.job_id)
         db.add(document)
+    else:
+        try:
+            stored = _stored_release_metadata(document)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='job has invalid release metadata') from exc
+        if stored is not None and stored != (str(event.release_id), event.markdown_sha256):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail='job already has a different release',
+            )
 
     for field_name in _EVENT_FIELDS:
         setattr(document, field_name, getattr(event, field_name))
@@ -308,16 +362,21 @@ def ingest_event(
     if event_type == 'collection.updated':
         return _handle_collection_updated(db)
 
-    if event_type != 'document.processed':
+    if event_type == 'document.processed':
+        # Processing is deliberately acknowledged without persistence. Only a
+        # signed document.released event can create an indexable Document.
+        return JSONResponse(status_code=status.HTTP_200_OK, content={'status': 'awaiting_release'})
+
+    if event_type != 'document.released':
         # Not an event type this service consumes -- ignored, not an error.
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     try:
-        event = DocumentProcessedEvent.model_validate(raw_payload)
+        event = DocumentReleasedEvent.model_validate(raw_payload)
     except ValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    event_key = f'{event.job_id}:{event.content_sha256}'
+    event_key = f'release:{event.release_id}'
     payload_sha256 = hashlib.sha256(raw_body).hexdigest()
 
     # Flushed (not committed) so the unique-constraint check and the
@@ -333,18 +392,32 @@ def ingest_event(
         db.rollback()
         existing = db.execute(select(IngestEvent).where(IngestEvent.event_key == event_key)).scalar_one_or_none()
         if existing is not None and existing.payload_sha256 != payload_sha256:
-            # Same (job_id, content_sha256) key, different body -- would
+            # Same release key, different body -- would
             # indicate a Weave-Ingest bug, not a normal at-least-once retry
             # (see IngestEvent's docstring). Still deduped either way: the
-            # dedup key is (job_id, content_sha256) by contract, not a
+            # dedup key is release_id by contract, not a
             # payload hash.
-            logger.warning('document.processed event %s redelivered with a different payload body', event_key)
+            logger.warning('document.released event %s redelivered with a different payload body', event_key)
+        document = db.execute(
+            select(Document).where(Document.source_job_id == event.job_id)
+        ).scalar_one_or_none()
+        if document is not None and document.status == DocumentStatus.PENDING:
+            # The previous delivery may have committed the Document and then
+            # failed while publishing to Redis. Do not acknowledge that
+            # delivery as complete until a pending document has been offered
+            # to the index queue again. An enqueue error deliberately escapes
+            # as 500 so the outbox will redeliver once more.
+            index_document.delay(str(document.id))
         return JSONResponse(status_code=status.HTTP_200_OK, content={'status': 'duplicate'})
 
-    frontmatter = event.frontmatter
+    frontmatter = _canonicalize_release_frontmatter(event.frontmatter, event)
     recommendation = event.quality.recommendation or 'warn'
 
-    document, is_new = _upsert_document(db, event, frontmatter, recommendation)
+    try:
+        document, is_new = _upsert_document(db, event, frontmatter, recommendation)
+    except HTTPException:
+        db.rollback()
+        raise
 
     try:
         db.commit()
@@ -358,7 +431,11 @@ def ingest_event(
         if not is_new:
             raise
         db.add(IngestEvent(event_key=event_key, event_type=event.event, payload_sha256=payload_sha256))
-        document, _ = _upsert_document(db, event, frontmatter, recommendation)
+        try:
+            document, _ = _upsert_document(db, event, frontmatter, recommendation)
+        except HTTPException:
+            db.rollback()
+            raise
         db.commit()
 
     db.refresh(document)

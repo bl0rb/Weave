@@ -15,8 +15,8 @@ const lora = Lora({
 });
 
 export const metadata: Metadata = {
-  title: "Weave Ingest",
-  description: "Document processing pipeline powered by PaddleOCR",
+  title: "Weave · Wissensportal",
+  description: "Weave Wissensportal",
 };
 
 export default function RootLayout({
@@ -25,7 +25,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`h-full antialiased ${sourceSans.variable} ${lora.variable}`}>
+    <html lang="de" className={`h-full antialiased ${sourceSans.variable} ${lora.variable}`}>
       <head>
         {/*
           `beforeInteractive` is Next.js's blessed way to run a script

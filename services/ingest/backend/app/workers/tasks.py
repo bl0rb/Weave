@@ -250,6 +250,13 @@ def _recover_jobs_on_worker_ready(sender=None, **kwargs) -> None:  # pragma: no 
     except Exception:
         logger.exception('Failed to kickstart the session-cleanup tick chain')
 
+    # Publication outbox reconciler: the release row is committed before any
+    # queue trigger, so a lost queue message is recovered by this chain.
+    try:
+        celery_app.send_task('publication_tick', args=[None])
+    except Exception:
+        logger.exception('Failed to kickstart the publication tick chain')
+
 
 @celery_app.task(name='process_job', bind=True, acks_late=True, reject_on_worker_lost=True)
 def process_job(
@@ -545,6 +552,7 @@ import app.workers.import_tasks  # noqa: E402,F401  (registers import_confluence
 import app.workers.openwebui_tasks  # noqa: E402,F401  (registers push_openwebui)
 import app.workers.refresh_tasks  # noqa: E402,F401  (registers confluence_refresh_tick)
 import app.workers.session_cleanup_tasks  # noqa: E402,F401  (registers session_cleanup_tick)
+import app.workers.publication_tasks  # noqa: E402,F401  (registers publication tasks)
 # webhook_tasks (registers deliver_webhook) is already imported above (as
 # `webhook_tasks`, module-object style) for the completion hooks' own use --
 # no separate registration-only import needed here, unlike the three above.

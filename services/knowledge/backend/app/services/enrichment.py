@@ -28,7 +28,10 @@ from app.services.chunker import Chunk
 # exactly what Weave-Retrieval's per-chunk filter needs; no separate
 # `collection_name` in meta, same as team/department never carrying a
 # second display-vs-slug pair.
-_DOCUMENT_FIELDS = ('source', 'original_filename', 'team', 'department', 'document_version', 'engine', 'collection')
+_DOCUMENT_FIELDS = (
+    'source', 'original_filename', 'team', 'department', 'document_version', 'engine', 'collection',
+    '_weave_release_id', '_weave_markdown_sha256',
+)
 
 # Confluence-only frontmatter keys (see contracts/frontmatter.schema.json)
 # -- present only for pages imported from Confluence, never for a plain

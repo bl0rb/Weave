@@ -23,6 +23,7 @@ frontend:
     type: ClusterIP
     port: 3000
   apiUrl: http://localhost:8000
+  chatUrl: http://localhost:3001
   resources: {}
   nodeSelector: {}
   tolerations: []
@@ -84,6 +85,14 @@ backend:
     allowPrivilegeEscalation: false
     capabilities:
       drop: ["ALL"]
+
+portal:
+  knowledgeBaseUrl: "http://weave-knowledge:8000"
+  knowledgeWebhookSecret:
+    existingSecret: ""
+    existingSecretKey: "webhook-secret"
+  privateHostAllowlist:
+    - weave-knowledge
 
 worker:
   enabled: true

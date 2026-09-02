@@ -34,7 +34,19 @@ from sqlalchemy.orm import defer
 
 from app.core.config import settings
 from app.database.session import SessionLocal
-from app.models.models import ImportPageState, ImportRun, ImportRunStatus, ImportSource, Job, JobArtifact, JobStatus, Tag
+from app.models.models import (
+    Collection,
+    ImportPageState,
+    ImportRun,
+    ImportRunStatus,
+    ImportSource,
+    Job,
+    JobArtifact,
+    JobStatus,
+    Tag,
+    User,
+    UserRole,
+)
 from app.services import security
 from app.services.confluence import AttachmentMeta, ConfluenceError, Page, PageSource, create_client
 from app.services.confluence_markdown import add_frontmatter_keys, convert_page, rewrite_cross_page_links, sanitize_filename
@@ -581,6 +593,7 @@ def _store_attachments(
                 upload_content=data,
                 upload_mime_type=content_type,
                 upload_size_bytes=len(data),
+                content_sha256=hashlib.sha256(data).hexdigest(),
                 status=JobStatus.PENDING,
                 owner_id=run.owner_id,
                 import_run_id=run.id,
@@ -590,7 +603,9 @@ def _store_attachments(
                         'email': options.get('email') or '',
                         'department': None,
                         'profile_id': options.get('ocr_profile_id'),
-                        'collection_id': None,
+                        'collection_id': options.get('collection_id'),
+                        'collection_slug': options.get('collection_slug'),
+                        'collection_name': options.get('collection_name'),
                         'folder': folder,
                         'subfolder': subfolder,
                         'storage_folder': child_storage_folder,
@@ -689,6 +704,40 @@ def _job_tags(options: dict, path_titles: list[str] | None) -> list[str]:
                 seen.add(title)
                 tags.append(title)
     return tags
+
+
+def _resolve_collection(db, source: ImportSource, options: dict) -> Collection | None:
+    """Resolve an assigned collection before any page job can be written.
+
+    The API applies visibility/control checks at creation time. This second
+    check protects queued runs and periodic refreshes from a deleted or no
+    longer controllable assignment. An admin source owner may retain an
+    assignment to another owner's collection, matching the API contract.
+    """
+    collection_id = options.get('collection_id')
+    if collection_id is None or collection_id == '':
+        # Slugs are never fallback selectors. Legacy runs without a collection
+        # id remain unassigned; malformed assigned snapshots fail closed.
+        if options.get('collection_slug') or options.get('collection_name'):
+            raise ValueError('collection assignment is missing its collection_id')
+        return None
+
+    collection = db.get(Collection, str(collection_id))
+    if collection is None:
+        raise ValueError('assigned collection no longer exists; refusing an unassigned import')
+
+    source_owner = db.get(User, source.owner_id)
+    if source_owner is None:
+        raise ValueError('import source owner no longer exists; refusing collection assignment')
+    if source_owner.role != UserRole.ADMIN and collection.owner_id != source.owner_id:
+        raise ValueError('assigned collection is no longer controllable by the import source owner')
+
+    # Re-normalize queued snapshots from the authoritative row. This also
+    # lets a collection name change flow into a later refresh safely.
+    options['collection_id'] = collection.id
+    options['collection_slug'] = collection.slug
+    options['collection_name'] = collection.name
+    return collection
 
 
 def _import_one_page(
@@ -812,6 +861,13 @@ def _import_one_page(
         space_key=state.space_key,
         path_titles=path_titles,
     )
+    collection_slug = options.get('collection_slug')
+    collection_name = options.get('collection_name')
+    if collection_slug and collection_name:
+        conversion.markdown = add_frontmatter_keys(
+            conversion.markdown,
+            {'collection': collection_slug, 'collection_name': collection_name},
+        )
 
     folder = options.get('folder') or _default_folder(run)
     subfolder = options.get('subfolder') or ''
@@ -828,6 +884,7 @@ def _import_one_page(
         upload_content=html_bytes,
         upload_mime_type='text/html',
         upload_size_bytes=len(html_bytes),
+        content_sha256=hashlib.sha256(html_bytes).hexdigest(),
         result_markdown=conversion.markdown,
         status=JobStatus.FINISHED,
         owner_id=run.owner_id,
@@ -840,7 +897,9 @@ def _import_one_page(
                 'email': options.get('email') or '',
                 'department': None,
                 'profile_id': None,
-                'collection_id': None,
+                'collection_id': options.get('collection_id'),
+                'collection_slug': options.get('collection_slug'),
+                'collection_name': options.get('collection_name'),
                 'folder': folder,
                 'subfolder': subfolder,
                 'storage_folder': storage_folder,
@@ -998,6 +1057,17 @@ def import_confluence(self, run_id: str, chunk_seq: int) -> None:
         source = db.get(ImportSource, run.source_id) if run.source_id else None
         if source is None:
             _fail_run(db, run, state, 'import source was deleted; the run cannot continue', claimed_seq)
+            return
+        try:
+            _resolve_collection(db, source, options)
+            # Persist worker-side normalization before any page job is made.
+            # This is also what makes a queued refresh use the current
+            # authoritative collection display values consistently.
+            run.options = dict(options)
+            state.persist(run)
+            _commit_owned(db, run.id, claimed_seq)
+        except ValueError as exc:
+            _fail_run(db, run, state, str(exc), claimed_seq)
             return
         try:
             credential = security.decrypt_import_credential(source.credential_encrypted)

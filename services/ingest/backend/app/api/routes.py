@@ -20,6 +20,7 @@ from app.core.config import settings
 from app.database.session import get_db
 from app.models.models import (
     Collection,
+    DocumentRelease,
     Job,
     JobArtifact,
     JobMarkdownVersion,
@@ -258,6 +259,32 @@ def _require_collection_control(collection: Collection, user: User) -> None:
         )
 
 
+def _require_unreleased_job(db: Session, job: Job) -> None:
+    if db.scalar(select(DocumentRelease.id).where(DocumentRelease.job_id == job.id)) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='Job has an issued portal release; a new document version is required',
+        )
+
+
+def _lock_jobs(db: Session, job_ids: list[str]) -> list[Job]:
+    """Lock a batch in a stable order before release/mutation guards.
+
+    PostgreSQL serializes a collection start against a release, save, or
+    restart touching any of the same jobs. SQLite ignores FOR UPDATE and
+    provides its single-writer serialization instead.
+    """
+    if not job_ids:
+        return []
+    return db.scalars(
+        select(Job)
+        .where(Job.id.in_(job_ids))
+        .order_by(Job.id)
+        .with_for_update()
+        .options(*_JOB_BLOB_DEFER_OPTIONS)
+    ).all()
+
+
 _COLLECTION_SLUG_RE = re.compile(r'^[a-z0-9]+(-[a-z0-9]+)*$')
 
 
@@ -282,9 +309,10 @@ def _unique_collection_slug(db: Session, base: str) -> str:
     return candidate
 
 
-def _collection_to_response(collection: Collection, *, job_ids: list[str] | None = None) -> CollectionResponse:
+def _collection_to_response(collection: Collection, user: User, *, job_ids: list[str] | None = None) -> CollectionResponse:
     return CollectionResponse(
         collection_id=collection.id,
+        can_manage=user.role == UserRole.ADMIN or collection.owner_id == user.id,
         slug=collection.slug,
         name=collection.name,
         description=collection.description,
@@ -912,7 +940,7 @@ def create_collection(
         webhook_tasks.dispatch_collection_event(db, collection, 'collection.updated')
     except Exception:  # pragma: no cover - webhooks must never break collection creation
         logger.exception('webhook dispatch failed for collection %s (collection.updated)', collection.id)
-    return _collection_to_response(collection)
+    return _collection_to_response(collection, user)
 
 
 @router.get('/collections', response_model=CollectionListResponse)
@@ -926,7 +954,7 @@ def list_collections(db: Session = Depends(get_db), user: User = Depends(get_cur
     if visible_filter is not None:
         query = query.where(visible_filter)
     collections = db.scalars(query).all()
-    return CollectionListResponse(items=[_collection_to_response(collection) for collection in collections])
+    return CollectionListResponse(items=[_collection_to_response(collection, user) for collection in collections])
 
 
 @router.get('/collections/registry', response_model=CollectionRegistryResponse)
@@ -976,7 +1004,7 @@ def get_collection(collection_id: str, db: Session = Depends(get_db), user: User
     if collection is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
     _require_visible_collection(db, collection, user)
-    return _collection_to_response(collection, job_ids=_collection_job_ids(db, collection.id, user))
+    return _collection_to_response(collection, user, job_ids=_collection_job_ids(db, collection.id, user))
 
 
 @router.patch('/collections/{collection_id}', response_model=CollectionResponse)
@@ -1016,7 +1044,7 @@ def update_collection(
         webhook_tasks.dispatch_collection_event(db, collection, 'collection.updated')
     except Exception:  # pragma: no cover - webhooks must never break a collection update
         logger.exception('webhook dispatch failed for collection %s (collection.updated)', collection.id)
-    return _collection_to_response(collection, job_ids=_collection_job_ids(db, collection.id, user))
+    return _collection_to_response(collection, user, job_ids=_collection_job_ids(db, collection.id, user))
 
 
 @router.post('/collections/{collection_id}/upload', response_model=UploadResponse)
@@ -1036,6 +1064,7 @@ def upload_document_to_collection(
     if collection is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
     _require_visible_collection(db, collection, user)
+    _require_collection_control(collection, user)
 
     file_id = str(uuid.uuid4())
     folder_value = folder.strip() or collection.folder or ''
@@ -1084,6 +1113,7 @@ def start_collection_processing(
     if collection is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
     _require_visible_collection(db, collection, user)
+    _require_collection_control(collection, user)
 
     # Raises 422 for an unknown/disabled 'vl:<connection_id>' selection;
     # {} for a static profile (see resolve_profile_selection). Resolved once
@@ -1101,11 +1131,20 @@ def start_collection_processing(
     if not job_ids:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='No files uploaded to collection')
 
+    locked_jobs = _lock_jobs(db, job_ids)
+    released_job_id = db.scalar(
+        select(DocumentRelease.job_id)
+        .where(DocumentRelease.job_id.in_(job_ids))
+        .limit(1)
+    )
+    if released_job_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='Collection contains an issued portal release; a new document version is required',
+        )
+
     started = 0
-    for job_id in job_ids:
-        job = db.get(Job, job_id)
-        if job is None:
-            continue
+    for job in locked_jobs:
         info = job.processing_info if isinstance(job.processing_info, dict) else {}
         settings_info = dict(info.get('settings')) if isinstance(info.get('settings'), dict) else {}
         # Clear any stale vl_connection_id/variant_label/webhook_connection_id
@@ -1458,11 +1497,12 @@ def restart_job(
 
     requested_profile_id = payload.profile_id if payload is not None else None
 
-    job = db.get(Job, job_id)
+    job = db.get(Job, job_id, with_for_update=True)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Job not found')
     _require_visible(db, job, user)
     _reject_benchmark_child_job(job)
+    _require_unreleased_job(db, job)
     if _is_import_page_job(job):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Imported pages cannot be restarted')
 
@@ -1547,7 +1587,7 @@ def retry_job_with_lower_profile(
 ) -> dict[str, str]:
     enforce_rate_limit(request)
 
-    job = db.get(Job, job_id)
+    job = db.get(Job, job_id, with_for_update=True)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Job not found')
     _require_visible(db, job, user)
@@ -1941,6 +1981,7 @@ def save_markdown(
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Job not found')
     _require_visible(db, job, user)
+    _require_unreleased_job(db, job)
     if job.status != JobStatus.FINISHED:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Job not finished')
 
@@ -2008,6 +2049,12 @@ def delete_job(
     _reject_benchmark_child_job(job)
 
     _check_job_password(job, password)
+
+    if db.scalar(select(DocumentRelease.id).where(DocumentRelease.job_id == job.id)) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='Job has an issued portal release and cannot be deleted',
+        )
 
     _delete_job_artifacts(job)
 
@@ -2248,6 +2295,21 @@ def delete_folder(
         for job in jobs
         if (fp := _job_folder_path(job)) == normalized or fp.startswith(f'{normalized}/')
     ]
+
+    release_job_ids = (
+        db.scalars(
+            select(DocumentRelease.job_id).where(
+                DocumentRelease.job_id.in_([job.id for job in folder_jobs])
+            )
+        ).all()
+        if folder_jobs
+        else []
+    )
+    if release_job_ids:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='Folder contains jobs with issued portal releases and cannot be deleted',
+        )
 
     deleted_jobs = 0
     for job in folder_jobs:

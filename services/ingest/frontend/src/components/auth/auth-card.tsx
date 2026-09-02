@@ -20,7 +20,7 @@ export function AuthShell({
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center gap-3">
           <WeaveIngestLogo className="h-12 w-12 drop-shadow-md" />
-          <span className="text-lg font-semibold text-slate-950">Weave Ingest</span>
+          <span className="text-lg font-semibold text-slate-950">Weave · Wissensportal</span>
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
@@ -39,7 +39,7 @@ export function AuthPageSpinner() {
     <main className="flex min-h-screen items-center justify-center bg-slate-50">
       <div
         role="status"
-        aria-label="Loading"
+        aria-label="Wird geladen"
         className="h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-emerald-600"
       />
     </main>

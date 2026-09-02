@@ -1,14 +1,11 @@
-"""Weave-Ingest markdown fetcher used by the index pipeline
+"""Weave-Ingest markdown fetchers used by the index pipeline
 (app/workers/tasks.py's index_document).
 
-Downloads a job's rendered markdown (YAML frontmatter + body) from
-Weave-Ingest's `GET /api/v1/jobs/{job_id}/download` route -- the exact URL a
-document.processed event's `markdown_url` field points at (see
-contracts/events/document.processed.md's `markdown_url` section). That
-route requires the same auth as any other Weave-Ingest API call
-(`Authorization: Bearer <token>`) and the same visibility check as any other
-job access, so this service needs a real Weave-Ingest service-user token
-(settings.weave_ingest_api_token), not just the URL.
+Released indexing downloads the immutable snapshot from
+`GET /api/v1/portal/releases/{release_id}/download`, using a locally built
+target and verifying its UTF-8 SHA-256 before chunking. The existing
+job-based fetcher remains available for compatibility with other callers,
+but released indexing never uses an event-supplied URL.
 
 Kept DB-free and FastAPI-free by design, same shape as
 app/services/embeddings.py's OpenAICompatibleProvider: a plain function
@@ -32,7 +29,10 @@ app/api/events.py), but no longer used to build any outbound request.
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import re
+import uuid
 from urllib.parse import urlsplit
 
 import httpx
@@ -43,6 +43,9 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT_SECONDS = 30.0
 _DOWNLOAD_PATH_TEMPLATE = '/api/v1/jobs/{job_id}/download'
+_RELEASE_DOWNLOAD_PATH_TEMPLATE = '/api/v1/portal/releases/{release_id}/download'
+_UUID_RE = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+_SHA256_RE = re.compile(r'^[a-f0-9]{64}$')
 
 
 class FetchError(Exception):
@@ -88,6 +91,17 @@ def build_markdown_url(job_id: str) -> str:
     below still checks it regardless, as defense-in-depth.
     """
     return f'{_authorized_base_url()}{_DOWNLOAD_PATH_TEMPLATE.format(job_id=job_id)}'
+
+
+def build_released_markdown_url(release_id: str) -> str:
+    """Build the only URL used for an approved release snapshot."""
+    try:
+        parsed_release_id = uuid.UUID(str(release_id))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise ValueError('release_id must be a UUID') from exc
+    if not _UUID_RE.fullmatch(str(release_id)):
+        raise ValueError('release_id must use canonical UUID syntax')
+    return f'{_authorized_base_url()}{_RELEASE_DOWNLOAD_PATH_TEMPLATE.format(release_id=parsed_release_id)}'
 
 
 def _is_within_base_url(markdown_url: str, base_url: str) -> bool:
@@ -158,23 +172,57 @@ def fetch_markdown(job_id: str, *, timeout: float = _DEFAULT_TIMEOUT_SECONDS) ->
     markdown_url = build_markdown_url(job_id)
     _validate_markdown_url(markdown_url, base_url)
 
+    return _fetch_url(markdown_url, timeout=timeout)
+
+
+def fetch_released_markdown(
+    release_id: str, expected_sha256: str, *, timeout: float = _DEFAULT_TIMEOUT_SECONDS
+) -> str:
+    """Download and verify an immutable approved release snapshot.
+
+    The event's markdown_url is intentionally not an input. The target is
+    constructed from trusted local settings and a UUID validated here, and
+    the UTF-8 bytes are checked against the signed top-level hash before the
+    caller can chunk the document.
+    """
+    if not isinstance(expected_sha256, str) or not _SHA256_RE.fullmatch(expected_sha256):
+        raise ValueError('expected_sha256 must be lowercase hexadecimal SHA-256')
+    markdown_url = build_released_markdown_url(release_id)
+    _validate_markdown_url(markdown_url, _authorized_base_url())
+    markdown = _fetch_url(markdown_url, timeout=timeout)
+    actual_sha256 = hashlib.sha256(markdown.encode('utf-8')).hexdigest()
+    if actual_sha256 != expected_sha256:
+        raise PermanentFetchError(
+            f'fetching {markdown_url!r} returned a body with SHA-256 {actual_sha256}, '
+            f'expected {expected_sha256}'
+        )
+    return markdown
+
+
+def _fetch_url(url: str, *, timeout: float) -> str:
     headers = {'Authorization': f'Bearer {settings.weave_ingest_api_token}'}
     try:
-        response = httpx.get(markdown_url, headers=headers, timeout=timeout, follow_redirects=False)
+        response = httpx.get(url, headers=headers, timeout=timeout, follow_redirects=False)
     except httpx.HTTPError as exc:
         # Covers httpx.TimeoutException (a subclass of HTTPError) as well as
         # every other transport-level failure (connection refused, DNS
         # failure, ...) -- none of these produced a real HTTP response, so
         # none of them can be classified by status code below.
-        raise TransientFetchError(f'fetching {markdown_url!r} failed: {exc}') from exc
+        raise TransientFetchError(f'fetching {url!r} failed: {exc}') from exc
 
     if response.status_code == 200:
+        raw_content = getattr(response, 'content', None)
+        if isinstance(raw_content, bytes):
+            try:
+                return raw_content.decode('utf-8')
+            except UnicodeDecodeError as exc:
+                raise PermanentFetchError(f'fetching {url!r} returned non-UTF-8 content') from exc
         return response.text
     if response.status_code in (401, 403, 404):
-        raise PermanentFetchError(f'fetching {markdown_url!r} returned HTTP {response.status_code}')
+        raise PermanentFetchError(f'fetching {url!r} returned HTTP {response.status_code}')
     if response.status_code >= 500:
-        raise TransientFetchError(f'fetching {markdown_url!r} returned HTTP {response.status_code}')
+        raise TransientFetchError(f'fetching {url!r} returned HTTP {response.status_code}')
     # Any other status (a stray redirect since follow_redirects=False, or an
     # unexpected 4xx) -- not retryable, same "any other 4xx" reasoning as
     # OpenAICompatibleProvider in app/services/embeddings.py.
-    raise PermanentFetchError(f'fetching {markdown_url!r} returned unexpected HTTP {response.status_code}')
+    raise PermanentFetchError(f'fetching {url!r} returned unexpected HTTP {response.status_code}')

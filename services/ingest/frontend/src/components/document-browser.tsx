@@ -1002,12 +1002,11 @@ export function DocumentBrowser({
                         </span>
                       )}
                       {isMailAttachmentJob(job) && mailMessageIdForJob(job) && (
-                        <Link
-                          href={`/mail/${mailMessageIdForJob(job)}`}
-                          className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-800 hover:bg-emerald-100"
+                        <span
+                          className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-800"
                         >
-                          <Mail className="h-3 w-3" /> from mail
-                        </Link>
+                          <Mail className="h-3 w-3" /> E-Mail-Anhang
+                        </span>
                       )}
                     </div>
                     {job.status === 'FAILED' && (

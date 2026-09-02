@@ -111,13 +111,13 @@ export default function LoginPage() {
       window.location.assign(handoff ? handoffStartUrl(handoff.state) : '/');
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        setError('Invalid credentials');
+        setError('Benutzername oder Passwort ist falsch.');
       } else if (err instanceof ApiError && err.status === 429) {
-        setError('Too many attempts — try again shortly');
+        setError('Zu viele Versuche. Bitte versuche es gleich erneut.');
       } else if (err instanceof ApiError) {
         setError(err.detail);
       } else {
-        setError('Could not reach the server. Please try again.');
+        setError('Der Dienst ist nicht erreichbar. Bitte versuche es erneut.');
       }
       setPending(false);
     }
@@ -144,17 +144,17 @@ export default function LoginPage() {
 
   return (
     <AuthShell
-      title="Sign in"
+      title="Anmelden"
       subtitle={
         handoff
-          ? 'Sign in once — you will be taken straight back to where you came from.'
-          : 'Welcome back — sign in to your Weave Ingest workspace.'
+          ? 'Melde dich mit deinem Weave-Konto an. Danach geht es zurück zum Chat.'
+          : 'Willkommen im Wissensportal. Melde dich mit deinem Weave-Konto an.'
       }
     >
       <form onSubmit={onSubmit} className="flex flex-col gap-4">
         <AuthField
           id="identifier"
-          label="Username or email"
+          label="Benutzername oder E-Mail"
           name="username"
           autoComplete="username"
           required
@@ -164,7 +164,7 @@ export default function LoginPage() {
         />
         <AuthField
           id="password"
-          label="Password"
+          label="Passwort"
           name="password"
           type="password"
           autoComplete="current-password"
@@ -176,7 +176,7 @@ export default function LoginPage() {
         <FormError message={error} />
 
         <Button type="submit" disabled={pending} className="mt-1 w-full rounded-xl">
-          {pending ? 'Signing in…' : 'Sign in'}
+          {pending ? 'Anmeldung läuft …' : 'Anmelden'}
         </Button>
       </form>
 
@@ -185,7 +185,7 @@ export default function LoginPage() {
           <div className="flex items-center gap-3" aria-hidden="true">
             <div className="h-px flex-1 bg-slate-200" />
             <span className="text-xs font-medium uppercase tracking-wide text-slate-400">
-              or continue with
+              oder über eure Organisation
             </span>
             <div className="h-px flex-1 bg-slate-200" />
           </div>

@@ -20,7 +20,9 @@ die alten Repos.
 | Verzeichnis | Aufgabe |
 |---|---|
 | `services/ingest` | Dokumenten-Ingestion: OCR (PaddleOCR), Konvertierung nach Markdown + Frontmatter, Quality-Gate; besitzt die Collections. |
-| `services/knowledge` | Index-Pipeline: konsumiert `document.processed`-Events, chunked und embedded Dokumente, schreibt den Chunk-Store (pgvector). |
+| `services/knowledge` | Index-Pipeline: konsumiert freigegebene `document.released`-Events, chunked und embedded Dokumente, schreibt den Chunk-Store (pgvector). |
+
+Das [Wissensportal](docs/wissensportal.md) indexiert regulär ausschließlich unveränderliche, manuell freigegebene `document.released`-Snapshots.
 | `services/retrieval` | Hybride Suche (pgvector + tsvector, RRF-Fusion) — liest den Chunk-Store von `services/knowledge` read-only mit, ohne eigene Migrationen. |
 | `services/runtime` | LLM-Executor und Agentic Loop: Intent-Routing, Bots als YAML, ruft `services/retrieval` fuer Suche, kann Chat-Turns an n8n delegieren. |
 | `services/api` | Oeffentliches Gateway und Identitaets-Autoritaet: Nutzer, API-Tokens, Sitzungen, Gespraeche, optionales OIDC-Login. |

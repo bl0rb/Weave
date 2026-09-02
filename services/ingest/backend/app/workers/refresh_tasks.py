@@ -61,7 +61,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.database.session import SessionLocal
-from app.models.models import ImportRun, ImportRunStatus, ImportSource
+from app.models.models import Collection, ImportRun, ImportRunStatus, ImportSource, User, UserRole
 from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -184,6 +184,23 @@ def _start_refresh_run(db, source: ImportSource) -> bool:
         return False
 
     options = dict(last_successful.options) if isinstance(last_successful.options, dict) else {}
+    collection_id = options.get('collection_id')
+    if collection_id:
+        collection = db.get(Collection, str(collection_id))
+        if collection is None:
+            raise ValueError('assigned collection no longer exists; refusing an unassigned refresh')
+        source_owner = db.get(User, source.owner_id)
+        if source_owner is None:
+            raise ValueError('import source owner no longer exists; refusing collection assignment')
+        if source_owner.role != UserRole.ADMIN and collection.owner_id != source.owner_id:
+            raise ValueError('assigned collection is no longer controllable by the import source owner')
+        # Keep the original id as the mapping anchor and refresh display values
+        # from the authoritative Collection row.
+        options['collection_id'] = collection.id
+        options['collection_slug'] = collection.slug
+        options['collection_name'] = collection.name
+    elif options.get('collection_slug') or options.get('collection_name'):
+        raise ValueError('collection assignment is missing its collection_id; refusing an unassigned refresh')
     # Re-clamped here even though the copied snapshot was already clamped at
     # its own creation time: settings (e.g. import_max_pages) may have
     # changed since -- same clamp-never-raise discipline as

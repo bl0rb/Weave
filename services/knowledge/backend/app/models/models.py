@@ -110,8 +110,9 @@ class Collection(Base):
 
 
 class Document(Base):
-    """One document.processed event's worth of source content, tracked
-    through this service's own index lifecycle.
+    """One released document snapshot, tracked through this service's own
+    index lifecycle. Legacy rows from the pre-release workflow remain
+    readable, but are never fetched or indexed by a new task.
 
     `source_job_id`/`previous_job_id` mirror Weave-Ingest's `job_id`/
     `previous_job_id` (see contracts/events/document.processed.schema.json)
@@ -135,12 +136,9 @@ class Document(Base):
     # own `previous_job_id`.
     previous_job_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # Weave-Ingest's `GET /api/v1/jobs/{job_id}/download` URL this document's
-    # markdown is fetched from (see contracts/events/document.processed.md's
-    # `markdown_url` field) -- app/api/events.py copies it out of the event
-    # verbatim, and app/workers/tasks.py's index_document re-fetches from
-    # here on every index attempt (including a retry) rather than the
-    # triggering event needing to be replayed. Nullable only because not
+    # The event's markdown_url is retained for audit/display. Released
+    # indexing builds its download target locally from release_id instead of
+    # trusting this value. Nullable only because not
     # every Document row in this codebase is created through that webhook
     # (the ORM-level tests in tests/test_models.py, tests/test_embeddings.py,
     # tests/test_reindex_cli.py, ... build bare rows for unrelated columns);
@@ -161,8 +159,8 @@ class Document(Base):
     # denormalized out of this for indexed filtering; frontmatter itself
     # stays the source of truth for anything else a later stage needs.
     frontmatter: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    # Fetched from the event's markdown_url and populated by the index run
-    # (see app/workers/tasks.py once it exists) -- NULL until then, which is
+    # Fetched from the immutable release snapshot and populated by the index
+    # run -- NULL until then, which is
     # exactly what `status == 'pending'` means.
     markdown_body: Mapped[str | None] = mapped_column(Text, nullable=True)
     team: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
@@ -192,7 +190,7 @@ class Document(Base):
     # run (see Chunk.embedding_model for the per-chunk value) -- lets a
     # later provider/model change be detected without joining to chunks.
     embedding_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # Consecutive transient app.services.ingest_client.fetch_markdown
+    # Consecutive transient app.services.ingest_client.fetch_released_markdown
     # failures for the current index-attempt chain -- reset to 0 on a
     # successful fetch, incremented by app/workers/tasks.py's
     # index_document on each transient failure, and checked against that
@@ -259,22 +257,19 @@ class Chunk(Base):
 
 
 class IngestEvent(Base):
-    """Idempotency ledger for inbound document.processed webhooks.
+    """Idempotency ledger for inbound document.released webhooks.
 
-    Weave-Ingest delivers with at-least-once semantics (see
-    contracts/events/document.processed.md's "Idempotenz" section, dedup key
-    `(job_id, content_sha256)`) -- `event_key` is that pair joined as
-    `f"{job_id}:{content_sha256}"`. A webhook handler looks this up before
-    doing any work; a hit means "already processed, return 202" rather than
-    re-indexing.
+    Weave-Ingest delivers with at-least-once semantics. Released events use
+    `release:<release_id>` as their event_key. A webhook handler records this
+    before indexing; a hit means "already processed" rather than re-indexing.
     """
 
     __tablename__ = 'ingest_events'
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     event_key: Mapped[str] = mapped_column(String(160), nullable=False, unique=True)
-    # 'document.processed' today; stored rather than assumed so a future
-    # second event type can share this same ledger table.
+    # Stored rather than assumed so event types can share this ledger table;
+    # document.processed deliberately never creates a ledger row.
     event_type: Mapped[str] = mapped_column(String(64), nullable=False)
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False

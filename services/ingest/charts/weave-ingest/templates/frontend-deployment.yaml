@@ -49,6 +49,8 @@ spec:
           env:
             - name: WEAVE_INGEST_PUBLIC_API_URL
               value: {{ .Values.frontend.apiUrl | quote }}
+            - name: WEAVE_CHAT_PUBLIC_URL
+              value: {{ .Values.frontend.chatUrl | quote }}
           livenessProbe:
             tcpSocket:
               port: http

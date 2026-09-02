@@ -85,6 +85,10 @@ jobs:
         run: npm run lint
         working-directory: services/ingest/frontend
 
+      - name: Test frontend
+        run: npm test
+        working-directory: services/ingest/frontend
+
       - name: Build frontend
         run: npm run build
         working-directory: services/ingest/frontend

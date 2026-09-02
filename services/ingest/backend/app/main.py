@@ -7,10 +7,14 @@ from app.api.auth import router_admin as auth_admin_router
 from app.api.auth import router_authenticated as auth_authenticated_router
 from app.api.auth import router_public as auth_public_router
 from app.api.benchmarks import router as benchmarks_router
+from app.api.chat_provider import router_admin as chat_provider_admin_router
+from app.api.chat_provider import router_internal as chat_provider_internal_router
 from app.api.deps import get_current_user, origin_guard
 from app.api.import_routes import router as import_router
-from app.api.mail_routes import router as mail_router
 from app.api.openwebui_routes import router as openwebui_router
+from app.api.portal import router as portal_router
+from app.api.portal_management import router as portal_management_router
+from app.api.portal_indexing import router as portal_indexing_router
 from app.api.routes import router
 from app.api.webhook_routes import router as webhook_router
 from app.core.config import settings
@@ -53,6 +57,8 @@ app.include_router(public_router)
 app.include_router(auth_public_router)
 app.include_router(auth_authenticated_router)
 app.include_router(auth_admin_router)
+app.include_router(chat_provider_admin_router)
+app.include_router(chat_provider_internal_router)
 
 # Secure-by-default: every other /api/v1 route (jobs, folders, collections,
 # paddle settings, ...) now requires a valid session. Step 3 layers
@@ -68,10 +74,6 @@ app.include_router(import_router, dependencies=[Depends(get_current_user), Depen
 # as the main router, no separate kill-switch.
 app.include_router(benchmarks_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
 
-# Mail ingestion (/api/v1/mail/...): same session + CSRF gate as the main
-# router, no separate kill-switch (mirrors benchmarks_router's registration).
-app.include_router(mail_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
-
 # OpenWebUI push surface (/api/v1/openwebui/...): same session + CSRF gate as
 # the main router; the module itself adds the OPENWEBUI_ENABLED kill-switch
 # (mirrors import_router's registration).
@@ -81,3 +83,9 @@ app.include_router(openwebui_router, dependencies=[Depends(get_current_user), De
 # as the main router; the module itself adds the WEBHOOKS_ENABLED kill-switch
 # (mirrors import_router's/openwebui_router's registration).
 app.include_router(webhook_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
+
+# Knowledge portal publication surface: authenticated reads and approvals,
+# with the same CSRF guard as the other state-changing API routers.
+app.include_router(portal_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
+app.include_router(portal_management_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
+app.include_router(portal_indexing_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])

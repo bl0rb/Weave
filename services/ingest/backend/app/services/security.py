@@ -209,6 +209,7 @@ def hash_session_token(token: str) -> str:
 _OIDC_CLIENT_SECRET_HKDF_INFO = b'oidc-client-secret'
 _IMPORT_CREDENTIAL_HKDF_INFO = b'import-source-credential'
 _VL_CONNECTION_API_KEY_HKDF_INFO = b'vl-connection-api-key'
+_CHAT_PROVIDER_API_KEY_HKDF_INFO = b'chat-provider-api-key'
 _OPENWEBUI_CONNECTION_API_KEY_HKDF_INFO = b'openwebui-connection-api-key'
 _WEBHOOK_CONNECTION_SECRET_HKDF_INFO = b'webhook-connection-secret'
 
@@ -301,6 +302,21 @@ def decrypt_vl_api_key(ciphertext: str) -> str:
         return fernet.decrypt(ciphertext.encode('utf-8')).decode('utf-8')
     except InvalidToken as exc:
         raise ValueError('VL connection API key could not be decrypted (wrong SECRET_KEY or corrupted value)') from exc
+
+
+def encrypt_chat_provider_api_key(plaintext: str) -> str:
+    """Encrypt the central chat provider key under a dedicated key domain."""
+    fernet = Fernet(_derive_fernet_key(_CHAT_PROVIDER_API_KEY_HKDF_INFO))
+    return fernet.encrypt(plaintext.encode('utf-8')).decode('utf-8')
+
+
+def decrypt_chat_provider_api_key(ciphertext: str) -> str:
+    """Decrypt the central chat provider key, rejecting drift/tampering."""
+    fernet = Fernet(_derive_fernet_key(_CHAT_PROVIDER_API_KEY_HKDF_INFO))
+    try:
+        return fernet.decrypt(ciphertext.encode('utf-8')).decode('utf-8')
+    except InvalidToken as exc:
+        raise ValueError('chat provider API key could not be decrypted') from exc
 
 
 # --- OpenWebUI connection API key encryption ---------------------------------

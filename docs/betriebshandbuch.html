@@ -304,7 +304,7 @@
       <tbody>
         <tr>
           <td class="k"><strong>Weave-Ingest</strong></td>
-          <td><strong>Eigene Oberfläche.</strong> <code>/admin</code> für Nutzer, Teams, OIDC-Verbindungen, Worker-Logs, OCR-Profil und -Timeout, VL-Verbindungen; <code>/connections</code> für Webhooks, dazu <code>/openwebui</code> und <code>/mail</code>. Alles Übrige <code>deploy/.env</code></td>
+          <td><strong>Eigene Oberfläche.</strong> <code>/admin</code> für Nutzer, Teams, OIDC-Verbindungen, Worker-Logs, OCR-Profil und -Timeout, VL-Verbindungen; <code>/connections</code> für Webhooks, Wissensbereichsverwaltung unter <code>/admin</code>, technische Werkzeuge ebenfalls dort. Alles Übrige <code>deploy/.env</code></td>
           <td>FastAPI · SQLAlchemy + Alembic · Celery (Redis-DB 0) · PaddleOCR/PP-StructureV3 im eigenen Worker-Image · Next.js 16 + React 19</td>
           <td>Sitzungs-Cookie (undurchsichtig, in der DB nur als sha256) <em>oder</em> Personal-Token <code>pd_…</code>. Passwörter bcrypt mit Konto-Sperre; beliebig viele OIDC-Verbindungen (Auth-Code + PKCE); Herkunftsprüfung gegen CSRF auf jeder schreibenden Route</td>
         </tr>

@@ -316,6 +316,12 @@ def _iter_sse_deltas(response: httpx.Response, *, url: str) -> Iterator[str]:
             yield content
 
 
+def _chat_completions_url(base_url: str) -> str:
+    """Accept a provider root as well as the common base ending in /v1."""
+    normalized = base_url.rstrip('/')
+    return f'{normalized}/chat/completions' if normalized.endswith('/v1') else f'{normalized}/v1/chat/completions'
+
+
 class OpenAICompatibleLLM:
     """LLMProvider for any OpenAI-compatible `/v1/chat/completions`
     endpoint.
@@ -356,7 +362,7 @@ class OpenAICompatibleLLM:
         model: str | None = None,
         temperature: float | None = None,
     ) -> LLMResult:
-        url = f'{self._base_url}/v1/chat/completions'
+        url = _chat_completions_url(self._base_url)
         headers = {'Authorization': f'Bearer {self._api_key}', 'Content-Type': 'application/json'}
         resolved_model = model or self._default_model
         payload: dict = {'model': resolved_model, 'messages': messages}
@@ -430,7 +436,7 @@ class OpenAICompatibleLLM:
         app/services/chat.py's `_stream_prepared_turn` for how a caller
         turns this into a single terminal `{"type": "error"}` SSE event.
         """
-        url = f'{self._base_url}/v1/chat/completions'
+        url = _chat_completions_url(self._base_url)
         headers = {'Authorization': f'Bearer {self._api_key}', 'Content-Type': 'application/json'}
         resolved_model = model or self._default_model
         payload: dict = {'model': resolved_model, 'messages': messages, 'stream': True}

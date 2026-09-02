@@ -1,16 +1,11 @@
 """Index pipeline Celery task: fetch -> chunk -> enrich -> embed -> persist.
 
-Enqueued by app/api/events.py right after a document.processed webhook is
-accepted (see that module's docstring for the receiver side of this
-contract) -- the task itself only ever needs `document_id`; every other
-input (`previous_job_id`, `frontmatter`) is already sitting on the Document
-row the webhook receiver wrote. The markdown fetch itself is keyed off
-`document.source_job_id`, NOT `document.markdown_url` -- see
-app/services/ingest_client.py's fetch_markdown docstring (FINDING 3) for
-why the event's own markdown_url field is never used to build the actual
-outbound request.
+Enqueued by app/api/events.py only after a document.released webhook is
+accepted. The task itself only needs `document_id`; release identity and
+the expected snapshot hash are stored in reserved Document frontmatter keys.
+Rows without valid release metadata are treated as legacy and are a no-op.
 
-Retry policy for a transient app.services.ingest_client.fetch_markdown
+Retry policy for a transient app.services.ingest_client.fetch_released_markdown
 failure mirrors Weave-Ingest's own app/workers/webhook_tasks.py's
 deliver_webhook: a self-re-enqueue via `self.app.send_task(...,
 countdown=...)` rather than Celery's built-in Task.retry. Same reasoning as
@@ -33,7 +28,10 @@ mirrors contracts/events/document.processed.md's own delivery-retry section
 from __future__ import annotations
 
 import logging
+import re
+import threading
 import uuid
+import weakref
 from datetime import datetime, timezone
 
 from celery.signals import worker_ready
@@ -58,6 +56,54 @@ INDEX_TASK_NAME = 'weave.knowledge.index_document'
 # comes from.
 _MAX_ATTEMPTS = 5
 _BACKOFF_SECONDS = (30, 60, 120, 240)
+_RELEASE_ID_KEY = '_weave_release_id'
+_MARKDOWN_SHA256_KEY = '_weave_markdown_sha256'
+_SHA256_HEX_RE = re.compile(r'^[a-f0-9]{64}$')
+_DOCUMENT_LOCKS: weakref.WeakValueDictionary[str, threading.Lock] = weakref.WeakValueDictionary()
+_DOCUMENT_LOCKS_GUARD = threading.Lock()
+
+
+def _document_lock(document_id: str) -> threading.Lock:
+    with _DOCUMENT_LOCKS_GUARD:
+        lock = _DOCUMENT_LOCKS.get(document_id)
+        if lock is None:
+            lock = threading.Lock()
+            _DOCUMENT_LOCKS[document_id] = lock
+        return lock
+
+
+def _release_metadata(document: Document) -> tuple[str, str] | None:
+    """Read the release provenance written by the signed event handler.
+
+    Documents created before the release workflow remain readable and
+    indexed. A task replay for one of those legacy rows is a no-op, which
+    keeps a stale processed webhook from publishing unapproved content.
+    """
+    frontmatter = document.frontmatter or {}
+    if not isinstance(frontmatter, dict):
+        return None
+    release_id = frontmatter.get(_RELEASE_ID_KEY)
+    markdown_sha256 = frontmatter.get(_MARKDOWN_SHA256_KEY)
+    if not isinstance(release_id, str) or not isinstance(markdown_sha256, str):
+        return None
+    try:
+        normalized_release_id = str(uuid.UUID(release_id))
+    except ValueError:
+        return None
+    if not _SHA256_HEX_RE.fullmatch(markdown_sha256):
+        return None
+    return normalized_release_id, markdown_sha256
+
+
+def _canonicalize_snapshot_frontmatter(frontmatter: dict, release_id: str, markdown_sha256: str) -> dict:
+    """Prevent downloaded YAML from changing the signed release identity."""
+    sanitized = {
+        key: value for key, value in frontmatter.items()
+        if key not in {_RELEASE_ID_KEY, _MARKDOWN_SHA256_KEY}
+    }
+    sanitized[_RELEASE_ID_KEY] = release_id
+    sanitized[_MARKDOWN_SHA256_KEY] = markdown_sha256
+    return sanitized
 
 
 def _backoff_seconds(attempt: int) -> int:
@@ -66,6 +112,25 @@ def _backoff_seconds(attempt: int) -> int:
 
 
 def _mark_failed(db: Session, document: Document, error: str) -> None:
+    document.status = DocumentStatus.FAILED
+    document.error = error
+    db.commit()
+
+
+def _mark_unexpected_failure(db: Session, document_id: str, error: str) -> None:
+    """Mark an unexpected task failure without clobbering a later success.
+
+    The task's original transaction is rolled back before this runs. The
+    fresh FOR UPDATE read waits for a concurrent indexer and observes its
+    committed status, so a successful worker cannot be overwritten by the
+    losing worker's defensive FAILED transition.
+    """
+    db.rollback()
+    document = db.execute(
+        select(Document).where(Document.id == uuid.UUID(document_id)).with_for_update()
+    ).scalar_one_or_none()
+    if document is None or document.status == DocumentStatus.INDEXED:
+        return
     document.status = DocumentStatus.FAILED
     document.error = error
     db.commit()
@@ -96,10 +161,23 @@ def _supersede_previous_version(db: Session, document: Document) -> None:
 
 
 def _run_pipeline(self, db: Session, document: Document) -> None:
+    release_metadata = _release_metadata(document)
+    if release_metadata is None:
+        logger.warning(
+            'index_document: document %s has no valid release metadata; refusing legacy/unapproved indexing',
+            document.id,
+        )
+        return
+    if document.status in (DocumentStatus.INDEXED, DocumentStatus.SUPERSEDED):
+        # A duplicate delivery after a successful commit, or a late delivery
+        # for an explicitly retired lineage version, must not fetch, rewrite
+        # chunks, or change version retirement state.
+        return
+    release_id, markdown_sha256 = release_metadata
     try:
-        markdown = ingest_client.fetch_markdown(document.source_job_id)
+        markdown = ingest_client.fetch_released_markdown(release_id, markdown_sha256)
     except (ValueError, ingest_client.PermanentFetchError) as exc:
-        # ValueError is fetch_markdown's SSRF-guard rejection (see its
+        # ValueError is the release fetcher's local target validation (see its
         # docstring) -- no request was ever made. Both cases are equally
         # unretryable: an unchanged markdown_url will fail the same way
         # every time.
@@ -128,6 +206,7 @@ def _run_pipeline(self, db: Session, document: Document) -> None:
     document.index_attempts = 0
 
     frontmatter, chunks = chunk_markdown(markdown)
+    frontmatter = _canonicalize_snapshot_frontmatter(frontmatter, release_id, markdown_sha256)
     # Kept in lockstep with the freshly-parsed body: build_chunk_meta below
     # and embed_chunks's own use of document.frontmatter (see
     # app/services/embeddings.py) must both see the exact same frontmatter
@@ -169,8 +248,7 @@ def _run_pipeline(self, db: Session, document: Document) -> None:
     db.commit()
 
 
-@celery_app.task(name=INDEX_TASK_NAME, bind=True, acks_late=True, reject_on_worker_lost=True)
-def index_document(self, document_id: str) -> None:
+def _index_document_unlocked(self, document_id: str) -> None:
     """Run fetch -> chunk -> embed -> persist for one Document row.
 
     Never raises on a fetch failure -- both the permanent and the
@@ -183,21 +261,32 @@ def index_document(self, document_id: str) -> None:
     """
     db = SessionLocal()
     try:
-        document = db.get(Document, uuid.UUID(document_id))
+        # PostgreSQL keeps this row lock through fetch/chunk/embed/commit, so
+        # duplicate deliveries that enqueue the same pending document cannot
+        # interleave chunk deletion and writes. SQLite ignores FOR UPDATE,
+        # but the pipeline remains transactionally serialized there by its
+        # single-writer behavior.
+        document = db.execute(
+            select(Document).where(Document.id == uuid.UUID(document_id)).with_for_update()
+        ).scalar_one_or_none()
         if document is None:
             logger.warning('index_document: document %s not found; nothing to do', document_id)
             return
         _run_pipeline(self, db, document)
     except Exception as exc:  # noqa: BLE001 - defensive terminal transition, see docstring
         logger.exception('index_document: unexpected failure for document %s', document_id)
-        db.rollback()
-        document = db.get(Document, uuid.UUID(document_id))
-        if document is not None:
-            document.status = DocumentStatus.FAILED
-            document.error = str(exc)
-            db.commit()
+        _mark_unexpected_failure(db, document_id, str(exc))
     finally:
         db.close()
+
+
+@celery_app.task(name=INDEX_TASK_NAME, bind=True, acks_late=True, reject_on_worker_lost=True)
+def index_document(self, document_id: str) -> None:
+    # The database row lock below serializes this across PostgreSQL worker
+    # processes. This small per-document lock also covers concurrent direct
+    # calls and SQLite workers, where SQLite ignores FOR UPDATE.
+    with _document_lock(document_id):
+        _index_document_unlocked(self, document_id)
 
 
 @worker_ready.connect

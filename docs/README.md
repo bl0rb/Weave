@@ -26,3 +26,4 @@ sie brauchen keinen Server und keine Abhängigkeiten außer Webfonts.
 
 Die Datenverträge zwischen den Diensten liegen nicht hier, sondern zentral in
 [../contracts/](../contracts/).
+Das [Wissensportal](wissensportal.md) beschreibt Freigaben, `document.released`, Betriebskonfiguration und den aktuellen Funktionsumfang.

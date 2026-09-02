@@ -69,7 +69,9 @@ def _sign(body: bytes, secret: str) -> str:
 
 def _event_payload(**overrides) -> dict:
     job_id = overrides.pop('job_id', None) or str(uuid.uuid4())
+    release_id = overrides.pop('release_id', None) or str(uuid.uuid4())
     content_sha256 = overrides.pop('content_sha256', None) or 'a' * 64
+    markdown_sha256 = overrides.pop('markdown_sha256', None) or 'b' * 64
     quality = overrides.pop(
         'quality',
         {
@@ -92,18 +94,20 @@ def _event_payload(**overrides) -> dict:
         },
     )
     payload = {
-        'event': 'document.processed',
+        'event': 'document.released',
         'timestamp': '2026-08-31T14:23:45.123456+00:00',
         'job_id': job_id,
         'document_version': 1,
         'previous_job_id': None,
         'content_sha256': content_sha256,
         'original_filename': 'report.pdf',
-        'markdown_url': f'{settings.weave_ingest_base_url}/api/v1/jobs/{job_id}/download',
+        'markdown_url': f'/api/v1/portal/releases/{release_id}/download',
         'frontmatter': frontmatter,
         'quality': quality,
         'engine': 'paddleocr',
         'processed_at': '2026-08-31T14:23:45Z',
+        'release_id': release_id,
+        'markdown_sha256': markdown_sha256,
     }
     payload.update(overrides)
     return payload
@@ -314,6 +318,67 @@ def test_missing_required_field_returns_400(monkeypatch):
 # --- Idempotency ---------------------------------------------------------------
 
 
+def test_processed_event_awaits_release_without_persistence(monkeypatch, _mock_index_document_delay):
+    monkeypatch.setattr(settings, 'weave_ingest_webhook_secret', 'top-secret')
+    payload = {'event': 'document.processed'}
+
+    resp = _post(payload)
+
+    assert resp.status_code == 200
+    assert resp.json() == {'status': 'awaiting_release'}
+    _mock_index_document_delay.assert_not_called()
+    db = TestingSessionLocal()
+    try:
+        assert db.query(Document).count() == 0
+        assert db.query(IngestEvent).count() == 0
+    finally:
+        db.close()
+
+
+def test_released_event_owns_reserved_frontmatter_provenance(monkeypatch, _mock_index_document_delay):
+    monkeypatch.setattr(settings, 'weave_ingest_webhook_secret', 'top-secret')
+    payload = _event_payload(frontmatter={
+        'source': 'report.pdf',
+        '_weave_release_id': str(uuid.uuid4()),
+        '_weave_markdown_sha256': '0' * 64,
+    })
+
+    resp = _post(payload)
+
+    assert resp.status_code == 202
+    document = _get_document(payload['job_id'])
+    assert document is not None
+    assert document.frontmatter['_weave_release_id'] == payload['release_id']
+    assert document.frontmatter['_weave_markdown_sha256'] == payload['markdown_sha256']
+    assert document.frontmatter['source'] == 'report.pdf'
+
+
+def test_different_release_for_same_job_is_rejected_without_overwrite(
+    monkeypatch, _mock_index_document_delay,
+):
+    monkeypatch.setattr(settings, 'weave_ingest_webhook_secret', 'top-secret')
+    first = _event_payload()
+    assert _post(first).status_code == 202
+
+    second = _event_payload(
+        job_id=first['job_id'], release_id=str(uuid.uuid4()), markdown_sha256='c' * 64,
+        content_sha256='d' * 64,
+    )
+    resp = _post(second)
+
+    assert resp.status_code == 409
+    document = _get_document(first['job_id'])
+    assert document is not None
+    assert document.frontmatter['_weave_release_id'] == first['release_id']
+    assert document.content_sha256 == first['content_sha256']
+    _mock_index_document_delay.assert_called_once()
+    db = TestingSessionLocal()
+    try:
+        assert db.query(IngestEvent).filter_by(event_key=f"release:{second['release_id']}").count() == 0
+    finally:
+        db.close()
+
+
 def test_duplicate_event_is_not_double_processed(monkeypatch, _mock_index_document_delay):
     monkeypatch.setattr(settings, 'weave_ingest_webhook_secret', 'top-secret')
     payload = _event_payload()
@@ -326,16 +391,56 @@ def test_duplicate_event_is_not_double_processed(monkeypatch, _mock_index_docume
     assert second.status_code == 200
     assert second.json() == {'status': 'duplicate'}
 
-    _mock_index_document_delay.assert_called_once()
+    # The first delivery queued the document; the duplicate must also
+    # re-offer it because the first enqueue may have been lost after commit.
+    assert _mock_index_document_delay.call_count == 2
 
     db = TestingSessionLocal()
     try:
         assert db.query(Document).filter_by(source_job_id=payload['job_id']).count() == 1
-        assert db.query(IngestEvent).filter_by(
-            event_key=f"{payload['job_id']}:{payload['content_sha256']}"
-        ).count() == 1
+        assert db.query(IngestEvent).filter_by(event_key=f"release:{payload['release_id']}").count() == 1
     finally:
         db.close()
+
+
+def test_enqueue_failure_after_commit_is_recovered_by_duplicate_delivery(monkeypatch):
+    monkeypatch.setattr(settings, 'weave_ingest_webhook_secret', 'top-secret')
+    payload = _event_payload()
+    enqueue = MagicMock(side_effect=[RuntimeError('redis down'), None])
+    monkeypatch.setattr(events_module.index_document, 'delay', enqueue)
+
+    # TestClient surfaces the server exception; in production this is the
+    # required HTTP 500 that causes the outbox to redeliver.
+    with pytest.raises(RuntimeError, match='redis down'):
+        _post(payload)
+
+    document = _get_document(payload['job_id'])
+    assert document is not None
+    assert document.status == DocumentStatus.PENDING
+
+    retry = _post(payload)
+    assert retry.status_code == 200
+    assert retry.json() == {'status': 'duplicate'}
+    assert enqueue.call_count == 2
+
+
+def test_duplicate_indexed_release_never_reenqueues(monkeypatch, _mock_index_document_delay):
+    monkeypatch.setattr(settings, 'weave_ingest_webhook_secret', 'top-secret')
+    payload = _event_payload()
+    assert _post(payload).status_code == 202
+
+    db = TestingSessionLocal()
+    try:
+        document = db.query(Document).filter_by(source_job_id=payload['job_id']).one()
+        document.status = DocumentStatus.INDEXED
+        db.commit()
+    finally:
+        db.close()
+
+    retry = _post(payload)
+    assert retry.status_code == 200
+    assert retry.json() == {'status': 'duplicate'}
+    _mock_index_document_delay.assert_called_once()
 
 
 def test_duplicate_detection_keys_on_job_id_and_content_sha256_not_timestamp(monkeypatch):
@@ -357,11 +462,11 @@ def test_duplicate_detection_keys_on_job_id_and_content_sha256_not_timestamp(mon
 # --- FINDING 1: source_job_id unique-constraint race ----------------------------
 
 
-def test_concurrent_same_job_id_different_content_sha256_does_not_500(monkeypatch, _mock_index_document_delay):
-    """Two document.processed events for the SAME job_id but DIFFERENT
-    content_sha256 both have distinct event_keys, so both pass the
-    event-dedup check, and both can see 'no existing Document for this
-    job_id' before either commits -- only one INSERT can win
+def test_concurrent_same_job_id_different_releases_returns_409(monkeypatch, _mock_index_document_delay):
+    """Two released events for the SAME job_id but DIFFERENT releases can
+    both pass event dedup before either inserts its Document. The loser of
+    the source_job_id race must then be rejected conservatively, without
+    overwriting the winning release.
     documents.source_job_id's own unique constraint. This simulates the
     loser's exact failure point: a colliding row committed by a concurrent
     session in the gap between this request's own SELECT and its own
@@ -369,6 +474,7 @@ def test_concurrent_same_job_id_different_content_sha256_does_not_500(monkeypatc
     monkeypatch.setattr(settings, 'weave_ingest_webhook_secret', 'top-secret')
     job_id = str(uuid.uuid4())
     payload = _event_payload(job_id=job_id, content_sha256='a' * 64)
+    winning_release_id = str(uuid.uuid4())
 
     real_commit = OrmSession.commit
     state = {'raced': False}
@@ -392,7 +498,10 @@ def test_concurrent_same_job_id_different_content_sha256_does_not_500(monkeypatc
             try:
                 other.add(Document(
                     source_job_id=job_id, content_sha256='c' * 64, engine='paddleocr',
-                    frontmatter={}, tags=[], processed_at=datetime.now(timezone.utc),
+                    frontmatter={
+                        '_weave_release_id': winning_release_id,
+                        '_weave_markdown_sha256': 'c' * 64,
+                    }, tags=[], processed_at=datetime.now(timezone.utc),
                 ))
                 real_commit(other)
             finally:
@@ -404,23 +513,20 @@ def test_concurrent_same_job_id_different_content_sha256_does_not_500(monkeypatc
 
     resp = _post(payload)
 
-    assert resp.status_code == 202
-    assert resp.json()['status'] == 'accepted'
+    assert resp.status_code == 409
 
     db = TestingSessionLocal()
     try:
         documents = db.query(Document).filter_by(source_job_id=job_id).all()
         assert len(documents) == 1
-        # This request's own event fields won on the retried update, not
-        # left at the race stub's placeholder values.
-        assert documents[0].content_sha256 == 'a' * 64
-        assert documents[0].status == DocumentStatus.PENDING
+        assert documents[0].content_sha256 == 'c' * 64
+        assert documents[0].frontmatter['_weave_release_id'] == winning_release_id
 
-        assert db.query(IngestEvent).filter_by(event_key=f"{job_id}:{'a' * 64}").count() == 1
+        assert db.query(IngestEvent).filter_by(event_key=f"release:{payload['release_id']}").count() == 0
     finally:
         db.close()
 
-    _mock_index_document_delay.assert_called_once()
+    _mock_index_document_delay.assert_not_called()
 
 
 # --- Block recommendation -------------------------------------------------------
@@ -489,7 +595,11 @@ def test_accepted_document_denormalizes_frontmatter_fields(monkeypatch, _mock_in
     assert document.engine == 'paddleocr'
     assert document.content_sha256 == payload['content_sha256']
     assert document.markdown_url == payload['markdown_url']
-    assert document.frontmatter == payload['frontmatter']
+    assert document.frontmatter == {
+        **payload['frontmatter'],
+        '_weave_release_id': payload['release_id'],
+        '_weave_markdown_sha256': payload['markdown_sha256'],
+    }
     assert document.previous_job_id is None
 
     _mock_index_document_delay.assert_called_once_with(document_id)
@@ -497,7 +607,7 @@ def test_accepted_document_denormalizes_frontmatter_fields(monkeypatch, _mock_in
 
 # --- FINDING 2: job_id/content_sha256 pattern validation -------------------------
 #
-# app/api/events.py converts every DocumentProcessedEvent ValidationError to
+# app/api/events.py converts every DocumentReleasedEvent ValidationError to
 # 400 (not FastAPI's default 422) -- see that module's manual
 # `except ValidationError: raise HTTPException(400, ...)` and the existing
 # test_missing_required_field_returns_400 above, which this mirrors for
@@ -523,6 +633,12 @@ def test_content_sha256_rejects_uppercase_hex(monkeypatch):
     monkeypatch.setattr(settings, 'weave_ingest_webhook_secret', 'top-secret')
     resp = _post(_event_payload(content_sha256='A' * 64))
     assert resp.status_code == 400
+
+
+def test_release_id_and_markdown_sha256_are_validated(monkeypatch):
+    monkeypatch.setattr(settings, 'weave_ingest_webhook_secret', 'top-secret')
+    assert _post(_event_payload(release_id='not-a-uuid')).status_code == 400
+    assert _post(_event_payload(markdown_sha256='A' * 64)).status_code == 400
 
 
 def test_colliding_delimiter_shifted_payloads_are_both_rejected(monkeypatch):

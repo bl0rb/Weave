@@ -65,6 +65,14 @@ class Settings(BaseSettings):
     # means public endpoints only.
     vl_private_host_allowlist: list[str] = []
 
+    # Central OpenAI-compatible provider configured in the Admin UI. Private
+    # endpoints must be named explicitly; safe_fetch still blocks metadata
+    # targets and revalidates every redirect hop.
+    chat_llm_private_host_allowlist: list[str] = []
+    # Shared bearer credential presented by Weave-Runtime when reading the
+    # decrypted effective configuration. Empty fails closed with 503.
+    chat_config_service_token: str = ''
+
     # Celery worker log capture into worker_log_entries (see
     # app/workers/log_capture.py) -- lets the admin UI tail worker container
     # logs without docker.sock/kubectl access, which the EKS/k8s deployment
@@ -91,6 +99,15 @@ class Settings(BaseSettings):
     # Base URL the API is publicly reachable at; used to build the OIDC
     # redirect_uri (`{public_api_url}/api/v1/auth/oidc/{slug}/callback`).
     public_api_url: str = 'http://localhost:8000'
+    # Fixed Weave-Knowledge publication target. Both values must be present
+    # before the portal release API mutates the durable outbox. The same
+    # address/secret sign the bounded indexing-status lookup (separate HMAC
+    # context), so the portal does not need Knowledge corpus-read access.
+    portal_knowledge_base_url: str = ''
+    portal_knowledge_webhook_secret: str = ''
+    publication_tick_seconds: int = 30
+    publication_lease_seconds: int = 120
+    publication_max_attempts: int = 5
 
     # --- Cross-service login handoff (app/api/auth.py's /auth/handoff/*) ---
     #

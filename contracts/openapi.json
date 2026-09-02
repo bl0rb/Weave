@@ -773,6 +773,220 @@
         "title": "Body_upload_document_to_collection_api_v1_collections__collection_id__upload_post",
         "type": "object"
       },
+      "ChatProviderAdminResponse": {
+        "properties": {
+          "base_url": {
+            "title": "Base Url",
+            "type": "string"
+          },
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "has_api_key": {
+            "title": "Has Api Key",
+            "type": "boolean"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          },
+          "timeout_seconds": {
+            "title": "Timeout Seconds",
+            "type": "number"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "configured",
+          "enabled",
+          "base_url",
+          "model",
+          "has_api_key",
+          "timeout_seconds",
+          "temperature",
+          "updated_at"
+        ],
+        "title": "ChatProviderAdminResponse",
+        "type": "object"
+      },
+      "ChatProviderInternalResponse": {
+        "properties": {
+          "api_key": {
+            "default": "",
+            "title": "Api Key",
+            "type": "string"
+          },
+          "base_url": {
+            "default": "",
+            "title": "Base Url",
+            "type": "string"
+          },
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "model": {
+            "default": "",
+            "title": "Model",
+            "type": "string"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          },
+          "timeout_seconds": {
+            "default": 60.0,
+            "title": "Timeout Seconds",
+            "type": "number"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "configured",
+          "enabled"
+        ],
+        "title": "ChatProviderInternalResponse",
+        "type": "object"
+      },
+      "ChatProviderTestResponse": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "detail"
+        ],
+        "title": "ChatProviderTestResponse",
+        "type": "object"
+      },
+      "ChatProviderUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "api_key": {
+            "anyOf": [
+              {
+                "maxLength": 8192,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "base_url": {
+            "default": "",
+            "maxLength": 1024,
+            "title": "Base Url",
+            "type": "string"
+          },
+          "clear_api_key": {
+            "default": false,
+            "title": "Clear Api Key",
+            "type": "boolean"
+          },
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "model": {
+            "default": "",
+            "maxLength": 255,
+            "title": "Model",
+            "type": "string"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "maximum": 2.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          },
+          "timeout_seconds": {
+            "default": 60.0,
+            "maximum": 300.0,
+            "minimum": 1.0,
+            "title": "Timeout Seconds",
+            "type": "number"
+          }
+        },
+        "title": "ChatProviderUpdateRequest",
+        "type": "object"
+      },
       "ClaimOwnerlessRequest": {
         "properties": {
           "owner_id": {
@@ -930,6 +1144,11 @@
       },
       "CollectionResponse": {
         "properties": {
+          "can_manage": {
+            "default": false,
+            "title": "Can Manage",
+            "type": "boolean"
+          },
           "collection_id": {
             "title": "Collection Id",
             "type": "string"
@@ -1202,6 +1421,61 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HandoffExchangeRequest": {
+        "properties": {
+          "code": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "HandoffExchangeRequest",
+        "type": "object"
+      },
+      "HandoffExchangeResponse": {
+        "description": "The identity behind a redeemed handoff code.\n\n`subject` is this service's own user id and is what the consuming\nservice must key its local account on -- never `username` or `email`,\nboth of which an admin can change here without meaning to hand the\naccount to somebody else.\n\n`team` is the team's NAME, not its id: that is the exact string a\ncollection's `read_teams` entry is matched against (see\ncontracts/chunk-store.md), so passing anything else would silently\ngrant nothing.",
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "is_admin": {
+            "title": "Is Admin",
+            "type": "boolean"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "team": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "username",
+          "email",
+          "is_admin"
+        ],
+        "title": "HandoffExchangeResponse",
         "type": "object"
       },
       "HealthResponse": {
@@ -1511,6 +1785,18 @@
       },
       "ImportRunOptions": {
         "properties": {
+          "collection_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection Id"
+          },
           "email": {
             "default": "",
             "title": "Email",
@@ -2425,489 +2711,6 @@
         "title": "LoginRequest",
         "type": "object"
       },
-      "MailIngestResponse": {
-        "properties": {
-          "body_format": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Body Format"
-          },
-          "content_sha256": {
-            "title": "Content Sha256",
-            "type": "string"
-          },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "from_address": {
-            "title": "From Address",
-            "type": "string"
-          },
-          "has_body": {
-            "title": "Has Body",
-            "type": "boolean"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "parts": {
-            "items": {
-              "$ref": "#/components/schemas/MailPartResponse"
-            },
-            "title": "Parts",
-            "type": "array"
-          },
-          "raw_size_bytes": {
-            "title": "Raw Size Bytes",
-            "type": "integer"
-          },
-          "recipients": {
-            "additionalProperties": true,
-            "title": "Recipients",
-            "type": "object"
-          },
-          "replayed": {
-            "title": "Replayed",
-            "type": "boolean"
-          },
-          "rfc_message_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rfc Message Id"
-          },
-          "sent_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sent At"
-          },
-          "source": {
-            "title": "Source",
-            "type": "string"
-          },
-          "subject": {
-            "title": "Subject",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "replayed",
-          "content_sha256",
-          "subject",
-          "from_address",
-          "source",
-          "raw_size_bytes",
-          "has_body",
-          "created_at"
-        ],
-        "title": "MailIngestResponse",
-        "type": "object"
-      },
-      "MailMessageDeleteResponse": {
-        "properties": {
-          "deleted_jobs": {
-            "default": 0,
-            "title": "Deleted Jobs",
-            "type": "integer"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id"
-        ],
-        "title": "MailMessageDeleteResponse",
-        "type": "object"
-      },
-      "MailMessageDetailResponse": {
-        "properties": {
-          "body_format": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Body Format"
-          },
-          "content_sha256": {
-            "title": "Content Sha256",
-            "type": "string"
-          },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "from_address": {
-            "title": "From Address",
-            "type": "string"
-          },
-          "has_body": {
-            "title": "Has Body",
-            "type": "boolean"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "parts": {
-            "items": {
-              "$ref": "#/components/schemas/MailPartDetail"
-            },
-            "title": "Parts",
-            "type": "array"
-          },
-          "raw_size_bytes": {
-            "title": "Raw Size Bytes",
-            "type": "integer"
-          },
-          "recipients": {
-            "additionalProperties": true,
-            "title": "Recipients",
-            "type": "object"
-          },
-          "rfc_message_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rfc Message Id"
-          },
-          "sent_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sent At"
-          },
-          "source": {
-            "title": "Source",
-            "type": "string"
-          },
-          "subject": {
-            "title": "Subject",
-            "type": "string"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "title": "Updated At",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "content_sha256",
-          "subject",
-          "from_address",
-          "source",
-          "raw_size_bytes",
-          "has_body",
-          "created_at",
-          "updated_at"
-        ],
-        "title": "MailMessageDetailResponse",
-        "type": "object"
-      },
-      "MailMessageListItem": {
-        "properties": {
-          "body_format": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Body Format"
-          },
-          "content_sha256": {
-            "title": "Content Sha256",
-            "type": "string"
-          },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "from_address": {
-            "title": "From Address",
-            "type": "string"
-          },
-          "has_body": {
-            "title": "Has Body",
-            "type": "boolean"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "parts": {
-            "items": {
-              "$ref": "#/components/schemas/MailPartResponse"
-            },
-            "title": "Parts",
-            "type": "array"
-          },
-          "raw_size_bytes": {
-            "title": "Raw Size Bytes",
-            "type": "integer"
-          },
-          "recipients": {
-            "additionalProperties": true,
-            "title": "Recipients",
-            "type": "object"
-          },
-          "rfc_message_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rfc Message Id"
-          },
-          "sent_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sent At"
-          },
-          "source": {
-            "title": "Source",
-            "type": "string"
-          },
-          "subject": {
-            "title": "Subject",
-            "type": "string"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "title": "Updated At",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "content_sha256",
-          "subject",
-          "from_address",
-          "source",
-          "raw_size_bytes",
-          "has_body",
-          "created_at",
-          "updated_at"
-        ],
-        "title": "MailMessageListItem",
-        "type": "object"
-      },
-      "MailMessageListResponse": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/MailMessageListItem"
-            },
-            "title": "Items",
-            "type": "array"
-          },
-          "total": {
-            "title": "Total",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "items",
-          "total"
-        ],
-        "title": "MailMessageListResponse",
-        "type": "object"
-      },
-      "MailPartDetail": {
-        "properties": {
-          "content_type": {
-            "title": "Content Type",
-            "type": "string"
-          },
-          "filename": {
-            "title": "Filename",
-            "type": "string"
-          },
-          "index": {
-            "title": "Index",
-            "type": "integer"
-          },
-          "job_error_message": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Job Error Message"
-          },
-          "job_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Job Id"
-          },
-          "job_status": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/JobStatus"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "outcome": {
-            "enum": [
-              "job",
-              "inline",
-              "skipped"
-            ],
-            "title": "Outcome",
-            "type": "string"
-          },
-          "size_bytes": {
-            "title": "Size Bytes",
-            "type": "integer"
-          },
-          "skip_reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Skip Reason"
-          }
-        },
-        "required": [
-          "index",
-          "filename",
-          "content_type",
-          "size_bytes",
-          "outcome"
-        ],
-        "title": "MailPartDetail",
-        "type": "object"
-      },
-      "MailPartResponse": {
-        "description": "One `MailMessage.parts[]` manifest entry -- mirrors\n`app.services.mail_ingest.MailPart.to_dict()` plus the route-stamped\n`job_id` for `outcome == 'job'` entries.",
-        "properties": {
-          "content_type": {
-            "title": "Content Type",
-            "type": "string"
-          },
-          "filename": {
-            "title": "Filename",
-            "type": "string"
-          },
-          "index": {
-            "title": "Index",
-            "type": "integer"
-          },
-          "job_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Job Id"
-          },
-          "outcome": {
-            "enum": [
-              "job",
-              "inline",
-              "skipped"
-            ],
-            "title": "Outcome",
-            "type": "string"
-          },
-          "size_bytes": {
-            "title": "Size Bytes",
-            "type": "integer"
-          },
-          "skip_reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Skip Reason"
-          }
-        },
-        "required": [
-          "index",
-          "filename",
-          "content_type",
-          "size_bytes",
-          "outcome"
-        ],
-        "title": "MailPartResponse",
-        "type": "object"
-      },
       "MarkdownBrowserResponse": {
         "properties": {
           "items": {
@@ -3553,6 +3356,719 @@
           "password"
         ],
         "title": "PasswordVerificationRequest",
+        "type": "object"
+      },
+      "PortalActivityCounts": {
+        "properties": {
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "finished": {
+            "title": "Finished",
+            "type": "integer"
+          },
+          "pending": {
+            "title": "Pending",
+            "type": "integer"
+          },
+          "running": {
+            "title": "Running",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pending",
+          "running",
+          "finished",
+          "failed"
+        ],
+        "title": "PortalActivityCounts",
+        "type": "object"
+      },
+      "PortalActivityItem": {
+        "properties": {
+          "collection_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection Id"
+          },
+          "collection_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection Name"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "import_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Import Run Id"
+          },
+          "import_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Import Status"
+          },
+          "original_filename": {
+            "title": "Original Filename",
+            "type": "string"
+          },
+          "quality_grade": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Grade"
+          },
+          "quality_recommendation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Recommendation"
+          },
+          "release_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Status"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "original_filename",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "PortalActivityItem",
+        "type": "object"
+      },
+      "PortalActivityListResponse": {
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/PortalActivityCounts"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PortalActivityItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "counts"
+        ],
+        "title": "PortalActivityListResponse",
+        "type": "object"
+      },
+      "PortalCollectionItem": {
+        "description": "`review_count` counts finished, non-empty, unprotected jobs without\na release, with no import or a FINISHED import, and with quality\nrecommendation other than `block` and grade other than `c` (case-insensitive).",
+        "properties": {
+          "collection_id": {
+            "title": "Collection Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "document_count": {
+            "title": "Document Count",
+            "type": "integer"
+          },
+          "failed_count": {
+            "title": "Failed Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortalManagementOwner"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pending_count": {
+            "title": "Pending Count",
+            "type": "integer"
+          },
+          "read_teams": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Read Teams",
+            "type": "array"
+          },
+          "released_count": {
+            "title": "Released Count",
+            "type": "integer"
+          },
+          "review_count": {
+            "title": "Review Count",
+            "type": "integer"
+          },
+          "running_count": {
+            "title": "Running Count",
+            "type": "integer"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "collection_id",
+          "slug",
+          "name",
+          "read_teams",
+          "document_count",
+          "pending_count",
+          "running_count",
+          "review_count",
+          "failed_count",
+          "released_count",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "PortalCollectionItem",
+        "type": "object"
+      },
+      "PortalCollectionListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PortalCollectionItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "PortalCollectionListResponse",
+        "type": "object"
+      },
+      "PortalConfigResponse": {
+        "properties": {
+          "publication_configured": {
+            "title": "Publication Configured",
+            "type": "boolean"
+          },
+          "team_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Name"
+          }
+        },
+        "required": [
+          "publication_configured",
+          "team_name"
+        ],
+        "title": "PortalConfigResponse",
+        "type": "object"
+      },
+      "PortalDocumentDetail": {
+        "properties": {
+          "can_release": {
+            "title": "Can Release",
+            "type": "boolean"
+          },
+          "can_reprocess": {
+            "default": false,
+            "title": "Can Reprocess",
+            "type": "boolean"
+          },
+          "collection_id": {
+            "title": "Collection Id",
+            "type": "string"
+          },
+          "collection_name": {
+            "title": "Collection Name",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "markdown": {
+            "title": "Markdown",
+            "type": "string"
+          },
+          "markdown_sha256": {
+            "title": "Markdown Sha256",
+            "type": "string"
+          },
+          "original_filename": {
+            "title": "Original Filename",
+            "type": "string"
+          },
+          "profile_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Id"
+          },
+          "quality_grade": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Grade"
+          },
+          "quality_recommendation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Recommendation"
+          },
+          "release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortalReleaseSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "original_filename",
+          "status",
+          "collection_id",
+          "collection_name",
+          "created_at",
+          "can_release",
+          "markdown",
+          "markdown_sha256"
+        ],
+        "title": "PortalDocumentDetail",
+        "type": "object"
+      },
+      "PortalDocumentItem": {
+        "properties": {
+          "can_release": {
+            "title": "Can Release",
+            "type": "boolean"
+          },
+          "collection_id": {
+            "title": "Collection Id",
+            "type": "string"
+          },
+          "collection_name": {
+            "title": "Collection Name",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "original_filename": {
+            "title": "Original Filename",
+            "type": "string"
+          },
+          "quality_grade": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Grade"
+          },
+          "quality_recommendation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Recommendation"
+          },
+          "release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortalReleaseSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "original_filename",
+          "status",
+          "collection_id",
+          "collection_name",
+          "created_at",
+          "can_release"
+        ],
+        "title": "PortalDocumentItem",
+        "type": "object"
+      },
+      "PortalDocumentListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PortalDocumentItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "PortalDocumentListResponse",
+        "type": "object"
+      },
+      "PortalIndexingItem": {
+        "properties": {
+          "indexing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortalIndexingStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortalReleaseSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "job_id"
+        ],
+        "title": "PortalIndexingItem",
+        "type": "object"
+      },
+      "PortalIndexingResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PortalIndexingItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "PortalIndexingResponse",
+        "type": "object"
+      },
+      "PortalIndexingStatus": {
+        "properties": {
+          "chunk_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Chunk Count",
+            "type": "integer"
+          },
+          "indexed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Indexed At"
+          },
+          "state": {
+            "enum": [
+              "not_received",
+              "mismatch",
+              "pending",
+              "indexed",
+              "empty",
+              "incomplete",
+              "failed",
+              "blocked",
+              "superseded",
+              "unavailable"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "PortalIndexingStatus",
+        "type": "object"
+      },
+      "PortalManagementOwner": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username"
+        ],
+        "title": "PortalManagementOwner",
+        "type": "object"
+      },
+      "PortalReleaseRequest": {
+        "properties": {
+          "markdown_sha256": {
+            "pattern": "^[0-9a-fA-F]{64}$",
+            "title": "Markdown Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "markdown_sha256"
+        ],
+        "title": "PortalReleaseRequest",
+        "type": "object"
+      },
+      "PortalReleaseSummary": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "sent",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "created_at",
+          "status"
+        ],
+        "title": "PortalReleaseSummary",
+        "type": "object"
+      },
+      "PortalReprocessRequest": {
+        "properties": {
+          "markdown_sha256": {
+            "pattern": "^[0-9a-fA-F]{64}$",
+            "title": "Markdown Sha256",
+            "type": "string"
+          },
+          "profile_id": {
+            "minLength": 1,
+            "title": "Profile Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "profile_id",
+          "markdown_sha256"
+        ],
+        "title": "PortalReprocessRequest",
+        "type": "object"
+      },
+      "PortalReprocessResponse": {
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "profile_id": {
+            "title": "Profile Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "queued",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "status",
+          "profile_id"
+        ],
+        "title": "PortalReprocessResponse",
         "type": "object"
       },
       "ProviderAdminResponse": {
@@ -4923,6 +5439,87 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/auth/admin/chat-provider": {
+      "get": {
+        "operationId": "get_chat_provider_api_v1_auth_admin_chat_provider_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatProviderAdminResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Chat Provider",
+        "tags": [
+          "chat-provider-admin"
+        ]
+      },
+      "put": {
+        "operationId": "update_chat_provider_api_v1_auth_admin_chat_provider_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatProviderUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatProviderAdminResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Chat Provider",
+        "tags": [
+          "chat-provider-admin"
+        ]
+      }
+    },
+    "/api/v1/auth/admin/chat-provider/test": {
+      "post": {
+        "operationId": "test_chat_provider_api_v1_auth_admin_chat_provider_test_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatProviderTestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Test Chat Provider",
+        "tags": [
+          "chat-provider-admin"
+        ]
+      }
+    },
     "/api/v1/auth/admin/jobs/claim-ownerless": {
       "post": {
         "operationId": "admin_claim_ownerless_jobs_api_v1_auth_admin_jobs_claim_ownerless_post",
@@ -5866,6 +6463,97 @@
         ]
       }
     },
+    "/api/v1/auth/handoff/exchange": {
+      "post": {
+        "description": "Step 2, service to service. Never reachable from a browser in any\nuseful way: it needs the shared secret in a header, which a\ncross-origin page cannot obtain.",
+        "operationId": "handoff_exchange_api_v1_auth_handoff_exchange_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HandoffExchangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandoffExchangeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Handoff Exchange",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/handoff/start": {
+      "get": {
+        "description": "Step 1. Requires an ordinary session here, so it does not care in the\nslightest HOW that session came about -- a local password, any of the\nconfigured OIDC providers, a future third method. That is the whole\nreason the chat can accept every login this service supports without\nknowing that any of them exist.",
+        "operationId": "handoff_start_api_v1_auth_handoff_start_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Handoff Start",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/v1/auth/login": {
       "post": {
         "operationId": "login_api_v1_auth_login_post",
@@ -5955,6 +6643,7 @@
     },
     "/api/v1/auth/oidc/{slug}/authorize": {
       "get": {
+        "description": "`handoff=1` means this login was started from another Weave service\n(the chat UI, via Weave-API): the callback then ends in a one-time code\nfor that service instead of a redirect into this app's own frontend.\nThe flag rides in the SIGNED state cookie rather than in the provider's\n`state` round-trip, so an IdP -- or anyone who can reach the callback\nURL -- cannot turn an ordinary login into a handoff.",
         "operationId": "oidc_authorize_api_v1_auth_oidc__slug__authorize_get",
         "parameters": [
           {
@@ -5964,6 +6653,33 @@
             "schema": {
               "title": "Slug",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "handoff",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Handoff",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "handoff_state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Handoff State"
             }
           }
         ],
@@ -7285,6 +8001,27 @@
         "summary": "Test Import Source"
       }
     },
+    "/api/v1/internal/chat-provider": {
+      "get": {
+        "operationId": "internal_chat_provider_api_v1_internal_chat_provider_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatProviderInternalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Internal Chat Provider",
+        "tags": [
+          "chat-provider-internal"
+        ]
+      }
+    },
     "/api/v1/jobs": {
       "get": {
         "operationId": "list_jobs_api_v1_jobs_get",
@@ -8086,502 +8823,6 @@
         "summary": "Get Job Versions"
       }
     },
-    "/api/v1/mail/messages": {
-      "get": {
-        "operationId": "list_mail_messages_api_v1_mail_messages_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "q",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Q"
-            }
-          },
-          {
-            "in": "query",
-            "name": "message_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Message Id"
-            }
-          },
-          {
-            "in": "query",
-            "name": "sha256",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Sha256"
-            }
-          },
-          {
-            "in": "query",
-            "name": "source",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Source"
-            }
-          },
-          {
-            "in": "query",
-            "name": "from_date",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "format": "date",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "From Date"
-            }
-          },
-          {
-            "in": "query",
-            "name": "to_date",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "format": "date",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "To Date"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "maximum": 500,
-                  "minimum": 0,
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Limit"
-            }
-          },
-          {
-            "in": "query",
-            "name": "offset",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "minimum": 0,
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Offset"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MailMessageListResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "List Mail Messages"
-      },
-      "post": {
-        "description": "Raw RFC-822 bytes (`Content-Type: message/rfc822`, the primary\ncontract) or `multipart/form-data` with a single `file` part (curl -F /\nn8n form-mode convenience) -- same query parameters, accepted as form\nfields instead in the latter case. See docs/integrations/mail-ingestion.md.\n\nQuery/form parameters:\n- profile_id: OCR profile (default: ppocrv6_tiny). Applied to all\n  attachment jobs.\n- folder, subfolder: Storage path (default: 'mail').\n- tags: Comma-separated tags to apply to attachment jobs.\n- source: Origin label; 'api' for API ingest, 'upload' for UI .eml files\n  (default: 'api').\n\nRate limiting is intentionally skipped here, following the\ncollection-bulk-upload precedent (see\n`upload_document_to_collection` in app/api/routes.py) -- a gateway\nflushing its outbox from one IP would otherwise burn the shared\nper-IP bucket. Auth + the size cap + hash dedup are the guards instead.",
-        "operationId": "ingest_mail_message_api_v1_mail_messages_post",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "profile_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Profile Id"
-            }
-          },
-          {
-            "in": "query",
-            "name": "folder",
-            "required": false,
-            "schema": {
-              "default": "mail",
-              "title": "Folder",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "subfolder",
-            "required": false,
-            "schema": {
-              "default": "",
-              "title": "Subfolder",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "tags",
-            "required": false,
-            "schema": {
-              "default": "",
-              "title": "Tags",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "source",
-            "required": false,
-            "schema": {
-              "default": "api",
-              "title": "Source",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MailIngestResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Ingest Mail Message"
-      }
-    },
-    "/api/v1/mail/messages/{message_id}": {
-      "delete": {
-        "description": "Mirrors delete_import_run in app/api/import_routes.py exactly, for\nexactly the same reason: SQLite (dev + the whole test suite) runs\nwithout PRAGMA foreign_keys, so the FK's ON DELETE SET NULL never fires\nthere -- an explicit UPDATE is required before deleting the row. Without\n`delete_jobs`, attachment jobs keep their history with mail_message_id\ncleared; with it, jobs (and their artifact blob rows, bulk-deleted\nwithout loading the blobs) are removed too.",
-        "operationId": "delete_mail_message_api_v1_mail_messages__message_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "message_id",
-            "required": true,
-            "schema": {
-              "title": "Message Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "delete_jobs",
-            "required": false,
-            "schema": {
-              "default": false,
-              "title": "Delete Jobs",
-              "type": "boolean"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MailMessageDeleteResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Delete Mail Message"
-      },
-      "get": {
-        "operationId": "get_mail_message_api_v1_mail_messages__message_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "message_id",
-            "required": true,
-            "schema": {
-              "title": "Message Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MailMessageDetailResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Mail Message"
-      }
-    },
-    "/api/v1/mail/messages/{message_id}/body": {
-      "get": {
-        "description": "Mirrors GET /jobs/{id}/preview: plain-text body markdown, 404 if the\nmessage has no body (attachment-only ingest -- a valid outcome, not an\nerror, so this is the only signal a consumer needs to skip fetching it).",
-        "operationId": "get_mail_message_body_api_v1_mail_messages__message_id__body_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "message_id",
-            "required": true,
-            "schema": {
-              "title": "Message Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Mail Message Body"
-      }
-    },
-    "/api/v1/mail/messages/{message_id}/export.json": {
-      "get": {
-        "description": "Schema `weave-ingest.mail-export/1` -- the aggregation consumers (n8n,\nBedrock AgentCore) want: envelope + body markdown + every attachment's\nOCR markdown (DB-first, result_markdown) in one call.",
-        "operationId": "export_mail_message_json_api_v1_mail_messages__message_id__export_json_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "message_id",
-            "required": true,
-            "schema": {
-              "title": "Message Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Export Mail Message Json"
-      }
-    },
-    "/api/v1/mail/messages/{message_id}/parts/{index}/content": {
-      "get": {
-        "description": "Original bytes of one part (incl. inline and skipped ones), extracted\non the fly by re-running the same deterministic MIME-tree walk against\n`raw_content` -- no double storage. Cross-checked against the stored\nmanifest before serving; index out of range or a manifest mismatch both\n404 (design doc).",
-        "operationId": "get_mail_message_part_content_api_v1_mail_messages__message_id__parts__index__content_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "message_id",
-            "required": true,
-            "schema": {
-              "title": "Message Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "index",
-            "required": true,
-            "schema": {
-              "title": "Index",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Mail Message Part Content"
-      }
-    },
-    "/api/v1/mail/messages/{message_id}/raw": {
-      "get": {
-        "description": "The original `.eml`, verbatim -- the JobArtifact content-endpoint\nheader conventions (nosniff, private cache, attachment disposition).\nNew surface: no endpoint before this served original upload bytes.",
-        "operationId": "get_mail_message_raw_api_v1_mail_messages__message_id__raw_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "message_id",
-            "required": true,
-            "schema": {
-              "title": "Message Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Mail Message Raw"
-      }
-    },
     "/api/v1/markdown-files": {
       "get": {
         "operationId": "list_markdown_files_api_v1_markdown_files_get",
@@ -9030,6 +9271,595 @@
           }
         },
         "summary": "Paddle Status"
+      }
+    },
+    "/api/v1/portal/activity": {
+      "get": {
+        "description": "Visible job activity as a blob-free SQL projection.\n\nCounts use the same visible, benchmark-free, filename-filtered job set as\nthe list, while intentionally ignoring the selected status filter.\nLegacy jobs without a resolvable collection remain visible to admins and\nhave null collection fields.",
+        "operationId": "list_activity_api_v1_portal_activity_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/JobStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalActivityListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Activity"
+      }
+    },
+    "/api/v1/portal/admin/collections": {
+      "get": {
+        "description": "Admin collection inventory with all counts computed in one aggregate.\n\nThe LEFT JOIN keeps collections with no jobs in the result. Job rows are\njoined through processing_info.settings.collection_id and benchmark jobs\nare excluded from every aggregate. `released_count` means a\nDocumentRelease row exists, regardless of its delivery status.",
+        "operationId": "list_admin_collections_api_v1_portal_admin_collections_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalCollectionListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Admin Collections"
+      }
+    },
+    "/api/v1/portal/collections/{collection_id}/markdown.zip": {
+      "get": {
+        "description": "Stream every downloadable, caller-visible Markdown in a collection.",
+        "operationId": "download_collection_markdown_api_v1_portal_collections__collection_id__markdown_zip_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Download Collection Markdown"
+      }
+    },
+    "/api/v1/portal/config": {
+      "get": {
+        "operationId": "portal_config_api_v1_portal_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalConfigResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Portal Config"
+      }
+    },
+    "/api/v1/portal/documents": {
+      "get": {
+        "operationId": "list_portal_documents_api_v1_portal_documents_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "collection_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Collection Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "review_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Review Only",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalDocumentListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Portal Documents"
+      }
+    },
+    "/api/v1/portal/documents/{job_id}": {
+      "get": {
+        "operationId": "get_portal_document_api_v1_portal_documents__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalDocumentDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Portal Document"
+      }
+    },
+    "/api/v1/portal/documents/{job_id}/markdown": {
+      "get": {
+        "description": "Download the exact Markdown represented by the portal review.",
+        "operationId": "download_portal_document_markdown_api_v1_portal_documents__job_id__markdown_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Download Portal Document Markdown"
+      }
+    },
+    "/api/v1/portal/documents/{job_id}/release": {
+      "post": {
+        "operationId": "release_portal_document_api_v1_portal_documents__job_id__release_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PortalReleaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalReleaseSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Release Portal Document"
+      }
+    },
+    "/api/v1/portal/documents/{job_id}/reprocess": {
+      "post": {
+        "operationId": "reprocess_portal_document_api_v1_portal_documents__job_id__reprocess_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PortalReprocessRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalReprocessResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reprocess Portal Document"
+      }
+    },
+    "/api/v1/portal/indexing-status": {
+      "get": {
+        "operationId": "indexing_status_api_v1_portal_indexing_status_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "maxItems": 50,
+              "minItems": 1,
+              "title": "Job Id",
+              "type": "array"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalIndexingResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Indexing Status"
+      }
+    },
+    "/api/v1/portal/releases/{release_id}/download": {
+      "get": {
+        "operationId": "download_release_api_v1_portal_releases__release_id__download_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "release_id",
+            "required": true,
+            "schema": {
+              "title": "Release Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Download Release"
+      }
+    },
+    "/api/v1/portal/releases/{release_id}/retry": {
+      "post": {
+        "operationId": "retry_release_api_v1_portal_releases__release_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "release_id",
+            "required": true,
+            "schema": {
+              "title": "Release Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalReleaseSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Release"
       }
     },
     "/api/v1/search": {

@@ -71,6 +71,9 @@ class ImportRunScope(BaseModel):
 
 
 class ImportRunOptions(BaseModel):
+    # Collection assignment is selected by id only; slug and display name are
+    # resolved server-side and stored as authoritative snapshots.
+    collection_id: str | None = Field(default=None, min_length=1, exclude_if=lambda value: value is None)
     # None = server default; the server clamps to import_max_pages /
     # import_max_depth regardless of the requested value.
     max_pages: int | None = Field(default=None, ge=1)

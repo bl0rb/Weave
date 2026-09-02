@@ -12,6 +12,7 @@ Dieses Verzeichnis enthält die Architektur-Entscheidungen der Weave-Plattform. 
 | [0004](0004-datenhaltung.md) | Datenhaltungs- und Schemastrategie | angenommen | 2026-08-31 |
 | [0005](0005-geteiltes-read-model.md) | Geteiltes Read-Model fuer den Chunk-Store | angenommen | 2026-08-31 |
 | [0006](0006-foederierte-anmeldung.md) | Weave-Ingest als Identitaetsanbieter der Plattform | angenommen | 2026-09-01 |
+| [0007](0007-zentrale-chat-provider-konfiguration.md) | Zentrale Chat-Provider-Konfiguration in Weave-Ingest | angenommen | 2026-09-02 |
 
 ## Format
 
@@ -43,3 +44,6 @@ Bewusste, einmalige Ausnahme zu ADR-0004: Weave-Retrieval liest `documents`/`chu
 
 ### 0006: Weave-Ingest als Identitätsanbieter
 Weave-API führt keine eigene Kontenwelt mehr, sondern föderiert an Weave-Ingest: dort liegen lokale Benutzer, Teams und eine ganze Tabelle von OIDC-Verbindungen samt Oberfläche. Der Chat schickt zum Anmelden dorthin und bekommt die Identität über einen einmaligen, server-zu-server eingelösten Code zurück. Ein Administrator pflegt Konten an einer Stelle; jede Anmeldeart, die Weave-Ingest kennt, gilt damit auch für den Chat.
+
+### 0007: Zentrale Chat-Provider-Konfiguration
+Weave-Ingest speichert den OpenAI-kompatiblen Endpoint, Modellnamen und den verschlüsselten API-Key. Die zustandslose Runtime liest für jeden direkten Chat-Turn einen frischen, dienst-authentifizierten Snapshot. Änderungen gelten damit für alle Replikate ohne Neustart; n8n-Flows behalten ihre eigene Modellkonfiguration.

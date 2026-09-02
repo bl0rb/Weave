@@ -120,7 +120,7 @@ def test_0004_auth_migration_upgrade_downgrade_round_trip(tmp_path, monkeypatch)
 
     insp = inspect(engine)
     tables = set(insp.get_table_names())
-    for expected in ('teams', 'auth_providers', 'users', 'sessions', 'collections'):
+    for expected in ('teams', 'auth_providers', 'users', 'sessions', 'collections', 'chat_provider_config'):
         assert expected in tables, f'{expected} missing after upgrade'
 
     job_columns = {c['name'] for c in insp.get_columns('jobs')}
@@ -163,7 +163,7 @@ def test_0004_auth_migration_upgrade_downgrade_round_trip(tmp_path, monkeypatch)
 
     insp = inspect(engine)
     tables = set(insp.get_table_names())
-    for removed in ('teams', 'auth_providers', 'users', 'sessions', 'collections'):
+    for removed in ('teams', 'auth_providers', 'users', 'sessions', 'collections', 'chat_provider_config'):
         assert removed not in tables, f'{removed} still present after downgrade'
     job_columns = {c['name'] for c in insp.get_columns('jobs')}
     assert 'owner_id' not in job_columns
@@ -172,7 +172,7 @@ def test_0004_auth_migration_upgrade_downgrade_round_trip(tmp_path, monkeypatch)
     command.upgrade(cfg, 'head')
     insp = inspect(engine)
     tables = set(insp.get_table_names())
-    for expected in ('teams', 'auth_providers', 'users', 'sessions', 'collections'):
+    for expected in ('teams', 'auth_providers', 'users', 'sessions', 'collections', 'chat_provider_config'):
         assert expected in tables
 
 

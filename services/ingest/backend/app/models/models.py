@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Float,
     Index,
     Integer,
     LargeBinary,
@@ -261,6 +262,40 @@ class VlConnection(Base):
     api_key_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
     system_prompt: Mapped[str] = mapped_column(Text, default='', server_default='', nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1', nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
+class ChatProviderConfig(Base):
+    """Singleton control-plane configuration for direct Weave chat bots.
+
+    Runtime stays stateless: it reads this row through the authenticated
+    internal endpoint before each direct (non-n8n) turn.  The API key is
+    encrypted under its own HKDF purpose and is never returned by an admin
+    response; only the service-authenticated Runtime endpoint can obtain the
+    decrypted value.
+    """
+
+    __tablename__ = 'chat_provider_config'
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default='default')
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0', nullable=False)
+    base_url: Mapped[str] = mapped_column(String(1024), default='', server_default='', nullable=False)
+    model: Mapped[str] = mapped_column(String(255), default='', server_default='', nullable=False)
+    api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    timeout_seconds: Mapped[float] = mapped_column(Float, default=60.0, server_default='60', nullable=False)
+    temperature: Mapped[float | None] = mapped_column(Float, nullable=True)
+    updated_by_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now(), nullable=False
     )
@@ -1043,3 +1078,38 @@ class LoginHandoffCode(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DocumentRelease(Base):
+    """Immutable approval snapshot and durable outbox row for the portal.
+
+    The job foreign key deliberately uses RESTRICT: an issued release must
+    never become an orphaned download. The snapshot and frozen event payload
+    are the source for delivery and download; the current Job markdown is
+    never read by consumers after this row has been created.
+    """
+
+    __tablename__ = 'document_releases'
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    job_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey('jobs.id', ondelete='RESTRICT'), nullable=False, unique=True, index=True
+    )
+    owner_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+    markdown_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    markdown_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default='pending', server_default='pending', nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default='0', nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False
+    )
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    lease_token: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)

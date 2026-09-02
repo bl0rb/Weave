@@ -276,6 +276,11 @@ services:
       # would compare equal to every caller's empty header and turn this
       # into an open identity oracle.
       HANDOFF_SECRET: ${HANDOFF_SECRET:-}
+      PORTAL_KNOWLEDGE_BASE_URL: ${PORTAL_KNOWLEDGE_BASE_URL:-http://weave-knowledge:8000}
+      PORTAL_KNOWLEDGE_WEBHOOK_SECRET: ${WEAVE_KNOWLEDGE_WEBHOOK_SECRET:-}
+      CHAT_CONFIG_SERVICE_TOKEN: ${CHAT_CONFIG_SERVICE_TOKEN:?CHAT_CONFIG_SERVICE_TOKEN is required}
+      CHAT_LLM_PRIVATE_HOST_ALLOWLIST: '${CHAT_LLM_PRIVATE_HOST_ALLOWLIST:-["host.docker.internal","ollama","vllm","llm"]}'
+      WEBHOOK_PRIVATE_HOST_ALLOWLIST: '${WEBHOOK_PRIVATE_HOST_ALLOWLIST:-["weave-knowledge"]}'
     volumes:
       - storage:/app/backend/storage:rw
     depends_on:
@@ -316,6 +321,9 @@ services:
       CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-1}
       CELERY_PREFETCH_MULTIPLIER: ${CELERY_PREFETCH_MULTIPLIER:-1}
       CELERY_MAX_TASKS_PER_CHILD: ${CELERY_MAX_TASKS_PER_CHILD:-5}
+      PORTAL_KNOWLEDGE_BASE_URL: ${PORTAL_KNOWLEDGE_BASE_URL:-http://weave-knowledge:8000}
+      PORTAL_KNOWLEDGE_WEBHOOK_SECRET: ${WEAVE_KNOWLEDGE_WEBHOOK_SECRET:-}
+      WEBHOOK_PRIVATE_HOST_ALLOWLIST: '${WEBHOOK_PRIVATE_HOST_ALLOWLIST:-["weave-knowledge"]}'
     volumes:
       - storage:/app/backend/storage:rw
       # $HOME of the worker's own user (worker.Dockerfile: uid 1000
@@ -346,6 +354,7 @@ services:
       - ${FRONTEND_PORT:-3000}:3000
     environment:
       WEAVE_INGEST_PUBLIC_API_URL: ${WEAVE_INGEST_PUBLIC_API_URL:-}
+      WEAVE_CHAT_PUBLIC_URL: ${WEAVE_CHAT_PUBLIC_URL:-http://localhost:3001}
     depends_on:
       - weave-ingest-backend
     networks:
@@ -393,7 +402,7 @@ services:
       # see contracts/events/document.processed.md's markdown_url section.
       WEAVE_INGEST_BASE_URL: http://weave-ingest-backend:8000
       WEAVE_INGEST_API_TOKEN: ${WEAVE_KNOWLEDGE_INGEST_API_TOKEN:?WEAVE_KNOWLEDGE_INGEST_API_TOKEN is required}
-      WEAVE_INGEST_WEBHOOK_SECRET: ${WEAVE_KNOWLEDGE_WEBHOOK_SECRET:-}
+      WEAVE_INGEST_WEBHOOK_SECRET: ${WEAVE_KNOWLEDGE_WEBHOOK_SECRET:?WEAVE_KNOWLEDGE_WEBHOOK_SECRET is required}
       # Guards THIS service's own read API (GET /api/v1/documents,
       # /documents/{id}, /collections) -- the indexed corpus itself, past
       # the team/read_teams scoping every search goes through. No Weave
@@ -445,6 +454,7 @@ services:
       SECRET_KEY: ${WEAVE_KNOWLEDGE_SECRET_KEY:?WEAVE_KNOWLEDGE_SECRET_KEY is required}
       WEAVE_INGEST_BASE_URL: http://weave-ingest-backend:8000
       WEAVE_INGEST_API_TOKEN: ${WEAVE_KNOWLEDGE_INGEST_API_TOKEN:?WEAVE_KNOWLEDGE_INGEST_API_TOKEN is required}
+      WEAVE_INGEST_WEBHOOK_SECRET: ${WEAVE_KNOWLEDGE_WEBHOOK_SECRET:?WEAVE_KNOWLEDGE_WEBHOOK_SECRET is required}
       # Same shared `x-embedding-env` anchor as weave-knowledge above --
       # the worker is what actually calls the embedding provider during
       # indexing, so it needs the identical values, not just "similar" ones.
@@ -700,6 +710,11 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_DEFAULT_MODEL: ${LLM_DEFAULT_MODEL:-}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60}
+      # Ingest owns the centrally managed provider/API key. Runtime reads a
+      # fresh snapshot per direct turn, preserving stateless horizontal scale.
+      CHAT_CONFIG_BASE_URL: ${CHAT_CONFIG_BASE_URL:-http://weave-ingest-backend:8000}
+      CHAT_CONFIG_SERVICE_TOKEN: ${CHAT_CONFIG_SERVICE_TOKEN:?CHAT_CONFIG_SERVICE_TOKEN is required}
+      CHAT_CONFIG_TIMEOUT_SECONDS: ${CHAT_CONFIG_TIMEOUT_SECONDS:-5}
       # 'rules': deterministic keyword/heuristic intent router. 'llm':
       # delegates classification to LLM_PROVIDER above.
       ROUTER_MODE: ${ROUTER_MODE:-rules}

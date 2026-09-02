@@ -21,6 +21,7 @@ from app.schemas.bot import BotRetrievalSummary, BotSummary
 from app.schemas.chat import ChatRequest, ChatResponse, ChatStreamEvent
 from app.services import chat as chat_service
 from app.services.botconfig import BotNotFoundError, list_bots
+from app.services.chat_config_client import ChatConfigUnavailable
 from app.services.n8n_client import N8nUnavailable
 from app.services.retrieval_client import RetrievalUnavailable
 
@@ -87,6 +88,8 @@ def _run_pipeline_step(step: Callable[[], _T]) -> _T:
         # docstring for exactly which failures land here (n8n unreachable,
         # timed out, or answered 5xx) versus N8nError (left uncaught,
         # default 500 -- see app/services/chat.py's own docstring).
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except ChatConfigUnavailable as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 

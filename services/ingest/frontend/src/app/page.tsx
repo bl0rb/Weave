@@ -1,9 +1,5 @@
-import { HomeDashboard } from '@/components/dashboard/home-dashboard';
+import { PortalHome } from '@/components/portal/home';
 
 export default function Home() {
-  return (
-    <main className="min-h-screen">
-      <HomeDashboard />
-    </main>
-  );
+  return <PortalHome />;
 }

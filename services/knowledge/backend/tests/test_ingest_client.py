@@ -19,6 +19,8 @@ test that a Document's stored (informative-only) markdown_url is never the
 thing actually fetched.
 """
 
+import hashlib
+import uuid
 from unittest.mock import patch
 
 import httpx
@@ -51,6 +53,44 @@ def test_build_markdown_url_from_base_and_job_id(monkeypatch):
 def test_build_markdown_url_tolerates_trailing_slash_in_base(monkeypatch):
     monkeypatch.setattr(settings, 'weave_ingest_base_url', 'https://weave.local/')
     assert build_markdown_url('abc-123') == 'https://weave.local/api/v1/jobs/abc-123/download'
+
+
+def test_released_fetch_builds_local_target_and_checks_utf8_hash(monkeypatch):
+    monkeypatch.setattr(settings, 'weave_ingest_base_url', 'https://weave.local')
+    monkeypatch.setattr(settings, 'weave_ingest_api_token', 'pd_service_token')
+    release_id = str(uuid.uuid4())
+    markdown = '---\ntitle: Freigegeben\n---\n\nInhalt'
+    expected_sha256 = hashlib.sha256(markdown.encode('utf-8')).hexdigest()
+
+    with patch(
+        'app.services.ingest_client.httpx.get', return_value=_FakeResponse(200, markdown)
+    ) as mock_get:
+        result = ingest_client.fetch_released_markdown(release_id, expected_sha256, timeout=7.0)
+
+    assert result == markdown
+    args, kwargs = mock_get.call_args
+    assert args[0] == f'https://weave.local/api/v1/portal/releases/{release_id}/download'
+    assert kwargs['headers']['Authorization'] == 'Bearer pd_service_token'
+    assert kwargs['follow_redirects'] is False
+    assert kwargs['timeout'] == 7.0
+
+
+def test_released_fetch_rejects_invalid_target_before_network(monkeypatch):
+    monkeypatch.setattr(settings, 'weave_ingest_base_url', 'https://weave.local')
+    with patch('app.services.ingest_client.httpx.get') as mock_get:
+        with pytest.raises(ValueError):
+            ingest_client.fetch_released_markdown('../release', 'b' * 64)
+    mock_get.assert_not_called()
+
+
+def test_released_fetch_rejects_body_hash_tampering_without_returning_content(monkeypatch):
+    monkeypatch.setattr(settings, 'weave_ingest_base_url', 'https://weave.local')
+    release_id = str(uuid.uuid4())
+    with patch(
+        'app.services.ingest_client.httpx.get', return_value=_FakeResponse(200, 'tampered')
+    ):
+        with pytest.raises(PermanentFetchError, match='expected'):
+            ingest_client.fetch_released_markdown(release_id, 'b' * 64)
 
 
 # --- fetch_markdown takes job_id only, never a URL -------------------------------

@@ -493,12 +493,11 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
             </span>
           )}
           {settings?.mode === 'mail_attachment' && mailMessageIdFromSettings(settings) && (
-            <Link
-              href={`/mail/${mailMessageIdFromSettings(settings)}`}
-              className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-800"
             >
-              <Mail className="h-3 w-3" /> from mail
-            </Link>
+              <Mail className="h-3 w-3" /> E-Mail-Anhang
+            </span>
           )}
         </p>
         <p>Created: {new Date(job.created_at).toLocaleString()}</p>

@@ -233,6 +233,7 @@ from app.schemas.chat import (
     Source,
 )
 from app.services import llm as llm_service
+from app.services.chat_config_client import fetch_chat_provider
 from app.services import n8n_client
 from app.services import retrieval_client
 from app.services import router as router_service
@@ -1082,7 +1083,28 @@ def _prepare_turn(request: ChatRequest) -> _PreparedTurn:
     # completely different generation mechanism this module has to
     # special-case BEFORE ever reaching that factory).
     is_n8n_bot = bot.model.provider == 'n8n'
-    llm_provider = None if is_n8n_bot else llm_service.get_llm(bot.model.provider)
+    central_provider = None if is_n8n_bot else fetch_chat_provider()
+    if central_provider is not None and central_provider.enabled:
+        resolved_temperature = (
+            central_provider.temperature
+            if central_provider.temperature is not None
+            else bot.model.temperature
+        )
+        bot = bot.model_copy(update={
+            'model': bot.model.model_copy(update={
+                'provider': 'openai',
+                'model': central_provider.model,
+                'temperature': resolved_temperature,
+            })
+        })
+        llm_provider = llm_service.OpenAICompatibleLLM(
+            base_url=central_provider.base_url,
+            api_key=central_provider.api_key,
+            model=central_provider.model,
+            timeout=central_provider.timeout_seconds,
+        )
+    else:
+        llm_provider = None if is_n8n_bot else llm_service.get_llm(bot.model.provider)
 
     router_start = time.perf_counter()
     # `llm_call` stays None whenever there is no real LLMProvider to build

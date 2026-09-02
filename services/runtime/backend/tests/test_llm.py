@@ -247,6 +247,13 @@ def test_openai_compatible_llm_omits_temperature_when_not_given():
     assert 'temperature' not in mock_post.call_args.kwargs['json']
 
 
+def test_openai_compatible_llm_does_not_duplicate_v1_in_base_url():
+    payload = _chat_payload('reply')
+    with patch('app.services.llm.httpx.post', return_value=_FakeResponse(200, payload)) as mock_post:
+        _provider(base_url='https://llm.example.com/openai/v1').chat([{'role': 'user', 'content': 'hi'}])
+    assert mock_post.call_args.args[0] == 'https://llm.example.com/openai/v1/chat/completions'
+
+
 def test_openai_compatible_llm_uses_requested_model_override():
     payload = _chat_payload('reply', model='')  # server doesn't echo a model back
     with patch('app.services.llm.httpx.post', return_value=_FakeResponse(200, payload)) as mock_post:

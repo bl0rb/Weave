@@ -25,7 +25,7 @@ wird, worauf es gebaut ist, und womit man sich bei ihm ausweist.
 
 | Dienst | Verwaltung | Technik | Ausweis am Dienst |
 |---|---|---|---|
-| Weave-Ingest | **Eigene Oberfläche** — `/admin` für Nutzer, Teams, OIDC-Verbindungen, Worker-Logs, OCR-Profil und -Timeout, VL-Verbindungen; `/connections` für Webhooks, dazu `/openwebui` und `/mail`. Alles Übrige `deploy/.env` | FastAPI · SQLAlchemy + Alembic · Celery (Redis-DB 0) · PaddleOCR/PP-StructureV3 im eigenen Worker-Image · Next.js 16 + React 19 | Sitzungs-Cookie (undurchsichtig, in der DB nur als sha256) **oder** Personal-Token `pd_…`. Passwörter bcrypt mit Konto-Sperre; beliebig viele OIDC-Verbindungen (Auth-Code + PKCE); Herkunftsprüfung gegen CSRF auf jeder schreibenden Route |
+| Weave-Ingest | **Eigene Oberfläche** — `/admin` für Nutzer, Teams, OIDC-Verbindungen, Worker-Logs, OCR-Profil und -Timeout, VL-Verbindungen; `/connections` für Webhooks, Wissensbereichsverwaltung unter `/admin`, technische Werkzeuge ebenfalls dort. Alles Übrige `deploy/.env` | FastAPI · SQLAlchemy + Alembic · Celery (Redis-DB 0) · PaddleOCR/PP-StructureV3 im eigenen Worker-Image · Next.js 16 + React 19 | Sitzungs-Cookie (undurchsichtig, in der DB nur als sha256) **oder** Personal-Token `pd_…`. Passwörter bcrypt mit Konto-Sperre; beliebig viele OIDC-Verbindungen (Auth-Code + PKCE); Herkunftsprüfung gegen CSRF auf jeder schreibenden Route |
 | Weave-Knowledge | Keine Oberfläche, nur `deploy/.env`. Collections kommen per Registry-Sync aus Ingest, werden hier nie gepflegt | FastAPI · SQLAlchemy + Alembic · Celery (Redis-DB 1) · pgvector | Zwei Eingänge, zwei Verfahren: der Webhook prüft HMAC-SHA256 über den **rohen** Rumpf (er nimmt Schreibzugriffe an — ein Bearer würde nichts darüber sagen, ob der Rumpf unterwegs verändert wurde), die Lese-Endpunkte verlangen `KNOWLEDGE_API_TOKEN` als Bearer. Ohne gesetzten Wert `503`. `/health` bleibt frei |
 | Weave-Retrieval | Keine Oberfläche, nur `deploy/.env` | FastAPI · SQLAlchemy auf einer reinen `SELECT`-Rolle · pgvector + tsvector · RRF · Cross-Encoder über HTTP | Dienst-Token `RETRIEVAL_API_TOKEN` als Bearer, konstante-Zeit-Vergleich, `503` wenn nicht gesetzt |
 | Weave-Runtime | **Bots als YAML-Dateien** im Volume `runtime_bots`, bei jedem Aufruf frisch von der Platte gelesen — eine Änderung wirkt ohne Neustart. Keine Oberfläche; alles Übrige `deploy/.env` | FastAPI · httpx · SSE · PyYAML. Ohne Datenbank | `RUNTIME_API_TOKEN` als Bearer. Stellt seinerseits Delegations-Token aus: HMAC-SHA256, fünf Minuten, mit dem erlaubten Collection-Umfang darin |
@@ -248,7 +248,7 @@ funktioniert vollständig, ohne Schlüssel und ohne Kosten.
 | Wofür | Variablen | Wo |
 |---|---|---|
 | Embeddings | `EMBEDDING_PROVIDER=openai`, `EMBEDDING_BASE_URL`, `EMBEDDING_API_KEY`, `EMBEDDING_MODEL`, `EMBEDDING_DIMENSION` | Knowledge **und** Retrieval, zeichengleich (eine einzige `x-embedding-env`-Compose-Variable, siehe `deploy/docker-compose.weave.yml`) |
-| Sprachmodell | `LLM_PROVIDER=openai`, `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_DEFAULT_MODEL` | nur Runtime |
+| Sprachmodell | Primär **Ingest → Administration → Chat & LLM**; `CHAT_CONFIG_SERVICE_TOKEN` zwischen Ingest/Runtime. `LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_DEFAULT_MODEL` bleiben der Standalone-Fallback | Ingest verwaltet, Runtime führt aus |
 | Reranker | `RERANK_PROVIDER=api`, `RERANK_BASE_URL`, `RERANK_API_KEY`, `RERANK_MODEL` | nur Retrieval |
 
 **`SEARCH_TOP_K` darf `RERANKER_MAX_DOCUMENTS` nicht überschreiten.** Sobald

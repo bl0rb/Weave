@@ -7,7 +7,7 @@ Weave-Knowledge ist die **Index-Pipeline** des Weave-Systems. Sie konsumiert str
 ## Zweck
 
 - Strukturbewusstes Chunking von Dokumenten (ATX-Headings, `<!-- page:N -->`-Marker, GFM-Tabellen, Confluence-Breadcrumbs)
-- Idempotente Verarbeitung des `document.processed`-Events von Weave-Ingest (Deduplication über `content_sha256`)
+- Idempotente Verarbeitung des `document.released`-Events von Weave-Ingest (Deduplication über `release_id`); `document.processed` wird authentifiziert mit `awaiting_release` bestätigt und indexiert nichts.
 - Metadata-Enrichment aus YAML-Frontmatter
 - Abstraktion von Embedding-Providern
 - Persistierung in PostgreSQL mit pgvector für Vektorsuche und tsvector-Indizes für Fulltext-Matching
@@ -105,8 +105,6 @@ von Weave-Ingests `deploy/docker-compose.weave.yml`.
 
 ## Status
 
-**In Arbeit (Phase 2)** — Service-Skeleton (Config, Models, Alembic-Migration,
-Celery-Grundgerüst, FastAPI-Health/Documents-Endpoints, Tests, Docker/CI)
-steht. Der eigentliche Index-Lauf (Webhook-Handling für `document.processed`,
-Markdown-Abruf, strukturbewusstes Chunking, Embedding-Provider-Integration)
-folgt in einer späteren Stage.
+Der Index-Lauf verarbeitet signierte `document.released`-Events, lädt den
+unveränderlichen Release-Snapshot und schreibt ihn idempotent in den
+Chunk-Store. `document.processed` erzeugt keinen Index-Task.

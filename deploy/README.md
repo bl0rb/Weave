@@ -145,7 +145,8 @@ Generate each with `openssl rand -hex 32`. Never reuse one shared secret's value
 - `EMBEDDINGS_MODEL` / `EMBEDDINGS_API_TOKEN` / `EMBEDDINGS_BATCH_SIZE` / `EMBEDDINGS_THREADS` / `EMBEDDINGS_MAX_INPUTS` / `EMBEDDINGS_NORMALIZE` – `weave-embeddings` only (the model this container itself loads, default `intfloat/multilingual-e5-small`); `EMBEDDINGS_API_TOKEN` empty by default like `RERANKER_API_TOKEN` below, not `:?required` — see the compose file's comment on that service for why
 - `RERANKER_MODEL` / `RERANKER_API_TOKEN` / `RERANKER_BATCH_SIZE` / `RERANKER_THREADS` / `RERANKER_MAX_DOCUMENTS` – `weave-reranker` only, default model `BAAI/bge-reranker-v2-m3`
 - `RETRIEVAL_TIMEOUT_SECONDS` (10) – HTTP timeout used by both Weave-Runtime's and Weave-Tools' calls into Weave-Retrieval
-- `LLM_PROVIDER` / `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_DEFAULT_MODEL` / `LLM_TIMEOUT_SECONDS`, `ROUTER_MODE`, `N8N_ALLOWED_BASE_URLS`, `TOOLS_BASE_URL`, `DELEGATION_TOKEN_TTL_SECONDS` – Weave-Runtime
+- `CHAT_CONFIG_SERVICE_TOKEN` – gemeinsames Secret von Ingest und Runtime für die zentrale **Administration → Chat & LLM**; `CHAT_CONFIG_BASE_URL` (intern standardmäßig Ingest), `CHAT_CONFIG_TIMEOUT_SECONDS` und `CHAT_LLM_PRIVATE_HOST_ALLOWLIST` steuern den Abruf und private Providerziele
+- `LLM_PROVIDER` / `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_DEFAULT_MODEL` / `LLM_TIMEOUT_SECONDS` – Standalone-Fallback der Runtime, wenn keine zentrale Chat-Konfiguration verdrahtet ist; `ROUTER_MODE`, `N8N_ALLOWED_BASE_URLS`, `TOOLS_BASE_URL`, `DELEGATION_TOKEN_TTL_SECONDS` bleiben Runtime-Einstellungen
 - `WEAVE_API_TIMEOUT_SECONDS` (10) – HTTP timeout for Weave-Tools' calls into Weave-API's introspection endpoint
 - `RATE_LIMIT_PER_MINUTE` (30), `HISTORY_MAX_MESSAGES` (20) – Weave-API
 - `WORKER_MEMORY_LIMIT` (3g), `WORKER_CPUS` (2.0), `CELERY_WORKER_CONCURRENCY` (1), `CELERY_PREFETCH_MULTIPLIER` (1), `CELERY_MAX_TASKS_PER_CHILD` (5) – Weave-Ingest worker

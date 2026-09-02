@@ -22,12 +22,15 @@ from app.api.routes import (
     _JOB_BLOB_DEFER_OPTIONS,
     _owner_visible,
     _parse_tags,
+    _require_collection_control,
+    _require_visible_collection,
     _sanitize_storage_path,
     _validated_webhook_connection,
 )
 from app.core.config import settings
 from app.database.session import get_db
 from app.models.models import (
+    Collection,
     ImportAuthType,
     ImportRun,
     ImportRunStatus,
@@ -460,6 +463,16 @@ def create_import_run(
     if payload.options.webhook_connection_id:
         _validated_webhook_connection(db, user, payload.options.webhook_connection_id)
 
+    collection = None
+    if payload.options.collection_id is not None:
+        collection = db.get(Collection, payload.options.collection_id.strip())
+        if collection is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
+        # Visibility and control are deliberately separate: a teammate may
+        # read a collection, but only its owner or an admin may write into it.
+        _require_visible_collection(db, collection, user)
+        _require_collection_control(collection, user)
+
     if payload.scope.type == 'page':
         scope_value = extract_page_id(payload.scope.value)
         if scope_value is None:
@@ -519,6 +532,9 @@ def create_import_run(
     options = {
         'max_pages': max_pages,
         'max_depth': max_depth,
+        'collection_id': collection.id if collection is not None else None,
+        'collection_slug': collection.slug if collection is not None else None,
+        'collection_name': collection.name if collection is not None else None,
         'include_attachments': payload.options.include_attachments,
         'ocr_attachments': payload.options.ocr_attachments,
         'ocr_profile_id': payload.options.ocr_profile_id,

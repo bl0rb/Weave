@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     # into the index, and a forged event carries whatever markdown, team and
     # collection slug its sender picks. Must match the secret configured on
     # the Weave-Ingest webhook connection that points at this service.
+    # Also authenticates the narrow indexing/status lookup with a separate
+    # HMAC context. It never grants access to the corpus read API above.
     weave_ingest_webhook_secret: str = ''
 
     # --- Collection registry sync (app/services/collection_sync.py,

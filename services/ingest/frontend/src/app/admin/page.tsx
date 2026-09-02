@@ -2,7 +2,8 @@
 
 import { useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
-import { Cpu, KeyRound, ScanEye, ShieldAlert, Terminal, Users, UsersRound } from 'lucide-react';
+import Link from 'next/link';
+import { FolderOpen, Wrench, ArrowRight, Cpu, KeyRound, MessageSquareText, ScanEye, ShieldAlert, Terminal, Users, UsersRound } from 'lucide-react';
 
 import { useAuth } from '@/lib/auth-context';
 import { UsersTab } from '@/components/admin/users-tab';
@@ -11,25 +12,30 @@ import { ProvidersTab } from '@/components/admin/providers-tab';
 import { LogsTab } from '@/components/admin/logs-tab';
 import { VlConnectionsTab } from '@/components/admin/vl-connections-tab';
 import { PaddleTab } from '@/components/admin/paddle-tab';
+import { CollectionsTab } from '@/components/admin/collections-tab';
+import { ChatProviderTab } from '@/components/admin/chat-provider-tab';
 
-type TabId = 'users' | 'teams' | 'providers' | 'logs' | 'vl-connections' | 'paddle';
+type TabId = 'collections' | 'tools' | 'users' | 'teams' | 'providers' | 'logs' | 'chat-provider' | 'vl-connections' | 'paddle';
 
 const tabs: { id: TabId; label: string; icon: typeof Users }[] = [
-  { id: 'users', label: 'Users', icon: Users },
+  { id: 'collections', label: 'Wissensbereiche', icon: FolderOpen },
+  { id: 'users', label: 'Nutzer', icon: Users },
   { id: 'teams', label: 'Teams', icon: UsersRound },
-  { id: 'providers', label: 'Identity Providers', icon: KeyRound },
-  { id: 'logs', label: 'Logs', icon: Terminal },
-  { id: 'vl-connections', label: 'VL Connections', icon: ScanEye },
+  { id: 'providers', label: 'Anmeldung', icon: KeyRound },
+  { id: 'chat-provider', label: 'Chat & LLM', icon: MessageSquareText },
+  { id: 'logs', label: 'Worker-Logs', icon: Terminal },
+  { id: 'vl-connections', label: 'Dokument-KI', icon: ScanEye },
   // Placed after VL Connections: both are runtime/processing configuration
   // (as opposed to Users/Teams/Providers, which are account administration).
-  { id: 'paddle', label: 'Paddle', icon: Cpu },
+  { id: 'paddle', label: 'OCR', icon: Cpu },
+  { id: 'tools', label: 'Werkzeuge', icon: Wrench },
 ];
 
 const TAB_IDS: TabId[] = tabs.map((t) => t.id);
 
 export default function AdminPage() {
   const { user } = useAuth();
-  const [tab, setTab] = useState<TabId>('users');
+  const [tab, setTab] = useState<TabId>('collections');
   const tabRefs = useRef<Partial<Record<TabId, HTMLButtonElement | null>>>({});
 
   const focusTab = (id: TabId) => {
@@ -61,10 +67,9 @@ export default function AdminPage() {
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100">
             <ShieldAlert className="h-6 w-6 text-slate-400" />
           </div>
-          <h1 className="mt-4 text-lg font-semibold text-slate-950">Admin privileges required</h1>
+          <h1 className="mt-4 text-lg font-semibold text-slate-950">Nur für Administratoren</h1>
           <p className="mt-1 max-w-md text-center text-sm text-slate-500">
-            This area is restricted to administrators. Ask an admin to grant you the admin role if
-            you need access.
+            Hier verwaltet die Administration Wissensbereiche, Nutzer und Einstellungen.
           </p>
         </div>
       </main>
@@ -77,13 +82,13 @@ export default function AdminPage() {
         <header className="mb-6">
           <h1 className="text-3xl font-semibold text-slate-950">Administration</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Manage accounts, access, and runtime configuration for your Weave Ingest deployment.
+            Wissensbereiche, Zugriffsrechte, Anmeldung und Verarbeitung zentral verwalten.
           </p>
         </header>
 
         <div
           role="tablist"
-          aria-label="Admin sections"
+          aria-label="Administrationsbereiche"
           className="mb-6 inline-flex flex-wrap gap-1 rounded-2xl border border-slate-200 bg-white p-1 shadow-sm"
         >
           {tabs.map(({ id, label, icon: Icon }) => {
@@ -114,6 +119,29 @@ export default function AdminPage() {
           })}
         </div>
 
+        {tab === 'collections' && (
+          <div role="tabpanel" id="admin-panel-collections" aria-labelledby="admin-tab-collections">
+            <CollectionsTab />
+          </div>
+        )}
+        {tab === 'tools' && (
+          <div role="tabpanel" id="admin-panel-tools" aria-labelledby="admin-tab-tools">
+            <h2 className="text-xl font-semibold text-slate-900">Werkzeuge für die Administration</h2>
+            <p className="mt-2 text-sm text-slate-600">Verbindungen prüfen, Verarbeitungsprofile vergleichen und einzelne Aufträge untersuchen.</p>
+            <div className="mt-6 grid gap-4 sm:grid-cols-2">
+              {[
+                ['/connections', 'Verbindungen', 'Confluence und Webhooks einrichten und prüfen.'],
+                ['/benchmark', 'Qualität vergleichen', 'OCR- und Vision-Profile mit denselben Dokumenten vergleichen.'],
+                ['/jobs', 'Auftragsverwaltung', 'Alle sichtbaren Aufträge, technische Details und Wiederholungen.'],
+                ['/imports', 'Confluence-Importe', 'Importfortschritt, Quellen und Fehler im Detail.'],
+                ['/processing/new', 'Verarbeitung testen', 'Dateien mit erweiterten OCR-Einstellungen verarbeiten.'],
+              ].map(([href, title, description]) => <Link key={href} href={href} className="rounded-xl border border-slate-200 bg-white p-5 transition hover:border-emerald-400">
+                <span className="flex items-center justify-between gap-3 font-semibold text-emerald-800">{title}<ArrowRight size={16} /></span>
+                <p className="mt-2 text-sm text-slate-600">{description}</p>
+              </Link>)}
+            </div>
+          </div>
+        )}
         {tab === 'users' && (
           <div role="tabpanel" id="admin-panel-users" aria-labelledby="admin-tab-users">
             <UsersTab />
@@ -132,6 +160,11 @@ export default function AdminPage() {
         {tab === 'logs' && (
           <div role="tabpanel" id="admin-panel-logs" aria-labelledby="admin-tab-logs">
             <LogsTab />
+          </div>
+        )}
+        {tab === 'chat-provider' && (
+          <div role="tabpanel" id="admin-panel-chat-provider" aria-labelledby="admin-tab-chat-provider">
+            <ChatProviderTab />
           </div>
         )}
         {tab === 'vl-connections' && (

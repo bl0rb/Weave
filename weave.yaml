@@ -251,33 +251,44 @@ shared:
       /internal/bots surface fail with 401/503 -- every chat turn ends in a
       502 from API's own gateway.
 
+  CHAT_CONFIG_SERVICE_TOKEN:
+    secret: true
+    env_var: CHAT_CONFIG_SERVICE_TOKEN
+    required: true
+    targets:
+      - {service: ingest, var: CHAT_CONFIG_SERVICE_TOKEN}
+      - {service: runtime, var: CHAT_CONFIG_SERVICE_TOKEN}
+    comment: >
+      Runtime presents this bearer token when it reads the centrally managed
+      OpenAI-compatible provider from Ingest. Ingest returns the decrypted
+      provider key only on that protected internal route; drift fails every
+      direct chat turn closed with 503/502 instead of falling back silently.
+
   WEAVE_KNOWLEDGE_WEBHOOK_SECRET:
     secret: true
     env_var: WEAVE_KNOWLEDGE_WEBHOOK_SECRET
     required: true
     targets:
-      # The rendered .env key is WEAVE_KNOWLEDGE_WEBHOOK_SECRET (prefixed to
-      # avoid colliding with Ingest's own, unrelated settings in the same
-      # flat namespace) -- docker-compose.weave.yml maps it to
-      # WEAVE_INGEST_WEBHOOK_SECRET inside the knowledge container itself.
+      # The rendered .env key is WEAVE_KNOWLEDGE_WEBHOOK_SECRET. Compose maps
+      # this shared value to Knowledge's WEAVE_INGEST_WEBHOOK_SECRET and to
+      # Ingest's portal publication sender.
       - {service: knowledge, var: WEAVE_KNOWLEDGE_WEBHOOK_SECRET}
+      - {service: ingest, var: PORTAL_KNOWLEDGE_WEBHOOK_SECRET}
     manual_targets:
       - >
-        Weave-Ingest: this side is NOT an environment variable at all -- it
-        is the secret of a webhook connection created through Ingest's own
-        admin UI (docs/betrieb.md section 3, step 4). `render`/`check`
-        cannot see or set it; after generating this value, paste it into
-        that webhook connection by hand and keep it in sync manually if it
-        is ever rotated here.
+        Legacy collection.updated delivery: the existing Ingest webhook
+        connection in the admin UI must still use this same value when it is
+        configured to notify Knowledge. `render`/`check` cannot inspect that
+        connection, so keep that legacy connection secret synchronized by
+        hand. The new document.released delivery uses the Ingest environment
+        target above and does not require a separate connection secret.
     comment: >
-      Verifies the X-Weave-Ingest-Signature header on an inbound
-      document.processed/collection.updated event. Left unset on the
-      Knowledge side: the event route answers 503 rather than accepting an
-      unsigned event that would otherwise let a forged sender inject
-      arbitrary markdown/team/collection data into the index. If the two
-      sides drift: every event is rejected with 401 and processed documents
-      simply never appear in the index -- no error surfaced to whoever
-      uploaded the document in Ingest.
+      Verifies the X-Weave-Ingest-Signature header on the inbound
+      document.released event. Knowledge rejects a missing secret rather than
+      accepting an unsigned publication that could inject arbitrary content
+      into the index. If the values drift, releases are rejected with 401 and
+      remain undelivered; document.processed is only acknowledged as
+      awaiting_release and is not an indexing trigger.
 
   # --- The embedding-model triple: what docs/betrieb.md section 5 calls out
   # as "kein Fehler. Vektorsuche liefert kommentarlos nichts" (provider +
@@ -491,6 +502,18 @@ services:
           Host port for weave-ingest-frontend. Bump this (not BACKEND_PORT)
           if something else on the host already holds 3000 -- the whole
           stack's `up` fails otherwise.
+      PORTAL_KNOWLEDGE_BASE_URL:
+        secret: false
+        value: "http://weave-knowledge:8000"
+        type: string
+        required: false
+        comment: "Internal Knowledge webhook target; the service listens on port 8000 inside the Compose network."
+      WEBHOOK_PRIVATE_HOST_ALLOWLIST:
+        secret: false
+        value: ["weave-knowledge"]
+        type: json_list
+        required: false
+        comment: "Existing private webhook hosts remain configurable; include weave-knowledge for portal publication."
       WORKER_MEMORY_LIMIT:
         secret: false
         value: "3g"
@@ -642,6 +665,17 @@ services:
 
   runtime:
     settings:
+      CHAT_CONFIG_BASE_URL:
+        secret: false
+        value: http://weave-ingest-backend:8000
+        type: string
+        required: false
+        comment: "Ingest control-plane address; Runtime reads a fresh provider snapshot for each direct turn."
+      CHAT_CONFIG_TIMEOUT_SECONDS:
+        secret: false
+        value: 5
+        type: float
+        required: false
       LLM_PROVIDER:
         secret: false
         value: fake
@@ -878,6 +912,12 @@ services:
 
   chat:
     settings:
+      WEAVE_CHAT_PUBLIC_URL:
+        secret: false
+        value: "http://localhost:3001"
+        type: string
+        required: false
+        comment: "Browser-reachable URL of the existing federated chat surface linked by the Ingest portal."
       WEAVE_API_OIDC_ENABLED:
         secret: false
         value: ""

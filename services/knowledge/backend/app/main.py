@@ -5,6 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.api.events import router as events_router
+from app.api.indexing import router as indexing_router
 from app.api.routes import router
 from app.core.config import settings
 from app.core.db import get_db
@@ -30,3 +31,4 @@ def healthcheck(db: Session = Depends(get_db)) -> HealthResponse:
 
 app.include_router(router)
 app.include_router(events_router)
+app.include_router(indexing_router)

@@ -43,6 +43,13 @@ class Settings(BaseSettings):
     # than the retrieval call above.
     llm_timeout_seconds: float = 60.0
 
+    # Optional central control plane owned by Weave-Ingest. Both values must
+    # be set together. When unset, the existing environment/bot-YAML provider
+    # behavior remains available for isolated development.
+    chat_config_base_url: str = ''
+    chat_config_service_token: str = ''
+    chat_config_timeout_seconds: float = 5.0
+
     # --- Intent router (see app/services -- filled in a later stage).
     # 'rules': a deterministic, dependency-free keyword/heuristic classifier.
     # 'llm': delegates the classification itself to llm_provider. Plain str
