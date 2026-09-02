@@ -30,7 +30,7 @@ Weave-Knowledge ist die **Index-Pipeline** des Weave-Systems. Sie konsumiert str
 ## Schnittstellen
 
 **Input:**
-- Kafka/Event-Queue: `document.processed` von Weave-Ingest
+- Signierter Webhook von Weave-Ingest: `document.released` (wird indexiert), `document.processed` (wird nur mit `awaiting_release` quittiert), `collection.updated` (Registry)
 
 **Output:**
 - PostgreSQL + pgvector: Persistierte Embeddings mit Metadaten

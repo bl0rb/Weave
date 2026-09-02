@@ -348,7 +348,7 @@
     <h1>Weave Bauplan</h1>
     <p class="lede">PaddleDoc wird nicht ersetzt — es wird zum Dokumenten-Compiler eines modularen Bot-Systems. Sechs Services, zwei Pipelines, ein Prinzip: RAG ist ein Werkzeug des Bots, nicht der Bot selbst.</p>
     <div class="meta">
-      <span>Stand: 31.08.2026 · Phasen 0–4.5 vollständig · 1 776 Tests grün über sechs Dienste</span>
+      <span>Stand: 31.08.2026 · Phasen 0–4.5 und 6 vollständig, Phase 5 (Aktions-Werkzeuge) offen · Testsuiten grün über neun Dienste</span>
       <span>Basis: PaddleDoc-Codeanalyse (Backend · Pipeline · Frontend · Infra)</span>
       <span>Quelle: new_apps.md</span>
     </div>
@@ -545,7 +545,7 @@
       </div>
       <ul class="tasks">
         <li><label><input type="checkbox" data-id="p4-chat" checked><span class="txt">Weave-API: <code>POST /v1/chat</code> {bot_id, conversation_id, message} → {answer, sources, trace} plus /bots, /bots/{id}, /conversations/{id}<span class="why">Umgesetzt inkl. OpenAI-kompatiblem /v1/chat/completions-Shim; der /documents-Upload-Proxy wandert zum document-Pfad in Phase 5.</span></span></label></li>
-        <li><label><input type="checkbox" data-id="p4-auth" checked><span class="txt">Auth und Rate-Limiting im Gateway: OIDC-Sessions und API-Token-Muster aus Ingest übernehmen<span class="why">API-Tokens (sha256, Ablauf, CLI), Rate-Limit und OIDC-SSO umgesetzt — beide Wege führen zum selben Konto und Limit.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p4-auth" checked><span class="txt">Anmeldung im Gateway föderiert an Weave-Ingest (ADR-0006): der Chat schickt zur Ingest-Anmeldeseite, ein Einmal-Handoff-Code wird server-zu-server gegen <code>WEAVE_HANDOFF_SECRET</code> eingelöst; Personal-Token und Rate-Limiting bleiben. Eigener OIDC-Anbieter am Gateway nur noch als Alternative.</span></label></li>
         <li><label><input type="checkbox" data-id="p4-state" checked><span class="txt">Conversation State in Postgres: users, bots, conversations, messages</span></label></li>
         <li><label><input type="checkbox" data-id="p4-router" checked><span class="txt">Intent-Router: conversational / knowledge / document / action / complex — Start mit kleinem Modell oder Regelwerk, Ausgabe {intent, confidence, needs_retrieval, needs_tool}<span class="why">Nur der knowledge-Pfad ruft Weave-Retrieval; „Hallo" geht direkt zum LLM.</span></span></label></li>
         <li><label><input type="checkbox" data-id="p4-botconfig" checked><span class="txt">Bot-als-YAML: model, system_prompt, retrieval (knowledge_bases, top_k, rerank, final_k), tools, permissions — geladen von der Runtime</span></label></li>
@@ -592,6 +592,26 @@
         <li><label><input type="checkbox" data-id="p5-planner"><span class="txt">Planner/Executor für complex-Intents: mehrstufige Aufgaben über RAG + Tools + Memory (V3)</span></label></li>
         <li><label><input type="checkbox" data-id="p5-memory"><span class="txt">Memory über die einzelne Conversation hinaus (V3)</span></label></li>
         <li><label><input type="checkbox" data-id="p5-agentic"><span class="txt">Erst jetzt bewerten: Agentic RAG, GraphRAG, Multi-Agent — nur wenn die Evaluation aus Phase 3 echte Lücken zeigt</span></label></li>
+      </ul>
+    </div>
+
+    <div class="phase" style="--th:var(--t-tools)" data-phase="p6">
+      <div class="phase-head">
+        <span class="ph-no">Phase 6</span>
+        <h3>Ein Repo, eine Konfiguration</h3>
+        <span class="count">0/0</span>
+        <div class="bar"><i></i></div>
+      </div>
+      <p class="section-sub" style="margin:0; padding:14px 22px 0;">Sechs Repos wurden ein Monorepo, sechs .env-Dateien eine deklarative Konfiguration. Alles hier ist umgesetzt.</p>
+      <ul class="tasks">
+        <li><label><input type="checkbox" data-id="p6-monorepo" checked><span class="txt">Monorepo <code>Weave-Tools</code>: alle Dienste unter <code>services/&lt;dienst&gt;</code>, gemeinsame Verträge unter <code>contracts/</code>, Compose unter <code>deploy/</code>, Doku und Artefakte unter <code>docs/</code>. Die sechs Ursprungs-Repos sind eingefroren.</span></label></li>
+        <li><label><input type="checkbox" data-id="p6-weaveyaml" checked><span class="txt"><code>weave.yaml</code> als einzige Konfigurationsquelle: geteilte Werte einmal deklariert und per <code>render</code> in jede Zielvariable gespiegelt; Geheimnisse nur als Umgebungsvariablen-Namen, nie im Repo.</span></label></li>
+        <li><label><input type="checkbox" data-id="p6-configcheck" checked><span class="txt"><code>scripts/weave_config.py check</code> prüft die gerenderte <code>.env</code> auf Widersprüche: Drift geteilter Werte (Fingerabdruck statt Klartext), Pflichtwerte, <code>SEARCH_TOP_K</code>/<code>RERANKER_MAX_DOCUMENTS</code>, <code>EMBEDDING_DIMENSION</code>, <code>CORS_ORIGINS</code>/<code>FRONTEND_PORT</code>, die Anmeldekette, und ob die <code>.env</code> noch zu <code>weave.yaml</code> passt.</span></label></li>
+        <li><label><input type="checkbox" data-id="p6-modelservices" checked><span class="txt">Zwei CPU-Modelldienste (<code>services/embeddings</code>: multilingual-e5-small über onnxruntime, Port 8006; <code>services/reranker</code>: bge-reranker-v2-m3, Port 8007), OpenAI- bzw. Cohere-kompatibel, hinter Dienst-Token.</span></label></li>
+        <li><label><input type="checkbox" data-id="p6-knowledgeapi" checked><span class="txt">Weave-Knowledges Lese-API hinter <code>KNOWLEDGE_API_TOKEN</code> (fail-closed 503); der Webhook-Eingang behält HMAC über den rohen Rumpf.</span></label></li>
+        <li><label><input type="checkbox" data-id="p6-portal" checked><span class="txt">Wissensportal in Ingest: Wissensbereiche mit <code>read_teams</code> in der Oberfläche, Freigaben als unveränderliche Snapshots (<code>document.released</code>), Indexstatus-Rückmeldung aus Knowledge; zentrale Chat-Provider-Konfiguration (ADR-0007) statt Runtime-Umgebungsvariablen.</span></label></li>
+        <li><label><input type="checkbox" data-id="p6-docs" checked><span class="txt">Betriebsdoku als <code>docs/betrieb.md</code> plus HTML-Artefakte im Repo (Architektur, Bauplan, Glossar, Betriebshandbuch); ADR 0001–0007.</span></label></li>
+        <li><label><input type="checkbox" data-id="p6-botsui"><span class="txt">Bots haben weiterhin keine Verwaltungsoberfläche: YAML-Dateien im Volume <code>runtime_bots</code>, bei jedem Aufruf neu gelesen, aber ohne Schreib-API oder Admin-Seite.</span></label></li>
       </ul>
     </div>
   </section>

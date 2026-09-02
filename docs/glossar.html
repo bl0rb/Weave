@@ -407,9 +407,19 @@
               <span class="weave"><b>In Weave</b>Dokumente mit Empfehlung <code>block</code> werden erst gar nicht indiziert. Fehlt die Bewertung ausnahmsweise, gilt das bewusst wie <code>warn</code> — nie wie <code>allow</code>.</span></td>
           </tr>
           <tr>
+            <td class="c-term"><span class="term">document.released</span></td>
+            <td class="c-def">Signiertes Event aus Ingest, das anzeigt: Für diesen Auftrag liegt ein unveränderlicher, manuell freigegebener Markdown-Snapshot vor.
+              <span class="weave"><b>In Weave</b>Nur dieses Event wird regulär indexiert — <code>document.processed</code> wird nur mit dem Status <code>awaiting_release</code> quittiert. Freigaben sind damit das Herz des Wissensportals.</span></td>
+          </tr>
+          <tr>
             <td class="c-term"><span class="term">Collection</span><span class="form">slug · read_teams</span></td>
             <td class="c-def">Eine benannte Sammlung von Dokumenten mit einer Liste von Teams, die sie lesen dürfen.
               <span class="weave"><b>In Weave</b>Der Slug wandert bis in die Chunk-Metadaten, die Zugriffsliste bewusst <em>nicht</em>: sie lebt in einer Registry. Deshalb kostet ein Rechteentzug kein Neuindizieren und wirkt sofort.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">read_teams</span></td>
+            <td class="c-def">Liste von Teamnamen an einer Collection — in Ingest „Wissensbereich" genannt —, die entscheidet, wer ihre Dokumente im Chat findet. Eine leere Liste bedeutet: für alle lesbar.
+              <span class="weave"><b>In Weave</b>Wird per Registry-Sync von Ingest nach Knowledge gespiegelt; Administratoren pflegen sie unter Administration → Wissensbereiche. Der Teamname muss dabei zeichengleich passen.</span></td>
           </tr>
         </tbody>
       </table>
@@ -440,6 +450,11 @@
             <td class="c-term"><span class="term">Embedding</span><span class="form">Vektor, z. B. 1536 Zahlen</span></td>
             <td class="c-def">Ein Text, übersetzt in eine lange Zahlenreihe. Texte mit ähnlicher Bedeutung landen dabei nah beieinander — auch ohne ein gemeinsames Wort.
               <span class="weave"><b>In Weave</b>Deshalb findet „Wie lange muss ich kündigen?" einen Abschnitt über Fristen. Der Modellname wird pro Chunk gespeichert; nur passend eingebettete Chunks werden durchsucht.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">e5-Präfixe</span></td>
+            <td class="c-def"><code>intfloat/multilingual-e5-*</code> erwartet vor jedem Text ein Präfix, das seine Rolle markiert: <code>query:</code> vor Suchanfragen, <code>passage:</code> vor Dokumenttexten.
+              <span class="weave"><b>In Weave</b>Werden anhand von <code>input_type</code> automatisch gesetzt. Fehlen sie, sinkt die Trefferqualität, ohne dass irgendwo ein Fehler auftaucht.</span></td>
           </tr>
           <tr>
             <td class="c-term"><span class="term">Dimension</span></td>
@@ -481,6 +496,11 @@
             <td class="c-def">Eine Tabelle, die Daten aus einem anderen Dienst nachführt, statt sie gemeinsam zu besitzen. Der Spiegel darf kurz hinterherhinken.
               <span class="weave"><b>In Weave</b>Die Collection-Registry wird von Ingest gespiegelt: alle 60 Sekunden turnusmäßig, bei einer Rechteänderung sofort per signiertem Event.</span></td>
           </tr>
+          <tr>
+            <td class="c-term"><span class="term">Registry-Sync</span></td>
+            <td class="c-def">Knowledge zieht Ingests <code>GET /collections/registry</code> — Slug, Name, Beschreibung, <code>read_teams</code> — in seine eigene <code>collections</code>-Tabelle; Retrieval filtert danach.
+              <span class="weave"><b>In Weave</b>Ein Ingest-Token, das keinem Administrator gehört, liefert eine leere Antwort und lässt damit die Registry leer.</span></td>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -519,7 +539,7 @@
           <tr>
             <td class="c-term"><span class="term">Reranker</span><span class="form">Cross-Encoder</span></td>
             <td class="c-def">Ein Modell, das Frage und Textstück <em>gemeinsam</em> liest und bewertet, wie gut sie zueinander passen. Viel genauer als der Vektorvergleich, aber zu langsam für den ganzen Bestand.
-              <span class="weave"><b>In Weave</b>Deshalb die Reihenfolge: grob 20 Kandidaten holen, dann genau bewerten, 5 behalten. Fällt der Reranker aus, liefert die Suche die RRF-Reihenfolge — sie scheitert nie am Reranker.</span></td>
+              <span class="weave"><b>In Weave</b>Deshalb die Reihenfolge: grob 20 Kandidaten holen (<code>SEARCH_TOP_K</code>), dann mit einem Cross-Encoder wie <code>BAAI/bge-reranker-v2-m3</code> genau bewerten und auf <code>SEARCH_FINAL_K</code> reduzieren. Fällt der Reranker aus, liefert die Suche die RRF-Reihenfolge — sie scheitert nie am Reranker.</span></td>
           </tr>
           <tr>
             <td class="c-term"><span class="term">top_k / final_k</span><span class="form">20 → 5</span></td>
@@ -612,6 +632,11 @@
               <span class="weave"><b>In Weave</b>OpenAI-kompatible Endpunkte, dazu ein deterministischer Fake-Provider für Tests — so laufen alle Tests ohne API-Schlüssel, ohne Kosten und mit immer gleichem Ergebnis.</span></td>
           </tr>
           <tr>
+            <td class="c-term"><span class="term">Zentrale Chat-Provider-Konfiguration</span><span class="form">ADR-0007</span></td>
+            <td class="c-def">Endpoint, Modell, API-Key, Timeout und Temperatur des OpenAI-kompatiblen Chat-Providers werden zentral gepflegt statt je Dienst konfiguriert.
+              <span class="weave"><b>In Weave</b>Verwaltet in Ingest unter Administration → Chat &amp; LLM, der Schlüssel Fernet-verschlüsselt. Runtime liest vor jedem direkten Turn einen frischen Snapshot über eine mit <code>CHAT_CONFIG_SERVICE_TOKEN</code> geschützte interne Schnittstelle — ein Providerwechsel braucht keinen Neustart. n8n-Bots verwalten ihr Modell weiter in n8n.</span></td>
+          </tr>
+          <tr>
             <td class="c-term"><span class="term">SSE / Streaming</span><span class="form">text/event-stream</span></td>
             <td class="c-def">Server-Sent Events: eine offene HTTP-Verbindung, über die der Server Häppchen nachschiebt. So erscheint die Antwort Wort für Wort statt nach Sekunden am Stück.
               <span class="weave"><b>In Weave</b>Die Reihenfolge ist garantiert: erst der Trace, dann die Text-Häppchen, dann die Quellen, dann das Ende. Rechte, Suche und Guard laufen vollständig <em>vor</em> dem ersten Zeichen.</span></td>
@@ -637,6 +662,26 @@
         <thead><tr><th class="c-term">Begriff</th><th class="c-def">Bedeutung</th></tr></thead>
         <tbody>
           <tr>
+            <td class="c-term"><span class="term">Föderierte Anmeldung</span><span class="form">ADR-0006</span></td>
+            <td class="c-def">Weave-API hat keine eigene Identität mehr: Der Chat schickt zum Anmelden auf die Ingest-Anmeldeseite, und wer sich dort ausweisen kann — Passwort oder eine der OIDC-Verbindungen —, ist damit auch am Chat angemeldet.
+              <span class="weave"><b>In Weave</b>Team und Admin-Bit werden bei jeder Anmeldung neu gelesen. Konten sind über die Ingest-Benutzer-ID verknüpft (Präfix <code>weave-ingest:</code>), nie über Name oder E-Mail.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Handoff-Code</span></td>
+            <td class="c-def">Einmal-Code, mit dem Ingest eine angemeldete Identität an Weave-API übergibt. Er reist in einer Redirect-URL und ist deshalb absichtlich wertlos für sich allein.
+              <span class="weave"><b>In Weave</b>Einmalig, rund 60 Sekunden gültig, nur mit dem geteilten <code>WEAVE_HANDOFF_SECRET</code> server-zu-server einlösbar (<code>/api/v1/auth/handoff/exchange</code>). Das Rücksprungziel liegt fest in Ingests <code>HANDOFF_CALLBACK_URL</code>, nie in einem Parameter.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Session-Exchange-Code</span></td>
+            <td class="c-def">Der zweite Einmal-Code derselben Kette: Weave-API übergibt damit die frische Sitzung an die Chat-Oberfläche.
+              <span class="weave"><b>In Weave</b>Landet am Endpunkt <code>/api/auth/sso/callback</code>, dessen Backend ihn gegen ein Sitzungstoken tauscht — dasselbe Muster wie beim Handoff-Code, ein Glied weiter.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Secure-Cookie</span></td>
+            <td class="c-def">Ein mit <code>Secure</code> markiertes Cookie, das über http verworfen wird. Safari macht dabei anders als Chrome auch für localhost keine Ausnahme.
+              <span class="weave"><b>In Weave</b>Das Flag folgt deshalb dem Schema der Anfrage (<code>X-Forwarded-Proto</code>), nicht <code>NODE_ENV</code>, das im Container immer <code>production</code> ist.</span></td>
+          </tr>
+          <tr>
             <td class="c-term"><span class="term">Harte Grenze</span><span class="form">allowed_teams · allowed_collections</span></td>
             <td class="c-def">Eine Einschränkung, die der Server selbst setzt und die der Aufrufer nicht weglassen kann — im Gegensatz zu einem Filter, den man einfach nicht mitschickt.
               <span class="weave"><b>In Weave</b>Wird als SQL-Bedingung vor dem Ranking erzwungen. Ein Filter kann innerhalb der Grenze verfeinern, sie aber nie erweitern.</span></td>
@@ -652,9 +697,29 @@
               <span class="weave"><b>In Weave</b>Runtime stellt ihn für n8n und MCP aus: fünf Minuten gültig, die lesbaren Collections eingebettet. Damit kann der Agent nie mehr sehen als der Mensch, für den er arbeitet.</span></td>
           </tr>
           <tr>
+            <td class="c-term"><span class="term">Dienst-Token</span></td>
+            <td class="c-def">Statisches Bearer-Token für Aufrufe zwischen Diensten, etwa <code>RETRIEVAL_API_TOKEN</code>, <code>RUNTIME_API_TOKEN</code>, <code>KNOWLEDGE_API_TOKEN</code>, <code>EMBEDDINGS_API_TOKEN</code> oder <code>RERANKER_API_TOKEN</code>.
+              <span class="weave"><b>In Weave</b>Immer fail-closed — nicht gesetzt heißt 503, nie „Auth aus". Verglichen wird konstant in der Zeit, nie mit einem einfachen <code>==</code>.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">KNOWLEDGE_API_TOKEN</span></td>
+            <td class="c-def">Dienst-Token vor Weave-Knowledges Lese-API (<code>/documents</code>, <code>/collections</code>), die sonst den indizierten Bestand an der Team-Prüfung vorbei herausgeben würde.
+              <span class="weave"><b>In Weave</b>Optional, weil kein anderer Dienst diese Routen aufruft. Ohne Wert antworten sie 503, Webhook und <code>/health</code> laufen unbeeinflusst weiter.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">X-Tools-Service-Token</span></td>
+            <td class="c-def">Zweiter Ausweis bei Weave-Tools neben <code>Authorization</code>: Der Header beantwortet „darf dieses Deployment hier überhaupt anfragen", <code>Authorization</code> „wessen Rechte gelten für diesen Aufruf".
+              <span class="weave"><b>In Weave</b>Bewusst zwei getrennte Header, damit ein einzelner Aufruf beide Fragen zugleich beantworten kann.</span></td>
+          </tr>
+          <tr>
             <td class="c-term"><span class="term">HMAC-SHA256</span></td>
             <td class="c-def">Eine Prüfsumme mit geteiltem Geheimnis. Nur wer das Geheimnis kennt, kann sie erzeugen — also belegt sie Herkunft und Unverändertheit zugleich.
               <span class="weave"><b>In Weave</b>Signiert Webhook-Zustellungen und Delegations-Token. Geprüft wird immer über den <em>rohen</em> Body: neu zusammengesetztes JSON hätte eine andere Signatur.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">HMAC-Webhook</span></td>
+            <td class="c-def">Knowledges Eingang prüft eingehende Ereignisse per HMAC-SHA256 über den rohen Rumpf (<code>X-Weave-Ingest-Signature: sha256=…</code>) und fail-closed.
+              <span class="weave"><b>In Weave</b>Ein Bearer-Token würde nur belegen, dass der Absender ein Geheimnis kennt — nicht, dass der Rumpf unterwegs unverändert blieb. Deshalb HMAC für Schreibzugriffe, Dienst-Token für Lesezugriffe.</span></td>
           </tr>
           <tr>
             <td class="c-term"><span class="term">Constant-time-Vergleich</span><span class="form">hmac.compare_digest</span></td>
@@ -712,9 +777,39 @@
         <thead><tr><th class="c-term">Begriff</th><th class="c-def">Bedeutung</th></tr></thead>
         <tbody>
           <tr>
+            <td class="c-term"><span class="term">weave.yaml</span></td>
+            <td class="c-def">Die eine Konfigurationsquelle der Plattform im Wurzelverzeichnis des Repos. Jeder Wert wird genau einmal deklariert: geteilte Werte unter <code>shared:</code> mit ihren Zielen aus Dienst und Variablenname, dienstspezifische Werte unter <code>services.&lt;dienst&gt;.settings</code>.
+              <span class="weave"><b>In Weave</b>Geheimnisse stehen nie in der Datei selbst, sondern nur als Name der Umgebungsvariable, aus der <code>render</code> ihren Wert zur Laufzeit liest.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">render</span><span class="form">python scripts/weave_config.py render</span></td>
+            <td class="c-def">Erzeugt aus <code>weave.yaml</code> die <code>deploy/.env</code> für den Stack. Geteilte Werte werden dabei einmal berechnet und in jede ihrer Zielvariablen gespiegelt.
+              <span class="weave"><b>In Weave</b>Die erzeugte Datei wird nie von Hand bearbeitet — sie trägt eine Kopfzeile, an der <code>check</code> erkennt, dass sie generiert ist.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">check</span><span class="form">python scripts/weave_config.py check</span></td>
+            <td class="c-def">Prüft eine bestehende <code>.env</code> auf Widersprüche: auseinandergelaufene geteilte Werte (Geheimnisse dabei nur als Fingerabdruck), fehlende Pflichtwerte und ob die Datei noch zu <code>weave.yaml</code> passt.
+              <span class="weave"><b>In Weave</b>Dazu zählen auch inhaltliche Regeln wie <code>SEARCH_TOP_K</code> &gt; <code>RERANKER_MAX_DOCUMENTS</code>, die zum Embedding-Modell passende <code>EMBEDDING_DIMENSION</code>, zu <code>FRONTEND_PORT</code> passende <code>CORS_ORIGINS</code> und die vollständige Anmeldekette über drei Dienste.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">Geteilte Werte</span></td>
+            <td class="c-def">Werte, die in mehreren Diensten zeichengleich sein müssen, weil der eine sie erzeugt und der andere sie prüft — etwa <code>RETRIEVAL_API_TOKEN</code> beim Aufrufer und beim Prüfer, oder <code>EMBEDDING_API_KEY</code> gegenüber <code>EMBEDDINGS_API_TOKEN</code>.
+              <span class="weave"><b>In Weave</b>Drift zeigt sich nicht als Fehlermeldung, sondern als stilles 401 oder 503 an einer Dienstgrenze — deshalb prüft <code>check</code> sie ausdrücklich.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">CORS_ORIGINS / FRONTEND_PORT</span></td>
+            <td class="c-def">Zwei Einstellungen, die zusammengehören: <code>CORS_ORIGINS</code> ist bei Ingest zugleich die CSRF-Herkunftsprüfung und muss den Port nennen, unter dem der Browser das Frontend lädt.
+              <span class="weave"><b>In Weave</b>Wer nur <code>FRONTEND_PORT</code> verschiebt, weil 3000 belegt ist, bekommt „Disallowed CORS origin" beim Preflight — <code>check</code> meldet diese Kombination.</span></td>
+          </tr>
+          <tr>
             <td class="c-term"><span class="term">Celery, Broker, Queue</span></td>
             <td class="c-def">Arbeit, die zu lange für eine HTTP-Antwort dauert, wandert als Auftrag in eine Warteschlange (den Broker, hier Redis) und wird von Worker-Prozessen abgearbeitet.
               <span class="weave"><b>In Weave</b>OCR und Indexierung laufen so. Jeder Dienst hat eine eigene benannte Queue — sonst würden sich die Worker gegenseitig die Aufträge wegnehmen.</span></td>
+          </tr>
+          <tr>
+            <td class="c-term"><span class="term">OCR-Profil</span><span class="form">--profile ocr</span></td>
+            <td class="c-def">Ein Compose-Profil, hinter dem der mehrere Gigabyte große PaddleOCR-Worker hängt, damit der Rest des Stacks in Minuten statt erst nach dessen Download startet.
+              <span class="weave"><b>In Weave</b>Ohne dieses Profil bleiben Aufträge auf <code>PENDING</code> stehen, und die Logs-Ansicht bleibt leer, weil erst der Worker sie füllt.</span></td>
           </tr>
           <tr>
             <td class="c-term"><span class="term">Idempotenz</span></td>
@@ -734,7 +829,7 @@
           <tr>
             <td class="c-term"><span class="term">ADR</span><span class="form">Architecture Decision Record</span></td>
             <td class="c-def">Eine kurze Notiz zu einer Architekturentscheidung: Kontext, Entscheidung, Konsequenzen, verworfene Alternativen.
-              <span class="weave"><b>In Weave</b>Vier Stück in <code>docs/adr/</code>. Sie beantworten die Frage, die in einem Jahr am teuersten wird: „Warum eigentlich so?"</span></td>
+              <span class="weave"><b>In Weave</b>Sieben Stück in <code>docs/adr/</code>, zuletzt 0006 (föderierte Anmeldung) und 0007 (zentrale Chat-Provider-Konfiguration). Sie beantworten die Frage, die in einem Jahr am teuersten wird: „Warum eigentlich so?"</span></td>
           </tr>
           <tr>
             <td class="c-term"><span class="term">Read-Model &amp; Single Writer</span></td>
@@ -749,12 +844,12 @@
           <tr>
             <td class="c-term"><span class="term">Webhook</span></td>
             <td class="c-def">Statt regelmäßig nachzufragen, ruft der Sender bei einem Ereignis von sich aus eine hinterlegte Adresse auf.
-              <span class="weave"><b>In Weave</b>Trägt <code>document.processed</code> und <code>collection.updated</code> — signiert, mit Wiederholung bei Fehlern und einem Auslieferungsprotokoll.</span></td>
+              <span class="weave"><b>In Weave</b>Trägt <code>document.released</code>, <code>document.processed</code> und <code>collection.updated</code> — signiert, mit Wiederholung bei Fehlern und einem Auslieferungsprotokoll. Indexiert wird nur die Freigabe.</span></td>
           </tr>
           <tr>
             <td class="c-term"><span class="term">OpenAI-kompatibler Shim</span></td>
             <td class="c-def">Ein Adapter, der ein fremdes System so aussehen lässt wie die OpenAI-Schnittstelle — dann funktionieren alle vorhandenen Clients ohne Anpassung.
-              <span class="weave"><b>In Weave</b><code>POST /v1/chat/completions</code>, wobei der Modellname die Bot-ID ist. So spricht Open WebUI direkt mit Weave, ohne dass Weave eine eigene Oberfläche bräuchte.</span></td>
+              <span class="weave"><b>In Weave</b><code>POST /v1/chat/completions</code>, wobei der Modellname die Bot-ID ist. So spricht Open WebUI direkt mit Weave — neben der eigenen Chat-Oberfläche, die denselben Weg nimmt.</span></td>
           </tr>
           <tr>
             <td class="c-term"><span class="term">Dokumenten-Compiler</span></td>
@@ -768,7 +863,7 @@
 
   <p class="empty" id="empty" hidden>Kein Begriff passt zu dieser Suche.</p>
 
-  <footer>Weave Glossar · Stand 31.08.2026 · 63 Begriffe aus Ingest, Knowledge, Retrieval, Runtime, API und Tools</footer>
+  <footer>Weave Glossar · Stand 31.08.2026 · 82 Begriffe aus Ingest, Knowledge, Retrieval, Runtime, API und Tools</footer>
 </div>
 
 <script>

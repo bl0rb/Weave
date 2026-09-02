@@ -469,6 +469,52 @@ def test_check_flags_a_chat_callback_missing_from_the_allowlist(tmp_path, config
 
 
 # ---------------------------------------------------------------------------
+# check: the .env drifting away from weave.yaml
+# ---------------------------------------------------------------------------
+
+def _rendered_env(tmp_path: Path, config_path: Path) -> Path:
+    out = tmp_path / "rendered.env"
+    assert wc.render(config_path, out, environ=REQUIRED_SECRET_ENV) == 0
+    return out
+
+
+def test_check_passes_on_a_freshly_rendered_env(tmp_path, config_path):
+    findings = wc.check(config_path, _rendered_env(tmp_path, config_path))
+
+    assert [f.message for f in findings] == []
+
+
+def test_check_flags_a_value_added_to_the_env_by_hand(tmp_path, config_path):
+    env_file = _rendered_env(tmp_path, config_path)
+    env_file.write_text(env_file.read_text() + "SOMETHING_NEW=1\n", encoding="utf-8")
+
+    messages = [f.message for f in wc.check(config_path, env_file)]
+
+    assert any("Von Hand" in m and "SOMETHING_NEW" in m for m in messages)
+
+
+def test_check_flags_an_env_older_than_weave_yaml(tmp_path, config_path):
+    env_file = _rendered_env(tmp_path, config_path)
+    # weave.yaml grew a setting after this .env was rendered
+    config_path.write_text(
+        config_path.read_text() + """
+  delta:
+    settings:
+      DELTA_LATER:
+        secret: false
+        value: 1
+        type: int
+        required: false
+""",
+        encoding="utf-8",
+    )
+
+    messages = [f.message for f in wc.check(config_path, env_file)]
+
+    assert any("aelter als" in m and "DELTA_LATER" in m for m in messages)
+
+
+# ---------------------------------------------------------------------------
 # check: never leaks a secret's actual value
 # ---------------------------------------------------------------------------
 
@@ -519,16 +565,18 @@ def test_real_weave_yaml_required_secrets_match_betrieb_md_section_4():
     required_env_vars = {
         item.env_var for item in items if item.secret and item.required
     }
-    # docs/betrieb.md section 4 lists 14 Pflichtwert rows that collapse to
-    # 9 distinct required secrets here (rows sharing one secret across
-    # services -- e.g. WEAVE_DELEGATION_SECRET is required on both runtime
-    # and tools -- collapse to one env var to export; the tenth row,
-    # CORS_ORIGINS, is not a secret and is checked separately below; the
-    # WEAVE_INGEST_BASE_URL row is out of this file's scope, see weave.yaml's
-    # own header comment) plus two infrastructure secrets this file adds on
-    # top (POSTGRES_PASSWORD, RETRIEVAL_DB_PASSWORD) that docs/betrieb.md
-    # does not list under "Pflichtwerte" but that are just as required for
-    # the stack to come up at all.
+    # docs/betrieb.md section 4 lists the Pflichtwert rows; those sharing one
+    # secret across services (WEAVE_DELEGATION_SECRET on runtime AND tools,
+    # CHAT_CONFIG_SERVICE_TOKEN on ingest AND runtime) collapse to one env
+    # var to export here. CORS_ORIGINS is not a secret and is checked
+    # separately below; the WEAVE_INGEST_BASE_URL row is out of this file's
+    # scope, see weave.yaml's own header comment. Two infrastructure secrets
+    # (POSTGRES_PASSWORD, RETRIEVAL_DB_PASSWORD) come on top: betrieb.md does
+    # not list them under "Pflichtwerte", but the stack cannot come up
+    # without them.
+    #
+    # A new entry here means a new row in betrieb.md section 4 (and the
+    # handbook) -- that is what this test is for.
     assert required_env_vars == {
         "WEAVE_INGEST_SECRET_KEY",
         "WEAVE_REDIS_PASSWORD",
@@ -541,6 +589,9 @@ def test_real_weave_yaml_required_secrets_match_betrieb_md_section_4():
         "INTROSPECTION_SERVICE_TOKEN",
         "TOOLS_API_TOKEN",
         "WEAVE_RETRIEVAL_DB_PASSWORD",
+        # ADR-0007: Ingest holds the chat-provider configuration, Runtime
+        # reads it per turn through this shared bearer.
+        "CHAT_CONFIG_SERVICE_TOKEN",
     }
 
 

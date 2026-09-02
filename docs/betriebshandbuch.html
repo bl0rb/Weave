@@ -291,7 +291,7 @@
         <tr><td class="k"><strong>Weave-Knowledge</strong></td><td><code>8001</code></td><td><code>weave_knowledge</code></td><td>Chunking, Embeddings, schreibt den Chunk-Store, spiegelt die Collection-Registry</td></tr>
         <tr><td class="k"><strong>Weave-Retrieval</strong></td><td><code>8002</code></td><td>liest <code>weave_knowledge</code></td><td>Hybride Suche; Lese-Autorität für Collections. Einziger Dienst ohne eigene DB — siehe ADR-0005</td></tr>
         <tr><td class="k"><strong>Weave-Runtime</strong></td><td><code>8003</code></td><td>keine</td><td>Intent-Router, Bots als YAML, LLM, n8n, stellt Delegations-Token aus</td></tr>
-        <tr><td class="k"><strong>Weave-API</strong></td><td><code>8004</code></td><td><code>weave_api</code></td><td>Gateway und Identitäts-Autorität: Nutzer, Tokens, Sitzungen, Gespräche</td></tr>
+        <tr><td class="k"><strong>Weave-API</strong></td><td><code>8004</code></td><td><code>weave_api</code></td><td>Gateway: Tokens, Sitzungen, Gespräche. Identitäten kommen aus Ingest (ADR-0006), hier liegt nur ihr Spiegel</td></tr>
         <tr><td class="k"><strong>Weave-Tools</strong></td><td><code>8005</code> · <code>3001</code></td><td>keine</td><td>MCP-Dienst mit rechte-gebundener Suche; Chat-Oberfläche</td></tr>
       </tbody>
     </table>
@@ -422,6 +422,7 @@
         <tr><td class="k">Retrieval</td><td><code>RETRIEVAL_API_TOKEN</code></td><td>Service-Auth. Ohne Wert antwortet jeder Aufruf mit <code>503</code></td></tr>
         <tr><td class="k">Runtime</td><td><code>RUNTIME_API_TOKEN</code></td><td>Nimmt nur Aufrufe des Gateways an</td></tr>
         <tr><td class="k">Runtime</td><td><code>WEAVE_DELEGATION_SECRET</code></td><td>Signiert Delegations-Token. Ohne Wert wird keines ausgestellt</td></tr>
+        <tr><td class="k">Ingest + Runtime</td><td><code>CHAT_CONFIG_SERVICE_TOKEN</code></td><td>Schützt die interne Projektion der zentralen Chat-Konfiguration samt entschlüsseltem Provider-Key (ADR-0007). Ein geteilter Wert: Ingest prüft, Runtime ruft</td></tr>
         <tr><td class="k">API</td><td><code>INTROSPECTION_SERVICE_TOKEN</code></td><td>Erlaubt anderen Diensten, Tokens prüfen zu lassen</td></tr>
         <tr><td class="k">Tools</td><td><code>TOOLS_API_TOKEN</code></td><td>Service-Auth der REST-Oberfläche</td></tr>
         <tr><td class="k">Tools</td><td><code>WEAVE_DELEGATION_SECRET</code></td><td>Prüft Delegations-Token. Ohne Wert: <code>503</code></td></tr>

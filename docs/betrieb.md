@@ -17,7 +17,7 @@ gegengeprüft. Diese Datei ist die maßgebliche Fassung.
 | Weave-Knowledge | 8001 | `weave_knowledge` | Chunking, Embeddings, schreibt den Chunk-Store, spiegelt die Collection-Registry |
 | Weave-Retrieval | 8002 | liest `weave_knowledge` | Hybride Suche, Lese-Autorität für Collections. Einziger Dienst ohne eigene DB (ADR-0005) |
 | Weave-Runtime | 8003 | keine | Intent-Router, Bots als YAML, LLM, n8n, stellt Delegations-Token aus |
-| Weave-API | 8004 | `weave_api` | Gateway und Identitäts-Autorität: Nutzer, Tokens, Sitzungen, Gespräche |
+| Weave-API | 8004 | `weave_api` | Gateway: Tokens, Sitzungen, Gespräche. Identitäten kommen aus Ingest (ADR-0006), hier liegt nur ihr Spiegel |
 | Weave-Tools | 8005 / 3001 | keine | MCP-Dienst mit rechte-gebundener Suche; Chat-Oberfläche |
 
 Dieselben sechs Dienste noch einmal, aus Betreibersicht: wo etwas eingestellt
@@ -127,6 +127,7 @@ Ohne diese startet der Dienst nicht oder verweigert fail-closed die Arbeit.
 | Retrieval | `RETRIEVAL_API_TOKEN` | Service-Auth. Ohne Wert antwortet jeder Aufruf mit `503` |
 | Runtime | `RUNTIME_API_TOKEN` | Nimmt nur Aufrufe des Gateways an |
 | Runtime | `WEAVE_DELEGATION_SECRET` | Signiert Delegations-Token. Ohne Wert wird keines ausgestellt |
+| Ingest + Runtime | `CHAT_CONFIG_SERVICE_TOKEN` | Schützt die interne Projektion der zentralen Chat-Konfiguration samt entschlüsseltem Provider-Key (ADR-0007). Ein geteilter Wert: Ingest prüft, Runtime ruft |
 | API | `INTROSPECTION_SERVICE_TOKEN` | Erlaubt anderen Diensten, Tokens prüfen zu lassen |
 | Tools | `TOOLS_API_TOKEN` | Service-Auth der REST-Oberfläche |
 | Tools | `WEAVE_DELEGATION_SECRET` | Prüft Delegations-Token. Ohne Wert: `503` |

@@ -2,9 +2,7 @@
 
 ## Overview
 
-`docker-compose.weave.yml` is the Docker Compose configuration for the full Weave microservice platform: Weave-Ingest, Weave-Knowledge, Weave-Retrieval, Weave-Runtime, Weave-Tools, and Weave-API.
-
-**Current Status:** All six services wired up with real, non-placeholder service blocks.
+`docker-compose.weave.yml` is the Docker Compose configuration for the full Weave platform: the six core services (Weave-Ingest, Weave-Knowledge, Weave-Retrieval, Weave-Runtime, Weave-Tools, Weave-API), the chat UI, and the two optional CPU model services (Weave-Embeddings, Weave-Reranker). Every variable it reads is declared once in `weave.yaml` at the repo root; `deploy/.env` is generated from it (see "Quick Start") and never edited by hand.
 
 ## What's Here
 
@@ -14,7 +12,7 @@ Infrastructure:
 
 Services, in the order they depend on each other (see "Startup order" below):
 - **weave-ingest-backend** / **weave-ingest-worker** / **weave-ingest-frontend**: document ingestion, async extraction, upload UI.
-- **weave-knowledge** / **weave-knowledge-worker**: consumes `document.processed` events, chunks + embeds documents into its own `weave_knowledge` database (pgvector).
+- **weave-knowledge** / **weave-knowledge-worker**: consumes `document.released` events (a release is an immutable, manually approved snapshot -- see `docs/wissensportal.md`), chunks + embeds documents into its own `weave_knowledge` database (pgvector). `document.processed` is only acknowledged (`awaiting_release`) and indexes nothing.
 - **weave-retrieval**: hybrid search (pgvector KNN + tsvector ranking, RRF fusion). Owns no schema — reads Weave-Knowledge's `documents`/`chunks`/`collections` tables directly, read-only. This is the one named exception to "no shared tables" (`docs/adr/0004`), documented in full in `docs/adr/0005`.
 - **weave-runtime**: chat/agent execution — intent routing, LLM calls, retrieval-augmented answers, optional delegation of a turn to an n8n agent flow.
 - **weave-tools-backend**: MCP + REST tool surface (`list_collections`, `search`) for delegated or personal-token-scoped callers. `weave-tools-frontend` is its chat UI, talking only to Weave-API.
@@ -128,8 +126,8 @@ Generate each with `openssl rand -hex 32`. Never reuse one shared secret's value
 - `SECRET_KEY` – Weave-Ingest's own session signing + credential encryption (`docs/adr/0003`: one `SECRET_KEY` per service, never shared)
 - `RETRIEVAL_DB_PASSWORD` – password for the read-only `weave_retrieval_ro` Postgres role (`docs/adr/0005`); set on **both** `postgres` (consumed by the init script that creates the role) and `weave-retrieval` (its `DATABASE_URL`)
 - `WEAVE_KNOWLEDGE_SECRET_KEY` – Weave-Knowledge's own `SECRET_KEY`
-- `WEAVE_KNOWLEDGE_INGEST_API_TOKEN` – a real Weave-Ingest Personal-Token for Weave-Knowledge's service user (fetches `markdown_url` after a `document.processed` webhook)
-- `WEAVE_KNOWLEDGE_WEBHOOK_SECRET` – technically optional (empty disables signature verification, local dev only), listed here because a real deployment must set it to the same secret configured on the Weave-Ingest webhook connection
+- `WEAVE_KNOWLEDGE_INGEST_API_TOKEN` – a real Weave-Ingest Personal-Token for Weave-Knowledge's service user (fetches the released snapshot after a `document.released` webhook, and the collection registry)
+- `WEAVE_KNOWLEDGE_WEBHOOK_SECRET` – required: the webhook ingress fails closed (503) while it is unset, since that route writes into the index. `render` mirrors it into Ingest's `PORTAL_KNOWLEDGE_WEBHOOK_SECRET` for the `document.released` delivery; a legacy `collection.updated` webhook connection created in the Ingest admin UI must carry the same value by hand
 - `RETRIEVAL_API_TOKEN`, `RUNTIME_API_TOKEN`, `WEAVE_DELEGATION_SECRET`, `INTROSPECTION_SERVICE_TOKEN` – see "Shared secrets" above
 - `WEAVE_API_SECRET_KEY` – Weave-API's own `SECRET_KEY`
 - `TOOLS_API_TOKEN` – gates Weave-Tools' REST surface (not shared with any other service in this compose file — e.g. an n8n HTTP-node credential)

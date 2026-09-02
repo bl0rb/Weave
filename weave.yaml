@@ -508,6 +508,17 @@ services:
         type: string
         required: false
         comment: "Internal Knowledge webhook target; the service listens on port 8000 inside the Compose network."
+      CHAT_LLM_PRIVATE_HOST_ALLOWLIST:
+        secret: false
+        value: ["host.docker.internal", "ollama", "vllm", "llm"]
+        type: json_list
+        required: false
+        comment: >
+          Private OpenAI-compatible chat targets the admin "Verbindung
+          testen" button (Administration -> Chat & LLM, ADR-0007) may reach.
+          The test goes through the SSRF-hardened safe_fetch path, which
+          blocks private networks unless the host is listed here; the
+          default names the usual local model runners.
       WEBHOOK_PRIVATE_HOST_ALLOWLIST:
         secret: false
         value: ["weave-knowledge"]

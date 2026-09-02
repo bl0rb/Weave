@@ -1,97 +1,123 @@
 # Weave
 
-## Ueberblick
+## Überblick
 
 Dieses Repository ist das Monorepo der Weave-Plattform: einer dokumentbasierten
-Suche/Chat-Loesung, aufgeteilt in sechs eigenstaendig lauffaehige Dienste plus
-zwei optionale, self-hosted CPU-Modelldienste und eine eigene Chat-Oberflaeche.
-Jeder Dienst laeuft als eigener Prozess/eigenes Image, hat eigene Tests und
-eigene Abhaengigkeiten — sie teilen sich in diesem Repo nur die Quelle, nicht
-die Laufzeit.
+Such- und Chat-Lösung aus sechs eigenständig lauffähigen Diensten, zwei
+optionalen CPU-Modelldiensten und einer eigenen Chat-Oberfläche. Jeder Dienst
+läuft als eigener Prozess und eigenes Image, hat eigene Tests und eigene
+Abhängigkeiten — geteilt wird hier nur die Quelle, nicht die Laufzeit.
 
 Die Dienste stammen aus sechs vormals getrennten Repos (Weave-Ingest,
-Weave-Knowledge, Weave-Retrieval, Weave-Runtime, Weave-Tools, Weave-API), die
-hierher migriert wurden und seither eingefroren sind — Verweise zeigen ab
-jetzt ausschliesslich auf die `services/`-Verzeichnisse hier, nicht mehr auf
-die alten Repos.
+Weave-Knowledge, Weave-Retrieval, Weave-Runtime, Weave-Tools, Weave-API). Die
+sind eingefroren; alles lebt jetzt unter `services/`.
 
-## Verzeichnisuebersicht
+Was die Zusammenlegung vor allem gebracht hat: **eine Konfiguration statt
+sechs.** `weave.yaml` im Wurzelverzeichnis deklariert jeden Wert genau einmal —
+geteilte Werte mit allen Diensten, die sie brauchen —, und
+`scripts/weave_config.py render` erzeugt daraus `deploy/.env`. Geheimnisse
+stehen nie im Repo, nur der Name der Umgebungsvariable, aus der `render` sie
+liest. `check` findet danach, was früher erst an einer Dienstgrenze als stilles
+401 oder 503 auffiel.
+
+## Verzeichnisübersicht
 
 | Verzeichnis | Aufgabe |
 |---|---|
-| `services/ingest` | Dokumenten-Ingestion: OCR (PaddleOCR), Konvertierung nach Markdown + Frontmatter, Quality-Gate; besitzt die Collections. |
-| `services/knowledge` | Index-Pipeline: konsumiert freigegebene `document.released`-Events, chunked und embedded Dokumente, schreibt den Chunk-Store (pgvector). |
+| `services/ingest` | Dokumenten-Ingestion: OCR (PaddleOCR), Markdown + Frontmatter, Quality-Gate, Wissensportal mit Freigaben; **besitzt Nutzer, Teams, OIDC-Verbindungen und Collections** — der Identitätsdienst der Plattform (ADR-0006) |
+| `services/knowledge` | Index-Pipeline: nimmt freigegebene `document.released`-Snapshots entgegen, chunkt und embeddet, schreibt den Chunk-Store (pgvector), spiegelt die Collection-Registry |
+| `services/retrieval` | Hybride Suche (pgvector + tsvector, RRF-Fusion, Cross-Encoder-Rerank); liest den Chunk-Store von `services/knowledge` read-only mit (ADR-0005) |
+| `services/runtime` | LLM-Executor: Intent-Routing, Bots als YAML, ruft `services/retrieval`, delegiert Turns an n8n; Chat-Provider kommt zentral aus Ingest (ADR-0007) |
+| `services/api` | Gateway: Tokens, Sitzungen, Gespräche. Identitäten kommen aus Ingest, hier liegt nur ihr Spiegel |
+| `services/tools` | MCP-Server + REST-Spiegel für rechte-gebundene Suche (`list_collections`, `search`) |
+| `services/chat` | Next.js-Chat-Oberfläche, spricht ausschließlich mit `services/api`; Anmeldung „Mit Weave anmelden" über Ingest |
+| `services/embeddings` | Optionaler CPU-Embedding-Dienst (`intfloat/multilingual-e5-small`, onnxruntime), OpenAI-kompatibel unter `/v1/embeddings` |
+| `services/reranker` | Optionaler CPU-Rerank-Dienst (`BAAI/bge-reranker-v2-m3`), Cohere/Jina-kompatibel unter `/rerank` |
+| `contracts/` | Dienstübergreifende Verträge: `frontmatter.schema.json`, `openapi.json`, `chunk-store.md`, `internal-chat.md`, `n8n-flow.md`, `indexing-status.md`, `events/` |
+| `deploy/` | Docker-Compose-Stack (`docker-compose.weave.yml` + Build-Override `docker-compose.local.yml`), Postgres-Init; `deploy/.env` wird generiert |
+| `docs/` | Betriebshandbuch (`betrieb.md`), Wissensportal, ADR 0001–0007 und die HTML-Artefakte zum Lesen im Browser |
+| `weave.yaml`, `scripts/` | Die eine Konfigurationsquelle und ihr `render`/`check` |
 
-Das [Wissensportal](docs/wissensportal.md) indexiert regulär ausschließlich unveränderliche, manuell freigegebene `document.released`-Snapshots.
-| `services/retrieval` | Hybride Suche (pgvector + tsvector, RRF-Fusion) — liest den Chunk-Store von `services/knowledge` read-only mit, ohne eigene Migrationen. |
-| `services/runtime` | LLM-Executor und Agentic Loop: Intent-Routing, Bots als YAML, ruft `services/retrieval` fuer Suche, kann Chat-Turns an n8n delegieren. |
-| `services/api` | Oeffentliches Gateway und Identitaets-Autoritaet: Nutzer, API-Tokens, Sitzungen, Gespraeche, optionales OIDC-Login. |
-| `services/tools` | MCP-Server + REST-Spiegel fuer rechte-gebundene Suche (`list_collections`, `search`) — die Action-Layer fuer delegierte/Personal-Token-Aufrufer. |
-| `services/chat` | Next.js-Chat-Oberflaeche fuer Menschen, spricht ausschliesslich mit `services/api`. |
-| `services/embeddings` | Optionaler, self-hosted CPU-Embedding-Server (`intfloat/multilingual-e5-small`), OpenAI-kompatibel unter `/v1/embeddings`. |
-| `services/reranker` | Optionaler, self-hosted CPU-Rerank-Server (`BAAI/bge-reranker-v2-m3`), Cohere/Jina-kompatibel unter `/rerank`. |
-| `contracts/` | Zentrale, dienstuebergreifende Vertraege: `frontmatter.schema.json`, `openapi.json`, `chunk-store.md`, `internal-chat.md`, `n8n-flow.md`, `events/`. |
-| `deploy/` | Docker-Compose-Stack (`docker-compose.weave.yml` + lokales Override `docker-compose.local.yml`), Postgres-Init-Skripte. |
-| `docs/` | Architekturentscheidungen (`docs/adr/`) und das Betriebshandbuch (`docs/betrieb.md`). |
+Das [Wissensportal](docs/wissensportal.md) trennt Verarbeitung und
+Veröffentlichung: indexiert wird regulär nur, was jemand ausdrücklich
+freigegeben hat.
 
-Jeder Dienst hat zudem sein eigenes README mit den fuer ihn spezifischen
-Details (Layout, Konfiguration, bekannte Einschraenkungen).
+Jeder Dienst hat zudem ein eigenes README mit den für ihn spezifischen
+Details. Die `.env.example`-Dateien dort gelten für den Einzelbetrieb eines
+Dienstes außerhalb des Compose-Stacks — im Stack kommt alles aus `weave.yaml`.
 
 ## Starten
 
-Der komplette Stack laeuft ueber Docker Compose — siehe `deploy/` und vor
-allem `docs/betrieb.md` fuer Pflichtwerte, geteilte Secrets und alle
-Stolperfallen. Kurzfassung fuer den lokalen Start (baut alle Dienste aus
-diesem Monorepo statt Registry-Images zu ziehen, die nie veroeffentlicht
-wurden):
-
 ```bash
-cd deploy
-touch .env    # Werte fuellen -- siehe docs/betrieb.md Abschnitt 4 und deploy/README.md
+# 1. Geheimnisse als Umgebungsvariablen bereitstellen (direnv, Passwort-
+#    manager, CI-Secret-Store). `render` nennt alle fehlenden auf einmal.
+python scripts/weave_config.py render      # schreibt deploy/.env
+python scripts/weave_config.py check       # prüft sie auf Widersprüche
 
-docker compose -f docker-compose.weave.yml -f docker-compose.local.yml up -d --build
+# 2. Stack bauen und starten (ohne OCR-Worker, der ist mehrere GB groß)
+docker compose -f deploy/docker-compose.weave.yml -f deploy/docker-compose.local.yml up -d --build
+
+# 3. OCR-Worker nachziehen — ohne ihn bleiben Aufträge auf PENDING
+docker compose -f deploy/docker-compose.weave.yml -f deploy/docker-compose.local.yml --profile ocr up -d weave-ingest-worker
 ```
 
-Der OCR-Worker (PaddleOCR, mehrere GB) haengt hinter einem eigenen Profil,
-damit der Rest des Stacks in wenigen Minuten statt deutlich laenger
-hochkommt:
+Ist Port 3000 belegt, beim Rendern `FRONTEND_PORT=3002` **und**
+`CORS_ORIGINS='["http://localhost:3002"]'` exportieren — `check` meldet, wenn
+nur eines von beiden gesetzt ist. Danach: Ingest unter `http://localhost:3002`
+(erster Admin über die Setup-Seite), Chat unter `http://localhost:3001`.
 
-```bash
-docker compose -f docker-compose.weave.yml -f docker-compose.local.yml \
-  --profile ocr up -d weave-ingest-worker
-```
+[docs/betrieb.md](docs/betrieb.md) deckt Pflichtwerte, geteilte Werte, stille
+Fehlkonfigurationen, die Anmeldung, den Umstieg auf die echten Modelldienste
+und einen Selbsttest ab.
 
-`docs/betrieb.md` deckt daruber hinaus Erstinbetriebnahme, SSO-Einrichtung,
-den Umstieg von den Attrappen-Providern auf die echten Embedding-/
-Rerank-Dienste und einen Selbsttest fuer den laufenden Stack ab.
+## Anmeldung
+
+Es gibt eine Anmeldung für alles. Ein Administrator legt in Ingest lokale
+Benutzer, Teams und OIDC-Verbindungen an; wer sich dort anmelden kann, kann
+sich am Chat anmelden — egal womit. Das Gateway führt keine eigene Kontenwelt
+mehr, sondern holt sich die Identität über einen einmaligen Handoff-Code
+(ADR-0006). Vier Werte über drei Dienste müssen dafür zusammenpassen; `check`
+prüft die Kette.
 
 ## Tests
 
 Jeder Python-Dienst hat sein eigenes `.venv` und seine eigene
 `requirements.txt`; Python-Version und Testbefehl unterscheiden sich pro
-Dienst (siehe `.github/workflows/pr-ci.yml`, das genau das pro Dienst
-abbildet). Beispielhaft:
+Dienst (`.github/workflows/pr-ci.yml` bildet genau das ab). Beispielhaft:
 
 ```bash
-# services/tools, services/embeddings, services/reranker (requirements.txt
-# im Dienst-Wurzelverzeichnis):
+# services/tools, services/embeddings, services/reranker
+# (requirements.txt im Dienst-Wurzelverzeichnis):
 cd services/<dienst>
 python -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/pytest -q
 
 # services/ingest, services/knowledge, services/retrieval, services/runtime,
-# services/api (requirements.txt liegt hier unter backend/):
+# services/api (requirements.txt liegt unter backend/):
 cd services/<dienst>
 python -m venv .venv && .venv/bin/pip install -r backend/requirements.txt
 .venv/bin/pytest -q backend/tests
+
+# services/chat und services/ingest/frontend (Next.js):
+npm install && npm test
+
+# die Konfiguration selbst:
+services/tools/.venv/bin/python -m pytest scripts/tests -q
 ```
 
-```bash
-# services/chat (Next.js):
-cd services/chat
-npm install
-npm test
-```
+Die CI führt pro Pull-Request nur die Dienste aus, deren Pfad sich geändert
+hat, und lässt ein Frontend mit bekannter Schwachstelle in `npm audit`
+durchfallen.
 
-Die CI (`.github/workflows/pr-ci.yml`) fuehrt pro Pull-Request nur die
-Dienste aus, deren Pfad sich tatsaechlich geaendert hat.
+## Dokumentation
+
+| Wo | Was |
+|---|---|
+| [docs/betrieb.md](docs/betrieb.md) | Die maßgebliche Betriebsdoku |
+| [docs/betriebshandbuch.html](docs/betriebshandbuch.html) | Dieselbe, lesbar aufbereitet |
+| [docs/architektur.html](docs/architektur.html), [docs/architektur-detail.html](docs/architektur-detail.html) | Gesamtschaubild und Detail samt Ablauf einer Wissensfrage |
+| [docs/bauplan.html](docs/bauplan.html) | Der Transformationsplan mit Umsetzungsstand |
+| [docs/glossar.html](docs/glossar.html) | Die Fachbegriffe, je allgemein und in ihrer Rolle in Weave |
+| [docs/wissensportal.md](docs/wissensportal.md) | Freigaben, Indexstatus, Wissensbereiche |
+| [docs/adr/](docs/adr/) | Warum eigentlich so — sieben Entscheidungen |
+| [contracts/](contracts/) | Die Datenverträge zwischen den Diensten |

@@ -264,7 +264,7 @@
         <rect x="344" y="352" width="24" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
         <text x="356" y="361" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">P4</text>
         <text x="432" y="384" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-API</text>
-        <text x="432" y="402" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8004 · Auth · Verlauf</text>
+        <text x="432" y="402" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8004 · Gateway · Verlauf</text>
 
         <!-- N7 Weave-Runtime (FOCAL) -->
         <rect x="600" y="344" width="192" height="72" rx="6" fill="#f8fafc"/>
@@ -344,17 +344,18 @@
           <h3>Stand</h3>
         </div>
         <ul>
-          <li>Fünf Dienste laufen, 1 252 Tests grün</li>
+          <li>Neun Dienste laufen — sechs Kern-, zwei Modelldienste, die Chat-Oberfläche — als ein Monorepo mit einer Konfiguration (<code>weave.yaml</code>)</li>
           <li>Bots sind YAML-Dateien, keine neuen Deployments</li>
-          <li>Gechattet wird heute über Open WebUI oder REST gegen Weave-API — eine eigene Chat-Oberfläche gibt es nicht</li>
-          <li>Wissenssammlungen entstehen über Metadaten (<code>department</code>, <code>team</code>, <code>tags</code>); benannte Knowledge-Bases fehlen noch</li>
-          <li>Offen außerdem: Weave-Tools und die OIDC-Anmeldung</li>
+          <li>Eigene Chat-Oberfläche (<code>services/chat</code>) mit Streaming, Quellen und Collection-Filter; daneben weiterhin REST und Open WebUI gegen Weave-API</li>
+          <li>Wissenssammlungen sind benannte Collections — in Ingest „Wissensbereiche“ — mit <code>read_teams</code>; Administratoren pflegen sie in der Oberfläche, Knowledge spiegelt sie per Registry-Sync</li>
+          <li>Anmeldung föderiert an Ingest (ADR-0006): eine Anmeldung für Portal und Chat. Weave-Tools als MCP-Dienst mit rechte-gebundener Suche vorhanden</li>
+          <li>Offen: Aktions-Werkzeuge (E-Mail, CRM, Web) hinter dem Intent-Router und eine Verwaltungsoberfläche für Bots</li>
         </ul>
       </div>
     </div>
 
     <div class="footer">
-      <span>Weave · Gesamtarchitektur nach Phase 4</span>
+      <span>Weave · Gesamtarchitektur nach Phase 6</span>
       <span>31.08.2026</span>
     </div>
 
