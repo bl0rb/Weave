@@ -134,7 +134,7 @@
   <div class="container">
 
     <div class="header">
-      <p class="header-eyebrow">Architektur · 31.08.2026</p>
+      <p class="header-eyebrow">Architektur · 06.09.2026 · v0.1.0</p>
       <h1>Weave Gesamtarchitektur</h1>
       <p class="subtitle">Sechs Dienste in zwei Pipelines: offline kompiliert Weave-Ingest Dokumente in einen durchsuchbaren Chunk-Store, online entscheidet der Router pro Anfrage, ob dafür überhaupt gesucht werden muss.</p>
     </div>
@@ -142,7 +142,7 @@
     <div class="diagram-container">
       <svg viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="weave-arch-title weave-arch-desc">
         <title id="weave-arch-title">Weave Gesamtarchitektur</title>
-        <desc id="weave-arch-desc">Offline nimmt Weave-Ingest Dokumente entgegen und meldet sie per Event an Weave-Knowledge, das Chunks und Vektoren in einen Postgres-Chunk-Store schreibt. Online nimmt Weave-API Anfragen entgegen und reicht sie an Weave-Runtime, das nur für Wissensfragen Weave-Retrieval aufruft, welches den Chunk-Store lesend durchsucht; Weave-Tools ist geplant.</desc>
+        <desc id="weave-arch-desc">Offline nimmt Weave-Ingest Dokumente entgegen und meldet sie per Event an Weave-Knowledge, das Chunks und Vektoren in einen Postgres-Chunk-Store schreibt. Online nimmt Weave-API Anfragen entgegen und reicht sie an Weave-Runtime, das nur für Wissensfragen Weave-Retrieval aufruft, welches den Chunk-Store lesend durchsucht. Weave-Tools stellt dieselbe Suche rechte-gebunden als MCP-Dienst bereit.</desc>
 
         <defs>
           <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
@@ -208,7 +208,7 @@
         <!-- D1: Runtime -> Tools (planned) -->
         <line x1="696" y1="416" x2="696" y2="472" stroke="#475569" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
         <rect x="708" y="436" width="52" height="12" rx="2" fill="#f8fafc"/>
-        <text x="734" y="445" fill="#64748b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PHASE 5</text>
+        <text x="734" y="445" fill="#64748b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">AKTIONEN</text>
 
         <!-- ============ ANNOTATION CALLOUT ============ -->
         <path d="M 1120 484 Q 940 460 764 420" fill="none" stroke="rgba(15,23,42,0.40)" stroke-width="1" stroke-dasharray="4,3"/>
@@ -282,13 +282,13 @@
         <text x="960" y="384" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Retrieval</text>
         <text x="960" y="402" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8002 · Hybrid · Rerank</text>
 
-        <!-- N9 Weave-Tools (optional / planned) -->
+        <!-- N9 Weave-Tools (MCP + Suche umgesetzt; Aktions-Werkzeuge offen) -->
         <rect x="600" y="472" width="192" height="72" rx="6" fill="#f8fafc"/>
-        <rect x="600" y="472" width="192" height="72" rx="6" fill="rgba(15,23,42,0.02)" stroke="rgba(15,23,42,0.20)" stroke-width="1" stroke-dasharray="4,3"/>
-        <rect x="608" y="480" width="24" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.20)" stroke-width="0.8"/>
-        <text x="620" y="489" fill="#64748b" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">P5</text>
-        <text x="696" y="512" fill="#64748b" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Tools</text>
-        <text x="696" y="530" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">REST · MCP · Mail</text>
+        <rect x="600" y="472" width="192" height="72" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+        <rect x="608" y="480" width="28" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+        <text x="622" y="489" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">P4.5</text>
+        <text x="696" y="512" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Tools</text>
+        <text x="696" y="530" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8005 · MCP · Suche</text>
 
         <!-- ============ LEGEND ============ -->
         <line x1="48" y1="632" x2="1232" y2="632" stroke="rgba(15,23,42,0.10)" stroke-width="0.8"/>
@@ -300,8 +300,8 @@
         <rect x="352" y="646" width="14" height="10" rx="2" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
         <text x="372" y="655" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Dienst, umgesetzt</text>
 
-        <rect x="552" y="646" width="14" height="10" rx="2" fill="rgba(15,23,42,0.02)" stroke="rgba(15,23,42,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
-        <text x="572" y="655" fill="#475569" font-size="9" font-family="'Inter', sans-serif">geplant</text>
+        <line x1="552" y1="651" x2="566" y2="651" stroke="#475569" stroke-width="1" stroke-dasharray="3,3" marker-end="url(#arrow)"/>
+        <text x="572" y="655" fill="#475569" font-size="9" font-family="'Inter', sans-serif">offen (Phase 5)</text>
 
         <line x1="752" y1="651" x2="766" y2="651" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
         <text x="772" y="655" fill="#475569" font-size="9" font-family="'Inter', sans-serif">HTTP-Aufruf</text>
@@ -319,7 +319,7 @@
         </div>
         <ul>
           <li>Weave-Ingest (früher PaddleDoc) macht aus PDF, Office, Bildern, Mail und Confluence strukturiertes Markdown mit YAML-Frontmatter, Versionskette und Quality-Gate</li>
-          <li>Nur bestandene Dokumente lösen das Webhook-Event <code>document.processed</code> aus — Grade C mit Empfehlung „block" wird gar nicht erst indiziert</li>
+          <li>Verarbeitet heißt noch nicht indiziert: <code>document.processed</code> wird nur mit <code>awaiting_release</code> quittiert. Erst die manuelle Freigabe im Wissensportal erzeugt einen unveränderlichen Snapshot und mit ihm <code>document.released</code> — das einzige Event, das Knowledge regulär indiziert. Grade C mit Empfehlung „block" kommt gar nicht erst so weit</li>
           <li>Weave-Knowledge chunkt strukturbewusst (Überschriften, Seitenmarker, Tabellen bleiben ganz), reichert Metadaten an und schreibt Vektoren</li>
           <li>Eine neue Dokumentversion ersetzt die Chunks der Vorversion in derselben Transaktion</li>
         </ul>
@@ -349,14 +349,15 @@
           <li>Eigene Chat-Oberfläche (<code>services/chat</code>) mit Streaming, Quellen und Collection-Filter; generische OpenAI-kompatible Clients können optional dieselbe Weave-API nutzen</li>
           <li>Wissenssammlungen sind benannte Collections — in Ingest „Wissensbereiche“ — mit <code>read_teams</code>; Administratoren pflegen sie in der Oberfläche, Knowledge spiegelt sie per Registry-Sync</li>
           <li>Anmeldung föderiert an Ingest (ADR-0006): eine Anmeldung für Portal und Chat. Weave-Tools als MCP-Dienst mit rechte-gebundener Suche vorhanden</li>
-          <li>Offen: Aktions-Werkzeuge (E-Mail, CRM, Web) hinter dem Intent-Router und eine Verwaltungsoberfläche für Bots</li>
+          <li>n8n-Bots werden zentral in Ingest verwaltet; Runtime liest die aktivierten Einträge pro Anfrage und schneidet ihren Umfang mit den Nutzerrechten. Lokale YAML-Bots bleiben als Fallback</li>
+          <li>Offen: Aktions-Werkzeuge (E-Mail, CRM, Web) hinter dem Intent-Router — und eine Oberfläche für die YAML-Bots, die weiterhin nur als Dateien im Volume gepflegt werden</li>
         </ul>
       </div>
     </div>
 
     <div class="footer">
       <span>Weave · Gesamtarchitektur nach Phase 6</span>
-      <span>31.08.2026</span>
+      <span>06.09.2026 · v0.1.0</span>
     </div>
 
   </div>

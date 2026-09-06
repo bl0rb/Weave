@@ -16,7 +16,7 @@ gegengeprüft. Diese Datei ist die maßgebliche Fassung.
 | Weave-Ingest | 8000 | `weave_ingest` | OCR, Markdown + Frontmatter, Quality-Gate, besitzt die Collections |
 | Weave-Knowledge | 8001 | `weave_knowledge` | Chunking, Embeddings, schreibt den Chunk-Store, spiegelt die Collection-Registry |
 | Weave-Retrieval | 8002 | liest `weave_knowledge` | Hybride Suche, Lese-Autorität für Collections. Einziger Dienst ohne eigene DB (ADR-0005) |
-| Weave-Runtime | 8003 | keine | Intent-Router, Bots als YAML, LLM, n8n, stellt Delegations-Token aus |
+| Weave-Runtime | 8003 | keine | Intent-Router, Bots aus YAML und aus Ingests Bot-Verwaltung, LLM, n8n, stellt Delegations-Token aus |
 | Weave-API | 8004 | `weave_api` | Gateway: Tokens, Sitzungen, Gespräche. Identitäten kommen aus Ingest (ADR-0006), hier liegt nur ihr Spiegel |
 | Weave-Tools | 8005 / 3001 | keine | MCP-Dienst mit rechte-gebundener Suche; Chat-Oberfläche |
 
@@ -25,10 +25,10 @@ wird, worauf es gebaut ist, und womit man sich bei ihm ausweist.
 
 | Dienst | Verwaltung | Technik | Ausweis am Dienst |
 |---|---|---|---|
-| Weave-Ingest | **Eigene Oberfläche** — `/admin` für Nutzer, Teams, OIDC-Verbindungen, Worker-Logs, OCR-Profil und -Timeout, VL-Verbindungen; `/connections` für Webhooks, Wissensbereichsverwaltung unter `/admin`, technische Werkzeuge ebenfalls dort. Alles Übrige `deploy/.env` | FastAPI · SQLAlchemy + Alembic · Celery (Redis-DB 0) · PaddleOCR/PP-StructureV3 im eigenen Worker-Image · Next.js 16 + React 19 | Sitzungs-Cookie (undurchsichtig, in der DB nur als sha256) **oder** Personal-Token `pd_…`. Passwörter bcrypt mit Konto-Sperre; beliebig viele OIDC-Verbindungen (Auth-Code + PKCE); Herkunftsprüfung gegen CSRF auf jeder schreibenden Route |
+| Weave-Ingest | **Eigene Oberfläche** — `/admin` für Nutzer, Teams, OIDC-Verbindungen, Worker-Logs, OCR-Profil und -Timeout, VL-Verbindungen, Chat & LLM (ADR-0007) und die **n8n-Bot-Verwaltung**; `/connections` für Webhooks, Wissensbereichsverwaltung unter `/admin`, technische Werkzeuge ebenfalls dort. Alles Übrige `deploy/.env` | FastAPI · SQLAlchemy + Alembic · Celery (Redis-DB 0) · PaddleOCR/PP-StructureV3 im eigenen Worker-Image · Next.js 16 + React 19 | Sitzungs-Cookie (undurchsichtig, in der DB nur als sha256) **oder** Personal-Token `pd_…`. Passwörter bcrypt mit Konto-Sperre; beliebig viele OIDC-Verbindungen (Auth-Code + PKCE); Herkunftsprüfung gegen CSRF auf jeder schreibenden Route |
 | Weave-Knowledge | Keine Oberfläche, nur `deploy/.env`. Collections kommen per Registry-Sync aus Ingest, werden hier nie gepflegt | FastAPI · SQLAlchemy + Alembic · Celery (Redis-DB 1) · pgvector | Zwei Eingänge, zwei Verfahren: der Webhook prüft HMAC-SHA256 über den **rohen** Rumpf (er nimmt Schreibzugriffe an — ein Bearer würde nichts darüber sagen, ob der Rumpf unterwegs verändert wurde), die Lese-Endpunkte verlangen `KNOWLEDGE_API_TOKEN` als Bearer. Ohne gesetzten Wert `503`. `/health` bleibt frei |
 | Weave-Retrieval | Keine Oberfläche, nur `deploy/.env` | FastAPI · SQLAlchemy auf einer reinen `SELECT`-Rolle · pgvector + tsvector · RRF · Cross-Encoder über HTTP | Dienst-Token `RETRIEVAL_API_TOKEN` als Bearer, konstante-Zeit-Vergleich, `503` wenn nicht gesetzt |
-| Weave-Runtime | **Bots als YAML-Dateien** im Volume `runtime_bots`, bei jedem Aufruf frisch von der Platte gelesen — eine Änderung wirkt ohne Neustart. Keine Oberfläche; alles Übrige `deploy/.env` | FastAPI · httpx · SSE · PyYAML. Ohne Datenbank | `RUNTIME_API_TOKEN` als Bearer. Stellt seinerseits Delegations-Token aus: HMAC-SHA256, fünf Minuten, mit dem erlaubten Collection-Umfang darin |
+| Weave-Runtime | **Zwei Quellen, eine Liste:** YAML-Dateien im Volume `runtime_bots`, bei jedem Aufruf frisch von der Platte gelesen, plus die in Ingest gepflegten n8n-Bots, bei jedem Aufruf frisch über `/api/v1/internal/bots` geholt. Gleiche `id` heißt: der zentrale Eintrag gewinnt. Eine Änderung wirkt auf beiden Wegen ohne Neustart. Eigene Oberfläche hat der Dienst keine; alles Übrige `deploy/.env` | FastAPI · httpx · SSE · PyYAML. Ohne Datenbank | `RUNTIME_API_TOKEN` als Bearer. Stellt seinerseits Delegations-Token aus: HMAC-SHA256, fünf Minuten, mit dem erlaubten Collection-Umfang darin |
 | Weave-API | `python -m app.cli create-user` / `create-token` im Container; keine Oberfläche. Identitäten kommen seit ADR-0006 ohnehin aus Ingest | FastAPI · SQLAlchemy + Alembic · authlib + joserfc | Personal-Token (in der DB nur als sha256) oder Sitzungs-Cookie. Angemeldet wird föderiert über Ingest — ersatzweise ein eigener OIDC-Anbieter. `INTROSPECTION_SERVICE_TOKEN` ist der Hauptschlüssel zur Token-Auflösung |
 | Weave-Tools | Keine Oberfläche für Einstellungen, beide Teile nur `deploy/.env` | MCP-Dienst: FastAPI + `mcp`. Chat: Next.js 16 + React 19, spricht ausschließlich mit 8004 | **Zwei getrennte Ausweise pro Aufruf:** `X-Tools-Service-Token` beantwortet „darf dieses Deployment hier überhaupt anfragen", `Authorization` „wessen Rechte gelten für genau diesen Aufruf". Nie im selben Header, sonst ginge beides zusammen nicht |
 
@@ -100,13 +100,22 @@ Zwei Tokens entstehen erst, wenn der Stack läuft. Nur diese Reihenfolge löst d
    in die `.env`, dann
    `docker compose … restart weave-knowledge weave-knowledge-worker`.
    Bis dahin läuft der Registry-Sync in ein 401.
-4. **Webhook-Verbindung in Ingest anlegen**, damit verarbeitete Dokumente bei
-   Knowledge ankommen. Das Secret dieser Verbindung muss identisch zu
-   `WEAVE_KNOWLEDGE_WEBHOOK_SECRET` sein.
-5. **Nutzer für die Chat-Oberfläche anlegen** (rein tokenbasiert, kein Passwort);
-   der Token wird genau einmal angezeigt:
+4. **Ein Dokument im Wissensportal freigeben.** Für den Index reicht
+   Verarbeiten nicht: nur eine Freigabe erzeugt den unveränderlichen Snapshot
+   und damit das `document.released`-Event, das Knowledge regulär indiziert
+   (`contracts/events/document.released.md`). `document.processed` wird nur
+   mit `awaiting_release` quittiert. Die Zustellung läuft über Ingests eigenen
+   internen Veröffentlichungskanal (`PORTAL_KNOWLEDGE_BASE_URL`, signiert mit
+   `WEAVE_KNOWLEDGE_WEBHOOK_SECRET`); beide Werte rendert `weave.yaml` bereits
+   — eine Webhook-Verbindung in der Oberfläche braucht es dafür **nicht**.
+   Benutzerdefinierte Webhooks bleiben davon unberührt: sie bedienen fremde
+   Konsumenten, nicht den Index.
+5. **Anmeldung für die Chat-Oberfläche.** Im Normalfall ist hier nichts zu tun:
+   wer sich in Ingest anmelden kann, kann seit ADR-0006 auch chatten. Nur für
+   einen Betrieb ohne föderierte Anmeldung wird in Weave-API von Hand ein
+   rein tokenbasierter Nutzer angelegt; der Token wird genau einmal angezeigt:
    ```bash
-   docker compose exec weave-api python -m app.cli create-user --username matze --team legal
+   docker compose exec weave-api python -m app.cli create-user --username alice --team legal
    ```
 
 ---
@@ -617,9 +626,25 @@ Modell-Ausgabe kann nur einschränken, nie erlauben. Und was ein Flow als Quelle
 zurückmeldet, ist eine Behauptung — Weave prüft jede gemeldete Quelle gegen den
 signierten Umfang und verwirft, was nicht passt (im Trace als `dropped_sources`).
 
-Die Webhook-Allowlist greift **beim Laden** der Bot-Datei, nicht beim ersten
-Aufruf: eine Konfigurationsdatei soll den Dienst nicht in beliebige Netze rufen
-lassen können.
+Die Webhook-Allowlist greift **beim Zusammenstellen der Bot-Liste**, nicht beim
+ersten Aufruf — und zwar für beide Quellen gleich: für die YAML-Dateien auf der
+Platte wie für die in Ingest gepflegten Einträge. Weder eine
+Konfigurationsdatei noch ein Administrator soll den Dienst in beliebige Netze
+rufen lassen können.
+
+n8n-Bots werden seit v0.1.0 zentral in Ingest gepflegt (Administration →
+Bots): Webhook-Adresse, optionales Flow-Token, Timeout, Streaming, erlaubte
+Teams und Wissensbereiche. Runtime holt die aktivierten Einträge mit
+`CHAT_CONFIG_SERVICE_TOKEN` pro Anfrage und schneidet ihren Umfang weiterhin
+mit den Rechten des Fragenden. Das Flow-Token liegt Fernet-verschlüsselt in
+Ingest und verlässt es nur über diese interne Route.
+
+Die Liste ist **ganz oder gar nicht**: sind `CHAT_CONFIG_BASE_URL` und
+`CHAT_CONFIG_SERVICE_TOKEN` gesetzt und Ingest antwortet nicht oder liefert
+Unbrauchbares, scheitert die gesamte Bot-Liste — auch die lokalen YAML-Bots.
+Das ist gewollt (nie eine halb alte, halb neue Definition), heißt aber:
+`/v1/bots` und jeder Chat-Turn hängen an der Erreichbarkeit von Ingest. Sind
+beide Werte leer, läuft Runtime eigenständig nur mit den YAML-Bots.
 
 ---
 
@@ -653,7 +678,9 @@ Embedding-Einstellungen von Knowledge und Retrieval nicht zusammenpassen.
 | Chat antwortet `502` | `RUNTIME_API_TOKEN` weicht zwischen API und Runtime ab |
 | Bot findet nie etwas | Embedding-Modell oder -Provider unterscheiden sich |
 | Antworten beginnen mit `[fake-llm]` | `LLM_PROVIDER` steht noch auf `fake` |
-| Dokumente erscheinen nicht im Index | Webhook-Verbindung fehlt oder Secret weicht ab (Knowledge-Log zeigt 401) |
+| Dokumente erscheinen nicht im Index | Meist fehlt schlicht die Freigabe im Wissensportal — sonst weicht `WEAVE_KNOWLEDGE_WEBHOOK_SECRET` ab (Knowledge-Log zeigt 401) |
+| `/v1/bots` antwortet `502`, Runtime meldet sich `degraded` | `CHAT_CONFIG_BASE_URL`/`CHAT_CONFIG_SERVICE_TOKEN` gesetzt, aber Ingest nicht erreichbar: Runtime antwortet `503`, das Gateway macht daraus `502`. Es scheitert die ganze Liste, auch die YAML-Bots |
+| Ein zentral gepflegter n8n-Bot taucht nicht auf | Er ist deaktiviert, oder seine Webhook-Adresse liegt außerhalb von `N8N_ALLOWED_BASE_URLS` |
 | Collections bleiben leer | Registry-Sync scheitert — der Ingest-Token gehört keinem Administrator |
 | MCP antwortet `503` | `WEAVE_DELEGATION_SECRET` oder `TOOLS_API_TOKEN` nicht gesetzt |
 | Login schlägt mit `403` fehl | Frontend-Adresse fehlt in `CORS_ORIGINS` |

@@ -602,9 +602,9 @@
               <span class="weave"><b>In Weave</b>Fünf Absichten: <code>conversational</code>, <code>knowledge</code>, <code>document</code>, <code>action</code>, <code>complex</code>. Nur <code>knowledge</code> löst eine Suche aus — „Hallo" braucht keine Vektordatenbank.</span></td>
           </tr>
           <tr>
-            <td class="c-term"><span class="term">Bot als Konfiguration</span><span class="form">YAML statt Code</span></td>
-            <td class="c-def">Ein Bot ist eine Datei mit Modell, Anweisung, Wissensquellen und Rechten — kein eigenes Programm.
-              <span class="weave"><b>In Weave</b>Ein neuer Fachbot ist eine neue YAML-Datei auf derselben Laufzeit: kein Deployment, kein Code-Review, keine zweite Betriebsumgebung.</span></td>
+            <td class="c-term"><span class="term">Bot als Konfiguration</span><span class="form">Konfiguration statt Code</span></td>
+            <td class="c-def">Ein Bot ist ein Eintrag mit Modell, Anweisung, Wissensquellen und Rechten — kein eigenes Programm.
+              <span class="weave"><b>In Weave</b>Ein neuer Fachbot ist eine neue YAML-Datei auf derselben Laufzeit: kein Deployment, kein Code-Review, keine zweite Betriebsumgebung. Seit v0.1.0 gibt es dafür zwei Wege: YAML-Dateien im Volume <code>runtime_bots</code> und n8n-Bots, die Administratoren in Ingest pflegen. Runtime führt beide Quellen bei jeder Anfrage zu einer Liste zusammen; bei gleicher <code>id</code> gewinnt der zentrale Eintrag.</span></td>
           </tr>
           <tr>
             <td class="c-term"><span class="term">System-Prompt</span></td>
@@ -863,7 +863,7 @@
 
   <p class="empty" id="empty" hidden>Kein Begriff passt zu dieser Suche.</p>
 
-  <footer>Weave Glossar · Stand 31.08.2026 · 82 Begriffe aus Ingest, Knowledge, Retrieval, Runtime, API und Tools</footer>
+  <footer>Weave Glossar · Stand 06.09.2026 (v0.1.0) · 82 Begriffe aus Ingest, Knowledge, Retrieval, Runtime, API und Tools</footer>
 </div>
 
 <script>

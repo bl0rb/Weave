@@ -4,6 +4,14 @@ Connection matrix for Weave Ingest deployments (Docker Compose and Kubernetes/He
 All rows are TCP. "Required" means the app cannot operate without it; "optional"
 rows depend on the listed feature being used.
 
+> **Scope.** This document predates the monorepo and covers **only the Ingest
+> service** — its own `docker-compose.yml`, `docker-compose.dev.yml` and
+> `docker-compose.nas.example.yml`, none of which are the platform stack under
+> `deploy/`. For the platform-wide picture — all nine services, which host
+> ports the Compose stack publishes, and the outbound connections the whole
+> stack needs — see **[Network design](../README.md#network-design)** in the
+> root README.
+
 An important architectural note up front: **the browser talks to the backend
 API directly** — the frontend container does not proxy API requests. Users
 therefore need network access to *both* the frontend and the backend (or to

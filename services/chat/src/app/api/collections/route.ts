@@ -9,10 +9,11 @@ import type { Collection } from '@/types/weave-api';
  * GET /api/collections — proxies Weave-API's GET /v1/collections: the
  * collections THIS user may read (resolved server-side there from the
  * caller's own team, never a parameter this route could override — see
- * Weave-API backend/app/api/collections.py). Purely informational for
- * this UI's sidebar: see the /v1/chat(/stream) request schema
- * (types/weave-api.ts's `ChatRequestBody`) for why there is no collection
- * selection to send back — it has no field for one.
+ * Weave-API backend/app/api/collections.py). Feeds the sidebar's filter:
+ * the chosen slugs travel back on the next turn as
+ * `ChatRequestBody.collections` (types/weave-api.ts, assembled in
+ * lib/chat-types.ts's `buildChatRequestBody`). That filter can only narrow
+ * the scope resolved upstream, never widen it.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = requireSessionCredential(request);

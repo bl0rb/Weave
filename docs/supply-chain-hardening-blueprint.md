@@ -6,6 +6,19 @@ internen Werkzeugen. Dieser Beitrag ist der Blueprint, nach dem ich dabei
 vorgegangen bin. Er ist produktneutral gehalten und lässt sich auf jede
 Anwendung mit automatisierter Pipeline übertragen.*
 
+> **Stand in diesem Repository.** Dieser Text beschreibt das Vorgehen, nicht
+> den Umsetzungsgrad hier. Umgesetzt sind M1 (alle Actions in
+> `.github/workflows/pr-ci.yml` auf Commit-SHA gepinnt, Helm-Tarball per
+> `sha256sum` geprüft), M4 (die Frontend-Builds scheitern an einem
+> `npm audit`-Fund) und M5 (`.github/dependabot.yml` im Wurzelverzeichnis
+> deckt alle neun Dienste ab). M3 ist **teilweise** umgesetzt: hash-gelockt
+> sind bislang nur `services/ingest/backend/requirements.txt` und
+> `requirements-worker.txt`; die übrigen sieben `requirements.txt` sind auf
+> exakte Versionen gepinnt, aber ohne Prüfsummen, und
+> `services/reranker/Dockerfile` installiert `torch` ungehasht aus dem
+> PyTorch-Index. Die Ausbaustufe „`latest`-Standardwerte entfernen" aus
+> Abschnitt 7 steht in `deploy/docker-compose.weave.yml` ebenfalls noch aus.
+
 ## 1. Anlass
 
 Im März 2026 wurden über einen einzigen kompromittierten Open-Source-Baustein

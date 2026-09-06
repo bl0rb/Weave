@@ -37,7 +37,7 @@ provide out of the box, and getting that wrong fails silently (every tool
 call would 500 with the error above) rather than at startup. Two
 independent HTTP servers -- this module's `mcp_app`, main.py's `app` -- run
 directly by uvicorn is the simpler, correctly-lifespan-driven shape; see
-README's "MCP-Server anbinden" for how to run both.
+this service's own README for how to run both.
 
 Both apps are equally stateless (see app/services/scope.py's own docstring
 for why neither caches anything across requests), so running only one of

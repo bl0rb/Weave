@@ -45,10 +45,12 @@ class SearchSourceOut(BaseModel):
     (`SearchToolRequest.collection` / the MCP `search` tool's own
     `collection` argument) -- every hit in that response necessarily
     belongs to it. When no `collection` was named, this is `None`: the
-    query ran across the caller's ENTIRE resolved scope, and Weave-
-    Retrieval's own SearchResult (see that service's app/schemas/search.py)
-    carries no per-chunk collection slug for this service to attribute a
-    hit to instead -- `document`/`page` remain fully precise either way,
+    query ran across the caller's ENTIRE resolved scope, and this service
+    does not currently attribute each hit individually. Weave-Retrieval
+    DOES return a per-chunk slug (`SearchResult.collection`, see that
+    service's app/schemas/search.py) -- echoing it through here instead of
+    the request-level value is an open improvement, not a limitation of the
+    upstream contract. `document`/`page` remain fully precise either way;
     only this one field is coarser when the search wasn't scoped to a
     single collection to begin with.
     """

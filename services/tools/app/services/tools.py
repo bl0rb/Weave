@@ -131,9 +131,10 @@ def search_for_scope(
             source=SearchSourceOut(
                 document=hit.get('original_filename') or hit['document_id'],
                 page=_format_page(hit.get('page_start'), hit.get('page_end')),
-                # Only ever known when the caller itself named a single
-                # collection -- see SearchSourceOut's own docstring for why
-                # an unscoped query can't attribute a hit to one.
+                # The request-level collection, not the hit's own: an
+                # unscoped query leaves this None even though Weave-
+                # Retrieval returns a per-chunk slug. See SearchSourceOut's
+                # docstring.
                 collection=collection,
             ),
         )

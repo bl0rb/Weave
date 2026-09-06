@@ -1,9 +1,9 @@
 # Frozen resolution of requirements.in (plain `pip freeze`, NOT a
 # `pip-compile --generate-hashes` lock -- see requirements.in's own header).
-# Regenerate from the repo root after touching requirements.in:
+# Regenerate from services/tools after touching requirements.in:
 #
-#   .venv/bin/python -m pip install -r backend/requirements.in && \
-#     .venv/bin/python -m pip freeze --local > backend/requirements.txt
+#   .venv/bin/python -m pip install -r requirements.in && \
+#     .venv/bin/python -m pip freeze --local > requirements.txt
 #
 annotated-doc==0.0.5
 annotated-types==0.8.0

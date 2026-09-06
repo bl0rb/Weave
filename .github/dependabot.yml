@@ -1,0 +1,120 @@
+# Dependabot reads this file only from the repository root. The configuration
+# that used to live in services/ingest/.github/ was never executed after the
+# six repositories became this monorepo, and its "/backend" and "/frontend"
+# directories no longer exist. Every manifest below was taken from
+# `git ls-files`; a new service needs its own entry here, because Dependabot
+# does not discover directories on its own.
+version: 2
+updates:
+  # --- Python: one entry per service, because each service pins its own
+  # requirements.txt against its own virtual environment.
+  - package-ecosystem: "pip"
+    directory: "/services/api/backend"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "pip"
+    directory: "/services/embeddings"
+    schedule:
+      interval: "weekly"
+
+  # Covers requirements.txt and requirements-worker.txt: Dependabot picks up
+  # every manifest in the directory, and both of these are hash-locked.
+  - package-ecosystem: "pip"
+    directory: "/services/ingest/backend"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "pip"
+    directory: "/services/knowledge/backend"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "pip"
+    directory: "/services/reranker"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "pip"
+    directory: "/services/retrieval/backend"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "pip"
+    directory: "/services/runtime/backend"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "pip"
+    directory: "/services/tools"
+    schedule:
+      interval: "weekly"
+
+  # --- Node: the chat interface and the Ingest portal frontend.
+  - package-ecosystem: "npm"
+    directory: "/services/chat"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "npm"
+    directory: "/services/ingest/frontend"
+    schedule:
+      interval: "weekly"
+
+  # --- Base images. One entry per Dockerfile directory.
+  - package-ecosystem: "docker"
+    directory: "/services/api/backend"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker"
+    directory: "/services/chat"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker"
+    directory: "/services/embeddings"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker"
+    directory: "/services/ingest/backend"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker"
+    directory: "/services/ingest/frontend"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker"
+    directory: "/services/knowledge/backend"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker"
+    directory: "/services/reranker"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker"
+    directory: "/services/retrieval/backend"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker"
+    directory: "/services/runtime/backend"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker"
+    directory: "/services/tools"
+    schedule:
+      interval: "weekly"
+
+  # --- The workflow actions themselves. Only .github/workflows/ at the root
+  # is executed, so only that directory is watched.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

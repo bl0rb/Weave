@@ -33,7 +33,7 @@ helm upgrade --install weave-ingest ./charts/weave-ingest \
 Install from GHCR OCI registry:
 
 ```bash
-helm install weave-ingest oci://ghcr.io/bl0rb/charts/weave-ingest --version 1.3.0 \
+helm install weave-ingest . \
   --namespace weave-ingest --create-namespace \
   --set auth.secretKey.value=<openssl rand -hex 32>
 ```

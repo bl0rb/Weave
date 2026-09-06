@@ -55,7 +55,7 @@
     <h1>Wie eine Frage zu einer belegten Antwort wird</h1>
     <p class="subtitle">Zwei Blicke auf dasselbe System: erst die Topologie aller neun Dienste und der geteilten Mitte, dann der zeitliche Ablauf einer einzelnen Wissensfrage — samt der Stellen, an denen Rechte geprüft werden.</p>
     <div class="meta">
-      <span>Stand 01.09.2026</span><span>9 Dienste · 3 Datenbanken · 2 CPU-Modelle</span>
+      <span>Stand 06.09.2026 · v0.1.0</span><span>9 Dienste · 3 Datenbanken · 2 CPU-Modelle</span>
       <span>lokal verifiziert</span>
     </div>
   </header>
@@ -261,7 +261,7 @@
       <h3><span class="dot" style="background:var(--accent)"></span>Was oben passiert</h3>
       <ul>
         <li>Der OCR-Worker macht aus PDF, Mail und Confluence strukturiertes Markdown mit Metadaten</li>
-        <li>Nur bestandene Dokumente lösen das signierte <code>document.processed</code>-Event aus</li>
+        <li>Indiziert wird erst nach manueller Freigabe: sie erzeugt den unveränderlichen Snapshot und das signierte <code>document.released</code>-Event</li>
         <li>Der Index-Worker chunkt strukturbewusst und lässt jede Passage einbetten</li>
         <li>Eine neue Version ersetzt die Chunks der alten in derselben Transaktion</li>
       </ul>

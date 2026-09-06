@@ -79,6 +79,25 @@ Cross-Service-Joins und geteilte Tabellen machen Services schwer zu skalieren un
 - **Koordination:** Jeder Service läuft Migrationen eigenständig beim Startup
 - **Rückwärts-Kompatibilität:** Services müssen mit 2-3 früheren Schema-Versionen kompatibel sein (z.B. falls Rollback nötig)
 
+## Umsetzungsstand
+
+Der ausgelieferte Stack legt **drei** der oben genannten sechs Datenbanken an:
+`weave_ingest` (als `POSTGRES_DB` vom Basis-Image), `weave_knowledge` und
+`weave_api` (`deploy/postgres-init/01-create-databases.sh`). Die drei übrigen
+existieren nicht, weil ihre Dienste keine eigenen Daten halten:
+
+- **Weave-Retrieval** liest die Datenbank von Weave-Knowledge über die reine
+  `SELECT`-Rolle `weave_retrieval_ro` mit — die eine bewusste Ausnahme zu
+  „keine geteilten Tabellen", entschieden in [ADR-0005](0005-geteiltes-read-model.md).
+- **Weave-Runtime** ist zustandslos: Bots kommen aus dem Volume `runtime_bots`
+  und aus Ingests Bot-Verwaltung, sonst hält der Dienst nichts.
+- **Weave-Tools** hält ebenfalls nichts; sein Umfang entsteht pro Aufruf aus
+  dem Delegations- oder Personal-Token.
+
+Der Grundsatz bleibt damit unberührt — kein Dienst schreibt in die Datenbank
+eines anderen. Ein Dienst, der später eigene Daten bekommt, bekommt auch eine
+eigene Datenbank nach demselben Muster.
+
 ## Konsequenzen
 
 **Positiv:**

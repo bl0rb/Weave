@@ -11,12 +11,6 @@
 [![Docker](https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white&style=flat-square)](docker-compose.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20chart-326CE5?logo=kubernetes&logoColor=white&style=flat-square)](charts/weave-ingest)
 
-[![pip-audit](https://img.shields.io/badge/pip--audit-0%20findings-216B52?logo=python&logoColor=white&style=flat-square)](../../.github/workflows/pr-ci.yml)
-[![npm audit](https://img.shields.io/badge/npm%20audit-0%20findings-216B52?logo=npm&logoColor=white&style=flat-square)](../../.github/workflows/pr-ci.yml)
-[![Audit](https://img.shields.io/badge/Security%20audit-Claude%20Opus%205-D97757?logo=anthropic&logoColor=white&style=flat-square)](#security)
-[![Containers](https://img.shields.io/badge/Containers-non--root%20uid%201000-0DB7ED?logo=docker&logoColor=white&style=flat-square)](backend/Dockerfile)
-[![Dependencies](https://img.shields.io/badge/Dependencies-hash--locked-8A5A07?style=flat-square)](backend/requirements.txt)
-[![Tests](https://img.shields.io/badge/Tests-519%20backend-3F6382?logo=pytest&logoColor=white&style=flat-square)](backend/tests)
 
 Weave Ingest is a document processing platform powered by PaddleOCR that converts PDFs, Office files, Mails and images into structured Markdown for RAG and AI pipelines.
 
@@ -27,7 +21,7 @@ frontmatter and event contracts — the shape every other Weave component relies
 in [`contracts/`](../../contracts/); the architectural decisions behind this transformation are
 recorded in [`docs/adr/`](../../docs/adr/).
 
-![Home page](../../docs/screenshots/overview-133.png)
+![Home page](../../docs/screenshots/user-wiki/01-portal-overview.png)
 
 ## Why Weave Ingest
 
@@ -162,7 +156,7 @@ helm upgrade --install weave-ingest ./charts/weave-ingest \
 Install from GHCR OCI chart:
 
 ```bash
-helm install weave-ingest oci://ghcr.io/bl0rb/charts/weave-ingest --version 1.3.3 \
+helm install weave-ingest ./charts/weave-ingest \
   --namespace weave-ingest --create-namespace \
   --set auth.secretKey.value=$(openssl rand -hex 32)
 ```
@@ -213,7 +207,7 @@ The upload wizard is a four-step flow — **Metadata → Profile → Upload → 
 
 ### Jobs (`/jobs`)
 
-![Jobs](../../docs/screenshots/jobs-133.png)
+![Jobs](../../docs/screenshots/user-wiki/13-job-management.png)
 
 Browse all jobs with folder tree, All/Running/Completed/Failed filter chips with counts, a job-type filter, quality grades, and version badges — `v2` marks documents that were re-uploaded with changed content. Every row action is an icon button with a hover tooltip: download, restart, retry with a lower profile, re-run with a different profile, edit markdown, send to an explicitly selected export webhook, delete. The Used Profile column shows compact codes like `ocr6m+v3` (full name on hover), and jobs processed by a VL connection show its name.
 
@@ -233,7 +227,7 @@ Confluence import runs, each with a status and page count. Every imported page's
 
 Run one document against up to 6 admin-configured VL connections plus optionally one OCR profile (2–7 variants per run) — the same document through several vision-language models, compared side by side.
 
-![Benchmark report](../../docs/screenshots/benchmark-report-133.png)
+![Benchmark report](../../docs/screenshots/user-wiki/14-quality-benchmark.png)
 
 The report compares duration, pages, output size, quality grade, and errors per variant — with Best result and Fastest badges, a tabbed markdown preview, links to each variant's job, and a JSON export. Variants that silently degraded to plain-text fallback are never crowned fastest/best.
 
@@ -510,34 +504,19 @@ Weave Ingest is built to run inside your own network. What is wired in by defaul
 
 To report a vulnerability, please open a GitHub Security Advisory rather than a public issue.
 
-## Publishing to GHCR
+## Container images
 
-Published images:
+The images referenced by the Compose files and the Helm chart
+(`ghcr.io/bl0rb/weave-ingest-backend`, `-worker`, `-frontend`) are **not
+published**: this repository wires up no registry release. Build them locally
+instead — `deploy/docker-compose.local.yml` overrides every `image:` with a
+build context, so the documented quick start in the root
+[README](../../README.md#quick-start) needs no registry at all.
 
-- `ghcr.io/bl0rb/weave-ingest-backend`
-- `ghcr.io/bl0rb/weave-ingest-worker`
-- `ghcr.io/bl0rb/weave-ingest-frontend`
-
-### Image publishing (automated)
-
-Workflow: `.github/workflows/publish-ghcr-images.yml`
-
-Trigger publish via git tag:
-
-```bash
-git tag v1.3.3
-git push origin v1.3.3
-```
-
-This publishes multi-arch images (`linux/amd64`, `linux/arm64`; worker is amd64) tagged with the version and `latest`. Pre-release tags (anything with a hyphen, e.g. `v1.3.0-rc.1`) publish their version tag but deliberately do **not** move `latest`, and their GitHub release is marked as a prerelease.
-
-### Helm chart publishing (automated)
-
-Workflow: `.github/workflows/publish-ghcr-helm-chart.yml`
-
-On `v*` tags, the chart is packaged and pushed to:
-
-- `oci://ghcr.io/bl0rb/charts`
+The publishing workflows that used to be documented here lived under
+`services/ingest/.github/workflows/`, a path GitHub never executes, and were
+removed rather than left as instructions that cannot work. Wiring up a real
+release for all nine services is open work, not a regression.
 
 ## Troubleshooting
 

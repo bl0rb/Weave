@@ -348,7 +348,7 @@
     <h1>Weave Bauplan</h1>
     <p class="lede">PaddleDoc wird nicht ersetzt — es wird zum Dokumenten-Compiler eines modularen Bot-Systems. Sechs Services, zwei Pipelines, ein Prinzip: RAG ist ein Werkzeug des Bots, nicht der Bot selbst.</p>
     <div class="meta">
-      <span>Stand: 31.08.2026 · Phasen 0–4.5 und 6 vollständig, Phase 5 (Aktions-Werkzeuge) offen · Testsuiten grün über neun Dienste</span>
+      <span>Stand: 06.09.2026 · v0.1.0 · Phasen 0–4.5 und 6 vollständig, Phase 5 (Aktions-Werkzeuge) offen · Testsuiten grün über neun Dienste</span>
       <span>Basis: PaddleDoc-Codeanalyse (Backend · Pipeline · Frontend · Infra)</span>
       <span>Quelle: new_apps.md</span>
     </div>
@@ -423,7 +423,7 @@
 
   <section>
     <div class="section-head"><span class="no">03</span><h2>Die sechs Services</h2></div>
-    <p class="section-sub">Alle sechs Repos existieren bereits als leere Git-Repositories. Nur Weave-Ingest startet mit Code — dem kompletten PaddleDoc.</p>
+    <p class="section-sub">Der Schnitt, wie er zu Beginn geplant wurde: sechs eigene Repositories, von denen nur Weave-Ingest mit Code startet — dem kompletten PaddleDoc. Seit Phase 6 liegen alle sechs als <code>services/&lt;dienst&gt;</code> in diesem Monorepo; die Ursprungs-Repos sind eingefroren.</p>
     <div class="services">
       <div class="svc-card" style="--th:var(--t-ingest)">
         <div class="svc-head"><h3>Weave-Ingest</h3><span class="tag">Dokumenten-Compiler</span></div>
@@ -447,7 +447,7 @@
       </div>
       <div class="svc-card" style="--th:var(--t-tools)">
         <div class="svc-head"><h3>Weave-Tools</h3><span class="tag">Action-Layer</span></div>
-        <p>MCP-Dienst und REST-Spiegel mit rechte-gebundener Suche, dazu die Chat-Oberfläche. Der Umfang kommt aus dem Token, nie aus den Werkzeug-Argumenten. Offen bleiben die handelnden Werkzeuge: E-Mail, CRM, Web.</p>
+        <p>MCP-Dienst und REST-Spiegel mit rechte-gebundener Suche. Der Umfang kommt aus dem Token, nie aus den Werkzeug-Argumenten. Die zunächst hier entstandene Chat-Oberfläche ist mit dem Monorepo ein eigener Dienst geworden (<code>services/chat</code>). Offen bleiben die handelnden Werkzeuge: E-Mail, CRM, Web.</p>
         <div class="basis">Teilweise umgesetzt · Phase 4.5c/d</div>
       </div>
       <div class="svc-card" style="--th:var(--t-api)">
@@ -571,10 +571,10 @@
         <li><label><input type="checkbox" data-id="p45-token" checked><span class="txt">Delegations-Token: HMAC-signiert, fünf Minuten gültig, erlaubter Collection-Umfang eingebettet<span class="why">Aussteller und Prüfer schlagen ohne Geheimnis hart fehl — ein leerer HMAC-Schlüssel erzeugt sonst gültige Signaturen.</span></span></label></li>
         <li><label><input type="checkbox" data-id="p45-mcp" checked><span class="txt">MCP-Dienst mit <code>list_collections</code> und <code>search</code>: Umfang immer serverseitig aus der Identität, Argumente können nur einschränken</span></label></li>
         <li><label><input type="checkbox" data-id="p45-n8n" checked><span class="txt">n8n als Bot-Provider mit signiertem Request und SSRF-Allowlist; von n8n gemeldete Quellen werden gegen den Umfang geprüft<span class="why">Quellen aus einem Flow sind eine Behauptung, keine Berechtigung — was außerhalb liegt, wird verworfen und im Trace gezählt.</span></span></label></li>
-        <li><label><input type="checkbox" data-id="p45-ui" checked><span class="txt">Chat-Oberfläche in Weave-Tools: Streaming, Quellenkarten, Trace-Panel; Token bleibt serverseitig im httpOnly-Cookie</span></label></li>
+        <li><label><input type="checkbox" data-id="p45-ui" checked><span class="txt">Eigene Chat-Oberfläche: Streaming, Quellenkarten, Trace-Panel; Token bleibt serverseitig im httpOnly-Cookie<span class="why">In Weave-Tools begonnen, seit dem Monorepo ein eigener Dienst unter <code>services/chat</code>.</span></span></label></li>
         <li><label><input type="checkbox" data-id="p45-filter" checked><span class="txt">Collection-Filter pro Anfrage — greift erst nach der Rechte-Schnittmenge und kann nie erweitern<span class="why">Eigener Guard-Grund, damit „deine Auswahl passt nicht" von „du darfst nichts" unterscheidbar ist.</span></span></label></li>
         <li><label><input type="checkbox" data-id="p45-oidc" checked><span class="txt">OIDC-Anmeldung im Gateway mit Cross-Origin-Übergabe an die Oberfläche<span class="why">Zuordnung nur über den OIDC-Subject, nie über die E-Mail — sonst wäre eine Kontoübernahme über eine gleiche Adresse möglich. Einmal-Code, 60 Sekunden, serverseitig getauscht.</span></span></label></li>
-        <li><label><input type="checkbox" data-id="p45-deploy" checked><span class="txt">Deploy-Stack vollständig: alle sechs Dienste, geteilte Geheimnisse an einer Stelle, Init-Skript für die drei Datenbanken und die Read-only-Rolle</span></label></li>
+        <li><label><input type="checkbox" data-id="p45-deploy" checked><span class="txt">Deploy-Stack vollständig: alle sechs Kerndienste samt Chat-Oberfläche, geteilte Geheimnisse an einer Stelle, Init-Skript für die drei Datenbanken und die Read-only-Rolle<span class="why">Mit den beiden optionalen CPU-Modelldiensten aus Phase 6 sind es heute neun.</span></span></label></li>
       </ul>
     </div>
 
@@ -610,7 +610,7 @@
         <li><label><input type="checkbox" data-id="p6-modelservices" checked><span class="txt">Zwei CPU-Modelldienste (<code>services/embeddings</code>: multilingual-e5-small über onnxruntime, Port 8006; <code>services/reranker</code>: bge-reranker-v2-m3, Port 8007), OpenAI- bzw. Cohere-kompatibel, hinter Dienst-Token.</span></label></li>
         <li><label><input type="checkbox" data-id="p6-knowledgeapi" checked><span class="txt">Weave-Knowledges Lese-API hinter <code>KNOWLEDGE_API_TOKEN</code> (fail-closed 503); der Webhook-Eingang behält HMAC über den rohen Rumpf.</span></label></li>
         <li><label><input type="checkbox" data-id="p6-portal" checked><span class="txt">Wissensportal in Ingest: Wissensbereiche mit <code>read_teams</code> in der Oberfläche, Freigaben als unveränderliche Snapshots (<code>document.released</code>), Indexstatus-Rückmeldung aus Knowledge; zentrale Chat-Provider-Konfiguration (ADR-0007) statt Runtime-Umgebungsvariablen.</span></label></li>
-        <li><label><input type="checkbox" data-id="p6-docs" checked><span class="txt">Betriebsdoku als <code>docs/betrieb.md</code> plus HTML-Artefakte im Repo (Architektur, Bauplan, Glossar, Betriebshandbuch); ADR 0001–0007.</span></label></li>
+        <li><label><input type="checkbox" data-id="p6-docs" checked><span class="txt">Betriebsdoku als <code>docs/betrieb.md</code> plus fünf HTML-Artefakte im Repo (Gesamtarchitektur, Architektur und Ablauf, Bauplan, Glossar, Betriebshandbuch); ADR 0001–0007.</span></label></li>
         <li><label><input type="checkbox" data-id="p6-botsui" checked><span class="txt">Zentrale n8n-Bot-Verwaltung in Ingest: Admins pflegen Webhook, Teams, Wissensbereiche und Quellen-Guard; Runtime liest aktivierte Einträge dienst-authentifiziert pro Anfrage und schneidet den Bot-Scope weiterhin mit den Nutzerrechten. Lokale YAML-Bots bleiben als Fallback und Beispiele erhalten.</span></label></li>
       </ul>
     </div>

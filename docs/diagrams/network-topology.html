@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Where Weave's network boundary actually is</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #f8fafc;
+      --color-ink:     #0f172a;
+      --color-muted:   #475569;
+      --color-accent:  #4f46e5;
+      --font-sans:     'Inter', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 1000px; width: 100%; }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 0.5rem;
+    }
+    .sub {
+      font-size: 0.95rem;
+      line-height: 1.5;
+      color: var(--color-muted);
+      max-width: 62ch;
+      margin-bottom: 1.5rem;
+    }
+    svg { width: 100%; min-width: 1000px; display: block; }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Architecture · Network topology</p>
+    <h1>Where Weave's network boundary actually is</h1>
+    <p class="sub">All fourteen containers share one flat bridge network — data stores included. What separates the services is the bearer token each one demands, not the network.</p>
+
+    <svg viewBox="0 0 1000 624" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="network-topology-title network-topology-desc">
+<title id="network-topology-title">Where Weave's network boundary actually is</title>
+<desc id="network-topology-desc">Browsers and n8n clients reach four Weave services that are meant to be published, while five internal-only services are published on the host as well; only PostgreSQL and Redis have no host port, so the real separation between services is the bearer token each one demands, not the network.</desc>
+
+<defs>
+  <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="#475569"/>
+  </marker>
+  <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/>
+  </marker>
+</defs>
+
+<rect width="100%" height="100%" fill="#f8fafc"/>
+
+<!-- ============ ZONES (drawn before arrows and nodes) ============ -->
+<rect x="24" y="32" width="952" height="104" rx="8" fill="rgba(15,23,42,0.02)" stroke="rgba(15,23,42,0.10)" stroke-width="0.8"/>
+<rect x="32" y="36" width="160" height="12" rx="2" fill="#f8fafc"/>
+<text x="40" y="45" fill="rgba(15,23,42,0.40)" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">OUTSIDE THE STACK</text>
+
+<rect x="24" y="192" width="952" height="264" rx="8" fill="rgba(15,23,42,0.02)" stroke="rgba(15,23,42,0.10)" stroke-width="0.8"/>
+<rect x="32" y="196" width="384" height="12" rx="2" fill="#f8fafc"/>
+<text x="40" y="205" fill="rgba(15,23,42,0.40)" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">PUBLISHED ON THE HOST · PLAIN HTTP · BOUND TO 0.0.0.0</text>
+
+<!-- ============ ARROWS (before boxes) ============ -->
+
+<!-- a1 Browser -> Ingest -->
+<path d="M 296,120 V 152 Q 296,160 288,160 H 152 Q 144,160 144,168 V 224" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+<!-- a2 Browser -> Chat UI -->
+<path d="M 336,120 V 224" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+<!-- a3 Browser -> Weave-API -->
+<path d="M 376,120 V 152 Q 376,160 384,160 H 552 Q 560,160 560,168 V 224" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+<!-- a4 n8n -> Tools -->
+<path d="M 808,120 V 224" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+
+<!-- a5 Chat UI -> Weave-API -->
+<path d="M 400,264 H 480" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="412" y="244" width="56" height="12" rx="2" fill="#f8fafc"/>
+<text x="440" y="253" fill="#64748b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SERVER-SIDE</text>
+
+<!-- a6 Weave-API -> internal services -->
+<path d="M 560,304 V 352" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+<!-- a7 Ingest -> internal services -->
+<path d="M 120,304 V 328 Q 120,336 128,336 H 328 Q 336,336 336,344 V 352" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="204" y="316" width="48" height="12" rx="2" fill="#f8fafc"/>
+<text x="228" y="325" fill="#64748b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SIGNED</text>
+
+<!-- a8 Tools -> internal services -->
+<path d="M 808,304 V 328 Q 808,336 800,336 H 616 Q 608,336 608,344 V 352" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+<!-- a9 Ingest -> data stores (bridges over a7 at y=336) -->
+<path d="M 168,304 V 328 a 8,8 0 0,0 0,16 V 464 Q 168,472 176,472 H 412 Q 420,472 420,480 V 496" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+<!-- a10 internal services -> data stores -->
+<path d="M 484,432 V 496" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+<!-- ============ NODES ============ -->
+
+<!-- Browser -->
+<rect x="256" y="64" width="160" height="56" rx="6" fill="#f8fafc"/>
+<rect x="256" y="64" width="160" height="56" rx="6" fill="rgba(71,85,105,0.10)" stroke="#64748b" stroke-width="1"/>
+<rect x="264" y="72" width="36" height="12" rx="2" fill="transparent" stroke="rgba(100,116,139,0.40)" stroke-width="0.8"/>
+<text x="282" y="81" fill="#64748b" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">USERS</text>
+<text x="336" y="100" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Browser</text>
+<text x="336" y="113" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">portal · chat · login</text>
+
+<!-- n8n / MCP client -->
+<rect x="712" y="64" width="192" height="56" rx="6" fill="#f8fafc"/>
+<rect x="712" y="64" width="192" height="56" rx="6" fill="rgba(15,23,42,0.03)" stroke="rgba(15,23,42,0.30)" stroke-width="1"/>
+<rect x="720" y="72" width="40" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.30)" stroke-width="0.8"/>
+<text x="740" y="81" fill="#475569" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">AGENT</text>
+<text x="808" y="100" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">n8n / MCP client</text>
+<text x="808" y="113" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">runs outside Weave</text>
+
+<!-- Weave-Ingest -->
+<rect x="56" y="224" width="176" height="80" rx="6" fill="#f8fafc"/>
+<rect x="56" y="224" width="176" height="80" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="64" y="232" width="40" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="84" y="241" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">PORTAL</text>
+<text x="144" y="268" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Ingest</text>
+<text x="144" y="284" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:3000 UI · :8000 API</text>
+<text x="144" y="296" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">portal · identity</text>
+
+<!-- Chat UI -->
+<rect x="272" y="224" width="128" height="80" rx="6" fill="#f8fafc"/>
+<rect x="272" y="224" width="128" height="80" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="280" y="232" width="24" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="292" y="241" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">UI</text>
+<text x="336" y="268" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Chat UI</text>
+<text x="336" y="284" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:3001</text>
+<text x="336" y="296" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">services/chat</text>
+
+<!-- Weave-API -->
+<rect x="480" y="224" width="160" height="80" rx="6" fill="#f8fafc"/>
+<rect x="480" y="224" width="160" height="80" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="488" y="232" width="44" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="510" y="241" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">GATEWAY</text>
+<text x="560" y="268" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-API</text>
+<text x="560" y="284" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8004</text>
+<text x="560" y="296" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">gateway</text>
+
+<!-- Weave-Tools -->
+<rect x="720" y="224" width="176" height="80" rx="6" fill="#f8fafc"/>
+<rect x="720" y="224" width="176" height="80" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="728" y="232" width="36" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="746" y="241" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">TOOLS</text>
+<text x="808" y="268" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Tools</text>
+<text x="808" y="284" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8005</text>
+<text x="808" y="296" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">REST · MCP</text>
+
+<!-- Internal-only services (FOCAL) -->
+<rect x="272" y="352" width="368" height="80" rx="6" fill="#f8fafc"/>
+<rect x="272" y="352" width="368" height="80" rx="6" fill="rgba(79,70,229,0.08)" stroke="#4f46e5" stroke-width="1"/>
+<rect x="280" y="360" width="80" height="12" rx="2" fill="transparent" stroke="rgba(79,70,229,0.40)" stroke-width="0.8"/>
+<text x="320" y="369" fill="#4f46e5" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">INTERNAL ONLY</text>
+<text x="456" y="392" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Knowledge · Retrieval · Runtime · Model services</text>
+<text x="456" y="408" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8001 · :8002 · :8003 · :8006 · :8007</text>
+<text x="456" y="422" fill="#4f46e5" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">no outside client needs these — published anyway</text>
+
+<!-- Data stores -->
+<rect x="372" y="496" width="224" height="56" rx="6" fill="#f8fafc"/>
+<rect x="372" y="496" width="224" height="56" rx="6" fill="rgba(15,23,42,0.05)" stroke="#475569" stroke-width="1"/>
+<rect x="380" y="504" width="36" height="12" rx="2" fill="transparent" stroke="rgba(71,85,105,0.50)" stroke-width="0.8"/>
+<text x="398" y="513" fill="#475569" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">STORE</text>
+<text x="484" y="532" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">PostgreSQL · Redis</text>
+<text x="484" y="546" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">no host port — the only sealed hop</text>
+
+<!-- ============ LEGEND ============ -->
+<line x1="24" y1="576" x2="976" y2="576" stroke="rgba(15,23,42,0.10)" stroke-width="0.8"/>
+<text x="24" y="592" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+
+<rect x="104" y="584" width="14" height="10" rx="2" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<text x="124" y="592" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Published service</text>
+
+<rect x="272" y="584" width="14" height="10" rx="2" fill="rgba(79,70,229,0.08)" stroke="#4f46e5" stroke-width="1"/>
+<text x="292" y="592" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Internal-only, exposed</text>
+
+<rect x="440" y="584" width="14" height="10" rx="2" fill="rgba(15,23,42,0.05)" stroke="#475569" stroke-width="1"/>
+<text x="460" y="592" fill="#475569" font-size="9" font-family="'Inter', sans-serif">No host port</text>
+
+<line x1="608" y1="589" x2="622" y2="589" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+<text x="628" y="592" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Ingress from outside</text>
+
+<line x1="776" y1="589" x2="790" y2="589" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<text x="796" y="592" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Internal call</text>
+</svg>
+  </div>
+</body>
+</html>

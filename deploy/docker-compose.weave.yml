@@ -889,7 +889,7 @@ services:
     # additional container from this SAME image with the CMD overridden,
     # e.g.:
     #   uvicorn app.mcp_server:mcp_app --host 0.0.0.0 --port 8000
-    # (see this monorepo's root README's "MCP-Server" section). Not started here because,
+    # (see services/tools/README.md). Not started here because,
     # unlike the REST surface (which needs its own TOOLS_API_TOKEN gate),
     # the MCP surface authenticates every call solely via the
     # Authorization header a caller already carries -- so whether to run

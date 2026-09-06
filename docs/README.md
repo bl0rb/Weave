@@ -33,6 +33,14 @@ claude.ai werden aus genau diesen Dateien neu veröffentlicht.
   [Galerie](screenshots/user-wiki/index.html) enthält alle Original-PNGs und den
   [Beispielablauf als GIF](screenshots/user-wiki/weave-example-process.gif):
   Anmelden → Hochladen → Verarbeiten → Freigeben → Chat-Mockup.
+- **[diagrams/](diagrams/)** — die gezeichneten Schaubilder als HTML-Quelle plus
+  exportiertes SVG. `network-topology` gehört zum Netzabschnitt der
+  [Wurzel-README](../README.md#network-design), die vier `supply-chain-*` und
+  `dependabot-flow` zum
+  [Härtungs-Blueprint](supply-chain-hardening-blueprint.md).
+- **[integrations/mail-ingestion.md](integrations/mail-ingestion.md)** — wie
+  Dokumente per Mail hereinkommen und warum die frühere separate Mail-API
+  entfernt wurde.
 
 Die Datenverträge zwischen den Diensten liegen nicht hier, sondern zentral in
 [../contracts/](../contracts/).

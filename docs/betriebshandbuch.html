@@ -258,7 +258,7 @@
   <h1>Weave Betriebshandbuch</h1>
   <p class="lede">Was du setzen musst, damit die sechs Dienste zusammenspielen — und vor allem: welche falschen Werte nichts kaputt machen, sondern nur dafür sorgen, dass es leise nicht funktioniert.</p>
   <div class="meta">
-    <span>Stand 01.09.2026</span>
+    <span>Stand 06.09.2026 · v0.1.0</span>
     <span>149 Einstellungen · 14 davon Pflicht</span>
     <span>aus den <code>config.py</code> der Dienste erhoben</span>
   </div>
@@ -290,7 +290,7 @@
         <tr><td class="k"><strong>Weave-Ingest</strong></td><td><code>8000</code></td><td><code>weave_ingest</code></td><td>OCR, Markdown + Frontmatter, Quality-Gate, besitzt die Collections</td></tr>
         <tr><td class="k"><strong>Weave-Knowledge</strong></td><td><code>8001</code></td><td><code>weave_knowledge</code></td><td>Chunking, Embeddings, schreibt den Chunk-Store, spiegelt die Collection-Registry</td></tr>
         <tr><td class="k"><strong>Weave-Retrieval</strong></td><td><code>8002</code></td><td>liest <code>weave_knowledge</code></td><td>Hybride Suche; Lese-Autorität für Collections. Einziger Dienst ohne eigene DB — siehe ADR-0005</td></tr>
-        <tr><td class="k"><strong>Weave-Runtime</strong></td><td><code>8003</code></td><td>keine</td><td>Intent-Router, Bots als YAML, LLM, n8n, stellt Delegations-Token aus</td></tr>
+        <tr><td class="k"><strong>Weave-Runtime</strong></td><td><code>8003</code></td><td>keine</td><td>Intent-Router, Bots aus YAML und aus Ingests Bot-Verwaltung, LLM, n8n, stellt Delegations-Token aus</td></tr>
         <tr><td class="k"><strong>Weave-API</strong></td><td><code>8004</code></td><td><code>weave_api</code></td><td>Gateway: Tokens, Sitzungen, Gespräche. Identitäten kommen aus Ingest (ADR-0006), hier liegt nur ihr Spiegel</td></tr>
         <tr><td class="k"><strong>Weave-Tools</strong></td><td><code>8005</code> · <code>3001</code></td><td>keine</td><td>MCP-Dienst mit rechte-gebundener Suche; Chat-Oberfläche</td></tr>
       </tbody>
@@ -322,7 +322,7 @@
         </tr>
         <tr>
           <td class="k"><strong>Weave-Runtime</strong></td>
-          <td><strong>Bots als YAML-Dateien</strong> im Volume <code>runtime_bots</code>, bei jedem Aufruf frisch von der Platte gelesen — eine Änderung wirkt ohne Neustart. Keine Oberfläche; alles Übrige <code>deploy/.env</code></td>
+          <td><strong>Zwei Quellen, eine Liste:</strong> YAML-Dateien im Volume <code>runtime_bots</code>, bei jedem Aufruf frisch von der Platte gelesen, plus die in Ingest gepflegten n8n-Bots, bei jedem Aufruf frisch über <code>/api/v1/internal/bots</code> geholt. Gleiche <code>id</code> heißt: der zentrale Eintrag gewinnt. Eine Änderung wirkt auf beiden Wegen ohne Neustart. Eigene Oberfläche hat der Dienst keine; alles Übrige <code>deploy/.env</code></td>
           <td>FastAPI · httpx · SSE · PyYAML. Ohne Datenbank</td>
           <td><code>RUNTIME_API_TOKEN</code> als Bearer. Stellt seinerseits Delegations-Token aus: HMAC-SHA256, fünf Minuten, mit dem erlaubten Collection-Umfang darin</td>
         </tr>
@@ -345,7 +345,7 @@
 
   <div class="box note">
     <div class="t">Warum Knowledge zwei Verfahren nebeneinander hat</div>
-    <p>Der Webhook nimmt <em>Schreibzugriffe</em> an: ein gefälschtes <code>document.processed</code> bringt beliebiges Markdown samt Team und Collection in den Index, und die Suche vertraut, was indiziert ist. Ein Bearer-Token würde dort nur sagen „der Absender kennt ein Geheimnis“, nicht „dieser Rumpf ist unterwegs unverändert geblieben“ — deshalb HMAC über den rohen Rumpf. Die Lese-Endpunkte dagegen geben nur heraus, was schon da ist; dort genügt ein Dienst-Token, wie bei Weave-Retrieval. Beide sind fail-closed: ohne konfigurierten Wert <code>503</code>, nie <code>200</code>.</p>
+    <p>Der Webhook nimmt <em>Schreibzugriffe</em> an: ein gefälschtes <code>document.released</code> bringt beliebiges Markdown samt Team und Collection in den Index, und die Suche vertraut, was indiziert ist. Ein Bearer-Token würde dort nur sagen „der Absender kennt ein Geheimnis“, nicht „dieser Rumpf ist unterwegs unverändert geblieben“ — deshalb HMAC über den rohen Rumpf. Die Lese-Endpunkte dagegen geben nur heraus, was schon da ist; dort genügt ein Dienst-Token, wie bei Weave-Retrieval. Beide sind fail-closed: ohne konfigurierten Wert <code>503</code>, nie <code>200</code>.</p>
   </div>
 
   <div class="box note">
@@ -393,14 +393,14 @@
       <p>Als <code>WEAVE_KNOWLEDGE_INGEST_API_TOKEN</code> in die <code>.env</code>, dann <code>docker compose … restart weave-knowledge weave-knowledge-worker</code>. Bis dahin läuft der Registry-Sync in ein 401 und die Collection-Rechte bleiben leer.</p>
     </li>
     <li>
-      <h3>Webhook-Verbindung in Ingest anlegen</h3>
-      <p>Damit verarbeitete Dokumente überhaupt bei Knowledge ankommen. Das Secret dieser Verbindung muss identisch zu <code>WEAVE_KNOWLEDGE_WEBHOOK_SECRET</code> sein, sonst weist Knowledge jedes Event mit 401 ab.</p>
+      <h3>Ein Dokument im Wissensportal freigeben</h3>
+      <p>Für den Index reicht Verarbeiten nicht. Erst eine Freigabe erzeugt den unveränderlichen Snapshot und damit <code>document.released</code> — das einzige Event, das Knowledge regulär indiziert; <code>document.processed</code> wird nur mit <code>awaiting_release</code> quittiert. Zugestellt wird über Ingests eigenen internen Veröffentlichungskanal (<code>PORTAL_KNOWLEDGE_BASE_URL</code>, signiert mit <code>WEAVE_KNOWLEDGE_WEBHOOK_SECRET</code>) — beides rendert <code>weave.yaml</code> bereits, eine Webhook-Verbindung in der Oberfläche braucht es dafür <strong>nicht</strong>. Weicht das Secret ab, weist Knowledge jede Freigabe mit 401 ab.</p>
     </li>
     <li>
-      <h3>Nutzer für die Chat-Oberfläche anlegen</h3>
-      <p>Rein tokenbasiert, kein Passwort nötig. Der Token wird genau einmal angezeigt.</p>
+      <h3>Anmeldung für die Chat-Oberfläche</h3>
+      <p>Im Normalfall ist hier nichts zu tun: wer sich in Ingest anmelden kann, kann seit ADR-0006 auch chatten. Nur ohne föderierte Anmeldung wird in Weave-API von Hand ein rein tokenbasierter Nutzer angelegt. Der Token wird genau einmal angezeigt.</p>
       <pre><span class="p">docker compose</span> exec weave-api python -m app.cli \
-  create-user --username matze --team legal</pre>
+  create-user --username alice --team legal</pre>
     </li>
   </ol>
 </section>
@@ -672,8 +672,16 @@
     <p>Der erlaubte Umfang wird immer serverseitig aus der Identität abgeleitet. Ein Collection-Name aus einem Tool-Argument oder einer Modell-Ausgabe kann nur einschränken, nie erlauben. Und was ein Flow als Quelle zurückmeldet, ist eine Behauptung: Weave prüft jede gemeldete Quelle gegen den signierten Umfang und verwirft, was nicht passt — sichtbar im Trace als <code>dropped_sources</code>.</p>
   </div>
   <div class="box warn">
-    <div class="t">Die Webhook-Allowlist greift beim Laden</div>
-    <p>Eine Bot-Datei mit einer nicht erlaubten Adresse lässt sich gar nicht erst laden — der Fehler kommt beim Start, nicht beim ersten Aufruf. Das ist Absicht: Eine Konfigurationsdatei soll den Dienst nicht in beliebige Netze rufen lassen können.</p>
+    <div class="t">Die Webhook-Allowlist greift beim Zusammenstellen der Liste</div>
+    <p>Ein Bot mit einer nicht erlaubten Adresse lässt sich gar nicht erst laden — der Fehler kommt beim Zusammenstellen der Bot-Liste, nicht beim ersten Aufruf. Das gilt für beide Quellen gleich: für die YAML-Dateien auf der Platte wie für die in Ingest gepflegten Einträge. Weder eine Konfigurationsdatei noch ein Administrator soll den Dienst in beliebige Netze rufen lassen können.</p>
+  </div>
+  <div class="box note">
+    <div class="t">n8n-Bots werden zentral in Ingest gepflegt</div>
+    <p>Seit v0.1.0 unter <strong>Administration → Bots</strong>: Webhook-Adresse, optionales Flow-Token, Timeout, Streaming, erlaubte Teams und Wissensbereiche. Runtime holt die aktivierten Einträge mit <code>CHAT_CONFIG_SERVICE_TOKEN</code> pro Anfrage und schneidet ihren Umfang weiterhin mit den Rechten des Fragenden. Das Flow-Token liegt Fernet-verschlüsselt in Ingest und verlässt es nur über diese interne Route. Lokale YAML-Bots bleiben als Fallback und Beispiele; bei gleicher <code>id</code> gewinnt der zentrale Eintrag.</p>
+  </div>
+  <div class="box danger">
+    <div class="t">Die Bot-Liste ist ganz oder gar nicht</div>
+    <p>Sind <code>CHAT_CONFIG_BASE_URL</code> und <code>CHAT_CONFIG_SERVICE_TOKEN</code> gesetzt und Ingest antwortet nicht oder liefert Unbrauchbares, scheitert die <em>gesamte</em> Bot-Liste — auch die lokalen YAML-Bots. Runtime antwortet <code>503</code> und meldet sich <code>degraded</code>, das Gateway macht daraus <code>502</code>. Das ist gewollt: nie eine halb alte, halb neue Definition. Es heißt aber, dass <code>/v1/bots</code> und jeder Chat-Turn an der Erreichbarkeit von Ingest hängen. Sind beide Werte leer, läuft Runtime eigenständig nur mit den YAML-Bots.</p>
   </div>
 </section>
 
@@ -706,7 +714,9 @@ curl -s -X POST localhost:8004/v1/chat \
         <tr><td class="k">Chat antwortet <code>502</code></td><td><code>RUNTIME_API_TOKEN</code> weicht zwischen API und Runtime ab</td></tr>
         <tr><td class="k">Bot findet nie etwas</td><td>Embedding-Modell oder -Provider unterscheiden sich zwischen Knowledge und Retrieval</td></tr>
         <tr><td class="k">Antworten beginnen mit <code>[fake-llm]</code></td><td><code>LLM_PROVIDER</code> steht noch auf <code>fake</code></td></tr>
-        <tr><td class="k">Dokumente erscheinen nicht im Index</td><td>Webhook-Verbindung fehlt, oder das Secret weicht ab (Knowledge-Log zeigt 401)</td></tr>
+        <tr><td class="k">Dokumente erscheinen nicht im Index</td><td>Meist fehlt schlicht die Freigabe im Wissensportal — sonst weicht <code>WEAVE_KNOWLEDGE_WEBHOOK_SECRET</code> ab (Knowledge-Log zeigt 401)</td></tr>
+        <tr><td class="k"><code>/v1/bots</code> antwortet <code>502</code>, Runtime meldet sich <code>degraded</code></td><td><code>CHAT_CONFIG_BASE_URL</code>/<code>CHAT_CONFIG_SERVICE_TOKEN</code> gesetzt, aber Ingest nicht erreichbar — dann scheitert die ganze Liste, auch die YAML-Bots</td></tr>
+        <tr><td class="k">Ein zentral gepflegter n8n-Bot taucht nicht auf</td><td>Er ist deaktiviert, oder seine Webhook-Adresse liegt außerhalb von <code>N8N_ALLOWED_BASE_URLS</code></td></tr>
         <tr><td class="k">Collections bleiben leer</td><td>Registry-Sync scheitert — der Ingest-Token gehört keinem Administrator</td></tr>
         <tr><td class="k">MCP antwortet <code>503</code></td><td><code>WEAVE_DELEGATION_SECRET</code> oder <code>TOOLS_API_TOKEN</code> nicht gesetzt</td></tr>
         <tr><td class="k">Login schlägt mit <code>403</code> fehl</td><td>Frontend-Adresse fehlt in <code>CORS_ORIGINS</code></td></tr>
@@ -719,7 +729,7 @@ curl -s -X POST localhost:8004/v1/chat \
   </div>
 </section>
 
-<footer>Weave Betriebshandbuch · Stand 01.09.2026 · erhoben aus den <code>config.py</code> der sechs Dienste und an einem laufenden Stack gegengeprüft</footer>
+<footer>Weave Betriebshandbuch · Stand 06.09.2026 (v0.1.0) · erhoben aus den <code>config.py</code> der sechs Dienste und an einem laufenden Stack gegengeprüft</footer>
 
 </div>
 </body>
