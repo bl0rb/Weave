@@ -1,7 +1,7 @@
-"""OpenAI-compatible POST /v1/chat/completions -- lets Open WebUI (or any
-other client speaking OpenAI's own Chat Completions API) use Weave-API as a
+"""OpenAI-compatible POST /v1/chat/completions for external clients that
+use the Chat Completions protocol and connect to Weave-API as a
 drop-in OpenAI endpoint, with a Weave-Runtime `bot_id` standing in for an
-OpenAI model name (README's "Open WebUI anbinden"). Behind the same
+OpenAI model name. Behind the same
 auth+ratelimit dependency as every other authenticated route
 (app/core/ratelimit.py's enforce_rate_limit) -- an OpenAI client
 authenticates with a Bearer token exactly like any other caller here, so a
@@ -232,9 +232,9 @@ def list_models() -> OpenAIModelList:
     """OpenAI's own model-listing endpoint, fed from the same bot registry
     GET /v1/bots already proxies (app/api/bots.py) -- see
     app/schemas/openai.py's OpenAIModel/OpenAIModelList docstrings for the
-    exact shape and why `created` is simply "now". This is what lets Open
-    WebUI populate its own model dropdown by itself (README's "Open WebUI
-    anbinden") instead of requiring a bot_id to be typed in by hand.
+    exact shape and why `created` is simply "now". Compatible clients can
+    use it to populate their model dropdown instead of requiring a bot_id
+    to be typed in by hand.
 
     Same error mapping as GET /v1/bots: any `RuntimeClientError` (Weave-
     Runtime unreachable, timed out, or rejecting the call outright) becomes

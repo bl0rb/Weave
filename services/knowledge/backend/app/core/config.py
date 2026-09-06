@@ -40,20 +40,20 @@ class Settings(BaseSettings):
     # signed webhook ingress are unaffected.
     knowledge_api_token: str = ''
 
-    # --- Weave-Ingest client (fetching a job's markdown_url after
-    # document.processed -- see contracts/events/document.processed.md). The
+    # --- Weave-Ingest client (fetching an immutable markdown snapshot after
+    # document.released -- see contracts/events/document.released.md). The
     # download route requires the same auth as any other Weave-Ingest API
     # call, so this service needs a real service-user token, not just a URL.
     weave_ingest_base_url: str = 'http://localhost:8000'
     weave_ingest_api_token: str = ''
     # HMAC-SHA256 shared secret used to verify the
-    # X-Weave-Ingest-Signature header on an inbound document.processed or
-    # collection.updated webhook (see contracts/events/document.processed.md's
-    # "Signaturverfahren"). REQUIRED: while it is unset, the event route
+    # X-Weave-Ingest-Signature header on an inbound document event or the
+    # dedicated collection.updated notification (see contracts/events/).
+    # REQUIRED: while it is unset, the event route
     # answers 503 rather than accepting unsigned events -- this route writes
     # into the index, and a forged event carries whatever markdown, team and
-    # collection slug its sender picks. Must match the secret configured on
-    # the Weave-Ingest webhook connection that points at this service.
+    # collection slug its sender picks. Must match Weave-Ingest's
+    # PORTAL_KNOWLEDGE_WEBHOOK_SECRET.
     # Also authenticates the narrow indexing/status lookup with a separate
     # HMAC context. It never grants access to the corpus read API above.
     weave_ingest_webhook_secret: str = ''
@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     # between one tick's self-re-enqueue and the next.
     #
     # This is a safety net, not the primary freshness mechanism: a
-    # `collection.updated` webhook (app/api/events.py) triggers an
+    # dedicated `collection.updated` notification (app/api/events.py) triggers an
     # immediate sync whenever Weave-Ingest's registry actually changes (an
     # access revocation in particular must not wait out a full tick -- see
     # that handler's docstring). 300s was too wide a residual window for a

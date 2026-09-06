@@ -2,14 +2,14 @@
 
 ## Einordnung
 
-Weave-API ist das **Bot-Gateway** und zentrale Einstiegspunkt des Weave-Systems. Sie verwaltet Authentifizierung, Konversations-State und nutzt Weave-Runtime als Backend für Message-Processing. Open WebUI dockt hier als Web-Oberfläche an. Weave-API ist außerdem die **Identitäts-Autorität** des Gesamtsystems: sie besitzt `users`/`api_tokens` und bietet anderen Services eine Token-Introspection an, ohne diese Tabellen zu teilen.
+Weave-API ist das **Bot-Gateway** und der zentrale Einstiegspunkt des Weave-Systems. Sie verwaltet Authentifizierung, Konversations-State und nutzt Weave-Runtime als Backend für Message-Processing. Die Produktoberfläche liegt in `services/chat`; optionale Integrationen können das OpenAI-kompatible Protokoll verwenden. Weave-API ist außerdem die **Identitäts-Autorität** des Gesamtsystems: sie besitzt `users`/`api_tokens` und bietet anderen Services eine Token-Introspection an, ohne diese Tabellen zu teilen.
 
 ## Zweck
 
 - POST `/v1/chat`: Unified Chat-Endpunkt (bot_id, conversation_id, message) → answer + sources + trace
 - POST `/v1/chat/stream`: dieselbe Konversation, gestreamt (`text/event-stream`) statt einer einzelnen JSON-Antwort — für eine eigene UI
-- POST `/v1/chat/completions`: OpenAI-kompatibler, zustandsloser Shim für Open WebUI & Co. (Modell = bot_id), inkl. `"stream": true`
-- GET `/v1/models`: OpenAI-kompatible Modell-Liste, gespeist aus der Bot-Registry — füllt Open WebUIs Modell-Dropdown automatisch
+- POST `/v1/chat/completions`: optionaler OpenAI-kompatibler, zustandsloser Shim (Modell = bot_id), inkl. `"stream": true`
+- GET `/v1/models`: OpenAI-kompatible Modell-Liste, gespeist aus der Bot-Registry
 - GET `/v1/collections`: die Collections, die der aufrufende Nutzer (über sein Team) lesen darf — proxied zu Weave-Retrievals Collections-Lese-Autorität
 - POST `/internal/tokens/introspect`: service-zu-service Token-Introspection für andere Weave-Dienste (z. B. einen künftigen MCP-Dienst)
 - OIDC + API-Token Authentifizierung (nach Weave-Ingest-Muster)
@@ -62,7 +62,7 @@ Weave-API ist das **Bot-Gateway** und zentrale Einstiegspunkt des Weave-Systems.
 - Weave-Retrieval: Collections-Lese-Autorität (GET `/v1/collections`)
 - PostgreSQL: Konversations-Persistierung
 - OIDC-Provider (optional, siehe unten) oder Personal-API-Token
-- Open WebUI (Client)
+- Weave Chat (`services/chat`) oder ein optionaler OpenAI-kompatibler Client
 
 ## Entwicklung
 
@@ -137,7 +137,7 @@ aktuell direkt in der Datenbank markiert werden.
 ### OIDC-Anmeldung einrichten
 
 Zusätzlich zum Personal-API-Token oben (der Weg für **Maschinen** --
-Skripte, Open WebUI, jede andere programmatische Anbindung, und bleibt es
+Skripte und andere programmatische Anbindungen, und bleibt es
 auch nach dieser Änderung) kann sich ein **Mensch im Browser** über OIDC
 anmelden und bekommt dafür ein serverseitiges, httpOnly Session-Cookie
 statt eines Bearer-Tokens (`app/api/auth.py`, `app/core/auth.py`s
@@ -263,18 +263,11 @@ curl -s http://localhost:8004/v1/chat \
 
 Die Antwort enthält `conversation_id` — bei einer Folgefrage in derselben Konversation wird diese `conversation_id` im nächsten Request mitgeschickt, statt `bot_id`/`message` erneut ohne Kontext zu senden.
 
-### Open WebUI anbinden
+### Optionalen OpenAI-kompatiblen Client anbinden
 
-`POST /v1/chat/completions` ist ein OpenAI-kompatibler Shim (`app/api/openai_compat.py`) vor demselben `Weave-Runtime`-Backend wie `POST /v1/chat` — er lässt Open WebUI (oder jeden anderen Client, der OpenAIs Chat-Completions-API spricht) Weave-API direkt als OpenAI-Endpunkt einbinden, ohne dass Weave-API dafür eine eigene Konversation anlegt: jede Anfrage trägt ihren kompletten `messages`-Verlauf selbst und wird eigenständig verarbeitet, es gibt kein `conversation_id`-Äquivalent und **nichts** wird in `conversations`/`messages` persistiert (der bekannte, quellenpflichtige `/v1/chat`-Verlauf bleibt davon unberührt).
+`POST /v1/chat/completions` ist ein optionaler OpenAI-kompatibler Shim (`app/api/openai_compat.py`) vor demselben `Weave-Runtime`-Backend wie `POST /v1/chat`. Er bindet Protokoll-kompatible Clients an, ohne dass Weave-API dafür eine eigene Konversation anlegt: jede Anfrage trägt ihren kompletten `messages`-Verlauf selbst und wird eigenständig verarbeitet, es gibt kein `conversation_id`-Äquivalent und **nichts** wird in `conversations`/`messages` persistiert. Für Menschen und persistente Gespräche ist `services/chat` über `/v1/chat` beziehungsweise `/v1/chat/stream` der vorgesehene Weg.
 
-In Open WebUI unter **Settings → Connections → OpenAI API**:
-
-| Feld | Wert |
-|---|---|
-| Base-URL | `http://<weave-api-host>:8004/v1` |
-| API-Key | ein Personal-API-Token dieses Nutzers (siehe "CLI" oben — `app/cli.py create-token`) |
-
-`GET /v1/models` ist jetzt implementiert (`app/api/openai_compat.py:list_models`, gespeist aus derselben Bot-Registry wie `GET /v1/bots`) — Open WebUI füllt seine Modell-Dropdown damit selbst, ein Bot-ID muss nicht mehr manuell eingetragen werden. Jeder Weave-Runtime-Bot (`GET /internal/bots`/`bots/*.yaml` dort) erscheint als ein Modell, die Bot-ID selbst als dessen `id`.
+Der Client erhält als Base-URL `http://<weave-api-host>:8004/v1` und als API-Key ein Personal-API-Token dieses Nutzers. `GET /v1/models` wird aus derselben Bot-Registry wie `GET /v1/bots` gespeist. Jeder Weave-Runtime-Bot erscheint als Modell; die Bot-ID ist dessen `id`.
 
 ```bash
 curl -s http://localhost:8004/v1/models -H "Authorization: Bearer $WEAVE_API_TOKEN" | jq
@@ -298,7 +291,7 @@ curl -s http://localhost:8004/v1/chat/completions \
 
 Antwortformat wie bei OpenAI: `choices[0].message.content` trägt die Antwort, `model` echot die angefragte Bot-ID, `usage` wird nicht mitgeschickt (Weave-Runtimes eigener Chat-Vertrag liefert keine Token-Zahlen, siehe `app/schemas/openai.py`).
 
-**Streaming:** mit `"stream": true` liefert derselbe Endpunkt `text/event-stream` statt einer einzelnen JSON-Antwort — genau das Format, das Open WebUI (und jeder andere OpenAI-Client) für einen tippenden Antworttext erwartet: ein Chunk pro Textfragment (`choices[0].delta.content`), das allererste Chunk zusätzlich mit `delta.role: "assistant"`, zum Schluss ein Chunk mit `finish_reason: "stop"` und danach die Zeile `data: [DONE]`. Ohne `"stream"` (oder mit `"stream": false`) bleibt die bisherige, einzelne JSON-Antwort unverändert.
+**Streaming:** mit `"stream": true` liefert derselbe Endpunkt `text/event-stream`: ein Chunk pro Textfragment (`choices[0].delta.content`), das erste Chunk zusätzlich mit `delta.role: "assistant"`, zum Schluss ein Chunk mit `finish_reason: "stop"` und danach `data: [DONE]`. Ohne `"stream"` bleibt die einzelne JSON-Antwort unverändert.
 
 ```bash
 curl -s -N http://localhost:8004/v1/chat/completions \
@@ -327,7 +320,7 @@ Bricht Weave-Runtimes eigene Generierung mitten im Stream ab (`type: "error"` au
 
 ### POST /v1/chat/stream (eigene UI)
 
-Die streamende Variante von `POST /v1/chat` oben, für eine eigene (Nicht-Open-WebUI-)Oberfläche: derselbe Request-Body (`bot_id`, `message`, optional `conversation_id`), aber `text/event-stream` statt einer einzelnen JSON-Antwort — Weave-Runtimes eigene Stream-Ereignisse (`trace`/`delta`/`sources`/`done`/`error`, siehe Weave-Runtimes `contracts/internal-chat.md`) werden nahezu unverändert durchgereicht. Die Nutzer-Nachricht wird wie bei `POST /v1/chat` sofort persistiert; die Antwort des Bots wird aber **nur bei einem sauberen `done`-Ereignis** gespeichert — bricht der Stream vorher ab (Weave-Runtime schickt ein `error`-Ereignis, die Verbindung reißt ab, oder der Stream endet einfach ohne `done`), entsteht **keine** Assistant-Nachricht; die bereits gespeicherte Nutzer-Nachricht bleibt erhalten und der Turn kann wiederholt werden (siehe `app/api/chat.py:_stream_and_persist` für die vollständige Begründung). Ein neu angelegtes Gespräch (`conversation_id` weggelassen) teilt seine ID über den Response-Header `X-Conversation-Id` mit, da die fünf Stream-Ereignistypen selbst dafür kein Feld vorsehen.
+Die streamende Variante von `POST /v1/chat` oben, für die eigene Chat-Oberfläche: derselbe Request-Body (`bot_id`, `message`, optional `conversation_id`), aber `text/event-stream` statt einer einzelnen JSON-Antwort — Weave-Runtimes eigene Stream-Ereignisse (`trace`/`delta`/`sources`/`done`/`error`, siehe Weave-Runtimes `contracts/internal-chat.md`) werden nahezu unverändert durchgereicht. Die Nutzer-Nachricht wird wie bei `POST /v1/chat` sofort persistiert; die Antwort des Bots wird aber **nur bei einem sauberen `done`-Ereignis** gespeichert — bricht der Stream vorher ab (Weave-Runtime schickt ein `error`-Ereignis, die Verbindung reißt ab, oder der Stream endet einfach ohne `done`), entsteht **keine** Assistant-Nachricht; die bereits gespeicherte Nutzer-Nachricht bleibt erhalten und der Turn kann wiederholt werden (siehe `app/api/chat.py:_stream_and_persist` für die vollständige Begründung). Ein neu angelegtes Gespräch (`conversation_id` weggelassen) teilt seine ID über den Response-Header `X-Conversation-Id` mit, da die fünf Stream-Ereignistypen selbst dafür kein Feld vorsehen.
 
 ```bash
 curl -s -N http://localhost:8004/v1/chat/stream \
@@ -446,8 +439,8 @@ Anfrage ab (z. B. unbekannter Bot, keine Berechtigung), wird dessen
 
 Zusätzlich gibt es jetzt `POST /v1/chat/completions`
 (`app/api/openai_compat.py`) — einen zustandslosen, OpenAI-kompatiblen Shim
-vor demselben Weave-Runtime-Backend, gedacht für die direkte Anbindung an
-Open WebUI (siehe "Open WebUI anbinden" oben). Anders als `/v1/chat`
+vor demselben Weave-Runtime-Backend, gedacht für optionale kompatible
+Integrationen. Anders als `/v1/chat`
 persistiert dieser Endpunkt nichts in `conversations`/`messages` — jede
 Anfrage trägt ihren eigenen `messages`-Verlauf und wird unabhängig
 verarbeitet.
@@ -457,10 +450,8 @@ Gegenstück zu `POST /internal/chat` an (identischer Request-Body, identische
 Pipeline, siehe dessen `contracts/internal-chat.md`) — Weave-API nutzt das
 jetzt an zwei Stellen (`app/services/runtime_client.py:chat_stream`):
 
-- `GET /v1/models` (`app/api/openai_compat.py`) füllt Open WebUIs
-  Modell-Dropdown automatisch aus der Bot-Registry (der bisher dokumentierte
-  Schwachpunkt "Bot-ID muss manuell eingetragen werden" -- siehe "Open WebUI
-  anbinden" oben).
+- `GET /v1/models` (`app/api/openai_compat.py`) liefert die Bot-Registry im
+  OpenAI-Modellformat.
 - `POST /v1/chat/completions` akzeptiert jetzt `"stream": true` und liefert
   dann `text/event-stream` im OpenAI-`chat.completion.chunk`-Format;
   ohne `"stream"` bleibt die bisherige, einzelne JSON-Antwort unverändert.

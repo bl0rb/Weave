@@ -44,6 +44,7 @@ it('starts creation directly from the journey and empty state, without a header 
   api.mockResolvedValue({ items: [], total: 0 });
   const { container } = render(<PortalHome />);
   await screen.findByRole('link', { name: 'Wissensbereich anlegen' });
+  expect(screen.queryByText('WISSEN VERBINDET')).toBeNull();
   const startLinks = screen.getAllByRole('link', { name: /Wissensbereich anlegen/ });
   expect(startLinks.length).toBe(2);
   startLinks.forEach(link => expect(link.getAttribute('href')).toBe('/knowledge/new'));

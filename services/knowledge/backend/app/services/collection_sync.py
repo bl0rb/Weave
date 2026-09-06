@@ -5,7 +5,7 @@ docstring for why the mirror carries no FK and is allowed to lag).
 Called from two places:
 - app/workers/collection_sync_tasks.py's `collection_sync_tick` -- the
   periodic self-re-enqueuing sync (no Celery Beat in this deployment).
-- app/api/events.py -- a one-off lazy reload when a `document.processed`
+- app/api/events.py -- a one-off lazy reload when a `document.released`
   event names a `collection` slug this mirror doesn't know yet (a brand-new
   collection can outrace the next scheduled tick).
 

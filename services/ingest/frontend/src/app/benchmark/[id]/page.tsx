@@ -259,7 +259,7 @@ export default function BenchmarkRunPage() {
         )}
 
         <section className="mb-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-1 flex items-center justify-between gap-4">
+          <div className="mb-1 flex flex-wrap items-center justify-between gap-4">
             <h2 className="text-lg font-semibold">Compare variants</h2>
             <p className="text-xs text-slate-500">{report.variants.length} variant(s)</p>
           </div>
@@ -369,7 +369,7 @@ export default function BenchmarkRunPage() {
         </section>
 
         <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-3 flex items-center justify-between gap-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-4">
             <h2 className="text-lg font-semibold">Markdown preview</h2>
             {activeVariant && (
               <p className="text-xs text-slate-500">

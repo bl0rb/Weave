@@ -472,12 +472,13 @@ def test_collection_flow(monkeypatch, tmp_path):
     )
     assert start_resp.status_code == 200
     assert start_resp.json()['started_jobs'] == 2
-    assert delayed[0]['job_id'] == job_id
-    assert delayed[1]['job_id'] == job_id_2
-    assert delayed[0]['profile_id'] == 'ppocrv6_medium'
-    assert delayed[0]['mode'] == 'collection'
-    assert delayed[0]['email'] == ''
-    assert delayed[0]['department'] == ''
+    # _lock_jobs deliberately sorts UUIDs to acquire database locks in a
+    # stable order; random UUID order is unrelated to upload order.
+    assert {entry['job_id'] for entry in delayed} == {job_id, job_id_2}
+    assert all(entry['profile_id'] == 'ppocrv6_medium' for entry in delayed)
+    assert all(entry['mode'] == 'collection' for entry in delayed)
+    assert all(entry['email'] == '' for entry in delayed)
+    assert all(entry['department'] == '' for entry in delayed)
 
 
 def test_collection_start_with_vl_profile_sets_vl_settings_and_dispatches_openai_vision(monkeypatch, tmp_path):

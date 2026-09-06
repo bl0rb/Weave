@@ -26,6 +26,13 @@ claude.ai werden aus genau diesen Dateien neu veröffentlicht.
 - **[firewall-requirements.md](firewall-requirements.md)** und
   **[supply-chain-hardening-blueprint.md](supply-chain-hardening-blueprint.md)** —
   aus dem PaddleDoc-Erbe, betreffen weiterhin den Ingest-Dienst.
+- **[bereinigung.md](bereinigung.md)** — verbindliche Integrationsgrenzen,
+  entfernte Altpfade und Kandidaten für spätere, kontrollierte Rückbauten.
+- **[screenshots/user-wiki/](screenshots/user-wiki/)** — 31 aktuelle Browseraufnahmen
+  in doppelter Pixeldichte mit Beispieldaten für das User-Wiki. Die
+  [Galerie](screenshots/user-wiki/index.html) enthält alle Original-PNGs und den
+  [Beispielablauf als GIF](screenshots/user-wiki/weave-example-process.gif):
+  Anmelden → Hochladen → Verarbeiten → Freigeben → Chat-Mockup.
 
 Die Datenverträge zwischen den Diensten liegen nicht hier, sondern zentral in
 [../contracts/](../contracts/).

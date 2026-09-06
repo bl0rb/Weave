@@ -9,9 +9,10 @@ from app.api.auth import router_public as auth_public_router
 from app.api.benchmarks import router as benchmarks_router
 from app.api.chat_provider import router_admin as chat_provider_admin_router
 from app.api.chat_provider import router_internal as chat_provider_internal_router
+from app.api.managed_bots import router_admin as managed_bots_admin_router
+from app.api.managed_bots import router_internal as managed_bots_internal_router
 from app.api.deps import get_current_user, origin_guard
 from app.api.import_routes import router as import_router
-from app.api.openwebui_routes import router as openwebui_router
 from app.api.portal import router as portal_router
 from app.api.portal_management import router as portal_management_router
 from app.api.portal_indexing import router as portal_indexing_router
@@ -59,6 +60,8 @@ app.include_router(auth_authenticated_router)
 app.include_router(auth_admin_router)
 app.include_router(chat_provider_admin_router)
 app.include_router(chat_provider_internal_router)
+app.include_router(managed_bots_admin_router)
+app.include_router(managed_bots_internal_router)
 
 # Secure-by-default: every other /api/v1 route (jobs, folders, collections,
 # paddle settings, ...) now requires a valid session. Step 3 layers
@@ -74,14 +77,9 @@ app.include_router(import_router, dependencies=[Depends(get_current_user), Depen
 # as the main router, no separate kill-switch.
 app.include_router(benchmarks_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
 
-# OpenWebUI push surface (/api/v1/openwebui/...): same session + CSRF gate as
-# the main router; the module itself adds the OPENWEBUI_ENABLED kill-switch
-# (mirrors import_router's registration).
-app.include_router(openwebui_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
-
 # Outbound webhook surface (/api/v1/webhooks/...): same session + CSRF gate
 # as the main router; the module itself adds the WEBHOOKS_ENABLED kill-switch
-# (mirrors import_router's/openwebui_router's registration).
+# (mirrors import_router's registration).
 app.include_router(webhook_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
 
 # Knowledge portal publication surface: authenticated reads and approvals,

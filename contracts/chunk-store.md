@@ -92,8 +92,9 @@ Weave-Ingest (Owner: slug, name, description, read_teams)
       v
 Weave-Knowledge  --  app/services/collection_sync.py::sync_collections()
       |  ausgeloest durch drei Pfade:
-      |  1. sofort bei Empfang eines signierten `collection.updated`-Events
-      |     (dieselbe Webhook-Strecke wie `document.processed`, siehe
+      |  1. sofort bei Empfang eines signierten, internen
+      |     `collection.updated`-Hinweises (derselbe interne Event-Endpunkt,
+      |     aber keine benutzerverwaltete Webhook-Verbindung; siehe
       |     app/api/events.py::_handle_collection_updated) -- der primaere
       |     Freshness-Mechanismus, insbesondere fuer Rechteentzug
       |     (`read_teams` verkleinert);
@@ -102,11 +103,12 @@ Weave-Knowledge  --  app/services/collection_sync.py::sync_collections()
       |     siehe app/workers/collection_sync_tasks.py) -- faengt einen
       |     verpassten/fehlgeschlagenen Webhook-Versand ab;
       |  3. einmaliger Lazy-Reload bei unbekanntem Slug (app/api/events.py,
-      |     `document.processed`-Pfad).
+      |     `document.released`-Pfad).
       |
       |  **Rechteentzug wirkt sofort per Event, spaetestens nach einem Tick**:
-      |  ein `collection.updated`-Event bringt eine verkleinerte `read_teams`
-      |  ueblicherweise binnen Millisekunden in den lokalen Spiegel; schlaegt
+      |  ein `collection.updated`-Hinweis startet sofort den Registry-Abruf,
+      |  der eine verkleinerte `read_teams`-Liste ueblicherweise binnen
+      |  Millisekunden in den lokalen Spiegel bringt; schlaegt
       |  der Sync bei Event-Empfang fehl (Weave-Ingest kurz nicht erreichbar),
       |  bleibt der Tick das Netz -- das verbleibende Zeitfenster ist dann
       |  hoechstens COLLECTION_SYNC_TICK_SECONDS. Ein `collection.updated`-Event

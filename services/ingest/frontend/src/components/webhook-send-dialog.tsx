@@ -27,8 +27,7 @@ type WebhookSendDialogProps = {
 
 /**
  * Modal manual-send flow: pick an enabled webhook connection, POST /send.
- * Unlike OpenWebUIPushDialog, POST /webhooks/send takes exactly one
- * connection_id + job_id (no batch send in the contract) and returns the
+ * POST /webhooks/send takes exactly one connection_id + job_id and returns the
  * finished delivery directly -- no polling needed.
  */
 export function WebhookSendDialog({ job, onClose, onSent }: WebhookSendDialogProps) {
@@ -36,7 +35,7 @@ export function WebhookSendDialog({ job, onClose, onSent }: WebhookSendDialogPro
   const [connectionsLoading, setConnectionsLoading] = useState(true);
   const [connectionsError, setConnectionsError] = useState<string | null>(null);
   // 404 means the backend hasn't shipped this endpoint yet, not a real
-  // failure (mirrors OpenWebUIPushDialog's `connectionsUnavailable` state).
+  // failure; the dialog then hides unavailable controls.
   const [connectionsUnavailable, setConnectionsUnavailable] = useState(false);
   const [selectedConnectionId, setSelectedConnectionId] = useState('');
 

@@ -13,18 +13,9 @@ the exact same dispatch/delivery/signature machinery as job.finished, and
 that it is excluded for benchmark variant jobs the same way job.finished
 already is (per-task opt-in -- see dispatch_job_event's docstring).
 
-Also covers 'collection.updated' (contracts/events/collection.updated.md):
-its thin payload shape (slug/name/description/read_teams/updated_at), that
-it rides the same delivery/signature/retry machinery as every other event,
-and its deliberately different dispatch shape -- a fan-out to every enabled
-connection subscribed to it, across every owner, triggered from
-app/api/routes.py's collection create/update rather than a job/run
-completion hook (see dispatch_collection_event's own docstring for why this
-is the one intentional exception to the "never a fan-out" rule above).
-
 Drives deliver_webhook directly against the shared sqlite test DB
-(SessionLocal monkeypatched to conftest's TestingSessionLocal), same pattern
-as test_openwebui_tasks.py; send_webhook_request is mocked at the
+(SessionLocal monkeypatched to conftest's TestingSessionLocal);
+send_webhook_request is mocked at the
 app.workers.webhook_tasks seam so no real network is needed.
 """
 
@@ -41,7 +32,6 @@ import yaml
 from app.models.models import Collection, ImportRun, Job, JobStatus, WebhookConnection, WebhookDelivery
 from app.services import security
 from app.services.webhooks import (
-    build_collection_updated_payload,
     build_document_processed_payload,
     build_job_payload,
     build_run_payload,
@@ -157,39 +147,6 @@ def _make_delivery(
     db.commit()
     db.refresh(delivery)
     return delivery
-
-
-def _make_collection(
-    db, owner_id: str | None, *, name: str = 'Kundenservice', read_teams=('kundenservice',), description=None,
-) -> Collection:
-    collection = Collection(
-        owner_id=owner_id,
-        slug=f'coll-{uuid.uuid4().hex[:8]}',
-        name=name,
-        description=description,
-        read_teams=list(read_teams),
-    )
-    db.add(collection)
-    db.commit()
-    db.refresh(collection)
-    return collection
-
-
-def _quiet_other_collection_updated_connections(db) -> None:
-    """dispatch_collection_event fans out to EVERY enabled connection
-    subscribed to 'collection.updated', system-wide (see its own docstring)
-    -- unlike every other dispatch_*_event test in this file, which only
-    ever touches connections/deliveries scoped to one job/run id it created
-    itself, a fan-out test's "no delivery"/"exactly N deliveries" assertion
-    is vulnerable to a 'collection.updated'-subscribed connection some
-    OTHER test already committed to this suite's one shared, never-reset
-    sqlite database (see conftest.py). Disabling every such pre-existing
-    connection first makes each fan-out test deterministic regardless of
-    what ran before it."""
-    for connection in db.query(WebhookConnection).filter(WebhookConnection.enabled.is_(True)).all():
-        if 'collection.updated' in (connection.events or []):
-            connection.enabled = False
-    db.commit()
 
 
 # --- send_webhook_request: signature correctness -----------------------------
@@ -329,46 +286,6 @@ def test_build_run_payload_shape() -> None:
         },
     }
     datetime.fromisoformat(payload['timestamp'])
-
-
-# --- build_collection_updated_payload ------------------------------------------
-
-def test_build_collection_updated_payload_shape() -> None:
-    """Deliberately thin (contracts/events/collection.updated.md): exactly
-    the four registry fields plus updated_at, nothing job-/document-shaped."""
-    db = TestingSessionLocal()
-    try:
-        user = create_test_user(username='webhook_coll_payload_user', email='webhook_coll_payload_user@example.com')
-        collection = _make_collection(
-            db, user.id, name='Kundenservice 2026', read_teams=['kundenservice', 'qm'], description='Q3/Q4 Anfragen',
-        )
-        payload = build_collection_updated_payload(collection)
-
-        assert payload == {
-            'event': 'collection.updated',
-            'timestamp': payload['timestamp'],
-            'slug': collection.slug,
-            'name': 'Kundenservice 2026',
-            'description': 'Q3/Q4 Anfragen',
-            'read_teams': ['kundenservice', 'qm'],
-            'updated_at': collection.updated_at.isoformat(),
-        }
-        datetime.fromisoformat(payload['timestamp'])
-    finally:
-        db.close()
-
-
-def test_build_collection_updated_payload_null_description_and_empty_read_teams() -> None:
-    db = TestingSessionLocal()
-    try:
-        user = create_test_user(username='webhook_coll_payload_user2', email='webhook_coll_payload_user2@example.com')
-        collection = _make_collection(db, user.id, read_teams=[], description=None)
-        payload = build_collection_updated_payload(collection)
-
-        assert payload['description'] is None
-        assert payload['read_teams'] == []
-    finally:
-        db.close()
 
 
 # --- build_document_processed_payload -----------------------------------------
@@ -605,70 +522,37 @@ def test_deliver_webhook_import_run_payload(db_session) -> None:
     assert db.get(WebhookDelivery, delivery_id).status == 'sent'
 
 
-def test_deliver_webhook_collection_updated_payload(db_session) -> None:
-    """deliver_webhook must branch on delivery.collection_id the same way it
-    already branches on job_id/import_run_id, building
-    build_collection_updated_payload's thin registry-nudge shape."""
-    db = db_session
-    user = create_test_user(username='webhook_task_coll', email='webhook_task_coll@example.com')
-    connection = _make_connection(db, user.id, events=('collection.updated',), secret='sekret')
-    collection = _make_collection(db, user.id, name='Kundenservice', read_teams=['kundenservice'])
-    delivery = _make_delivery(db, connection, collection_id=collection.id, event='collection.updated')
-    delivery_id = delivery.id
 
-    with patch('app.workers.webhook_tasks.send_webhook_request', return_value=(200, None)) as mock_send:
-        deliver_webhook(delivery_id)
+def test_historical_collection_delivery_is_failed_without_network_call(db_session) -> None:
+    user = create_test_user(
+        username='webhook_legacy_collection',
+        email='webhook_legacy_collection@example.com',
+    )
+    connection = _make_connection(db_session, user.id)
+    collection = Collection(
+        id=str(uuid.uuid4()),
+        slug='legacy-collection',
+        name='Legacy collection',
+        owner_id=user.id,
+        read_teams=[],
+    )
+    db_session.add(collection)
+    db_session.commit()
+    delivery = _make_delivery(
+        db_session,
+        connection,
+        collection_id=collection.id,
+        event='collection.updated',
+    )
 
-    mock_send.assert_called_once()
-    args = mock_send.call_args[0]
-    assert args[0] == connection.url
-    payload = args[1]
-    assert payload['event'] == 'collection.updated'
-    assert payload['slug'] == collection.slug
-    assert payload['name'] == 'Kundenservice'
-    assert payload['read_teams'] == ['kundenservice']
-    assert args[2] == 'sekret'
+    with patch.object(webhook_tasks, 'send_webhook_request') as send:
+        deliver_webhook.run(delivery.id)
 
-    db.expire_all()
-    refreshed = db.get(WebhookDelivery, delivery_id)
-    assert refreshed.status == 'sent'
-    assert refreshed.http_status == 200
-
-
-def test_deliver_webhook_collection_deleted_before_delivery_runs_fails_gracefully(db_session) -> None:
-    """A collection deleted before its pending delivery is processed: unlike
-    test_deliver_webhook_connection_deleted_marks_failed (where the delivery
-    row keeps referencing the now-nonexistent connection_id, so
-    deliver_webhook's own `db.get()` returns None), the collections.id ->
-    webhook_deliveries.collection_id FK is ondelete='SET NULL' and this
-    suite's sqlite runs with PRAGMA foreign_keys=ON (see conftest.py) -- so
-    the SET NULL genuinely fires at the DB level on delete, and by the time
-    deliver_webhook re-fetches the row, delivery.collection_id is already
-    NULL rather than a dangling id (same reachability caveat already true,
-    untested, for job_id/import_run_id on this exact FK-enforcing setup).
-    What this exercises instead: that outcome still lands the delivery
-    'failed' via the shared fallback branch, rather than crashing or leaving
-    it stuck 'pending' forever."""
-    db = db_session
-    user = create_test_user(username='webhook_task_coll_deleted', email='webhook_task_coll_deleted@example.com')
-    connection = _make_connection(db, user.id, events=('collection.updated',))
-    collection = _make_collection(db, user.id)
-    delivery = _make_delivery(db, connection, collection_id=collection.id, event='collection.updated')
-    delivery_id = delivery.id
-
-    db.delete(collection)
-    db.commit()
-
-    with patch('app.workers.webhook_tasks.send_webhook_request') as mock_send:
-        deliver_webhook(delivery_id)
-
-    mock_send.assert_not_called()
-    db.expire_all()
-    refreshed = db.get(WebhookDelivery, delivery_id)
-    assert refreshed.status == 'failed'
-    assert refreshed.collection_id is None  # the FK's SET NULL already applied
-    assert refreshed.error_message == 'delivery has neither a job, an import run, nor a collection to build a payload from'
-
+    send.assert_not_called()
+    db_session.expire_all()
+    stored = db_session.get(WebhookDelivery, delivery.id)
+    assert stored.status == 'failed'
+    assert stored.error_message == 'generic collection registry exports are retired'
 
 def test_deliver_webhook_document_processed_uses_document_payload(db_session) -> None:
     """deliver_webhook must branch on delivery.event: 'document.processed'
@@ -1108,118 +992,6 @@ def test_dispatch_run_event_noop_without_configured_connection(db_session) -> No
 
     mock_send_task.assert_not_called()
     assert db.query(WebhookDelivery).filter(WebhookDelivery.import_run_id == run.id).count() == 0
-
-
-# --- Collection dispatch (app/api/routes.py's create_collection/update_collection) --
-#
-# Unlike dispatch_job_event/dispatch_run_event above, this is a fan-out, not
-# a per-task opt-in -- see dispatch_collection_event's own module comment for
-# why a collection has no equivalent of a single "the configured connection".
-
-def test_dispatch_collection_event_fans_out_to_every_subscribed_connection_across_owners(db_session) -> None:
-    """The core of the fan-out contract: two DIFFERENT owners each have an
-    enabled connection subscribed to collection.updated -- both get their
-    own delivery for the same collection.updated call, even though neither
-    owns (or was ever configured on) the collection itself."""
-    db = db_session
-    _quiet_other_collection_updated_connections(db)
-    collection_owner = create_test_user(username='webhook_coll_owner', email='webhook_coll_owner@example.com')
-    other_owner1 = create_test_user(username='webhook_coll_sub1', email='webhook_coll_sub1@example.com')
-    other_owner2 = create_test_user(username='webhook_coll_sub2', email='webhook_coll_sub2@example.com')
-    connection1 = _make_connection(db, other_owner1.id, events=('collection.updated',))
-    connection2 = _make_connection(db, other_owner2.id, events=('collection.updated', 'job.finished'))
-    collection = _make_collection(db, collection_owner.id)
-
-    with patch.object(webhook_tasks.celery_app, 'send_task') as mock_send_task:
-        webhook_tasks.dispatch_collection_event(db, collection, 'collection.updated')
-
-    assert mock_send_task.call_count == 2
-    db.expire_all()
-    deliveries = db.query(WebhookDelivery).filter(WebhookDelivery.collection_id == collection.id).all()
-    assert len(deliveries) == 2
-    assert {d.connection_id for d in deliveries} == {connection1.id, connection2.id}
-    assert {d.owner_id for d in deliveries} == {other_owner1.id, other_owner2.id}
-    assert all(d.event == 'collection.updated' and d.status == 'pending' for d in deliveries)
-
-
-def test_dispatch_collection_event_skips_unsubscribed_and_disabled_connections(db_session) -> None:
-    db = db_session
-    _quiet_other_collection_updated_connections(db)
-    owner = create_test_user(username='webhook_coll_skip_owner', email='webhook_coll_skip_owner@example.com')
-    _make_connection(db, owner.id, events=('job.finished',))  # not subscribed
-    _make_connection(db, owner.id, events=('collection.updated',), enabled=False)  # subscribed but disabled
-    collection = _make_collection(db, owner.id)
-
-    with patch.object(webhook_tasks.celery_app, 'send_task') as mock_send_task:
-        webhook_tasks.dispatch_collection_event(db, collection, 'collection.updated')
-
-    mock_send_task.assert_not_called()
-    assert db.query(WebhookDelivery).filter(WebhookDelivery.collection_id == collection.id).count() == 0
-
-
-def test_dispatch_collection_event_no_delivery_when_no_connection_configured(db_session) -> None:
-    """'kein Feuern wenn keine Webhook-Verbindung konfiguriert ist': with no
-    webhook connections at all in the system, create/update must not raise
-    and must not create any delivery."""
-    db = db_session
-    _quiet_other_collection_updated_connections(db)
-    owner = create_test_user(username='webhook_coll_none_owner', email='webhook_coll_none_owner@example.com')
-    collection = _make_collection(db, owner.id)
-
-    with patch.object(webhook_tasks.celery_app, 'send_task') as mock_send_task:
-        webhook_tasks.dispatch_collection_event(db, collection, 'collection.updated')  # must not raise
-
-    mock_send_task.assert_not_called()
-    assert db.query(WebhookDelivery).filter(WebhookDelivery.collection_id == collection.id).count() == 0
-
-
-def test_dispatch_collection_event_noop_when_webhooks_disabled(db_session, monkeypatch) -> None:
-    db = db_session
-    _quiet_other_collection_updated_connections(db)
-    monkeypatch.setattr(webhook_tasks.settings, 'webhooks_enabled', False)
-    owner = create_test_user(username='webhook_coll_disabled_owner', email='webhook_coll_disabled_owner@example.com')
-    _make_connection(db, owner.id, events=('collection.updated',))
-    collection = _make_collection(db, owner.id)
-
-    with patch.object(webhook_tasks.celery_app, 'send_task') as mock_send_task:
-        webhook_tasks.dispatch_collection_event(db, collection, 'collection.updated')
-
-    mock_send_task.assert_not_called()
-    assert db.query(WebhookDelivery).filter(WebhookDelivery.collection_id == collection.id).count() == 0
-
-
-def test_dispatch_collection_event_respects_pending_cap_per_connection_owner(db_session, monkeypatch) -> None:
-    db = db_session
-    _quiet_other_collection_updated_connections(db)
-    monkeypatch.setattr(webhook_tasks.settings, 'webhook_max_pending_deliveries_per_user', 0)
-    owner = create_test_user(username='webhook_coll_cap_owner', email='webhook_coll_cap_owner@example.com')
-    _make_connection(db, owner.id, events=('collection.updated',))
-    collection = _make_collection(db, owner.id)
-
-    with patch.object(webhook_tasks.celery_app, 'send_task') as mock_send_task:
-        webhook_tasks.dispatch_collection_event(db, collection, 'collection.updated')  # must not raise
-
-    mock_send_task.assert_not_called()
-    assert db.query(WebhookDelivery).filter(WebhookDelivery.collection_id == collection.id).count() == 0
-
-
-def test_dispatch_collection_event_ignores_connection_without_owner(db_session) -> None:
-    """A connection whose owner was deleted (owner_id SET NULL) is skipped --
-    there is no owner left to attribute a pending-cap or a GET
-    /webhooks/deliveries listing to."""
-    db = db_session
-    _quiet_other_collection_updated_connections(db)
-    owner = create_test_user(username='webhook_coll_orphan_owner', email='webhook_coll_orphan_owner@example.com')
-    connection = _make_connection(db, owner.id, events=('collection.updated',))
-    collection = _make_collection(db, owner.id)
-    connection.owner_id = None
-    db.commit()
-
-    with patch.object(webhook_tasks.celery_app, 'send_task') as mock_send_task:
-        webhook_tasks.dispatch_collection_event(db, collection, 'collection.updated')
-
-    mock_send_task.assert_not_called()
-    assert db.query(WebhookDelivery).filter(WebhookDelivery.collection_id == collection.id).count() == 0
 
 
 def test_process_job_completion_hook_swallows_webhook_dispatch_errors(monkeypatch, tmp_path) -> None:

@@ -39,7 +39,7 @@ export function WebhookConnectionsTab() {
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   // 404 means the backend hasn't shipped this endpoint yet, not a real
-  // failure (mirrors openwebui-connections-tab.tsx's `unavailable` state).
+  // failure; the panel then hides unavailable controls.
   const [unavailable, setUnavailable] = useState(false);
 
   const [creating, setCreating] = useState(false);
@@ -97,8 +97,7 @@ export function WebhookConnectionsTab() {
     }
   }, []);
 
-  // Initial loads only (mirrors openwebui-connections-tab.tsx): each IIFE's
-  // first statement is its `await`, not a synchronous setState, per
+  // Initial loads only: each IIFE's first statement is its `await`, not a synchronous setState, per
   // react-hooks/set-state-in-effect.
   useEffect(() => {
     let cancelled = false;
@@ -306,8 +305,8 @@ export function WebhookConnectionsTab() {
               ))}
             </ul>
             <p className="mt-4 text-xs text-slate-500">
-              If a secret is set, deliveries carry an X-Weave-Ingest-Signature header (HMAC-SHA256) your n8n flow can
-              verify.
+              If a secret is set, deliveries carry an X-Weave-Ingest-Signature header (HMAC-SHA256) that the receiver
+              can verify. Chat-agent access through n8n is configured on the bot and uses a separate delegated scope.
             </p>
           </>
         )}
@@ -504,14 +503,14 @@ function ConnectionModal({
             autoFocus
           />
         </Field>
-        <Field label="URL" hint="Where events are POSTed, e.g. an n8n webhook trigger URL.">
+        <Field label="URL" hint="Where export events are POSTed.">
           <input
             type="url"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             className={inputClass}
             required
-            placeholder="https://n8n.example.com/webhook/..."
+            placeholder="https://export.example.com/weave-events"
           />
         </Field>
         <Field label="Secret" hint={isEdit ? 'Leave blank to keep the stored secret.' : 'Optional -- enables the X-Weave-Ingest-Signature header.'}>

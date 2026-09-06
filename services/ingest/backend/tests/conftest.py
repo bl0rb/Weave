@@ -64,7 +64,7 @@ Base.metadata.create_all(bind=engine)
 class _FakeRedis:
     def __init__(self) -> None:
         # Shared by both the INCR-based rate limiter and the SET NX EX-based
-        # cooldown (see app/api/openwebui_routes.py._check_test_cooldown) --
+        # connection-test cooldown --
         # one flat key/value store, same as a real Redis instance; keys() /
         # delete() below deliberately don't care which call created a key.
         self._counts: dict[str, int | str] = {}

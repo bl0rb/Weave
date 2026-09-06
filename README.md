@@ -1,123 +1,152 @@
 # Weave
 
-## Überblick
+## Overview
 
-Dieses Repository ist das Monorepo der Weave-Plattform: einer dokumentbasierten
-Such- und Chat-Lösung aus sechs eigenständig lauffähigen Diensten, zwei
-optionalen CPU-Modelldiensten und einer eigenen Chat-Oberfläche. Jeder Dienst
-läuft als eigener Prozess und eigenes Image, hat eigene Tests und eigene
-Abhängigkeiten — geteilt wird hier nur die Quelle, nicht die Laufzeit.
+This repository is the monorepo for the Weave platform: a document-based
+knowledge and chat system made up of six independently deployable application
+services, two optional CPU model services, and two web interfaces. Every
+service runs as its own process and container image, with its own dependencies
+and test suite. The repository is shared; the runtimes remain isolated.
 
-Die Dienste stammen aus sechs vormals getrennten Repos (Weave-Ingest,
-Weave-Knowledge, Weave-Retrieval, Weave-Runtime, Weave-Tools, Weave-API). Die
-sind eingefroren; alles lebt jetzt unter `services/`.
+The services originated in six separate repositories (Weave-Ingest,
+Weave-Knowledge, Weave-Retrieval, Weave-Runtime, Weave-Tools, and Weave-API).
+Those repositories are frozen. The maintained source now lives under
+`services/`.
 
-Was die Zusammenlegung vor allem gebracht hat: **eine Konfiguration statt
-sechs.** `weave.yaml` im Wurzelverzeichnis deklariert jeden Wert genau einmal —
-geteilte Werte mit allen Diensten, die sie brauchen —, und
-`scripts/weave_config.py render` erzeugt daraus `deploy/.env`. Geheimnisse
-stehen nie im Repo, nur der Name der Umgebungsvariable, aus der `render` sie
-liest. `check` findet danach, was früher erst an einer Dienstgrenze als stilles
-401 oder 503 auffiel.
+The main benefit of the consolidation is **one configuration instead of six**.
+The root-level `weave.yaml` declares each value once and maps shared values to
+every service that consumes them. `scripts/weave_config.py render` creates the
+gitignored `deploy/.env` file. Secrets are never stored in the repository;
+`weave.yaml` only contains the name of the environment variable from which a
+secret is read. The companion `check` command detects mismatches that would
+otherwise surface at a service boundary as an unexplained 401 or 503 response.
 
-## Verzeichnisübersicht
+## Repository layout
 
-| Verzeichnis | Aufgabe |
+| Path | Responsibility |
 |---|---|
-| `services/ingest` | Dokumenten-Ingestion: OCR (PaddleOCR), Markdown + Frontmatter, Quality-Gate, Wissensportal mit Freigaben; **besitzt Nutzer, Teams, OIDC-Verbindungen und Collections** — der Identitätsdienst der Plattform (ADR-0006) |
-| `services/knowledge` | Index-Pipeline: nimmt freigegebene `document.released`-Snapshots entgegen, chunkt und embeddet, schreibt den Chunk-Store (pgvector), spiegelt die Collection-Registry |
-| `services/retrieval` | Hybride Suche (pgvector + tsvector, RRF-Fusion, Cross-Encoder-Rerank); liest den Chunk-Store von `services/knowledge` read-only mit (ADR-0005) |
-| `services/runtime` | LLM-Executor: Intent-Routing, Bots als YAML, ruft `services/retrieval`, delegiert Turns an n8n; Chat-Provider kommt zentral aus Ingest (ADR-0007) |
-| `services/api` | Gateway: Tokens, Sitzungen, Gespräche. Identitäten kommen aus Ingest, hier liegt nur ihr Spiegel |
-| `services/tools` | MCP-Server + REST-Spiegel für rechte-gebundene Suche (`list_collections`, `search`) |
-| `services/chat` | Next.js-Chat-Oberfläche, spricht ausschließlich mit `services/api`; Anmeldung „Mit Weave anmelden" über Ingest |
-| `services/embeddings` | Optionaler CPU-Embedding-Dienst (`intfloat/multilingual-e5-small`, onnxruntime), OpenAI-kompatibel unter `/v1/embeddings` |
-| `services/reranker` | Optionaler CPU-Rerank-Dienst (`BAAI/bge-reranker-v2-m3`), Cohere/Jina-kompatibel unter `/rerank` |
-| `contracts/` | Dienstübergreifende Verträge: `frontmatter.schema.json`, `openapi.json`, `chunk-store.md`, `internal-chat.md`, `n8n-flow.md`, `indexing-status.md`, `events/` |
-| `deploy/` | Docker-Compose-Stack (`docker-compose.weave.yml` + Build-Override `docker-compose.local.yml`), Postgres-Init; `deploy/.env` wird generiert |
-| `docs/` | Betriebshandbuch (`betrieb.md`), Wissensportal, ADR 0001–0007 und die HTML-Artefakte zum Lesen im Browser |
-| `weave.yaml`, `scripts/` | Die eine Konfigurationsquelle und ihr `render`/`check` |
+| `services/ingest` | Document ingestion: OCR with PaddleOCR, Markdown and frontmatter, quality gate, and the knowledge portal with manual release. **Owns users, teams, OIDC connections, and knowledge spaces (collections)** and is the platform identity provider (ADR-0006). |
+| `services/knowledge` | Indexing pipeline: consumes released `document.released` snapshots, chunks and embeds them, writes the pgvector chunk store, and mirrors the collection registry. |
+| `services/retrieval` | Hybrid search using pgvector, tsvector, RRF fusion, and cross-encoder reranking. Reads the Knowledge chunk store through a read-only database role (ADR-0005). |
+| `services/runtime` | LLM executor: intent routing, YAML-defined bots, Retrieval calls, and delegated n8n turns. The central chat-provider configuration comes from Ingest (ADR-0007). |
+| `services/api` | Gateway for API tokens, sessions, and conversations. Identities originate in Ingest and are mirrored here. |
+| `services/tools` | MCP server and REST mirror for permission-bound `list_collections` and `search` tools. |
+| `services/chat` | Next.js chat interface. It talks only to `services/api` and signs users in through **Sign in with Weave**. |
+| `services/embeddings` | Optional OpenAI-compatible CPU embedding service using `intfloat/multilingual-e5-small` and ONNX Runtime at `/v1/embeddings`. |
+| `services/reranker` | Optional Cohere/Jina-compatible CPU reranking service using `BAAI/bge-reranker-v2-m3` at `/rerank`. |
+| `contracts/` | Cross-service contracts: `frontmatter.schema.json`, `openapi.json`, `chunk-store.md`, `internal-chat.md`, `n8n-flow.md`, `indexing-status.md`, and event contracts. |
+| `deploy/` | Docker Compose stack, local build override, and PostgreSQL initialization. `deploy/.env` is generated and ignored by Git. |
+| `docs/` | Operations guide, knowledge-portal guide, ADRs, browser-readable architecture artifacts, and the screenshot-based user wiki. |
+| `weave.yaml`, `scripts/` | The single configuration source and its `render` and `check` commands. |
 
-Das [Wissensportal](docs/wissensportal.md) trennt Verarbeitung und
-Veröffentlichung: indexiert wird regulär nur, was jemand ausdrücklich
-freigegeben hat.
+The [knowledge portal guide](docs/wissensportal.md) explains the separation
+between processing and publication. Under the normal workflow, only content
+that a user explicitly releases is indexed.
 
-Jeder Dienst hat zudem ein eigenes README mit den für ihn spezifischen
-Details. Die `.env.example`-Dateien dort gelten für den Einzelbetrieb eines
-Dienstes außerhalb des Compose-Stacks — im Stack kommt alles aus `weave.yaml`.
+Each service also has its own README for service-specific details. Its
+`.env.example` file applies when that service is run independently. The Compose
+stack receives its configuration from `weave.yaml`.
 
-## Starten
+## Technology stack
+
+| Layer | Technology |
+|---|---|
+| APIs and workers | Python, FastAPI, Pydantic Settings, SQLAlchemy, Alembic, Celery |
+| Web interfaces | Node.js 26, Next.js, React, TypeScript, Tailwind CSS |
+| Persistent data | PostgreSQL with pgvector; separate `weave_ingest`, `weave_knowledge`, and `weave_api` databases |
+| Queues and coordination | Redis with isolated logical databases and named Celery queues |
+| Retrieval | HNSW vector search, PostgreSQL full-text search, Reciprocal Rank Fusion, cross-encoder reranking |
+| Local CPU models | ONNX Runtime for multilingual E5 embeddings; BGE multilingual cross-encoder for reranking |
+| Integrations | Confluence, n8n, OpenAI-compatible chat endpoints, MCP |
+| Deployment target | Container images, local Docker Compose, and Kubernetes/Helm for enterprise operation |
+
+## Quick start
 
 ```bash
-# 1. Geheimnisse als Umgebungsvariablen bereitstellen (direnv, Passwort-
-#    manager, CI-Secret-Store). `render` nennt alle fehlenden auf einmal.
-python scripts/weave_config.py render      # schreibt deploy/.env
-python scripts/weave_config.py check       # prüft sie auf Widersprüche
+# 1. Provide secrets as environment variables through direnv, a password
+#    manager, or a CI secret store. `render` reports every missing value at once.
+python scripts/weave_config.py render      # writes deploy/.env
+python scripts/weave_config.py check       # checks cross-service consistency
 
-# 2. Stack bauen und starten (ohne OCR-Worker, der ist mehrere GB groß)
-docker compose -f deploy/docker-compose.weave.yml -f deploy/docker-compose.local.yml up -d --build
+# 2. Build and start the stack. The large OCR worker is opt-in.
+docker compose --env-file deploy/.env \
+  -f deploy/docker-compose.weave.yml \
+  -f deploy/docker-compose.local.yml \
+  up -d --build
 
-# 3. OCR-Worker nachziehen — ohne ihn bleiben Aufträge auf PENDING
-docker compose -f deploy/docker-compose.weave.yml -f deploy/docker-compose.local.yml --profile ocr up -d weave-ingest-worker
+# 3. Start the OCR worker. Without it, uploaded jobs remain PENDING.
+docker compose --env-file deploy/.env \
+  -f deploy/docker-compose.weave.yml \
+  -f deploy/docker-compose.local.yml \
+  --profile ocr up -d weave-ingest-worker
 ```
 
-Ist Port 3000 belegt, beim Rendern `FRONTEND_PORT=3002` **und**
-`CORS_ORIGINS='["http://localhost:3002"]'` exportieren — `check` meldet, wenn
-nur eines von beiden gesetzt ist. Danach: Ingest unter `http://localhost:3002`
-(erster Admin über die Setup-Seite), Chat unter `http://localhost:3001`.
+If port 3000 is already in use, export `FRONTEND_PORT=3002` and
+`CORS_ORIGINS='["http://localhost:3002"]'` before rendering. `check` reports
+when only one of these values is set. The knowledge portal then opens at
+`http://localhost:3002`, and the chat interface at `http://localhost:3001`.
+The first local administrator is created through the portal setup page.
 
-[docs/betrieb.md](docs/betrieb.md) deckt Pflichtwerte, geteilte Werte, stille
-Fehlkonfigurationen, die Anmeldung, den Umstieg auf die echten Modelldienste
-und einen Selbsttest ab.
+[docs/betrieb.md](docs/betrieb.md) documents all required and optional values,
+shared-secret relationships, silent misconfiguration risks, authentication,
+real model services, and the end-to-end self-test.
 
-## Anmeldung
+## Authentication and authorization
 
-Es gibt eine Anmeldung für alles. Ein Administrator legt in Ingest lokale
-Benutzer, Teams und OIDC-Verbindungen an; wer sich dort anmelden kann, kann
-sich am Chat anmelden — egal womit. Das Gateway führt keine eigene Kontenwelt
-mehr, sondern holt sich die Identität über einen einmaligen Handoff-Code
-(ADR-0006). Vier Werte über drei Dienste müssen dafür zusammenpassen; `check`
-prüft die Kette.
+Weave provides one account experience across the platform. Administrators
+manage local users, teams, and OIDC providers in Ingest. Anyone who can sign in
+there can use the chat with the same identity, regardless of whether the
+account is local or federated. The API gateway does not maintain a second user
+directory; it receives the identity through a short-lived, single-use handoff
+code (ADR-0006).
 
-## Tests
+Teams grant access to knowledge spaces. Runtime intersects the user's readable
+collections with the bot configuration and any request filter before search.
+n8n and MCP receive short-lived delegated scopes and cannot widen them. Shared
+service credentials remain server-side and are checked fail-closed. Run
+`python scripts/weave_config.py check` after every secret or endpoint change.
 
-Jeder Python-Dienst hat sein eigenes `.venv` und seine eigene
-`requirements.txt`; Python-Version und Testbefehl unterscheiden sich pro
-Dienst (`.github/workflows/pr-ci.yml` bildet genau das ab). Beispielhaft:
+## Testing
+
+Every Python service has its own virtual environment and pinned requirements.
+The Python version and exact test command may differ by service; the CI workflow
+in `.github/workflows/pr-ci.yml` is the executable reference.
 
 ```bash
 # services/tools, services/embeddings, services/reranker
-# (requirements.txt im Dienst-Wurzelverzeichnis):
-cd services/<dienst>
-python -m venv .venv && .venv/bin/pip install -r requirements.txt
+cd services/<service>
+python -m venv .venv
+.venv/bin/pip install -r requirements.txt
 .venv/bin/pytest -q
 
 # services/ingest, services/knowledge, services/retrieval, services/runtime,
-# services/api (requirements.txt liegt unter backend/):
-cd services/<dienst>
-python -m venv .venv && .venv/bin/pip install -r backend/requirements.txt
+# and services/api
+cd services/<service>
+python -m venv .venv
+.venv/bin/pip install -r backend/requirements.txt
 .venv/bin/pytest -q backend/tests
 
-# services/chat und services/ingest/frontend (Next.js):
-npm install && npm test
+# services/chat and services/ingest/frontend
+npm install
+npm test
 
-# die Konfiguration selbst:
+# Configuration renderer and validator
 services/tools/.venv/bin/python -m pytest scripts/tests -q
 ```
 
-Die CI führt pro Pull-Request nur die Dienste aus, deren Pfad sich geändert
-hat, und lässt ein Frontend mit bekannter Schwachstelle in `npm audit`
-durchfallen.
+Pull-request CI runs only the service suites affected by a path change and
+fails a frontend build when `npm audit` reports a known high-severity issue.
 
-## Dokumentation
+## Documentation
 
-| Wo | Was |
+| Location | Contents |
 |---|---|
-| [docs/betrieb.md](docs/betrieb.md) | Die maßgebliche Betriebsdoku |
-| [docs/betriebshandbuch.html](docs/betriebshandbuch.html) | Dieselbe, lesbar aufbereitet |
-| [docs/architektur.html](docs/architektur.html), [docs/architektur-detail.html](docs/architektur-detail.html) | Gesamtschaubild und Detail samt Ablauf einer Wissensfrage |
-| [docs/bauplan.html](docs/bauplan.html) | Der Transformationsplan mit Umsetzungsstand |
-| [docs/glossar.html](docs/glossar.html) | Die Fachbegriffe, je allgemein und in ihrer Rolle in Weave |
-| [docs/wissensportal.md](docs/wissensportal.md) | Freigaben, Indexstatus, Wissensbereiche |
-| [docs/adr/](docs/adr/) | Warum eigentlich so — sieben Entscheidungen |
-| [contracts/](contracts/) | Die Datenverträge zwischen den Diensten |
+| [docs/betrieb.md](docs/betrieb.md) | Authoritative operations guide |
+| [docs/betriebshandbuch.html](docs/betriebshandbuch.html) | Browser-readable operations handbook |
+| [docs/architektur.html](docs/architektur.html), [docs/architektur-detail.html](docs/architektur-detail.html) | System architecture and the detailed sequence of a knowledge query |
+| [docs/bauplan.html](docs/bauplan.html) | Transformation plan and implementation status |
+| [docs/glossar.html](docs/glossar.html) | Technical terms and their role in Weave |
+| [docs/wissensportal.md](docs/wissensportal.md) | Knowledge spaces, release workflow, and indexing status |
+| [docs/screenshots/user-wiki/](docs/screenshots/user-wiki/) | Sanitized screenshots covering the user and administrator interfaces |
+| [docs/adr/](docs/adr/) | Architecture decision records |
+| [contracts/](contracts/) | Data and API contracts between services |

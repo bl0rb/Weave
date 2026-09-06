@@ -1,17 +1,13 @@
 """Outbound webhook delivery transport.
 
-Kept FastAPI-free (mirrors app/services/openwebui.py's shape) so both
-app/api/webhook_routes.py (the synchronous POST .../test probe) and
+Kept FastAPI-free so both app/api/webhook_routes.py (the synchronous probe) and
 app/workers/webhook_tasks.py (the `deliver_webhook` Celery task, with its own
 retry/backoff loop) call the exact same function for the exact same wire
 format -- there must be only one place that builds headers/signs the body.
 
-Every outbound request goes through app.services.safe_fetch.safe_fetch --
-the same SSRF protection Confluence/OpenWebUI get (private-IP block with the
-admin-managed `allowed_private_hosts` exemption, unconditional cloud-metadata
-block, DNS pinning, redirect revalidation). Webhook receivers (e.g. n8n) are
-typically self-hosted on a private LAN, exactly like the OpenWebUI case this
-mirrors.
+Every outbound request goes through app.services.safe_fetch.safe_fetch:
+private-IP blocking with an admin-managed allowlist, unconditional metadata
+blocking, DNS pinning and redirect revalidation.
 """
 
 from __future__ import annotations
@@ -30,7 +26,7 @@ from app.models.models import Tag, job_tags
 from app.services.safe_fetch import SafeFetchError, safe_fetch
 
 if TYPE_CHECKING:
-    from app.models.models import Collection, ImportRun, Job
+    from app.models.models import ImportRun, Job
 
 _REQUEST_TIMEOUT_SECONDS = 15.0
 _MAX_RESPONSE_BYTES = 64 * 1024
@@ -232,37 +228,6 @@ def build_document_processed_payload(job: 'Job') -> dict:
         },
         'engine': engine,
         'processed_at': processed_at,
-    }
-
-
-def build_collection_updated_payload(collection: 'Collection') -> dict:
-    """Build the JSON payload for a 'collection.updated' event (see
-    contracts/events/collection.updated.md), dispatched from
-    app/api/routes.py's POST /collections and PATCH /collections/{id} via
-    app/workers/webhook_tasks.dispatch_collection_event.
-
-    Deliberately thin -- unlike build_job_payload/build_document_processed_payload,
-    it carries only the exact fields GET /collections/registry itself
-    exposes (slug/name/description/read_teams) plus `updated_at`, nothing
-    document- or job-shaped. This event's whole job is to be a fast nudge:
-    "this collection's registry entry changed, go re-pull the registry now
-    instead of waiting for your next periodic sync" -- the registry endpoint
-    remains the actual source of truth a consumer reconciles against, not
-    this payload. That is also why there is nothing here worth reconciling
-    against a late or duplicate delivery (at-least-once, see
-    send_webhook_request's retry/backoff): whatever a consumer does on
-    receipt, it ends by re-reading GET /collections/registry, which is
-    always the current state regardless of which delivery attempt triggered
-    the re-read.
-    """
-    return {
-        'event': 'collection.updated',
-        'timestamp': datetime.now(timezone.utc).isoformat(),
-        'slug': collection.slug,
-        'name': collection.name,
-        'description': collection.description,
-        'read_teams': list(collection.read_teams or []),
-        'updated_at': collection.updated_at.isoformat(),
     }
 
 

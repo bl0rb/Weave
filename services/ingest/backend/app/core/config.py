@@ -172,73 +172,28 @@ class Settings(BaseSettings):
     # Per-process asyncio semaphore capping concurrent outbound test probes.
     import_probe_concurrency: int = 4
 
-    # --- Mail ingestion (POST /api/v1/mail/messages, app/services/mail_ingest.py).
-    # Hard cap on the raw .eml body size, enforced by streaming
-    # request.stream() chunk-wise and aborting with 413 once exceeded --
-    # there is no body-size middleware anywhere in this stack (uvicorn is
-    # started bare), so nothing else bounds it. Defaults to max_upload_bytes
-    # (100 MiB) but is its own setting since a raw email (with attachments
-    # inline as MIME parts) can legitimately want a different cap than a
-    # single-file upload. Same ops caveat as uploads: the Helm chart sets no
-    # proxy-body-size ingress annotation by default.
-    max_mail_message_bytes: int = 100 * 1024 * 1024
-    # Inline Content-ID parts (signature images, logos) never get an OCR Job
-    # by default -- flip this on to burn worker time on them anyway.
+    # --- Individual .eml uploads (app/services/mail_ingest.py).
+    # Inline Content-ID parts such as signature images stay out of the
+    # combined document by default. MAX_UPLOAD_BYTES covers the .eml itself.
     ocr_inline_images: bool = False
-
-    # --- OpenWebUI push (app/services/openwebui.py, app/api/openwebui_routes.py,
-    # app/workers/openwebui_tasks.py). Kill-switch: when False the
-    # /openwebui API surface returns 404s, mirroring IMPORT_ENABLED.
-    openwebui_enabled: bool = True
-    # Overall wall-clock budget for one push: upload + processing poll +
-    # knowledge-attach + best-effort replace. Also doubles as the worst-case
-    # legitimate runtime the claim's stale-lease reclaim allows for before
-    # treating a 'running' push as worker-lost (see _claim_push).
-    openwebui_push_timeout_seconds: int = 300
-    # Redis-backed cooldown between POST /openwebui/connections/{id}/test
-    # probes (429 + Retry-After inside the window) -- Redis rather than a
-    # DB column like ImportSource.last_test_at, since OpenWebUIConnection
-    # carries no last-tested timestamp field.
-    openwebui_test_cooldown_seconds: int = 10
-    # Cap on pending+running OpenWebUIPush rows per user, enforced by
-    # POST /openwebui/pushes -- a wedged/very active OpenWebUI instance must
-    # not let one user queue unbounded outbound work.
-    openwebui_push_max_pending_per_user: int = 50
-    # Hostnames ('host' or 'host:port') of private-network OpenWebUI
-    # instances outbound pushes may reach -- same shape and enforcement as
-    # import_private_host_allowlist (passed into safe_fetch as
-    # allowed_private_hosts, re-checked per redirect hop; cloud-metadata IPs
-    # stay blocked unconditionally). Not part of the original OpenWebUI push
-    # spec's config list, but required for the SSRF protection it does
-    # mandate to be usable at all: OpenWebUI is typically self-hosted on a
-    # private network, exactly like the Confluence Server/DC case this
-    # mirrors. JSON list env value (OPENWEBUI_PRIVATE_HOST_ALLOWLIST), same
-    # parsing as cors_origins/import_private_host_allowlist.
-    openwebui_private_host_allowlist: list[str] = []
 
     # --- Outbound webhooks (app/services/webhooks.py, app/api/webhook_routes.py,
     # app/workers/webhook_tasks.py). Kill-switch: when False the /webhooks API
-    # surface returns 404s, mirroring IMPORT_ENABLED/OPENWEBUI_ENABLED.
+    # surface returns 404s, mirroring IMPORT_ENABLED.
     webhooks_enabled: bool = True
     # DB-backed cooldown, per connection_id, between POST
     # /webhooks/connections/{id}/test probes (429 + Retry-After inside the
-    # window) -- Redis-backed like openwebui_test_cooldown_seconds (see
-    # app/api/webhook_routes._check_test_cooldown), since WebhookConnection
-    # likewise carries no last-tested timestamp column.
+    # window) -- Redis-backed because WebhookConnection has no last-tested
+    # timestamp column.
     webhook_test_cooldown_seconds: int = 10
     # Cap on pending WebhookDelivery rows per user, enforced by POST
-    # /webhooks/send -- same reasoning as openwebui_push_max_pending_per_user:
-    # a wedged/unreachable receiving endpoint must not let one user queue
-    # unbounded outbound work.
+    # /webhooks/send so one unreachable receiver cannot queue unbounded work.
     webhook_max_pending_deliveries_per_user: int = 50
     # Hostnames ('host' or 'host:port') of private-network webhook receivers
-    # outbound deliveries may reach -- same shape and enforcement as
-    # openwebui_private_host_allowlist (passed into safe_fetch as
-    # allowed_private_hosts, re-checked per redirect hop; cloud-metadata IPs
-    # stay blocked unconditionally). Webhook receivers (e.g. n8n) are
-    # typically self-hosted on a private LAN, exactly like the OpenWebUI
-    # case this mirrors. JSON list env value (WEBHOOK_PRIVATE_HOST_ALLOWLIST),
-    # same parsing as cors_origins/import_private_host_allowlist.
+    # outbound deliveries may reach. Passed into safe_fetch as
+    # allowed_private_hosts and re-checked per redirect hop; cloud-metadata
+    # IPs stay blocked unconditionally. JSON list env value
+    # (WEBHOOK_PRIVATE_HOST_ALLOWLIST), same parsing as the import allowlist.
     webhook_private_host_allowlist: list[str] = []
 
     # --- Confluence refresh (periodic re-crawl of an ImportSource to pick up

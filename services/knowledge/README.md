@@ -2,7 +2,7 @@
 
 ## Einordnung
 
-Weave-Knowledge ist die **Index-Pipeline** des Weave-Systems. Sie konsumiert strukturierte Dokumente aus Weave-Ingest und transformiert sie in durchsuchbare Embeddings, die in einer vektorisierten Postgres-Datenbank persistiert werden. Sie ersetzt den bisherigen OpenWebUI-Integration Push und bildet die Grundlage für die Retrieval-Dienste.
+Weave-Knowledge ist die **Index-Pipeline** des Weave-Systems. Sie konsumiert freigegebene, strukturierte Dokumente aus Weave-Ingest und transformiert sie in durchsuchbare Embeddings, die in einer vektorisierten Postgres-Datenbank persistiert werden. Damit besitzt die Plattform einen kontrollierten internen Indexierungsweg statt direkter Pushes an externe Wissenssysteme.
 
 ## Zweck
 
@@ -30,7 +30,7 @@ Weave-Knowledge ist die **Index-Pipeline** des Weave-Systems. Sie konsumiert str
 ## Schnittstellen
 
 **Input:**
-- Signierter Webhook von Weave-Ingest: `document.released` (wird indexiert), `document.processed` (wird nur mit `awaiting_release` quittiert), `collection.updated` (Registry)
+- Signierter interner Event-Endpunkt für Weave-Ingest: `document.released` wird indexiert, `document.processed` nur mit `awaiting_release` quittiert; der dedizierte `collection.updated`-Hinweis löst einen vollständigen Registry-Abruf aus und enthält selbst keine ACL.
 
 **Output:**
 - PostgreSQL + pgvector: Persistierte Embeddings mit Metadaten

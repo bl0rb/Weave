@@ -22,9 +22,8 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from app.models.models import Job, JobStatus, Team, UserRole, WebhookConnection, WebhookDelivery
+from app.models.models import ImportRun, ImportRunStatus, Job, JobStatus, ManagedBot, Team, UserRole
 from app.services.security import rate_limiter
-from app.workers import webhook_tasks
 from conftest import TestingSessionLocal, create_test_user, login_as
 
 
@@ -47,6 +46,11 @@ def _isolated_storage(monkeypatch, tmp_path):
     # Real processing is opted into per-test below; by default /start is a
     # no-op so tests that don't need it stay fast and worker-free.
     monkeypatch.setattr(routes.process_job, 'delay', lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        routes.publication_tasks.notify_collection_registry_changed,
+        'delay',
+        lambda *args, **kwargs: None,
+    )
     yield
 
 
@@ -107,6 +111,99 @@ def test_collections_visibility_and_patch_control_matrix():
     assert owner_patch.json()['slug'] == admin_patch.json()['slug']
 
 
+def test_empty_collection_can_be_deleted_only_by_owner_or_admin():
+    team_id = _make_team('coll-delete-team')
+    owner = _user('coll-delete-owner', team_id=team_id)
+    teammate = _user('coll-delete-teammate', team_id=team_id)
+    outsider = _user('coll-delete-outsider')
+
+    owner_client = login_as(owner.username)
+    created = owner_client.post('/api/v1/collections', json={'name': 'Leerer Bereich'})
+    assert created.status_code == 200, created.text
+    collection_id = created.json()['collection_id']
+
+    # Visibility is not control: a teammate may read the card but not rename
+    # or delete it. A completely unrelated caller still gets the endpoint's
+    # non-enumerating 404 response.
+    assert login_as(teammate.username).delete(f'/api/v1/collections/{collection_id}').status_code == 403
+    assert login_as(outsider.username).delete(f'/api/v1/collections/{collection_id}').status_code == 404
+
+    deleted = owner_client.delete(f'/api/v1/collections/{collection_id}')
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json() == {'status': 'deleted'}
+    assert owner_client.get(f'/api/v1/collections/{collection_id}').status_code == 404
+
+
+def test_collection_delete_never_cascades_documents_or_races_an_active_import():
+    owner = _user('coll-delete-protected-owner')
+    owner_client = login_as(owner.username)
+
+    with_document = owner_client.post('/api/v1/collections', json={'name': 'Bereich mit Dokument'})
+    assert with_document.status_code == 200, with_document.text
+    document_collection_id = with_document.json()['collection_id']
+    db = TestingSessionLocal()
+    try:
+        db.add(Job(
+            original_filename='behalten.pdf',
+            upload_path='/tmp/behalten.pdf',
+            owner_id=owner.id,
+            processing_info={'settings': {'collection_id': document_collection_id}},
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    blocked_document = owner_client.delete(f'/api/v1/collections/{document_collection_id}')
+    assert blocked_document.status_code == 409
+    assert 'enthält noch Dokumente' in blocked_document.json()['detail']
+    assert owner_client.get(f'/api/v1/collections/{document_collection_id}').status_code == 200
+
+    with_import = owner_client.post('/api/v1/collections', json={'name': 'Bereich mit Import'})
+    assert with_import.status_code == 200, with_import.text
+    import_collection_id = with_import.json()['collection_id']
+    db = TestingSessionLocal()
+    try:
+        db.add(ImportRun(
+            owner_id=owner.id,
+            kind='confluence',
+            status=ImportRunStatus.RUNNING,
+            scope_type='page',
+            scope_value='12345',
+            options={'collection_id': import_collection_id},
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    blocked_import = owner_client.delete(f'/api/v1/collections/{import_collection_id}')
+    assert blocked_import.status_code == 409
+    assert 'läuft noch ein Import' in blocked_import.json()['detail']
+    assert owner_client.get(f'/api/v1/collections/{import_collection_id}').status_code == 200
+
+    assigned = owner_client.post('/api/v1/collections', json={'name': 'Bereich für Bot'})
+    assert assigned.status_code == 200, assigned.text
+    bot_collection_id = assigned.json()['collection_id']
+    bot_collection_slug = assigned.json()['slug']
+    db = TestingSessionLocal()
+    try:
+        db.add(ManagedBot(
+            id=f'collection-guard-{uuid.uuid4().hex[:8]}',
+            name='Collection Guard',
+            webhook_url='https://n8n.example.com/webhook/guard',
+            teams=[],
+            collections=[bot_collection_slug],
+            updated_by_id=owner.id,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    blocked_bot = owner_client.delete(f'/api/v1/collections/{bot_collection_id}')
+    assert blocked_bot.status_code == 409
+    assert 'noch einem Bot zugeordnet' in blocked_bot.json()['detail']
+    assert owner_client.get(f'/api/v1/collections/{bot_collection_id}').status_code == 200
+
+
 def test_collections_registry_lists_every_collection_unfiltered_by_visibility():
     """GET /collections/registry is the Weave-Knowledge sync source: unlike
     GET /collections it is NOT scoped to the caller's own visibility -- an
@@ -154,157 +251,82 @@ def test_collections_registry_rejects_non_admin():
     assert outsider_client.get('/api/v1/collections/registry').status_code == 403
 
 
-# --- collection.updated webhook event (contracts/events/collection.updated.md) ---
-#
-# End-to-end through the real POST /collections / PATCH /collections/{id}
-# routes (app/workers/webhook_tasks.dispatch_collection_event's own unit
-# tests -- fan-out mechanics, payload shape, pending-cap, etc. -- live in
-# test_webhook_tasks.py); this only exercises that the routes actually wire
-# the call in. celery_app.send_task is mocked (no broker in tests);
-# dispatch_collection_event still runs for real, so the WebhookDelivery row
-# it creates is real.
 
-def _quiet_other_collection_updated_connections() -> None:
-    """dispatch_collection_event fans out to every enabled 'collection.updated'
-    connection system-wide (see its own docstring), so a leftover one from
-    an earlier test -- this suite's sqlite database is never reset between
-    tests, see conftest.py -- would otherwise also fire for this test's
-    collection and inflate its delivery/call counts."""
-    db = TestingSessionLocal()
-    try:
-        for connection in db.query(WebhookConnection).filter(WebhookConnection.enabled.is_(True)).all():
-            if 'collection.updated' in (connection.events or []):
-                connection.enabled = False
-        db.commit()
-    finally:
-        db.close()
+# --- Dedicated Collection-registry notification -----------------------------
 
+def test_create_collection_notifies_knowledge_without_external_webhook_payload(monkeypatch):
+    from app.api import routes
 
-@pytest.fixture()
-def _registry_sync_connection():
-    """One admin-owned webhook connection subscribed to 'collection.updated'
-    for the test -- disabled again on teardown so it cannot leak into a
-    LATER test's POST/PATCH /collections call and trigger a real, unmocked
-    celery_app.send_task there (this suite's sqlite database is never reset
-    between tests, see conftest.py)."""
-    _quiet_other_collection_updated_connections()
-    sync_user = _user('coll-webhook-sync', role=UserRole.ADMIN)
-    db = TestingSessionLocal()
-    try:
-        connection = WebhookConnection(
-            owner_id=sync_user.id, name='registry-sync', url='https://n8n.example.com/webhook/registry',
-            events=['collection.updated'], enabled=True,
+    monkeypatch.setattr(routes.publication_tasks, 'publication_configured', lambda: True)
+    owner = _user('coll-notify-create')
+    owner_client = login_as(owner.username)
+    with patch.object(
+        routes.publication_tasks.notify_collection_registry_changed,
+        'delay',
+    ) as notify:
+        response = owner_client.post(
+            '/api/v1/collections',
+            json={'name': 'Knowledge notification', 'read_teams': ['ops']},
         )
-        db.add(connection)
-        db.commit()
-        db.refresh(connection)
-        connection_id = connection.id
-    finally:
-        db.close()
 
-    yield sync_user
-
-    db = TestingSessionLocal()
-    try:
-        conn = db.get(WebhookConnection, connection_id)
-        if conn is not None:
-            conn.enabled = False
-            db.commit()
-    finally:
-        db.close()
+    assert response.status_code == 200, response.text
+    notify.assert_called_once_with(response.json()['slug'])
 
 
-def test_create_collection_fires_collection_updated_webhook(_registry_sync_connection):
-    """POST /collections -- Event feuert bei Anlegen."""
-    sync_user = _registry_sync_connection
-    owner = _user('coll-webhook-owner-create')
+def test_patch_collection_notifies_knowledge_with_stable_slug(monkeypatch):
+    from app.api import routes
+
+    monkeypatch.setattr(routes.publication_tasks, 'publication_configured', lambda: True)
+    owner = _user('coll-notify-patch')
+    owner_client = login_as(owner.username)
+    created = owner_client.post('/api/v1/collections', json={'name': 'Before'})
+    assert created.status_code == 200, created.text
+
+    with patch.object(
+        routes.publication_tasks.notify_collection_registry_changed,
+        'delay',
+    ) as notify:
+        response = owner_client.patch(
+            f"/api/v1/collections/{created.json()['collection_id']}",
+            json={'name': 'After', 'read_teams': ['legal']},
+        )
+
+    assert response.status_code == 200, response.text
+    notify.assert_called_once_with(created.json()['slug'])
+
+
+def test_collection_notification_enqueue_failure_does_not_rollback_create(monkeypatch):
+    from app.api import routes
+
+    monkeypatch.setattr(routes.publication_tasks, 'publication_configured', lambda: True)
+    owner = _user('coll-notify-failure')
+    owner_client = login_as(owner.username)
+    monkeypatch.setattr(
+        routes.publication_tasks.notify_collection_registry_changed,
+        'delay',
+        lambda *_: (_ for _ in ()).throw(RuntimeError('broker unavailable')),
+    )
+
+    response = owner_client.post('/api/v1/collections', json={'name': 'Still committed'})
+    assert response.status_code == 200, response.text
+    assert owner_client.get(f"/api/v1/collections/{response.json()['collection_id']}").status_code == 200
+
+
+def test_collection_change_skips_broker_when_knowledge_is_not_configured(monkeypatch):
+    from app.api import routes
+
+    monkeypatch.setattr(routes.publication_tasks, 'publication_configured', lambda: False)
+    owner = _user('coll-notify-unconfigured')
     owner_client = login_as(owner.username)
 
-    with patch.object(webhook_tasks.celery_app, 'send_task') as mock_send_task:
-        create_resp = owner_client.post(
-            '/api/v1/collections', json={'name': 'Webhook Create Test', 'read_teams': ['ops']},
-        )
-    assert create_resp.status_code == 200, create_resp.text
-    collection_id = create_resp.json()['collection_id']
+    with patch.object(
+        routes.publication_tasks.notify_collection_registry_changed,
+        'delay',
+    ) as notify:
+        response = owner_client.post('/api/v1/collections', json={'name': 'No Knowledge channel'})
 
-    mock_send_task.assert_called_once()
-    db = TestingSessionLocal()
-    try:
-        deliveries = db.query(WebhookDelivery).filter(WebhookDelivery.collection_id == collection_id).all()
-        assert len(deliveries) == 1
-        delivery = deliveries[0]
-        assert delivery.event == 'collection.updated'
-        assert delivery.status == 'pending'
-        assert delivery.owner_id == sync_user.id
-    finally:
-        db.close()
-
-
-def test_patch_collection_read_teams_fires_collection_updated_webhook(_registry_sync_connection):
-    """PATCH /collections/{id} with a read_teams change -- Event feuert bei
-    read_teams-Aenderung -- and the payload built for that delivery (via the
-    same build_collection_updated_payload deliver_webhook itself uses)
-    carries the new read_teams, not the one the collection was created
-    with."""
-    owner = _user('coll-webhook-owner-patch')
-    owner_client = login_as(owner.username)
-
-    with patch.object(webhook_tasks.celery_app, 'send_task') as mock_create_send_task:
-        create_resp = owner_client.post(
-            '/api/v1/collections', json={'name': 'Webhook Patch Test', 'read_teams': ['ops']},
-        )
-    assert create_resp.status_code == 200
-    mock_create_send_task.assert_called_once()  # the create above also fires
-    collection_id = create_resp.json()['collection_id']
-
-    with patch.object(webhook_tasks.celery_app, 'send_task') as mock_patch_send_task:
-        patch_resp = owner_client.patch(
-            f'/api/v1/collections/{collection_id}', json={'read_teams': ['kundenservice', 'qm']},
-        )
-    assert patch_resp.status_code == 200, patch_resp.text
-    mock_patch_send_task.assert_called_once()
-
-    db = TestingSessionLocal()
-    try:
-        deliveries = (
-            db.query(WebhookDelivery)
-            .filter(WebhookDelivery.collection_id == collection_id, WebhookDelivery.event == 'collection.updated')
-            .order_by(WebhookDelivery.created_at)
-            .all()
-        )
-        assert len(deliveries) == 2  # one from the create, one from this read_teams patch
-
-        from app.models.models import Collection
-        from app.services.webhooks import build_collection_updated_payload
-
-        collection = db.get(Collection, collection_id)
-        payload = build_collection_updated_payload(collection)
-        assert payload['read_teams'] == ['kundenservice', 'qm']
-        assert payload['slug'] == create_resp.json()['slug']
-    finally:
-        db.close()
-
-
-def test_create_collection_no_delivery_without_configured_webhook_connection():
-    """'kein Feuern wenn keine Webhook-Verbindung konfiguriert ist': with no
-    webhook connection subscribed to collection.updated anywhere in the
-    system, POST /collections must succeed normally and create zero
-    WebhookDelivery rows."""
-    _quiet_other_collection_updated_connections()
-    owner = _user('coll-webhook-owner-none')
-    owner_client = login_as(owner.username)
-
-    with patch.object(webhook_tasks.celery_app, 'send_task') as mock_send_task:
-        create_resp = owner_client.post('/api/v1/collections', json={'name': 'No Webhook Configured'})
-    assert create_resp.status_code == 200, create_resp.text
-    collection_id = create_resp.json()['collection_id']
-
-    mock_send_task.assert_not_called()
-    db = TestingSessionLocal()
-    try:
-        assert db.query(WebhookDelivery).filter(WebhookDelivery.collection_id == collection_id).count() == 0
-    finally:
-        db.close()
+    assert response.status_code == 200, response.text
+    notify.assert_not_called()
 
 
 def _minimal_text_pdf_bytes(text: str) -> bytes:

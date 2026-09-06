@@ -659,7 +659,7 @@ export function ProcessingFlow() {
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
                 <p className="text-sm font-semibold text-slate-950">Send result to webhook</p>
                 <p className="mt-1 text-xs text-slate-600">
-                  Optional — deliver the finished result to a webhook connection, e.g. an n8n flow.
+                  Optional — deliver the finished result to a configured external archive or workflow endpoint.
                 </p>
                 {enabledWebhookConnections.length > 0 ? (
                   <select

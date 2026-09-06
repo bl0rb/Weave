@@ -880,9 +880,9 @@ function NewImportPageInner() {
                 </div>
 
                 <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-4">
-                  <p className="text-sm font-semibold text-slate-950">Send result to webhook</p>
+                  <p className="text-sm font-semibold text-slate-950">Export result to webhook</p>
                   <p className="text-xs text-slate-600">
-                    Optional — deliver the finished result to a webhook connection, e.g. an n8n flow.
+                    Optional — deliver the finished result to a configured external export receiver.
                   </p>
                   {webhookConnections.length > 0 ? (
                     <select

@@ -127,16 +127,9 @@ class Job(Base):
     import_run: Mapped['ImportRun | None'] = relationship(back_populates='jobs')
     benchmark_run: Mapped['BenchmarkRun | None'] = relationship(back_populates='jobs')
     mail_message: Mapped['MailMessage | None'] = relationship(back_populates='jobs')
-    # CASCADE at the DB level (job_id FK below) + ORM cascade so a deleted
-    # job's push history disappears with it on sqlite too (no PRAGMA
-    # foreign_keys there -- same reasoning as markdown_versions/artifacts).
-    openwebui_pushes: Mapped[list['OpenWebUIPush']] = relationship(
-        back_populates='job', cascade='all, delete-orphan'
-    )
     # No cascade -- FK is ondelete='SET NULL' (webhook_deliveries.job_id),
-    # not CASCADE like openwebui_pushes.job_id above: a delivery row is an
-    # audit/log entry of an outbound webhook attempt and must outlive the
-    # job it was about, same reasoning as ImportPageState.job_id.
+    # because a delivery row is an audit/log entry of an outbound webhook
+    # attempt and must outlive the job it was about.
     webhook_deliveries: Mapped[list['WebhookDelivery']] = relationship(back_populates='job')
 
 
@@ -308,6 +301,50 @@ class ChatProviderConfig(Base):
     )
 
 
+class ManagedBot(Base):
+    """Admin-managed n8n bot exposed to Weave-Runtime.
+
+    Runtime remains stateless and reads enabled rows through the authenticated
+    internal control-plane endpoint.  ``auth_token_encrypted`` is write-only
+    on the admin API and decrypted only for that service-to-service response.
+    Team names and collection slugs intentionally match the identifiers used
+    by Runtime's existing permission and retrieval contracts.
+    """
+
+    __tablename__ = 'managed_bots'
+
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1', nullable=False)
+    webhook_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    streaming: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0', nullable=False)
+    auth_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    timeout_seconds: Mapped[int] = mapped_column(Integer, default=120, server_default='120', nullable=False)
+    teams: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    collections: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    require_sources: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1', nullable=False)
+    no_context_reply: Mapped[str] = mapped_column(
+        Text,
+        default='Ich habe dazu keine belegten Informationen gefunden.',
+        server_default='Ich habe dazu keine belegten Informationen gefunden.',
+        nullable=False,
+    )
+    updated_by_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
 class User(Base):
     __tablename__ = 'users'
     __table_args__ = (
@@ -362,8 +399,6 @@ class User(Base):
     benchmark_runs: Mapped[list['BenchmarkRun']] = relationship(back_populates='owner')
     api_tokens: Mapped[list['ApiToken']] = relationship(back_populates='user', cascade='all, delete-orphan')
     mail_messages: Mapped[list['MailMessage']] = relationship(back_populates='owner')
-    openwebui_connections: Mapped[list['OpenWebUIConnection']] = relationship(back_populates='owner')
-    openwebui_pushes: Mapped[list['OpenWebUIPush']] = relationship(back_populates='owner')
     webhook_connections: Mapped[list['WebhookConnection']] = relationship(back_populates='owner')
     webhook_deliveries: Mapped[list['WebhookDelivery']] = relationship(back_populates='owner')
 
@@ -700,7 +735,7 @@ class MailMessage(Base):
     -- the same primitive as Job.content_sha256, lifted to message level.
     A replayed POST with identical bytes returns the existing row (200)
     instead of re-ingesting, which is what makes sender-side retry loops
-    (gateway outbox, n8n retry-on-fail) safe. rfc_message_id (the parsed
+    (gateway outbox, external retry-on-fail) safe. rfc_message_id (the parsed
     Message-ID header) is a lookup convenience only, never the dedup key --
     it is sender-controlled, spoofable, and not always present.
     """
@@ -851,110 +886,15 @@ class WorkerLogEntry(Base):
     exc_text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
-class OpenWebUIConnection(Base):
-    """A saved OpenWebUI connection: base URL + write-only API key, used to
-    push a job's markdown into one of the target instance's knowledge
-    collections (see app/services/openwebui.py, app/workers/openwebui_tasks.py).
-
-    `api_key_encrypted` is Fernet-encrypted at rest with a key derived via
-    HKDF-SHA256(SECRET_KEY, info="openwebui-connection-api-key") -- see
-    app/services/security.py. The key is write-only at the API: no response
-    schema carries it (only a `has_api_key` boolean), and it is decrypted
-    only inside GET .../knowledge, POST .../test, and the push worker task.
-    Unlike ImportSource (CASCADE on owner delete -- a Confluence credential
-    must not survive its owner), this is SET NULL: pushes already made under
-    a connection stay attributable (via OpenWebUIPush.connection_name) even
-    after the connection or its owner is gone.
-    """
-
-    __tablename__ = 'openwebui_connections'
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    # Normalized, no trailing slash, e.g. https://openwebui.internal.example.com
-    base_url: Mapped[str] = mapped_column(String(1024), nullable=False)
-    api_key_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
-    owner_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True
-    )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
-    )
-
-    owner: Mapped[User | None] = relationship(back_populates='openwebui_connections')
-    # No cascade -- ondelete=SET NULL at the DB level, same pattern as
-    # ImportRun.jobs/BenchmarkRun.jobs/MailMessage.jobs: history outlives the
-    # connection it was made under.
-    pushes: Mapped[list['OpenWebUIPush']] = relationship(back_populates='connection')
-
-
-class OpenWebUIPush(Base):
-    """One push attempt of a job's current markdown into an OpenWebUI
-    knowledge collection: upload -> wait for processing -> attach to the
-    collection -> best-effort remove the previous push's file (see
-    app/workers/openwebui_tasks.py for the full sequence).
-
-    `connection_name`/`knowledge_name` are snapshots taken at creation time
-    so history stays readable after the connection is deleted or the
-    knowledge collection is renamed/removed upstream -- the live values (if
-    the connection still exists) are what GET .../knowledge returns.
-    `pushed_content_sha256` is set only on a finished push and is compared
-    against sha256(the job's CURRENT markdown) at read time to derive
-    content_stale (see app/schemas/openwebui.py) -- never stored as a
-    boolean, so it stays correct even if the job is edited after the push.
-    """
-
-    __tablename__ = 'openwebui_pushes'
-    __table_args__ = (
-        Index('ix_openwebui_pushes_job_id_created_at', 'job_id', 'created_at'),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    connection_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey('openwebui_connections.id', ondelete='SET NULL'), nullable=True
-    )
-    connection_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    job_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey('jobs.id', ondelete='CASCADE'), nullable=False, index=True
-    )
-    knowledge_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    knowledge_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    # 'pending' | 'running' | 'finished' | 'failed' -- plain String (not a
-    # native/CHECK enum, unlike JobStatus/ImportRunStatus) since nothing
-    # here needs DB-level validation beyond what the worker/API already do.
-    status: Mapped[str] = mapped_column(String(16), default='pending', server_default='pending', nullable=False)
-    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    openwebui_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # The prior push's openwebui_file_id, once this push's success removed it
-    # from OpenWebUI (best-effort; see app/workers/openwebui_tasks.py). NULL
-    # when there was no predecessor to replace, or the replace never ran.
-    replaced_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    pushed_content_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    owner_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True
-    )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
-    )
-
-    connection: Mapped[OpenWebUIConnection | None] = relationship(back_populates='pushes')
-    job: Mapped[Job] = relationship(back_populates='openwebui_pushes')
-    owner: Mapped[User | None] = relationship(back_populates='openwebui_pushes')
-
-
 class WebhookConnection(Base):
-    """A saved outbound-webhook target: a URL (typically an n8n workflow
-    webhook or similar, often running on the owner's LAN) plus an optional
+    """A saved generic outbound-export target plus an optional
     write-only signing secret and the subset of events it should receive
     (see app/schemas/webhooks.py's WEBHOOK_EVENTS for the fixed set).
 
     `secret_encrypted` is Fernet-encrypted at rest with a key derived via
     HKDF-SHA256(SECRET_KEY, info="webhook-connection-secret") -- see
-    app/services/security.py. Unlike OpenWebUIConnection.api_key_encrypted,
-    the secret is genuinely optional (a connection may be created with none
-    at all, e.g. while its receiving end has no signature verification set
+    app/services/security.py. The secret is optional (a connection may be
+    created with none at all, e.g. while its receiving end has no signature verification set
     up yet) -- see app/schemas/webhooks.py's write-only update contract for
     how PATCH distinguishes "leave unchanged" from "clear it". It is
     write-only at the API either way: no response schema carries it (only a
@@ -964,25 +904,22 @@ class WebhookConnection(Base):
     Unlike ImportSource (CASCADE on owner delete -- a Confluence credential
     must not survive its owner), this is SET NULL: deliveries already made
     through a connection stay attributable (via WebhookDelivery.connection_name)
-    even after the connection or its owner is gone, same reasoning as
-    OpenWebUIConnection.
+    even after the connection or its owner is gone.
     """
 
     __tablename__ = 'webhook_connections'
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    # Not normalized/reshaped (unlike OpenWebUIConnection.base_url): a
-    # webhook URL commonly carries a meaningful path and/or query-string
-    # token of its own (n8n's /webhook/<id>, Slack-style incoming-webhook
-    # paths, ...), so only scheme/host/credentials are validated -- see
+    # A target URL commonly carries a meaningful path and/or query-string
+    # token of its own, so only scheme/host/credentials are validated -- see
     # app/api/webhook_routes._validate_webhook_url.
     url: Mapped[str] = mapped_column(String(2048), nullable=False)
     secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1', nullable=False)
     # Subset of WEBHOOK_EVENTS this connection should receive; validated at
     # the API layer (app/schemas/webhooks.py), never at the DB level -- same
-    # discipline as OpenWebUIPush.status being a plain String, not an enum.
+    # discipline as other extensible status fields in this model.
     events: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     owner_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True
@@ -993,8 +930,8 @@ class WebhookConnection(Base):
     )
 
     owner: Mapped[User | None] = relationship(back_populates='webhook_connections')
-    # No cascade -- ondelete=SET NULL at the DB level, same pattern as
-    # OpenWebUIConnection.pushes: delivery history outlives the connection.
+    # No cascade -- ondelete=SET NULL because delivery history outlives the
+    # connection.
     deliveries: Mapped[list['WebhookDelivery']] = relationship(back_populates='connection')
 
 
@@ -1003,16 +940,15 @@ class WebhookDelivery(Base):
     (or attempted) for one event, processed by the `deliver_webhook` Celery
     task with retry/backoff (see app/workers/webhook_tasks.py).
 
-    `connection_name` is a snapshot taken at creation time, same as
-    OpenWebUIPush.connection_name -- history stays readable after the
-    connection is deleted or renamed. `job_id`/`import_run_id`/`collection_id`
+    `connection_name` is a snapshot taken at creation time so history stays
+    readable after the connection is deleted or renamed.
+    `job_id`/`import_run_id`/`collection_id`
     are all SET NULL (not CASCADE): a delivery row is an audit/log entry of
     an attempted HTTP call and must outlive the job, import run, or
     collection it was about, same reasoning as ImportPageState.job_id.
-    Exactly one of job_id/import_run_id/collection_id is set for a given
-    event ('job.finished'/'job.failed'/'document.processed' carry job_id;
-    'import_run.finished' carries import_run_id; 'collection.updated'
-    carries collection_id), never more than one.
+    Current exports use job_id or import_run_id. collection_id is retained
+    only for historical delivery rows created before registry notifications
+    moved to the dedicated Knowledge channel.
     """
 
     __tablename__ = 'webhook_deliveries'
@@ -1025,9 +961,8 @@ class WebhookDelivery(Base):
     owner_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True
     )
-    # 'job.finished' | 'job.failed' | 'import_run.finished' | 'document.processed'
-    # | 'collection.updated' -- plain String (not a native/CHECK enum), same
-    # discipline as OpenWebUIPush.status.
+    # 'job.finished' | 'job.failed' | 'import_run.finished' |
+    # 'document.processed' -- plain String (not a native/CHECK enum).
     event: Mapped[str] = mapped_column(String(32), nullable=False)
     job_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey('jobs.id', ondelete='SET NULL'), nullable=True, index=True

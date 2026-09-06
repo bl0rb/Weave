@@ -140,10 +140,6 @@ spec:
               value: {{ .Values.importer.attachmentMaxBytes | int64 | quote }}
             - name: IMPORT_RUN_MAX_TOTAL_BYTES
               value: {{ .Values.importer.runMaxTotalBytes | int64 | quote }}
-            - name: OPENWEBUI_ENABLED
-              value: {{ .Values.openwebui.enabled | quote }}
-            - name: OPENWEBUI_PRIVATE_HOST_ALLOWLIST
-              value: {{ .Values.openwebui.privateHostAllowlist | toJson | quote }}
             # Webhook delivery: the deliver_webhook task runs on this worker,
             # so it needs the same WEBHOOK_* settings as the backend. The
             # pending-cap is also enforced here, not just by the backend's

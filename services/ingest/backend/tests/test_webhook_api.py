@@ -1,8 +1,8 @@
 """Outbound webhook API surface: connections CRUD + test cooldown, and the
 /send create + GET /deliveries flow (owner-private connection visibility,
 kill-switch, event validation). Drives the real TestClient/conftest wiring,
-same pattern as test_openwebui_api.py; the webhook transport call and the
-Celery dispatch are mocked out at the app.api.webhook_routes seam so no real
+using the same API-fixture pattern as the other connection tests. The webhook
+transport call and Celery dispatch are mocked at the app.api.webhook_routes seam so no real
 network/broker is needed.
 """
 
@@ -48,8 +48,8 @@ def test_webhook_connections_and_send_flow() -> None:
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
-    # URL is preserved verbatim, path/query included -- unlike OpenWebUI's
-    # base_url this is never reshaped.
+    # URL is preserved verbatim, path/query included; the outbound fetcher
+    # validates it before use rather than reshaping it.
     assert body['url'] == 'https://n8n.internal.example.com/webhook/abc123'
     assert body['enabled'] is True
     assert body['events'] == ['job.finished', 'job.failed']
@@ -77,7 +77,7 @@ def test_webhook_connections_and_send_flow() -> None:
     finally:
         db.close()
 
-    # secret explicitly empty -> stored secret cleared (unlike OpenWebUI's
+    # secret explicitly empty -> stored secret cleared (unlike an omitted
     # api_key, an empty value here means "remove it", not "keep it" -- see
     # WebhookConnectionUpdateRequest.secret's docstring).
     resp = authed.patch(f'/api/v1/webhooks/connections/{connection_id}', json={'secret': ''})
@@ -125,7 +125,7 @@ def test_webhook_connections_and_send_flow() -> None:
     )
     assert resp.status_code == 422
 
-    # Cross-user 404 (strictly owner-private, like OpenWebUIConnection; no
+    # Cross-user 404: connections are strictly owner-private, with no
     # GET-by-id endpoint exists in the contract, only list/patch/delete/test,
     # so PATCH is what exercises _get_owned_connection here).
     create_test_user(username='wh_other', email='wh_other@example.com')
@@ -231,9 +231,7 @@ def test_webhook_connections_and_send_flow() -> None:
     assert resp.json()['items'] == []
 
     # --- delete connection: 204, delivery history stays queryable with
-    # connection_id nulled (ORM nullifies it on flush -- same mechanism as
-    # openwebui_routes.delete_openwebui_connection nulling
-    # OpenWebUIPush.connection_id) ---
+    # connection_id nulled by the ORM on flush ---
     resp = authed.delete(f'/api/v1/webhooks/connections/{connection_id}')
     assert resp.status_code == 204
     assert resp.content == b''

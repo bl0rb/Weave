@@ -1,13 +1,10 @@
-"""Outbound webhook API surface: connections (owner-private, write-only
-signing secret -- same shape as app/api/openwebui_routes.py's
-OpenWebUIConnection) and deliveries (one row per delivery attempt, processed
-by the `deliver_webhook` Celery task, enqueued here by name only -- this
-module never imports the worker task module, mirroring
-openwebui_routes.py's PUSH_TASK_NAME convention).
+"""Generic outbound-export webhook surface: owner-private connections with
+write-only signing secrets and one audit row per delivery attempt. Delivery
+is handled by the `deliver_webhook` Celery task, enqueued here by name so the
+API process never imports the worker implementation.
 
 Registered in app/main.py under the same get_current_user + origin_guard
-dependencies as the main job router. The WEBHOOKS_ENABLED kill-switch below
-mirrors openwebui_routes._require_openwebui_enabled exactly.
+dependencies as the main job router. WEBHOOKS_ENABLED hides the full surface.
 """
 
 from __future__ import annotations
@@ -27,6 +24,7 @@ from app.core.config import settings
 from app.database.session import get_db
 from app.models.models import Job, JobStatus, User, WebhookConnection, WebhookDelivery
 from app.schemas.webhooks import (
+    WEBHOOK_EVENTS,
     WebhookConnectionCreateRequest,
     WebhookConnectionListResponse,
     WebhookConnectionResponse,
@@ -36,14 +34,10 @@ from app.schemas.webhooks import (
     WebhookDeliveryResponse,
     WebhookSendRequest,
 )
-# Module-object access (security.encrypt_webhook_secret /
-# security.decrypt_webhook_secret) rather than from-imports: matches
-# openwebui_routes.py's late-binding convention, keeping the helpers
-# monkeypatchable in tests.
+# Module-object access keeps the encryption helpers monkeypatchable in tests.
 from app.services import security
 # Imported by name (not `from ... import send_webhook_request as _send`) so
-# tests can patch `app.api.webhook_routes.send_webhook_request` directly,
-# same pattern as openwebui_routes patching test_connection/list_knowledge.
+# tests can patch `app.api.webhook_routes.send_webhook_request` directly.
 from app.services.webhooks import send_webhook_request
 from app.services.security import enforce_rate_limit
 from app.workers.celery_app import celery_app
@@ -60,8 +54,7 @@ _TEST_COOLDOWN_KEY_PREFIX = 'webhook-test-cooldown:'
 
 def _require_webhooks_enabled() -> None:
     # Kill-switch: with WEBHOOKS_ENABLED=false the whole /webhooks surface
-    # 404s as if the feature does not exist -- mirrors
-    # openwebui_routes._require_openwebui_enabled / import_routes._require_import_enabled.
+    # 404s as if the feature does not exist, like the import kill-switch.
     if not settings.webhooks_enabled:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Not found')
 
@@ -74,11 +67,10 @@ router = APIRouter(prefix='/api/v1/webhooks', dependencies=[Depends(_require_web
 def _validate_webhook_url(raw: str) -> str:
     """Scheme must be http/https, host present, no embedded credentials.
 
-    Unlike import_routes._normalize_base_url / openwebui_routes._normalize_base_url,
-    the path/query/fragment are left untouched and the value is returned
+    The path/query/fragment are left untouched and the value is returned
     verbatim (just stripped) -- a webhook URL commonly carries a meaningful
-    path and/or a query-string token of its own (n8n's /webhook/<id>,
-    Slack-style incoming-webhook paths, ...), so reshaping it would corrupt
+    path and/or a query-string token of its own (for example, a signed
+    archive-ingress path), so reshaping it would corrupt
     the address rather than merely normalize it.
     """
     value = raw.strip()
@@ -104,9 +96,8 @@ def _dedupe_events(events: list[str]) -> list[str]:
 
 def _get_owned_connection(db: Session, connection_id: str, user: User) -> WebhookConnection:
     """Connections are strictly owner-private (a signing secret is a
-    personal credential for the receiving endpoint), mirroring
-    openwebui_routes._get_owned_connection: any non-owner -- including
-    admins -- gets a 404, never a 403, so cross-user connection ids are
+    personal credential for the receiving endpoint). Any non-owner,
+    including an admin, gets a 404 so cross-user connection ids are
     unprobeable."""
     connection = db.get(WebhookConnection, connection_id)
     if connection is None or connection.owner_id != user.id:
@@ -120,7 +111,9 @@ def _connection_to_response(connection: WebhookConnection) -> WebhookConnectionR
         name=connection.name,
         url=connection.url,
         enabled=connection.enabled,
-        events=list(connection.events or []),
+        # Hide retired event names on legacy rows. New writes are already
+        # constrained by the request schema.
+        events=[event for event in (connection.events or []) if event in WEBHOOK_EVENTS],
         has_secret=connection.secret_encrypted is not None,
         created_at=connection.created_at,
         updated_at=connection.updated_at,
@@ -186,8 +179,7 @@ def create_webhook_connection(
         events=_dedupe_events(list(payload.events)),
         enabled=payload.enabled,
         # Write-only from here on: encrypted at rest, never logged, never in
-        # any response schema. Genuinely optional -- unlike OpenWebUI's
-        # api_key, a connection may have no secret at all.
+        # any response schema. A connection may have no secret at all.
         secret_encrypted=security.encrypt_webhook_secret(payload.secret) if payload.secret else None,
     )
     db.add(connection)
@@ -302,8 +294,7 @@ def list_webhook_deliveries(
 ) -> WebhookDeliveryListResponse:
     # Own deliveries only, not team-wide -- a delivery is tied to the user
     # who owns the connection (or triggered the manual send), not to job
-    # visibility, so there is no equivalent of openwebui_routes' job_id-scoped
-    # "own + team + admin" branch here.
+    # visibility; this list is strictly scoped to the connection owner.
     deliveries = db.scalars(
         select(WebhookDelivery)
         .where(WebhookDelivery.owner_id == user.id)
@@ -323,9 +314,7 @@ def send_webhook(
     """Manual, single-job resend: creates a WebhookDelivery row and enqueues
     `deliver_webhook` for the worker to actually build the payload (event
     'job.finished' -- only a FINISHED job can be manually sent) and call
-    app/services/webhooks.send_webhook_request. Mirrors
-    openwebui_routes.create_openwebui_pushes's dispatch shape, but for a
-    single (connection, job) pair rather than a batch."""
+    app/services/webhooks.send_webhook_request for one connection/job pair."""
     enforce_rate_limit(request)
     connection = _get_owned_connection(db, payload.connection_id, user)
     if not connection.enabled:
@@ -339,8 +328,7 @@ def send_webhook(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Job is not finished')
 
     # Server-side cap: an unreachable/very slow receiving endpoint must not
-    # let one user queue unbounded outbound work (mirrors
-    # openwebui_routes.create_openwebui_pushes's pending-count cap).
+    # let one user queue unbounded outbound work.
     pending_count = db.scalar(
         select(func.count()).select_from(WebhookDelivery).where(
             WebhookDelivery.owner_id == user.id,

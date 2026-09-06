@@ -10,15 +10,13 @@ export type WebhookEvent =
   | 'job.finished'
   | 'job.failed'
   | 'import_run.finished'
-  | 'document.processed'
-  | 'collection.updated';
+  | 'document.processed';
 
 export const WEBHOOK_EVENTS: WebhookEvent[] = [
   'job.finished',
   'job.failed',
   'import_run.finished',
   'document.processed',
-  'collection.updated',
 ];
 
 /** Plain-language labels for the events checkbox group. */
@@ -30,10 +28,6 @@ export const webhookEventLabel: Record<WebhookEvent, string> = {
   // job.finished for a successful job, carrying frontmatter + quality-gate
   // data plus a markdown_url instead of the inline markdown job.finished sends.
   'document.processed': 'Document processed',
-  // See contracts/events/collection.updated.md -- fired on POST /collections
-  // and PATCH /collections/{id} (not a job/run completion), fanned out to
-  // every subscribed connection rather than a single per-task one.
-  'collection.updated': 'Collection updated',
 };
 
 export type WebhookConnection = {
@@ -109,11 +103,11 @@ export const webhookDeliveryStatusChip: Record<WebhookDeliveryStatus, string> = 
 };
 
 /**
- * Matches the openwebui_test_cooldown_seconds-style per-connection test
- * cooldown documented for POST /webhooks/connections/{id}/test. The 429
+ * Per-connection cooldown documented for POST
+ * /webhooks/connections/{id}/test. The 429
  * does carry a Retry-After header, but apiJson's ApiError only exposes the
  * parsed detail string, not response headers -- so the client falls back to
- * this fixed window, same as OPENWEBUI_TEST_COOLDOWN_FALLBACK_MS (lib/openwebui.ts).
+ * this fixed window.
  */
 export const WEBHOOK_TEST_COOLDOWN_FALLBACK_MS = 10_000;
 
@@ -121,9 +115,7 @@ const BASE = '/api/v1/webhooks';
 
 /**
  * Like apiFetch + ok-check, but for the DELETE endpoint whose success body
- * we do not need. Duplicates lib/openwebui.ts's `send` rather than
- * importing it -- lib/ files stay independent of each other in this
- * codebase.
+ * we do not need.
  */
 async function send(path: string, init?: RequestInit): Promise<void> {
   const res = await apiFetch(path, init);

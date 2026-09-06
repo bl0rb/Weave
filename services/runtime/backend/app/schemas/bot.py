@@ -13,7 +13,7 @@ quietly ignores half its author's intent.
 
 import re
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 # Lowercase letters/digits, hyphen-separated -- the same shape a URL path
 # segment or a Kubernetes resource name would require, since `id` doubles as
@@ -46,7 +46,7 @@ class N8nConfig(BaseModel):
 
     `webhook_url` is hand-authored YAML content -- configuration, not
     end-user input -- but it is still checked against
-    `settings.n8n_allowed_base_urls` (a simple `str.startswith()` allowlist,
+    `settings.n8n_allowed_base_urls` (an exact scheme/host/port plus path-boundary allowlist,
     see that setting's own docstring in app/core/config.py) once, at BOT
     LOAD time (app/services/botconfig.py), not deferred to the first actual
     webhook call: the URL living in a YAML file is what makes it
@@ -58,6 +58,14 @@ class N8nConfig(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
     webhook_url: str
+    # Optional second factor for n8n installations protected by a bearer
+    # token.  SecretStr keeps accidental repr/log output redacted; the
+    # control plane stores the value encrypted and only Runtime receives it.
+    auth_token: SecretStr | None = None
+    # When enabled, n8n responds with the SSE event contract documented in
+    # contracts/n8n-flow.md. Source-required bots are buffered until their
+    # evidence is known so streaming can never bypass the response guard.
+    streaming: bool = False
     # Passed as this bot's own httpx timeout for the (never-retried, see
     # app/services/n8n_client.py's own docstring) webhook call -- an n8n
     # agent flow doing real tool/search work is expected to take

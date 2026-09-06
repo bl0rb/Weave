@@ -7,9 +7,8 @@ tick is a chain of self-re-enqueued tasks: each execution re-sends itself
 via `self.app.send_task(..., countdown=confluence_refresh_tick_seconds)`.
 The chain is kicked off by the existing `worker_ready` hook in
 app/workers/tasks.py (`celery_app.send_task('confluence_refresh_tick')`, by
-name only -- this module is registered with the Celery app the same way
-import_tasks.py/openwebui_tasks.py are, via an explicit import at the bottom
-of tasks.py).
+name only. This module is registered through an explicit import at the bottom
+of tasks.py.
 
 Singleton discipline (no Beat means nothing else guarantees only one chain
 is ever running) is a Redis SET-NX-EX lock, styled after

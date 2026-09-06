@@ -32,6 +32,10 @@ _T = TypeVar('_T')
 
 @router.get('/bots', response_model=list[BotSummary])
 def list_bots_endpoint() -> list[BotSummary]:
+    try:
+        bots = list_bots()
+    except ChatConfigUnavailable as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return [
         BotSummary(
             id=bot.id,
@@ -39,7 +43,7 @@ def list_bots_endpoint() -> list[BotSummary]:
             description=bot.description,
             retrieval=BotRetrievalSummary(enabled=bot.retrieval.enabled),
         )
-        for bot in list_bots()
+        for bot in bots
     ]
 
 

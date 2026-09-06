@@ -299,8 +299,18 @@ def test_refresh_preserves_collection_and_fails_closed_when_deleted(monkeypatch)
         sent.clear()
         db.get(ImportSource, source.id).last_refresh_at = None
         db.commit()
+        target_run_ids_before = set(
+            db.scalars(select(ImportRun.id).where(ImportRun.source_id == source.id)).all()
+        )
         refresh_tasks._dispatch_due_refreshes()
-        assert sent == []
+        # The scheduler is global and may legitimately dispatch another due
+        # source left by this module's shared database. Assert the security
+        # property for this source: deleting its assigned Collection must not
+        # create a replacement run with an empty scope.
+        target_run_ids_after = set(
+            db.scalars(select(ImportRun.id).where(ImportRun.source_id == source.id)).all()
+        )
+        assert target_run_ids_after == target_run_ids_before
         source_row = db.get(ImportSource, source.id)
         assert 'refusing an unassigned refresh' in source_row.last_refresh_error
     finally:

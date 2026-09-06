@@ -710,8 +710,8 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_DEFAULT_MODEL: ${LLM_DEFAULT_MODEL:-}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60}
-      # Ingest owns the centrally managed provider/API key. Runtime reads a
-      # fresh snapshot per direct turn, preserving stateless horizontal scale.
+      # Ingest owns centrally managed provider and n8n-bot configuration.
+      # Runtime reads fresh snapshots, preserving stateless horizontal scale.
       CHAT_CONFIG_BASE_URL: ${CHAT_CONFIG_BASE_URL:-http://weave-ingest-backend:8000}
       CHAT_CONFIG_SERVICE_TOKEN: ${CHAT_CONFIG_SERVICE_TOKEN:?CHAT_CONFIG_SERVICE_TOKEN is required}
       CHAT_CONFIG_TIMEOUT_SECONDS: ${CHAT_CONFIG_TIMEOUT_SECONDS:-5}
@@ -724,8 +724,8 @@ services:
       WEAVE_DELEGATION_SECRET: ${WEAVE_DELEGATION_SECRET:?WEAVE_DELEGATION_SECRET is required}
       DELEGATION_TOKEN_TTL_SECONDS: ${DELEGATION_TOKEN_TTL_SECONDS:-300}
       # JSON list of webhook base URLs an n8n-provider bot's webhook_url
-      # must start with, checked once at bot-YAML load time (SSRF guard).
-      # Empty (default) disables n8n bots outright.
+      # must match. The guard applies to local YAML and centrally managed
+      # bots whenever Runtime resolves the roster. Empty disables n8n bots.
       N8N_ALLOWED_BASE_URLS: ${N8N_ALLOWED_BASE_URLS:-[]}
       # Forwarded verbatim to n8n as `tools_base_url` so a flow needs no
       # separate configuration of where Weave-Tools lives.

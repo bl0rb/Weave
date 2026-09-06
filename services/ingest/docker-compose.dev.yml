@@ -69,13 +69,7 @@ services:
       IMPORT_PRIVATE_HOST_ALLOWLIST: ${IMPORT_PRIVATE_HOST_ALLOWLIST:-[]}
       IMPORT_MAX_PAGES: ${IMPORT_MAX_PAGES:-200}
       IMPORT_ATTACHMENT_MAX_BYTES: ${IMPORT_ATTACHMENT_MAX_BYTES:-20971520}
-      # OpenWebUI push: same allowlist convention as IMPORT_* -- a LAN-hosted
-      # OpenWebUI needs its host (host or host:port) listed here.
-      OPENWEBUI_ENABLED: ${OPENWEBUI_ENABLED:-true}
-      OPENWEBUI_PRIVATE_HOST_ALLOWLIST: ${OPENWEBUI_PRIVATE_HOST_ALLOWLIST:-[]}
-      # Webhook delivery: same allowlist convention as IMPORT_*/OPENWEBUI_* --
-      # a LAN-hosted target (e.g. n8n) needs its host (host or host:port)
-      # listed here.
+      # Generic export webhooks use a separate private-host allowlist.
       WEBHOOKS_ENABLED: ${WEBHOOKS_ENABLED:-true}
       WEBHOOK_PRIVATE_HOST_ALLOWLIST: ${WEBHOOK_PRIVATE_HOST_ALLOWLIST:-[]}
       WEBHOOK_MAX_PENDING_DELIVERIES_PER_USER: ${WEBHOOK_MAX_PENDING_DELIVERIES_PER_USER:-50}
@@ -152,10 +146,6 @@ services:
       IMPORT_PRIVATE_HOST_ALLOWLIST: ${IMPORT_PRIVATE_HOST_ALLOWLIST:-[]}
       IMPORT_MAX_PAGES: ${IMPORT_MAX_PAGES:-200}
       IMPORT_ATTACHMENT_MAX_BYTES: ${IMPORT_ATTACHMENT_MAX_BYTES:-20971520}
-      # OpenWebUI push: the push task runs on this worker, so it needs the
-      # same OPENWEBUI_* settings as the backend (which only tests/lists).
-      OPENWEBUI_ENABLED: ${OPENWEBUI_ENABLED:-true}
-      OPENWEBUI_PRIVATE_HOST_ALLOWLIST: ${OPENWEBUI_PRIVATE_HOST_ALLOWLIST:-[]}
       # Webhook delivery: the deliver_webhook task runs on this worker, so it
       # needs the same WEBHOOK_* settings as the backend. The pending-cap is
       # also enforced here, not just by the backend's POST /webhooks/send --

@@ -256,7 +256,7 @@ function CreateUserModal({
             autoComplete="new-password"
           />
         </Field>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Role">
             <select
               value={role}
@@ -284,7 +284,7 @@ function CreateUserModal({
         </div>
         <Toggle checked={isActive} onChange={setIsActive} label="Active" />
         <ErrorNotice message={error} />
-        <div className="flex justify-end gap-2 pt-1">
+        <div className="flex flex-wrap justify-end gap-2 pt-1">
           <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
@@ -363,7 +363,7 @@ function EditUserModal({
             autoComplete="new-password"
           />
         </Field>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Role">
             <select
               value={role}
@@ -391,7 +391,7 @@ function EditUserModal({
         </div>
         <Toggle checked={isActive} onChange={setIsActive} label="Active" />
         <ErrorNotice message={error} />
-        <div className="flex justify-end gap-2 pt-1">
+        <div className="flex flex-wrap justify-end gap-2 pt-1">
           <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={busy}>
             Cancel
           </Button>

@@ -1612,9 +1612,8 @@ def vl_settings_for_worker(db: Session, profile_id: str | None) -> dict[str, str
     """Non-raising counterpart to resolve_profile_selection for Celery
     workers (app/workers/import_tasks.py's attachment-OCR dispatch), which
     must never abort a whole run/page over an HTTP-shaped exception --
-    workers in this codebase deliberately stay fastapi-free (see
-    app/workers/openwebui_tasks.py's "instead of raising HTTPException"
-    house rule). The connection was already validated once, at request time
+    workers in this codebase deliberately stay FastAPI-free. The connection
+    was already validated once, at request time
     (import_routes.py's create_import_run calls resolve_profile_selection);
     if it has since been deleted/disabled, this still returns
     vl_connection_id so process_job's own disabled-connection check

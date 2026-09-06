@@ -112,7 +112,7 @@ export function ChatProviderTab() {
               <input className={inputClass} type="password" autoComplete="new-password" value={apiKey} disabled={clearKey} onChange={event => setApiKey(event.target.value)} placeholder={config.has_api_key ? 'Gespeicherten Key beibehalten' : 'sk-…'} />
               {config.has_api_key && <label className="mt-2 flex items-center gap-2 text-xs font-normal text-slate-600"><input type="checkbox" checked={clearKey} onChange={event => setClearKey(event.target.checked)} />Gespeicherten API-Key entfernen</label>}
             </Field>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Timeout (Sekunden)">
                 <input className={inputClass} type="number" min={1} max={300} value={config.timeout_seconds} onChange={event => setConfig({ ...config, timeout_seconds: Number(event.target.value) || 1 })} />
               </Field>

@@ -1001,6 +1001,39 @@ def test_0015_webhook_collection_event_round_trip(tmp_path, monkeypatch) -> None
     assert 'collection_id' in {c['name'] for c in insp.get_columns('webhook_deliveries')}
 
 
+def test_0019_managed_bots_migration_round_trip(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / 'migration_scratch_0019.db'
+    db_url = f'sqlite:///{db_path}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+
+    engine = create_engine(db_url, future=True)
+    _build_legacy_metadata().create_all(bind=engine)
+    cfg = _alembic_config()
+    command.stamp(cfg, '0003_job_markdown_versions')
+    command.upgrade(cfg, '0018_chat_provider_config')
+    assert 'managed_bots' not in set(inspect(engine).get_table_names())
+
+    command.upgrade(cfg, 'head')
+    inspector = inspect(engine)
+    assert 'managed_bots' in set(inspector.get_table_names())
+    assert {
+        'id', 'name', 'description', 'enabled', 'webhook_url', 'streaming',
+        'auth_token_encrypted', 'timeout_seconds', 'teams', 'collections',
+        'require_sources', 'no_context_reply', 'updated_by_id', 'created_at',
+        'updated_at',
+    } <= {column['name'] for column in inspector.get_columns('managed_bots')}
+    foreign_keys = inspector.get_foreign_keys('managed_bots')
+    assert any(
+        fk['referred_table'] == 'users' and fk['constrained_columns'] == ['updated_by_id']
+        for fk in foreign_keys
+    ), foreign_keys
+
+    command.downgrade(cfg, '0018_chat_provider_config')
+    assert 'managed_bots' not in set(inspect(engine).get_table_names())
+    command.upgrade(cfg, 'head')
+    assert 'managed_bots' in set(inspect(engine).get_table_names())
+
+
 def test_migration_revision_ids_fit_alembic_version_column():
     """Alembic stores the current revision in alembic_version.version_num,
     a VARCHAR(32). PostgreSQL enforces that limit; SQLite (this suite's

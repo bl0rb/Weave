@@ -12,13 +12,18 @@ from sqlalchemy import or_, select, update
 from app.core.config import settings
 from app.database.session import SessionLocal
 from app.models.models import DocumentRelease
-from app.services.publications import publication_configured, release_endpoint
+from app.services.publications import (
+    build_collection_registry_changed_payload,
+    publication_configured,
+    release_endpoint,
+)
 from app.services.webhooks import send_webhook_request
 from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
 DELIVERY_TASK_NAME = 'deliver_release'
+COLLECTION_NOTIFICATION_TASK_NAME = 'notify_collection_registry_changed'
 TICK_TASK_NAME = 'publication_tick'
 _LOCK_KEY = 'worker:portal-publication:tick-lock'
 _MAX_ERROR_CHARS = 2000
@@ -110,6 +115,52 @@ def deliver_release(self, release_id: str) -> None:
         # crash or an unexpected local failure.
     finally:
         db.close()
+
+
+@celery_app.task(
+    name=COLLECTION_NOTIFICATION_TASK_NAME,
+    bind=True,
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
+def notify_collection_registry_changed(self, slug: str, attempt: int = 0) -> None:
+    """Tell Knowledge to re-fetch the Collection registry.
+
+    This dedicated service-to-service channel replaces the former fan-out to
+    arbitrary user webhooks. It carries no ACL and periodic registry polling
+    remains the fallback if this best-effort notification cannot be sent.
+    """
+    if not publication_configured():
+        logger.warning('collection registry changed, but Knowledge publication is not configured')
+        return
+
+    http_status, error_message = send_webhook_request(
+        release_endpoint(),
+        build_collection_registry_changed_payload(slug),
+        settings.portal_knowledge_webhook_secret,
+        frozenset(settings.webhook_private_host_allowlist),
+    )
+    if error_message is None:
+        return
+
+    next_attempt = attempt + 1
+    final = 400 <= http_status < 500 or next_attempt >= max(1, settings.publication_max_attempts)
+    if final:
+        logger.error(
+            'collection registry notification for %s failed after %s attempt(s): %s',
+            slug,
+            next_attempt,
+            error_message,
+        )
+        return
+    try:
+        self.app.send_task(
+            COLLECTION_NOTIFICATION_TASK_NAME,
+            args=[slug, next_attempt],
+            countdown=_backoff(next_attempt),
+        )
+    except Exception:
+        logger.exception('failed to schedule collection registry notification retry for %s', slug)
 
 
 def _lock_ttl() -> int:

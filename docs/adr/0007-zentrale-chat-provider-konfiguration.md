@@ -1,4 +1,4 @@
-# ADR 0007: Zentrale Chat-Provider-Konfiguration in Weave-Ingest
+# ADR 0007: Zentrale Chat- und Bot-Konfiguration in Weave-Ingest
 
 **Status:** angenommen
 
@@ -16,12 +16,16 @@ Weave-Runtime liest vor jedem direkten, nicht an n8n delegierten Chat-Turn einen
 
 n8n-Flows sind nicht betroffen. Sie führen ihren Agentenlauf außerhalb der Runtime aus und verwalten ihr dort eingesetztes Modell in n8n. Collection- und Bot-Berechtigungen werden weiterhin vor jeder Delegation aufgelöst und im Delegations-Token begrenzt.
 
+Seit 2026-09-04 verwaltet Weave-Ingest zusätzlich die fachliche Konfiguration von n8n-Bots: Anzeigename, Webhook, Timeout, erlaubte Teams und Collections sowie Quellenpflicht. Runtime liest die aktivierten Einträge über denselben dienst-authentifizierten Kontrollpfad frisch ein und führt sie mit den lokalen YAML-Bots zusammen; ein zentraler Eintrag überschreibt dieselbe Bot-ID. Ein optionales Webhook-Geheimnis liegt verschlüsselt vor, wird nie über die Admin-API zurückgegeben und darf nur an Runtime projiziert werden. Die Netzgrenze bleibt unabhängig davon `N8N_ALLOWED_BASE_URLS` in Runtime. Die Bot-Auswahl kann Nutzerrechte ausschließlich einschränken, nie erweitern.
+
 ## Konsequenzen
 
 - Providerwechsel benötigen keinen Runtime-Rollout.
 - Alle Runtime-Replikate verwenden ab dem nächsten Turn denselben DB-Stand.
 - `CHAT_CONFIG_SERVICE_TOKEN` ist ein neues geteiltes Secret zwischen Ingest und Runtime und muss in Kubernetes aus derselben Secret-Quelle stammen.
 - Pro direktem Turn entsteht ein kleiner interner HTTP-Aufruf zu Ingest.
+- Bot-Listen und Bot-Lookups erzeugen ebenfalls einen kleinen internen HTTP-Aufruf; ein nicht erreichbarer zentraler Kontrollpfad führt geschlossen zu `503` statt zu einer veralteten Teilkonfiguration.
+- Lokale YAML-Bots bleiben für Beispiele, Notbetrieb und isolierte Entwicklung erhalten. Die zentrale Datenbank ist für identische IDs maßgeblich.
 - Für private Providerziele pflegt der Betreiber `CHAT_LLM_PRIVATE_HOST_ALLOWLIST`; der Verbindungstest bleibt über den geschützten `safe_fetch`-Pfad an SSRF- und Redirect-Prüfungen gebunden.
 
 ## Alternativen

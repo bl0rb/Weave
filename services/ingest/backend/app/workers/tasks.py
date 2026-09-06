@@ -549,7 +549,6 @@ def probe_paddle() -> dict[str, str | None]:
 # The worker entrypoint is `celery -A app.workers.tasks`, so any task module
 # must be imported from here to register with the app.
 import app.workers.import_tasks  # noqa: E402,F401  (registers import_confluence)
-import app.workers.openwebui_tasks  # noqa: E402,F401  (registers push_openwebui)
 import app.workers.refresh_tasks  # noqa: E402,F401  (registers confluence_refresh_tick)
 import app.workers.session_cleanup_tasks  # noqa: E402,F401  (registers session_cleanup_tick)
 import app.workers.publication_tasks  # noqa: E402,F401  (registers publication tasks)

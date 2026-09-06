@@ -14,22 +14,12 @@ from pydantic import BaseModel, Field
 # it is dispatched right alongside job.finished (never on its own, never for
 # job.failed) by app/workers/tasks.py's completion hook, through
 # app/workers/webhook_tasks.dispatch_job_event with a second event string.
-#
-# 'collection.updated' (see contracts/events/collection.updated.md) also
-# rides this same connection/delivery/retry machinery, but its dispatch
-# shape differs from every event above: it is fired from app/api/routes.py's
-# POST /collections and PATCH /collections/{id} (not a job/run completion
-# hook) and fans out to every enabled connection subscribed to it, across
-# every owner -- there is no per-task webhook_connection_id to opt a
-# collection into, since a collection is a global ACL/registry resource (see
-# GET /collections/registry), not a job or run one caller configured with a
-# single connection. See app/workers/webhook_tasks.dispatch_collection_event.
 WEBHOOK_EVENTS: tuple[str, ...] = (
-    'job.finished', 'job.failed', 'import_run.finished', 'document.processed', 'collection.updated',
+    'job.finished', 'job.failed', 'import_run.finished', 'document.processed',
 )
 
 WebhookEvent = Literal[
-    'job.finished', 'job.failed', 'import_run.finished', 'document.processed', 'collection.updated',
+    'job.finished', 'job.failed', 'import_run.finished', 'document.processed',
 ]
 
 
@@ -37,11 +27,11 @@ WebhookEvent = Literal[
 
 class WebhookConnectionCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
-    # Not normalized/reshaped (unlike OpenWebUIConnectionCreateRequest.base_url)
-    # -- see app/api/webhook_routes._validate_webhook_url.
+    # Preserved verbatim after validation because paths and query strings can
+    # be meaningful to generic export receivers.
     url: str = Field(min_length=1, max_length=2048)
-    # Write-only, and genuinely optional (unlike OpenWebUI's api_key): a
-    # connection may be created with no signing secret at all.
+    # Write-only and optional: a connection may be created without a signing
+    # secret, though signed exports are recommended.
     secret: str | None = Field(default=None, max_length=4096)
     events: list[WebhookEvent] = Field(min_length=1, max_length=len(WEBHOOK_EVENTS))
     enabled: bool = True
@@ -57,10 +47,8 @@ class WebhookConnectionUpdateRequest(BaseModel):
     #   - key omitted entirely            -> stored secret unchanged
     #   - key present, value None or ''   -> stored secret cleared (secret_encrypted = NULL)
     #   - key present, non-empty value    -> stored secret rotated
-    # Unlike OpenWebUIConnectionUpdateRequest.api_key (omitted/empty both
-    # mean "keep"), the secret column is nullable and a webhook connection
-    # with no secret is a valid, meaningful state -- so there must be an
-    # explicit way to reach it again after one was set.
+    # The secret column is nullable: omitted means "keep", while an explicit
+    # empty value clears it.
     secret: str | None = Field(default=None, max_length=4096)
 
 

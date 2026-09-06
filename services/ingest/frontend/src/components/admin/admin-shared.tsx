@@ -95,13 +95,13 @@ export function SectionCard({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-5">
+    <section className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-slate-950">{title}</h2>
           {description && <p className="mt-0.5 text-sm text-slate-500">{description}</p>}
         </div>
-        {actions && <div className="flex items-center gap-2">{actions}</div>}
+        {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
       </div>
       {children}
     </section>
@@ -222,15 +222,15 @@ export function Modal({
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4">
       <div
         className="absolute inset-0 bg-slate-950/30 backdrop-blur-sm"
         onClick={onClose}
         aria-hidden="true"
       />
-      <div className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-100 bg-white p-6 shadow-2xl">
-        <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-base font-semibold text-slate-950">{title}</h3>
+      <div className="relative max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-100 bg-white p-4 shadow-2xl sm:p-6">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h3 className="min-w-0 break-words text-base font-semibold text-slate-950">{title}</h3>
           <button
             onClick={onClose}
             aria-label="Close dialog"
@@ -277,7 +277,7 @@ export function ConfirmDialog({
     <Modal title={title} onClose={onClose}>
       <div className="text-sm text-slate-600">{body}</div>
       <ErrorNoticeSpaced message={error} />
-      <div className="mt-5 flex justify-end gap-2">
+      <div className="mt-5 flex flex-wrap justify-end gap-2">
         <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>
           Cancel
         </Button>

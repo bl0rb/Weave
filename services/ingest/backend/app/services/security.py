@@ -210,7 +210,7 @@ _OIDC_CLIENT_SECRET_HKDF_INFO = b'oidc-client-secret'
 _IMPORT_CREDENTIAL_HKDF_INFO = b'import-source-credential'
 _VL_CONNECTION_API_KEY_HKDF_INFO = b'vl-connection-api-key'
 _CHAT_PROVIDER_API_KEY_HKDF_INFO = b'chat-provider-api-key'
-_OPENWEBUI_CONNECTION_API_KEY_HKDF_INFO = b'openwebui-connection-api-key'
+_MANAGED_BOT_AUTH_TOKEN_HKDF_INFO = b'managed-bot-auth-token'
 _WEBHOOK_CONNECTION_SECRET_HKDF_INFO = b'webhook-connection-secret'
 
 
@@ -319,39 +319,26 @@ def decrypt_chat_provider_api_key(ciphertext: str) -> str:
         raise ValueError('chat provider API key could not be decrypted') from exc
 
 
-# --- OpenWebUI connection API key encryption ---------------------------------
-#
-# Same Fernet-over-HKDF pattern as OIDC client secrets / import credentials /
-# VL connection API keys, under its own info label.
-# openwebui_connections.api_key_encrypted is write-only at the API; the
-# plaintext exists only inside GET .../knowledge, POST .../test, and the
-# push worker task (see app/workers/openwebui_tasks.py).
-
-def encrypt_openwebui_api_key(plaintext: str) -> str:
-    """Fernet-encrypt an OpenWebUI connection API key for storage in
-    openwebui_connections.api_key_encrypted."""
-    fernet = Fernet(_derive_fernet_key(_OPENWEBUI_CONNECTION_API_KEY_HKDF_INFO))
+def encrypt_managed_bot_auth_token(plaintext: str) -> str:
+    """Encrypt an optional n8n bearer token under its own key domain."""
+    fernet = Fernet(_derive_fernet_key(_MANAGED_BOT_AUTH_TOKEN_HKDF_INFO))
     return fernet.encrypt(plaintext.encode('utf-8')).decode('utf-8')
 
 
-def decrypt_openwebui_api_key(ciphertext: str) -> str:
-    """Inverse of encrypt_openwebui_api_key.
-
-    Raises ValueError if the ciphertext is malformed/tampered, or was
-    encrypted under a different SECRET_KEY (e.g. after a key rotation).
-    """
-    fernet = Fernet(_derive_fernet_key(_OPENWEBUI_CONNECTION_API_KEY_HKDF_INFO))
+def decrypt_managed_bot_auth_token(ciphertext: str) -> str:
+    """Decrypt an n8n bearer token and reject key drift or tampering."""
+    fernet = Fernet(_derive_fernet_key(_MANAGED_BOT_AUTH_TOKEN_HKDF_INFO))
     try:
         return fernet.decrypt(ciphertext.encode('utf-8')).decode('utf-8')
     except InvalidToken as exc:
-        raise ValueError('OpenWebUI connection API key could not be decrypted (wrong SECRET_KEY or corrupted value)') from exc
+        raise ValueError('managed bot authentication token could not be decrypted') from exc
 
 
 # --- Webhook connection secret encryption ------------------------------------
 #
-# Same Fernet-over-HKDF pattern as OIDC client secrets / import credentials /
-# VL connection API keys / OpenWebUI connection API keys, under its own info
-# label. webhook_connections.secret_encrypted is write-only at the API; the
+# Same Fernet-over-HKDF pattern as OIDC client secrets, import credentials,
+# VL connection keys and chat-provider keys, under its own info label.
+# webhook_connections.secret_encrypted is write-only at the API; the
 # plaintext exists only inside POST .../test and the delivery worker task
 # (see app/workers/webhook_tasks.py). Unlike the other secrets above, this one
 # is genuinely optional -- a connection may have no secret at all -- so

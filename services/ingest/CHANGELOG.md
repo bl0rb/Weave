@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- The direct OpenWebUI integration has been retired: connection CRUD, push API, worker task,
+  frontend panels and client-specific configuration are gone. The generic OpenAI-compatible
+  chat gateway remains available independently in Weave API.
+- `collection.updated` can no longer be subscribed to by user-managed export webhooks. It is
+  now a dedicated signed Ingest-to-Knowledge freshness notification containing only the
+  collection slug and timestamps, never the system-wide team ACL matrix.
+- The retired mail API schema has been removed. Individual `.eml` files remain supported by
+  the normal source upload, review and release workflow.
+
 ### Added
 - Form fields keep their labels. Where the pipeline does not recognise a form section as a
   table, its fields decay into one-word paragraphs and label and value come apart —

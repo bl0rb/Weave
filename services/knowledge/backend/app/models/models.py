@@ -147,7 +147,7 @@ class Document(Base):
     # 'paddleocr' | 'mail-eml' | 'pypdf-fallback' | 'spreadsheet-fallback' |
     # 'openai_vision' -- plain String (not a native/CHECK enum), same
     # discipline Weave-Ingest uses for values it doesn't own the contract
-    # for (see e.g. OpenWebUIPush.status in Weave-Ingest's models.py).
+    # for in other durable delivery models.
     engine: Mapped[str] = mapped_column(String(64), nullable=False)
     # 'A' | 'B' | 'C', or NULL if the event carried no quality-gate result
     # (see contracts/events/document.processed.md's quality.grade) --

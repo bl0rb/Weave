@@ -432,7 +432,7 @@
       </div>
       <div class="svc-card" style="--th:var(--t-knowledge)">
         <div class="svc-head"><h3>Weave-Knowledge</h3><span class="tag">Index-Pipeline</span></div>
-        <p>Konsumiert das <code>document.processed</code>-Event: strukturbewusstes Chunking (Headings, Seitenmarker, Breadcrumbs), Metadata-Enrichment, Embeddings, Schreiben in Postgres + pgvector. Ersetzt den bisherigen OpenWebUI-Push.</p>
+        <p>Konsumiert das <code>document.processed</code>-Event: strukturbewusstes Chunking (Headings, Seitenmarker, Breadcrumbs), Metadata-Enrichment, Embeddings, Schreiben in Postgres + pgvector. Ersetzt direkte Pushes an externe Wissenssysteme durch eine kontrollierte interne Veröffentlichung.</p>
         <div class="basis">Basis: neu · Muster aus Ingest</div>
       </div>
       <div class="svc-card" style="--th:var(--t-retrieval)">
@@ -452,7 +452,7 @@
       </div>
       <div class="svc-card" style="--th:var(--t-api)">
         <div class="svc-head"><h3>Weave-API</h3><span class="tag">Bot-Gateway</span></div>
-        <p><code>POST /v1/chat</code> mit bot_id, conversation_id, message → answer, sources, trace. Auth (OIDC + API-Tokens), Rate-Limiting, Conversation State. Open WebUI dockt hier als Dev-Oberfläche an.</p>
+        <p><code>POST /v1/chat</code> mit bot_id, conversation_id, message → answer, sources, trace. Auth (OIDC + API-Tokens), Rate-Limiting, Conversation State. Optional können OpenAI-kompatible Clients diese Gateway-Schnittstelle verwenden.</p>
         <div class="basis">Basis: neu · Auth-Muster aus Ingest</div>
       </div>
     </div>
@@ -491,7 +491,7 @@
       </div>
       <ul class="tasks">
         <li><label><input type="checkbox" data-id="p1-copy" checked><span class="txt">PaddleDoc-Code (Backend, Worker, Frontend, Helm-Chart) nach Weave-Ingest übernehmen; Namespace, Images und Branding umziehen<span class="why">Images heißen heute ghcr.io/bl0rb/paddledoc-*.</span></span></label></li>
-        <li><label><input type="checkbox" data-id="p1-scope" checked><span class="txt">Scope schärfen: <code>push_openwebui</code>-Task deprecaten — Downstream-Verteilung übernimmt künftig Weave-Knowledge über das Event<span class="why">Mail-Ingestion, Confluence-Import und Benchmarks bleiben: das sind Ingestion-Quellen.</span></span></label></li>
+        <li><label><input type="checkbox" data-id="p1-scope" checked><span class="txt">Scope schärfen: direkten Wissenssystem-Push entfernen — Downstream-Verteilung übernimmt Weave-Knowledge über den internen Veröffentlichungsvertrag<span class="why">Mail-Ingestion, Confluence-Import und Benchmarks bleiben: das sind Ingestion-Quellen.</span></span></label></li>
         <li><label><input type="checkbox" data-id="p1-event" checked><span class="txt"><code>document.processed</code>-Event auf der bestehenden Webhook-Infrastruktur implementieren (HMAC-SHA256 und Retry existieren bereits)</span></label></li>
         <li><label><input type="checkbox" data-id="p1-quality" checked><span class="txt">Quality-Gate-Empfehlung (allow/warn/block) im Event-Payload durchreichen<span class="why">Damit Knowledge Grade-C-Dokumente gar nicht erst indiziert.</span></span></label></li>
         <li><label><input type="checkbox" data-id="p1-openapi" checked><span class="txt">API-Vertrag v1 einfrieren und als OpenAPI-Spez exportieren: /upload, /jobs, /export, /mail/messages, /import<span class="why">Weave-API und Knowledge programmieren gegen diesen Vertrag, nicht gegen den Code.</span></span></label></li>
@@ -551,7 +551,7 @@
         <li><label><input type="checkbox" data-id="p4-botconfig" checked><span class="txt">Bot-als-YAML: model, system_prompt, retrieval (knowledge_bases, top_k, rerank, final_k), tools, permissions — geladen von der Runtime</span></label></li>
         <li><label><input type="checkbox" data-id="p4-llm" checked><span class="txt">LLM-Provider-Abstraktion: VL-Connection-Verwaltung aus PaddleDoc als Vorlage (OpenAI-kompatible Endpoints, verschlüsselte Keys)<span class="why">Provider-Abstraktion + FakeLLM umgesetzt; Keys kommen aus der Env — DB-verschlüsselte Connection-Verwaltung nach VL-Muster bei Bedarf später.</span></span></label></li>
         <li><label><input type="checkbox" data-id="p4-guard" checked><span class="txt">Response Guard + Quellenpflicht: Antworten im knowledge-Pfad tragen sources (document, page) aus den Chunk-Metadaten</span></label></li>
-        <li><label><input type="checkbox" data-id="p4-openwebui" checked><span class="txt">Open WebUI als Dev-/Testoberfläche gegen Weave-API anbinden — daneben stellen, nicht in den Kern</span></label></li>
+        <li><label><input type="checkbox" data-id="p4-compatible-api" checked><span class="txt">OpenAI-kompatible Gateway-Schnittstelle für optionale Bestands-Clients anbieten — außerhalb des Kernpfads</span></label></li>
       </ul>
     </div>
 
@@ -567,7 +567,7 @@
         <li><label><input type="checkbox" data-id="p45-registry" checked><span class="txt">Registry-Spiegel in Weave-Knowledge: 60-Sekunden-Tick plus sofortiges <code>collection.updated</code>-Event bei Rechteänderung</span></label></li>
         <li><label><input type="checkbox" data-id="p45-boundary" checked><span class="txt"><code>allowed_collections</code> als harte SQL-Grenze vor dem Ranking, Bot-Scope als Schnittmenge aus Bot- und Nutzerrechten<span class="why">Leere Schnittmenge heißt: gar nicht erst suchen. Der Sentinel <code>__none__</code> hält den Altbestand sichtbar, statt ihn beim Anlegen der ersten Collection lautlos zu entfernen.</span></span></label></li>
         <li><label><input type="checkbox" data-id="p45-streaming" checked><span class="txt">SSE-Streaming von Runtime bis in den OpenAI-Shim; Rechte, Suche und Guard laufen vollständig vor dem ersten Zeichen</span></label></li>
-        <li><label><input type="checkbox" data-id="p45-models" checked><span class="txt"><code>GET /v1/models</code> — Open WebUI füllt seine Bot-Auswahl jetzt selbst</span></label></li>
+        <li><label><input type="checkbox" data-id="p45-models" checked><span class="txt"><code>GET /v1/models</code> — kompatible Clients können die freigegebenen Bots selbst auflisten</span></label></li>
         <li><label><input type="checkbox" data-id="p45-token" checked><span class="txt">Delegations-Token: HMAC-signiert, fünf Minuten gültig, erlaubter Collection-Umfang eingebettet<span class="why">Aussteller und Prüfer schlagen ohne Geheimnis hart fehl — ein leerer HMAC-Schlüssel erzeugt sonst gültige Signaturen.</span></span></label></li>
         <li><label><input type="checkbox" data-id="p45-mcp" checked><span class="txt">MCP-Dienst mit <code>list_collections</code> und <code>search</code>: Umfang immer serverseitig aus der Identität, Argumente können nur einschränken</span></label></li>
         <li><label><input type="checkbox" data-id="p45-n8n" checked><span class="txt">n8n als Bot-Provider mit signiertem Request und SSRF-Allowlist; von n8n gemeldete Quellen werden gegen den Umfang geprüft<span class="why">Quellen aus einem Flow sind eine Behauptung, keine Berechtigung — was außerhalb liegt, wird verworfen und im Trace gezählt.</span></span></label></li>
@@ -611,7 +611,7 @@
         <li><label><input type="checkbox" data-id="p6-knowledgeapi" checked><span class="txt">Weave-Knowledges Lese-API hinter <code>KNOWLEDGE_API_TOKEN</code> (fail-closed 503); der Webhook-Eingang behält HMAC über den rohen Rumpf.</span></label></li>
         <li><label><input type="checkbox" data-id="p6-portal" checked><span class="txt">Wissensportal in Ingest: Wissensbereiche mit <code>read_teams</code> in der Oberfläche, Freigaben als unveränderliche Snapshots (<code>document.released</code>), Indexstatus-Rückmeldung aus Knowledge; zentrale Chat-Provider-Konfiguration (ADR-0007) statt Runtime-Umgebungsvariablen.</span></label></li>
         <li><label><input type="checkbox" data-id="p6-docs" checked><span class="txt">Betriebsdoku als <code>docs/betrieb.md</code> plus HTML-Artefakte im Repo (Architektur, Bauplan, Glossar, Betriebshandbuch); ADR 0001–0007.</span></label></li>
-        <li><label><input type="checkbox" data-id="p6-botsui"><span class="txt">Bots haben weiterhin keine Verwaltungsoberfläche: YAML-Dateien im Volume <code>runtime_bots</code>, bei jedem Aufruf neu gelesen, aber ohne Schreib-API oder Admin-Seite.</span></label></li>
+        <li><label><input type="checkbox" data-id="p6-botsui" checked><span class="txt">Zentrale n8n-Bot-Verwaltung in Ingest: Admins pflegen Webhook, Teams, Wissensbereiche und Quellen-Guard; Runtime liest aktivierte Einträge dienst-authentifiziert pro Anfrage und schneidet den Bot-Scope weiterhin mit den Nutzerrechten. Lokale YAML-Bots bleiben als Fallback und Beispiele erhalten.</span></label></li>
       </ul>
     </div>
   </section>

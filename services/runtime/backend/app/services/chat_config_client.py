@@ -61,3 +61,36 @@ def fetch_chat_provider() -> ChatProviderSnapshot | None:
     if snapshot.enabled and (not snapshot.base_url or not snapshot.model):
         raise ChatConfigUnavailable('Zentrale Chat-Konfiguration ist unvollständig.')
     return snapshot
+
+
+def fetch_managed_bots() -> list[dict] | None:
+    """Fetch enabled admin-managed bots from the same control plane.
+
+    ``None`` means standalone mode (both central settings absent).  An empty
+    list is a valid configured response and leaves the bundled YAML bots as
+    the roster; centrally managed ids override an identically named YAML bot.
+    """
+    base_url = settings.chat_config_base_url.rstrip('/')
+    token = settings.chat_config_service_token
+    if not base_url and not token:
+        return None
+    if not base_url or not token:
+        raise ChatConfigUnavailable('Zentrale Bot-Konfiguration ist unvollständig.')
+    try:
+        response = httpx.get(
+            f'{base_url}/api/v1/internal/bots',
+            headers={'Authorization': f'Bearer {token}'},
+            timeout=settings.chat_config_timeout_seconds,
+        )
+    except httpx.HTTPError as exc:
+        raise ChatConfigUnavailable('Zentrale Bot-Konfiguration ist vorübergehend nicht erreichbar.') from exc
+    if response.status_code != 200:
+        raise ChatConfigUnavailable('Zentrale Bot-Konfiguration ist vorübergehend nicht verfügbar.')
+    try:
+        body = response.json()
+        items = body['items']
+        if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
+            raise TypeError
+        return items
+    except (ValueError, TypeError, KeyError) as exc:
+        raise ChatConfigUnavailable('Zentrale Bot-Konfiguration hat ungültige Daten geliefert.') from exc

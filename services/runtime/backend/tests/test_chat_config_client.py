@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from app.core.config import settings
-from app.services.chat_config_client import ChatConfigUnavailable, fetch_chat_provider
+from app.services.chat_config_client import ChatConfigUnavailable, fetch_chat_provider, fetch_managed_bots
 from app.services.chat_config_client import ChatProviderSnapshot
 from tests.conftest import AUTH_HEADERS, client
 
@@ -13,6 +13,42 @@ def test_unconfigured_client_preserves_standalone_runtime_behavior(monkeypatch):
     monkeypatch.setattr(settings, 'chat_config_base_url', '')
     monkeypatch.setattr(settings, 'chat_config_service_token', '')
     assert fetch_chat_provider() is None
+    assert fetch_managed_bots() is None
+
+
+def test_fetches_enabled_managed_bots_with_service_auth(monkeypatch):
+    monkeypatch.setattr(settings, 'chat_config_base_url', 'http://ingest:8000')
+    monkeypatch.setattr(settings, 'chat_config_service_token', 'shared-token')
+    response = Mock(status_code=200)
+    response.json.return_value = {'items': [{
+        'id': 'service-agent',
+        'name': 'Service Agent',
+        'webhook_url': 'https://n8n.example.test/webhook/service',
+        'auth_token': 'n8n-token',
+        'streaming': False,
+        'timeout_seconds': 60,
+        'teams': ['service'],
+        'collections': ['handbuch'],
+        'require_sources': True,
+        'no_context_reply': 'Keine Belege.',
+    }]}
+    with patch('app.services.chat_config_client.httpx.get', return_value=response) as get:
+        bots = fetch_managed_bots()
+    assert bots and bots[0]['id'] == 'service-agent'
+    assert bots[0]['auth_token'] == 'n8n-token'
+    assert get.call_args.args[0] == 'http://ingest:8000/api/v1/internal/bots'
+    assert get.call_args.kwargs['headers'] == {'Authorization': 'Bearer shared-token'}
+
+
+@pytest.mark.parametrize('body', [{}, {'items': {}}, {'items': ['not-an-object']}])
+def test_managed_bot_snapshot_rejects_invalid_shapes(monkeypatch, body):
+    monkeypatch.setattr(settings, 'chat_config_base_url', 'http://ingest:8000')
+    monkeypatch.setattr(settings, 'chat_config_service_token', 'shared-token')
+    response = Mock(status_code=200)
+    response.json.return_value = body
+    with patch('app.services.chat_config_client.httpx.get', return_value=response):
+        with pytest.raises(ChatConfigUnavailable):
+            fetch_managed_bots()
 
 
 def test_fetches_a_fresh_authenticated_snapshot(monkeypatch):

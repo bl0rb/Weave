@@ -54,7 +54,7 @@ export function ConfluenceConnectionsTab() {
   // Reusable for post-mutation refreshes (create/delete). NOT called from the
   // mount effect below -- react-hooks/set-state-in-effect requires an
   // effect's own body stay await-first, so the mount fetch duplicates this
-  // logic instead of calling `reload()` directly (mirrors openwebui-connections-tab.tsx).
+  // logic instead of calling `reload()` directly.
   const reload = useCallback(async () => {
     try {
       const data = await apiJson<ImportSourceListResponse>('/api/v1/import/sources', { cache: 'no-store' });

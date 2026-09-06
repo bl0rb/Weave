@@ -127,7 +127,7 @@ Generate each with `openssl rand -hex 32`. Never reuse one shared secret's value
 - `RETRIEVAL_DB_PASSWORD` – password for the read-only `weave_retrieval_ro` Postgres role (`docs/adr/0005`); set on **both** `postgres` (consumed by the init script that creates the role) and `weave-retrieval` (its `DATABASE_URL`)
 - `WEAVE_KNOWLEDGE_SECRET_KEY` – Weave-Knowledge's own `SECRET_KEY`
 - `WEAVE_KNOWLEDGE_INGEST_API_TOKEN` – a real Weave-Ingest Personal-Token for Weave-Knowledge's service user (fetches the released snapshot after a `document.released` webhook, and the collection registry)
-- `WEAVE_KNOWLEDGE_WEBHOOK_SECRET` – required: the webhook ingress fails closed (503) while it is unset, since that route writes into the index. `render` mirrors it into Ingest's `PORTAL_KNOWLEDGE_WEBHOOK_SECRET` for the `document.released` delivery; a legacy `collection.updated` webhook connection created in the Ingest admin UI must carry the same value by hand
+- `WEAVE_KNOWLEDGE_WEBHOOK_SECRET` – required: the internal event ingress fails closed (503) while it is unset, since that route writes into the index. `render` mirrors it into Ingest's `PORTAL_KNOWLEDGE_WEBHOOK_SECRET` for `document.released` and the ACL-free `collection.updated` registry hint. Both use the dedicated Ingest→Knowledge channel; no user-managed webhook or n8n configuration is involved
 - `RETRIEVAL_API_TOKEN`, `RUNTIME_API_TOKEN`, `WEAVE_DELEGATION_SECRET`, `INTROSPECTION_SERVICE_TOKEN` – see "Shared secrets" above
 - `WEAVE_API_SECRET_KEY` – Weave-API's own `SECRET_KEY`
 - `TOOLS_API_TOKEN` – gates Weave-Tools' REST surface (not shared with any other service in this compose file — e.g. an n8n HTTP-node credential)

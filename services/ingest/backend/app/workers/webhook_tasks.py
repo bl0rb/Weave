@@ -13,12 +13,12 @@ event but never selected on the task gets nothing; the connection's own
 connection *is* configured.
 
 Registered from app/workers/tasks.py (the `celery -A app.workers.tasks`
-entrypoint) via an explicit import, mirroring app/workers/openwebui_tasks.py;
+entrypoint) via an explicit import;
 app/api/webhook_routes.py and the completion hooks in app/workers/tasks.py /
 app/workers/import_tasks.py enqueue by name only (`deliver_webhook`).
 
-Unlike OpenWebUIPush, WebhookDelivery.status has no 'running' state (just
-'pending' | 'sent' | 'failed' -- see app/models/models.py's docstring), so
+WebhookDelivery.status has no 'running' state (just 'pending' | 'sent' |
+'failed' -- see app/models/models.py's docstring), so
 there is no claim/reclaim dance here: a delivery simply stays 'pending'
 across retries (each retry re-sends the same row, bumping `attempts`) until
 it lands on a terminal 'sent' or 'failed'. Retries are self-re-enqueues with
@@ -39,7 +39,6 @@ from app.database.session import SessionLocal
 from app.models.models import Job, WebhookConnection, WebhookDelivery
 from app.services import security
 from app.services.webhooks import (
-    build_collection_updated_payload,
     build_document_processed_payload,
     build_job_payload,
     build_run_payload,
@@ -140,16 +139,17 @@ def deliver_webhook(self, delivery_id: str) -> None:
                     return
                 payload = build_run_payload(run)
             elif delivery.collection_id:
-                from app.models.models import Collection
-
-                collection = db.get(Collection, delivery.collection_id)
-                if collection is None:
-                    _finish(
-                        db, delivery, status='failed', http_status=None,
-                        error_message='collection was deleted; the delivery cannot continue',
-                    )
-                    return
-                payload = build_collection_updated_payload(collection)
+                # Rows from the retired generic collection.updated fan-out
+                # are never sent after this deployment. Registry changes now
+                # use the dedicated signed Knowledge channel.
+                _finish(
+                    db,
+                    delivery,
+                    status='failed',
+                    http_status=None,
+                    error_message='generic collection registry exports are retired',
+                )
+                return
             else:
                 _finish(
                     db, delivery, status='failed', http_status=None,
@@ -338,69 +338,3 @@ def dispatch_run_event(db, run) -> None:
     connection_id = options.get('webhook_connection_id')
     connection_id = connection_id if isinstance(connection_id, str) and connection_id else None
     _dispatch(db, run.owner_id, 'import_run.finished', connection_id=connection_id, job_id=None, import_run_id=run.id)
-
-
-# --- Dispatch: 'collection.updated' fan-out ---------------------------------
-#
-# Deliberately NOT built on top of _dispatch above: every other event in this
-# module is per-task opt-in (a job/run carries the id of the one connection
-# it should notify), because a job/run is a resource one caller configured.
-# A collection is different in kind -- it is a global ACL/registry resource
-# (see app/models/models.py's Collection docstring and GET
-# /collections/registry, which is likewise never scoped by caller
-# visibility) that anyone with control over it (owner or admin, see
-# app/api/routes.py's _require_collection_control) can change, and there is
-# no single natural "the connection this collection is configured with" to
-# read an id from. So this fans out instead: every enabled connection,
-# regardless of who owns it, that lists 'collection.updated' among its
-# subscribed events gets its own delivery. Called from app/api/routes.py's
-# create_collection/update_collection, each wrapped in its own try/except
-# (a dispatch failure must never break a collection create/update that has
-# already committed) -- see contracts/events/collection.updated.md.
-
-def dispatch_collection_event(db, collection, event: str) -> None:
-    """event is always 'collection.updated'. No-op unless WEBHOOKS_ENABLED is
-    on. Connections with no owner (owner_id NULL -- only reachable via the
-    owner being deleted after the connection was created, ondelete='SET
-    NULL' on WebhookConnection.owner_id) are skipped: there would be no
-    meaningful owner to attribute the resulting WebhookDelivery/pending-cap
-    accounting to, and GET /webhooks/deliveries is owner-scoped, so such a
-    delivery could never even be listed by anyone."""
-    if not settings.webhooks_enabled:
-        return
-
-    connections = db.scalars(
-        select(WebhookConnection).where(
-            WebhookConnection.enabled.is_(True),
-            WebhookConnection.owner_id.is_not(None),
-        )
-    ).all()
-
-    cap = settings.webhook_max_pending_deliveries_per_user
-    for connection in connections:
-        # Filtered in Python, not SQL -- same reasoning as
-        # _configured_connection's identical `events` check above (JSON list
-        # column, no portable containment operator across sqlite/postgres).
-        if event not in (connection.events or []):
-            continue
-
-        owner_id = connection.owner_id
-        pending = _pending_delivery_count(db, owner_id)
-        if pending >= cap:
-            logger.warning(
-                'collection.updated dispatch: pending-delivery cap reached for user %s; skipping connection %s (%s)',
-                owner_id, connection.id, connection.name,
-            )
-            continue
-
-        delivery = WebhookDelivery(
-            connection_id=connection.id,
-            connection_name=connection.name,
-            owner_id=owner_id,
-            event=event,
-            collection_id=collection.id,
-            status='pending',
-        )
-        db.add(delivery)
-        db.commit()
-        celery_app.send_task(DELIVER_TASK_NAME, args=[delivery.id])

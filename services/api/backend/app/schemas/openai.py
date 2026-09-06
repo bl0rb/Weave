@@ -1,9 +1,9 @@
 """OpenAI-compatible request/response shapes for POST /v1/chat/completions
-(app/api/openai_compat.py) -- the shim that lets Open WebUI, or any other
-client built against OpenAI's own Chat Completions API, talk to Weave-API as
+(app/api/openai_compat.py), allowing clients built against OpenAI's Chat
+Completions API to talk to Weave-API as
 if it were an OpenAI-compatible LLM endpoint, with `model` standing in for a
 Weave-Runtime `bot_id` (see that module's own docstring for the full
-request/response mapping, and README's "Open WebUI anbinden").
+request/response mapping).
 
 Deliberately NOT `extra='forbid'` anywhere here, unlike
 app/schemas/bot.py's (Weave-Runtime's) bot YAML schema: a real OpenAI client
@@ -129,9 +129,8 @@ class OpenAIChatCompletionChunk(BaseModel):
 # GET /v1/bots already proxies (app/api/bots.py's own list_bots(), see
 # app/api/openai_compat.py's `list_models`) -- one entry per Weave-Runtime
 # bot, `id` standing in for a bot_id exactly like `model` does on
-# OpenAIChatCompletionRequest above. This is what lets Open WebUI populate
-# its own model dropdown by itself instead of requiring a bot_id to be
-# typed in by hand (see README's "Open WebUI anbinden").
+# OpenAIChatCompletionRequest above. Compatible clients can populate a model
+# dropdown from this endpoint instead of requiring a bot_id by hand.
 
 
 class OpenAIModel(BaseModel):
@@ -139,7 +138,7 @@ class OpenAIModel(BaseModel):
     authoritative source -- Weave-Runtime's own bot registry
     (GET /internal/bots, that service's app/services/botconfig.py) carries
     no bot creation timestamp at all -- so this is simply "now", recomputed
-    on every call; real OpenAI clients (Open WebUI included) use this field
+    on every call; compatible clients use this field
     only for display/sort purposes, never as a cache key or a value they'd
     notice changing between two calls."""
 

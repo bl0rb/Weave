@@ -1,9 +1,9 @@
 # Vertrag: n8n als Bot-Provider
 
 **Vertrag-Version:** 1
-**Status:** angenommen (Weave-Runtime-Seite implementiert; Weave-Tools-seitige Token-Pruefung und ein konkreter n8n-Flow sind Sache des jeweils anbietenden Repos/Operators, nicht Teil dieses Repos)
+**Status:** angenommen (Weave-Runtime und Weave-Tools sind in diesem Monorepo implementiert; konkrete n8n-Flows werden vom jeweiligen Betreiber in n8n gepflegt)
 **Anbieter (Owner):** Weave-Runtime — ruft den Webhook auf (`backend/app/services/n8n_client.py`), entscheidet WELCHE Chat-Turns dorthin gehen (`backend/app/services/chat.py`s `_run_n8n_turn`), und stellt das Delegations-Token aus (`backend/app/services/delegation.py`).
-**Konsument (Caller dieses Vertrags, in der Gegenrichtung Anbieter der Token-Pruefung):** ein n8n-Agentenflow, adressiert ueber `bot.n8n.webhook_url` (`backend/app/schemas/bot.py`s `N8nConfig`) — und, sobald jener Flow das Delegations-Token gegen Weave-Tools einloest, Weave-Tools selbst als Token-Verifizierer.
+**Konsument (Caller dieses Vertrags, in der Gegenrichtung Anbieter der Token-Pruefung):** ein n8n-Agentenflow, adressiert ueber `bot.n8n.webhook_url` (`backend/app/schemas/bot.py`s `N8nConfig`; der Bot kann aus einer lokalen YAML-Datei oder aus der zentralen Ingest-Administration stammen) — und, sobald jener Flow das Delegations-Token gegen Weave-Tools einloest, Weave-Tools selbst als Token-Verifizierer.
 
 ## Zweck
 
@@ -31,7 +31,7 @@ Der Intent-Router (`backend/app/services/router.py`) läuft für einen n8n-Bot *
 
 ## Request: Weave-Runtime → n8n-Webhook
 
-`POST bot.n8n.webhook_url` (siehe `backend/app/schemas/bot.py`s `N8nConfig`, bereits beim Laden der Bot-YAML gegen `N8N_ALLOWED_BASE_URLS` geprueft — nie erst beim Aufruf, siehe `backend/app/services/botconfig.py`).
+`POST bot.n8n.webhook_url` (siehe `backend/app/schemas/bot.py`s `N8nConfig`, bereits beim Zusammenstellen des Bot-Rosters gegen `N8N_ALLOWED_BASE_URLS` geprueft — fuer lokale YAML-Dateien ebenso wie fuer zentral verwaltete Bots, nie erst beim Aufruf; siehe `backend/app/services/botconfig.py`).
 
 **Header:**
 
@@ -79,7 +79,7 @@ token = b64url(json(payload)) + "." + b64url(hmac_sha256(secret, b64url(json(pay
 
 **Ausstellung (Weave-Runtime, `mint_delegation_token`):** `WEAVE_DELEGATION_SECRET` nicht konfiguriert → **harter Fehler** (`DelegationConfigError`), kein unsigniertes Token, kein Fallback. `collections` kommt unveraendert von `resolve_collection_scope` — diese Funktion selbst trifft KEINE eigene Zugriffsentscheidung, sie signiert nur, was ihr Aufrufer bereits aufgeloest hat (siehe `contracts/internal-chat.md`s Collections-Abschnitt fuer die volle `resolve_collection_scope`-Logik, hier unveraendert wiederverwendet).
 
-**Pruefung (Weave-Tools, der Verifizierer — ausserhalb dieses Repos, hier spezifiziert fuer dessen Implementierung):**
+**Pruefung (Weave-Tools, der Verifizierer in `services/tools`):**
 
 1. Signatur pruefen mit `hmac.compare_digest` (konstante Zeit) — Schluessel: dasselbe `WEAVE_DELEGATION_SECRET`.
 2. `payload.v == 1`.
@@ -91,7 +91,7 @@ token = b64url(json(payload)) + "." + b64url(hmac_sha256(secret, b64url(json(pay
 
 ## Wie der n8n-Flow Weave-Tools damit aufruft (REST vs. MCP)
 
-Das `delegation_token` allein genuegt NICHT, um Weave-Tools' REST-Oberflaeche zu erreichen. Diese Repo-Grenze wird in der Praxis leicht uebersehen, weil der Rest dieses Vertrags nur den einen Header dokumentiert, den der Flow selbst AUSSTELLT (den `Authorization`-Header seines eigenen Weave-Tools-Aufrufs, mit dem `delegation_token` als Bearer-Wert) — tatsaechlich verlangt Weave-Tools' REST-Router (`backend/app/api/tools.py` in JENEM Repo) auf JEDER `/api/v1/tools/*`-Route zusaetzlich einen ZWEITEN, unabhaengigen Header, erzwungen von dessen `backend/app/api/deps.py`s `require_tools_service_token`:
+Das `delegation_token` allein genuegt NICHT, um Weave-Tools' REST-Oberflaeche zu erreichen. Diese Repo-Grenze wird in der Praxis leicht uebersehen, weil der Rest dieses Vertrags nur den einen Header dokumentiert, den der Flow selbst AUSSTELLT (den `Authorization`-Header seines eigenen Weave-Tools-Aufrufs, mit dem `delegation_token` als Bearer-Wert) — tatsaechlich verlangt Weave-Tools' REST-Router (`services/tools/app/api/tools.py`) auf JEDER `/api/v1/tools/*`-Route zusaetzlich einen ZWEITEN, unabhaengigen Header, erzwungen von dessen `backend/app/api/deps.py`s `require_tools_service_token`:
 
 | Header | Wert | Beantwortet welche Frage | Wer stellt ihn aus |
 |---|---|---|---|
@@ -102,7 +102,7 @@ Fehlt `X-Tools-Service-Token`, oder ist `TOOLS_API_TOKEN` bei Weave-Tools selbst
 
 **Wichtig — wo `TOOLS_API_TOKEN` lebt:** es ist ein Service-Geheimnis VON Weave-Tools, kein Feld dieses Vertrags und kein Feld des Webhook-Bodys. Weave-Runtime kennt es nicht, besitzt es nicht und schickt es nirgends mit — ein Service-Geheimnis gehoert nicht in einen Payload, den ein anderer Dienst pro Turn zusammenstellt. Der Operator, der den n8n-Flow baut, hinterlegt `TOOLS_API_TOKEN` EIGENSTAENDIG als n8n-Zugangsdaten fuer den HTTP-Request-Node, der Weave-Tools' REST-Endpunkte aufruft — komplett ausserhalb dessen, was Weave-Runtime pro Chat-Turn kontrolliert oder auch nur sehen kann.
 
-**MCP-Weg zum Vergleich:** ruft der Flow stattdessen Weave-Tools' MCP-Server auf (`backend/app/mcp_server.py` in jenem Repo, streamable-HTTP), genuegt EIN einziger Header — `Authorization: Bearer <delegation_token>`. Der MCP-Server hat keine zu `require_tools_service_token` aequivalente Pruefung; jedes MCP-Tool (`list_collections`, `search`) loest seinen Scope ausschliesslich aus diesem einen Header auf. Ein Flow, der ueber MCP statt REST spricht, braucht `TOOLS_API_TOKEN` also gar nicht erst zu konfigurieren — das ist ein bewusster Unterschied zwischen den beiden Transportwegen, keine Luecke in einem von beiden.
+**MCP-Weg zum Vergleich:** ruft der Flow stattdessen Weave-Tools' MCP-Server auf (`services/tools/app/mcp_server.py`, streamable-HTTP), genuegt EIN einziger Header — `Authorization: Bearer <delegation_token>`. Der MCP-Server hat keine zu `require_tools_service_token` aequivalente Pruefung; jedes MCP-Tool (`list_collections`, `search`) loest seinen Scope ausschliesslich aus diesem einen Header auf. Ein Flow, der ueber MCP statt REST spricht, braucht `TOOLS_API_TOKEN` also gar nicht erst zu konfigurieren — das ist ein bewusster Unterschied zwischen den beiden Transportwegen, keine Luecke in einem von beiden.
 
 ## Signatur-Pruefung (n8n prueft Weave-Runtime)
 
@@ -170,5 +170,5 @@ Dieselbe Disziplin wie `contracts/internal-chat.md`: additiv (ein neues optional
 
 ## Änderungsprotokoll
 
-- **v1 (2026-08-31):** Initialer Vertrag — n8n als Bot-Provider, Delegations-Token-Ausstellung (`backend/app/services/delegation.py`), Anfrage-Signatur und Webhook-Aufruf (`backend/app/services/n8n_client.py`), Routing-Entscheidung und Guard-Integration (`backend/app/services/chat.py`s `_run_n8n_turn`), SSRF-Allowlist fuer `webhook_url` (`backend/app/services/botconfig.py`). Die Weave-Tools-seitige Token-Pruefung selbst ist in diesem Vertrag spezifiziert, aber nicht in diesem Repo implementiert.
+- **v1 (2026-08-31):** Initialer Vertrag — n8n als Bot-Provider, Delegations-Token-Ausstellung (`backend/app/services/delegation.py`), Anfrage-Signatur und Webhook-Aufruf (`backend/app/services/n8n_client.py`), Routing-Entscheidung und Guard-Integration (`backend/app/services/chat.py`s `_run_n8n_turn`), SSRF-Allowlist fuer `webhook_url` (`backend/app/services/botconfig.py`). Die Weave-Tools-seitige Token-Pruefung ist in `services/tools` implementiert; nur der konkrete n8n-Flow liegt außerhalb von Weave.
 - **v1, Haertung (2026-08-31, Sicherheits-Review):** additiv, keine Versionserhoehung. (1) `sources[].collection` neu dokumentiert; Weave-Runtime prueft jede von n8n gemeldete Quelle nach dem Aufruf gegen den im Delegations-Token signierten Umfang und verwirft, was nicht passt (`_filter_n8n_sources_by_scope`, Abschnitt "Quellen sind eine Behauptung, keine Berechtigung") — `trace.n8n.dropped_sources` zaehlt mit. (2) Abschnitt "Wie der n8n-Flow Weave-Tools damit aufruft" ergaenzt: Weave-Tools' REST-Oberflaeche verlangt zusaetzlich zum `Authorization`-Delegations-Token einen `X-Tools-Service-Token`-Header (eigene n8n-Zugangsdaten, NIE von Weave-Runtime mitgeschickt); der MCP-Weg braucht diesen zweiten Header nicht. (3) `_validate_n8n_webhook_allowlist` (`backend/app/services/botconfig.py`) vergleicht `N8N_ALLOWED_BASE_URLS`-Eintraege jetzt scheme/host/port-EXAKT (`urllib.parse`) statt per rohem String-Praefix — schliesst Bypass-Varianten ueber angehaengte Domains/Ports oder `userinfo@`-Host-Smuggling.

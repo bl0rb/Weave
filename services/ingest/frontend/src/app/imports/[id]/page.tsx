@@ -194,7 +194,7 @@ export default function ImportRunPage() {
         )}
 
         <section className="mb-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.05)]">
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <p className="text-sm font-semibold text-slate-950">
               {run.pages_imported} of {run.pages_discovered} discovered page(s) imported
             </p>
@@ -281,7 +281,7 @@ export default function ImportRunPage() {
         )}
 
         <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.05)]">
-          <div className="mb-3 flex items-center justify-between gap-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-4">
             <h2 className="text-lg font-semibold">Imported jobs</h2>
             <p className="text-sm text-slate-500">{run.jobs.length} job(s)</p>
           </div>

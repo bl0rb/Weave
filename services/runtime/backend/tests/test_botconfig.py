@@ -98,6 +98,57 @@ def test_load_bot_raises_bot_not_found_error_for_unknown_id(bots_dir):
         load_bot('does-not-exist')
 
 
+def test_centrally_managed_bot_is_merged_with_local_roster(bots_dir, monkeypatch):
+    (bots_dir / 'minimal.yaml').write_text(_MINIMAL_BOT, encoding='utf-8')
+    monkeypatch.setattr(settings, 'n8n_allowed_base_urls', ['https://n8n.example.test/webhook/'])
+    monkeypatch.setattr('app.services.botconfig.fetch_managed_bots', lambda: [{
+        'id': 'service-agent',
+        'name': 'Service Agent',
+        'description': 'Zentral verwaltet',
+        'webhook_url': 'https://n8n.example.test/webhook/service',
+        'streaming': False,
+        'auth_token': 'secret-token',
+        'timeout_seconds': 75,
+        'teams': ['service'],
+        'collections': ['handbuch'],
+        'require_sources': True,
+        'no_context_reply': 'Keine Belege.',
+    }])
+
+    bots = list_bots()
+    assert [bot.id for bot in bots] == ['minimal', 'service-agent']
+    managed = bots[1]
+    assert managed.permissions.teams == ['service']
+    assert managed.retrieval.collections == ['handbuch']
+    assert managed.retrieval.include_uncollected is False
+    assert managed.n8n.webhook_url == 'https://n8n.example.test/webhook/service'
+    assert managed.n8n.timeout_seconds == 75
+    assert managed.n8n.auth_token.get_secret_value() == 'secret-token'
+    assert 'secret-token' not in repr(managed)
+
+
+def test_central_bot_with_same_id_overrides_local_yaml(bots_dir, monkeypatch):
+    (bots_dir / 'minimal.yaml').write_text(_MINIMAL_BOT, encoding='utf-8')
+    monkeypatch.setattr(settings, 'n8n_allowed_base_urls', ['https://n8n.example.test/webhook/'])
+    monkeypatch.setattr('app.services.botconfig.fetch_managed_bots', lambda: [{
+        'id': 'minimal',
+        'name': 'Zentraler Minimal Bot',
+        'webhook_url': 'https://n8n.example.test/webhook/minimal',
+        'streaming': False,
+        'auth_token': '',
+        'timeout_seconds': 120,
+        'teams': [],
+        'collections': [],
+        'require_sources': False,
+        'no_context_reply': 'Nicht verwendet.',
+    }])
+
+    bots = list_bots()
+    assert len(bots) == 1
+    assert bots[0].name == 'Zentraler Minimal Bot'
+    assert bots[0].model.provider == 'n8n'
+
+
 def test_bot_not_found_error_is_a_key_error(bots_dir):
     assert issubclass(BotNotFoundError, KeyError)
 

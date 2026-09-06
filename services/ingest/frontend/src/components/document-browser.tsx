@@ -2,11 +2,10 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Download, Inbox, LoaderCircle, Mail, Pencil, RefreshCcw, RotateCcw, SearchX, Settings2, Trash2, TrendingDown, UploadCloud, Webhook } from 'lucide-react';
+import { Download, Inbox, LoaderCircle, Mail, Pencil, RefreshCcw, RotateCcw, SearchX, Settings2, Trash2, TrendingDown, Webhook } from 'lucide-react';
 
 import { Field, inputClass, LoadingState, Modal } from '@/components/admin/admin-shared';
 import { Button } from '@/components/ui/button';
-import { OpenWebUIPushDialog } from '@/components/openwebui-push-dialog';
 import { WebhookSendDialog } from '@/components/webhook-send-dialog';
 import type { PaddleCapabilities } from '@/components/dashboard/shared';
 import { apiFetch, redirectIfSessionExpired } from '@/lib/api';
@@ -313,7 +312,6 @@ export function DocumentBrowser({
   const [sortKey, setSortKey] = useState<SortKey>('created');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [currentPage, setCurrentPage] = useState(1);
-  const [pushDialogJob, setPushDialogJob] = useState<Job | null>(null);
   const [webhookDialogJob, setWebhookDialogJob] = useState<Job | null>(null);
   const [restartProfileJob, setRestartProfileJob] = useState<Job | null>(null);
 
@@ -1131,19 +1129,6 @@ export function DocumentBrowser({
                             size="sm"
                             variant="ghost"
                             className="h-8 w-8 px-0"
-                            onClick={() => setPushDialogJob(job)}
-                            aria-label={`Push ${job.original_filename} to OpenWebUI`}
-                            title="Push to OpenWebUI"
-                          >
-                            <UploadCloud className="h-4 w-4 text-emerald-700" />
-                          </Button>
-                        )}
-                        {job.status === 'FINISHED' && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            className="h-8 w-8 px-0"
                             onClick={() => setWebhookDialogJob(job)}
                             aria-label={`Send ${job.original_filename} to webhook`}
                             title="Send to webhook"
@@ -1255,13 +1240,6 @@ export function DocumentBrowser({
             </div>
           </div>
         </div>
-      )}
-
-      {pushDialogJob && (
-        <OpenWebUIPushDialog
-          jobs={[{ id: pushDialogJob.id, label: pushDialogJob.original_filename }]}
-          onClose={() => setPushDialogJob(null)}
-        />
       )}
 
       {webhookDialogJob && (

@@ -6,6 +6,7 @@ from app.api.internal import router as internal_router
 from app.core.config import settings
 from app.schemas.health import HealthResponse
 from app.services.botconfig import BotConfigError, list_bots
+from app.services.chat_config_client import ChatConfigUnavailable
 
 app = FastAPI(title=settings.app_name)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
@@ -33,6 +34,9 @@ def healthcheck() -> HealthResponse:
         return HealthResponse(status='degraded', bots=0, detail=f'BOTS_DIR not readable: {exc}')
     except BotConfigError as exc:
         logger.error('invalid bot configuration: %s', exc)
+        return HealthResponse(status='degraded', bots=0, detail=str(exc))
+    except ChatConfigUnavailable as exc:
+        logger.error('managed bot control plane unavailable: %s', exc)
         return HealthResponse(status='degraded', bots=0, detail=str(exc))
     return HealthResponse(status='healthy', bots=len(bots))
 

@@ -266,7 +266,7 @@ export default function BenchmarkPage() {
             )}
 
             <div>
-              <div className="mb-2 flex items-center justify-between gap-4">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-4">
                 <p className="text-sm font-medium text-slate-950">VL connections</p>
                 <p className="text-xs text-slate-500">
                   {selectedConnectionIds.length >= MAX_VL_CONNECTIONS
@@ -350,7 +350,7 @@ export default function BenchmarkPage() {
 
             {uploadProgress && (
               <div aria-live="polite" className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
-                <div className="flex items-center justify-between gap-4">
+                <div className="flex flex-wrap items-center justify-between gap-4">
                   <div>
                     <p className="font-medium text-slate-950">Uploading file</p>
                     <p className="text-xs text-slate-500">{uploadProgress.currentFile}</p>
@@ -384,7 +384,7 @@ export default function BenchmarkPage() {
         </section>
 
         <section className="rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
-          <div className="mb-3 flex items-center justify-between gap-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-4">
             <h2 className="text-lg font-semibold">Runs</h2>
             <p className="text-sm text-slate-500">{runs.length} run(s)</p>
           </div>

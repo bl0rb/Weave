@@ -21,7 +21,7 @@ both ingress hosts).
 | Direction | Peer | Port | Purpose | Needed |
 |---|---|---|---|---|
 | Inbound | User browsers / ingress controller | 8000 (or 443 via ingress) | REST API (UI, session auth) | Required |
-| Inbound | API clients (n8n, scripts) | 8000 (or 443 via ingress) | REST API (session auth) | Optional |
+| Inbound | API clients and scripts | 8000 (or 443 via ingress) | REST API (personal-token or session auth) | Optional |
 | Outbound | PostgreSQL | 5432 | Jobs, users, sessions, results | Required |
 | Outbound | Redis | 6379 | Celery broker/results, runtime settings | Required |
 | Outbound | OIDC identity provider (e.g. `login.microsoftonline.com` for Entra ID, or your Keycloak host) | 443 | OIDC discovery, JWKS, token exchange | Optional — only when OIDC login is configured |
@@ -69,13 +69,13 @@ a bare `host` entry matches any port, `host:port` pins the port):
 | Integration | Env var | Helm value |
 |---|---|---|
 | Confluence import | `IMPORT_PRIVATE_HOST_ALLOWLIST` | `importer.privateHostAllowlist` |
-| OpenWebUI push | `OPENWEBUI_PRIVATE_HOST_ALLOWLIST` | `openwebui.privateHostAllowlist` |
+| Generic export webhook | `WEBHOOK_PRIVATE_HOST_ALLOWLIST` | `webhooks.privateHostAllowlist` |
 | Vision-language endpoint | `VL_PRIVATE_HOST_ALLOWLIST` | `vl.privateHostAllowlist` |
 
 The env values are JSON lists (`["wiki.corp.internal"]`); the Helm values are
 YAML lists rendered into them. Set them for **both** the backend and the worker
-deployment — the test probe runs in the backend, the import crawl and the push
-run in the worker (the chart wires one value into both). The change is an
+deployment — the test probe runs in the backend, while import crawls and export
+delivery run in the worker (the chart wires the relevant values into both). The change is an
 environment variable, so the pods must restart to pick it up.
 
 The allowlist is re-evaluated on every redirect hop against that hop's own

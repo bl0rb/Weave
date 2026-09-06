@@ -21,10 +21,13 @@ from app.database.session import get_db
 from app.models.models import (
     Collection,
     DocumentRelease,
+    ImportRun,
+    ImportRunStatus,
     Job,
     JobArtifact,
     JobMarkdownVersion,
     JobStatus,
+    ManagedBot,
     Tag,
     Team,
     User,
@@ -75,7 +78,7 @@ from app.services.paddle_service import (
 )
 from app.services.security import DUMMY_PASSWORD_HASH, enforce_rate_limit, hash_password, verify_password
 from app.services.storage import build_result_path, save_upload
-from app.workers import webhook_tasks
+from app.workers import publication_tasks
 from app.workers.celery_app import celery_app
 from app.workers.tasks import process_job
 
@@ -937,9 +940,13 @@ def create_collection(
     db.add(collection)
     db.commit()
     try:
-        webhook_tasks.dispatch_collection_event(db, collection, 'collection.updated')
-    except Exception:  # pragma: no cover - webhooks must never break collection creation
-        logger.exception('webhook dispatch failed for collection %s (collection.updated)', collection.id)
+        # Avoid touching the Celery broker in installations that do not use
+        # the Knowledge publication channel. The periodic registry pull in
+        # Knowledge remains the fallback once the channel is configured.
+        if publication_tasks.publication_configured():
+            publication_tasks.notify_collection_registry_changed.delay(collection.slug)
+    except Exception:  # pragma: no cover - notification must never break collection creation
+        logger.exception('Knowledge registry notification failed for collection %s', collection.id)
     return _collection_to_response(collection, user)
 
 
@@ -1034,17 +1041,79 @@ def update_collection(
 
     db.commit()
     try:
-        # Fires on every PATCH, not only when read_teams actually changed --
-        # the event is a cheap "go re-pull the registry" nudge (see
-        # contracts/events/collection.updated.md), so an occasional
-        # no-op-content delivery costs a consumer nothing beyond one extra
-        # GET /collections/registry, while trying to detect "did anything
-        # actually change" here would just be more code for the one change
-        # (read_teams) this whole fix exists for.
-        webhook_tasks.dispatch_collection_event(db, collection, 'collection.updated')
-    except Exception:  # pragma: no cover - webhooks must never break a collection update
-        logger.exception('webhook dispatch failed for collection %s (collection.updated)', collection.id)
+        # Every PATCH nudges Knowledge to pull the authoritative registry.
+        # The internal event carries no ACL and never fans out to user-owned
+        # webhook targets.
+        if publication_tasks.publication_configured():
+            publication_tasks.notify_collection_registry_changed.delay(collection.slug)
+    except Exception:  # pragma: no cover - notification must never break an update
+        logger.exception('Knowledge registry notification failed for collection %s', collection.id)
     return _collection_to_response(collection, user, job_ids=_collection_job_ids(db, collection.id, user))
+
+
+@router.delete('/collections/{collection_id}')
+def delete_collection(
+    collection_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, str]:
+    """Delete an empty collection controlled by the caller.
+
+    Documents are deliberately never cascaded from a collection delete: a
+    release may already have reached the shared RAG store.  The owner must
+    remove documents explicitly first, while pending/running Confluence
+    imports also block deletion so they cannot create orphaned jobs after
+    this transaction commits.
+    """
+    enforce_rate_limit(request)
+    collection = db.get(Collection, collection_id)
+    if collection is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
+    _require_visible_collection(db, collection, user)
+    _require_collection_control(collection, user)
+    slug = collection.slug
+
+    collection_ref = Job.processing_info['settings']['collection_id'].as_string()
+    if db.scalar(select(Job.id).where(collection_ref == collection.id).limit(1)) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='Der Wissensbereich enthält noch Dokumente und kann deshalb nicht gelöscht werden.',
+        )
+
+    import_collection_ref = ImportRun.options['collection_id'].as_string()
+    if db.scalar(
+        select(ImportRun.id)
+        .where(
+            ImportRun.status.in_([ImportRunStatus.PENDING, ImportRunStatus.RUNNING]),
+            import_collection_ref == collection.id,
+        )
+        .limit(1)
+    ) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='Für diesen Wissensbereich läuft noch ein Import. Bitte warte, bis er abgeschlossen ist.',
+        )
+
+    # An empty ManagedBot.collections list means "all collections the user
+    # may read". Silently removing this slug from the last-item list would
+    # therefore widen the bot rather than merely clean up a reference. Block
+    # deletion until an administrator has made that policy change explicit.
+    configured_bot_scopes = db.execute(select(ManagedBot.id, ManagedBot.collections)).all()
+    if any(slug in (bot_collections or []) for _, bot_collections in configured_bot_scopes):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='Der Wissensbereich ist noch einem Bot zugeordnet. Bitte entferne zuerst diese Zuordnung.',
+        )
+
+    db.delete(collection)
+    db.commit()
+    try:
+        if publication_tasks.publication_configured():
+            publication_tasks.notify_collection_registry_changed.delay(slug)
+    except Exception:  # pragma: no cover - notification must never break deletion
+        logger.exception('Knowledge registry notification failed for deleted collection %s', collection_id)
+    return {'status': 'deleted'}
 
 
 @router.post('/collections/{collection_id}/upload', response_model=UploadResponse)

@@ -78,7 +78,7 @@ export default function ImportsPage() {
         )}
 
         <section className="mb-6 rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
-          <div className="mb-3 flex items-center justify-between gap-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-4">
             <h2 className="text-lg font-semibold">Runs</h2>
             <p className="text-sm text-slate-500">{runs.length} run(s)</p>
           </div>

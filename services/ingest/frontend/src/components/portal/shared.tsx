@@ -6,10 +6,10 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { dateLabel, documentState, documentUrl, type PortalDocument } from '@/lib/portal';
 import { useIndexingStatus } from '@/lib/use-indexing-status';
 
-export function PortalPage({ title, description, eyebrow = 'WISSEN VERBINDET', actions, children }: {
-  title: string; description: string; eyebrow?: string; actions?: React.ReactNode; children: React.ReactNode;
+export function PortalPage({ title, description, eyebrow = null, actions, children }: {
+  title: string; description: string; eyebrow?: string | null; actions?: React.ReactNode; children: React.ReactNode;
 }) {
-  return <main id="main-content" className="portal-page"><header className="portal-header"><div><p className="portal-eyebrow">{eyebrow}</p><h1>{title}</h1><p className="portal-description">{description}</p></div>{actions && <div className="portal-actions">{actions}</div>}</header>{children}</main>;
+  return <main id="main-content" className="portal-page"><header className="portal-header"><div>{eyebrow && <p className="portal-eyebrow">{eyebrow}</p>}<h1>{title}</h1><p className="portal-description">{description}</p></div>{actions && <div className="portal-actions">{actions}</div>}</header>{children}</main>;
 }
 export function Notice({ children, error = false, action }: { children: React.ReactNode; error?: boolean; action?: () => void }) {
   return <div className={`portal-notice ${error ? 'portal-notice-error' : ''}`} role={error ? 'alert' : 'status'}><span>{children}</span>{action && <Button variant="outline" size="sm" onClick={action}><RefreshCw size={14} />Erneut versuchen</Button>}</div>;

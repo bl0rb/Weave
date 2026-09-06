@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import math
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -156,6 +156,19 @@ def build_release_payload(job: Job, release_id: str, snapshot_hash: str, frontma
     if isinstance(frontmatter.get('processed_at'), str):
         payload['processed_at'] = frontmatter['processed_at']
     return payload
+
+
+def build_collection_registry_changed_payload(slug: str) -> dict:
+    """Build the internal registry-invalidation nudge for Knowledge.
+
+    The ACL itself is deliberately absent. Knowledge always re-fetches the
+    admin-protected registry and treats this event only as a freshness hint.
+    """
+    return {
+        'event': 'collection.updated',
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'slug': slug,
+    }
 
 
 def release_endpoint() -> str:

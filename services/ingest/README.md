@@ -187,7 +187,7 @@ Since chart 1.1.0 a `SECRET_KEY` is required — the chart refuses to render wit
 - Password-gated view/download/edit/delete per job
 - OpenAI-compatible page-by-page vision profile
 - User accounts with per-user/team data visibility, local login and OIDC SSO
-- Admin console for users, teams, identity providers, worker logs, sign-in logs, Paddle runtime settings, and VL connections
+- Admin console for knowledge areas, n8n-backed bots, users, teams, identity providers, worker logs, sign-in logs, Paddle runtime settings, and VL connections
 
 ## Product Walkthrough
 
@@ -215,7 +215,7 @@ The upload wizard is a four-step flow — **Metadata → Profile → Upload → 
 
 ![Jobs](../../docs/screenshots/jobs-133.png)
 
-Browse all jobs with folder tree, All/Running/Completed/Failed filter chips with counts, a job-type filter, quality grades, and version badges — `v2` marks documents that were re-uploaded with changed content. Every row action is an icon button with a hover tooltip: download, restart, retry with a lower profile, re-run with a different profile, edit markdown, push (OpenWebUI), delete. The Used Profile column shows compact codes like `ocr6m+v3` (full name on hover), and jobs processed by a VL connection show its name.
+Browse all jobs with folder tree, All/Running/Completed/Failed filter chips with counts, a job-type filter, quality grades, and version badges — `v2` marks documents that were re-uploaded with changed content. Every row action is an icon button with a hover tooltip: download, restart, retry with a lower profile, re-run with a different profile, edit markdown, send to an explicitly selected export webhook, delete. The Used Profile column shows compact codes like `ocr6m+v3` (full name on hover), and jobs processed by a VL connection show its name.
 
 ### Job Detail (`/jobs/{id}`)
 
@@ -239,7 +239,7 @@ The report compares duration, pages, output size, quality grade, and errors per 
 
 ### Connections (`/connections`)
 
-Every user configures the external systems their account talks to, in two groups of tabs: **External services** (Confluence — create, test, rename, delete import sources and their auto-refresh interval; OpenWebUI — connection CRUD and recent-push history) and **AI models** (**VL Models** — administrators get the full CRUD panel, everyone else a read-only list of the enabled connections so they can see what a File Task or benchmark can run against).
+Every user configures the external systems their account talks to, in two groups of tabs: **External services** (Confluence — create, test, rename, delete import sources and their auto-refresh interval; generic signed export webhooks for explicitly selected jobs/import runs) and **AI models** (**VL Models** — administrators get the full CRUD panel, everyone else a read-only list of the enabled connections so they can see what a File Task or benchmark can run against). These export webhooks are optional integration adapters; they are not the n8n chat-agent path.
 
 **Portal publication is explicit.** `document.processed` acknowledges authenticated processing with `awaiting_release`; Weave-Knowledge indexes only the immutable, owner/admin-approved [`document.released`](../../contracts/events/document.released.md) snapshot. Delivery status is not index completion.
 
@@ -310,6 +310,8 @@ Common endpoints:
 - `POST /api/v1/benchmarks` — start a benchmark run; `GET /api/v1/benchmarks/{id}/report` for the comparison
 - `GET /api/v1/vl-connections` — enabled VL connections (id, name, model)
 - `POST /api/v1/auth/tokens` / `GET` / `DELETE /api/v1/auth/tokens/{id}` — API token management (session only)
+- `GET` / `POST /api/v1/auth/admin/bots`, `PUT` / `DELETE /api/v1/auth/admin/bots/{id}` — centrally manage n8n-backed bots (admin; secret values are write-only)
+- `GET /api/v1/internal/bots` — enabled bot projection for Weave Runtime (service token; `Cache-Control: no-store`)
 - `GET /api/v1/auth/admin/worker-logs` — worker logs (admin)
 - `GET /api/v1/stats`, `GET /api/v1/health`, `GET /api/v1/paddle/status`, `GET /api/v1/paddle/capabilities`
 
@@ -323,36 +325,37 @@ Every document processed through a collection carries that collection's slug in 
 
 - `POST /api/v1/collections` — create (`name`, optional `slug`, `description`, `read_teams`, plus the existing `email`/`department`/`folder`/`subfolder`/`password`)
 - `GET /api/v1/collections` — list collections visible to the caller (same own/team/admin visibility rule as `GET /jobs`)
+- `PATCH /api/v1/collections/{id}` — rename or change the description/read teams (owner or admin; the stable slug never changes)
+- `DELETE /api/v1/collections/{id}` — delete an empty knowledge area (owner or admin); documents and active imports block deletion instead of being cascaded
 - `GET /api/v1/collections/{id}` — detail, including the ids of jobs uploaded into it
-- `PATCH /api/v1/collections/{id}` — update `name`/`description`/`read_teams` (owner or admin only; the slug itself never changes once documents have been tagged with it). Also fires the [`collection.updated`](../../contracts/events/collection.updated.md) webhook event (see below).
+- `PATCH /api/v1/collections/{id}` — update `name`/`description`/`read_teams` (owner or admin only; the slug itself never changes once documents have been tagged with it). Also queues the internal [`collection.updated`](../../contracts/events/collection.updated.md) freshness notification for Weave-Knowledge.
 - `GET /api/v1/collections/registry` — **admin-only.** `{"items": [{slug, name, description, read_teams}, ...]}` for every collection, unfiltered by caller visibility (same `{items: [...]}` envelope every other list endpoint here uses). This is the sync endpoint **Weave-Knowledge** polls to populate its own `collections` registry table, which **Weave-Retrieval** then reads to decide which collections a team may search. It intentionally returns no document content or job data — identity/ACL metadata only, but that ACL metadata is the complete cross-team access map of the system (every collection's `read_teams`), so a non-admin caller gets 403. **The account whose token Weave-Knowledge uses for this sync must be an admin.**
 
-Rather than relying solely on Weave-Knowledge's periodic poll against the endpoint above, `POST /api/v1/collections` and `PATCH /api/v1/collections/{id}` also fire a [`collection.updated`](../../contracts/events/collection.updated.md) webhook event — same connection/delivery/retry machinery as `document.processed`, but fanned out to every enabled connection subscribed to it (there is no per-collection opt-in connection, unlike a job's `webhook_connection_id`). The payload is a deliberately thin nudge (`slug`, `name`, `description`, `read_teams`, `updated_at`), not a data source: a consumer reacts to it by re-pulling `GET /collections/registry`, which stays the actual source of truth. This closes the gap where a `read_teams` change (a rights revocation in particular) would otherwise only reach Weave-Knowledge at the next periodic sync.
+Rather than relying solely on Weave-Knowledge's periodic poll against the endpoint above, `POST /api/v1/collections` and `PATCH /api/v1/collections/{id}` also queue a dedicated, signed [`collection.updated`](../../contracts/events/collection.updated.md) notification to Weave-Knowledge. Its payload contains only `event`, `timestamp`, and `slug`; it deliberately carries no `read_teams` matrix. Knowledge responds by re-pulling the admin-protected registry. This internal notification is not exposed through user-managed webhook subscriptions and is never sent to n8n.
 
-## n8n Integration
+## n8n agent access
 
-Use HTTP Request nodes with a simple upload -> poll -> fetch pattern.
+The agent path starts at a chat request. Ingest does not push Collections or documents into n8n:
 
 ```mermaid
 flowchart LR
-   A[Document Source\nPDF DOCX PPTX XLSX PNG JPG] --> B[n8n Trigger\nWebhook / Schedule / Drive Watch]
-   B --> C[n8n HTTP Request\nPOST /api/v1/upload]
-   C --> D[Weave Ingest Queue\nCelery + Worker]
-   D --> E[PaddleOCR Processing\nStructured Markdown Output]
-   E --> F[n8n Poll Loop\nGET /api/v1/jobs/job-id]
-   F --> G[n8n Fetch Result\nGET preview / export.json]
-   G --> H[RAG Ingestion\nChunk + Embed + Index]
-   H --> I[Retrieval + Answering\nVector Search + LLM]
+   A[Chat] --> B[Weave API]
+   B --> C[Weave Runtime]
+   C -->|signed turn + delegated Collection scope| D[n8n agent flow]
+   D -->|MCP or REST + delegated token| E[Weave Tools]
+   E --> F[Retrieval]
+   F --> G[Permitted Collections]
+   G --> D
+   D --> C
+   C --> B
+   B --> A
 ```
 
-Since v1.2.1, the simplest integration is a **personal API token**: create one under Settings for a dedicated Weave Ingest user and set a single `Authorization: Bearer pd_...` header on every HTTP Request node — no login node, no cookie forwarding. Use `/export.json` to get markdown plus metadata (hash, version, quality grade) in one call.
+Runtime first resolves the intersection of user permissions, bot scope, and the optional per-request filter. It signs exactly that result into a short-lived Delegations-Token. n8n can then call Weave-Tools over MCP or REST, but it cannot widen the signed Collection scope. Runtime validates the sources reported by n8n against the same scope before returning an answer to the chat. See [`contracts/n8n-flow.md`](../../contracts/n8n-flow.md).
 
-Portal-backed RAG ingestion requires an explicit manual `document.released` snapshot after processing. Downloading an export or receiving `document.processed` does not grant publication. The former mail-specific HTTP integration is retired.
+Generic user-managed webhooks remain available as an optional export adapter for explicitly selected jobs and import runs. They do not receive Collection ACL changes and are not required for the platform's indexing or chat flow.
 
-n8n URL choice:
-
-- n8n inside Docker with Weave Ingest: `http://backend:8000`
-- n8n on host machine: `http://localhost:8000`
+Portal-backed RAG ingestion still requires an explicit manual `document.released` snapshot after processing. Downloading an export or receiving `document.processed` does not grant publication.
 
 ## Deployment and Runtime Notes
 
@@ -503,7 +506,7 @@ Weave Ingest is built to run inside your own network. What is wired in by defaul
 
 - `SECRET_KEY` is what makes the stored third-party credentials readable. Set it once via `scripts/init-env.sh` (or your secret manager) and keep it — rotating it invalidates every stored OIDC client secret, import credential and VL API key, and they have to be entered again.
 - Self-hosted VL endpoints (vLLM, Ollama, LiteLLM) live on private addresses, which `safe_fetch` blocks by default. List them in `VL_PRIVATE_HOST_ALLOWLIST` (`["vl.internal:8000"]`), the same way `IMPORT_PRIVATE_HOST_ALLOWLIST` works for an internal Confluence. Cloud-metadata addresses stay blocked either way.
-- Any private-address target needs an app-level allowlist on top of the firewall rule: an internal Confluence in `IMPORT_PRIVATE_HOST_ALLOWLIST`, a self-hosted OpenWebUI in `OPENWEBUI_PRIVATE_HOST_ALLOWLIST`. A host that is reachable from inside the pod is still rejected with `resolves to a blocked address` until it is listed. Set it on the backend *and* the worker and restart both — see [docs/firewall-requirements.md](../../docs/firewall-requirements.md#privateinternal-targets-need-an-app-level-allowlist-too).
+- Any private-address target needs an app-level allowlist on top of the firewall rule: an internal Confluence in `IMPORT_PRIVATE_HOST_ALLOWLIST`, a self-hosted VL endpoint in `VL_PRIVATE_HOST_ALLOWLIST`, or a generic export receiver in `WEBHOOK_PRIVATE_HOST_ALLOWLIST`. A host that is reachable from inside the pod is still rejected with `resolves to a blocked address` until it is listed. Set the relevant value on every component that makes that outbound request and restart it — see [docs/firewall-requirements.md](../../docs/firewall-requirements.md#privateinternal-targets-need-an-app-level-allowlist-too).
 
 To report a vulnerability, please open a GitHub Security Advisory rather than a public issue.
 

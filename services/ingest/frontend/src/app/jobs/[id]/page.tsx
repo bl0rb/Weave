@@ -4,18 +4,16 @@ import { Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { useParams, useSearchParams } from 'next/navigation';
-import { Mail, Pencil, Settings2, UploadCloud, Webhook } from 'lucide-react';
+import { Mail, Pencil, Settings2, Webhook } from 'lucide-react';
 
 import { ErrorNotice, Field, inputClass, LoadingState, Modal } from '@/components/admin/admin-shared';
 import { Button } from '@/components/ui/button';
 import type { PaddleCapabilities } from '@/components/dashboard/shared';
 import type { JobArtifact } from '@/components/markdown/markdown-view';
-import { OpenWebUIPushDialog } from '@/components/openwebui-push-dialog';
 import { WebhookSendDialog } from '@/components/webhook-send-dialog';
 import { apiFetch, redirectIfSessionExpired, type JobVersionEntry, type JobVersionsResponse } from '@/lib/api';
 import { API_BASE_URL } from '@/lib/api-base';
 import { peekCached, setCached } from '@/lib/data-cache';
-import { type OpenWebUIPush, listOpenWebUIPushes, pushStatusChip } from '@/lib/openwebui';
 
 const CAPABILITIES_PATH = '/api/v1/paddle/capabilities';
 
@@ -147,10 +145,6 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
   // null = not fetched yet, or the backend doesn't support this endpoint yet
   // (404) — the Versions section stays hidden in both cases.
   const [versions, setVersions] = useState<JobVersionEntry[] | null>(null);
-  // null = not fetched yet, no push yet, or the backend doesn't support this
-  // endpoint yet (404) — the last-push line stays hidden in all three cases.
-  const [lastPush, setLastPush] = useState<OpenWebUIPush | null>(null);
-  const [pushDialogOpen, setPushDialogOpen] = useState(false);
   const [webhookDialogOpen, setWebhookDialogOpen] = useState(false);
   const [restartProfileDialogOpen, setRestartProfileDialogOpen] = useState(false);
   const markdownSectionRef = useRef<HTMLElement>(null);
@@ -179,22 +173,6 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
       // error) simply hides the Versions section.
       if (isActive()) {
         setVersions(null);
-      }
-    }
-  };
-
-  const loadLastPush = async (id: string, isActive: () => boolean = () => true) => {
-    try {
-      const data = await listOpenWebUIPushes({ jobId: id, limit: 1 });
-      if (!isActive()) {
-        return;
-      }
-      setLastPush(data.items[0] ?? null);
-    } catch {
-      // Non-fatal: an older backend without this endpoint (or any transient
-      // error) simply hides the last-push line.
-      if (isActive()) {
-        setLastPush(null);
       }
     }
   };
@@ -251,7 +229,6 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
       setJob(jobData);
       setCached(`/api/v1/jobs/${id}`, jobData);
       void loadVersions(id, () => active);
-      void loadLastPush(id, () => active);
       const jobSettings = jobData.processing_info?.settings as Record<string, unknown> | undefined;
       setViewTab(jobSettings?.mode === 'import' ? 'rendered' : 'raw');
       if (jobData.status === 'FINISHED') {
@@ -466,12 +443,6 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
     setSaveMessage(`Saved as version ${payload.version}.`);
     setIsEditing(false);
     setIsSaving(false);
-    // The new version's content no longer matches whatever was last pushed
-    // to OpenWebUI, so the content_stale banner must be recomputed rather
-    // than keep showing the pre-save push status.
-    if (job?.id) {
-      void loadLastPush(job.id);
-    }
   };
 
   return (
@@ -612,10 +583,6 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
             <a href={`${API}/api/v1/jobs/${job.id}/export.json${password ? `?password=${encodeURIComponent(password)}` : ''}`}>
               <Button variant="outline">Download JSON</Button>
             </a>
-            <Button variant="outline" onClick={() => setPushDialogOpen(true)}>
-              <UploadCloud className="h-4 w-4" />
-              Push to OpenWebUI
-            </Button>
             <Button variant="outline" onClick={() => setWebhookDialogOpen(true)}>
               <Webhook className="h-4 w-4" />
               Send to webhook
@@ -635,21 +602,6 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
                 <Settings2 className="h-4 w-4" />
                 Re-run with profile…
               </Button>
-            )}
-          </div>
-        )}
-        {job.status === 'FINISHED' && lastPush && (
-          <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
-            <span>Last OpenWebUI push:</span>
-            <span className={`rounded px-2 py-1 text-xs ${pushStatusChip[lastPush.status]}`}>{lastPush.status}</span>
-            <span>
-              {lastPush.knowledge_name} via {lastPush.connection_name}
-            </span>
-            {lastPush.content_stale && (
-              <span className="font-medium text-amber-700">Content changed since last push</span>
-            )}
-            {lastPush.status === 'failed' && lastPush.error_message && (
-              <span className="text-red-600">{lastPush.error_message}</span>
             )}
           </div>
         )}
@@ -719,13 +671,6 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
           )}
         </section>
       </div>
-      {pushDialogOpen && (
-        <OpenWebUIPushDialog
-          jobs={[{ id: job.id, label: job.original_filename }]}
-          onClose={() => setPushDialogOpen(false)}
-          onPushed={() => void loadLastPush(job.id)}
-        />
-      )}
       {webhookDialogOpen && (
         <WebhookSendDialog
           job={{ id: job.id, label: job.original_filename }}
@@ -849,7 +794,7 @@ function RestartWithProfileDialog({
           <p className="text-sm text-slate-600">No profiles available.</p>
         )}
         <ErrorNotice message={error} />
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={starting}>
             Cancel
           </Button>

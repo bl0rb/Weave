@@ -274,20 +274,15 @@ shared:
       # Ingest's portal publication sender.
       - {service: knowledge, var: WEAVE_KNOWLEDGE_WEBHOOK_SECRET}
       - {service: ingest, var: PORTAL_KNOWLEDGE_WEBHOOK_SECRET}
-    manual_targets:
-      - >
-        Legacy collection.updated delivery: the existing Ingest webhook
-        connection in the admin UI must still use this same value when it is
-        configured to notify Knowledge. `render`/`check` cannot inspect that
-        connection, so keep that legacy connection secret synchronized by
-        hand. The new document.released delivery uses the Ingest environment
-        target above and does not require a separate connection secret.
     comment: >
       Verifies the X-Weave-Ingest-Signature header on the inbound
-      document.released event. Knowledge rejects a missing secret rather than
-      accepting an unsigned publication that could inject arbitrary content
-      into the index. If the values drift, releases are rejected with 401 and
-      remain undelivered; document.processed is only acknowledged as
+      document.released event and the ACL-free collection.updated registry
+      nudge. Both use Ingest's dedicated internal publication channel;
+      user-managed webhooks and n8n are not involved. Knowledge rejects a
+      missing secret rather than accepting an unsigned publication that could
+      inject content or trigger a registry read. If the values drift,
+      releases remain undelivered and registry updates wait for the periodic
+      sync fallback; document.processed is only acknowledged as
       awaiting_release and is not an indexing trigger.
 
   # --- The embedding-model triple: what docs/betrieb.md section 5 calls out
@@ -681,7 +676,7 @@ services:
         value: http://weave-ingest-backend:8000
         type: string
         required: false
-        comment: "Ingest control-plane address; Runtime reads a fresh provider snapshot for each direct turn."
+        comment: "Ingest control-plane address; Runtime reads fresh provider and managed-bot snapshots without keeping local admin state."
       CHAT_CONFIG_TIMEOUT_SECONDS:
         secret: false
         value: 5
@@ -753,9 +748,9 @@ services:
         type: json_list
         required: false
         comment: >
-          SSRF guard, checked once when a bot YAML file is loaded. Empty
-          (default) disables n8n-provider bots outright: no webhook_url can
-          ever start-with-match against nothing.
+          SSRF guard, applied to local YAML bots and centrally managed bots
+          whenever Runtime resolves the current roster. Empty (default)
+          disables n8n-provider bots outright: no webhook_url can match.
       TOOLS_BASE_URL:
         secret: false
         value: "http://weave-tools-backend:8000"

@@ -256,7 +256,7 @@
         <rect x="80" y="352" width="36" height="12" rx="2" fill="transparent" stroke="rgba(100,116,139,0.40)" stroke-width="0.8"/>
         <text x="98" y="361" fill="#64748b" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">INPUT</text>
         <text x="168" y="384" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Clients</text>
-        <text x="168" y="402" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Open WebUI · REST</text>
+        <text x="168" y="402" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Chat-UI · REST</text>
 
         <!-- N6 Weave-API -->
         <rect x="336" y="344" width="192" height="72" rx="6" fill="#f8fafc"/>
@@ -346,7 +346,7 @@
         <ul>
           <li>Neun Dienste laufen — sechs Kern-, zwei Modelldienste, die Chat-Oberfläche — als ein Monorepo mit einer Konfiguration (<code>weave.yaml</code>)</li>
           <li>Bots sind YAML-Dateien, keine neuen Deployments</li>
-          <li>Eigene Chat-Oberfläche (<code>services/chat</code>) mit Streaming, Quellen und Collection-Filter; daneben weiterhin REST und Open WebUI gegen Weave-API</li>
+          <li>Eigene Chat-Oberfläche (<code>services/chat</code>) mit Streaming, Quellen und Collection-Filter; generische OpenAI-kompatible Clients können optional dieselbe Weave-API nutzen</li>
           <li>Wissenssammlungen sind benannte Collections — in Ingest „Wissensbereiche“ — mit <code>read_teams</code>; Administratoren pflegen sie in der Oberfläche, Knowledge spiegelt sie per Registry-Sync</li>
           <li>Anmeldung föderiert an Ingest (ADR-0006): eine Anmeldung für Portal und Chat. Weave-Tools als MCP-Dienst mit rechte-gebundener Suche vorhanden</li>
           <li>Offen: Aktions-Werkzeuge (E-Mail, CRM, Web) hinter dem Intent-Router und eine Verwaltungsoberfläche für Bots</li>

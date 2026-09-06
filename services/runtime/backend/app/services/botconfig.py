@@ -20,6 +20,7 @@ from pydantic import ValidationError
 
 from app.core.config import settings
 from app.schemas.bot import BotConfig
+from app.services.chat_config_client import fetch_managed_bots
 
 
 class BotConfigError(Exception):
@@ -273,14 +274,56 @@ def _load_bot_file(path: Path) -> BotConfig:
     return bot
 
 
+def _managed_bot(raw: dict) -> BotConfig:
+    """Translate the Ingest control-plane projection into BotConfig."""
+    bot_id = str(raw.get('id') or 'unknown')
+    try:
+        bot = BotConfig.model_validate({
+            'id': raw['id'],
+            'name': raw['name'],
+            'description': raw.get('description'),
+            'model': {'provider': 'n8n', 'model': 'n8n-agent-flow'},
+            'system_prompt': 'Du führst Anfragen über den konfigurierten n8n-Workflow aus.',
+            'retrieval': {
+                'enabled': False,
+                'collections': raw.get('collections') or [],
+                'include_uncollected': False,
+            },
+            'permissions': {'teams': raw.get('teams') or []},
+            'guard': {
+                'require_sources': bool(raw.get('require_sources', True)),
+                'no_context_reply': raw.get('no_context_reply') or 'Ich habe dazu keine belegten Informationen gefunden.',
+            },
+            'n8n': {
+                'webhook_url': raw['webhook_url'],
+                'timeout_seconds': raw.get('timeout_seconds', 120),
+                'streaming': bool(raw.get('streaming', False)),
+                'auth_token': raw.get('auth_token') or None,
+            },
+        })
+    except (ValidationError, KeyError, TypeError) as exc:
+        raise BotConfigError(f'managed bot {bot_id!r}: invalid control-plane data') from exc
+    _validate_n8n_webhook_allowlist(bot, Path(f'managed-{bot.id}.yaml'))
+    return bot
+
+
 def list_bots() -> list[BotConfig]:
-    """Every bot in BOTS_DIR, sorted by filename. Raises BotConfigError
-    (naming the offending file) on the FIRST invalid one encountered --
-    every caller today (app/main.py's /health, app/api/internal.py's
-    /internal/bots) wants an all-or-nothing signal for the roster as a
-    whole: a broken bot file is a deployment problem to surface, not
-    something to silently paper over by serving a partial roster."""
-    return [_load_bot_file(path) for path in _bot_files()]
+    """Return the effective local-plus-managed roster.
+
+    Local YAML is read first.  Centrally managed ids then override matching
+    local ids, and the final list is sorted by bot id for stable API output.
+    Invalid local or control-plane data fails the roster as a whole: every
+    caller (health, listing, and a chat turn) needs one unambiguous config,
+    never a silently partial mix of old and new definitions.
+    """
+    local = [_load_bot_file(path) for path in _bot_files()]
+    managed_raw = fetch_managed_bots()
+    if managed_raw is None:
+        return local
+    managed = [_managed_bot(raw) for raw in managed_raw]
+    merged = {bot.id: bot for bot in local}
+    merged.update({bot.id: bot for bot in managed})
+    return [merged[bot_id] for bot_id in sorted(merged)]
 
 
 def load_bot(bot_id: str) -> BotConfig:
