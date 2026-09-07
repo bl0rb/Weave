@@ -35,5 +35,5 @@ httpx==0.28.1
 # numpy: mean-pooling/normalization math over the model's raw output.
 onnxruntime==1.29.0
 tokenizers==0.23.2
-huggingface_hub==1.29.0
+huggingface_hub==1.30.0
 numpy==2.5.2
