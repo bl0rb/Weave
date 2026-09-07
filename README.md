@@ -33,7 +33,7 @@ does not decide anything. It answers questions from documents that someone
 deliberately published, and it shows its work.
 
 The current release is **v0.1.0** — nine services, running and tested end to
-end. The [wiki](https://github.com/bl0rb/Weave-Tools/wiki) is the place to
+end. The [wiki](https://github.com/bl0rb/Weave/wiki) is the place to
 start reading; this README covers the repository itself.
 
 ## The services
