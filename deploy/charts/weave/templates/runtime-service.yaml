@@ -1,0 +1,32 @@
+{{/*
+Weave-Runtime ist clusterintern. Aufrufer ist heute allein das Gateway
+Weave-API; getrennt sind die beiden nur durch das statische
+RUNTIME_API_TOKEN. Deshalb gibt es fuer diesen Dienst bewusst keinen
+Ingress-Block in values.yaml.
+*/}}
+{{- if .Values.runtime.enabled }}
+{{- include "weave.validate" . }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "weave.componentName" (dict "ctx" $ "component" "runtime") }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "runtime") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.runtime.service.type }}
+  ports:
+    # targetPort ist der NAME des Containerports, nicht 8000: der Container
+    # lauscht immer auf 8000, waehrend service.port frei waehlbar ist und in
+    # die von weave.internalUrl gebildete Adresse eingeht.
+    - name: http
+      port: {{ .Values.runtime.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "weave.selectorLabels" (dict "ctx" $ "component" "runtime") | nindent 4 }}
+{{- end }}

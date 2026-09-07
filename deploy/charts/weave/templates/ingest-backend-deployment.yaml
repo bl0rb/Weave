@@ -1,0 +1,149 @@
+{{/*
+Weave-Ingest, Backend -- nimmt Uploads entgegen, legt Jobs an, bedient die
+Verwaltungsoberflaeche und ist zugleich der Identitaetsanbieter, von dem
+Weave-API seine Benutzer borgt (ADR-0004).
+
+Der zugehoerige Service steht in ingest-backend-service.yaml, das gemeinsam
+mit dem Worker benutzte Ablage-PVC in ingest-storage-pvc.yaml.
+*/}}
+{{- if .Values.ingestBackend.enabled }}
+{{- include "weave.validate" . }}
+{{- $w := .Values.ingestBackend }}
+{{- $hpa := .Values.autoscaling.ingestBackend }}
+{{- $component := "ingest-backend" }}
+{{- $storageClaim := .Values.persistence.existingClaim | default (include "weave.componentName" (dict "ctx" $ "component" "ingest-storage")) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "weave.componentName" (dict "ctx" $ "component" $component) }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" $component) | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if $hpa.enabled }}
+  # Mit eingeschalteter HPA wird replicas hier bewusst WEGGELASSEN statt auf
+  # minReplicas gesetzt: sonst traegt jedes `helm upgrade` -- und in einer
+  # GitOps-Installation jeder ArgoCD-Sync -- die Replikenzahl wieder auf den
+  # Wert aus dem Manifest zurueck und macht damit jede Hochskalierung der HPA
+  # rueckgaengig. Ein fehlendes replicas laesst Kubernetes das Feld beim
+  # ersten Anlegen mit 1 vorbelegen und danach allein die HPA schreiben.
+  {{- else }}
+  replicas: {{ $w.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "weave.selectorLabels" (dict "ctx" $ "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "weave.podLabels" (dict "ctx" $ "component" $component "extra" $w.podLabels) | nindent 8 }}
+      {{- $pann := include "weave.podAnnotations" (dict "ctx" $ "extra" $w.podAnnotations) }}
+      {{- with $pann }}
+      annotations:
+        {{- . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "weave.serviceAccountName" . }}
+      {{- with (include "weave.imagePullSecrets" .) }}
+      imagePullSecrets:
+        {{- . | nindent 8 }}
+      {{- end }}
+      {{- with $w.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $w.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $w.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $w.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: ingest-backend
+          image: {{ include "weave.image" (dict "ctx" $ "image" $w.image) | quote }}
+          imagePullPolicy: {{ include "weave.imagePullPolicy" (dict "ctx" $ "image" $w.image) }}
+          {{- with $w.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            # Fest 8000: entrypoint.sh startet uvicorn mit --port 8000, das ist
+            # keine Einstellung. Welchen Port der Service nach aussen anbietet,
+            # entscheidet ingestBackend.service.port; er zielt auf diesen
+            # benannten Port, nicht auf eine Zahl.
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            # REIHENFOLGE: erst die Geheimnisse, dann die Konfiguration. Der
+            # unten erzeugte REDIS_URL traegt $(REDIS_PASSWORD), und Kubernetes
+            # loest ein $(VAR) nur aus einem Eintrag auf, der WEITER OBEN in
+            # derselben env-Liste steht. Siehe den Kopf von _helpers.tpl.
+            {{- include "weave.secretEnv" (dict "ctx" $ "service" "ingest") | nindent 12 }}
+            {{- include "weave.env" (dict "ctx" $ "service" "ingest" "overrides" (dict
+                  "POSTGRES_HOST" (include "weave.postgresHost" $)
+                  "POSTGRES_PORT" (include "weave.postgresPort" $)
+                  "REDIS_URL" (include "weave.redisUrl" (dict "ctx" $ "db" 0))
+                  "PORTAL_KNOWLEDGE_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "knowledge"))
+                )) | nindent 12 }}
+            # Kein Wert aus weave.yaml, sondern eine Entscheidung dieser
+            # Installation: entrypoint.sh faehrt Alembic beim Start, sofern
+            # RUN_ALEMBIC_ON_STARTUP nicht "false" ist. Bei mehr als einer
+            # Replik migrieren sonst mehrere Pods gleichzeitig dieselbe
+            # Datenbank.
+            - name: RUN_ALEMBIC_ON_STARTUP
+              value: {{ $w.runAlembicOnStartup | quote }}
+          {{- if $w.probes.liveness.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ $w.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ $w.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ $w.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ $w.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ $w.probes.liveness.failureThreshold }}
+          {{- end }}
+          {{- if $w.probes.readiness.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ $w.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ $w.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ $w.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ $w.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ $w.probes.readiness.failureThreshold }}
+          {{- end }}
+          {{- with $w.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: shared-storage
+              mountPath: /app/backend/storage
+      volumes:
+        # Immer gemountet, auch ohne Persistenz: das Backend legt hier die
+        # hochgeladene Datei ab, der Worker liest sie von dort wieder --
+        # dasselbe Verzeichnis in zwei Pods (im Compose-Stack das Volume
+        # "storage" in beiden Diensten).
+        - name: shared-storage
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $storageClaim | quote }}
+          {{- else }}
+          # ACHTUNG: ohne Persistenz bekommt JEDER Pod sein eigenes leeres
+          # Verzeichnis. Backend und Worker sehen dann verschiedene Dateien und
+          # jeder Job scheitert daran, dass seine Datei nicht auffindbar ist.
+          # Nur brauchbar, solange ingestWorker.enabled=false ist.
+          emptyDir: {}
+          {{- end }}
+{{- end }}

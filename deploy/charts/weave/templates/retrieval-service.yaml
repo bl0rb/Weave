@@ -1,0 +1,34 @@
+{{/*
+Der Service vor Weave-Retrieval.
+
+Er ist die Adresse, die weave.internalUrl fuer die Komponente "retrieval"
+bildet -- Weave-Runtime, Weave-Tools und Weave-API sprechen ihn darueber
+an (RETRIEVAL_BASE_URL). ClusterIP und kein Ingress: die einzige Huerde
+vor diesem Dienst ist das gemeinsame statische RETRIEVAL_API_TOKEN.
+*/}}
+{{- if .Values.retrieval.enabled }}
+{{- include "weave.validate" . }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "weave.componentName" (dict "ctx" $ "component" "retrieval") }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "retrieval") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.retrieval.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.retrieval.service.port }}
+      # Der Container lauscht immer auf 8000 (Dockerfile: EXPOSE 8000,
+      # uvicorn --port 8000); retrieval.service.port aendert nur, unter
+      # welchem Port ihn andere ansprechen.
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "weave.selectorLabels" (dict "ctx" $ "component" "retrieval") | nindent 4 }}
+{{- end }}

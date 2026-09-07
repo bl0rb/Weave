@@ -1,0 +1,36 @@
+{{/*
+Der Service, dessen Namen weave.redisHost im Modus bundled zurueckgibt --
+beide leiten ihn aus weave.componentName mit der Komponente "redis" ab, es
+gibt also nur eine Stelle, an der dieser Name entsteht.
+
+Im Modus external entsteht hier nichts: dort zeigt weave.redisHost auf
+redis.external.host, und der Port kommt aus redis.external.port. Im Modus
+bundled ist der Port immer 6379 -- er ist eine Eigenschaft dieses Objekts
+und keine Einstellung, die auseinanderlaufen koennte.
+*/}}
+{{- if eq .Values.redis.mode "bundled" }}
+{{- include "weave.validate" . }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "weave.componentName" (dict "ctx" $ "component" "redis") }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "redis") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  # Bewusst ohne type-Schalter in values.yaml: dieser Broker hat kein
+  # Authentifizierungsmodell ausser einem statischen Passwort und gehoert
+  # nicht ueber die Clustergrenze hinaus erreichbar gemacht.
+  type: ClusterIP
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+      protocol: TCP
+  selector:
+    {{- include "weave.selectorLabels" (dict "ctx" $ "component" "redis") | nindent 4 }}
+{{- end }}

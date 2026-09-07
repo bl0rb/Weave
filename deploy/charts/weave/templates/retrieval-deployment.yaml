@@ -1,0 +1,157 @@
+{{/*
+Weave-Retrieval -- hybride Suche (pgvector + tsvector, RRF-Fusion).
+
+BESITZT KEIN SCHEMA. Dieser Dienst liest die Tabellen
+documents/chunks/collections in weave_knowledge, also der Datenbank von
+Weave-Knowledge -- die eine benannte Ausnahme von ADR-0004, beschrieben
+in ADR-0005 und contracts/chunk-store.md. Er tut das ausdruecklich NICHT
+mit den Schreibzugangsdaten von Weave-Knowledge, sondern unter der
+eigenen Rolle config.retrieval.RETRIEVAL_DB_USER (weave_retrieval_ro),
+die nur SELECT darf. Angelegt wird sie vom db-bootstrap-Job, ihr Passwort
+kommt als RETRIEVAL_DB_PASSWORD aus dem Secret -- nie aus values.yaml,
+denn ein Passwort in values landet im Klartext in der Release-Historie.
+
+Aus demselben Grund faehrt dieses Image kein Alembic und hat gar keinen
+Entrypoint dafuer (services/retrieval/backend/Dockerfile startet uvicorn
+direkt): der Lesende migriert nicht.
+
+Nicht ins Internet. Vor diesem Dienst steht allein ein statisches
+Bearer-Token (RETRIEVAL_API_TOKEN), das Weave-Runtime, Weave-Tools und
+Weave-API teilen -- keine Benutzeranmeldung. Deshalb bringt dieses Chart
+fuer ihn keinen Ingress mit.
+*/}}
+{{- if .Values.retrieval.enabled }}
+{{- include "weave.validate" . }}
+{{- $r := .Values.retrieval }}
+{{- $name := include "weave.componentName" (dict "ctx" $ "component" "retrieval") }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "retrieval") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.autoscaling.retrieval.enabled }}
+  # Kein replicas-Feld, solange die HPA fuer retrieval laeuft: ein hier
+  # gesetzter Wert wuerde bei JEDEM `helm upgrade` zurueckgeschrieben, und
+  # die HPA muesste mitten im Upgrade erst wieder hochskalieren.
+  {{- else }}
+  replicas: {{ $r.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "weave.selectorLabels" (dict "ctx" $ "component" "retrieval") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "weave.podLabels" (dict "ctx" $ "component" "retrieval" "extra" $r.podLabels) | nindent 8 }}
+      {{- $pann := include "weave.podAnnotations" (dict "ctx" $ "extra" $r.podAnnotations) }}
+      {{- with $pann }}
+      annotations:
+        {{- . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "weave.serviceAccountName" . }}
+      {{- with (include "weave.imagePullSecrets" .) }}
+      imagePullSecrets:
+        {{- . | nindent 8 }}
+      {{- end }}
+      {{- with $r.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $r.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $r.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $r.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: retrieval
+          image: {{ include "weave.image" (dict "ctx" $ "image" $r.image) | quote }}
+          imagePullPolicy: {{ include "weave.imagePullPolicy" (dict "ctx" $ "image" $r.image) }}
+          {{- with $r.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            {{- /*
+            Erst die Geheimnisse, dann die Konfiguration: die DATABASE_URL
+            unten traegt $(RETRIEVAL_DB_PASSWORD), und Kubernetes setzt ein
+            $(VAR) nur aus einem Eintrag ein, der in DERSELBEN Liste weiter
+            oben steht. Andersherum verbindet sich der Dienst mit dem
+            Passwort "$(RETRIEVAL_DB_PASSWORD)" und meldet einen
+            Authentifizierungsfehler ohne erkennbare Ursache.
+            */}}
+            {{- include "weave.secretEnv" (dict "ctx" $ "service" "retrieval") | nindent 12 }}
+            {{- /*
+            RETRIEVAL_DB_USER geht nur in die DATABASE_URL ein, nicht als
+            eigene Variable in den Container -- der Dienst liest ohnehin
+            nur die fertige URL. Datenbank ist weave_knowledge, also die
+            FREMDE Datenbank, Rolle ist die Read-only-Rolle (ADR-0005),
+            Passwort bleibt als $(VAR) stehen und steht so nie im
+            gerenderten Manifest.
+            */}}
+            {{- $ov := dict
+                  "DATABASE_URL" (include "weave.databaseUrl" (dict "ctx" $
+                      "database" $.Values.postgresql.databases.knowledge
+                      "user" (include "weave.retrievalDbUser" $)
+                      "passwordVar" "RETRIEVAL_DB_PASSWORD")) }}
+            {{- /*
+            Die beiden Modelldienste, jeweils nur wenn dieses Release sie
+            mitbringt und die Konfiguration die Adresse leer laesst -- sonst
+            gewinnt weave.yaml. Siehe weave.embeddingBaseUrl.
+            */}}
+            {{- with (include "weave.embeddingBaseUrl" (dict "ctx" $ "service" "retrieval")) }}
+            {{- $_ := set $ov "EMBEDDING_BASE_URL" . }}
+            {{- end }}
+            {{- with (include "weave.rerankBaseUrl" (dict "ctx" $)) }}
+            {{- $_ := set $ov "RERANK_BASE_URL" . }}
+            {{- end }}
+            {{- include "weave.env" (dict "ctx" $ "service" "retrieval"
+                  "except" (list "RETRIEVAL_DB_USER")
+                  "overrides" $ov) | nindent 12 }}
+          {{- if $r.probes.liveness.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ $r.probes.liveness.path | quote }}
+              port: http
+            initialDelaySeconds: {{ $r.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ $r.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ $r.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ $r.probes.liveness.failureThreshold }}
+          {{- end }}
+          {{- if $r.probes.readiness.enabled }}
+          # GET /health dieses Dienstes fragt die Datenbank an (main.py:
+          # healthcheck mit Depends(get_db)). Die Probe faellt hier also
+          # auch dann aus, wenn nur Postgres weg ist -- gewollt: ein
+          # Retrieval ohne Chunk-Store kann keine Suche beantworten.
+          readinessProbe:
+            httpGet:
+              path: {{ $r.probes.readiness.path | quote }}
+              port: http
+            initialDelaySeconds: {{ $r.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ $r.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ $r.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ $r.probes.readiness.failureThreshold }}
+          {{- end }}
+          {{- with $r.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

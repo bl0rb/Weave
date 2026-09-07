@@ -1,0 +1,142 @@
+{{/*
+Weave-API -- das oeffentliche Gateway.
+
+Besitzt ein eigenes Schema in der Datenbank weave_api (ADR-0004: users,
+api_tokens, conversations, messages) und faehrt als einer von drei Diensten
+Alembic beim Start. Nach aussen sichtbar, deshalb gibt es dafuer einen
+Ingress-Block; nach innen ruft es Runtime, Retrieval und Ingest.
+
+INGEST_LOGIN_URL wird bewusst NICHT ueberschrieben: das ist die Adresse, die
+ein BROWSER aufruft (die /login-Seite des Ingest-Frontends), nicht die
+clusterinterne Adresse. Ueberschrieben wird nur INGEST_API_URL -- damit
+loest dieser Container den Handoff-Code serverseitig ein.
+*/}}
+{{- if .Values.api.enabled }}
+{{- include "weave.validate" . }}
+{{- $c := .Values.api }}
+{{- $auto := .Values.autoscaling.api }}
+{{- $name := include "weave.componentName" (dict "ctx" $ "component" "api") }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "api") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  # Bei eingeschalteter HPA nur der Startwert. Zu autoscaling.api gehoert
+  # der Hinweis aus values.yaml: dieser Dienst migriert beim Start, mehrere
+  # gleichzeitig hochfahrende Repliken migrieren also gleichzeitig.
+  replicas: {{ ternary $auto.minReplicas $c.replicas $auto.enabled }}
+  selector:
+    matchLabels:
+      {{- include "weave.selectorLabels" (dict "ctx" $ "component" "api") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "weave.podLabels" (dict "ctx" $ "component" "api" "extra" $c.podLabels) | nindent 8 }}
+      {{- $pann := include "weave.podAnnotations" (dict "ctx" $ "extra" $c.podAnnotations) }}
+      {{- with $pann }}
+      annotations:
+        {{- . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "weave.serviceAccountName" . }}
+      {{- with (include "weave.imagePullSecrets" .) }}
+      imagePullSecrets:
+        {{- . | nindent 8 }}
+      {{- end }}
+      {{- with $c.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: api
+          image: {{ include "weave.image" (dict "ctx" $ "image" $c.image) | quote }}
+          imagePullPolicy: {{ include "weave.imagePullPolicy" (dict "ctx" $ "image" $c.image) }}
+          {{- with $c.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            # ERST die Geheimnisse, DANN die Konfiguration: DATABASE_URL
+            # unten traegt $(POSTGRES_PASSWORD), und Kubernetes ersetzt ein
+            # $(VAR) nur aus einem Eintrag WEITER OBEN in derselben Liste.
+            # Umgedreht wuerde sich dieser Dienst mit dem Passwort
+            # "$(POSTGRES_PASSWORD)" anmelden. Siehe _helpers.tpl.
+            #
+            # rename: weave.yaml nennt den Wert WEAVE_API_SECRET_KEY, damit
+            # jeder Dienst laut ADR-0003 seinen eigenen .env-Schluessel hat;
+            # der Container liest ihn als SECRET_KEY. Der Schluessel im
+            # Secret behaelt den Namen aus values.generated.yaml.
+            {{- include "weave.secretEnv" (dict "ctx" $ "service" "api"
+                  "rename" (dict "WEAVE_API_SECRET_KEY" "SECRET_KEY")) | nindent 12 }}
+            {{- include "weave.env" (dict "ctx" $ "service" "api"
+                  "except" (list "POSTGRES_USER" "POSTGRES_PORT")
+                  "overrides" (dict
+                    "DATABASE_URL" (include "weave.databaseUrl" (dict "ctx" $
+                      "database" $.Values.postgresql.databases.api
+                      "user" (include "weave.postgresUser" $)
+                      "passwordVar" "POSTGRES_PASSWORD"))
+                    "RUNTIME_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "runtime"))
+                    "RETRIEVAL_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "retrieval"))
+                    "INGEST_API_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "ingestBackend"))
+                  )) | nindent 12 }}
+            # Kein Wert aus weave.yaml: ob migriert wird, ist eine
+            # Eigenschaft dieses Deployments, nicht der Plattform. Das
+            # entrypoint.sh des Images liest die Variable und laesst sie
+            # per Vorgabe wahr sein.
+            - name: RUN_ALEMBIC_ON_STARTUP
+              value: {{ $c.runAlembicOnStartup | quote }}
+          {{- with $c.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if $c.probes.liveness.enabled }}
+          # Der Start wartet erst auf Postgres und faehrt dann Alembic
+          # (entrypoint.sh des Images), bevor uvicorn ueberhaupt lauscht.
+          # Eine fehlschlagende Readiness kostet in dieser Zeit nichts, eine
+          # fehlschlagende Liveness startet den Pod mitten in der Migration
+          # neu -- mit den Vorgabewerten aus values.yaml bleiben dafuer
+          # initialDelaySeconds + failureThreshold x periodSeconds. Wer
+          # laengere Migrationen erwartet, erhoeht genau die.
+          livenessProbe:
+            httpGet:
+              path: {{ $c.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ $c.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ $c.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ $c.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ $c.probes.liveness.failureThreshold }}
+          {{- end }}
+          {{- if $c.probes.readiness.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ $c.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ $c.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ $c.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ $c.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ $c.probes.readiness.failureThreshold }}
+          {{- end }}
+{{- end }}

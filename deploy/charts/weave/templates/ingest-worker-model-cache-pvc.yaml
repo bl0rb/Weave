@@ -1,0 +1,38 @@
+{{/*
+Der Modell-Cache des Ingest-Workers: das $HOME seines eigenen Benutzers
+(worker.Dockerfile, uid 1000 weave-ingest, ENV HOME=/home/weave-ingest).
+PaddleOCR laedt seine Gewichte erst beim ersten Gebrauch nach
+$HOME/.paddlex und $HOME/.paddleocr, also zur Laufzeit und nicht beim Bauen
+des Images.
+
+Ohne diese Ablage laedt jeder Pod-Neustart mehrere hundert MB neu; wo der
+ausgehende Netzverkehr eingeschraenkt ist, schlaegt der Download fehl und
+die Verarbeitung faellt still auf den Pfad ohne OCR zurueck.
+
+Nur ein Volume fuer diesen einen Workload -- deshalb reicht hier
+ReadWriteOnce, solange es bei einer Replik bleibt. Mehr Repliken brauchen
+ReadWriteMany, sonst startet die zweite auf einem anderen Knoten nie.
+*/}}
+{{- if and .Values.ingestWorker.enabled .Values.ingestWorker.modelCache.enabled .Values.ingestWorker.modelCache.persistence.enabled (not .Values.ingestWorker.modelCache.persistence.existingClaim) }}
+{{- $p := .Values.ingestWorker.modelCache.persistence }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "weave.componentName" (dict "ctx" $ "component" "ingest-worker-model-cache") }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "ingest-worker") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- toYaml $p.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ $p.size | quote }}
+  {{- with $p.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+{{- end }}

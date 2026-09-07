@@ -1,0 +1,143 @@
+{{/*
+Weave-Reranker -- POST /rerank in der Cohere/Jina-Form, CPU-only, per
+Vorgabe AUS.
+
+Warum aus: solange config.retrieval.RERANK_PROVIDER auf "none" steht, ruft
+niemand diesen Dienst. Er wird erst gebraucht, wenn der Betrieb ihn auf
+"api" stellt und RERANK_BASE_URL auf ihn zeigen laesst -- der Weg dorthin
+steht in docs/betrieb.md Abschnitt 7.
+
+ZWEI DINGE, DIE BEIM EINSCHALTEN STILL SCHIEFGEHEN KOENNEN, beide in
+values.yaml bereits vermerkt und beide von `weave_config.py check`
+geprueft, nicht von diesem Chart:
+  - SEARCH_TOP_K groesser als RERANKER_MAX_DOCUMENTS: dieser Dienst
+    antwortet dann mit 413, und Weave-Retrieval faellt still auf die
+    unrerankte Reihenfolge zurueck.
+  - RERANKER_API_TOKEN nicht gesetzt: der Dienst startet, antwortet aber je
+    Anfrage mit 503, statt beim Start abzubrechen.
+
+Der Gewichte-Cache liegt unter /data/model-cache -- Vorgabewert von
+RERANKER_CACHE_DIR aus services/reranker/Dockerfile, deshalb muss das Chart
+die Variable nicht setzen, sondern nur an dieser Stelle mounten.
+*/}}
+{{- if .Values.reranker.enabled }}
+{{- include "weave.validate" . }}
+{{- $r := .Values.reranker }}
+{{- $name := include "weave.componentName" (dict "ctx" $ "component" "reranker") }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "reranker") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ $r.replicas }}
+  {{- if and $r.persistence.enabled (not (has "ReadWriteMany" $r.persistence.accessModes)) }}
+  strategy:
+    # Recreate, gleiche Begruendung wie bei embeddings: alle Pods benutzen
+    # dasselbe PVC, und ohne ReadWriteMany kann der neue Pod das Volume
+    # nicht anhaengen, solange der alte laeuft. Hier faellt das noch
+    # deutlicher aus -- ein Pod, der neu laden muss, holt ~2,3 GB.
+    type: Recreate
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "weave.selectorLabels" (dict "ctx" $ "component" "reranker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "weave.podLabels" (dict "ctx" $ "component" "reranker" "extra" $r.podLabels) | nindent 8 }}
+      {{- $pann := include "weave.podAnnotations" (dict "ctx" $ "extra" $r.podAnnotations) }}
+      {{- with $pann }}
+      annotations:
+        {{- . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "weave.serviceAccountName" . }}
+      {{- with (include "weave.imagePullSecrets" .) }}
+      imagePullSecrets:
+        {{- . | nindent 8 }}
+      {{- end }}
+      {{- with $r.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $r.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $r.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $r.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: reranker
+          image: {{ include "weave.image" (dict "ctx" $ "image" $r.image) | quote }}
+          imagePullPolicy: {{ include "weave.imagePullPolicy" (dict "ctx" $ "image" $r.image) }}
+          {{- with $r.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            # secretEnv VOR env -- die verbindliche Reihenfolge aus dem Kopf
+            # von _helpers.tpl.
+            {{- include "weave.secretEnv" (dict "ctx" $ "service" "reranker") | nindent 12 }}
+            {{- include "weave.env" (dict "ctx" $ "service" "reranker") | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          {{- with $r.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if $r.probes.liveness.enabled }}
+          # Wie bei embeddings beweist GET /health nur, dass der Prozess
+          # antwortet: es liefert sofort 200, auch waehrend des ersten
+          # Ladens. Der Unterschied ist die Groesse -- ~2,3 GB statt
+          # ~448 MiB, also rund die fuenffache Wartezeit. Deshalb stehen in
+          # values.yaml hier die noch grosszuegigeren Werte.
+          livenessProbe:
+            httpGet:
+              path: {{ $r.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ $r.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ $r.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ $r.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ $r.probes.liveness.failureThreshold }}
+          {{- end }}
+          {{- if $r.probes.readiness.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ $r.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ $r.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ $r.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ $r.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ $r.probes.readiness.failureThreshold }}
+          {{- end }}
+          volumeMounts:
+            - name: model-cache
+              mountPath: /data/model-cache
+      volumes:
+        - name: model-cache
+          {{- if $r.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $r.persistence.existingClaim | default $name }}
+          {{- else }}
+          # Ohne Persistenz laedt jeder Pod-Neustart ~2,3 GB neu. Das ist
+          # nicht nur langsam -- bei eingeschraenktem Egress schlaegt es
+          # fehl, und jede Suche faellt still auf die unrerankte Reihenfolge
+          # zurueck (services/reranker/README.md, "Betriebshinweis").
+          emptyDir: {}
+          {{- end }}
+{{- end }}

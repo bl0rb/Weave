@@ -1,0 +1,44 @@
+{{/*
+Der Gewichte-Cache unter /models (EMBEDDINGS_CACHE_DIR aus
+services/embeddings/Dockerfile).
+
+Das Image bringt die Gewichte NICHT mit -- es laedt den ONNX-Export von
+intfloat/multilingual-e5-small (~448 MiB) beim ersten Start von
+HuggingFace. Ohne dieses Volume passiert das bei jedem Pod-Neustart erneut,
+also bei jedem Upgrade, jedem Knotenwechsel und jedem OOM-Kill.
+
+Rendert nur, wenn der Dienst eingeschaltet ist, die Persistenz gilt und
+kein fremder Claim benannt wurde: mit persistence.existingClaim mountet das
+Deployment ein PVC, das jemand anders angelegt hat -- dieses Chart legt es
+dann weder an noch veraendert es das vorhandene.
+
+Zum Zusammenspiel mit embeddings.replicas: mit ReadWriteOnce koennen
+mehrere Repliken nur starten, wenn sie auf demselben Knoten landen. Wer
+hochskalieren will, braucht hier ReadWriteMany (mehrere Leser auf einem
+Cache sind unproblematisch) -- oder schaltet die Persistenz ab und nimmt in
+Kauf, dass jede Replik ihre eigene Kopie laedt.
+*/}}
+{{- if and .Values.embeddings.enabled .Values.embeddings.persistence.enabled (not .Values.embeddings.persistence.existingClaim) }}
+{{- include "weave.validate" . }}
+{{- $p := .Values.embeddings.persistence }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "weave.componentName" (dict "ctx" $ "component" "embeddings") }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "embeddings") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- toYaml $p.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ $p.size | quote }}
+  {{- with $p.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+{{- end }}

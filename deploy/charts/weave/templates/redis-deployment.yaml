@@ -1,0 +1,166 @@
+{{/*
+redis.mode=bundled -- EVALUIERUNGSPFAD, wie postgresql.mode=bundled.
+
+Eine Replik, kein Sentinel, kein Cluster, kein Failover. Redis ist hier
+Celery-Broker UND Result-Backend fuer genau zwei Dienste: Weave-Ingest auf
+der logischen Datenbank 0 und Weave-Knowledge auf 1 (ADR-0001 -- eine
+Instanz, getrennte logische Datenbanken, getrennte benannte Queues).
+Retrieval, Runtime, Tools und API benutzen Redis ueberhaupt nicht.
+
+Was ein Ausfall bedeutet: die noch nicht abgeholten Celery-Auftraege sind
+weg. Ein Dokument, das gerade in der Verarbeitung war, bleibt in seinem
+Zwischenzustand stehen und muss neu angestossen werden. Fuer den
+Produktivbetrieb gehoert redis.mode deshalb auf external, mit einer
+Instanz, die jemand anders betreibt und ueberwacht.
+
+Diese Datei rendert nur im Modus bundled; im Modus external entsteht hier
+nichts und weave.redisHost zeigt auf redis.external.host.
+*/}}
+{{- if eq .Values.redis.mode "bundled" }}
+{{- include "weave.validate" . }}
+{{- $r := .Values.redis.bundled }}
+{{- $name := include "weave.componentName" (dict "ctx" $ "component" "redis") }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "redis") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  # Genau eine. Zwei Repliken hinter einem Service waeren zwei voneinander
+  # unabhaengige Broker: ein Worker, der auf der einen Instanz lauscht,
+  # sieht die Auftraege der anderen nie. Das faellt nicht als Fehler auf,
+  # sondern als "manche Dokumente werden einfach nicht verarbeitet".
+  replicas: 1
+  strategy:
+    # Recreate, nicht RollingUpdate: bei eingeschalteter Persistenz haengt
+    # ein ReadWriteOnce-Volume an diesem Pod, das der neue Pod nicht
+    # anhaengen kann, solange der alte laeuft -- er bliebe Pending. Ohne
+    # Persistenz waere RollingUpdate moeglich, aber zwei gleichzeitig
+    # laufende Broker sind aus demselben Grund unerwuenscht wie zwei
+    # Repliken.
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "weave.selectorLabels" (dict "ctx" $ "component" "redis") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "weave.podLabels" (dict "ctx" $ "component" "redis" "extra" $r.podLabels) | nindent 8 }}
+      {{- $pann := include "weave.podAnnotations" (dict "ctx" $ "extra" $r.podAnnotations) }}
+      {{- with $pann }}
+      annotations:
+        {{- . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "weave.serviceAccountName" . }}
+      {{- with (include "weave.imagePullSecrets" .) }}
+      imagePullSecrets:
+        {{- . | nindent 8 }}
+      {{- end }}
+      {{- with $r.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $r.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $r.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $r.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: redis
+          image: {{ include "weave.image" (dict "ctx" $ "image" $r.image) | quote }}
+          imagePullPolicy: {{ include "weave.imagePullPolicy" (dict "ctx" $ "image" $r.image) }}
+          {{- with $r.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          # Dieselben Schalter wie im Compose-Stack
+          # (deploy/docker-compose.weave.yml, Dienst redis).
+          #
+          # Das Passwort steht als $(REDIS_PASSWORD) hier, nicht als Wert:
+          # Kubernetes ersetzt $(VAR) auch in command/args aus der env-Liste
+          # desselben Containers, also steht das Geheimnis nie im
+          # gerenderten Manifest. Aus demselben Grund geht es nicht als
+          # --requirepass <wert> auf die Kommandozeile, wo es in jeder
+          # Prozessliste des Knotens stuende.
+          #
+          # ACHTUNG: mit secrets.optional=true (Vorgabe) bleibt $(...)
+          # unersetzt stehen, wenn das Secret den Schluessel REDIS_PASSWORD
+          # gar nicht fuehrt -- Redis laeuft dann mit dem Passwort
+          # "$(REDIS_PASSWORD)" an, und jeder Dienst scheitert an der
+          # Anmeldung, ohne dass Redis selbst einen Fehler meldet. Der
+          # Schluessel gehoert also in JEDER Installation ins Secret.
+          command:
+            - redis-server
+            - --save
+            - "60"
+            - "1"
+            - --loglevel
+            - warning
+            - --requirepass
+            - $(REDIS_PASSWORD)
+          env:
+            # config.redis ist in weave.yaml leer -- Redis hat ausser dem
+            # Passwort keine Einstellung, die von dort kaeme. Deshalb hier
+            # nur weave.secretEnv und kein weave.env.
+            {{- include "weave.secretEnv" (dict "ctx" $ "service" "redis" "only" (list "REDIS_PASSWORD")) | nindent 12 }}
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+          {{- with $r.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          # tcpSocket und nicht `redis-cli ping`: mit --requirepass muesste
+          # die Probe das Passwort mitbringen (auf der Kommandozeile, also
+          # in der Prozessliste, oder als zweite Kopie in einer weiteren
+          # Umgebungsvariablen). Was eine solche Probe zusaetzlich beweisen
+          # wuerde -- dass die Anmeldung klappt -- beweist sie ohnehin
+          # nicht: sie benutzt dasselbe Passwort wie der Server und wuerde
+          # auch dann gruen bleiben, wenn beide denselben falschen Wert
+          # haben. Ob die DIENSTE hereinkommen, zeigt deren eigene
+          # Bereitschaftspruefung.
+          livenessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          readinessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          {{- if $r.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $r.persistence.existingClaim | default $name }}
+          {{- else }}
+          # Ohne Persistenz ueberlebt der RDB-Schnappschuss aus `--save 60 1`
+          # zwar einen Neustart des Containers, aber nicht den des Pods.
+          # Genau das ist die Vorgabe: ein Broker-Zustand, den niemand
+          # sichert, ist im Zweifel irrefuehrender als gar keiner.
+          emptyDir: {}
+          {{- end }}
+{{- end }}

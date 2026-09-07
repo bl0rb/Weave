@@ -1,0 +1,91 @@
+{{- $ns := .Release.Namespace }}
+{{- $fn := include "weave.fullname" . }}
+Weave {{ .Chart.AppVersion }} -- Release {{ .Release.Name }} im Namespace {{ $ns }}.
+
+1. Was jetzt laeuft
+{{ if .Values.dbBootstrap.enabled }}
+   Der db-bootstrap-Job legt zuerst die drei Datenbanken und die
+   Read-only-Rolle an. Er ist ein post-install/post-upgrade-Hook, laeuft
+   also NACH den Deployments -- bis er durch ist, warten Knowledge, API und
+   Retrieval auf ihre Datenbank und starten neu. Das ist erwartet.
+
+     kubectl -n {{ $ns }} logs job/{{ $fn }}-db-bootstrap
+{{- else }}
+   dbBootstrap.enabled=false: die Datenbanken {{ include "weave.postgresIngestDatabase" . }},
+   {{ .Values.postgresql.databases.knowledge }} und {{ .Values.postgresql.databases.api }}
+   sowie die Rolle {{ include "weave.retrievalDbUser" . }} muessen von Hand
+   existieren, sonst kommt kein Dienst herein. Die noetige SQL steht in
+   deploy/postgres-init/01-create-databases.sh und in
+   templates/db-bootstrap-job.yaml.
+{{- end }}
+
+     kubectl -n {{ $ns }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+2. Die Geheimnisse
+{{ if .Values.secrets.existingSecret }}
+   Dieses Release liest aus dem Secret "{{ .Values.secrets.existingSecret }}", das
+   es weder anlegt noch prueft. Es muss im Namespace {{ $ns }} existieren und
+   diese Schluessel tragen:
+
+{{ include "weave.allSecretNames" . | fromYamlArray | join ", " | indent 5 }}
+{{ if .Values.secrets.optional }}
+   secrets.optional=true: ein fehlender Schluessel laesst den Pod trotzdem
+   starten, und der Dienst sagt beim Start selbst, welche Einstellung ihm
+   fehlt. Auf false setzen, wenn der Pod lieber gar nicht erst starten soll.
+{{- end }}
+{{- else }}
+   Dieses Release hat das Secret {{ $fn }}-secrets aus secrets.values angelegt.
+   Diese Werte stehen im Klartext in der Helm-Release-Historie und sind fuer
+   jeden lesbar, der `helm get values {{ .Release.Name }}` darf. Fuer den
+   Produktivbetrieb gehoert das Secret jemand anderem (External Secrets
+   Operator, Vault, Wrapper-Chart) und dieses Chart nennt es nur beim Namen:
+
+     --set secrets.create=false --set secrets.existingSecret=<name>
+{{- end }}
+
+3. Von aussen erreichbar
+{{- $exposed := list }}
+{{- range $k := (list "ingestFrontend" "ingestBackend" "chat" "api") }}
+{{- if (get $.Values.ingress $k).enabled }}
+{{- range $h := (get $.Values.ingress $k).hosts }}
+{{- $exposed = append $exposed (printf "%s -> %s" $k $h.host) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{ if $exposed }}
+{{- range $e := $exposed }}
+   {{ $e }}
+{{- end }}
+{{- else }}
+   Kein Ingress eingeschaltet -- dieses Chart bringt bewusst keinen
+   Vorgabe-Hostnamen mit. Zum Ausprobieren ohne Ingress:
+
+     kubectl -n {{ $ns }} port-forward svc/{{ $fn }}-chat {{ .Values.chat.service.port }}
+     kubectl -n {{ $ns }} port-forward svc/{{ $fn }}-ingest-frontend {{ .Values.ingestFrontend.service.port }}
+
+   Nach aussen gehoeren nur diese vier: ingestFrontend, ingestBackend, chat,
+   api. Retrieval, Runtime und der Tools-Dienst trennt nur ein statisches
+   Bearer-Token; der MCP-Server hat nicht einmal das.
+{{- end }}
+
+4. Wo die Konfiguration herkommt
+{{ if .Values.config }}
+   Aus values.generated.yaml, erzeugt aus weave.yaml. Wer eine Variable
+   aendern will, aendert weave.yaml und erzeugt die Datei neu:
+
+     python scripts/weave_config.py helm-values \
+         --out deploy/charts/weave/values.generated.yaml
+
+   Die Adressen, unter denen die Dienste einander im Cluster erreichen,
+   bestimmt dagegen dieses Chart (values.yaml, internalUrls) -- in
+   weave.yaml stehen dort die Docker-Compose-Namen.
+{{- end }}
+
+5. Was dieses Chart NICHT tut
+   Es rendert keine SecretStore-, ExternalSecret- oder
+   NetworkPolicy-Objekte, kennt keine StorageClass und keinen Hostnamen und
+   installiert keinen Operator -- weder CloudNativePG noch den
+   Prometheus-Operator{{ if eq .Values.postgresql.mode "cnpg" }}. postgresql.mode=cnpg setzt voraus, dass der
+   CloudNativePG-Operator schon im Cluster ist; sonst bleibt das
+   Cluster-Objekt {{ include "weave.cnpgClusterName" . }} einfach liegen{{ end }}.
+   Das ist Sache des Wrapper-Charts, das dieses hier als Dependency zieht.

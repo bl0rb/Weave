@@ -1,0 +1,33 @@
+{{/*
+Die Chat-Oberflaeche ist einer der vier Dienste, die nach aussen gehoeren
+(ingress.chat in values.yaml, per Vorgabe aus). Der Service bleibt
+ClusterIP, solange service.type nichts anderes sagt.
+
+Kein Eintrag in internalUrls: diese Oberflaeche ruft niemanden im Cluster
+an sich, sie wird nur von aussen aufgerufen.
+*/}}
+{{- if .Values.chat.enabled }}
+{{- include "weave.validate" . }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "weave.componentName" (dict "ctx" $ "component" "chat") }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "chat") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.chat.service.type }}
+  ports:
+    # Der Container lauscht auf 3000 (Next.js, siehe services/chat/Dockerfile);
+    # service.port ist davon unabhaengig waehlbar.
+    - name: http
+      port: {{ .Values.chat.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "weave.selectorLabels" (dict "ctx" $ "component" "chat") | nindent 4 }}
+{{- end }}

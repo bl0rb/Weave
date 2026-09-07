@@ -1,0 +1,174 @@
+{{/*
+postgresql.mode=bundled -- EVALUIERUNGSPFAD, KEIN HA-SETUP.
+
+Eine Replik, ein PVC, ein Deployment. Kein Failover, kein Backup, keine
+Point-in-Time-Recovery, keine Replikation. Jedes Upgrade dieses
+Deployments startet die einzige Datenbank der Plattform neu, und ein
+verlorenes PVC ist ein verlorener Korpus. Das ist genug, um Weave
+auszuprobieren oder eine CI-Strecke zu fahren -- fuer den Produktivbetrieb
+gehoert postgresql.mode auf cnpg (dieses Chart rendert dafuer ein
+CloudNativePG-Cluster) oder auf external (ein Server, den jemand anders
+betreibt und sichert).
+
+Der Modus legt bewusst KEINE Datenbanken und keine Rollen an: das macht in
+allen drei Modi derselbe db-bootstrap-Job, siehe dort.
+*/}}
+{{- if eq .Values.postgresql.mode "bundled" }}
+{{- include "weave.validate" . }}
+{{- $b := .Values.postgresql.bundled }}
+{{- $name := include "weave.componentName" (dict "ctx" $ "component" "postgres") }}
+{{- if and $b.persistence.enabled (not $b.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "postgres") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- toYaml $b.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ $b.persistence.size | quote }}
+  {{- with $b.persistence.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+---
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "postgres") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+      protocol: TCP
+  selector:
+    {{- include "weave.selectorLabels" (dict "ctx" $ "component" "postgres") | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "postgres") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  # Genau eine. Zwei Repliken auf demselben PVC waeren zwei Postgres-
+  # Prozesse auf einem Datenverzeichnis -- das beschaedigt es.
+  replicas: 1
+  strategy:
+    # Recreate, nicht RollingUpdate: der neue Pod koennte das
+    # ReadWriteOnce-Volume ohnehin nicht anhaengen, solange der alte laeuft,
+    # und wuerde ewig Pending bleiben.
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "weave.selectorLabels" (dict "ctx" $ "component" "postgres") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "weave.podLabels" (dict "ctx" $ "component" "postgres" "extra" $b.podLabels) | nindent 8 }}
+      {{- $pann := include "weave.podAnnotations" (dict "ctx" $ "extra" $b.podAnnotations) }}
+      {{- with $pann }}
+      annotations:
+        {{- . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "weave.serviceAccountName" . }}
+      {{- with (include "weave.imagePullSecrets" .) }}
+      imagePullSecrets:
+        {{- . | nindent 8 }}
+      {{- end }}
+      {{- with $b.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $b.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $b.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $b.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: postgres
+          image: {{ include "weave.image" (dict "ctx" $ "image" $b.image) | quote }}
+          imagePullPolicy: {{ include "weave.imagePullPolicy" (dict "ctx" $ "image" $b.image) }}
+          {{- with $b.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: postgres
+              containerPort: 5432
+              protocol: TCP
+          env:
+            # POSTGRES_USER/POSTGRES_DB kommen aus weave.yaml (config.postgres),
+            # nicht aus values.yaml -- eine Quelle.
+            - name: POSTGRES_USER
+              value: {{ include "weave.postgresUser" . | quote }}
+            - name: POSTGRES_DB
+              value: {{ include "weave.postgresIngestDatabase" . | quote }}
+            {{- include "weave.secretEnv" (dict "ctx" $ "service" "postgres" "only" (list "POSTGRES_PASSWORD")) | nindent 12 }}
+            # Das offizielle Image legt sein Datenverzeichnis sonst direkt in
+            # den Mountpunkt; bei manchen Volume-Providern liegt dort schon
+            # ein lost+found, und initdb verweigert dann den Dienst.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          {{- with $b.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ include "weave.postgresUser" . | quote }}]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ include "weave.postgresUser" . | quote }}]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          {{- if $b.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $b.persistence.existingClaim | default $name }}
+          {{- else }}
+          # Ohne Persistenz ist jeder Pod-Neustart ein leerer Korpus. Nur
+          # fuer eine wegwerfbare CI-Strecke sinnvoll.
+          emptyDir: {}
+          {{- end }}
+{{- end }}

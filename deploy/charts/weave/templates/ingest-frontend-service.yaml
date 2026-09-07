@@ -1,0 +1,28 @@
+{{/*
+Der Service vor der Ingest-Oberflaeche. Kein anderer Dienst dieser Plattform
+ruft ihn auf -- er ist da, damit der Ingress (ingress.ingestFrontend, per
+Vorgabe aus) und ein `kubectl port-forward` ein Ziel haben.
+*/}}
+{{- if .Values.ingestFrontend.enabled }}
+{{- $component := "ingest-frontend" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "weave.componentName" (dict "ctx" $ "component" $component) }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" $component) | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.ingestFrontend.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.ingestFrontend.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "weave.selectorLabels" (dict "ctx" $ "component" $component) | nindent 4 }}
+{{- end }}

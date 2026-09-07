@@ -1,0 +1,37 @@
+{{/*
+Der Service, auf den weave.internalUrl mit component "embeddings" zeigt --
+beide leiten den Namen aus weave.componentName ab und den Port aus
+embeddings.service.port, es gibt also keine zweite Stelle, an der eine
+dieser beiden Angaben stuende.
+
+KEIN Ingress: dieser Dienst kennt nur ein statisches Bearer-Token
+(EMBEDDINGS_API_TOKEN) und gehoert nicht ins Internet. values.yaml
+beschreibt unter ingress genau die vier Dienste, die nach aussen duerfen --
+dieser ist keiner davon.
+*/}}
+{{- if .Values.embeddings.enabled }}
+{{- include "weave.validate" . }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "weave.componentName" (dict "ctx" $ "component" "embeddings") }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "embeddings") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.embeddings.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.embeddings.service.port }}
+      # Der Container lauscht immer auf 8000 (services/embeddings/Dockerfile,
+      # uvicorn --port 8000). Der Service-Port darf davon abweichen, der
+      # targetPort nicht -- deshalb der Portname statt einer Zahl.
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "weave.selectorLabels" (dict "ctx" $ "component" "embeddings") | nindent 4 }}
+{{- end }}

@@ -1,0 +1,90 @@
+{{/*
+===========================================================================
+Die vier Dienste, die ueberhaupt nach aussen duerfen.
+
+Alles andere spricht nur clusterintern miteinander und gehoert nicht ins
+Internet -- insbesondere nicht retrieval, runtime und toolsBackend, die
+nur ein statisches Bearer-Token trennt, und erst recht nicht der
+MCP-Server, der gar kein eigenes Diensttoken hat (siehe
+tools-deployment.yaml). Deshalb gibt es hier genau vier Eintraege und kein
+Muster, mit dem sich ein fuenfter aus values.yaml nachschieben liesse.
+
+WARUM EINE DATEI STATT VIER
+
+Die vier Ingresses unterscheiden sich nur in drei Angaben (Schluessel in
+.Values.ingress, Komponentenname des Services, Port). Als vier fast
+gleiche Dateien waere die Pruefung requireIngressHosts vier Mal zu
+vergessen; als eine Tabelle gilt sie fuer alle vier.
+
+WARUM KEIN VORGABE-HOSTNAME
+
+Ein Hostname ist standortspezifisch. Ein mitgeliefertes Beispiel waere
+entweder falsch oder wuerde versehentlich uebernommen, deshalb ist jeder
+Ingress per Vorgabe aus und hosts leer -- und ein eingeschalteter Ingress
+ohne hosts bricht mit einer lesbaren Meldung ab statt einen Catch-all zu
+rendern, der jede Anfrage dieses Controllers abfaengt (weave.requireIngressHosts).
+
+In der Praxis setzt ein Wrapper-Chart die Hostnamen; Annotationen fuer den
+Controller (TLS-Aussteller, Body-Size, Rate-Limits) kommen aus
+ingress.<name>.annotations und werden mit global.commonAnnotations
+zusammengefuehrt.
+===========================================================================
+*/}}
+{{- $ingresses := list
+      (dict "key" "ingestFrontend" "component" "ingest-frontend" "workload" "ingestFrontend")
+      (dict "key" "ingestBackend"  "component" "ingest-backend"  "workload" "ingestBackend")
+      (dict "key" "chat"           "component" "chat"            "workload" "chat")
+      (dict "key" "api"            "component" "api"             "workload" "api") }}
+{{- range $i := $ingresses }}
+{{- $ing := get $.Values.ingress $i.key }}
+{{/* Die Pruefung laeuft VOR dem enabled-Zweig, damit ein eingeschalteter
+     Ingress ohne hosts auch dann auffaellt, wenn er sonst nichts rendern
+     wuerde. */}}
+{{- include "weave.requireIngressHosts" (dict "ctx" $ "name" $i.key) }}
+{{- if $ing.enabled }}
+{{- include "weave.validate" $ }}
+{{- $workload := get $.Values $i.workload }}
+{{/* Ein Ingress auf einen abgeschalteten Dienst zeigt auf einen Service,
+     den dieses Release nicht anlegt. Der Ingress-Controller meldet das als
+     503 ohne Hinweis auf die Ursache -- also lieber hier abbrechen. */}}
+{{- if not $workload.enabled }}
+{{- fail (printf "ingress.%s.enabled=true, aber %s.enabled=false. Der Ingress zeigte auf einen Service, den dieses Release nicht anlegt." $i.key $i.workload) }}
+{{- end }}
+{{- $svcName := include "weave.componentName" (dict "ctx" $ "component" $i.component) }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $svcName }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" $i.component) | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $ "extra" $ing.annotations) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $ing.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  rules:
+    {{- range $h := $ing.hosts }}
+    - host: {{ required (printf "ingress.%s.hosts: jeder Eintrag braucht ein 'host'." $i.key) $h.host | quote }}
+      http:
+        paths:
+          {{- range $p := (default (list (dict "path" "/" "pathType" "Prefix")) $h.paths) }}
+          - path: {{ default "/" $p.path | quote }}
+            pathType: {{ default "Prefix" $p.pathType }}
+            backend:
+              service:
+                name: {{ $svcName }}
+                port:
+                  number: {{ $workload.service.port }}
+          {{- end }}
+    {{- end }}
+  {{- with $ing.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- end }}

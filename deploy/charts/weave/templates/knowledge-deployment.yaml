@@ -1,0 +1,162 @@
+{{/*
+Weave-Knowledge -- der Dienst (Webhook-Eingang, Lese-API, Alembic).
+
+Er besitzt das Schema in der Datenbank weave_knowledge und ist ihr
+einziger Schreiber (ADR-0004). Weave-Retrieval liest dieselben Tabellen
+mit einer eigenen Read-only-Rolle mit -- die eine benannte Ausnahme von
+ADR-0004, siehe ADR-0005 und contracts/chunk-store.md. Fuer dieses
+Template heisst das: NUR hier laeuft Alembic, und was diese Migrationen
+erzeugen, ist ein Vertrag, kein Interna.
+
+Dasselbe Image laeuft ein zweites Mal als Celery-Worker
+(knowledge-worker-deployment.yaml). Unterschied ist allein das command;
+die Umgebung ist absichtlich dieselbe, weil beide dasselbe
+Settings-Modul laden.
+*/}}
+{{- if .Values.knowledge.enabled }}
+{{- include "weave.validate" . }}
+{{- $k := .Values.knowledge }}
+{{- $name := include "weave.componentName" (dict "ctx" $ "component" "knowledge") }}
+{{/*
+Die Umbenennungen aus dem Kopf von _helpers.tpl: weave.yaml vergibt je
+Dienst einen eigenen .env-Schluessel (ADR-0003), im Container heissen die
+Werte anders. Ohne diese drei Zeilen startet der Dienst und findet seine
+Pflichtwerte nicht. Der Schluessel IM Secret bleibt unveraendert.
+*/}}
+{{- $rename := dict
+      "WEAVE_KNOWLEDGE_SECRET_KEY" "SECRET_KEY"
+      "WEAVE_KNOWLEDGE_INGEST_API_TOKEN" "WEAVE_INGEST_API_TOKEN"
+      "WEAVE_KNOWLEDGE_WEBHOOK_SECRET" "WEAVE_INGEST_WEBHOOK_SECRET" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "knowledge") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.autoscaling.knowledge.enabled }}
+  # Kein replicas-Feld, solange die HPA fuer knowledge laeuft: ein hier
+  # gesetzter Wert wuerde bei JEDEM `helm upgrade` zurueckgeschrieben, und
+  # die HPA muesste mitten im Upgrade erst wieder hochskalieren.
+  {{- else }}
+  replicas: {{ $k.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "weave.selectorLabels" (dict "ctx" $ "component" "knowledge") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "weave.podLabels" (dict "ctx" $ "component" "knowledge" "extra" $k.podLabels) | nindent 8 }}
+      {{- $pann := include "weave.podAnnotations" (dict "ctx" $ "extra" $k.podAnnotations) }}
+      {{- with $pann }}
+      annotations:
+        {{- . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "weave.serviceAccountName" . }}
+      {{- with (include "weave.imagePullSecrets" .) }}
+      imagePullSecrets:
+        {{- . | nindent 8 }}
+      {{- end }}
+      {{- with $k.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $k.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $k.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $k.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: knowledge
+          image: {{ include "weave.image" (dict "ctx" $ "image" $k.image) | quote }}
+          imagePullPolicy: {{ include "weave.imagePullPolicy" (dict "ctx" $ "image" $k.image) }}
+          {{- with $k.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            # Der Container lauscht immer auf 8000; der Port, unter dem ihn
+            # andere ansprechen, ist eine Eigenschaft des Services.
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            {{- /*
+            ERST die Geheimnisse, DANN die Konfiguration -- nicht
+            Geschmackssache: DATABASE_URL und REDIS_URL unten tragen
+            $(POSTGRES_PASSWORD) bzw. $(REDIS_PASSWORD), und Kubernetes
+            loest ein $(VAR) ausschliesslich aus einem Eintrag auf, der in
+            DERSELBEN Liste weiter oben steht. Andernfalls verbindet sich
+            der Dienst mit dem Passwort "$(POSTGRES_PASSWORD)".
+            */}}
+            {{- include "weave.secretEnv" (dict "ctx" $ "service" "knowledge" "rename" $rename) | nindent 12 }}
+            {{- /*
+            POSTGRES_USER und POSTGRES_PORT gehen nur in die DATABASE_URL
+            ein -- dieses Image liest im Gegensatz zu Weave-Ingest keine
+            Einzelfelder, sondern nur die fertige URL.
+            REDIS_URL auf die logische Datenbank 1, nie auf die 0 von
+            Weave-Ingest (ADR-0001).
+            */}}
+            {{- $ov := dict
+                  "DATABASE_URL" (include "weave.databaseUrl" (dict "ctx" $
+                      "database" $.Values.postgresql.databases.knowledge
+                      "user" (include "weave.postgresUser" $)
+                      "passwordVar" "POSTGRES_PASSWORD"))
+                  "REDIS_URL" (include "weave.redisUrl" (dict "ctx" $ "db" 1))
+                  "WEAVE_INGEST_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "ingestBackend")) }}
+            {{- /*
+            Nur, wenn dieses Release den Embedding-Dienst mitbringt UND die
+            Konfiguration die Adresse leer laesst -- sonst gewinnt, was in
+            weave.yaml steht. Siehe weave.embeddingBaseUrl.
+            */}}
+            {{- with (include "weave.embeddingBaseUrl" (dict "ctx" $ "service" "knowledge")) }}
+            {{- $_ := set $ov "EMBEDDING_BASE_URL" . }}
+            {{- end }}
+            {{- include "weave.env" (dict "ctx" $ "service" "knowledge"
+                  "except" (list "POSTGRES_USER" "POSTGRES_PORT")
+                  "overrides" $ov) | nindent 12 }}
+            # Kein Eintrag aus weave.yaml, sondern eine Betriebsentscheidung
+            # dieses Charts: entrypoint.sh im Image faehrt `alembic upgrade
+            # head`, solange die Variable nicht "false" ist. Bei mehr als
+            # einer Replik migrieren sonst mehrere Pods gleichzeitig.
+            - name: RUN_ALEMBIC_ON_STARTUP
+              value: {{ $k.runAlembicOnStartup | quote }}
+          {{- if $k.probes.liveness.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ $k.probes.liveness.path | quote }}
+              port: http
+            initialDelaySeconds: {{ $k.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ $k.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ $k.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ $k.probes.liveness.failureThreshold }}
+          {{- end }}
+          {{- if $k.probes.readiness.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ $k.probes.readiness.path | quote }}
+              port: http
+            initialDelaySeconds: {{ $k.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ $k.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ $k.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ $k.probes.readiness.failureThreshold }}
+          {{- end }}
+          {{- with $k.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

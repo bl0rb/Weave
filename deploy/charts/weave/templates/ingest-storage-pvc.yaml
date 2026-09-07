@@ -1,0 +1,41 @@
+{{/*
+Die Dateiablage von Weave-Ingest: EIN Volume fuer ZWEI Workloads. Das
+Backend legt jede hochgeladene Datei unter /app/backend/storage ab, der
+Celery-Worker liest sie von dort wieder -- im Compose-Stack ist das dasselbe
+benannte Volume "storage" in beiden Diensten.
+
+Daher ReadWriteMany als Vorgabe (values.yaml, persistence.accessModes): mit
+ReadWriteOnce kann nur ein Knoten das Volume anhaengen, also muessen Backend
+und Worker auf demselben Knoten landen -- oder einer der beiden bleibt fuer
+immer Pending, ohne dass irgendwo steht, warum.
+
+Faellt weg, sobald persistence.existingClaim gesetzt ist: dann mounten beide
+Workloads das dort genannte, von jemand anderem angelegte Claim.
+*/}}
+{{- if and .Values.persistence.enabled (not .Values.persistence.existingClaim) (or .Values.ingestBackend.enabled .Values.ingestWorker.enabled) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "weave.componentName" (dict "ctx" $ "component" "ingest-storage") }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "ingest-storage") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- toYaml .Values.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size | quote }}
+  {{- /* Ein leerer Wert laesst das Feld WEG, statt storageClassName: "" zu
+         schreiben. Der Unterschied ist nicht kosmetisch: die leere
+         Zeichenkette schaltet dynamisches Provisioning ausdruecklich AB und
+         verlangt ein von Hand angelegtes PV. Fehlt das Feld dagegen, nimmt
+         der Cluster seine Vorgabe-StorageClass. */}}
+  {{- with .Values.persistence.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+{{- end }}

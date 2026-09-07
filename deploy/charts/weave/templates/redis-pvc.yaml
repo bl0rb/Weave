@@ -1,0 +1,37 @@
+{{/*
+Das Volume unter /data, in das Redis seinen RDB-Schnappschuss schreibt
+(`--save 60 1`, siehe redis-deployment.yaml).
+
+Rendert nur, wenn der Modus bundled gilt, die Persistenz eingeschaltet ist
+und kein fremder Claim benannt wurde: mit persistence.existingClaim
+verweist das Deployment auf ein PVC, das jemand anders angelegt hat --
+dieses Chart legt es dann weder an noch veraendert es das vorhandene.
+
+ReadWriteOnce reicht, weil hier nur ein einziger Pod schreibt (replicas: 1,
+strategy Recreate). Ein zweiter Redis auf demselben Verzeichnis waere
+ohnehin ein Fehler.
+*/}}
+{{- if and (eq .Values.redis.mode "bundled") .Values.redis.bundled.persistence.enabled (not .Values.redis.bundled.persistence.existingClaim) }}
+{{- include "weave.validate" . }}
+{{- $p := .Values.redis.bundled.persistence }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "weave.componentName" (dict "ctx" $ "component" "redis") }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "redis") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- toYaml $p.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ $p.size | quote }}
+  {{- with $p.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,239 @@
+{{/*
+===========================================================================
+Legt die drei Datenbanken und die Read-only-Rolle an -- in ALLEN DREI
+Postgres-Modi.
+
+WARUM ES DIESEN JOB GIBT
+
+Weave braucht drei Datenbanken (ADR-0004: eine je Dienst mit eigenem
+Schema) -- weave_ingest, weave_knowledge, weave_api -- und die Rolle
+weave_retrieval_ro, mit der Weave-Retrieval in weave_knowledge NUR liest
+(ADR-0005, contracts/chunk-store.md).
+
+Im Compose-Stack macht das deploy/postgres-init/01-create-databases.sh,
+das das offizielle Image einmalig beim ersten Start gegen ein leeres
+Datenverzeichnis ausfuehrt. Im Cluster gibt es diesen Haken nicht in allen
+Modi, und im wichtigsten Modus reicht er auch nicht:
+
+  - CNPGs bootstrap.initdb legt GENAU EINE Datenbank an. Fuer die anderen
+    beiden ist dort kein Platz.
+  - CNPGs postInitSQL laeuft ausschliesslich in der postgres-Datenbank.
+    Die entscheidende Anweisung hier -- ALTER DEFAULT PRIVILEGES -- ist
+    aber datenbank- UND schemagebunden: sie muss IN weave_knowledge
+    laufen, sonst betrifft sie die falsche Datenbank und weave_retrieval_ro
+    sieht spaeter keine einzige Tabelle.
+  - Im Modus external gehoert der Server jemand anderem; einen
+    Init-Container-Haken gibt es dort ueberhaupt nicht.
+
+Ein Job, der sich als Rolle mit CREATE DATABASE und CREATE ROLE verbindet
+und danach eine zweite Verbindung IN weave_knowledge aufmacht, ist deshalb
+der einzige Weg, der in allen drei Modi funktioniert.
+
+WARUM 'FOR ROLE' BEI ALTER DEFAULT PRIVILEGES
+
+ALTER DEFAULT PRIVILEGES ohne FOR ROLE gilt fuer kuenftige Objekte der
+AUSFUEHRENDEN Rolle. Im Compose-Skript ist das dieselbe Rolle, unter der
+spaeter Alembic die Tabellen anlegt, deshalb steht dort kein FOR ROLE.
+Hier ist es das nicht: dieser Job verbindet sich im Modus cnpg als
+postgres, Alembic laeuft als der Anwendungs-Owner. Ohne FOR ROLE wuerde
+die Voreinstellung fuer Tabellen gelten, die postgres anlegt -- also fuer
+keine einzige -- und der Fehler faellt erst auf, wenn eine Suche nichts
+findet, nicht beim Anlegen. Deshalb FOR ROLE <owner>.
+
+IDEMPOTENZ
+
+Der Job laeuft als post-install- UND post-upgrade-Hook, also mehrfach.
+CREATE DATABASE und CREATE ROLE nur, wenn es sie nicht schon gibt; das
+Passwort der Read-only-Rolle wird bei jedem Lauf neu gesetzt, damit eine
+Rotation des Secrets ankommt. Zusaetzlich zu ALTER DEFAULT PRIVILEGES
+(kuenftige Tabellen) ein GRANT SELECT ON ALL TABLES (bereits vorhandene) --
+das braucht der Compose-Pfad nicht, weil dort beim Init noch nichts
+existiert, dieser Job dagegen laeuft nach jedem Upgrade und damit nach
+Migrationen, die neue Tabellen mitgebracht haben.
+===========================================================================
+*/}}
+{{- if .Values.dbBootstrap.enabled }}
+{{- include "weave.validate" . }}
+{{- $j := .Values.dbBootstrap }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "weave.componentName" (dict "ctx" $ "component" "db-bootstrap") }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "db-bootstrap") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": {{ $j.hookWeight | quote }}
+    # before-hook-creation raeumt den Job des vorigen Laufs weg (ein Job ist
+    # in seiner spec unveraenderlich, ein zweites Upgrade wuerde sonst
+    # scheitern); hook-succeeded loescht ihn nach Erfolg. Ein
+    # FEHLGESCHLAGENER Job bleibt absichtlich stehen, damit seine Logs
+    # lesbar sind.
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    {{- $ann := include "weave.annotations" (dict "ctx" $ "extra" $j.annotations) }}
+    {{- with $ann }}
+    {{- . | nindent 4 }}
+    {{- end }}
+spec:
+  backoffLimit: {{ $j.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "weave.podLabels" (dict "ctx" $ "component" "db-bootstrap") | nindent 8 }}
+      {{- $pann := include "weave.podAnnotations" (dict "ctx" $ "extra" $j.podAnnotations) }}
+      {{- with $pann }}
+      annotations:
+        {{- . | nindent 8 }}
+      {{- end }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "weave.serviceAccountName" . }}
+      {{- with (include "weave.imagePullSecrets" .) }}
+      imagePullSecrets:
+        {{- . | nindent 8 }}
+      {{- end }}
+      {{- with $j.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $j.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $j.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $j.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: db-bootstrap
+          image: {{ include "weave.image" (dict "ctx" $ "image" $j.image) | quote }}
+          imagePullPolicy: {{ include "weave.imagePullPolicy" (dict "ctx" $ "image" $j.image) }}
+          {{- with $j.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: PGHOST
+              value: {{ include "weave.postgresHost" . | quote }}
+            - name: PGPORT
+              value: {{ include "weave.postgresPort" . | quote }}
+            # Die Rolle, mit der dieser Job arbeitet: sie braucht CREATE
+            # DATABASE und CREATE ROLE. Im Modus cnpg ist das postgres (der
+            # von bootstrap.initdb angelegte Owner darf beides nicht), sonst
+            # die Rolle aus weave.yaml.
+            - name: PGUSER
+              value: {{ include "weave.dbBootstrapUser" . | quote }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weave.dbBootstrapSecretName" . | quote }}
+                  key: {{ include "weave.dbBootstrapSecretKey" . | quote }}
+            # Die Wartungsdatenbank, mit der sich der Job zuerst verbindet.
+            # Sie existiert in jedem Postgres-Cluster.
+            - name: PGDATABASE
+              value: postgres
+            # Der Eigentuemer der drei Datenbanken und die Rolle, unter der
+            # spaeter Alembic seine Tabellen anlegt -- entscheidend fuer das
+            # FOR ROLE weiter unten.
+            - name: OWNER
+              value: {{ include "weave.postgresUser" . | quote }}
+            - name: DB_INGEST
+              value: {{ include "weave.postgresIngestDatabase" . | quote }}
+            - name: DB_KNOWLEDGE
+              value: {{ .Values.postgresql.databases.knowledge | quote }}
+            - name: DB_API
+              value: {{ .Values.postgresql.databases.api | quote }}
+            - name: RO_USER
+              value: {{ include "weave.retrievalDbUser" . | quote }}
+            # Aus dem Plattform-Secret, nicht aus dem Superuser-Secret: es
+            # ist dasselbe Passwort, das Weave-Retrieval spaeter benutzt.
+            {{- include "weave.secretEnv" (dict "ctx" $ "service" "postgres" "only" (list "RETRIEVAL_DB_PASSWORD")) | nindent 12 }}
+            - name: WAIT_RETRIES
+              value: {{ $j.wait.retries | quote }}
+            - name: WAIT_INTERVAL
+              value: {{ $j.wait.intervalSeconds | quote }}
+          {{- with $j.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              # --- Wartestrecke -------------------------------------------
+              # pg_isready allein reicht nicht: es meldet einen lauschenden
+              # Server auch dann, wenn die Anmeldung noch nicht geht (ein
+              # frisch angelegtes CNPG-Cluster faehrt erst initdb). Deshalb
+              # wird auf eine echte Abfrage gewartet.
+              i=0
+              until psql -qtAX -c 'SELECT 1' >/dev/null 2>&1; do
+                i=$((i + 1))
+                if [ "$i" -ge "$WAIT_RETRIES" ]; then
+                  echo "Postgres unter ${PGHOST}:${PGPORT} als ${PGUSER} nach ${WAIT_RETRIES} Versuchen nicht erreichbar." >&2
+                  echo "Letzter Versuch im Klartext:" >&2
+                  psql -qtAX -c 'SELECT 1' || true
+                  exit 1
+                fi
+                echo "Warte auf Postgres unter ${PGHOST}:${PGPORT} (${i}/${WAIT_RETRIES}) ..."
+                sleep "$WAIT_INTERVAL"
+              done
+              echo "Postgres erreichbar."
+
+              if [ -z "${RETRIEVAL_DB_PASSWORD:-}" ]; then
+                echo "RETRIEVAL_DB_PASSWORD ist leer. Die Rolle ${RO_USER} bekaeme ein leeres Passwort und Weave-Retrieval kaeme nicht herein." >&2
+                echo "Der Schluessel RETRIEVAL_DB_PASSWORD fehlt im Secret, aus dem dieses Release liest." >&2
+                exit 1
+              fi
+
+              # --- Die drei Datenbanken -----------------------------------
+              # CREATE DATABASE laeuft nicht in einer Transaktion und nimmt
+              # keine Parameter, also der \gexec-Weg: die Abfrage baut die
+              # Anweisung als Text und liefert KEINE Zeile, wenn die
+              # Datenbank schon existiert -- damit ist der Lauf idempotent.
+              # %I quotiert Bezeichner korrekt.
+              for db in "$DB_INGEST" "$DB_KNOWLEDGE" "$DB_API"; do
+                psql -v ON_ERROR_STOP=1 -qtAX -v db="$db" -v owner="$OWNER" <<'SQL'
+              SELECT format('CREATE DATABASE %I OWNER %I', :'db', :'owner')
+              WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = :'db')\gexec
+              SQL
+                echo "Datenbank ${db}: vorhanden."
+              done
+
+              # --- Die Read-only-Rolle ------------------------------------
+              # %L erzeugt ein korrekt maskiertes Literal, das Passwort geht
+              # als psql-Variable herein und nicht per Textersetzung in die
+              # SQL -- anders als im Compose-Init-Skript, das ein
+              # Anfuehrungszeichen im Passwort nicht ueberlebt.
+              # ALTER ROLE laeuft bei JEDEM Lauf, damit eine Rotation des
+              # Secrets bei der Rolle ankommt.
+              psql -v ON_ERROR_STOP=1 -qtAX \
+                   -v ro_user="$RO_USER" -v ro_password="$RETRIEVAL_DB_PASSWORD" <<'SQL'
+              SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'ro_user', :'ro_password')
+              WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'ro_user')\gexec
+              SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L', :'ro_user', :'ro_password')\gexec
+              SQL
+              echo "Rolle ${RO_USER}: vorhanden."
+
+              # --- Die Rechte, und zwar IN weave_knowledge ----------------
+              # Der eigentliche Grund fuer diesen Job. Diese Anweisungen
+              # wirken nur in der Datenbank, in der sie laufen -- deshalb
+              # eine zweite Verbindung mit --dbname.
+              psql -v ON_ERROR_STOP=1 -qtAX --dbname "$DB_KNOWLEDGE" \
+                   -v ro_user="$RO_USER" -v owner="$OWNER" -v db="$DB_KNOWLEDGE" <<'SQL'
+              SELECT format('GRANT CONNECT ON DATABASE %I TO %I', :'db', :'ro_user')\gexec
+              SELECT format('GRANT USAGE ON SCHEMA public TO %I', :'ro_user')\gexec
+              -- FOR ROLE :owner, nicht die ausfuehrende Rolle: Alembic legt
+              -- die Tabellen als :owner an, und nur fuer dessen kuenftige
+              -- Tabellen soll das SELECT-Recht automatisch gelten.
+              SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT SELECT ON TABLES TO %I', :'owner', :'ro_user')\gexec
+              -- Fuer alles, was beim Wiederholungslauf schon da ist: ALTER
+              -- DEFAULT PRIVILEGES wirkt ausschliesslich in die Zukunft.
+              SELECT format('GRANT SELECT ON ALL TABLES IN SCHEMA public TO %I', :'ro_user')\gexec
+              SQL
+              echo "Rechte fuer ${RO_USER} in ${DB_KNOWLEDGE}: gesetzt."
+              echo "db-bootstrap fertig."
+{{- end }}

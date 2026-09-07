@@ -1,0 +1,1169 @@
+# Die von Hand gepflegte Haelfte der Chart-Konfiguration.
+#
+# Was hier NICHT steht: jede Variable, die weave.yaml deklariert. Die kommt
+# aus values.generated.yaml, das `python scripts/weave_config.py helm-values`
+# aus derselben weave.yaml erzeugt, aus der `render` die deploy/.env baut.
+# Eine Variable, die dort steht, wird hier nicht wiederholt -- sonst gaebe es
+# zwei Quellen, die auseinanderlaufen koennen.
+#
+#     helm install weave deploy/charts/weave \
+#         -f deploy/charts/weave/values.generated.yaml \
+#         -f meine-werte.yaml
+#
+# Was hier steht, ist alles, was eine weave.yaml gar nicht kennen kann:
+# Images, Repliken, Ressourcen, Scheduling, Storage, Ingress, und die Frage,
+# woher Postgres und Redis kommen.
+#
+# UMWICKELBARKEIT: Ueber diesem Chart liegt in der Praxis ein privates
+# Wrapper-Chart, das es als Dependency zieht und alles Standortspezifische
+# ergaenzt -- Secret-Provisionierung (External Secrets Operator/Vault),
+# Ingress-Hostnamen, StorageClasses, NetworkPolicies, ArgoCD-Sync-Waves.
+# Dieses Chart erzwingt davon nichts: es rendert keine SecretStore-,
+# ExternalSecret- oder NetworkPolicy-Objekte, kennt keinen Vorgabe-Hostnamen,
+# hat Ingress per Vorgabe aus, und jedes Objekt nimmt zusaetzliche
+# Annotationen aus global.commonAnnotations bzw. dem jeweiligen Workload
+# entgegen, damit ein Wrapper z.B. Sync-Waves setzen kann, ohne dieses Chart
+# zu aendern.
+
+nameOverride: ""
+fullnameOverride: ""
+
+global:
+  # Praefix fuer JEDES image.repository unten, z.B. "registry.corp.internal"
+  # fuer eine gespiegelte Registry. Leer heisst: die Repositories werden
+  # unveraendert benutzt (ghcr.io/bl0rb/...).
+  imageRegistry: ""
+  # Gilt fuer alle Workloads; ein Workload kann sie mit image.pullPolicy
+  # ueberschreiben.
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+  # Auf JEDES Objekt des Charts gelegt (Deployments, Services, PVCs, Jobs,
+  # Ingresses, Secret, Postgres-Cluster).
+  commonLabels: {}
+  # Ebenso -- der Platz fuer argocd.argoproj.io/sync-wave und Aehnliches.
+  commonAnnotations: {}
+  # Auf jeden Pod jedes Workloads zusaetzlich zu dessen eigenen
+  # podAnnotations/podLabels.
+  podAnnotations: {}
+  podLabels: {}
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# ---------------------------------------------------------------------------
+# config / secrets -- die generierte Haelfte
+# ---------------------------------------------------------------------------
+
+# Wird von values.generated.yaml gefuellt: config.<dienst>.<VAR> = "wert",
+# nur Nicht-Geheimnisse. Hier leer, damit ein `helm template` ohne die
+# generierte Datei nicht an einem nil scheitert, sondern an der lesbaren
+# Meldung aus weave.requireGeneratedValues.
+config: {}
+
+secrets:
+  # RESERVIERTE SCHLUESSEL in diesem Block: existingSecret, create, values,
+  # optional. JEDER ANDERE Schluessel ist ein Dienstname, dessen Wert die
+  # Liste der Geheimnis-VARIABLENNAMEN dieses Dienstes ist -- geschrieben von
+  # `weave_config.py helm-values`, nicht von Hand. Ein Dienst heisst in
+  # weave.yaml nie wie einer der vier reservierten Schluessel.
+
+  # ENTWEDER: Name eines Secrets, das jemand anders fuellt -- der External
+  # Secrets Operator, Vault, ein Wrapper-Chart, ein `kubectl create secret`.
+  # Das Secret muss zum Zeitpunkt des Pod-Starts existieren und je Eintrag
+  # aus secrets.<dienst> einen Schluessel gleichen Namens tragen
+  # (POSTGRES_PASSWORD, RETRIEVAL_API_TOKEN, ...). Das Chart legt es nicht
+  # an und veraendert es nicht.
+  existingSecret: ""
+
+  # ODER: das Chart legt ein eigenes Secret "<fullname>-secrets" aus
+  # secrets.values an. Genau eines von beidem -- beides oder keines von
+  # beidem laesst weave.requireSecrets mit einer lesbaren Meldung
+  # fehlschlagen.
+  create: false
+  # Schluessel sind die VARIABLENNAMEN aus secrets.<dienst>, nicht die
+  # weave.yaml-Schluessel: derselbe Wert kann unter zwei Namen gebraucht
+  # werden (EMBEDDING_API_KEY im Knowledge/Retrieval, EMBEDDINGS_API_TOKEN im
+  # Embeddings-Dienst) und braucht dann beide Eintraege.
+  # Fuer den Produktivbetrieb ist existingSecret der richtige Weg: was hier
+  # steht, landet im Klartext in der Helm-Release-Historie.
+  values: {}
+  #   WEAVE_POSTGRES_PASSWORD wird NICHT hier eingetragen -- der Schluessel
+  #   heisst wie die VARIABLE, also:
+  #   POSTGRES_PASSWORD: ""
+  #   RETRIEVAL_DB_PASSWORD: ""
+  #   REDIS_PASSWORD: ""
+  #   SECRET_KEY: ""
+  #   ...
+
+  # secretKeyRef mit optional: true. Grund: mit existingSecret weiss dieses
+  # Chart nicht, welche Schluessel der externe Store tatsaechlich liefert.
+  # Ein fehlender Pflichtschluessel wird dann nicht zu einem
+  # CreateContainerConfigError ohne Hinweis auf die Ursache, sondern der
+  # Dienst startet und seine EIGENE Startpruefung sagt, welche Einstellung
+  # fehlt (jeder Weave-Dienst prueft seine Pflichtwerte beim Start). Auf
+  # false setzen, wenn der Pod lieber gar nicht erst starten soll.
+  optional: true
+
+# Variablen aus values.generated.yaml, die in einem Cluster keine Bedeutung
+# haben und deshalb in KEINEN Container gehen. Sie sind trotzdem in
+# weave.yaml richtig aufgehoben -- sie steuern dort die Compose-Datei.
+env:
+  exclude:
+    # Image-Tags: im Chart macht das image.tag/appVersion.
+    - WEAVE_INGEST_TAG
+    - WEAVE_KNOWLEDGE_TAG
+    - WEAVE_RETRIEVAL_TAG
+    - WEAVE_RUNTIME_TAG
+    - WEAVE_API_TAG
+    - WEAVE_TOOLS_TAG
+    - WEAVE_TOOLS_FRONTEND_TAG
+    - WEAVE_EMBEDDINGS_TAG
+    - WEAVE_RERANKER_TAG
+    # Host-Ports, auf denen Compose die Container veroeffentlicht. Im
+    # Cluster macht das der Service bzw. der Ingress; der Container lauscht
+    # immer auf 8000 (Backends) bzw. 3000 (Frontends).
+    - BACKEND_PORT
+    - FRONTEND_PORT
+    - KNOWLEDGE_PORT
+    - RETRIEVAL_PORT
+    - RUNTIME_PORT
+    - API_PORT
+    - TOOLS_PORT
+    - TOOLS_FRONTEND_PORT
+    - EMBEDDINGS_PORT
+    - RERANKER_PORT
+    # Compose-eigene Container-Limits; im Chart macht das
+    # ingestWorker.resources.
+    - WORKER_CPUS
+    - WORKER_MEMORY_LIMIT
+
+# Cluster-interne Adressen, unter denen die Dienste einander erreichen.
+# Diese Adressen stehen bewusst NICHT in weave.yaml: dort steht der
+# Docker-Compose-Servicename (http://weave-knowledge:8000), den es in einem
+# Cluster nicht gibt. Leer heisst: aus dem Release abgeleitet, also
+# http://<fullname>-<komponente>:8000. Ein gesetzter Wert gewinnt gegenueber
+# dem generierten config-Wert -- so erreicht man z.B. einen Dienst, der in
+# einem anderen Namespace oder gar nicht aus diesem Release kommt.
+internalUrls:
+  ingestBackend: ""
+  knowledge: ""
+  retrieval: ""
+  runtime: ""
+  api: ""
+  toolsBackend: ""
+  embeddings: ""
+  reranker: ""
+
+# ---------------------------------------------------------------------------
+# Workloads
+#
+# Elf Images, dreizehn moegliche Workloads: weave-knowledge laeuft zweimal
+# (Dienst und Celery-Worker, gleiches Image, anderes command), und
+# weave-tools-backend ebenfalls (REST-Dienst und, per Vorgabe aus, der
+# MCP-Server unter toolsBackend.mcp).
+# ---------------------------------------------------------------------------
+
+ingestBackend:
+  enabled: true
+  image:
+    repository: ghcr.io/bl0rb/weave-ingest-backend
+    # Leer heisst: die appVersion des Charts. Ein Release setzt Chart- und
+    # App-Version auf denselben Tag wie die Images.
+    tag: ""
+    # Leer heisst: global.imagePullPolicy.
+    pullPolicy: ""
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 8000
+  # Alembic laeuft beim Start des Backends (entrypoint.sh). Bei mehr als
+  # einer Replik startet die Migration mehrfach parallel -- fuer ein Upgrade
+  # entweder auf 1 Replik gehen oder hier abschalten und die Migration
+  # separat fahren.
+  runAlembicOnStartup: true
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+  probes:
+    liveness:
+      enabled: true
+      path: /api/v1/health
+      initialDelaySeconds: 20
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 6
+    readiness:
+      enabled: true
+      path: /api/v1/health
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+
+ingestWorker:
+  enabled: true
+  image:
+    repository: ghcr.io/bl0rb/weave-ingest-worker
+    tag: ""
+    pullPolicy: ""
+  replicas: 1
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  # RuntimeClass fuer GPU-Knoten, auf denen der NVIDIA-Runtime als eigene
+  # RuntimeClass exponiert ist (typisch mit dem NVIDIA GPU Operator). Leer
+  # lassen, wo GPU-Knoten den NVIDIA-Runtime ohnehin als Default haben.
+  runtimeClassName: ""
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+  # Ein Celery-Worker hat keinen HTTP-Port; eine HTTP-Probe gibt es hier
+  # deshalb nicht.
+  probes:
+    liveness:
+      enabled: false
+    readiness:
+      enabled: false
+  # PaddleOCR laedt seine Gewichte zur Laufzeit nach $HOME (/home/weave-ingest,
+  # uid 1000). Ohne Persistenz laedt jeder Pod-Neustart mehrere hundert MB
+  # neu; in Clustern mit eingeschraenktem Egress schlaegt das fehl und die
+  # Jobs fallen still auf den Klartext-Pfad ohne OCR zurueck.
+  modelCache:
+    enabled: true
+    # Ohne Persistenz: emptyDir. Leer = kein sizeLimit.
+    sizeLimit: ""
+    persistence:
+      enabled: false
+      # Bei mehr als einer Replik muss hier ReadWriteMany stehen, sonst
+      # starten Repliken auf anderen Knoten nie.
+      accessModes:
+        - ReadWriteOnce
+      size: 10Gi
+      storageClassName: ""
+      existingClaim: ""
+
+ingestFrontend:
+  enabled: true
+  image:
+    repository: ghcr.io/bl0rb/weave-ingest-frontend
+    tag: ""
+    pullPolicy: ""
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 3000
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+  # Das Next.js-Image bringt keinen /health-Endpunkt mit -- die Startseite
+  # ist die Probe.
+  probes:
+    liveness:
+      enabled: true
+      path: /
+      initialDelaySeconds: 20
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 6
+    readiness:
+      enabled: true
+      path: /
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+
+knowledge:
+  enabled: true
+  image:
+    repository: ghcr.io/bl0rb/weave-knowledge
+    tag: ""
+    pullPolicy: ""
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 8000
+  # Dieser Dienst besitzt das Schema in weave_knowledge und faehrt als
+  # einziger Alembic dagegen -- siehe contracts/chunk-store.md.
+  runAlembicOnStartup: true
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+  probes:
+    liveness:
+      enabled: true
+      path: /health
+      initialDelaySeconds: 20
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 6
+    readiness:
+      enabled: true
+      path: /health
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+
+# Gleiches Image wie knowledge, anderes command:
+#   celery -A app.workers.tasks worker --loglevel=info -Q weave.knowledge.index
+knowledgeWorker:
+  enabled: true
+  image:
+    repository: ghcr.io/bl0rb/weave-knowledge
+    tag: ""
+    pullPolicy: ""
+  replicas: 1
+  # Die Queue, die dieser Worker abarbeitet (ADR-0001: je Dienst eine eigene
+  # benannte Queue auf der gemeinsamen Redis-Instanz).
+  queue: weave.knowledge.index
+  logLevel: info
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+  probes:
+    liveness:
+      enabled: false
+    readiness:
+      enabled: false
+
+retrieval:
+  enabled: true
+  image:
+    repository: ghcr.io/bl0rb/weave-retrieval
+    tag: ""
+    pullPolicy: ""
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 8000
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+  probes:
+    liveness:
+      enabled: true
+      path: /health
+      initialDelaySeconds: 20
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 6
+    readiness:
+      enabled: true
+      path: /health
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+
+runtime:
+  enabled: true
+  image:
+    repository: ghcr.io/bl0rb/weave-runtime
+    tag: ""
+    pullPolicy: ""
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 8000
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+  probes:
+    liveness:
+      enabled: true
+      path: /health
+      initialDelaySeconds: 20
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 6
+    readiness:
+      enabled: true
+      path: /health
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+  # Der Bot-Roster (BOTS_DIR, im Image ./bots) wird bei jedem Aufruf frisch
+  # von der Platte gelesen. enabled: false laesst es beim Inhalt des Images
+  # (die zwei mitgelieferten Beispiel-Bots); enabled: true macht ihn
+  # beschreibbar und ueberlebt einen Neustart. Bei mehr als einer Replik
+  # muessen die accessModes ReadWriteMany enthalten.
+  botsPersistence:
+    enabled: false
+    accessModes:
+      - ReadWriteOnce
+    size: 1Gi
+    storageClassName: ""
+    existingClaim: ""
+
+api:
+  enabled: true
+  image:
+    repository: ghcr.io/bl0rb/weave-api
+    tag: ""
+    pullPolicy: ""
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 8000
+  # Dieser Dienst besitzt das Schema in weave_api und faehrt Alembic beim
+  # Start (ADR-0004).
+  runAlembicOnStartup: true
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+  probes:
+    liveness:
+      enabled: true
+      path: /health
+      initialDelaySeconds: 20
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 6
+    readiness:
+      enabled: true
+      path: /health
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+
+toolsBackend:
+  enabled: true
+  image:
+    repository: ghcr.io/bl0rb/weave-tools-backend
+    tag: ""
+    pullPolicy: ""
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 8000
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+  probes:
+    liveness:
+      enabled: true
+      path: /health
+      initialDelaySeconds: 20
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 6
+    readiness:
+      enabled: true
+      path: /health
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+  # Dasselbe Image bringt einen ZWEITEN ASGI-Dienst mit, den MCP-Server
+  # (app/mcp_server.py, streamable-HTTP unter /mcp). Er laeuft absichtlich
+  # als eigener uvicorn-Prozess, nicht im selben Container. Per Vorgabe aus:
+  # ob er gebraucht wird, haengt daran, ob in dieser Installation ueberhaupt
+  # ein MCP-Client existiert. Anders als die REST-Oberflaeche hat er kein
+  # eigenes Diensttoken -- er authentifiziert jeden Aufruf allein ueber den
+  # Authorization-Header, den der Aufrufer schon mitbringt.
+  mcp:
+    enabled: false
+    replicas: 1
+    service:
+      type: ClusterIP
+      port: 8000
+    resources: {}
+    podAnnotations: {}
+
+chat:
+  # Die Chat-Oberflaeche (Quelle services/chat), im Compose-Stack
+  # weave-tools-frontend genannt. Spricht ausschliesslich mit Weave-API,
+  # nie direkt mit Retrieval oder toolsBackend.
+  enabled: true
+  image:
+    repository: ghcr.io/bl0rb/weave-tools-frontend
+    tag: ""
+    pullPolicy: ""
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 3000
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+  probes:
+    liveness:
+      enabled: true
+      path: /
+      initialDelaySeconds: 20
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 6
+    readiness:
+      enabled: true
+      path: /
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+
+embeddings:
+  # Per Vorgabe AUS. Nichts ruft diesen Dienst, solange
+  # config.knowledge.EMBEDDING_PROVIDER bzw. config.retrieval.EMBEDDING_PROVIDER
+  # auf "fake" steht -- gebraucht wird er erst mit EMBEDDING_PROVIDER=openai.
+  # Siehe docs/betrieb.md Abschnitt 7.
+  #
+  # Die ADRESSE muss dabei niemand von Hand eintragen: ist dieser Dienst
+  # eingeschaltet und laesst die Konfiguration EMBEDDING_BASE_URL leer,
+  # setzt das Chart sie auf internalUrls.embeddings bzw. auf die aus dem
+  # Release abgeleitete Adresse (weave.embeddingBaseUrl in _helpers.tpl).
+  # Steht dort eine Adresse, gewinnt sie -- so bleibt ein Anbieter
+  # ausserhalb des Clusters moeglich.
+  enabled: false
+  image:
+    repository: ghcr.io/bl0rb/weave-embeddings
+    tag: ""
+    pullPolicy: ""
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 8000
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+  # GET /health antwortet auch waehrend des ersten Modell-Downloads sofort
+  # mit 200 (Feld `warm: false`) -- die Probe beweist also Liveness, nie
+  # Readiness. Genau so gewollt: eine Probe darf einen langsamen
+  # Erst-Download nicht fuer einen toten Prozess halten und ihn mittendrin
+  # neu starten. Daher die grosse failureThreshold.
+  probes:
+    liveness:
+      enabled: true
+      path: /health
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 30
+    readiness:
+      enabled: true
+      path: /health
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 30
+  # ~448 MiB ONNX-Gewichte, zur Laufzeit von HuggingFace nachgeladen nach
+  # /models. Ohne Persistenz laedt jeder Pod-Neustart sie erneut.
+  persistence:
+    enabled: true
+    accessModes:
+      - ReadWriteOnce
+    size: 5Gi
+    storageClassName: ""
+    existingClaim: ""
+
+reranker:
+  # Per Vorgabe AUS, gleiche Begruendung wie embeddings: gebraucht erst mit
+  # config.retrieval.RERANK_PROVIDER=api. RERANK_BASE_URL fuellt das Chart
+  # wie bei embeddings selbst, solange die Konfiguration sie leer laesst.
+  #
+  # Achtung: SEARCH_TOP_K darf dann RERANKER_MAX_DOCUMENTS nicht
+  # ueberschreiten, sonst antwortet dieser Dienst mit 413 und jede Suche
+  # faellt still auf die unrerankte Reihenfolge zurueck. `weave_config.py
+  # check` prueft das fuer die .env; dieses Chart prueft es beim Rendern,
+  # sobald reranker.enabled gilt (weave.requireRerankerLimits).
+  enabled: false
+  image:
+    repository: ghcr.io/bl0rb/weave-reranker
+    tag: ""
+    pullPolicy: ""
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 8000
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+  # Wie bei embeddings nur Liveness, mit noch mehr Luft: der erste Start
+  # laedt ~2,3 GB Gewichte.
+  probes:
+    liveness:
+      enabled: true
+      path: /health
+      initialDelaySeconds: 60
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 60
+    readiness:
+      enabled: true
+      path: /health
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 60
+  persistence:
+    enabled: true
+    accessModes:
+      - ReadWriteOnce
+    size: 15Gi
+    storageClassName: ""
+    existingClaim: ""
+
+# Der Dateiablage-Bereich, den ingestBackend und ingestWorker BEIDE unter
+# /app/backend/storage mounten -- das Backend nimmt Uploads entgegen, der
+# Worker liest sie. Deshalb ein Volume fuer zwei Workloads und deshalb
+# ReadWriteMany: mit ReadWriteOnce landen Backend und Worker auf demselben
+# Knoten oder gar nicht.
+persistence:
+  enabled: true
+  accessModes:
+    - ReadWriteMany
+  size: 20Gi
+  storageClassName: ""
+  existingClaim: ""
+
+# ---------------------------------------------------------------------------
+# PostgreSQL
+# ---------------------------------------------------------------------------
+
+postgresql:
+  # cnpg | external | bundled
+  #
+  #   cnpg     Empfohlen fuer den Produktivbetrieb. Rendert ein
+  #            postgresql.cnpg.io/v1 Cluster. SETZT VORAUS, dass der
+  #            CloudNativePG-Operator im Cluster installiert ist -- dieses
+  #            Chart bringt ihn nicht mit und installiert ihn nicht. Ohne
+  #            Operator bleibt das Cluster-Objekt einfach liegen.
+  #   external Es wird nichts gerendert. Host/Port kommen aus
+  #            postgresql.external, die Zugangsdaten aus dem Secret.
+  #   bundled  Ein einfaches Deployment plus PVC. Siehe den Kommentar bei
+  #            postgresql.bundled: Evaluierungspfad, kein HA-Setup.
+  mode: bundled
+
+  # Die Rolle, unter der Ingest, Knowledge und API schreiben, kommt aus
+  # weave.yaml (config.postgres.POSTGRES_USER); ihr Passwort aus dem Secret
+  # unter dem Schluessel POSTGRES_PASSWORD. Die Read-only-Rolle heisst
+  # config.retrieval.RETRIEVAL_DB_USER, ihr Passwort liegt unter
+  # RETRIEVAL_DB_PASSWORD. Beide werden hier deshalb nicht wiederholt.
+
+  # Die Namen der drei Datenbanken. weave_ingest steht als POSTGRES_DB in
+  # weave.yaml und wird von dort gelesen; die beiden anderen kennt weave.yaml
+  # nicht (Compose baut sie in die DATABASE_URL ein), also stehen sie hier.
+  databases:
+    knowledge: weave_knowledge
+    api: weave_api
+
+  external:
+    host: ""
+    port: 5432
+
+  cnpg:
+    # ACHTUNG, VOR DEM ERSTEN EINSATZ PRUEFEN: dieses Image MUSS die
+    # Extension pgvector mitbringen. Weave-Knowledge legt in weave_knowledge
+    # eine vector-Spalte an (contracts/chunk-store.md); ohne die Extension
+    # bricht dessen erster Alembic-Lauf ab. Ob das hier eingetragene
+    # Standard-Image von CloudNativePG pgvector fuehrt, haengt von dessen
+    # Version ab und wird von diesem Chart nicht geprueft -- im Zweifel ein
+    # eigenes Image eintragen, das erkennbar pgvector enthaelt (der
+    # Compose-Stack benutzt dafuer pgvector/pgvector:pg16).
+    imageName: ghcr.io/cloudnative-pg/postgresql:16
+    instances: 3
+    # Auf das Cluster-Objekt selbst, zusaetzlich zu global.commonAnnotations.
+    annotations: {}
+    # Annotationen fuer den ServiceAccount, den der CNPG-Operator fuer DIESES
+    # Cluster anlegt -- nicht der aus serviceAccount oben, den nur die
+    # Weave-Pods benutzen. Hier steht die Cloud-Identitaet, wenn
+    # backup.inheritFromIAMRole gilt (eks.amazonaws.com/role-arn,
+    # iam.gke.io/gcp-service-account o.ae.). Standortspezifisch, deshalb leer.
+    serviceAccountTemplate:
+      annotations: {}
+    # Synchrone Repliken. 0/0 heisst asynchrone Replikation.
+    minSyncReplicas: 0
+    maxSyncReplicas: 0
+    enablePDB: true
+    # unsupervised | supervised -- supervised heisst: der Switchover beim
+    # Minor-Upgrade wartet auf einen manuellen Anstoss.
+    primaryUpdateStrategy: unsupervised
+    # Zusaetzliche pg_hba-Zeilen, VOR den von CNPG erzeugten. Leer lassen,
+    # solange nichts ausserhalb des Clusters direkt verbindet.
+    pg_hba: []
+    bootstrap:
+      initdb:
+        # CNPG legt beim Bootstrap GENAU EINE Datenbank an. Die beiden
+        # anderen und die Read-only-Rolle macht der db-bootstrap-Job --
+        # siehe templates/db-bootstrap-job.yaml.
+        database: weave_ingest
+        owner: weave
+        # Name eines Secrets vom Typ kubernetes.io/basic-auth mit den
+        # Schluesseln username und password fuer den owner oben. Dieses
+        # Chart legt es NICHT an -- das ist die Naht fuer den External
+        # Secrets Operator bzw. das Wrapper-Chart. Leer heisst: CNPG
+        # erzeugt selbst ein Passwort, das dann aber nicht dasselbe ist wie
+        # POSTGRES_PASSWORD im Plattform-Secret, und die Dienste kommen
+        # nicht herein.
+        secret:
+          name: ""
+        encoding: UTF8
+        localeCollate: ""
+        localeCType: ""
+    storage:
+      size: 50Gi
+      storageClassName: ""
+    # Secret vom Typ kubernetes.io/basic-auth fuer die postgres-Rolle. Der
+    # db-bootstrap-Job braucht Superuser-Rechte (CREATE DATABASE, CREATE
+    # ROLE), die der initdb-owner nicht hat -- ohne dieses Secret kann der
+    # Job in diesem Modus nichts anlegen.
+    superuserSecret:
+      name: ""
+    resources: {}
+    monitoring:
+      # Braucht den Prometheus-Operator im Cluster; deshalb per Vorgabe aus.
+      enablePodMonitor: false
+    backup:
+      enabled: false
+      # z.B. s3://mein-bucket/weave -- ohne diesen Wert schlaegt das
+      # Template mit einer lesbaren Meldung fehl, sobald backup.enabled gilt.
+      destinationPath: ""
+      endpointURL: ""
+      retentionPolicy: 30d
+      # true: die Anmeldung laeuft ueber die IAM-Rolle des ServiceAccounts
+      # (IRSA/Workload Identity), es wird kein Secret gebraucht.
+      # false: s3CredentialsSecret muss gesetzt sein.
+      inheritFromIAMRole: false
+      # Secret mit den Schluesseln accessKeyId und secretAccessKey. Dieses
+      # Chart legt es nicht an.
+      s3CredentialsSecret:
+        name: ""
+        accessKeyIdKey: ACCESS_KEY_ID
+        secretAccessKeyKey: ACCESS_SECRET_KEY
+      wal:
+        compression: gzip
+      data:
+        compression: gzip
+
+  bundled:
+    # EVALUIERUNGSPFAD, KEIN HA-SETUP. Eine einzige Replik, ein PVC, kein
+    # Failover, kein Backup, keine Point-in-Time-Recovery, und ein Upgrade
+    # des Deployments bedeutet einen Neustart der einzigen Datenbank. Fuer
+    # den Produktivbetrieb postgresql.mode auf cnpg oder external stellen.
+    image:
+      repository: pgvector/pgvector
+      tag: pg16
+      pullPolicy: ""
+    resources: {}
+    podAnnotations: {}
+    podLabels: {}
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 999
+      runAsGroup: 999
+      fsGroup: 999
+      fsGroupChangePolicy: OnRootMismatch
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]
+    persistence:
+      enabled: true
+      accessModes:
+        - ReadWriteOnce
+      size: 20Gi
+      storageClassName: ""
+      existingClaim: ""
+
+# Legt die drei Datenbanken und die Read-only-Rolle an -- in ALLEN DREI
+# Postgres-Modi. Die ausfuehrliche Begruendung steht in
+# templates/db-bootstrap-job.yaml.
+dbBootstrap:
+  enabled: true
+  image:
+    # Braucht nur psql. Dasselbe Image wie der gebuendelte Postgres, damit
+    # eine Installation nicht zwei verschiedene Postgres-Images zieht.
+    repository: pgvector/pgvector
+    tag: pg16
+    pullPolicy: ""
+  backoffLimit: 3
+  # Helm-Hook-Gewicht. Negativ heisst: vor den anderen Hook-Objekten. Ein
+  # Wrapper-Chart, das ArgoCD-Sync-Waves benutzt, setzt stattdessen
+  # dbBootstrap.annotations.
+  hookWeight: "-5"
+  annotations: {}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  resources: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 999
+    runAsGroup: 999
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+  # Wie lange auf ein erreichbares Postgres gewartet wird, bevor der Job
+  # aufgibt. 60 x 5s = 5 Minuten -- genug fuer ein frisch angelegtes
+  # CNPG-Cluster, das erst noch initdb faehrt.
+  wait:
+    retries: 60
+    intervalSeconds: 5
+  # Zugangsdaten, mit denen der Job verbindet. Er braucht CREATE DATABASE und
+  # CREATE ROLE, also Superuser oder eine Rolle mit CREATEDB und CREATEROLE.
+  superuser:
+    # Leer = abgeleitet: im Modus cnpg "postgres" (die Rolle, fuer die CNPG
+    # sein superuserSecret ausstellt), sonst config.postgres.POSTGRES_USER.
+    username: ""
+    passwordSecret:
+      # Leer = abgeleitet: im Modus cnpg postgresql.cnpg.superuserSecret.name,
+      # sonst das Plattform-Secret.
+      name: ""
+      # Leer = abgeleitet: im Modus cnpg "password" (so heisst der Schluessel
+      # in einem kubernetes.io/basic-auth-Secret), sonst POSTGRES_PASSWORD.
+      key: ""
+
+# ---------------------------------------------------------------------------
+# Redis
+# ---------------------------------------------------------------------------
+
+redis:
+  # bundled | external
+  #
+  # Redis ist Celery-Broker und Result-Backend fuer Ingest (logische DB 0)
+  # und Knowledge (logische DB 1) -- ADR-0001: eine Instanz, getrennte
+  # logische Datenbanken und getrennte benannte Queues.
+  mode: bundled
+  # Das Passwort kommt in beiden Modi aus dem Secret, Schluessel
+  # REDIS_PASSWORD. Es steht als solches in weave.yaml und wird hier deshalb
+  # nicht wiederholt.
+  external:
+    host: ""
+    port: 6379
+  bundled:
+    # Auch das ist ein Evaluierungspfad: eine Replik, keine Persistenz-
+    # Garantie ueber einen Pod-Neustart hinaus. Ein verlorener Broker-Zustand
+    # bedeutet verlorene, noch nicht abgeholte Celery-Auftraege.
+    image:
+      repository: redis
+      tag: "7"
+      pullPolicy: ""
+    resources: {}
+    podAnnotations: {}
+    podLabels: {}
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 999
+      runAsGroup: 999
+      fsGroup: 999
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]
+    persistence:
+      enabled: false
+      accessModes:
+        - ReadWriteOnce
+      size: 8Gi
+      storageClassName: ""
+      existingClaim: ""
+
+# ---------------------------------------------------------------------------
+# Autoscaling
+# ---------------------------------------------------------------------------
+
+# Je Workload eine HPA. Alle per Vorgabe aus. ingestBackend, knowledge und
+# api fahren beim Start Alembic -- eine HPA darauf heisst mehrere gleich-
+# zeitige Migrationslaeufe beim Hochskalieren waehrend eines Upgrades.
+#
+# targetCPUUtilizationPercentage bezieht sich auf resources.requests.cpu des
+# jeweiligen Workloads. Der ist per Vorgabe nicht gesetzt (resources: {}) --
+# ohne ihn hat die HPA keinen Bezugswert, meldet "missing request for cpu"
+# und skaliert nie. Wer hier einschaltet, setzt also auch
+# <workload>.resources.requests.cpu.
+#
+# `annotations` je Block: zusaetzliche Annotationen fuer genau diese HPA,
+# etwa eine ArgoCD-Sync-Wave. global.commonAnnotations kommen ohnehin dazu.
+#
+# Welche Workloads hier bewusst fehlen (postgres, redis, embeddings,
+# reranker, der MCP-Server), steht in templates/hpa.yaml.
+autoscaling:
+  ingestBackend:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+    annotations: {}
+  ingestWorker:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 75
+    annotations: {}
+  ingestFrontend:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 70
+    annotations: {}
+  knowledge:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+    annotations: {}
+  knowledgeWorker:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 75
+    annotations: {}
+  retrieval:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+    annotations: {}
+  runtime:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+    annotations: {}
+  api:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+    annotations: {}
+  toolsBackend:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+    annotations: {}
+  chat:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 70
+    annotations: {}
+
+# ---------------------------------------------------------------------------
+# Ingress
+# ---------------------------------------------------------------------------
+
+# ALLE per Vorgabe AUS, und KEIN Hostname als Vorgabewert. Ein Hostname ist
+# standortspezifisch; ein mitgelieferter Beispielhost waere entweder falsch
+# oder wuerde versehentlich uebernommen. Ein Ingress mit enabled: true und
+# leerer hosts-Liste laesst das Template mit einer lesbaren Meldung
+# fehlschlagen.
+#
+# Nach aussen sichtbar sind genau vier Dienste. Alles andere spricht nur
+# clusterintern miteinander und gehoert nicht ins Internet -- insbesondere
+# nicht retrieval, runtime und toolsBackend, die nur ein statisches
+# Bearer-Token trennt.
+ingress:
+  ingestFrontend:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []
+    #  - host: ingest.example.org
+    #    paths:
+    #      - path: /
+    #        pathType: Prefix
+    tls: []
+  ingestBackend:
+    # Achtung: Uploads gehen hier durch. Die Body-Size-Grenze des
+    # Ingress-Controllers muss zu MAX_UPLOAD_BYTES passen, sonst bricht der
+    # Upload am Ingress ab, bevor die Anwendung ihn ueberhaupt sieht.
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []
+    tls: []
+  chat:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []
+    tls: []
+  api:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []
+    tls: []

@@ -1,0 +1,139 @@
+{{/*
+postgresql.mode=cnpg -- der empfohlene Weg fuer den Produktivbetrieb.
+
+DIESES CHART SETZT CLOUDNATIVEPG NICHT VORAUS. Diese Datei rendert nur,
+wenn der Modus ausdruecklich gewaehlt ist; in den beiden anderen Modi
+entsteht hier kein einziges Objekt und die API-Gruppe
+postgresql.cnpg.io/v1 wird nie referenziert. Ist der Modus gewaehlt, MUSS
+der CloudNativePG-Operator im Cluster installiert sein -- er bringt die
+CRD mit und ist es, der aus diesem Cluster-Objekt tatsaechlich Pods,
+Services und Volumes macht. Ohne Operator lehnt der API-Server das Objekt
+mangels CRD ab (bzw. es bleibt wirkungslos liegen), und kein Dienst dieser
+Plattform findet eine Datenbank.
+
+Der Operator gehoert nicht in dieses Chart: er ist clusterweit, hat eigene
+RBAC- und Webhook-Objekte und wird typischerweise einmal pro Cluster
+installiert, nicht einmal pro Weave-Release.
+
+Was CNPG hier NICHT erledigt: die drei Datenbanken und die
+Read-only-Rolle. bootstrap.initdb legt genau EINE Datenbank an. Den Rest
+macht templates/db-bootstrap-job.yaml -- die Begruendung steht dort.
+*/}}
+{{- if eq .Values.postgresql.mode "cnpg" }}
+{{- include "weave.validate" . }}
+{{- include "weave.requireCnpgBackup" . }}
+{{- $cnpg := .Values.postgresql.cnpg }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ include "weave.cnpgClusterName" . }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "postgres") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $ "extra" $cnpg.annotations) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $cnpg.serviceAccountTemplate.annotations }}
+  # Der Operator legt fuer dieses Cluster einen eigenen ServiceAccount an --
+  # NICHT den aus templates/serviceaccount.yaml, den nur die Weave-Pods
+  # benutzen. Genau dieser hier braucht die Cloud-Identitaet, wenn
+  # backup.inheritFromIAMRole gilt: ohne die Annotation (die IRSA-Rolle bzw.
+  # die Workload-Identity-Bindung) hat der Barman-Sidecar keine
+  # Anmeldedaten, und die Sicherung schlaegt still fehl, bis eine gebraucht
+  # wird. Was hier hineingehoert, ist standortspezifisch -- deshalb steht
+  # hier nur die Naht und kein Vorgabewert.
+  serviceAccountTemplate:
+    metadata:
+      annotations:
+        {{- toYaml . | nindent 8 }}
+  {{- end }}
+  # Muss pgvector mitbringen -- Weave-Knowledge legt in weave_knowledge eine
+  # vector-Spalte an (contracts/chunk-store.md), und ohne die Extension
+  # bricht dessen erster Alembic-Lauf ab. Das Chart kann das nicht pruefen;
+  # siehe den Hinweis bei postgresql.cnpg.imageName in values.yaml.
+  imageName: {{ $cnpg.imageName | quote }}
+  instances: {{ $cnpg.instances }}
+  {{- if or $cnpg.minSyncReplicas $cnpg.maxSyncReplicas }}
+  minSyncReplicas: {{ $cnpg.minSyncReplicas }}
+  maxSyncReplicas: {{ $cnpg.maxSyncReplicas }}
+  {{- end }}
+  enablePDB: {{ $cnpg.enablePDB }}
+  primaryUpdateStrategy: {{ $cnpg.primaryUpdateStrategy }}
+  {{- with $cnpg.pg_hba }}
+  postgresql:
+    pg_hba:
+      {{- toYaml . | nindent 6 }}
+  {{- end }}
+  bootstrap:
+    initdb:
+      # GENAU EINE Datenbank -- mehr kann initdb nicht. weave_knowledge und
+      # weave_api macht der db-bootstrap-Job.
+      database: {{ $cnpg.bootstrap.initdb.database | quote }}
+      owner: {{ $cnpg.bootstrap.initdb.owner | quote }}
+      {{- if $cnpg.bootstrap.initdb.secret.name }}
+      # kubernetes.io/basic-auth mit username/password. Das Passwort MUSS
+      # dasselbe sein wie POSTGRES_PASSWORD im Plattform-Secret, sonst
+      # kommen die Dienste nicht herein. Genau hier haengt sich ein
+      # Wrapper-Chart mit dem External Secrets Operator ein und stellt
+      # beide Secrets aus derselben Quelle aus.
+      secret:
+        name: {{ $cnpg.bootstrap.initdb.secret.name | quote }}
+      {{- end }}
+      encoding: {{ $cnpg.bootstrap.initdb.encoding | quote }}
+      {{- with $cnpg.bootstrap.initdb.localeCollate }}
+      localeCollate: {{ . | quote }}
+      {{- end }}
+      {{- with $cnpg.bootstrap.initdb.localeCType }}
+      localeCType: {{ . | quote }}
+      {{- end }}
+  storage:
+    size: {{ $cnpg.storage.size | quote }}
+    {{- with $cnpg.storage.storageClassName }}
+    storageClass: {{ . | quote }}
+    {{- end }}
+  {{- if $cnpg.superuserSecret.name }}
+  # Ohne dieses Secret gibt es keinen Superuser-Zugang, und der
+  # db-bootstrap-Job kann weder CREATE DATABASE noch CREATE ROLE.
+  enableSuperuserAccess: true
+  superuserSecret:
+    name: {{ $cnpg.superuserSecret.name | quote }}
+  {{- end }}
+  {{- with $cnpg.resources }}
+  resources:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  monitoring:
+    # Braucht den Prometheus-Operator (CRD PodMonitor); deshalb per Vorgabe
+    # aus, wie alles, was dieses Chart nicht selbst mitbringt.
+    enablePodMonitor: {{ $cnpg.monitoring.enablePodMonitor }}
+  {{- if $cnpg.backup.enabled }}
+  backup:
+    barmanObjectStore:
+      destinationPath: {{ $cnpg.backup.destinationPath | quote }}
+      {{- with $cnpg.backup.endpointURL }}
+      endpointURL: {{ . | quote }}
+      {{- end }}
+      {{- if $cnpg.backup.inheritFromIAMRole }}
+      # Anmeldung ueber die IAM-Rolle des ServiceAccounts (IRSA bzw.
+      # Workload Identity) -- es wird kein Secret gebraucht, und keines
+      # angelegt.
+      s3Credentials:
+        inheritFromIAMRole: true
+      {{- else }}
+      s3Credentials:
+        accessKeyId:
+          name: {{ $cnpg.backup.s3CredentialsSecret.name | quote }}
+          key: {{ $cnpg.backup.s3CredentialsSecret.accessKeyIdKey | quote }}
+        secretAccessKey:
+          name: {{ $cnpg.backup.s3CredentialsSecret.name | quote }}
+          key: {{ $cnpg.backup.s3CredentialsSecret.secretAccessKeyKey | quote }}
+      {{- end }}
+      wal:
+        compression: {{ $cnpg.backup.wal.compression }}
+      data:
+        compression: {{ $cnpg.backup.data.compression }}
+    retentionPolicy: {{ $cnpg.backup.retentionPolicy | quote }}
+  {{- end }}
+{{- end }}

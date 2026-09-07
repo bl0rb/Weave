@@ -1,0 +1,61 @@
+{{/*
+Beide Oberflaechen von Weave-Tools bleiben clusterintern -- values.yaml
+fuehrt fuer sie bewusst keinen Ingress-Block. Die REST-Spiegelung schuetzt
+nur das statische TOOLS_API_TOKEN, und der MCP-Server hat gar kein eigenes
+Diensttoken: er authentifiziert jeden Aufruf ueber den Authorization-Header
+des Aufrufers. Wer eine dieser Oberflaechen nach aussen geben will, legt
+den Ingress im Wrapper-Chart an und weiss dann, was er tut.
+*/}}
+{{- if .Values.toolsBackend.enabled }}
+{{- include "weave.validate" . }}
+{{- $c := .Values.toolsBackend }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "weave.componentName" (dict "ctx" $ "component" "tools-backend") }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "tools-backend") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ $c.service.type }}
+  ports:
+    - name: http
+      port: {{ $c.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "weave.selectorLabels" (dict "ctx" $ "component" "tools-backend") | nindent 4 }}
+{{- if $c.mcp.enabled }}
+---
+{{/*
+Eigener Service fuer den MCP-Server. Er waere kein zusaetzlicher Port am
+Service oben: die Selector-Labels trennen zwei verschiedene Pod-Mengen, und
+weave.internalUrl toolsBackend zeigt weiter auf die REST-Spiegelung, die
+Weave-Runtime als tools_base_url an n8n weiterreicht.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "weave.componentName" (dict "ctx" $ "component" "tools-mcp") }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "tools-mcp") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ $c.mcp.service.type }}
+  ports:
+    - name: http
+      port: {{ $c.mcp.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "weave.selectorLabels" (dict "ctx" $ "component" "tools-mcp") | nindent 4 }}
+{{- end }}
+{{- end }}

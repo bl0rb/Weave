@@ -1,0 +1,118 @@
+{{/*
+Weave-Ingest, Frontend -- die Next.js-Oberflaeche zum Hochladen, Beobachten
+und Durchsehen der Dokumente. Nicht zu verwechseln mit .Values.chat: das ist
+die Chat-Oberflaeche aus services/chat.
+
+Dieser Workload spricht nur mit dem Ingest-Backend, kennt keine Datenbank,
+kein Redis und kein einziges Geheimnis -- secrets.ingest wird hier deshalb
+absichtlich nicht eingebunden.
+*/}}
+{{- if .Values.ingestFrontend.enabled }}
+{{- include "weave.validate" . }}
+{{- $w := .Values.ingestFrontend }}
+{{- $hpa := .Values.autoscaling.ingestFrontend }}
+{{- $component := "ingest-frontend" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "weave.componentName" (dict "ctx" $ "component" $component) }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" $component) | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if $hpa.enabled }}
+  # replicas bleibt weg, solange die HPA laeuft -- Begruendung siehe
+  # ingest-backend-deployment.yaml.
+  {{- else }}
+  replicas: {{ $w.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "weave.selectorLabels" (dict "ctx" $ "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "weave.podLabels" (dict "ctx" $ "component" $component "extra" $w.podLabels) | nindent 8 }}
+      {{- $pann := include "weave.podAnnotations" (dict "ctx" $ "extra" $w.podAnnotations) }}
+      {{- with $pann }}
+      annotations:
+        {{- . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "weave.serviceAccountName" . }}
+      {{- with (include "weave.imagePullSecrets" .) }}
+      imagePullSecrets:
+        {{- . | nindent 8 }}
+      {{- end }}
+      {{- with $w.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $w.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $w.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $w.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: ingest-frontend
+          image: {{ include "weave.image" (dict "ctx" $ "image" $w.image) | quote }}
+          imagePullPolicy: {{ include "weave.imagePullPolicy" (dict "ctx" $ "image" $w.image) }}
+          {{- with $w.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            # Fest 3000: das Image startet `npm run start`, also next start auf
+            # dessen Vorgabeport. ingestFrontend.service.port entscheidet nur,
+            # unter welchem Port der Service davorsteht.
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          env:
+            # Zwei Aufrufe, weil die beiden Variablen in weave.yaml bei
+            # VERSCHIEDENEN Diensten stehen: WEAVE_INGEST_PUBLIC_API_URL beim
+            # Dienst ingest, WEAVE_CHAT_PUBLIC_URL beim Dienst chat. Gelesen
+            # werden beide von diesem Frontend, das den Wechsel in die
+            # Chat-Oberflaeche anbietet.
+            #
+            # Beides sind Adressen, die ein BROWSER aufruft, keine
+            # clusterinternen -- sie werden deshalb NICHT durch
+            # weave.internalUrl ersetzt, sondern bleiben, was weave.yaml sagt.
+            {{- include "weave.env" (dict "ctx" $ "service" "ingest" "only" (list "WEAVE_INGEST_PUBLIC_API_URL")) | nindent 12 }}
+            {{- include "weave.env" (dict "ctx" $ "service" "chat" "only" (list "WEAVE_CHAT_PUBLIC_URL")) | nindent 12 }}
+          {{- if $w.probes.liveness.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ $w.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ $w.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ $w.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ $w.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ $w.probes.liveness.failureThreshold }}
+          {{- end }}
+          {{- if $w.probes.readiness.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ $w.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ $w.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ $w.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ $w.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ $w.probes.readiness.failureThreshold }}
+          {{- end }}
+          {{- with $w.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

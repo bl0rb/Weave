@@ -1,0 +1,246 @@
+{{/*
+Weave-Tools -- die Werkzeug-Oberflaeche fuer delegierte, auf den Aufrufer
+eingegrenzte Zugriffe. Zustandslos: keine Datenbank, kein Redis; jeder
+Aufruf loest seinen Scope frisch ueber Weave-API auf und ruft
+Weave-Retrieval.
+
+ZWEI ASGI-ANWENDUNGEN IN EINEM IMAGE
+Dieses Image bringt zwei voneinander unabhaengige Anwendungen mit:
+
+  app.main:app        die REST-Spiegelung (/health + /api/v1/tools/*)
+  app.mcp_server:mcp_app  den MCP-Server (streamable HTTP unter /mcp)
+
+Sie laufen laut dem Modul-Docstring von app/mcp_server.py absichtlich als
+zwei uvicorn-Prozesse und nicht als einer: die von
+MCPServer.streamable_http_app() zurueckgegebene Starlette-Anwendung haengt
+an ihrem EIGENEN ASGI-lifespan; als Mount in der FastAPI-Anwendung von
+main.py bekaeme sie den nicht, und das faellt nicht beim Start auf, sondern
+erst beim ersten Werkzeugaufruf.
+
+Deshalb steht unten ein zweites Deployment aus DEMSELBEN Image mit
+ueberschriebenem command -- und deshalb ist es per Vorgabe AUS
+(toolsBackend.mcp.enabled=false). Die Begruendung ist die der Compose-Datei:
+anders als die REST-Spiegelung, die mit TOOLS_API_TOKEN eine eigene
+Diensttuer hat, authentifiziert die MCP-Oberflaeche jeden Aufruf allein
+ueber den Authorization-Header, den der Aufrufer ohnehin mitbringt. Ob sie
+gebraucht wird, haengt also einzig daran, ob es in dieser Installation
+ueberhaupt einen MCP-Client gibt (n8n-MCP-Node, Claude, ...). Beide
+Anwendungen sind zustandslos, also ist eine allein, die andere allein oder
+beide nebeneinander gleichermassen richtig.
+*/}}
+{{- if .Values.toolsBackend.enabled }}
+{{- include "weave.validate" . }}
+{{- $c := .Values.toolsBackend }}
+{{- $auto := .Values.autoscaling.toolsBackend }}
+{{- $name := include "weave.componentName" (dict "ctx" $ "component" "tools-backend") }}
+{{/* Die nicht-geheime Umgebung ist fuer beide Deployments dieselbe: dasselbe
+     Image, dasselbe app/core/config.py, nur ein anderer Einstiegspunkt.
+     Einmal gebaut, zweimal benutzt -- so kann sie nicht auseinanderlaufen.
+     Bei den Geheimnissen unterscheiden sie sich um genau eines, siehe beim
+     MCP-Deployment unten. In beiden Faellen gilt die verbindliche
+     Reihenfolge aus _helpers.tpl: erst secretEnv, dann env. */}}
+{{- $cfgEnv := include "weave.env" (dict "ctx" $ "service" "tools" "overrides" (dict
+      "WEAVE_API_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "api"))
+      "RETRIEVAL_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "retrieval"))
+    )) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "tools-backend") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  # Bei eingeschalteter HPA nur der Startwert; danach gehoert die
+  # Replikenzahl der HPA.
+  replicas: {{ ternary $auto.minReplicas $c.replicas $auto.enabled }}
+  selector:
+    matchLabels:
+      {{- include "weave.selectorLabels" (dict "ctx" $ "component" "tools-backend") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "weave.podLabels" (dict "ctx" $ "component" "tools-backend" "extra" $c.podLabels) | nindent 8 }}
+      {{- $pann := include "weave.podAnnotations" (dict "ctx" $ "extra" $c.podAnnotations) }}
+      {{- with $pann }}
+      annotations:
+        {{- . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "weave.serviceAccountName" . }}
+      {{- with (include "weave.imagePullSecrets" .) }}
+      imagePullSecrets:
+        {{- . | nindent 8 }}
+      {{- end }}
+      {{- with $c.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: tools-backend
+          image: {{ include "weave.image" (dict "ctx" $ "image" $c.image) | quote }}
+          imagePullPolicy: {{ include "weave.imagePullPolicy" (dict "ctx" $ "image" $c.image) }}
+          {{- with $c.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          # Kein command: das CMD des Images startet genau diese REST-
+          # Spiegelung (uvicorn app.main:app auf 8000).
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            {{- include "weave.secretEnv" (dict "ctx" $ "service" "tools") | nindent 12 }}
+            {{- $cfgEnv | nindent 12 }}
+          {{- with $c.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if $c.probes.liveness.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ $c.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ $c.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ $c.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ $c.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ $c.probes.liveness.failureThreshold }}
+          {{- end }}
+          {{- if $c.probes.readiness.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ $c.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ $c.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ $c.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ $c.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ $c.probes.readiness.failureThreshold }}
+          {{- end }}
+{{- if $c.mcp.enabled }}
+---
+{{/*
+Der MCP-Server: dasselbe Image, ueberschriebenes command. Er teilt sich mit
+der REST-Spiegelung Scheduling, Sicherheitskontext und Labels bis auf die
+Komponente -- values.yaml gibt ihm eigene replicas, service, resources und
+podAnnotations, alles andere waere eine zweite Stelle, an der dieselbe
+Entscheidung stehen kann.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "weave.componentName" (dict "ctx" $ "component" "tools-mcp") }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "tools-mcp") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  # Keine HPA: values.yaml fuehrt autoscaling nur fuer die zehn Workloads,
+  # die im Normalbetrieb laufen.
+  replicas: {{ $c.mcp.replicas }}
+  selector:
+    matchLabels:
+      {{- include "weave.selectorLabels" (dict "ctx" $ "component" "tools-mcp") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "weave.podLabels" (dict "ctx" $ "component" "tools-mcp" "extra" $c.podLabels) | nindent 8 }}
+      {{- $pann := include "weave.podAnnotations" (dict "ctx" $ "extra" $c.mcp.podAnnotations) }}
+      {{- with $pann }}
+      annotations:
+        {{- . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "weave.serviceAccountName" . }}
+      {{- with (include "weave.imagePullSecrets" .) }}
+      imagePullSecrets:
+        {{- . | nindent 8 }}
+      {{- end }}
+      {{- with $c.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: tools-mcp
+          image: {{ include "weave.image" (dict "ctx" $ "image" $c.image) | quote }}
+          imagePullPolicy: {{ include "weave.imagePullPolicy" (dict "ctx" $ "image" $c.image) }}
+          {{- with $c.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          # Das Image hat kein ENTRYPOINT, nur ein CMD -- command ersetzt es
+          # also vollstaendig. Genau der Aufruf, den services/tools/Dockerfile
+          # und die Compose-Datei als den zweiten Prozess nennen.
+          command:
+            - uvicorn
+            - app.mcp_server:mcp_app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            # OHNE TOOLS_API_TOKEN. Das ist die Tuer VOR der REST-
+            # Spiegelung: nur app/api/deps.py liest den Wert, und zwar aus
+            # dem Header X-Tools-Service-Token. Die MCP-Oberflaeche hat
+            # diese Tuer nicht -- sie loest jeden Aufruf ueber den
+            # Authorization-Header auf, den der Aufrufer mitbringt. Ein
+            # Geheimnis, das eine Anwendung nicht liest, gehoert auch nicht
+            # in ihre Umgebung.
+            {{- include "weave.secretEnv" (dict "ctx" $ "service" "tools"
+                  "except" (list "TOOLS_API_TOKEN")) | nindent 12 }}
+            {{- $cfgEnv | nindent 12 }}
+          {{- with $c.mcp.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          # KEINE HTTP-Probe: mcp_app ist mcp_server.streamable_http_app()
+          # und bedient ausschliesslich den MCP-Transport unter /mcp -- ein
+          # /health wie in app/main.py gibt es dort nicht, und ein GET auf
+          # /mcp ohne die vom Protokoll verlangten Header ist kein
+          # verlaesslicher 2xx. Geprueft wird deshalb nur, dass uvicorn den
+          # Port geoeffnet hat; mehr laesst sich hier ohne einen echten
+          # MCP-Handshake nicht behaupten.
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+{{- end }}
+{{- end }}

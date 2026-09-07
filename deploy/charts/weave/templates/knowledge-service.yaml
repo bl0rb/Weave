@@ -1,0 +1,39 @@
+{{/*
+Der Service vor Weave-Knowledge.
+
+Er ist die Adresse, die weave.internalUrl fuer die Komponente "knowledge"
+bildet -- Weave-Ingest schickt seine document.processed-Webhooks dorthin
+(PORTAL_KNOWLEDGE_BASE_URL). Gehoert NICHT ins Internet: ausser /health
+haengt hinter jedem Pfad entweder eine Signaturpruefung oder ein
+statisches Token, aber keine Benutzeranmeldung. Deshalb bringt dieses
+Chart auch keinen Ingress fuer diesen Dienst mit.
+
+Der Worker bekommt bewusst keinen Service: er lauscht auf keinem Port,
+sondern holt seine Auftraege aus der Redis-Queue.
+*/}}
+{{- if .Values.knowledge.enabled }}
+{{- include "weave.validate" . }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "weave.componentName" (dict "ctx" $ "component" "knowledge") }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "knowledge") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.knowledge.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.knowledge.service.port }}
+      # Der Container lauscht immer auf 8000 (Dockerfile: EXPOSE 8000,
+      # uvicorn --port 8000). Wer den Port aendern will, aendert
+      # knowledge.service.port -- die Zielseite bleibt.
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "weave.selectorLabels" (dict "ctx" $ "component" "knowledge") | nindent 4 }}
+{{- end }}

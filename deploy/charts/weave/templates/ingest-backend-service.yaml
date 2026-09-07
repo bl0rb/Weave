@@ -1,0 +1,30 @@
+{{/*
+Der clusterinterne Zugang zum Ingest-Backend. Unter genau dieser Adresse
+erreichen Weave-Knowledge, Weave-Runtime und Weave-API es -- siehe
+weave.internalUrl, das denselben Namen bildet.
+*/}}
+{{- if .Values.ingestBackend.enabled }}
+{{- $component := "ingest-backend" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "weave.componentName" (dict "ctx" $ "component" $component) }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" $component) | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.ingestBackend.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.ingestBackend.service.port }}
+      # Der benannte Port des Containers, nicht 8000 als Zahl: so bleibt der
+      # Service richtig, falls der Container den Port je aendert.
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "weave.selectorLabels" (dict "ctx" $ "component" $component) | nindent 4 }}
+{{- end }}

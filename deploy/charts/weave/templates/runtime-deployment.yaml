@@ -1,0 +1,175 @@
+{{/*
+Weave-Runtime -- der LLM-Executor.
+
+Zustandslos: keine Datenbank, kein Redis (siehe die Compose-Datei, wo
+weave-runtime als einziger Dienst ohne depends_on auf postgres steht). Er
+ruft Weave-Retrieval fuer die Suche, den LLM-Anbieter fuer die Antwort und
+Weave-Tools ueber ein kurzlebiges Delegationstoken. Deshalb hier drei
+overrides: weave.yaml traegt an diesen drei Stellen Docker-Servicenamen
+(http://weave-retrieval:8000 und so weiter), die es im Cluster nicht gibt.
+
+Das einzige, was dieser Dienst von der Platte liest, ist der Bot-Roster --
+dafuer das optionale PVC unten.
+*/}}
+{{- if .Values.runtime.enabled }}
+{{- include "weave.validate" . }}
+{{- $c := .Values.runtime }}
+{{- $auto := .Values.autoscaling.runtime }}
+{{- $name := include "weave.componentName" (dict "ctx" $ "component" "runtime") }}
+{{- $botsClaim := $c.botsPersistence.existingClaim | default (printf "%s-bots" $name | trunc 63 | trimSuffix "-") }}
+{{- if and $c.botsPersistence.enabled (not $c.botsPersistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $botsClaim }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "runtime") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- toYaml $c.botsPersistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ $c.botsPersistence.size | quote }}
+  {{- with $c.botsPersistence.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "runtime") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  # Bei eingeschalteter HPA ist das nur der Startwert; danach gehoert die
+  # Replikenzahl der HPA. Gleiche Bauart wie im Vorbild-Chart
+  # services/ingest/charts/weave-ingest.
+  replicas: {{ ternary $auto.minReplicas $c.replicas $auto.enabled }}
+  selector:
+    matchLabels:
+      {{- include "weave.selectorLabels" (dict "ctx" $ "component" "runtime") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "weave.podLabels" (dict "ctx" $ "component" "runtime" "extra" $c.podLabels) | nindent 8 }}
+      {{- $pann := include "weave.podAnnotations" (dict "ctx" $ "extra" $c.podAnnotations) }}
+      {{- with $pann }}
+      annotations:
+        {{- . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "weave.serviceAccountName" . }}
+      {{- with (include "weave.imagePullSecrets" .) }}
+      imagePullSecrets:
+        {{- . | nindent 8 }}
+      {{- end }}
+      {{- with $c.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $c.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: runtime
+          image: {{ include "weave.image" (dict "ctx" $ "image" $c.image) | quote }}
+          imagePullPolicy: {{ include "weave.imagePullPolicy" (dict "ctx" $ "image" $c.image) }}
+          {{- with $c.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            # ERST die Geheimnisse, DANN die Konfiguration -- die verbindliche
+            # Reihenfolge aus dem Kopf von _helpers.tpl. Runtime hat zwar
+            # keine $(VAR)-Referenz, aber die Regel gilt in jedem Workload,
+            # damit sie nicht beim naechsten hinzugekommenen Wert vergessen
+            # wird.
+            {{- include "weave.secretEnv" (dict "ctx" $ "service" "runtime") | nindent 12 }}
+            {{- include "weave.env" (dict "ctx" $ "service" "runtime" "overrides" (dict
+                  "RETRIEVAL_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "retrieval"))
+                  "CHAT_CONFIG_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "ingestBackend"))
+                  "TOOLS_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "toolsBackend"))
+                )) | nindent 12 }}
+            # BOTS_DIR steht bewusst nicht hier: der Vorgabewert './bots' der
+            # Anwendung (app/core/config.py) loest gegen WORKDIR /app auf und
+            # trifft damit genau den Mountpunkt unten. Ein zweiter Ort, an dem
+            # dieser Pfad steht, koennte nur auseinanderlaufen.
+          {{- with $c.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if $c.probes.liveness.enabled }}
+          # GET /health parst bei jedem Aufruf den gesamten Bot-Roster,
+          # antwortet aber auch bei einem kaputten Bot mit 200 und
+          # status: degraded (app/main.py). Die Probe beweist also, dass der
+          # Prozess laeuft -- ein fehlerhafter Bot nimmt den Pod nicht aus der
+          # Rotation, sondern faellt im Health-Feld auf.
+          livenessProbe:
+            httpGet:
+              path: {{ $c.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ $c.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ $c.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ $c.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ $c.probes.liveness.failureThreshold }}
+          {{- end }}
+          {{- if $c.probes.readiness.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ $c.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ $c.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ $c.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ $c.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ $c.probes.readiness.failureThreshold }}
+          {{- end }}
+          {{- if $c.botsPersistence.enabled }}
+          volumeMounts:
+            - name: bots
+              mountPath: /app/bots
+          {{- end }}
+      {{- if $c.botsPersistence.enabled }}
+      volumes:
+        # ACHTUNG, UNTERSCHIED ZU COMPOSE: dort seedet Docker ein frisch
+        # angelegtes named volume aus dem Inhalt des Images an diesem Pfad,
+        # der Roster startet also mit den zwei mitgelieferten Beispiel-Bots.
+        # Kubernetes tut das nicht -- ein frisches PVC ist leer, und der
+        # Mount verdeckt das bots/-Verzeichnis des Images vollstaendig.
+        #
+        # Das ist kein Fehler, sondern der Grund, warum dieses Volume
+        # optional ist: list_bots() (app/services/botconfig.py) mischt die
+        # lokalen YAML-Dateien mit den zentral in Weave-Ingest gepflegten
+        # Bots, die ueber CHAT_CONFIG_BASE_URL kommen. Ein leeres
+        # Verzeichnis heisst also "keine lokalen Bots", nicht "keine Bots".
+        # Was NICHT geht, ist ein fehlendes Verzeichnis: darauf antwortet
+        # /health mit status degraded. Ein leeres PVC erfuellt die
+        # Bedingung, das Image ohne Mount ebenfalls.
+        - name: bots
+          persistentVolumeClaim:
+            claimName: {{ $botsClaim }}
+      {{- end }}
+{{- end }}

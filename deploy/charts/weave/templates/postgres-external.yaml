@@ -1,0 +1,28 @@
+{{/*
+postgresql.mode=external -- hier wird ABSICHTLICH NICHTS gerendert.
+
+Host und Port stehen in postgresql.external, die drei Datenbanknamen in
+postgresql.databases (weave_knowledge, weave_api) bzw. in weave.yaml
+(POSTGRES_DB fuer weave_ingest). Die Zugangsdaten kommen wie in jedem
+anderen Modus aus dem Secret: POSTGRES_PASSWORD fuer die schreibende Rolle,
+RETRIEVAL_DB_PASSWORD fuer weave_retrieval_ro.
+
+Diese Datei existiert nur, damit der Modus im Chart auffindbar ist und
+damit die beiden Bedingungen, unter denen er nicht funktionieren kann,
+beim Rendern auffallen statt beim ersten Verbindungsversuch:
+
+  - ein leerer Host (die Pruefung steckt in weave.postgresHost),
+  - ein Server, auf dem pgvector fehlt. Das kann dieses Chart nicht
+    pruefen: Weave-Knowledge legt in weave_knowledge eine vector-Spalte an
+    (contracts/chunk-store.md), und ohne die Extension bricht dessen
+    Alembic-Lauf ab. Managed-Angebote fuehren pgvector meist, muessen es
+    aber oft erst freischalten.
+
+Die drei Datenbanken und die Read-only-Rolle legt auch hier der
+db-bootstrap-Job an -- er braucht dafuer eine Rolle mit CREATE DATABASE und
+CREATE ROLE, siehe dbBootstrap.superuser in values.yaml.
+*/}}
+{{- if eq .Values.postgresql.mode "external" }}
+{{- include "weave.validate" . }}
+{{- $_ := include "weave.postgresHost" . }}
+{{- end }}

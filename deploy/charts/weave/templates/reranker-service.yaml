@@ -1,0 +1,34 @@
+{{/*
+Der Service, auf den weave.internalUrl mit component "reranker" zeigt --
+Name aus weave.componentName, Port aus reranker.service.port, also nur eine
+Stelle je Angabe.
+
+KEIN Ingress, gleiche Begruendung wie bei embeddings: dieser Dienst kennt
+nur ein statisches Bearer-Token (RERANKER_API_TOKEN). Nach aussen sichtbar
+sind genau die vier Dienste, die values.yaml unter ingress auffuehrt.
+*/}}
+{{- if .Values.reranker.enabled }}
+{{- include "weave.validate" . }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "weave.componentName" (dict "ctx" $ "component" "reranker") }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "reranker") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.reranker.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.reranker.service.port }}
+      # Der Container lauscht immer auf 8000 (services/reranker/Dockerfile,
+      # uvicorn --port 8000).
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "weave.selectorLabels" (dict "ctx" $ "component" "reranker") | nindent 4 }}
+{{- end }}

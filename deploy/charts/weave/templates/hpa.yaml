@@ -1,0 +1,96 @@
+{{/*
+===========================================================================
+Je Workload eine HorizontalPodAutoscaler, alle per Vorgabe aus.
+
+WARUM DAS OBJEKT WIRKLICH GEBRAUCHT WIRD
+
+Jedes Deployment schreibt seine replicas als
+`ternary $auto.minReplicas $c.replicas $auto.enabled`. Ohne dieses Template
+haette autoscaling.<workload>.enabled=true also GENAU EINE Wirkung: die
+Replikenzahl faellt auf minReplicas und bleibt dort. Das waere schlechter
+als gar keine Einstellung.
+
+WARUM replicas UEBERHAUPT WEITER GESCHRIEBEN WIRD
+
+Ein Deployment ohne replicas-Feld faehrt beim ersten Anlegen mit 1 hoch,
+bis die HPA das erste Mal misst. minReplicas als Startwert ist der
+ruhigere Weg; danach besitzt die HPA das Feld, und Helm fasst es beim
+Upgrade nicht mehr an, solange der Wert im Manifest gleich bleibt.
+
+WELCHE WORKLOADS FEHLEN, UND WARUM
+
+  postgres/redis  Zustandsbehaftet. Zwei Postgres-Prozesse auf einem
+                  Datenverzeichnis beschaedigen es; ein zweiter Redis ist
+                  ein zweiter, leerer Broker.
+  toolsBackend.mcp Eigenes Deployment, aber kein eigener autoscaling-Block:
+                  wer den MCP-Server ueberhaupt braucht, betreibt ihn
+                  typischerweise mit einer festen, kleinen Replikenzahl.
+  embeddings/     Ihr Start laedt hunderte MB bis GB Modellgewichte nach.
+  reranker        Eine CPU-getriebene HPA skaliert genau dann hoch, wenn
+                  ohnehin schon Last anliegt, und der neue Pod ist erst
+                  Minuten spaeter bereit. Das gehoert ueber Warteschlangen-
+                  laenge oder gar nicht gesteuert, nicht ueber CPU.
+
+Zu ingestBackend, knowledge und api gehoert der Hinweis aus values.yaml:
+diese drei fahren beim Start Alembic. Mehrere gleichzeitig hochskalierende
+Repliken migrieren gleichzeitig gegen dieselbe Datenbank.
+===========================================================================
+*/}}
+{{- $workloads := list
+      (dict "key" "ingestBackend"   "component" "ingest-backend")
+      (dict "key" "ingestWorker"    "component" "ingest-worker")
+      (dict "key" "ingestFrontend"  "component" "ingest-frontend")
+      (dict "key" "knowledge"       "component" "knowledge")
+      (dict "key" "knowledgeWorker" "component" "knowledge-worker")
+      (dict "key" "retrieval"       "component" "retrieval")
+      (dict "key" "runtime"         "component" "runtime")
+      (dict "key" "api"             "component" "api")
+      (dict "key" "toolsBackend"    "component" "tools-backend")
+      (dict "key" "chat"            "component" "chat") }}
+{{- range $w := $workloads }}
+{{- $auto := get $.Values.autoscaling $w.key }}
+{{- $c := get $.Values $w.key }}
+{{- if $auto.enabled }}
+{{- include "weave.validate" $ }}
+{{- if not $c.enabled }}
+{{- fail (printf "autoscaling.%s.enabled=true, aber %s.enabled=false. Eine HPA ohne Deployment meldet dauerhaft 'failed to get scale subresource'." $w.key $w.key) }}
+{{- end }}
+{{/* Eine HPA mit minReplicas > maxReplicas wird vom API-Server angenommen
+     und skaliert danach nie -- die Meldung steckt in ihrem status, den
+     niemand liest. */}}
+{{- if gt (int $auto.minReplicas) (int $auto.maxReplicas) }}
+{{- fail (printf "autoscaling.%s: minReplicas (%v) ist groesser als maxReplicas (%v)." $w.key $auto.minReplicas $auto.maxReplicas) }}
+{{- end }}
+{{- $name := include "weave.componentName" (dict "ctx" $ "component" $w.component) }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" $w.component) | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $ "extra" $auto.annotations) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $name }}
+  minReplicas: {{ $auto.minReplicas }}
+  maxReplicas: {{ $auto.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          # Prozent der REQUESTS, nicht der Limits. Ein Workload ohne
+          # resources.requests.cpu hat keinen Bezugswert: die HPA meldet
+          # dann "missing request for cpu" und skaliert nie. Wer hier
+          # einschaltet, setzt also auch <workload>.resources.
+          averageUtilization: {{ $auto.targetCPUUtilizationPercentage }}
+{{- end }}
+{{- end }}

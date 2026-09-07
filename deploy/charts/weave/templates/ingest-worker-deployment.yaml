@@ -1,0 +1,161 @@
+{{/*
+Weave-Ingest, Celery-Worker -- extrahiert, konvertiert und indiziert die
+Dokumente, die das Backend entgegengenommen hat. Kein Service: dieser
+Workload lauscht auf keinem Port, er holt seine Auftraege aus Redis
+(logische Datenbank 0, ADR-0001).
+
+Das command kommt aus dem Image (worker.Dockerfile, CMD celery -A
+app.workers.tasks worker ...) und wird hier deshalb nicht wiederholt; die
+Stellschrauben darin -- CELERY_WORKER_CONCURRENCY,
+CELERY_PREFETCH_MULTIPLIER, CELERY_MAX_TASKS_PER_CHILD -- kommen als
+Umgebungsvariablen aus weave.yaml.
+*/}}
+{{- if .Values.ingestWorker.enabled }}
+{{- include "weave.validate" . }}
+{{- $w := .Values.ingestWorker }}
+{{- $hpa := .Values.autoscaling.ingestWorker }}
+{{- $component := "ingest-worker" }}
+{{- $storageClaim := .Values.persistence.existingClaim | default (include "weave.componentName" (dict "ctx" $ "component" "ingest-storage")) }}
+{{- $cacheClaim := $w.modelCache.persistence.existingClaim | default (include "weave.componentName" (dict "ctx" $ "component" "ingest-worker-model-cache")) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "weave.componentName" (dict "ctx" $ "component" $component) }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" $component) | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if $hpa.enabled }}
+  # replicas bleibt weg, solange die HPA laeuft -- Begruendung siehe
+  # ingest-backend-deployment.yaml.
+  {{- else }}
+  replicas: {{ $w.replicas }}
+  {{- end }}
+  {{- if and $w.modelCache.enabled $w.modelCache.persistence.enabled (not (has "ReadWriteMany" $w.modelCache.persistence.accessModes)) }}
+  strategy:
+    # Der Modell-Cache haengt an einem Volume, das nur EIN Knoten gleichzeitig
+    # anhaengen kann. Ein RollingUpdate startet den neuen Pod, bevor der alte
+    # endet; landet er auf einem anderen Knoten, bekommt er das Volume nie und
+    # bleibt fuer immer Pending, waehrend der alte Pod nicht beendet wird --
+    # das Upgrade kommt dann nie durch. Recreate beendet erst, startet dann.
+    type: Recreate
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "weave.selectorLabels" (dict "ctx" $ "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "weave.podLabels" (dict "ctx" $ "component" $component "extra" $w.podLabels) | nindent 8 }}
+      {{- $pann := include "weave.podAnnotations" (dict "ctx" $ "extra" $w.podAnnotations) }}
+      {{- with $pann }}
+      annotations:
+        {{- . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "weave.serviceAccountName" . }}
+      {{- with $w.runtimeClassName }}
+      # Nur noetig, wo der NVIDIA-Runtime als eigene RuntimeClass exponiert ist
+      # (siehe values.yaml) -- die OCR-Pfade dieses Workers nutzen die GPU,
+      # wenn eine da ist.
+      runtimeClassName: {{ . | quote }}
+      {{- end }}
+      {{- with (include "weave.imagePullSecrets" .) }}
+      imagePullSecrets:
+        {{- . | nindent 8 }}
+      {{- end }}
+      {{- with $w.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $w.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $w.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $w.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: ingest-worker
+          image: {{ include "weave.image" (dict "ctx" $ "image" $w.image) | quote }}
+          imagePullPolicy: {{ include "weave.imagePullPolicy" (dict "ctx" $ "image" $w.image) }}
+          {{- with $w.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            # Erst die Geheimnisse, dann die Konfiguration -- REDIS_URL traegt
+            # $(REDIS_PASSWORD), siehe den Kopf von _helpers.tpl.
+            #
+            # Der Worker bekommt dieselbe Umgebung wie das Backend, absichtlich:
+            # er importiert dasselbe app/core/config.py, das beim Import
+            # abbricht, wenn SECRET_KEY fuer eine Nicht-SQLite-Datenbank fehlt.
+            # Ein Zuviel schadet hier nicht, ein Zuwenig laesst den Prozess gar
+            # nicht erst starten.
+            {{- include "weave.secretEnv" (dict "ctx" $ "service" "ingest") | nindent 12 }}
+            {{- include "weave.env" (dict "ctx" $ "service" "ingest" "overrides" (dict
+                  "POSTGRES_HOST" (include "weave.postgresHost" $)
+                  "POSTGRES_PORT" (include "weave.postgresPort" $)
+                  "REDIS_URL" (include "weave.redisUrl" (dict "ctx" $ "db" 0))
+                  "PORTAL_KNOWLEDGE_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "knowledge"))
+                )) | nindent 12 }}
+            {{- if $w.modelCache.enabled }}
+            # Derselbe Wert, den worker.Dockerfile schon als ENV HOME setzt,
+            # hier wiederholt, damit Mountpunkt und HOME in EINER Datei
+            # nebeneinander stehen: PaddleOCR laedt seine Gewichte zur Laufzeit
+            # nach $HOME/.paddlex bzw. $HOME/.paddleocr. Zeigte HOME woandershin
+            # als der Mount unten, liefe der Download in die schreibbare Schicht
+            # des Containers und jeder Neustart holte mehrere hundert MB neu.
+            - name: HOME
+              value: /home/weave-ingest
+            {{- end }}
+          {{- with $w.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- /* Keine Proben: ein Celery-Worker hat keinen HTTP-Port, gegen den
+                 eine httpGet-Probe laufen koennte. ingestWorker.probes steht in
+                 values.yaml aus genau diesem Grund auf enabled: false. */}}
+          volumeMounts:
+            - name: shared-storage
+              mountPath: /app/backend/storage
+            {{- if $w.modelCache.enabled }}
+            - name: model-cache
+              mountPath: /home/weave-ingest
+            {{- end }}
+      volumes:
+        # Dieselbe Ablage, die auch das Backend mountet -- es schreibt die
+        # hochgeladene Datei, dieser Worker liest sie.
+        - name: shared-storage
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $storageClaim | quote }}
+          {{- else }}
+          # ACHTUNG: ohne Persistenz sieht dieser Pod ein eigenes, leeres
+          # Verzeichnis und findet keine einzige vom Backend abgelegte Datei.
+          emptyDir: {}
+          {{- end }}
+        {{- if $w.modelCache.enabled }}
+        - name: model-cache
+          {{- if $w.modelCache.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $cacheClaim | quote }}
+          {{- else }}
+          emptyDir:
+            {{- if $w.modelCache.sizeLimit }}
+            sizeLimit: {{ $w.modelCache.sizeLimit | quote }}
+            {{- else }}
+            {}
+            {{- end }}
+          {{- end }}
+        {{- end }}
+{{- end }}

@@ -1,0 +1,42 @@
+{{/*
+Der Gewichte-Cache unter /data/model-cache (RERANKER_CACHE_DIR aus
+services/reranker/Dockerfile).
+
+Das Image bringt die Gewichte NICHT mit -- es laedt BAAI/bge-reranker-v2-m3
+(~2,3 GB) beim ersten Start von HuggingFace. Deshalb ist die Vorgabegroesse
+hier deutlich hoeher als bei embeddings, und deshalb faellt ein fehlendes
+Volume hier deutlicher auf: ohne Cache holt jeder Pod-Neustart diese
+2,3 GB erneut.
+
+Rendert nur, wenn der Dienst eingeschaltet ist, die Persistenz gilt und
+kein fremder Claim benannt wurde -- mit persistence.existingClaim mountet
+das Deployment ein PVC, das jemand anders angelegt hat.
+
+Zum Zusammenspiel mit reranker.replicas gilt dasselbe wie bei embeddings:
+mit ReadWriteOnce koennen mehrere Repliken nur starten, wenn sie auf
+demselben Knoten landen; wer hochskalieren will, braucht ReadWriteMany.
+*/}}
+{{- if and .Values.reranker.enabled .Values.reranker.persistence.enabled (not .Values.reranker.persistence.existingClaim) }}
+{{- include "weave.validate" . }}
+{{- $p := .Values.reranker.persistence }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "weave.componentName" (dict "ctx" $ "component" "reranker") }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "reranker") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- toYaml $p.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ $p.size | quote }}
+  {{- with $p.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+{{- end }}

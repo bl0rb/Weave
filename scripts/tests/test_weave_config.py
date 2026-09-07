@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 
 import weave_config as wc
 
@@ -615,3 +616,138 @@ def test_real_weave_yaml_renders_and_then_checks_clean(tmp_path):
 
     findings = wc.check(REPO_ROOT / "weave.yaml", out)
     assert findings == []
+
+
+# ---------------------------------------------------------------------------
+# helm-values
+# ---------------------------------------------------------------------------
+
+def _helm_doc(tmp_path: Path, config_path: Path) -> dict:
+    """Run helm-values against a config and parse the file back as YAML."""
+    out = tmp_path / "values.generated.yaml"
+    rc = wc.helm_values(config_path, out)
+    assert rc == 0
+    return yaml.safe_load(out.read_text(encoding="utf-8"))
+
+
+def test_helm_values_groups_non_secrets_by_service(tmp_path, config_path):
+    doc = _helm_doc(tmp_path, config_path)
+    assert doc["config"]["alpha"]["ALPHA_PORT"] == "9001"
+    assert doc["config"]["alpha"]["EMBEDDING_MODEL"] == "fake-embed"
+    assert doc["config"]["beta"]["EMBEDDING_MODEL"] == "fake-embed"
+
+
+def test_helm_values_lists_only_secret_names(tmp_path, config_path):
+    doc = _helm_doc(tmp_path, config_path)
+    assert doc["secrets"]["alpha"] == ["ALPHA_ONLY_SECRET", "ALPHA_TOKEN", "SHARED_SECRET"]
+    assert doc["secrets"]["beta"] == ["SHARED_SECRET"]
+    assert doc["secrets"]["gamma"] == ["GAMMA_TOKEN"]
+
+
+def test_helm_values_never_writes_a_secret_value_or_placeholder(
+    tmp_path, config_path, monkeypatch
+):
+    # Every required secret exported, exactly as a `render` would need them --
+    # helm-values must ignore them all the same.
+    environ = dict(REQUIRED_SECRET_ENV, TEST_CROSS_NAMED_SECRET="cross-value")
+    for name, value in environ.items():
+        monkeypatch.setenv(name, value)
+
+    out = tmp_path / "values.generated.yaml"
+    assert wc.helm_values(config_path, out) == 0
+    text = out.read_text(encoding="utf-8")
+    for name, value in environ.items():
+        assert value not in text, f"{name} leaked into {out.name}"
+
+    doc = yaml.safe_load(text)
+    # A secret appears as a bare name in a list, never as a key with a value
+    # -- not even an empty string or a "changeme" placeholder.
+    for names in doc["secrets"].values():
+        assert isinstance(names, list)
+        for entry in names:
+            assert isinstance(entry, str)
+    # ... and nowhere in the config half either.
+    for settings in doc["config"].values():
+        assert "SHARED_SECRET" not in settings
+        assert "ALPHA_ONLY_SECRET" not in settings
+
+
+def test_helm_values_ignores_environment_overrides(tmp_path, config_path, monkeypatch):
+    # `render` honours an exported ALPHA_PORT; a generated chart values file
+    # must describe the platform, not the machine that generated it.
+    monkeypatch.setenv("ALPHA_PORT", "9999")
+    doc = _helm_doc(tmp_path, config_path)
+    assert doc["config"]["alpha"]["ALPHA_PORT"] == "9001"
+
+
+def test_helm_values_serializes_like_the_env_render(tmp_path, config_path):
+    env_out = tmp_path / "out.env"
+    assert wc.render(config_path, env_out, environ=dict(REQUIRED_SECRET_ENV)) == 0
+    rendered = wc.parse_env_file(env_out)
+
+    doc = _helm_doc(tmp_path, config_path)
+    # json_list stays compact JSON, ints stay unpadded digits -- byte-for-byte
+    # what the .env carries, so a container sees the same string either way.
+    assert doc["config"]["beta"]["BETA_LIST"] == rendered["BETA_LIST"] == '["a","b"]'
+    assert doc["config"]["alpha"]["EMBEDDING_DIMENSION"] == rendered["EMBEDDING_DIMENSION"]
+
+
+def test_helm_values_gives_a_secret_only_service_an_empty_config_block(tmp_path, config_path):
+    # gamma has no settings of its own, only a shared secret target. The block
+    # still exists so a template can index config.<service> without a nil check.
+    doc = _helm_doc(tmp_path, config_path)
+    assert doc["config"]["gamma"] == {}
+
+
+def test_helm_values_header_names_the_regenerating_command(tmp_path, config_path):
+    out = tmp_path / "values.generated.yaml"
+    assert wc.helm_values(config_path, out) == 0
+    text = out.read_text(encoding="utf-8")
+    assert text.startswith(wc.HELM_VALUES_HEADER)
+    assert "weave_config.py helm-values" in text
+    assert "DO NOT EDIT BY HAND" in text
+
+
+def test_helm_values_cli_writes_the_requested_file(tmp_path, config_path):
+    out = tmp_path / "nested" / "values.generated.yaml"
+    rc = wc.main(["--config", str(config_path), "helm-values", "--out", str(out)])
+    assert rc == 0
+    assert out.exists()
+
+
+def test_real_weave_yaml_helm_values_covers_every_service(tmp_path):
+    doc = _helm_doc(tmp_path, REPO_ROOT / "weave.yaml")
+    items = wc.load_items(REPO_ROOT / "weave.yaml")
+    services = {service for item in items for service, _var in item.targets}
+    assert set(doc["config"]) == services
+    assert set(doc["secrets"]) == services
+
+
+def test_real_weave_yaml_helm_values_matches_the_env_render(tmp_path):
+    """The chart and the compose stack must see identical non-secret values --
+    that is the whole point of both reading weave.yaml."""
+    items = wc.load_items(REPO_ROOT / "weave.yaml")
+    env_out = tmp_path / "deploy.env"
+    environ = {
+        item.env_var: f"test-value-for-{item.env_var}"
+        for item in items
+        if item.secret and item.required
+    }
+    assert wc.render(REPO_ROOT / "weave.yaml", env_out, environ=environ) == 0
+    rendered = wc.parse_env_file(env_out)
+
+    doc = _helm_doc(tmp_path, REPO_ROOT / "weave.yaml")
+    for service, settings in doc["config"].items():
+        for var, value in settings.items():
+            assert value == rendered[var], f"{service}.{var} drifted from the .env"
+
+
+def test_real_weave_yaml_helm_values_leaks_no_required_secret(tmp_path):
+    out = tmp_path / "values.generated.yaml"
+    assert wc.helm_values(REPO_ROOT / "weave.yaml", out) == 0
+    text = out.read_text(encoding="utf-8")
+    items = wc.load_items(REPO_ROOT / "weave.yaml")
+    secret_vars = {var for item in items if item.secret for _s, var in item.targets}
+    doc = yaml.safe_load(text)
+    for settings in doc["config"].values():
+        assert not (set(settings) & secret_vars)

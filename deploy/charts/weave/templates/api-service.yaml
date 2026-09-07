@@ -1,0 +1,29 @@
+{{/*
+Weave-API ist einer der vier Dienste, die ueberhaupt nach aussen gehoeren
+(siehe den Ingress-Block in values.yaml). Der Service selbst bleibt
+ClusterIP, solange service.type nichts anderes sagt -- nach aussen fuehrt
+der Ingress, nicht dieser Service.
+*/}}
+{{- if .Values.api.enabled }}
+{{- include "weave.validate" . }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "weave.componentName" (dict "ctx" $ "component" "api") }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "api") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.api.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.api.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "weave.selectorLabels" (dict "ctx" $ "component" "api") | nindent 4 }}
+{{- end }}

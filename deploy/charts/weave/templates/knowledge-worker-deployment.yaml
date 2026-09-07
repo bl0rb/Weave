@@ -1,0 +1,155 @@
+{{/*
+Weave-Knowledge -- der Celery-Worker.
+
+Gleiches Image wie der Dienst, gleiche Umgebung, anderes command. Er
+arbeitet die Queue weave.knowledge.index ab: chunken, embedden, in
+weave_knowledge schreiben. Genau so trennt der Compose-Stack die beiden
+(deploy/docker-compose.weave.yml, weave-knowledge-worker).
+
+WARUM DIESELBE UMGEBUNG WIE DER DIENST: beide laden dasselbe
+Settings-Modul, das seine Pflichtwerte beim Import prueft. Ein Zuviel
+schadet nicht, ein Zuwenig laesst schon den Import scheitern -- und zwar
+als CrashLoopBackOff ohne erkennbaren Zusammenhang zur fehlenden
+Variable.
+
+WARUM KEIN ALEMBIC: `command` ersetzt das CMD des Images
+(/app/entrypoint.sh) vollstaendig, also laeuft hier weder die Wartestrecke
+auf Postgres noch `alembic upgrade head`. Das ist beabsichtigt -- das
+Schema in weave_knowledge gehoert dem Dienst, und zwei Migrationslaeufe
+nebeneinander sind ein Problem, kein doppelter Schutz. Der Worker
+verbindet sich lazy und wartet notfalls in seinen Retries.
+
+WARUM KEIN SERVICE: der Worker lauscht auf keinem Port. Aus demselben
+Grund sind seine Proben in values.yaml aus -- eine HTTP-Probe haette hier
+nichts zum Abfragen.
+*/}}
+{{- if .Values.knowledgeWorker.enabled }}
+{{- include "weave.validate" . }}
+{{- $w := .Values.knowledgeWorker }}
+{{- $name := include "weave.componentName" (dict "ctx" $ "component" "knowledge-worker") }}
+{{/* Dieselbe Umbenennungstabelle wie beim Dienst, siehe Kopf von _helpers.tpl. */}}
+{{- $rename := dict
+      "WEAVE_KNOWLEDGE_SECRET_KEY" "SECRET_KEY"
+      "WEAVE_KNOWLEDGE_INGEST_API_TOKEN" "WEAVE_INGEST_API_TOKEN"
+      "WEAVE_KNOWLEDGE_WEBHOOK_SECRET" "WEAVE_INGEST_WEBHOOK_SECRET" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "knowledge-worker") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.autoscaling.knowledgeWorker.enabled }}
+  # Kein replicas-Feld, solange die HPA fuer knowledgeWorker laeuft: ein hier
+  # gesetzter Wert wuerde bei JEDEM `helm upgrade` zurueckgeschrieben, und
+  # die HPA muesste mitten im Upgrade erst wieder hochskalieren.
+  {{- else }}
+  replicas: {{ $w.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "weave.selectorLabels" (dict "ctx" $ "component" "knowledge-worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "weave.podLabels" (dict "ctx" $ "component" "knowledge-worker" "extra" $w.podLabels) | nindent 8 }}
+      {{- $pann := include "weave.podAnnotations" (dict "ctx" $ "extra" $w.podAnnotations) }}
+      {{- with $pann }}
+      annotations:
+        {{- . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "weave.serviceAccountName" . }}
+      {{- with (include "weave.imagePullSecrets" .) }}
+      imagePullSecrets:
+        {{- . | nindent 8 }}
+      {{- end }}
+      {{- with $w.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $w.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $w.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $w.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: knowledge-worker
+          image: {{ include "weave.image" (dict "ctx" $ "image" $w.image) | quote }}
+          imagePullPolicy: {{ include "weave.imagePullPolicy" (dict "ctx" $ "image" $w.image) }}
+          {{- with $w.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          # ACHTUNG BEI knowledgeWorker.queue: der Dienst stellt seine
+          # Auftraege in die Queue, die im Image festgeschrieben ist
+          # (app/workers/celery_app.py: task_default_queue =
+          # 'weave.knowledge.index'). Steht hier ein anderer Name, lauscht
+          # dieser Worker an einer leeren Queue und die Auftraege bleiben
+          # unbearbeitet liegen -- ohne Fehlermeldung auf einer der beiden
+          # Seiten. Der Wert ist nur da, damit ein Betrieb mit mehreren
+          # Queues moeglich ist, nicht zum Umbenennen.
+          command:
+            - "celery"
+            - "-A"
+            - "app.workers.tasks"
+            - "worker"
+            - "--loglevel={{ required "knowledgeWorker.logLevel darf nicht leer sein" $w.logLevel }}"
+            - "-Q"
+            - {{ required "knowledgeWorker.queue darf nicht leer sein" $w.queue | quote }}
+          env:
+            {{- /* Reihenfolge wie ueberall: erst die Geheimnisse, dann die
+                 Konfiguration -- DATABASE_URL und REDIS_URL enthalten
+                 $(POSTGRES_PASSWORD) bzw. $(REDIS_PASSWORD), und Kubernetes
+                 ersetzt die nur aus einem Eintrag weiter OBEN in derselben
+                 Liste. */}}
+            {{- include "weave.secretEnv" (dict "ctx" $ "service" "knowledge" "rename" $rename) | nindent 12 }}
+            {{- $ov := dict
+                  "DATABASE_URL" (include "weave.databaseUrl" (dict "ctx" $
+                      "database" $.Values.postgresql.databases.knowledge
+                      "user" (include "weave.postgresUser" $)
+                      "passwordVar" "POSTGRES_PASSWORD"))
+                  "REDIS_URL" (include "weave.redisUrl" (dict "ctx" $ "db" 1))
+                  "WEAVE_INGEST_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "ingestBackend")) }}
+            {{- /*
+            Nur, wenn dieses Release den Embedding-Dienst mitbringt UND die
+            Konfiguration die Adresse leer laesst -- sonst gewinnt, was in
+            weave.yaml steht. Siehe weave.embeddingBaseUrl.
+            */}}
+            {{- with (include "weave.embeddingBaseUrl" (dict "ctx" $ "service" "knowledge")) }}
+            {{- $_ := set $ov "EMBEDDING_BASE_URL" . }}
+            {{- end }}
+            {{- include "weave.env" (dict "ctx" $ "service" "knowledge"
+                  "except" (list "POSTGRES_USER" "POSTGRES_PORT")
+                  "overrides" $ov) | nindent 12 }}
+          {{- /*
+          Keine Proben. knowledgeWorker.probes.liveness/readiness stehen in
+          values.yaml auf enabled: false und haben bewusst weder Pfad noch
+          Schwellwerte: dieser Container oeffnet keinen Port, eine
+          httpGet-Probe haette hier nichts zum Abfragen und wuerde jeden Pod
+          im Minutentakt neu starten.
+
+          Wer sie trotzdem einschaltet, soll das erfahren, statt sich zu
+          fragen, warum keine Probe im Manifest steht -- deshalb hier ein
+          Abbruch statt eines stillen Weglassens.
+          */}}
+          {{- if or $w.probes.liveness.enabled $w.probes.readiness.enabled }}
+          {{- fail "knowledgeWorker.probes.*.enabled=true, aber dieser Container oeffnet keinen Port: er holt seine Auftraege aus der Redis-Queue, statt HTTP zu bedienen. Eine httpGet-Probe kann es hier deshalb nicht geben; die Werte in values.yaml stehen aus genau diesem Grund auf false und tragen weder Pfad noch Schwellwerte. Eine echte Lebendpruefung fuer einen Celery-Worker ist `celery -A app.workers.tasks inspect ping` als exec-Probe -- eine andere Bauform, die ein Wrapper-Chart per Patch ergaenzt." }}
+          {{- end }}
+          {{- with $w.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

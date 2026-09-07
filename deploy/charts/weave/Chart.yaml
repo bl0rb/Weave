@@ -1,0 +1,18 @@
+apiVersion: v2
+name: weave
+description: Helm chart for the whole Weave platform (Ingest, Knowledge, Retrieval, Runtime, API, Tools, Chat, plus the optional self-hosted embedding/rerank services)
+type: application
+# Beide Werte setzt der Release-Workflow auf den Git-Tag; was hier steht,
+# gilt nur fuer einen lokalen `helm install` aus dem Arbeitsverzeichnis.
+# appVersion ist zugleich der Default-Tag jedes Images (image.tag leer), damit
+# `helm install --version X` genau die Images X zieht statt eines beweglichen
+# latest.
+version: 0.1.1
+appVersion: "0.1.1"
+keywords:
+  - rag
+  - document-ingestion
+  - pgvector
+  - fastapi
+maintainers:
+  - name: weave

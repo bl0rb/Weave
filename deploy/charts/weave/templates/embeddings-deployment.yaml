@@ -1,0 +1,148 @@
+{{/*
+Weave-Embeddings -- OpenAI-kompatibles /v1/embeddings, CPU-only, per Vorgabe
+AUS.
+
+Warum aus: solange config.knowledge.EMBEDDING_PROVIDER (und
+config.retrieval.EMBEDDING_PROVIDER) auf "fake" stehen, ruft niemand diesen
+Dienst. Er wird erst gebraucht, wenn der Betrieb EMBEDDING_PROVIDER auf
+"openai" stellt und EMBEDDING_BASE_URL auf ihn zeigen laesst -- der Weg
+dorthin steht in docs/betrieb.md Abschnitt 7. Ein Dienst, der ~448 MiB
+Gewichte laedt und CPU bindet, ohne dass ihn jemand aufruft, gehoert nicht
+in die Vorgabe.
+
+Auch der Compose-Stack macht das so: kein depends_on aus weave-knowledge
+oder weave-retrieval zeigt auf diesen Dienst, damit eine optionale Sache
+nicht zur harten Abhaengigkeit des Normalstarts wird.
+
+Der Gewichte-Cache liegt unter /models -- das ist der Vorgabewert von
+EMBEDDINGS_CACHE_DIR aus services/embeddings/Dockerfile, deshalb muss das
+Chart die Variable nicht setzen, sondern nur an dieser Stelle mounten.
+*/}}
+{{- if .Values.embeddings.enabled }}
+{{- include "weave.validate" . }}
+{{- $e := .Values.embeddings }}
+{{- $name := include "weave.componentName" (dict "ctx" $ "component" "embeddings") }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "embeddings") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ $e.replicas }}
+  {{- if and $e.persistence.enabled (not (has "ReadWriteMany" $e.persistence.accessModes)) }}
+  strategy:
+    # Recreate, weil alle Pods dasselbe PVC benutzen und dessen accessModes
+    # kein ReadWriteMany enthalten: ein RollingUpdate startet den neuen Pod
+    # vor dem Abbau des alten, und der neue kann ein ReadWriteOnce-Volume
+    # nicht anhaengen, solange der alte es haelt -- er bliebe Pending, bis
+    # das Deployment aufgibt. Mit ReadWriteMany bleibt es beim
+    # RollingUpdate.
+    type: Recreate
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "weave.selectorLabels" (dict "ctx" $ "component" "embeddings") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "weave.podLabels" (dict "ctx" $ "component" "embeddings" "extra" $e.podLabels) | nindent 8 }}
+      {{- $pann := include "weave.podAnnotations" (dict "ctx" $ "extra" $e.podAnnotations) }}
+      {{- with $pann }}
+      annotations:
+        {{- . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "weave.serviceAccountName" . }}
+      {{- with (include "weave.imagePullSecrets" .) }}
+      imagePullSecrets:
+        {{- . | nindent 8 }}
+      {{- end }}
+      {{- with $e.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $e.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $e.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $e.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: embeddings
+          image: {{ include "weave.image" (dict "ctx" $ "image" $e.image) | quote }}
+          imagePullPolicy: {{ include "weave.imagePullPolicy" (dict "ctx" $ "image" $e.image) }}
+          {{- with $e.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            # secretEnv VOR env -- die verbindliche Reihenfolge aus dem Kopf
+            # von _helpers.tpl. Hier enthaelt zwar kein Wert ein $(VAR),
+            # aber die Regel gilt fuer jedes Workload-Template, damit sie
+            # nicht an der einen Stelle vergessen wird, an der sie zaehlt.
+            {{- include "weave.secretEnv" (dict "ctx" $ "service" "embeddings") | nindent 12 }}
+            {{- include "weave.env" (dict "ctx" $ "service" "embeddings") | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          {{- with $e.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if $e.probes.liveness.enabled }}
+          # GET /health antwortet auch waehrend des ersten Modell-Downloads
+          # sofort mit 200 und meldet den Fortschritt im Feld `warm`. Die
+          # Probe beweist damit Liveness, nie Readiness -- so gewollt, denn
+          # eine Probe darf einen langsamen Erst-Download nicht fuer einen
+          # toten Prozess halten und ihn mittendrin neu starten. Daher die
+          # grosse failureThreshold in values.yaml.
+          livenessProbe:
+            httpGet:
+              path: {{ $e.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ $e.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ $e.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ $e.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ $e.probes.liveness.failureThreshold }}
+          {{- end }}
+          {{- if $e.probes.readiness.enabled }}
+          # Aus demselben Grund sagt auch diese Probe nur, dass der Prozess
+          # antwortet. Ein Aufrufer, der wissen muss, ob das Modell geladen
+          # ist, fragt die Felder `warm`/`status` derselben Antwort ab.
+          readinessProbe:
+            httpGet:
+              path: {{ $e.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ $e.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ $e.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ $e.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ $e.probes.readiness.failureThreshold }}
+          {{- end }}
+          volumeMounts:
+            - name: models
+              mountPath: /models
+      volumes:
+        - name: models
+          {{- if $e.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $e.persistence.existingClaim | default $name }}
+          {{- else }}
+          # Ohne Persistenz laedt JEDER Pod-Neustart die Gewichte erneut von
+          # HuggingFace. In Clustern mit eingeschraenktem Egress schlaegt
+          # das fehl, und der Dienst bleibt dauerhaft `warm: false`.
+          emptyDir: {}
+          {{- end }}
+{{- end }}
