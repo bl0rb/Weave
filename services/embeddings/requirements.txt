@@ -37,7 +37,7 @@ pytest==9.1.1
 python-dotenv==1.2.3
 pyyaml==6.0.3
 starlette==1.6.0
-tokenizers==0.23.1
+tokenizers==0.23.2
 tqdm==4.70.0
 typing-extensions==4.16.0
 typing-inspection==0.4.4

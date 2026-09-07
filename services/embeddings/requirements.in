@@ -34,6 +34,6 @@ httpx==0.28.1
 #   caches them under EMBEDDINGS_CACHE_DIR.
 # numpy: mean-pooling/normalization math over the model's raw output.
 onnxruntime==1.29.0
-tokenizers==0.23.1
+tokenizers==0.23.2
 huggingface_hub==1.29.0
 numpy==2.5.2
