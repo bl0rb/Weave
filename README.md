@@ -1,5 +1,41 @@
 # Weave
 
+![Two colleagues beside a stack of binders. One asks "Wer kennt den aktuellen Stand?" — who knows the current state? The other, holding a laptop, answers "Der Kollege. Auf Bali." — our colleague. He is on Bali. The chair between them is empty.](docs/teaser.jpeg)
+
+## What Weave is for
+
+Every organisation keeps its real knowledge in two places: in documents nobody
+can find, and in the heads of people who are not at their desk. The first place
+is searchable in theory and unusable in practice; the second goes on holiday.
+
+Weave turns the documents into something that answers. It reads PDFs, Office
+files, scans, e-mails and Confluence pages, converts them into structured text
+with their metadata intact, and makes them answerable in a chat — with the
+source next to every answer, so a reader can check where a statement comes
+from instead of trusting it.
+
+Three decisions shape the product, and they are the ones worth understanding
+before anything technical:
+
+| Decision | What it means in practice |
+|---|---|
+| **Nothing is indexed by accident** | A processed document is not a published one. Someone reviews it and releases it explicitly; only then does it become findable. Uploading a folder does not expose it. |
+| **Permissions are part of the search, not a filter afterwards** | What a person may read is decided inside the database query. Someone outside a knowledge space gets no results — not a hidden result, and not an error that reveals one exists. |
+| **No sources, no answer** | When the search finds nothing, the bot says so. It does not produce a fluent, unsourced answer, which is the failure mode that makes such systems untrustworthy in the first place. |
+
+The platform runs on your own infrastructure. The language model is
+exchangeable and can be one you host yourself; out of the box the stack starts
+with placeholder models and reaches no external service at all, so it can be
+evaluated before any data or budget leaves the building.
+
+**What it is not:** Weave does not replace the people who know things, and it
+does not decide anything. It answers questions from documents that someone
+deliberately published, and it shows its work.
+
+The current release is **v0.1.0** — nine services, running and tested end to
+end. The [wiki](https://github.com/bl0rb/Weave-Tools/wiki) is the place to
+start reading; this README covers the repository itself.
+
 ## Overview
 
 This repository is the monorepo for the Weave platform: a document-based
