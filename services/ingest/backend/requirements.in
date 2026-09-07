@@ -11,7 +11,7 @@
 # hashes that make `pip install --require-hashes` refuse a swapped package.
 fastapi==0.141.1
 uvicorn[standard]==0.52.3
-pydantic==2.13.4
+pydantic==2.13.5
 pydantic-settings==2.14.2
 sqlalchemy==2.0.51
 psycopg[binary]==3.3.4
