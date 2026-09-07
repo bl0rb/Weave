@@ -19,11 +19,18 @@ ENV RERANKER_CACHE_DIR=/data/model-cache
 # otherwise a plain `pip install -r requirements.txt` resolves the `torch`
 # line against default PyPI, which serves the CUDA build (several GB
 # larger, entirely wasted on a CPU-only deployment). Installing it first
-# means the later `-r requirements.txt` pass finds torch==2.13.0 already
-# satisfied and never re-resolves it against the wrong index. See
-# README.md's "Imagegroesse" for the actual size difference this makes.
+# means the later `-r requirements.txt` pass finds torch already satisfied
+# and never re-resolves it against the wrong index. See README.md's
+# "Imagegroesse" for the actual size difference this makes.
+#
+# The version is READ OUT of requirements.txt rather than repeated here. A
+# second pin drifts the moment Dependabot bumps the first one, and then the
+# "already satisfied" above quietly stops being true: the -r pass resolves
+# torch against plain PyPI and pulls the CUDA build after all. That is
+# exactly what the torch 2.14.0 bump (#15) did.
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.13.0 \
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
+	"$(grep -E '^torch==' /app/requirements.txt)" \
 	&& pip install --no-cache-dir -r /app/requirements.txt
 
 COPY app /app/app
