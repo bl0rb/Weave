@@ -19,7 +19,7 @@
 # image. onnxruntime + tokenizers + huggingface_hub below are used
 # directly instead.
 fastapi==0.141.1
-uvicorn[standard]==0.52.3
+uvicorn[standard]==0.52.4
 pydantic==2.13.5
 pydantic-settings==2.14.2
 pytest==9.1.1
