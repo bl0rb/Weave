@@ -13,7 +13,7 @@
 # Weave-Retrieval or an LLM provider (httpx) and YAML bot configs (PyYAML, see
 # app/services/botconfig.py).
 fastapi==0.141.1
-uvicorn[standard]==0.52.3
+uvicorn[standard]==0.52.4
 pydantic==2.13.4
 pydantic-settings==2.14.2
 httpx==0.28.1
