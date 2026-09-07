@@ -23,9 +23,19 @@ claude.ai werden aus genau diesen Dateien neu veröffentlicht.
   verworfenen Alternativen, zuletzt 0006 (föderierte Anmeldung) und 0007
   (zentrale Chat-Provider-Konfiguration). Sie beantworten die Frage, die in einem Jahr am
   teuersten wird: „Warum eigentlich so?"
-- **[firewall-requirements.md](firewall-requirements.md)** und
-  **[supply-chain-hardening-blueprint.md](supply-chain-hardening-blueprint.md)** —
-  aus dem PaddleDoc-Erbe, betreffen weiterhin den Ingest-Dienst.
+- **[firewall-requirements.md](firewall-requirements.md)** — aus dem
+  PaddleDoc-Erbe, betrifft weiterhin den Ingest-Dienst.
+- **Lieferketten-Härtung** — der Blueprint dazu steht als Beitrag auf
+  [werkworks.de](https://werkworks.de/blog/supply-chain-blueprint/)
+  ([englisch](https://werkworks.de/en/blog/supply-chain-blueprint/)) und wird
+  dort gepflegt; eine zweite Fassung hier würde nur auseinanderlaufen. Was
+  davon in **diesem** Repository umgesetzt ist: M1 (alle Actions in
+  `.github/workflows/pr-ci.yml` auf Commit-SHA gepinnt, Helm-Tarball per
+  `sha256sum` geprüft), M4 (der Frontend-Build scheitert an einem
+  `npm audit`-Fund) und M5 (`.github/dependabot.yml` deckt alle neun Dienste
+  ab). M3 nur teilweise — hash-gelockt sind bislang allein
+  `services/ingest/backend/requirements.txt` und `requirements-worker.txt`;
+  die übrigen sieben sind auf exakte Versionen gepinnt, aber ohne Prüfsummen.
 - **[bereinigung.md](bereinigung.md)** — verbindliche Integrationsgrenzen,
   entfernte Altpfade und Kandidaten für spätere, kontrollierte Rückbauten.
 - **[screenshots/user-wiki/](screenshots/user-wiki/)** — 31 aktuelle Browseraufnahmen
@@ -33,11 +43,9 @@ claude.ai werden aus genau diesen Dateien neu veröffentlicht.
   [Galerie](screenshots/user-wiki/index.html) enthält alle Original-PNGs und den
   [Beispielablauf als GIF](screenshots/user-wiki/weave-example-process.gif):
   Anmelden → Hochladen → Verarbeiten → Freigeben → Chat-Mockup.
-- **[diagrams/](diagrams/)** — die gezeichneten Schaubilder als HTML-Quelle plus
+- **[diagrams/](diagrams/)** — gezeichnete Schaubilder als HTML-Quelle plus
   exportiertes SVG. `network-topology` gehört zum Netzabschnitt der
-  [Wurzel-README](../README.md#network-design), die vier `supply-chain-*` und
-  `dependabot-flow` zum
-  [Härtungs-Blueprint](supply-chain-hardening-blueprint.md).
+  [Wurzel-README](../README.md#network-design).
 - **[integrations/mail-ingestion.md](integrations/mail-ingestion.md)** — wie
   Dokumente per Mail hereinkommen und warum die frühere separate Mail-API
   entfernt wurde.
