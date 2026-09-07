@@ -14,7 +14,7 @@
 # schema of its own to migrate (it is the read-only side of the shared
 # chunk-store contract, never the writer).
 fastapi==0.141.1
-uvicorn[standard]==0.52.3
+uvicorn[standard]==0.52.4
 pydantic==2.13.5
 pydantic-settings==2.14.2
 sqlalchemy==2.0.52
