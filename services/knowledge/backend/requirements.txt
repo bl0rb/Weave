@@ -44,7 +44,7 @@ python-dotenv==1.2.3
 pyyaml==6.0.3
 redis==6.2.0
 six==1.17.0
-sqlalchemy==2.0.51
+sqlalchemy==2.0.52
 starlette==1.6.0
 typing-extensions==4.16.0
 typing-inspection==0.4.4
