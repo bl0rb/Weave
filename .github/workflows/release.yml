@@ -27,7 +27,6 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_OWNER: bl0rb
-  CHART_PATH: services/ingest/charts/weave-ingest
   OCI_REPO: ghcr.io/bl0rb/charts
 
 permissions:
@@ -178,12 +177,24 @@ jobs:
           provenance: false
 
   chart:
-    name: Helm chart
+    name: Helm ${{ matrix.name }}
     needs: [version, ci]
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Die ganze Plattform: neun Dienste, Datenbanken, Modelldienste.
+          - name: weave
+            path: deploy/charts/weave
+          # Nur Weave-Ingest. Bleibt eigenstaendig, weil es Bestand hat und
+          # anderswo als Dependency gezogen wird -- eine Umstellung darauf ist
+          # eine bewusste Migration, kein Versionssprung.
+          - name: weave-ingest
+            path: services/ingest/charts/weave-ingest
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -198,7 +209,7 @@ jobs:
           helm version --short
 
       - name: Lint chart
-        run: helm lint "${{ env.CHART_PATH }}"
+        run: helm lint "${{ matrix.path }}"
 
       - name: Log in to GHCR for Helm OCI
         shell: bash
@@ -211,7 +222,7 @@ jobs:
         run: |
           # Chart and app version follow the repository tag, so `helm install
           # --version X` and the image tags in values.yaml cannot drift apart.
-          OUT=$(helm package "${{ env.CHART_PATH }}" \
+          OUT=$(helm package "${{ matrix.path }}" \
             --version "${{ needs.version.outputs.value }}" \
             --app-version "${{ needs.version.outputs.value }}")
           echo "$OUT"
@@ -256,14 +267,19 @@ jobs:
             echo "\`weave-ingest-worker\` and \`weave-reranker\` are amd64 only;"
             echo "every other image is amd64 and arm64."
             echo
-            echo "## Helm chart"
+            echo "## Helm charts"
+            echo
+            echo "The whole platform -- nine services, databases, optional model services:"
+            echo
+            echo '```bash'
+            echo "helm install weave oci://${{ env.OCI_REPO }}/weave --version ${VERSION}"
+            echo '```'
+            echo
+            echo "Weave-Ingest on its own, unchanged:"
             echo
             echo '```bash'
             echo "helm install weave-ingest oci://${{ env.OCI_REPO }}/weave-ingest --version ${VERSION}"
-            echo '```'
-            echo
-            echo "The chart covers Weave-Ingest. The remaining services deploy"
-            echo "through the Compose stack in \`deploy/\`."
+            echo '```'"
             echo
             echo "## Running it"
             echo
