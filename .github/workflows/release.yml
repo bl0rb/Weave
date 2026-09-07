@@ -279,7 +279,7 @@ jobs:
             echo
             echo '```bash'
             echo "helm install weave-ingest oci://${{ env.OCI_REPO }}/weave-ingest --version ${VERSION}"
-            echo '```'"
+            echo '```'
             echo
             echo "## Running it"
             echo
