@@ -55,11 +55,51 @@ updates:
     directory: "/services/chat"
     schedule:
       interval: "weekly"
+    groups:
+      # React und ReactDOM muessen exakt dieselbe Version tragen -- React
+      # bricht sonst beim Start ab ("Incompatible React versions"). Einzeln
+      # gebumpt scheitert jede der beiden PRs an genau dieser Pruefung, und
+      # einzeln gemerged waere main kaputt. Die Typen wandern mit, damit sie
+      # nicht hinterherhinken.
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+      # eslint-config-next liest die Next-Version, gegen die es gebaut wurde.
+      # Auseinanderlaufen lassen heisst: Lint-Regeln fuer eine Version, die
+      # nicht installiert ist.
+      next:
+        patterns:
+          - "next"
+          - "eslint-config-next"
+          - "@next/*"
 
   - package-ecosystem: "npm"
     directory: "/services/ingest/frontend"
     schedule:
       interval: "weekly"
+    groups:
+      # React und ReactDOM muessen exakt dieselbe Version tragen -- React
+      # bricht sonst beim Start ab ("Incompatible React versions"). Einzeln
+      # gebumpt scheitert jede der beiden PRs an genau dieser Pruefung, und
+      # einzeln gemerged waere main kaputt. Die Typen wandern mit, damit sie
+      # nicht hinterherhinken.
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+      # eslint-config-next liest die Next-Version, gegen die es gebaut wurde.
+      # Auseinanderlaufen lassen heisst: Lint-Regeln fuer eine Version, die
+      # nicht installiert ist.
+      next:
+        patterns:
+          - "next"
+          - "eslint-config-next"
+          - "@next/*"
 
   # --- Base images. One entry per Dockerfile directory.
   - package-ecosystem: "docker"
