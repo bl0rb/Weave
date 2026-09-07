@@ -20,7 +20,7 @@
 # round trip over the streamable-HTTP transport, in-process), not the older
 # 1.x FastMCP API most existing tutorials still show.
 fastapi==0.141.1
-uvicorn[standard]==0.52.3
+uvicorn[standard]==0.52.4
 pydantic==2.13.4
 pydantic-settings==2.14.2
 httpx==0.28.1
