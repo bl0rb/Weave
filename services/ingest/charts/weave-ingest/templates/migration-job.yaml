@@ -34,7 +34,7 @@ spec:
       {{- end }}
       containers:
         - name: migrate
-          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
           {{- with .Values.migrationJob.containerSecurityContext }}
           securityContext:

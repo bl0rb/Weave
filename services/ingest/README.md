@@ -156,7 +156,7 @@ helm upgrade --install weave-ingest ./charts/weave-ingest \
 Install from GHCR OCI chart:
 
 ```bash
-helm install weave-ingest ./charts/weave-ingest \
+helm install weave-ingest oci://ghcr.io/bl0rb/charts/weave-ingest --version 0.1.0 \
   --namespace weave-ingest --create-namespace \
   --set auth.secretKey.value=$(openssl rand -hex 32)
 ```
@@ -506,17 +506,20 @@ To report a vulnerability, please open a GitHub Security Advisory rather than a 
 
 ## Container images
 
-The images referenced by the Compose files and the Helm chart
-(`ghcr.io/bl0rb/weave-ingest-backend`, `-worker`, `-frontend`) are **not
-published**: this repository wires up no registry release. Build them locally
-instead — `deploy/docker-compose.local.yml` overrides every `image:` with a
-build context, so the documented quick start in the root
-[README](../../README.md#quick-start) needs no registry at all.
+This service's three images — `ghcr.io/bl0rb/weave-ingest-backend`, `-worker`
+and `-frontend` — are published from the repository root, together with the
+other eight and the Helm chart. Pushing a tag `vX.Y.Z` runs
+[`.github/workflows/release.yml`](../../.github/workflows/release.yml): it runs
+every service's test suite first, then builds and pushes each image tagged with
+the version, and `latest` alongside it unless the tag is a pre-release.
 
-The publishing workflows that used to be documented here lived under
-`services/ingest/.github/workflows/`, a path GitHub never executes, and were
-removed rather than left as instructions that cannot work. Wiring up a real
-release for all nine services is open work, not a regression.
+`-backend` and `-frontend` are amd64 and arm64; `-worker` is amd64 only,
+because building the paddlepaddle tree for arm64 under emulation costs hours
+for an image whose GPU variant is amd64-only anyway.
+
+To run an untagged state, or while changing something locally, use
+`deploy/docker-compose.local.yml` — it overrides every `image:` with a build
+context, so nothing is pulled.
 
 ## Troubleshooting
 

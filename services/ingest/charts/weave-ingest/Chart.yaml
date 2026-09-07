@@ -2,8 +2,10 @@ apiVersion: v2
 name: weave-ingest
 description: Helm chart for weave-ingest (frontend + FastAPI backend + Celery worker)
 type: application
-version: 1.3.0
-appVersion: "1.3.0"
+# Beide Werte setzt der Release-Workflow auf den Git-Tag; was hier steht,
+# gilt nur fuer einen lokalen `helm install` aus dem Arbeitsverzeichnis.
+version: 0.1.0
+appVersion: "0.1.0"
 keywords:
   - paddleocr
   - fastapi

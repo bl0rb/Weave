@@ -17,7 +17,10 @@ frontend:
   replicaCount: 1
   image:
     repository: ghcr.io/bl0rb/weave-ingest-frontend
-    tag: "latest"
+    # Leer heisst: die appVersion des Charts. Ein Release setzt Chart- und
+    # App-Version auf denselben Tag wie die Images, damit `helm install
+    # --version X` genau die Images X zieht statt eines beweglichen latest.
+    tag: ""
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
@@ -44,7 +47,10 @@ backend:
   replicaCount: 1
   image:
     repository: ghcr.io/bl0rb/weave-ingest-backend
-    tag: "latest"
+    # Leer heisst: die appVersion des Charts. Ein Release setzt Chart- und
+    # App-Version auf denselben Tag wie die Images, damit `helm install
+    # --version X` genau die Images X zieht statt eines beweglichen latest.
+    tag: ""
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
@@ -99,7 +105,10 @@ worker:
   replicaCount: 1
   image:
     repository: ghcr.io/bl0rb/weave-ingest-worker
-    tag: "latest"
+    # Leer heisst: die appVersion des Charts. Ein Release setzt Chart- und
+    # App-Version auf denselben Tag wie die Images, damit `helm install
+    # --version X` genau die Images X zieht statt eines beweglichen latest.
+    tag: ""
     pullPolicy: IfNotPresent
   paddleDefaultProfile: ppocrv6_tiny
   # Celery task time limits + matching broker visibility_timeout -- see the

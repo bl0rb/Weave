@@ -12,10 +12,17 @@ on:
   push:
     branches:
       - main
-  # Kept as a reusable entry point for a future release gate. The caller it
-  # was originally added for (Weave-Ingest's own publish workflow) no longer
-  # exists; nothing calls this today.
+  # The release gate calls this file. `run_all` exists because the path
+  # filter below has no meaning on a tag push -- there is no sensible
+  # "changed since" to compare against, so every service job would skip and
+  # the gate would wave through a release nothing had tested. A release runs
+  # the whole suite; a pull request runs what it touched.
   workflow_call:
+    inputs:
+      run_all:
+        description: "Run every service suite, ignoring the path filter"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -47,6 +54,9 @@ jobs:
 
       - name: Filter changed paths
         id: filter
+        # Skipped for a release: `run_all` already forces every job to run,
+        # and on a tag push this action has nothing to diff against.
+        if: ${{ !inputs.run_all }}
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
           filters: |
@@ -72,7 +82,7 @@ jobs:
   ingest:
     name: Weave-Ingest
     needs: changes
-    if: needs.changes.outputs.ingest == 'true'
+    if: ${{ inputs.run_all || needs.changes.outputs.ingest == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -185,7 +195,7 @@ jobs:
   knowledge:
     name: Weave-Knowledge
     needs: changes
-    if: needs.changes.outputs.knowledge == 'true'
+    if: ${{ inputs.run_all || needs.changes.outputs.knowledge == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -208,7 +218,7 @@ jobs:
   retrieval:
     name: Weave-Retrieval
     needs: changes
-    if: needs.changes.outputs.retrieval == 'true'
+    if: ${{ inputs.run_all || needs.changes.outputs.retrieval == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -231,7 +241,7 @@ jobs:
   runtime:
     name: Weave-Runtime
     needs: changes
-    if: needs.changes.outputs.runtime == 'true'
+    if: ${{ inputs.run_all || needs.changes.outputs.runtime == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -261,7 +271,7 @@ jobs:
   api:
     name: Weave-API
     needs: changes
-    if: needs.changes.outputs.api == 'true'
+    if: ${{ inputs.run_all || needs.changes.outputs.api == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -284,7 +294,7 @@ jobs:
   tools:
     name: Weave-Tools
     needs: changes
-    if: needs.changes.outputs.tools == 'true'
+    if: ${{ inputs.run_all || needs.changes.outputs.tools == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -307,7 +317,7 @@ jobs:
   chat:
     name: Weave-Chat
     needs: changes
-    if: needs.changes.outputs.chat == 'true'
+    if: ${{ inputs.run_all || needs.changes.outputs.chat == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -346,7 +356,7 @@ jobs:
   embeddings:
     name: Weave-Embeddings
     needs: changes
-    if: needs.changes.outputs.embeddings == 'true'
+    if: ${{ inputs.run_all || needs.changes.outputs.embeddings == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -371,7 +381,7 @@ jobs:
   reranker:
     name: Weave-Reranker
     needs: changes
-    if: needs.changes.outputs.reranker == 'true'
+    if: ${{ inputs.run_all || needs.changes.outputs.reranker == 'true' }}
     runs-on: ubuntu-latest
 
     steps:

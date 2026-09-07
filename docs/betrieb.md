@@ -63,8 +63,11 @@ Attrappen-Providern, bis das in Abschnitt 7 beschrieben umgestellt wird.
 
 ## 2. Lokal starten
 
-Die Compose-Datei zeigt auf Registry-Images, die nie veröffentlicht wurden. Das
-Override baut alle sechs Dienste aus diesem Monorepo (`services/<dienst>`).
+Die Compose-Datei zieht die Images aus `ghcr.io/bl0rb/`. Sie entstehen beim
+Release: ein Tag `vX.Y.Z` baut und veröffentlicht alle elf
+(`.github/workflows/release.yml`). Wer einen ungetaggten Stand fahren will
+oder lokal etwas ändert, nimmt das Override — es baut jeden Dienst aus
+diesem Repository (`services/<dienst>`) statt ihn zu ziehen.
 
 ```bash
 cd deploy
