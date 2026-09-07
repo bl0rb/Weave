@@ -36,28 +36,12 @@ The current release is **v0.1.0** — nine services, running and tested end to
 end. The [wiki](https://github.com/bl0rb/Weave-Tools/wiki) is the place to
 start reading; this README covers the repository itself.
 
-## Overview
+## The services
 
-This repository is the monorepo for the Weave platform: a document-based
-knowledge and chat system made up of six independently deployable application
-services, two optional CPU model services, and two web interfaces. Every
-service runs as its own process and container image, with its own dependencies
-and test suite. The repository is shared; the runtimes remain isolated.
-
-The services originated in six separate repositories (Weave-Ingest,
-Weave-Knowledge, Weave-Retrieval, Weave-Runtime, Weave-Tools, and Weave-API).
-Those repositories are frozen. The maintained source now lives under
-`services/`.
-
-The main benefit of the consolidation is **one configuration instead of six**.
-The root-level `weave.yaml` declares each value once and maps shared values to
-every service that consumes them. `scripts/weave_config.py render` creates the
-gitignored `deploy/.env` file. Secrets are never stored in the repository;
-`weave.yaml` only contains the name of the environment variable from which a
-secret is read. The companion `check` command detects mismatches that would
-otherwise surface at a service boundary as an unexplained 401 or 503 response.
-
-## Repository layout
+Six application services, two optional CPU model services and two web
+interfaces. Each runs as its own process and container image, with its own
+dependencies and its own test suite; the runtimes stay isolated from one
+another.
 
 | Path | Responsibility |
 |---|---|
@@ -82,6 +66,16 @@ that a user explicitly releases is indexed.
 Each service also has its own README for service-specific details. Its
 `.env.example` file applies when that service is run independently. The Compose
 stack receives its configuration from `weave.yaml`.
+
+### One configuration for all of them
+
+`weave.yaml` declares each value once and maps the shared ones into every
+service that consumes them. `scripts/weave_config.py render` writes the
+gitignored `deploy/.env` from it; the file is never edited by hand. Secrets are
+not stored in the repository — `weave.yaml` holds only the name of the
+environment variable a secret is read from. The companion `check` command finds
+the mismatches that would otherwise surface at a service boundary as an
+unexplained 401 or 503.
 
 ## Technology stack
 
@@ -229,8 +223,8 @@ SSRF-hardened fetcher that rejects private addresses unless the specific host
 is allowlisted — opening the firewall alone is not enough.
 
 [docs/firewall-requirements.md](docs/firewall-requirements.md) holds a
-port-by-port connection matrix, but note its scope: it predates the monorepo and
-covers only the Ingest service and its own Compose files. The section above is
+port-by-port connection matrix, but note its scope: it predates this repository
+layout and covers only the Ingest service and its own Compose files. The section above is
 the platform-wide picture.
 
 ## Authentication and authorization
