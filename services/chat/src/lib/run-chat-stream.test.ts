@@ -13,6 +13,8 @@ const SAMPLE_TRACE: ChatTrace = {
   router_mode: 'rules',
   timings_ms: { router_ms: 1 },
   guard: null,
+  // Regel-Router, kein n8n-Turn -- genau der Fall, den `null` abdeckt.
+  n8n: null,
 };
 
 const SAMPLE_SOURCE: Source = {
@@ -24,6 +26,8 @@ const SAMPLE_SOURCE: Source = {
   document_id: 'doc-1',
   chunk_id: 7,
   score: 0.9,
+  // Passt zu retrieval.collections des SAMPLE_TRACE oben.
+  collection: 'legal-2026',
 };
 
 describe('consumeChatStream', () => {

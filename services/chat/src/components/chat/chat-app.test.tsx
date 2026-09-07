@@ -58,7 +58,7 @@ describe('ChatApp turn lifecycle', () => {
   });
 
   it('re-enables the composer after switching bots mid-turn, instead of leaving it locked forever', async () => {
-    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>((input) => {
       const url = String(input);
       if (url.endsWith('/api/bots')) return Promise.resolve(jsonResponse(BOTS));
       if (url.endsWith('/api/collections')) return Promise.resolve(jsonResponse([]));
@@ -103,7 +103,7 @@ describe('ChatApp turn lifecycle', () => {
   });
 
   it('re-enables the composer after starting a new conversation mid-turn', async () => {
-    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>((input) => {
       const url = String(input);
       if (url.endsWith('/api/bots')) return Promise.resolve(jsonResponse([BOTS[0]]));
       if (url.endsWith('/api/collections')) return Promise.resolve(jsonResponse([]));
@@ -156,7 +156,7 @@ describe('ChatApp collection filter', () => {
   });
 
   function mockFetch() {
-    return vi.fn((input: RequestInfo | URL) => {
+    return vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>((input) => {
       const url = String(input);
       if (url.endsWith('/api/bots')) return Promise.resolve(jsonResponse(BOTS));
       if (url.endsWith('/api/collections')) return Promise.resolve(jsonResponse(COLLECTIONS));
@@ -176,7 +176,7 @@ describe('ChatApp collection filter', () => {
       expect(fetchMock.mock.calls.some(([req]) => String(req).endsWith('/api/chat/stream'))).toBe(true);
     });
     const [, init] = fetchMock.mock.calls.find(([req]) => String(req).endsWith('/api/chat/stream'))!;
-    return JSON.parse((init as RequestInit).body as string);
+    return JSON.parse(init!.body as string);
   }
 
   it('sends the sidebar collection selection as the request filter', async () => {

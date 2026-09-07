@@ -7,27 +7,27 @@ describe('weaveApiFetch — credential-to-header selection (session.ts SessionCr
   });
 
   it('sends a `bearer` credential as an Authorization header, never a Cookie', async () => {
-    const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(null, { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
     await weaveApiFetch('/v1/bots', { kind: 'bearer', value: 'personal-token-123' });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    const headers = init.headers as Record<string, string>;
+    const [, init] = fetchMock.mock.calls[0];
+    const headers = init!.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer personal-token-123');
     expect(headers.Cookie).toBeUndefined();
   });
 
   it('sends a `session` credential as a Cookie header on Weave-API\'s own session cookie name, never Authorization', async () => {
-    const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(null, { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
     await weaveApiFetch('/v1/bots', { kind: 'session', value: 'sso-session-abc' });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    const headers = init.headers as Record<string, string>;
+    const [, init] = fetchMock.mock.calls[0];
+    const headers = init!.headers as Record<string, string>;
     // Weave-API backend/app/core/auth.py's own SESSION_COOKIE_NAME — taken
     // over verbatim, see weave-api-server.ts's GATEWAY_SESSION_COOKIE_NAME.
     expect(headers.Cookie).toBe('weave_api_session=sso-session-abc');
