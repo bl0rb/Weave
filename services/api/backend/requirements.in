@@ -30,4 +30,4 @@ pytest==9.1.1
 # not imported directly by this codebase, so it's left unpinned here and
 # just frozen wherever pip resolves it into requirements.txt.
 authlib==1.7.2
-joserfc==1.7.4
+joserfc==1.7.5

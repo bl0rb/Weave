@@ -22,7 +22,7 @@ httptools==0.8.0
 httpx==0.28.1
 idna==3.19
 iniconfig==2.3.0
-joserfc==1.7.4
+joserfc==1.7.5
 mako==1.4.1
 markupsafe==3.0.3
 packaging==26.3
