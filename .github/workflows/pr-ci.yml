@@ -12,14 +12,20 @@ on:
   push:
     branches:
       - main
-  # Lets services/ingest/.github/workflows/publish-ghcr-images.yml keep
-  # calling this file as its release gate (`uses: ./.github/workflows/pr-ci.yml`,
-  # always resolved relative to the repo root) -- unique to Weave-Ingest's
-  # own former workflow, kept here so that reference stays intact.
+  # Kept as a reusable entry point for a future release gate. The caller it
+  # was originally added for (Weave-Ingest's own publish workflow) no longer
+  # exists; nothing calls this today.
   workflow_call:
 
 permissions:
   contents: read
+  # dorny/paths-filter below resolves a pull_request's changed files through
+  # the API, not through a local diff. Without this it fails closed with
+  # "Resource not accessible by integration" and every service job is skipped
+  # -- which is what happened to all 51 Dependabot PRs at once. Dependabot
+  # runs get a more restricted token than a normal PR, so this is the
+  # permission that has to be granted explicitly rather than inherited.
+  pull-requests: read
 
 jobs:
   changes:
