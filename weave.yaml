@@ -439,6 +439,16 @@ services:
 
   ingest:
     settings:
+      SERVICE_NAME:
+        secret: false
+        value: ingest-worker
+        type: string
+        required: false
+      SERVICE_NAME:
+        secret: false
+        value: ingest-worker
+        type: string
+        required: false
       RUNTIME_BOTS_BASE_URL:
         secret: false
         value: http://weave-runtime:8000

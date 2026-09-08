@@ -38,10 +38,19 @@ router_internal = APIRouter(prefix='/api/v1/internal/bots', tags=['managed-bots-
 def _admin_response(row: ManagedBot) -> ManagedBotAdminResponse:
     return ManagedBotAdminResponse(
         id=row.id,
+        kind=row.kind,
         name=row.name,
         description=row.description,
         enabled=row.enabled,
         webhook_url=row.webhook_url,
+        system_prompt=row.system_prompt,
+        temperature=row.temperature,
+        retrieval_enabled=row.retrieval_enabled,
+        retrieval_filters=dict(row.retrieval_filters or {}),
+        top_k=row.top_k,
+        final_k=row.final_k,
+        rerank=row.rerank,
+        include_uncollected=row.include_uncollected,
         streaming=row.streaming,
         has_auth_token=bool(row.auth_token_encrypted),
         timeout_seconds=row.timeout_seconds,
@@ -67,8 +76,10 @@ def _runtime_bots() -> list[ManagedBotAdminResponse]:
         )
         response.raise_for_status()
         items = response.json()
-    except (httpx.HTTPError, ValueError) as exc:
-        raise HTTPException(status_code=503, detail=f'Runtime-Botliste nicht verfügbar: {exc}') from exc
+    except (httpx.HTTPError, ValueError):
+        # Managed n8n bots remain administrable when Runtime is temporarily
+        # unavailable; the next refresh exposes local YAML bots again.
+        return []
     return [ManagedBotAdminResponse(
         id=item['id'], name=item['name'], description=item.get('description'), enabled=True,
         webhook_url='', streaming=False, has_auth_token=False, timeout_seconds=0,
@@ -113,9 +124,18 @@ def _apply(row: ManagedBot, payload: ManagedBotCreate | ManagedBotUpdate, admin:
     next_url = payload.webhook_url
     url_changed = bool(row.webhook_url and row.webhook_url != next_url)
     row.name = payload.name
+    row.kind = payload.kind
     row.description = payload.description
     row.enabled = payload.enabled
     row.webhook_url = next_url
+    row.system_prompt = payload.system_prompt
+    row.temperature = payload.temperature
+    row.retrieval_enabled = payload.retrieval_enabled
+    row.retrieval_filters = dict(payload.retrieval_filters)
+    row.top_k = payload.top_k
+    row.final_k = payload.final_k
+    row.rerank = payload.rerank
+    row.include_uncollected = payload.include_uncollected
     row.streaming = payload.streaming
     row.timeout_seconds = payload.timeout_seconds
     row.teams = list(payload.teams)
@@ -205,9 +225,18 @@ def internal_managed_bots(response: Response, db: Session = Depends(get_db)) -> 
             ) from exc
         items.append(ManagedBotInternalResponse(
             id=row.id,
+            kind=row.kind,
             name=row.name,
             description=row.description,
             webhook_url=row.webhook_url,
+            system_prompt=row.system_prompt,
+            temperature=row.temperature,
+            retrieval_enabled=row.retrieval_enabled,
+            retrieval_filters=dict(row.retrieval_filters or {}),
+            top_k=row.top_k,
+            final_k=row.final_k,
+            rerank=row.rerank,
+            include_uncollected=row.include_uncollected,
             streaming=row.streaming,
             auth_token=auth_token,
             timeout_seconds=row.timeout_seconds,

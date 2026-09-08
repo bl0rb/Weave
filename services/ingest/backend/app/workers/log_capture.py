@@ -97,6 +97,7 @@ class WorkerLogDBHandler(logging.Handler):
             db.add(WorkerLogEntry(
                 created_at=datetime.now(timezone.utc),
                 level=record.levelname,
+                service=settings.service_name,
                 logger_name=record.name,
                 worker_name=_WORKER_NAME,
                 task_id=task_id,

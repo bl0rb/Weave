@@ -4,6 +4,7 @@ import re
 from datetime import datetime
 from urllib.parse import urlsplit
 
+from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
@@ -14,10 +15,19 @@ _UNSAFE_URL_CHARS = re.compile(r'[\\\x00-\x1f\x7f]')
 class ManagedBotWrite(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
+    kind: Literal['n8n', 'llm'] = 'n8n'
     name: str = Field(min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=4000)
     enabled: bool = True
-    webhook_url: str = Field(min_length=1, max_length=2048)
+    webhook_url: str | None = Field(default=None, max_length=2048)
+    system_prompt: str | None = Field(default=None, max_length=12000)
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    retrieval_enabled: bool = False
+    retrieval_filters: dict = Field(default_factory=dict)
+    top_k: int = Field(default=20, ge=1, le=100)
+    final_k: int = Field(default=5, ge=1, le=100)
+    rerank: bool = True
+    include_uncollected: bool = True
     streaming: bool = False
     auth_token: str | None = Field(default=None, max_length=8192)
     clear_auth_token: bool = False
@@ -29,7 +39,7 @@ class ManagedBotWrite(BaseModel):
         default='Ich habe dazu keine belegten Informationen gefunden.', min_length=1, max_length=2000
     )
 
-    @field_validator('name', 'webhook_url', 'no_context_reply')
+    @field_validator('name', 'no_context_reply')
     @classmethod
     def strip_required(cls, value: str) -> str:
         cleaned = value.strip()
@@ -78,6 +88,16 @@ class ManagedBotWrite(BaseModel):
             raise ValueError('auth_token and clear_auth_token cannot be used together')
         return self
 
+    @model_validator(mode='after')
+    def validate_kind(self) -> 'ManagedBotWrite':
+        if self.final_k > self.top_k:
+            raise ValueError('final_k must be less than or equal to top_k')
+        if self.kind == 'n8n' and not self.webhook_url:
+            raise ValueError('webhook_url is required for n8n bots')
+        if self.kind == 'llm' and (not self.system_prompt or self.webhook_url or self.auth_token or self.streaming or self.clear_auth_token):
+            raise ValueError('LLM bots require system_prompt and cannot use n8n fields')
+        return self
+
 
 class ManagedBotCreate(ManagedBotWrite):
     id: str = Field(min_length=1, max_length=255)
@@ -97,10 +117,19 @@ class ManagedBotUpdate(ManagedBotWrite):
 
 class ManagedBotAdminResponse(BaseModel):
     id: str
+    kind: str
     name: str
     description: str | None
     enabled: bool
-    webhook_url: str
+    webhook_url: str | None
+    system_prompt: str | None = None
+    temperature: float | None = None
+    retrieval_enabled: bool = False
+    retrieval_filters: dict = Field(default_factory=dict)
+    top_k: int = 20
+    final_k: int = 5
+    rerank: bool = True
+    include_uncollected: bool = True
     streaming: bool
     has_auth_token: bool
     timeout_seconds: int
@@ -120,9 +149,18 @@ class ManagedBotListResponse(BaseModel):
 
 class ManagedBotInternalResponse(BaseModel):
     id: str
+    kind: str = 'n8n'
     name: str
     description: str | None
-    webhook_url: str
+    webhook_url: str | None = None
+    system_prompt: str | None = None
+    temperature: float | None = None
+    retrieval_enabled: bool = False
+    retrieval_filters: dict = Field(default_factory=dict)
+    top_k: int = 20
+    final_k: int = 5
+    rerank: bool = True
+    include_uncollected: bool = True
     streaming: bool
     auth_token: str = ''
     timeout_seconds: int

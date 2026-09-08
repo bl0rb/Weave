@@ -1498,6 +1498,7 @@ def _worker_log_response(entry: WorkerLogEntry) -> WorkerLogEntryResponse:
         id=entry.id,
         created_at=entry.created_at,
         level=entry.level,
+        service=entry.service,
         logger_name=entry.logger_name,
         worker_name=entry.worker_name,
         task_id=entry.task_id,
@@ -1512,6 +1513,7 @@ def admin_list_worker_logs(
     db: Session = Depends(get_db),
     level: WorkerLogLevel | None = None,
     worker: str | None = None,
+    service: str | None = None,
     q: str | None = None,
     since: datetime | None = None,
     until: datetime | None = None,
@@ -1524,6 +1526,8 @@ def admin_list_worker_logs(
         conditions.append(WorkerLogEntry.level.in_(_WORKER_LOG_LEVEL_ORDER[floor_idx:]))
     if worker:
         conditions.append(WorkerLogEntry.worker_name == worker)
+    if service:
+        conditions.append(WorkerLogEntry.service == service)
     if q:
         conditions.append(WorkerLogEntry.message.ilike(f'%{q}%'))
     if since is not None:

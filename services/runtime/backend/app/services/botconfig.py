@@ -278,16 +278,22 @@ def _managed_bot(raw: dict) -> BotConfig:
     """Translate the Ingest control-plane projection into BotConfig."""
     bot_id = str(raw.get('id') or 'unknown')
     try:
+        kind = raw.get('kind', 'n8n')
+        is_llm = kind == 'llm'
         bot = BotConfig.model_validate({
             'id': raw['id'],
             'name': raw['name'],
             'description': raw.get('description'),
-            'model': {'provider': 'n8n', 'model': 'n8n-agent-flow'},
-            'system_prompt': 'Du führst Anfragen über den konfigurierten n8n-Workflow aus.',
+            'model': {'provider': 'fake', 'model': 'fake-chat', 'temperature': raw.get('temperature')} if is_llm else {'provider': 'n8n', 'model': 'n8n-agent-flow'},
+            'system_prompt': raw.get('system_prompt') if is_llm else 'Du führst Anfragen über den konfigurierten n8n-Workflow aus.',
             'retrieval': {
-                'enabled': False,
+                'enabled': bool(raw.get('retrieval_enabled', False)) if is_llm else False,
+                'filters': raw.get('retrieval_filters') or {},
                 'collections': raw.get('collections') or [],
-                'include_uncollected': False,
+                'top_k': raw.get('top_k', 20),
+                'final_k': raw.get('final_k', 5),
+                'rerank': bool(raw.get('rerank', True)),
+                'include_uncollected': bool(raw.get('include_uncollected', True)) if is_llm else False,
             },
             'permissions': {'teams': raw.get('teams') or []},
             'guard': {
@@ -299,7 +305,7 @@ def _managed_bot(raw: dict) -> BotConfig:
                 'timeout_seconds': raw.get('timeout_seconds', 120),
                 'streaming': bool(raw.get('streaming', False)),
                 'auth_token': raw.get('auth_token') or None,
-            },
+            } if not is_llm else None,
         })
     except (ValidationError, KeyError, TypeError) as exc:
         raise BotConfigError(f'managed bot {bot_id!r}: invalid control-plane data') from exc

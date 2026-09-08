@@ -190,6 +190,7 @@ DEVIATIONS: dict[str, dict[str, Deviation]] = {
             "PUBLIC_API_URL",
             "REDIS_PASSWORD",
             "SECRET_KEY",
+            "SERVICE_NAME",
             "WEBHOOK_PRIVATE_HOST_ALLOWLIST",
             # Aus dem chat-Block: die liest die Chat-Oberflaeche selbst.
             "CHAT_APP_BASE_URL",

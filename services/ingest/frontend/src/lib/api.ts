@@ -136,6 +136,7 @@ export interface WorkerLogEntry {
   id: string;
   created_at: string; // ISO 8601
   level: string;
+  service: string;
   logger_name: string;
   worker_name: string;
   /** Null for log lines emitted outside a running Celery task. */

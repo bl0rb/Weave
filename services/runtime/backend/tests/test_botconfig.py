@@ -127,6 +127,25 @@ def test_centrally_managed_bot_is_merged_with_local_roster(bots_dir, monkeypatch
     assert 'secret-token' not in repr(managed)
 
 
+def test_centrally_managed_llm_bot_is_projected_with_retrieval(bots_dir, monkeypatch):
+    (bots_dir / 'minimal.yaml').write_text(_MINIMAL_BOT, encoding='utf-8')
+    monkeypatch.setattr('app.services.botconfig.fetch_managed_bots', lambda: [{
+        'id': 'knowledge-agent', 'name': 'Knowledge Agent', 'description': 'DB managed',
+        'kind': 'llm', 'system_prompt': 'Use only evidence.', 'temperature': 0.2,
+        'retrieval_enabled': True, 'retrieval_filters': {'department': 'legal'},
+        'top_k': 12, 'final_k': 4, 'rerank': False, 'include_uncollected': False,
+        'teams': ['legal'], 'collections': ['vertraege'], 'require_sources': True,
+        'no_context_reply': 'No evidence.',
+    }])
+    managed = {bot.id: bot for bot in list_bots()}['knowledge-agent']
+    assert managed.model.provider == 'fake'
+    assert managed.system_prompt == 'Use only evidence.'
+    assert managed.retrieval.enabled is True
+    assert managed.retrieval.filters.department == 'legal'
+    assert managed.retrieval.final_k == 4
+    assert managed.n8n is None
+
+
 def test_central_bot_with_same_id_overrides_local_yaml(bots_dir, monkeypatch):
     (bots_dir / 'minimal.yaml').write_text(_MINIMAL_BOT, encoding='utf-8')
     monkeypatch.setattr(settings, 'n8n_allowed_base_urls', ['https://n8n.example.test/webhook/'])

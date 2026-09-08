@@ -256,6 +256,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required — it encrypts sessions and stored credentials}
+      SERVICE_NAME: ${SERVICE_NAME:-ingest-worker}
       PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
       CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:3000"]}
       # --- Identity provider for the rest of the platform (OPTIONAL).
@@ -324,6 +325,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required — it encrypts sessions and stored credentials}
+      SERVICE_NAME: ${SERVICE_NAME:-ingest-worker}
       CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-1}
       CELERY_PREFETCH_MULTIPLIER: ${CELERY_PREFETCH_MULTIPLIER:-1}
       CELERY_MAX_TASKS_PER_CHILD: ${CELERY_MAX_TASKS_PER_CHILD:-5}

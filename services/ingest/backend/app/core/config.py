@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     paddle_default_profile: str = 'ppocrv6_tiny'
     paddle_timeout_seconds: int = 300
     worker_concurrency: int = 1
+    service_name: str = 'ingest-worker'
 
     # Celery task hard/soft time limits. Long OCR jobs on CPU can legitimately
     # run for many minutes, but a hung/stuck task (e.g. a wedged onnxruntime

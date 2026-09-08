@@ -322,10 +322,19 @@ class ManagedBot(Base):
     __tablename__ = 'managed_bots'
 
     id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), default='n8n', server_default='n8n', nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1', nullable=False)
-    webhook_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    webhook_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    temperature: Mapped[float | None] = mapped_column(Float, nullable=True)
+    retrieval_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0', nullable=False)
+    retrieval_filters: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    top_k: Mapped[int] = mapped_column(Integer, default=20, server_default='20', nullable=False)
+    final_k: Mapped[int] = mapped_column(Integer, default=5, server_default='5', nullable=False)
+    rerank: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1', nullable=False)
+    include_uncollected: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1', nullable=False)
     streaming: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0', nullable=False)
     auth_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=120, server_default='120', nullable=False)
@@ -889,6 +898,7 @@ class WorkerLogEntry(Base):
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False, index=True
     )
     level: Mapped[str] = mapped_column(String(16), nullable=False, index=True)  # DEBUG/INFO/WARNING/ERROR/CRITICAL
+    service: Mapped[str] = mapped_column(String(64), nullable=False, index=True, default='ingest-worker')
     logger_name: Mapped[str] = mapped_column(String(255), nullable=False)
     # Container/pod hostname (socket.gethostname()) -- unique per worker
     # replica in the k8s Deployment; stable for the container's lifetime in

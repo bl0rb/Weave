@@ -57,8 +57,9 @@ export function LogsTab() {
 
   const [level, setLevel] = useState<LogLevel | ''>('');
   const [worker, setWorker] = useState('');
+  const [service, setService] = useState('');
   const [query, setQuery] = useState('');
-  const hasFilters = level !== '' || worker.trim() !== '' || query.trim() !== '';
+  const hasFilters = level !== '' || worker.trim() !== '' || service !== '' || query.trim() !== '';
 
   // No setState before the first `await` here on purpose — callers flip
   // the relevant spinner flag themselves before calling `load`, so this
@@ -67,12 +68,13 @@ export function LogsTab() {
   // (needed by resetFilters, whose setters only land on the next render).
   async function load(
     offset: number,
-    filters?: { level: LogLevel | ''; worker: string; query: string },
+    filters?: { level: LogLevel | ''; worker: string; service: string; query: string },
   ): Promise<void> {
-    const active = filters ?? { level, worker, query };
+    const active = filters ?? { level, worker, service, query };
     const params = new URLSearchParams({ limit: String(LIMIT), offset: String(offset) });
     if (active.level) params.set('level', active.level);
     if (active.worker.trim()) params.set('worker', active.worker.trim());
+    if (active.service) params.set('service', active.service);
     if (active.query.trim()) params.set('q', active.query.trim());
     try {
       const res = await apiJson<WorkerLogsResponse>(
@@ -142,7 +144,8 @@ export function LogsTab() {
     // The setters above only land on the next render, and this closure's
     // `load` still sees the old state — pass the cleared values explicitly.
     setRefreshing(true);
-    void load(0, { level: '', worker: '', query: '' });
+    void load(0, { level: '', worker: '', service: '', query: '' });
+    void load(0, { level: '', worker: '', service: '', query: '' });
   }
 
   function onEnterApply(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -153,6 +156,14 @@ export function LogsTab() {
   }
 
   const hasMore = entries.length < total;
+  const serviceSummary = entries.reduce<Record<string, { count: number; errors: number }>>((summary, entry) => {
+    const current = summary[entry.service] ?? { count: 0, errors: 0 };
+    current.count += 1;
+    if (entry.level === 'ERROR' || entry.level === 'CRITICAL') current.errors += 1;
+    summary[entry.service] = current;
+    return summary;
+  }, {});
+  const serviceOptions = Object.keys(serviceSummary).sort();
 
   return (
     <SectionCard
@@ -186,6 +197,14 @@ export function LogsTab() {
               <option value="WARNING">Warning</option>
               <option value="INFO">Info</option>
               <option value="DEBUG">Debug</option>
+            </select>
+          </Field>
+        </div>
+        <div className="w-48">
+          <Field label="Service">
+            <select value={service} onChange={(e) => setService(e.target.value)} className={inputClass}>
+              <option value="">All services</option>
+              {serviceOptions.map((name) => <option key={name} value={name}>{name}</option>)}
             </select>
           </Field>
         </div>
@@ -225,6 +244,15 @@ export function LogsTab() {
         <span>{total > 0 ? `Showing ${entries.length} of ${total} entries` : ''}</span>
         <span>{lastFetchedAt ? `Updated ${lastFetchedAt.toLocaleTimeString()}` : ''}</span>
       </div>
+      {Object.keys(serviceSummary).length > 0 && (
+        <div className="mb-3 flex flex-wrap gap-2" aria-label="Log summary by service">
+          {Object.entries(serviceSummary).sort(([a], [b]) => a.localeCompare(b)).map(([name, summary]) => (
+            <button key={name} type="button" onClick={() => { setService(name); setRefreshing(true); void load(0, { level, worker, service: name, query }); }} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-left text-xs text-slate-600 hover:border-emerald-300 hover:bg-emerald-50">
+              <strong className="text-slate-800">{name}</strong> · {summary.count} entries{summary.errors ? ` · ${summary.errors} errors` : ''}
+            </button>
+          ))}
+        </div>
+      )}
 
       <ErrorNotice message={error} />
       {unavailable && (
@@ -271,6 +299,9 @@ function LogRow({ entry }: { entry: WorkerLogEntry }) {
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
         <span className="shrink-0 text-slate-500">
           {new Date(entry.created_at).toLocaleTimeString()}
+        </span>
+        <span className="shrink-0 rounded bg-slate-800 px-1.5 text-emerald-300" title="Service">
+          {entry.service}
         </span>
         <span
           className={`shrink-0 w-20 font-semibold ${LEVEL_COLORS[entry.level] ?? 'text-slate-300'}`}

@@ -78,6 +78,7 @@ config:
     POSTGRES_USER: "weave"
     PUBLIC_API_URL: "http://localhost:8000"
     RUNTIME_BOTS_BASE_URL: "http://weave-runtime:8000"
+    SERVICE_NAME: "ingest-worker"
     WEAVE_INGEST_PUBLIC_API_URL: ""
     WEAVE_INGEST_TAG: "latest"
     WEBHOOK_PRIVATE_HOST_ALLOWLIST: "[\"weave-knowledge\"]"

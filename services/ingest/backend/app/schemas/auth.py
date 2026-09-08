@@ -219,6 +219,7 @@ class WorkerLogEntryResponse(BaseModel):
     id: str
     created_at: datetime
     level: str
+    service: str
     logger_name: str
     worker_name: str
     task_id: str | None = None
