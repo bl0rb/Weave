@@ -279,12 +279,15 @@ def test_refresh_preserves_collection_and_fails_closed_when_deleted(monkeypatch)
             'send_task',
             lambda name, args=None, **kwargs: sent.append((name, list(args or []))),
         )
-        assert refresh_tasks._start_refresh_run(db, db.get(ImportSource, source.id)) is True
+        started_run = refresh_tasks._start_refresh_run(db, db.get(ImportSource, source.id))
+        assert isinstance(started_run, ImportRun)
         refresh_run = db.scalar(
             select(ImportRun)
             .where(ImportRun.source_id == source.id)
             .where(ImportRun.id != prior.id)
         )
+        assert refresh_run is not None
+        assert started_run.id == refresh_run.id
         assert refresh_run.options['collection_id'] == collection.id
         assert refresh_run.options['collection_slug'] == collection.slug
         assert sent == [('import_confluence', [refresh_run.id, 0])]

@@ -169,9 +169,9 @@ def _has_active_run(db, source_id: str) -> bool:
 
 def _start_refresh_run(db, source: ImportSource, template: ImportRun | None = None) -> ImportRun | None:
     """Start a new refresh run, copying the scope + options of the source's
-    last successful run. Returns False (no-op) when there is nothing to
-    refresh from yet -- a source that has never finished a run has no scope
-    to repeat, and refresh_enabled alone does not invent one."""
+    last successful run or an explicit template. Returns the queued run,
+    or None when the source is missing, already has an active run, or has
+    no successful run to repeat. refresh_enabled alone invents no scope."""
     source = db.scalar(select(ImportSource).where(ImportSource.id == source.id).with_for_update())
     if source is None or _has_active_run(db, source.id):
         return None
