@@ -288,6 +288,15 @@ def _username_base_from_claims(claims: dict) -> str:
     return str(claims['sub'])
 
 
+def _resolve_teams(claims: dict) -> list[str]:
+    value = claims.get(settings.oidc_team_claim) if settings.oidc_team_claim else None
+    if isinstance(value, str):
+        return [value] if value else []
+    if isinstance(value, list):
+        return list(dict.fromkeys(team for team in value if isinstance(team, str) and team))
+    return []
+
+
 def _resolve_team(claims: dict) -> str | None:
     """`OIDC_TEAM_CLAIM` (app/core/config.py), if configured, names the
     claim carrying this user's team. A list-valued claim (e.g. Keycloak/
@@ -644,6 +653,7 @@ def oidc_callback(
             user = User(
                 username=_generate_unique_username(db, username_base),
                 team=_resolve_team(claims),
+                teams=_resolve_teams(claims),
                 oidc_subject=subject,
                 disabled=False,
             )
@@ -664,6 +674,9 @@ def oidc_callback(
         if user.disabled:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Account is disabled')
 
+        user.team = _resolve_team(claims)
+        user.teams = _resolve_teams(claims)
+        db.commit()
         logger.info('oidc login succeeded for user %s', user.id)
 
         # `return_to` was already resolved against OIDC_POST_LOGIN_ALLOWED_URLS
@@ -770,6 +783,7 @@ def _provision_ingest_user(db: Session, identity: IngestIdentity) -> User:
         user = User(
             username=_generate_unique_username(db, identity.username),
             team=identity.team,
+            teams=identity.effective_teams,
             is_admin=identity.is_admin,
             oidc_subject=subject,
             disabled=False,
@@ -788,8 +802,9 @@ def _provision_ingest_user(db: Session, identity: IngestIdentity) -> User:
                 )
         return user
 
-    if user.team != identity.team or user.is_admin != identity.is_admin:
+    if user.team != identity.team or user.teams != identity.effective_teams or user.is_admin != identity.is_admin:
         user.team = identity.team
+        user.teams = identity.effective_teams
         user.is_admin = identity.is_admin
         db.commit()
     return user

@@ -12,6 +12,7 @@ export interface AuthUser {
   email: string;
   role: UserRole;
   team_id: string | null;
+  team_ids?: string[];
   is_active: boolean;
   oidc_provider_id: string | null;
   created_at: string;
@@ -76,6 +77,7 @@ export interface AdminUserCreateRequest {
   password?: string;
   role: UserRole;
   team_id?: string | null;
+  team_ids?: string[];
   is_active: boolean;
 }
 
@@ -85,6 +87,7 @@ export interface AdminUserUpdateRequest {
   password?: string;
   role?: UserRole;
   team_id?: string | null;
+  team_ids?: string[];
   /** Explicit team removal (distinct from "leave unchanged"). */
   clear_team?: boolean;
   is_active?: boolean;

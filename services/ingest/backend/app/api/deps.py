@@ -5,6 +5,7 @@ can depend on `get_current_user`/`origin_guard` without importing the whole
 auth endpoint module.
 """
 
+import hmac
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
@@ -124,6 +125,20 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
         session.expires_at = min(now + SESSION_SLIDING_WINDOW, _aware_utc(session.created_at) + SESSION_ABSOLUTE_CAP)
         db.commit()
 
+    return user
+
+
+def get_knowledge_reader(request: Request, db: Session = Depends(get_db)) -> User | None:
+    scheme, _, token = (request.headers.get('authorization') or '').partition(' ')
+    expected = settings.knowledge_ingest_api_token
+    if expected and scheme.lower() == 'bearer' and hmac.compare_digest(token.strip().encode(), expected.encode()):
+        return None
+    return get_current_user(request, db)
+
+
+def require_knowledge_registry_reader(user: User | None = Depends(get_knowledge_reader)) -> User | None:
+    if user is not None and user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Admin privileges required')
     return user
 
 

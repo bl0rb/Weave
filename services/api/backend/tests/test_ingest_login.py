@@ -191,6 +191,23 @@ def test_a_second_login_resyncs_team_and_admin_but_keeps_one_account(configured,
         db.close()
 
 
+def test_existing_session_refreshes_memberships_and_fails_closed(configured, monkeypatch):
+    _mock_ingest(monkeypatch, identity={**IDENTITY, 'teams': ['rechtsabteilung', 'buchhaltung']})
+    start = _start_login(return_to=None)
+    assert _callback('live-identity-code', _state_from(start)).status_code == 302
+    _mock_ingest(monkeypatch, identity={**IDENTITY, 'teams': [], 'team': None, 'is_admin': False})
+    protected_url = '/v1/conversations/00000000-0000-0000-0000-000000000001'
+    assert client.get(protected_url).status_code == 404
+    with _db() as db:
+        user = db.query(User).one()
+        assert user.effective_teams == []
+        assert user.is_admin is False
+    _mock_ingest(monkeypatch, status_code=503)
+    assert client.get(protected_url).status_code == 503
+    _mock_ingest(monkeypatch, status_code=404)
+    assert client.get(protected_url).status_code == 401
+
+
 # --- step 2: everything that must not work ------------------------------------
 
 def test_callback_without_the_state_cookie_is_rejected(configured, monkeypatch) -> None:

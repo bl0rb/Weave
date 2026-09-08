@@ -11,7 +11,7 @@ from sqlalchemy import or_, select, update
 
 from app.core.config import settings
 from app.database.session import SessionLocal
-from app.models.models import DocumentRelease
+from app.models.models import DocumentRelease, KnowledgeWithdrawal
 from app.services.publications import (
     build_collection_registry_changed_payload,
     publication_configured,
@@ -178,6 +178,35 @@ def _acquire_or_renew(token: str | None) -> str | None:
     return token
 
 
+@celery_app.task(name='deliver_knowledge_withdrawal', acks_late=True, reject_on_worker_lost=True)
+def deliver_knowledge_withdrawal(job_id: str) -> None:
+    with SessionLocal() as db:
+        entry = db.scalar(select(KnowledgeWithdrawal).where(KnowledgeWithdrawal.job_id == job_id).with_for_update())
+        if entry is None or entry.status != 'pending':
+            return
+        if not publication_configured():
+            entry.error_message = 'Knowledge publication is not configured'
+            entry.next_attempt_at = _now() + timedelta(seconds=60)
+            db.commit()
+            return
+        try:
+            http_status, error = send_webhook_request(
+                release_endpoint(), {'event': 'document.withdrawn', 'job_id': job_id},
+                settings.portal_knowledge_webhook_secret, frozenset(settings.webhook_private_host_allowlist),
+            )
+        except Exception:
+            http_status, error = 0, 'Knowledge withdrawal delivery failed'
+        entry.attempts += 1
+        if error is None and http_status == 200:
+            entry.status = 'sent'
+            entry.error_message = None
+            entry.next_attempt_at = None
+        else:
+            entry.error_message = str(error or f'Unexpected Knowledge response: {http_status}')[:_MAX_ERROR_CHARS]
+            entry.next_attempt_at = _now() + timedelta(seconds=_backoff(entry.attempts))
+        db.commit()
+
+
 def reconcile_due_releases() -> int:
     db = SessionLocal()
     try:
@@ -197,6 +226,16 @@ def reconcile_due_releases() -> int:
             celery_app.send_task(DELIVERY_TASK_NAME, args=[release_id])
         except Exception:
             logger.exception('failed to enqueue pending release %s', release_id)
+    with SessionLocal() as db:
+        withdrawals = db.scalars(select(KnowledgeWithdrawal.job_id).where(
+            KnowledgeWithdrawal.status == 'pending',
+            or_(KnowledgeWithdrawal.next_attempt_at.is_(None), KnowledgeWithdrawal.next_attempt_at <= _now()),
+        ).limit(100)).all()
+    for job_id in withdrawals:
+        try:
+            celery_app.send_task('deliver_knowledge_withdrawal', args=[job_id])
+        except Exception:
+            logger.exception('failed to enqueue Knowledge withdrawal %s', job_id)
     return len(ids)
 
 

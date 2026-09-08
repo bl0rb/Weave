@@ -29,6 +29,7 @@ router = APIRouter(prefix='/api/v1', dependencies=[Depends(require_service_token
 @router.get('/collections', response_model=list[CollectionOut])
 def list_collections(
     team: str | None = Query(default=None),
+    teams: list[str] | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> list[CollectionOut]:
     # No `team` query param at all -- not merely an empty string -- means
@@ -37,7 +38,7 @@ def list_collections(
     # actually knows the requesting team's slug is expected to always pass
     # it; this is not a way to escalate to "every collection", only ever a
     # narrower view than passing a real team would give.
-    collections = readable_collections(db, team)
+    collections = readable_collections(db, team, teams=teams)
     return [
         CollectionOut(slug=c.slug, name=c.name, description=c.description, public=not c.read_teams)
         for c in collections

@@ -167,12 +167,15 @@ def _has_active_run(db, source_id: str) -> bool:
     )
 
 
-def _start_refresh_run(db, source: ImportSource) -> bool:
+def _start_refresh_run(db, source: ImportSource, template: ImportRun | None = None) -> ImportRun | None:
     """Start a new refresh run, copying the scope + options of the source's
     last successful run. Returns False (no-op) when there is nothing to
     refresh from yet -- a source that has never finished a run has no scope
     to repeat, and refresh_enabled alone does not invent one."""
-    last_successful = db.scalar(
+    source = db.scalar(select(ImportSource).where(ImportSource.id == source.id).with_for_update())
+    if source is None or _has_active_run(db, source.id):
+        return None
+    last_successful = template or db.scalar(
         select(ImportRun)
         .where(ImportRun.source_id == source.id)
         .where(ImportRun.status == ImportRunStatus.FINISHED)
@@ -180,7 +183,7 @@ def _start_refresh_run(db, source: ImportSource) -> bool:
         .limit(1)
     )
     if last_successful is None:
-        return False
+        return None
 
     options = dict(last_successful.options) if isinstance(last_successful.options, dict) else {}
     collection_id = options.get('collection_id')
@@ -215,6 +218,7 @@ def _start_refresh_run(db, source: ImportSource) -> bool:
     # column/migration. import_tasks.py's per-page diff logic and the
     # last_refresh_at/last_refresh_error bookkeeping both key off this.
     options['is_refresh'] = True
+    options['sync_template_run_id'] = last_successful.id
 
     frontier = [[last_successful.scope_value, 0]] if last_successful.scope_type == 'page' else []
     run = ImportRun(
@@ -230,9 +234,16 @@ def _start_refresh_run(db, source: ImportSource) -> bool:
     db.commit()
     # Enqueued by name only, exactly like import_routes.create_import_run --
     # this module never imports the worker task module.
-    celery_app.send_task('import_confluence', args=[run.id, 0])
+    try:
+        celery_app.send_task('import_confluence', args=[run.id, 0])
+    except Exception:
+        run.status = ImportRunStatus.FAILED
+        run.error_message = 'Sync could not be queued; please retry'
+        run.finished_at = datetime.now(timezone.utc)
+        db.commit()
+        raise
     logger.info('confluence refresh: started run %s for source %s', run.id, source.id)
-    return True
+    return run
 
 
 def _dispatch_due_refreshes() -> None:

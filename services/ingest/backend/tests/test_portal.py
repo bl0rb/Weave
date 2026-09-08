@@ -105,6 +105,32 @@ def _configure(monkeypatch):
     monkeypatch.setattr(settings, 'portal_knowledge_webhook_secret', 'secret')
 
 
+def test_grade_c_requires_confirmation_and_preserves_quality(monkeypatch):
+    _configure(monkeypatch)
+    monkeypatch.setattr(publication_tasks.deliver_release, 'delay', lambda *args: None)
+    suffix = uuid.uuid4().hex[:8]
+    user = create_test_user(username=f'quality-{suffix}', email=f'quality-{suffix}@example.com')
+    collection = _collection(user.id)
+    job = _job(user.id, collection, quality='block')
+    with _db() as db:
+        stored = db.get(Job, job.id)
+        stored.processing_info = {**stored.processing_info, 'execution': {'quality_gate': {'grade': 'C', 'recommendation': 'block'}}}
+        db.commit()
+    authed = login_as(user.username)
+    preview = authed.get(f'/api/v1/portal/documents/{job.id}').json()
+    assert preview['can_release'] is True
+    payload = {'markdown_sha256': preview['markdown_sha256']}
+    url = f'/api/v1/portal/documents/{job.id}/release'
+    assert authed.post(url, json=payload).status_code == 409
+    released = authed.post(url, json={**payload, 'accept_quality_warning': True})
+    assert released.status_code == 202, released.text
+    with _db() as db:
+        event = db.get(DocumentRelease, released.json()['id']).payload
+        assert event['quality_override'] is True
+        assert event['quality']['grade'] == 'C'
+        assert event['quality']['recommendation'] == 'block'
+
+
 def test_portal_config_returns_authenticated_team_name(monkeypatch):
     team = _team('Support')
     user = create_test_user(
@@ -144,6 +170,18 @@ def test_portal_preview_hash_canonicalizes_authoritative_collection_and_release(
     downloaded = authed.get(f'/api/v1/portal/releases/{release_id}/download')
     assert downloaded.status_code == 200
     assert downloaded.text == body['markdown']
+
+    monkeypatch.setattr(settings, 'knowledge_ingest_api_token', 'knowledge-test-credential')
+    service_headers = {'Authorization': 'Bearer knowledge-test-credential'}
+    snapshot_url = f'/api/v1/portal/releases/{release_id}/download'
+    assert client.get(snapshot_url, headers=service_headers).text == body['markdown']
+    assert client.get('/api/v1/collections/registry', headers=service_headers).status_code == 200
+    for forbidden_url in ('/api/v1/auth/admin/users', '/api/v1/jobs', f'/api/v1/portal/documents/{job.id}'):
+        assert client.get(forbidden_url, headers=service_headers).status_code == 401
+    for protected_url in (snapshot_url, '/api/v1/collections/registry'):
+        assert client.get(protected_url, headers={'Authorization': 'Bearer wrong'}).status_code == 401
+    monkeypatch.setattr(settings, 'knowledge_ingest_api_token', '')
+    assert client.get('/api/v1/collections/registry', headers=service_headers).status_code == 401
 
     db = _db()
     try:

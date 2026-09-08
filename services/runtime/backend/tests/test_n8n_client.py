@@ -103,7 +103,7 @@ def test_run_flow_body_carries_message_history_user_bot_id_and_scope(monkeypatch
     body = captured['body']
     assert body['message'] == 'what next'
     assert body['history'] == history
-    assert body['user'] == {'id': 'u-1', 'username': 'j.schmidt', 'team': 'legal'}
+    assert body['user'] == {'id': 'u-1', 'username': 'j.schmidt', 'team': 'legal', 'teams': ['legal']}
     assert body['bot_id'] == 'n8n-agent'
     assert body['allowed_collections'] == ['vertraege', '__none__']
     assert body['tools_base_url'] == 'https://weave-tools.internal.example.com'

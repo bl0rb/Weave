@@ -14,6 +14,10 @@ Das JSON entspricht `document.processed` einschließlich `event`, `job_id`,
 - `markdown_sha256`: kleingeschriebener hexadezimaler SHA-256 des UTF-8-Inhalts
   des freigegebenen Snapshots.
 - `markdown_url`: `/api/v1/portal/releases/{release_id}/download`.
+- `quality_override`: optionales Boolean, standardmäßig `false`. Nur bei
+  Qualitätsstufe C und ausdrücklich bestätigter Portal-Freigabe `true`.
+  Knowledge darf dann trotz Empfehlung `block` indizieren. Die gespeicherte
+  Qualitätsbewertung bleibt C/block; der Override gilt nicht für andere Sperren.
 
 Der Snapshot enthält das serverseitig canonicalisierte Frontmatter und bleibt
 nach der Freigabe byteweise unverändert. `frontmatter.collection` ist daher
@@ -44,6 +48,11 @@ Freigabe haben; eine andere Freigabe für denselben Job wird konservativ mit
 HTTP 409 abgewiesen, auch bei gleichzeitiger Zustellung.
 
 ## `document.processed`
+
+Ein vorheriges `document.withdrawn` für dieselbe Job-ID hat Vorrang vor jeder
+Freigabe. Knowledge antwortet dann `200 {"status":"withdrawn","job_id":"..."}`
+ohne Dokumentanlage oder Indexauftrag. Der Widerrufsbeleg darf nicht zusammen
+mit den Inhaltsdaten entfernt werden.
 
 Ein signiertes `document.processed` wird mit
 `200 {"status":"awaiting_release"}` quittiert. Dabei werden kein

@@ -69,8 +69,8 @@ def _visible_benchmark_filter(user: User):
     if user.role == UserRole.ADMIN:
         return None
     conditions = [BenchmarkRun.owner_id == user.id]
-    if user.team_id is not None:
-        teammate_ids = select(User.id).where(User.team_id == user.team_id)
+    if user.team_ids:
+        teammate_ids = select(User.id).where(User.team_id.in_(user.team_ids))
         conditions.append(BenchmarkRun.owner_id.in_(teammate_ids))
     return or_(*conditions)
 

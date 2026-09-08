@@ -32,11 +32,13 @@ from app.database.session import get_db
 from app.models.models import (
     Collection,
     ImportAuthType,
+    ImportPageState,
     ImportRun,
     ImportRunStatus,
     ImportSource,
     Job,
     JobArtifact,
+    KnowledgeWithdrawal,
     User,
     UserRole,
 )
@@ -50,6 +52,7 @@ from app.schemas.import_ import (
     ImportRunListResponse,
     ImportRunOptions,
     ImportRunResponse,
+    ImportWithdrawalRequest,
     ImportSourceCreateRequest,
     ImportSourceListResponse,
     ImportSourceResponse,
@@ -139,8 +142,8 @@ def _visible_run_filter(user: User):
     if user.role == UserRole.ADMIN:
         return None
     conditions = [ImportRun.owner_id == user.id]
-    if user.team_id is not None:
-        teammate_ids = select(User.id).where(User.team_id == user.team_id)
+    if user.team_ids:
+        teammate_ids = select(User.id).where(User.team_id.in_(user.team_ids))
         conditions.append(ImportRun.owner_id.in_(teammate_ids))
     return or_(*conditions)
 
@@ -439,6 +442,7 @@ def create_import_run(
     # Owner check via the source helper: importing with a teammate's stored
     # credential is forbidden, and non-owned ids 404.
     source = _get_owned_source(db, payload.source_id, user)
+    db.refresh(source, with_for_update=True)
     if not source.server_kind:
         # The worker selects the v1/v2 client by the persisted server_kind, so
         # a run can only start against a source that passed /test.
@@ -598,7 +602,10 @@ def list_import_runs(
     if visible_filter is not None:
         query = query.where(visible_filter)
     runs = db.scalars(query).all()
-    return ImportRunListResponse(items=[ImportRunResponse.model_validate(run) for run in runs])
+    return ImportRunListResponse(items=[ImportRunResponse.model_validate(run).model_copy(update={
+        'can_sync': run.kind == 'confluence' and run.owner_id == user.id and run.source_id is not None and run.status not in (ImportRunStatus.PENDING, ImportRunStatus.RUNNING),
+        'missing_page_count': len((run.state or {}).get('missing_pages') or []),
+    }) for run in runs])
 
 
 @router.get('/runs/{run_id}', response_model=ImportRunDetailResponse)
@@ -627,9 +634,20 @@ def get_import_run(
     ]
 
     base = ImportRunResponse.model_validate(run)
+    base.can_sync = run.kind == 'confluence' and run.owner_id == user.id and run.source_id is not None and run.status not in (ImportRunStatus.PENDING, ImportRunStatus.RUNNING)
+    base.missing_page_count = len(state.get('missing_pages') or [])
     stored_options = run.options if isinstance(run.options, dict) else {}
+    missing_pages = [dict(entry) for entry in state.get('missing_pages') or []]
+    for entry in missing_pages:
+        withdrawal_ids = entry.get('withdrawal_job_ids') or []
+        if withdrawal_ids:
+            withdrawals = db.scalars(select(KnowledgeWithdrawal).where(KnowledgeWithdrawal.job_id.in_(withdrawal_ids))).all()
+            entry['withdrawal_status'] = 'sent' if len(withdrawals) == len(withdrawal_ids) and all(item.status == 'sent' for item in withdrawals) else 'pending'
+            entry['withdrawal_error'] = next((item.error_message for item in withdrawals if item.error_message), None)
     return ImportRunDetailResponse(
         **base.model_dump(),
+        missing_pages=missing_pages,
+        can_remove_missing=run.owner_id == user.id and run.status == ImportRunStatus.FINISHED,
         source_id=run.source_id,
         # Extra keys in the stored dict (e.g. is_refresh) are ignored here.
         options=ImportRunOptions.model_validate(stored_options),
@@ -639,6 +657,88 @@ def get_import_run(
         errors=errors,
         jobs=[ImportRunJobSummary(id=job.id, title=job.original_filename, status=job.status) for job in jobs],
     )
+
+
+@router.post('/runs/{run_id}/sync', response_model=ImportRunResponse, status_code=202)
+def sync_import_run(
+    run_id: str, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+) -> ImportRunResponse:
+    from app.workers.refresh_tasks import _start_refresh_run
+
+    enforce_rate_limit(request)
+    template = _get_visible_run(db, run_id, user)
+    _require_run_control(template, user)
+    if template.kind != 'confluence' or template.status in (ImportRunStatus.PENDING, ImportRunStatus.RUNNING):
+        raise HTTPException(status_code=409, detail='Only completed Confluence runs can be synchronized')
+    source = db.get(ImportSource, template.source_id) if template.source_id else None
+    if source is None or source.owner_id != user.id:
+        raise HTTPException(status_code=404, detail='Import source not found')
+    try:
+        run = _start_refresh_run(db, source, template=template)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    except Exception:
+        raise HTTPException(status_code=503, detail='Sync could not be queued; please retry') from None
+    if run is None:
+        raise HTTPException(status_code=409, detail='A synchronization is already running for this source')
+    return ImportRunResponse.model_validate(run)
+
+
+@router.post('/runs/{run_id}/missing/{page_id}/withdraw', status_code=202)
+def withdraw_missing_page(
+    run_id: str, page_id: str, payload: ImportWithdrawalRequest, request: Request,
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+) -> dict:
+    from app.services.publications import publication_configured
+    from app.workers.refresh_tasks import _has_active_run
+
+    enforce_rate_limit(request)
+    run = _get_visible_run(db, run_id, user)
+    if run.owner_id != user.id:
+        raise HTTPException(status_code=403, detail='Only the import owner can withdraw missing pages')
+    if not payload.confirm:
+        raise HTTPException(status_code=422, detail='Explicit removal confirmation is required')
+    if run.status != ImportRunStatus.FINISHED or not (run.options or {}).get('is_refresh'):
+        raise HTTPException(status_code=409, detail='Only completed sync findings can be removed')
+    if not publication_configured():
+        raise HTTPException(status_code=503, detail='Knowledge publication is not configured')
+    source = db.scalar(select(ImportSource).where(ImportSource.id == run.source_id).with_for_update())
+    if source is None or source.owner_id != user.id:
+        raise HTTPException(status_code=404, detail='Import source not found')
+    if _has_active_run(db, source.id):
+        raise HTTPException(status_code=409, detail='Wait for the active synchronization to finish')
+    state = dict(run.state or {})
+    missing = [dict(entry) for entry in state.get('missing_pages') or []]
+    candidate = next((entry for entry in missing if entry.get('page_id') == page_id), None)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail='Missing page finding not found')
+    if candidate.get('withdrawal_job_ids'):
+        return {'status': 'pending', 'job_ids': candidate['withdrawal_job_ids']}
+    tracked = db.scalar(select(ImportPageState).where(ImportPageState.source_id == source.id, ImportPageState.page_id == page_id))
+    if tracked is None or tracked.job_id != candidate.get('job_id'):
+        raise HTTPException(status_code=409, detail='Page changed since this sync; synchronize again')
+    source_runs = db.scalars(select(ImportRun).where(ImportRun.source_id == source.id)).all()
+    if any(_aware_utc(item.created_at) > _aware_utc(run.created_at) and page_id in ((item.state or {}).get('visited') or {}) for item in source_runs):
+        raise HTTPException(status_code=409, detail='Page was seen by a newer sync; synchronize again')
+    jobs = db.scalars(select(Job).where(Job.import_run_id.in_([item.id for item in source_runs])).options(*_JOB_BLOB_DEFER_OPTIONS)).all()
+    matching = [job for job in jobs if str((((job.processing_info or {}).get('settings') or {}).get('import') or {}).get('source_page_id') or '') == page_id]
+    if not matching or any(job.owner_id != user.id for job in matching):
+        raise HTTPException(status_code=409, detail='Page ownership changed; removal refused')
+    job_ids = [job.id for job in matching]
+    for job in matching:
+        if db.get(KnowledgeWithdrawal, job.id) is None:
+            db.add(KnowledgeWithdrawal(job_id=job.id))
+    tracked.job_id = None
+    candidate['withdrawal_job_ids'] = job_ids
+    state['missing_pages'] = missing
+    run.state = state
+    db.commit()
+    for job_id in job_ids:
+        try:
+            celery_app.send_task('deliver_knowledge_withdrawal', args=[job_id])
+        except Exception:
+            pass
+    return {'status': 'pending', 'job_ids': job_ids}
 
 
 @router.post('/runs/{run_id}/cancel', response_model=ImportRunCancelResponse)

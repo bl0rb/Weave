@@ -74,7 +74,7 @@ export function UsersTab() {
                   <th className="pb-2 pr-3 font-medium">Username</th>
                   <th className="hidden pb-2 pr-3 font-medium md:table-cell">Email</th>
                   <th className="pb-2 pr-3 font-medium">Role</th>
-                  <th className="hidden pb-2 pr-3 font-medium lg:table-cell">Team</th>
+                  <th className="hidden pb-2 pr-3 font-medium lg:table-cell">Teams</th>
                   <th className="pb-2 pr-3 font-medium">Active</th>
                   <th className="hidden pb-2 pr-3 font-medium sm:table-cell">SSO</th>
                   <th className="hidden pb-2 pr-3 font-medium xl:table-cell">Created</th>
@@ -90,7 +90,9 @@ export function UsersTab() {
                       <Badge tone={u.role === 'admin' ? 'emerald' : 'slate'}>{u.role}</Badge>
                     </td>
                     <td className="hidden py-3 pr-3 text-slate-700 lg:table-cell">
-                      {teamName(u.team_id)}
+                      <span className="block max-w-xs break-words">
+                        {(u.team_ids ?? (u.team_id ? [u.team_id] : [])).map(teamName).join(', ') || '—'}
+                      </span>
                     </td>
                     <td className="py-3 pr-3">
                       <Badge tone={u.is_active ? 'emerald' : 'red'}>
@@ -182,6 +184,57 @@ export function UsersTab() {
   );
 }
 
+function TeamMembershipFields({
+  teams,
+  primary,
+  selected,
+  onChange,
+}: {
+  teams: Team[];
+  primary: string;
+  selected: string[];
+  onChange: (primary: string, selected: string[]) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <Field label="Primary team">
+        <select
+          aria-label="Primary team"
+          value={primary}
+          onChange={(event) => {
+            const next = event.target.value;
+            onChange(next, next ? Array.from(new Set([...selected, next])) : []);
+          }}
+          className={inputClass}
+        >
+          <option value={NO_TEAM}>No team</option>
+          {teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
+        </select>
+      </Field>
+      <fieldset className="space-y-2">
+        <legend className="mb-2 text-sm font-medium text-slate-700">Team access</legend>
+        <div className="max-h-48 space-y-2 overflow-y-auto">
+          {teams.map((team) => (
+            <label key={team.id} className="flex items-start gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={selected.includes(team.id)}
+                disabled={team.id === primary}
+                onChange={(event) => {
+                  const next = event.target.checked ? [...selected, team.id] : selected.filter((id) => id !== team.id);
+                  onChange(primary || next[0] || NO_TEAM, next);
+                }}
+                className="mt-1 shrink-0"
+              />
+              <span className="min-w-0 break-words">{team.name}</span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+    </div>
+  );
+}
+
 function CreateUserModal({
   teams,
   onClose,
@@ -196,6 +249,7 @@ function CreateUserModal({
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<UserRole>('user');
   const [teamId, setTeamId] = useState<string>(NO_TEAM);
+  const [teamIds, setTeamIds] = useState<string[]>([]);
   const [isActive, setIsActive] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -211,6 +265,7 @@ function CreateUserModal({
       is_active: isActive,
       ...(password ? { password } : {}),
       ...(teamId !== NO_TEAM ? { team_id: teamId } : {}),
+      team_ids: teamIds,
     };
     try {
       await apiJson<AuthUser>('/api/v1/auth/admin/users', {
@@ -267,21 +322,8 @@ function CreateUserModal({
               <option value="admin">Admin</option>
             </select>
           </Field>
-          <Field label="Team">
-            <select
-              value={teamId}
-              onChange={(e) => setTeamId(e.target.value)}
-              className={inputClass}
-            >
-              <option value={NO_TEAM}>No team</option>
-              {teams.map((t) => (
-                <option key={t.id} value={String(t.id)}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </Field>
         </div>
+        <TeamMembershipFields teams={teams} primary={teamId} selected={teamIds} onChange={(primary, selected) => { setTeamId(primary); setTeamIds(selected); }} />
         <Toggle checked={isActive} onChange={setIsActive} label="Active" />
         <ErrorNotice message={error} />
         <div className="flex flex-wrap justify-end gap-2 pt-1">
@@ -313,6 +355,7 @@ function EditUserModal({
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<UserRole>(user.role);
   const [teamId, setTeamId] = useState<string>(user.team_id === null ? NO_TEAM : String(user.team_id));
+  const [teamIds, setTeamIds] = useState<string[]>(user.team_ids ?? (user.team_id ? [user.team_id] : []));
   const [isActive, setIsActive] = useState(user.is_active);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -327,6 +370,7 @@ function EditUserModal({
       is_active: isActive,
       ...(password ? { password } : {}),
       ...(teamId === NO_TEAM ? { clear_team: true } : { team_id: teamId }),
+      team_ids: teamIds,
     };
     try {
       await apiJson<AuthUser>(`/api/v1/auth/admin/users/${user.id}`, {
@@ -374,21 +418,8 @@ function EditUserModal({
               <option value="admin">Admin</option>
             </select>
           </Field>
-          <Field label="Team">
-            <select
-              value={teamId}
-              onChange={(e) => setTeamId(e.target.value)}
-              className={inputClass}
-            >
-              <option value={NO_TEAM}>No team</option>
-              {teams.map((t) => (
-                <option key={t.id} value={String(t.id)}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </Field>
         </div>
+        <TeamMembershipFields teams={teams} primary={teamId} selected={teamIds} onChange={(primary, selected) => { setTeamId(primary); setTeamIds(selected); }} />
         <Toggle checked={isActive} onChange={setIsActive} label="Active" />
         <ErrorNotice message={error} />
         <div className="flex flex-wrap justify-end gap-2 pt-1">

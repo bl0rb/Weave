@@ -220,7 +220,7 @@ def run_flow(
     payload = {
         'message': message,
         'history': history,
-        'user': {'id': user.id, 'username': user.username, 'team': user.team},
+        'user': {'id': user.id, 'username': user.username, 'team': user.team, 'teams': user.effective_teams},
         'bot_id': bot.id,
         'allowed_collections': scope,
         'delegation_token': token,

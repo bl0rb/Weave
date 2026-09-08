@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session as OrmSession
 
 from app.api import events as events_module
 from app.core.config import settings
-from app.models.models import Collection, Document, DocumentStatus, IngestEvent
+from app.models.models import Chunk, Collection, Document, DocumentStatus, IngestEvent
 from app.services.collection_sync import CollectionSyncError
 from tests.conftest import TestingSessionLocal, client
 
@@ -60,6 +60,48 @@ def _cleanup():
         db.commit()
     finally:
         db.close()
+
+
+@pytest.mark.parametrize('override,expected_status', [(False, DocumentStatus.BLOCKED), (True, DocumentStatus.PENDING)])
+def test_grade_c_requires_signed_override(override, expected_status, _mock_index_document_delay, monkeypatch):
+    monkeypatch.setattr(settings, 'weave_ingest_webhook_secret', 'quality-test-secret')
+    event = _event_payload(quality={'grade': 'C', 'recommendation': 'block'}, quality_override=override)
+    response = _post(event)
+    assert response.status_code in (200, 202), response.text
+    with TestingSessionLocal() as db:
+        document = db.query(Document).filter_by(source_job_id=event['job_id']).one()
+        assert document.status == expected_status
+        assert document.quality_grade == 'C'
+        assert document.quality_recommendation == 'block'
+    assert _mock_index_document_delay.called is override
+
+
+def test_withdrawal_removes_document_and_prevents_late_release(monkeypatch):
+    monkeypatch.setattr(settings, 'weave_ingest_webhook_secret', 'withdrawal-test-secret')
+    event = _event_payload()
+    assert _post(event).status_code == 202
+    with TestingSessionLocal() as db:
+        document = db.query(Document).filter_by(source_job_id=event['job_id']).one()
+        document_id = document.id
+        document.markdown_body = 'obsolete content'
+        db.add(Chunk(document_id=document.id, chunk_index=0, text='obsolete content', char_count=16))
+        db.commit()
+    withdrawal = {'event': 'document.withdrawn', 'job_id': event['job_id']}
+    assert _post(withdrawal, signature=None).status_code == 401
+    for _attempt in range(2):
+        assert _post(withdrawal).json()['status'] == 'withdrawn'
+    assert _post(event).json()['status'] == 'withdrawn'
+    with TestingSessionLocal() as db:
+        assert db.query(Document).filter_by(source_job_id=event['job_id']).first() is None
+        assert db.query(Chunk).filter_by(document_id=document_id).count() == 0
+
+
+def test_withdrawal_before_release_prevents_publication(monkeypatch):
+    monkeypatch.setattr(settings, 'weave_ingest_webhook_secret', 'withdrawal-test-secret')
+    event = _event_payload()
+    assert _post({'event': 'document.withdrawn', 'job_id': event['job_id']}).status_code == 200
+    assert _post(event).json()['status'] == 'withdrawn'
+    assert _post({'event': 'document.withdrawn', 'job_id': '../invalid'}).status_code == 400
 
 
 def _sign(body: bytes, secret: str) -> str:

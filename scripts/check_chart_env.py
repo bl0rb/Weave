@@ -167,6 +167,10 @@ DEVIATIONS: dict[str, dict[str, Deviation]] = {
             "WEAVE_INGEST_PUBLIC_API_URL und WEAVE_CHAT_PUBLIC_URL.",
         )
         for var in (
+            "BOOTSTRAP_ADMIN_USERNAME",
+            "BOOTSTRAP_ADMIN_EMAIL",
+            "BOOTSTRAP_ADMIN_PASSWORD",
+            "KNOWLEDGE_INGEST_API_TOKEN",
             "CELERY_MAX_TASKS_PER_CHILD",
             "CELERY_PREFETCH_MULTIPLIER",
             "CELERY_WORKER_CONCURRENCY",

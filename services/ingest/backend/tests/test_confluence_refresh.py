@@ -273,6 +273,116 @@ def _get_page_state(source_id: str, page_id: str) -> ImportPageState | None:
         db.close()
 
 
+@pytest.mark.parametrize('incomplete', [False, True])
+def test_missing_pages_are_scoped_and_require_complete_discovery(incomplete):
+    owner = _make_owner()
+    source_id = _make_source(owner.id, refresh_enabled=False)
+    previous_id = _make_finished_run(owner.id, source_id)
+    missing_job = _make_prior_job(owner.id, 'gone', version=1, import_run_id=previous_id)
+    _make_page_state(source_id, 'gone', version=1, job_id=missing_job)
+    other_id = _make_finished_run(owner.id, source_id, scope_value='elsewhere')
+    other_job = _make_prior_job(owner.id, 'unrelated', version=1, import_run_id=other_id)
+    _make_page_state(source_id, 'unrelated', version=1, job_id=other_job)
+    current_id = _make_refresh_run(owner.id, source_id, scope_value='P1')
+    with _db() as db:
+        run = db.get(ImportRun, current_id)
+        state = import_tasks._RunState(run)
+        state.frontier = []
+        state.visited = {'P1': 'existing'}
+        state.discovery_complete = not incomplete
+        import_tasks._detect_missing_pages(db, run, state)
+        assert [item['page_id'] for item in state.missing_pages] == ([] if incomplete else ['gone'])
+
+
+@pytest.mark.parametrize('status_code,expected', [(401, []), (403, []), (404, ['gone']), (410, ['gone']), (500, [])])
+def test_incomplete_sync_only_reports_explicitly_unavailable_pages(status_code, expected):
+    owner = _make_owner()
+    source_id = _make_source(owner.id, refresh_enabled=False)
+    previous_id = _make_finished_run(owner.id, source_id)
+    job_id = _make_prior_job(owner.id, 'gone', version=1, import_run_id=previous_id)
+    _make_page_state(source_id, 'gone', version=1, job_id=job_id)
+    run_id = _make_refresh_run(owner.id, source_id, scope_value='P1')
+    with _db() as db:
+        run = db.get(ImportRun, run_id)
+        run.pages_failed = 1
+        state = import_tasks._RunState(run)
+        state.add_error('gone', '', f'HTTP {status_code}')
+        state.visited = {'gone': None}
+        if status_code in (404, 410):
+            state.unavailable_pages.add('gone')
+        import_tasks._detect_missing_pages(db, run, state)
+        assert [item['page_id'] for item in state.missing_pages] == expected
+
+
+def test_manual_sync_reuses_selected_historical_scope_and_rejects_overlap(monkeypatch):
+    from tests.conftest import login_as
+    owner = _make_owner()
+    source_id = _make_source(owner.id, refresh_enabled=False)
+    original = _make_finished_run(owner.id, source_id, scope_value='selected')
+    _make_finished_run(owner.id, source_id, scope_value='other')
+    sent = []
+    monkeypatch.setattr(celery_app, 'send_task', lambda name, args=None, **kwargs: sent.append((name, args)))
+    authed = login_as(owner.username)
+    response = authed.post(f'/api/v1/import/runs/{original}/sync')
+    assert response.status_code == 202, response.text
+    run = _get_run(response.json()['id'])
+    assert run.scope_value == 'selected'
+    assert run.options['is_refresh'] is True
+    assert sent == [('import_confluence', [run.id, 0])]
+    assert authed.post(f'/api/v1/import/runs/{original}/sync').status_code == 409
+
+
+def test_missing_page_withdrawal_is_durable_and_retries(monkeypatch):
+    from app.core.config import settings
+    from app.models.models import KnowledgeWithdrawal
+    from app.workers import publication_tasks
+    from tests.conftest import login_as
+
+    monkeypatch.setattr(settings, 'portal_knowledge_base_url', 'http://knowledge')
+    monkeypatch.setattr(settings, 'portal_knowledge_webhook_secret', 'test-secret')
+    monkeypatch.setattr(celery_app, 'send_task', lambda *args, **kwargs: None)
+    monkeypatch.setattr(publication_tasks, 'SessionLocal', TestingSessionLocal)
+    owner = _make_owner()
+    source_id = _make_source(owner.id, refresh_enabled=False)
+    prior_id = _make_finished_run(owner.id, source_id)
+    job_id = _make_prior_job(owner.id, 'gone', version=1, import_run_id=prior_id)
+    _make_page_state(source_id, 'gone', version=1, job_id=job_id)
+    run_id = _make_refresh_run(owner.id, source_id, scope_value='P1')
+    with _db() as db:
+        run = db.get(ImportRun, run_id)
+        state = import_tasks._RunState(run)
+        state.frontier = []
+        import_tasks._detect_missing_pages(db, run, state)
+        state.persist(run)
+        run.status = ImportRunStatus.FINISHED
+        db.commit()
+    authed = login_as(owner.username)
+    url = f'/api/v1/import/runs/{run_id}/missing/gone/withdraw'
+    assert authed.post(url, json={'confirm': False}).status_code == 422
+    with _db() as db:
+        newer = ImportRun(source_id=source_id, owner_id=owner.id, kind='confluence', scope_type='page', scope_value='P1', status=ImportRunStatus.FINISHED, options={}, state={'visited': {'gone': job_id}})
+        db.add(newer)
+        db.commit()
+        newer_id = newer.id
+    assert authed.post(url, json={'confirm': True}).status_code == 409
+    with _db() as db:
+        db.delete(db.get(ImportRun, newer_id))
+        db.commit()
+    assert authed.post(url, json={'confirm': True}).status_code == 202
+    assert authed.post(url, json={'confirm': True}).status_code == 202
+    monkeypatch.setattr(publication_tasks, 'send_webhook_request', lambda *args: (503, 'Unavailable'))
+    publication_tasks.deliver_knowledge_withdrawal(job_id)
+    with _db() as db:
+        entry = db.get(KnowledgeWithdrawal, job_id)
+        assert entry.status == 'pending'
+        assert entry.error_message == 'Unavailable'
+    monkeypatch.setattr(publication_tasks, 'send_webhook_request', lambda *args: (200, None))
+    publication_tasks.deliver_knowledge_withdrawal(job_id)
+    detail = authed.get(f'/api/v1/import/runs/{run_id}').json()
+    assert detail['missing_pages'][0]['withdrawal_status'] == 'sent'
+    assert _get_page_state(source_id, 'gone').job_id is None
+
+
 def _frontmatter(markdown: str) -> dict:
     end = markdown.find('\n---\n', 4)
     return yaml.safe_load(markdown[4:end + 1])

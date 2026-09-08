@@ -59,6 +59,59 @@ def _db():
     return TestingSessionLocal()
 
 
+def test_handoff_identity_requires_service_secret_and_returns_current_memberships(client, monkeypatch):
+    _wipe_users_and_sessions()
+    monkeypatch.setattr(settings, 'handoff_secret', 'identity-service-secret')
+    user = _create_user(username='identity-reader', email='identity@example.com')
+    with _db() as db:
+        member = db.get(User, user.id)
+        teams = [Team(name='identity-a'), Team(name='identity-b')]
+        db.add_all(teams)
+        db.flush()
+        member.team_id = teams[0].id
+        member.memberships = teams
+        db.commit()
+    url = f'/api/v1/auth/handoff/identity/{user.id}'
+    assert client.get(url).status_code == 401
+    assert client.get(url, headers={'X-Weave-Handoff-Secret': 'wrong'}).status_code == 401
+    headers = {'X-Weave-Handoff-Secret': 'identity-service-secret'}
+    response = client.get(url, headers=headers)
+    assert response.status_code == 200
+    assert set(response.json()['teams']) == {'identity-a', 'identity-b'}
+    with _db() as db:
+        db.get(User, user.id).is_active = False
+        db.commit()
+    assert client.get(url, headers=headers).status_code == 404
+    monkeypatch.setattr(settings, 'handoff_secret', '')
+    assert client.get(url, headers=headers).status_code == 503
+
+
+def test_deployment_admin_bootstrap_is_idempotent(monkeypatch):
+    _wipe_users_and_sessions()
+    monkeypatch.setattr(settings, 'bootstrap_admin_username', 'deployment-admin')
+    monkeypatch.setattr(settings, 'bootstrap_admin_email', 'deployment@example.com')
+    monkeypatch.setattr(settings, 'bootstrap_admin_password', 'DeploymentPassw0rd')
+    with _db() as db:
+        auth_module.bootstrap_admin(db)
+        admin = db.scalar(select(User).where(User.username == 'deployment-admin'))
+        assert admin.role == UserRole.ADMIN
+        initial_hash = admin.password_hash
+        monkeypatch.setattr(settings, 'bootstrap_admin_password', 'ChangedPassw0rd')
+        auth_module.bootstrap_admin(db)
+        db.refresh(admin)
+        assert admin.password_hash == initial_hash
+        assert len(db.scalars(select(User)).all()) == 1
+    _wipe_users_and_sessions()
+
+
+def test_deployment_admin_bootstrap_rejects_partial_configuration(monkeypatch):
+    monkeypatch.setattr(settings, 'bootstrap_admin_username', 'deployment-admin')
+    monkeypatch.setattr(settings, 'bootstrap_admin_email', '')
+    monkeypatch.setattr(settings, 'bootstrap_admin_password', '')
+    with _db() as db, pytest.raises(RuntimeError, match='configured together'):
+        auth_module.bootstrap_admin(db)
+
+
 def _wipe_users_and_sessions() -> None:
     db = _db()
     try:

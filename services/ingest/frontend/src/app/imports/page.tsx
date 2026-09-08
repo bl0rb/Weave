@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { FileInput, FilePlus, Inbox, LoaderCircle, RefreshCcw, RotateCcw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { ImportSyncButton } from '@/components/portal/import-sync';
 import { ApiError, apiJson } from '@/lib/api';
 import { formatBytes } from '@/components/dashboard/shared';
 import { type ImportRun, type ImportRunListResponse, isRunActive, runStatusChip, runTitle } from '@/lib/imports';
@@ -109,6 +110,7 @@ export default function ImportsPage() {
                     </td>
                     <td className="py-3">
                       <span className={`rounded px-2 py-1 text-xs ${runStatusChip[run.status]}`}>{run.status}</span>
+                      {!!run.missing_page_count && <Link href={`/imports/${run.id}`} className="mt-2 block text-xs text-amber-800">{run.missing_page_count} Seite(n) nicht mehr gefunden</Link>}
                     </td>
                     <td className="py-3 text-slate-700">
                       {run.pages_imported} / {run.pages_discovered}
@@ -120,6 +122,7 @@ export default function ImportsPage() {
                     </td>
                     <td className="hidden py-3 text-slate-700 md:table-cell">{new Date(run.created_at).toLocaleString()}</td>
                     <td className="py-3 text-right">
+                      {run.can_sync && <ImportSyncButton runId={run.id} compact />}
                       {!isRunActive(run.status) && (
                         <Link
                           href={`/imports/new?from=${run.id}`}

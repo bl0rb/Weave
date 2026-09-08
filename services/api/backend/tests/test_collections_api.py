@@ -77,7 +77,7 @@ def test_get_collections_forwards_the_callers_own_team(fake_retrieval, caller):
     response = client.get('/v1/collections', headers=caller)
 
     assert response.status_code == 200
-    assert fake.calls == [('/api/v1/collections', {'team': 'Legal'})]
+    assert fake.calls == [('/api/v1/collections', {'teams': ['Legal']})]
 
 
 def test_get_collections_omits_team_param_for_a_user_with_no_team(fake_retrieval, db_session):
@@ -87,7 +87,7 @@ def test_get_collections_omits_team_param_for_a_user_with_no_team(fake_retrieval
     response = client.get('/v1/collections', headers=auth_headers(raw_token))
 
     assert response.status_code == 200
-    assert fake.calls == [('/api/v1/collections', None)]
+    assert fake.calls == [('/api/v1/collections', {'teams': []})]
 
 
 def test_a_foreign_team_query_param_cannot_override_the_callers_own_team(fake_retrieval, caller):
@@ -100,7 +100,7 @@ def test_a_foreign_team_query_param_cannot_override_the_callers_own_team(fake_re
     response = client.get('/v1/collections?team=some-other-team', headers=caller)
 
     assert response.status_code == 200
-    assert fake.calls == [('/api/v1/collections', {'team': 'Legal'})]
+    assert fake.calls == [('/api/v1/collections', {'teams': ['Legal']})]
 
 
 def test_get_collections_returns_502_when_retrieval_is_unreachable(fake_retrieval, caller):

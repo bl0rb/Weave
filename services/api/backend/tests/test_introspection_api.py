@@ -37,6 +37,7 @@ def test_valid_personal_token_returns_active_identity(db_session):
         'user_id': str(user.id),
         'username': 'intro-alice',
         'team': 'Support',
+        'teams': ['Support'],
         'is_admin': True,
     }
 

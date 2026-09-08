@@ -81,3 +81,4 @@ class DocumentReleasedEvent(_DocumentEventBase):
     event: Literal['document.released']
     release_id: UUID
     markdown_sha256: str = Field(pattern=_SHA256_HEX_PATTERN)
+    quality_override: bool = Field(default=False, strict=True)

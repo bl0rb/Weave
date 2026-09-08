@@ -126,13 +126,16 @@ Generate each with `openssl rand -hex 32`. Never reuse one shared secret's value
 - `SECRET_KEY` – Weave-Ingest's own session signing + credential encryption (`docs/adr/0003`: one `SECRET_KEY` per service, never shared)
 - `RETRIEVAL_DB_PASSWORD` – password for the read-only `weave_retrieval_ro` Postgres role (`docs/adr/0005`); set on **both** `postgres` (consumed by the init script that creates the role) and `weave-retrieval` (its `DATABASE_URL`)
 - `WEAVE_KNOWLEDGE_SECRET_KEY` – Weave-Knowledge's own `SECRET_KEY`
-- `WEAVE_KNOWLEDGE_INGEST_API_TOKEN` – a real Weave-Ingest Personal-Token for Weave-Knowledge's service user (fetches the released snapshot after a `document.released` webhook, and the collection registry)
+- `WEAVE_KNOWLEDGE_INGEST_API_TOKEN` – a deployment-generated service credential for the collection registry and approved snapshots. `render` mirrors it into Ingest's `KNOWLEDGE_INGEST_API_TOKEN`; Knowledge receives it as `WEAVE_INGEST_API_TOKEN`. No administrator account or UI-issued token is required. With an external Helm Secret, provide both declared secret keys with the same value.
 - `WEAVE_KNOWLEDGE_WEBHOOK_SECRET` – required: the internal event ingress fails closed (503) while it is unset, since that route writes into the index. `render` mirrors it into Ingest's `PORTAL_KNOWLEDGE_WEBHOOK_SECRET` for `document.released` and the ACL-free `collection.updated` registry hint. Both use the dedicated Ingest→Knowledge channel; no user-managed webhook or n8n configuration is involved
 - `RETRIEVAL_API_TOKEN`, `RUNTIME_API_TOKEN`, `WEAVE_DELEGATION_SECRET`, `INTROSPECTION_SERVICE_TOKEN` – see "Shared secrets" above
 - `WEAVE_API_SECRET_KEY` – Weave-API's own `SECRET_KEY`
 - `TOOLS_API_TOKEN` – gates Weave-Tools' REST surface (not shared with any other service in this compose file — e.g. an n8n HTTP-node credential)
 
 ### Optional (have sensible defaults)
+
+- `BOOTSTRAP_ADMIN_USERNAME`, `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD`: set together to provision the first Ingest admin after migrations. The renderer reads the password from `WEAVE_BOOTSTRAP_ADMIN_PASSWORD`. Existing users are never overwritten. Remove bootstrap credentials after provisioning.
+- Provision runtime secrets through the secret manager and `secrets.existingSecret`, never image builds or committed Helm values. Keep them stable across deployments and roll out all consumers on rotation. Replace and revoke any previously used Knowledge administrator PAT.
 
 - `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PORT` – default `weave_ingest` / `weave` / `5432`
 - `BACKEND_PORT` (8000), `FRONTEND_PORT` (3000), `KNOWLEDGE_PORT` (8001), `RETRIEVAL_PORT` (8002), `RUNTIME_PORT` (8003), `API_PORT` (8004), `TOOLS_PORT` (8005), `TOOLS_FRONTEND_PORT` (3001), `EMBEDDINGS_PORT` (8006), `RERANKER_PORT` (8007)

@@ -336,7 +336,7 @@ def _check_permissions(bot: BotConfig, user: ChatUser) -> None:
     allowed_teams = bot.permissions.teams
     if not allowed_teams:
         return
-    if user.team not in allowed_teams:
+    if not set(user.effective_teams).intersection(allowed_teams):
         raise BotPermissionDenied(
             f'bot {bot.id!r} is restricted to teams {allowed_teams!r}; caller team is {user.team!r}',
             bot_id=bot.id,
@@ -380,6 +380,8 @@ def _allowed_teams(bot: BotConfig, user: ChatUser) -> list[str] | None:
     `or None` below closes that gap: an empty `permissions.teams` becomes
     `None` (unrestricted), matching what "every team may" actually means.
     """
+    if user.teams is not None:
+        return user.effective_teams
     if user.team:
         return [user.team]
     return bot.permissions.teams or None
@@ -464,7 +466,7 @@ def _resolve_rights_scope(bot: BotConfig, user: ChatUser) -> list[str]:
     RetrievalUnavailable/RetrievalError unchanged -- see this module's
     docstring for how `app/api/internal.py` maps each.
     """
-    readable = [collection.slug for collection in retrieval_client.list_collections(user.team)]
+    readable = [collection.slug for collection in retrieval_client.list_collections(user.teams if user.teams is not None else user.team)]
     bot_collections = bot.retrieval.collections
     if bot_collections:
         readable_set = set(readable)

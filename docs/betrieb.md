@@ -92,17 +92,31 @@ Start des ganzen Stacks ab.
 
 ## 3. Erstinbetriebnahme
 
-Zwei Tokens entstehen erst, wenn der Stack läuft. Nur diese Reihenfolge löst das auf:
+Die Service-Credentials werden vor dem ersten Start durch CI/CD oder einen
+Secret-Manager bereitgestellt. Ein persönlicher Admin-Token ist für Knowledge
+nicht mehr erforderlich.
 
-1. **Ersten Administrator in Weave-Ingest anlegen** über die Setup-Seite. Der
-   erste Nutzer wird automatisch Administrator.
-2. **Dort einen persönlichen API-Token erzeugen.** Er muss einem *Administrator*
-   gehören: Weave-Knowledge holt die Collection-Registry über einen
-   Admin-Endpunkt, weil sie die komplette Zugriffskarte ausgibt.
-3. **Token eintragen und neu starten:** als `WEAVE_KNOWLEDGE_INGEST_API_TOKEN`
-   in die `.env`, dann
-   `docker compose … restart weave-knowledge weave-knowledge-worker`.
-   Bis dahin läuft der Registry-Sync in ein 401.
+1. **Secrets einmalig erzeugen und speichern**, etwa mit `openssl rand -hex 32`.
+  `WEAVE_KNOWLEDGE_INGEST_API_TOKEN` ist ein dediziertes Service-Credential.
+  `weave_config.py render` spiegelt es für Ingest nach
+  `KNOWLEDGE_INGEST_API_TOKEN`; Knowledge erhält denselben Wert im Container
+  als `WEAVE_INGEST_API_TOKEN`. Es erlaubt ausschließlich Registry-Lesen und
+  freigegebene Snapshots, keine Benutzerverwaltung oder Entwürfe.
+2. **Erstadmin optional automatisieren:** `BOOTSTRAP_ADMIN_USERNAME`,
+  `BOOTSTRAP_ADMIN_EMAIL` und die Secret-Quelle `WEAVE_BOOTSTRAP_ADMIN_PASSWORD`
+  vor dem Rendern setzen. Im Container heißt das Passwort
+  `BOOTSTRAP_ADMIN_PASSWORD`. Nach den Migrationen legt Ingest den ersten
+  Admin an, sofern noch kein Benutzer existiert. Wiederholungen ändern weder
+  Benutzer noch Passwörter. Ohne diese Variablen bleibt die Setup-Seite verfügbar;
+  teilweise gesetzte Bootstrap-Werte führen zu einem Startfehler.
+3. **Deployment starten.** Bei Helm `secrets.existingSecret` verwenden. Das
+  referenzierte Secret muss beide Schlüssel `KNOWLEDGE_INGEST_API_TOKEN` und
+  `WEAVE_KNOWLEDGE_INGEST_API_TOKEN` mit identischem Inhalt enthalten.
+  Secrets nicht als Build-Argumente oder in Helm-Werte im Git schreiben.
+  Bei Rotation die betroffenen Pods/Container neu erzeugen; ein Compose-
+  `restart` übernimmt keine geänderten Umgebungsvariablen. Alte Admin-PATs
+  nach erfolgreicher Umstellung widerrufen und nicht als neues Service-Secret
+  wiederverwenden. Bootstrap-Passwörter anschließend aus dem Deployment entfernen.
 4. **Ein Dokument im Wissensportal freigeben.** Für den Index reicht
    Verarbeiten nicht: nur eine Freigabe erzeugt den unveränderlichen Snapshot
    und damit das `document.released`-Event, das Knowledge regulär indiziert
@@ -123,6 +137,33 @@ Zwei Tokens entstehen erst, wenn der Stack läuft. Nur diese Reihenfolge löst d
 
 ---
 
+### 3.1 Mehrere Teams und Rechteentzug
+
+Ingest speichert Mitgliedschaften in `user_teams`; die Migration übernimmt
+bestehende `users.team_id`-Zuordnungen. In der Benutzerverwaltung lassen sich
+mehrere Teams auswählen. Das bisherige `team_id` bleibt das primäre Team:
+Die Besitzerfreigabe von Jobs, Collections, Importen und Benchmarks richtet
+sich weiterhin nach dem primären Team des Besitzers, nicht nach allen seinen
+zusätzlichen Mitgliedschaften. Eine zusätzliche Mitgliedschaft erweitert
+Leserechte des Mitglieds, veröffentlicht aber nicht dessen alte Dokumente.
+Ein bewusster Wechsel des primären Teams verändert dagegen wie bisher diese
+Besitzerfreigaben. Schreib- und Verwaltungsrechte bleiben separat geschützt.
+
+Handoff, Gateway, Runtime und Tools übertragen `teams` als vollständige Liste.
+Bei vorhandener Liste ist `[]` verbindlich, kein Fallback auf `team`. OIDC im
+Gateway übernimmt alle nichtleeren String-Werte des konfigurierten Claims und
+aktualisiert sie bei jedem Login. Föderierte Ingest-Benutzer werden zusätzlich
+bei jedem autorisierten Gateway-Zugriff und jeder Personal-Token-Introspection
+über `/api/v1/auth/handoff/identity/{user_id}` mit `X-Weave-Handoff-Secret`
+aktualisiert. Ingest-Ausfall: Zugriff scheitert mit 503 statt alte Rechte zu nutzen.
+
+Bereits ausgestellte n8n-Delegationstokens behalten ihren signierten Umfang
+bis `exp` (standardmäßig 300 Sekunden ab Ausstellung). Sie werden nicht live
+introspektiert. Für dringenden globalen Widerruf das Delegations-Secret auf
+Runtime und Tools koordiniert rotieren. Neue Turns erhalten aktuelle Rechte.
+Beim Upgrade zuerst Migrationen und die empfangenden Services Ingest,
+Retrieval und Tools ausrollen, danach Gateway und Runtime.
+
 ## 4. Pflichtwerte
 
 Ohne diese startet der Dienst nicht oder verweigert fail-closed die Arbeit.
@@ -133,7 +174,8 @@ Ohne diese startet der Dienst nicht oder verweigert fail-closed die Arbeit.
 | Ingest | `REDIS_URL` | Celery-Broker für die OCR-Verarbeitung — logische DB `0` |
 | Ingest | `CORS_ORIGINS` | Erlaubte Frontend-Herkunft, zugleich CSRF-Schutz |
 | Knowledge | `WEAVE_INGEST_BASE_URL` | Woher Markdown und Registry geholt werden |
-| Knowledge | `WEAVE_INGEST_API_TOKEN` | Admin-Token aus Ingest (Schritt 2) |
+| Ingest | `KNOWLEDGE_INGEST_API_TOKEN` | Service-Credential für Registry und freigegebene Snapshots |
+| Knowledge | `WEAVE_INGEST_API_TOKEN` | Derselbe Wert wie Ingests `KNOWLEDGE_INGEST_API_TOKEN` |
 | Knowledge | `WEAVE_INGEST_WEBHOOK_SECRET` | Prüft eingehende Events. Ohne Wert: `503` — dieser Endpunkt schreibt in den Index |
 | Knowledge *(sobald die Lese-API genutzt wird)* | `KNOWLEDGE_API_TOKEN` | Service-Auth für `/documents` und `/collections`. Ohne Wert: `503`; Indizierung, Webhook und `/health` laufen weiter |
 | Retrieval | `RETRIEVAL_API_TOKEN` | Service-Auth. Ohne Wert antwortet jeder Aufruf mit `503` |

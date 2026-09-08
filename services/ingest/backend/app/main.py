@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.auth import router_admin as auth_admin_router
+from app.api.auth import bootstrap_admin
 from app.api.auth import router_authenticated as auth_authenticated_router
 from app.api.auth import router_public as auth_public_router
 from app.api.benchmarks import router as benchmarks_router
@@ -14,11 +15,14 @@ from app.api.managed_bots import router_internal as managed_bots_internal_router
 from app.api.deps import get_current_user, origin_guard
 from app.api.import_routes import router as import_router
 from app.api.portal import router as portal_router
+from app.api.portal import knowledge_router as knowledge_release_router
 from app.api.portal_management import router as portal_management_router
 from app.api.portal_indexing import router as portal_indexing_router
 from app.api.routes import router
+from app.api.routes import knowledge_router as knowledge_registry_router
 from app.api.webhook_routes import router as webhook_router
 from app.core.config import settings
+from app.database.session import SessionLocal
 from app.schemas.jobs import HealthResponse
 from app.services.storage import ensure_storage_dirs
 
@@ -36,6 +40,8 @@ app.add_middleware(
 @app.on_event('startup')
 def startup() -> None:
     ensure_storage_dirs()
+    with SessionLocal() as db:
+        bootstrap_admin(db)
 
 
 # Public, unauthenticated router: liveness/readiness probes have no session
@@ -62,6 +68,8 @@ app.include_router(chat_provider_admin_router)
 app.include_router(chat_provider_internal_router)
 app.include_router(managed_bots_admin_router)
 app.include_router(managed_bots_internal_router)
+app.include_router(knowledge_registry_router)
+app.include_router(knowledge_release_router)
 
 # Secure-by-default: every other /api/v1 route (jobs, folders, collections,
 # paddle settings, ...) now requires a valid session. Step 3 layers

@@ -111,6 +111,38 @@ def test_collections_visibility_and_patch_control_matrix():
     assert owner_patch.json()['slug'] == admin_patch.json()['slug']
 
 
+def test_multiple_memberships_grant_reads_without_resharing_owned_collections():
+    team_a = _make_team('multi-a')
+    team_b = _make_team('multi-b')
+    team_c = _make_team('multi-c')
+    reader = _user('multi-reader', team_id=team_a)
+    owner_b = _user('multi-owner-b', team_id=team_b)
+    owner_c = _user('multi-owner-c', team_id=team_c)
+    admin_client = login_as(_user('multi-admin', role=UserRole.ADMIN).username)
+    reader_client = login_as(reader.username)
+    client_b = login_as(owner_b.username)
+    own_id = reader_client.post('/api/v1/collections', json={'name': 'Owned in A'}).json()['collection_id']
+    collection_b = client_b.post('/api/v1/collections', json={'name': 'Owned in B'}).json()['collection_id']
+    collection_c = login_as(owner_c.username).post('/api/v1/collections', json={'name': 'Owned in C'}).json()['collection_id']
+    assert reader_client.get(f'/api/v1/collections/{collection_b}').status_code == 404
+    updated = admin_client.patch(f'/api/v1/auth/admin/users/{reader.id}', json={'team_ids': [team_a, team_b], 'team_id': team_a})
+    assert updated.status_code == 200, updated.text
+    assert set(updated.json()['team_ids']) == {team_a, team_b}
+    legacy_update = admin_client.patch(f'/api/v1/auth/admin/users/{reader.id}', json={'team_id': team_a})
+    assert set(legacy_update.json()['team_ids']) == {team_a, team_b}
+    assert reader_client.get(f'/api/v1/collections/{collection_b}').status_code == 200
+    assert reader_client.get(f'/api/v1/collections/{collection_c}').status_code == 404
+    assert client_b.get(f'/api/v1/collections/{own_id}').status_code == 404
+    assert reader_client.patch(f'/api/v1/collections/{collection_b}', json={'name': 'Not allowed'}).status_code == 403
+    revoked = admin_client.patch(f'/api/v1/auth/admin/users/{reader.id}', json={'team_ids': [team_a]})
+    assert revoked.status_code == 200
+    assert reader_client.get(f'/api/v1/collections/{collection_b}').status_code == 404
+    listed = {item['collection_id'] for item in reader_client.get('/api/v1/collections').json()['items']}
+    assert own_id in listed
+    assert collection_b not in listed
+    assert collection_c not in listed
+
+
 def test_empty_collection_can_be_deleted_only_by_owner_or_admin():
     team_id = _make_team('coll-delete-team')
     owner = _user('coll-delete-owner', team_id=team_id)

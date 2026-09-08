@@ -207,6 +207,11 @@ class Scope:
     team: str | None
     allowed_collections: list[str]
     bot_id: str | None = None
+    teams: list[str] | None = None
+
+    @property
+    def effective_teams(self) -> list[str]:
+        return list(self.teams) if self.teams is not None else ([self.team] if self.team else [])
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -270,6 +275,7 @@ def issue_delegation_token(
     collections: list[str],
     bot_id: str | None = None,
     ttl_seconds: int | None = None,
+    teams: list[str] | None = None,
 ) -> str:
     """Mint a Delegations-Token for `user_id`'s current, already-resolved
     scope. The production issuer of these tokens is Weave-Runtime, not this
@@ -292,6 +298,7 @@ def issue_delegation_token(
         'sub': user_id,
         'username': username,
         'team': team,
+        'teams': teams if teams is not None else ([team] if team else []),
         'collections': collections,
         'bot': bot_id,
         'iat': now,
@@ -357,6 +364,8 @@ def _verify_delegation_token(token: str) -> dict[str, Any]:
         team = payload.get('team')
         if team is not None and not isinstance(team, str):
             raise ScopeError(_GENERIC_AUTH_ERROR)
+        if 'teams' in payload:
+            _validated_teams(payload['teams'])
         bot_id = payload.get('bot')
         if bot_id is not None and not isinstance(bot_id, str):
             raise ScopeError(_GENERIC_AUTH_ERROR)
@@ -382,12 +391,19 @@ def _resolve_delegated_scope(token: str) -> Scope:
         user_id=payload['sub'],
         username=payload['username'],
         team=payload.get('team'),
+        teams=payload.get('teams'),
         allowed_collections=list(payload['collections']),
         bot_id=payload.get('bot'),
     )
 
 
-def _fetch_readable_collection_slugs(team: str | None) -> list[str]:
+def _validated_teams(value: object) -> list[str]:
+    if not isinstance(value, list) or any(not isinstance(team, str) or not team for team in value):
+        raise ScopeError(_GENERIC_AUTH_ERROR)
+    return list(dict.fromkeys(value))
+
+
+def _fetch_readable_collection_slugs(team: str | list[str] | None) -> list[str]:
     """GET {RETRIEVAL_BASE_URL}/api/v1/collections?team=<team> and return
     just the slugs -- the Personal-Token path's answer to "which collections
     may this team read", per the Collections contract's read-authority split
@@ -396,7 +412,7 @@ def _fetch_readable_collection_slugs(team: str | None) -> list[str]:
     endpoint's own docstring: omitting it entirely, not merely passing an
     empty string, is what selects "public collections only").
     """
-    params = {'team': team} if team is not None else {}
+    params = {'teams': team} if isinstance(team, list) else ({'team': team} if team is not None else {})
     response = httpx.get(
         f'{settings.retrieval_base_url}/api/v1/collections',
         params=params,
@@ -438,12 +454,14 @@ def _resolve_personal_scope(token: str) -> Scope:
         raise ScopeError(_GENERIC_AUTH_ERROR)
 
     team = data.get('team')
-    allowed_collections = _fetch_readable_collection_slugs(team)
+    teams = _validated_teams(data['teams']) if 'teams' in data else None
+    allowed_collections = _fetch_readable_collection_slugs(teams if teams is not None else team)
     return Scope(
         kind='personal',
         user_id=str(data['user_id']),
         username=data['username'],
         team=team,
+        teams=teams,
         allowed_collections=allowed_collections,
     )
 

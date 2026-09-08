@@ -14,7 +14,7 @@ from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import defer
 
-from app.api.deps import aware_utc, get_current_user
+from app.api.deps import aware_utc, get_current_user, get_knowledge_reader
 from app.api.routes import (
     _active_process_job_ids,
     _apply_visible_filter,
@@ -26,7 +26,7 @@ from app.api.routes import (
 )
 from app.core.config import settings
 from app.database.session import get_db
-from app.models.models import Collection, DocumentRelease, ImportRun, ImportRunStatus, Job, JobStatus, Team, User, UserRole
+from app.models.models import Collection, DocumentRelease, ImportRun, ImportRunStatus, Job, JobStatus, KnowledgeWithdrawal, Team, User, UserRole
 from app.schemas.jobs import JobRestartRequest
 from app.schemas.portal import (
     PortalConfigResponse,
@@ -49,6 +49,7 @@ from app.workers import publication_tasks
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/v1/portal')
+knowledge_router = APIRouter(prefix='/api/v1/portal')
 _EXPORT_CHUNK_BYTES = 1024 * 1024
 _EXPORT_SPOOL_BYTES = 8 * 1024 * 1024
 
@@ -104,14 +105,14 @@ def _can_release_light(db, job: Job, collection: Collection, user: User) -> bool
     """
     if job.status != JobStatus.FINISHED or not job.result_markdown or job.password_hash:
         return False
+    if db.get(KnowledgeWithdrawal, job.id) is not None:
+        return False
     if not _import_run_finished(db, job):
         return False
     if not _job_is_controlled(db, job, collection, user):
         return False
     grade, recommendation = _quality(job)
-    if recommendation and recommendation.lower() == 'block':
-        return False
-    if grade and grade.lower() == 'c':
+    if recommendation and recommendation.lower() == 'block' and (grade or '').lower() != 'c':
         return False
     return True
 
@@ -226,7 +227,9 @@ def _stream_spooled_file(file):
         file.close()
 
 
-def _require_publishable(job: Job, collection: Collection, db, user: User, supplied_hash: str) -> tuple[str, str, dict]:
+def _require_publishable(job: Job, collection: Collection, db, user: User, supplied_hash: str, accept_quality_warning: bool = False) -> tuple[str, str, dict]:
+    if db.get(KnowledgeWithdrawal, job.id) is not None:
+        raise HTTPException(status_code=409, detail='Document was withdrawn from Knowledge; import a new version')
     if not _job_is_controlled(db, job, collection, user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='User cannot release this document')
     if job.status != JobStatus.FINISHED:
@@ -235,7 +238,10 @@ def _require_publishable(job: Job, collection: Collection, db, user: User, suppl
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Import run is not finished')
     _protected(job)
     grade, recommendation = _quality(job)
-    if (recommendation and recommendation.lower() == 'block') or (grade and grade.lower() == 'c'):
+    is_grade_c = (grade or '').lower() == 'c'
+    if is_grade_c and not accept_quality_warning:
+        raise HTTPException(status_code=409, detail='Explicit confirmation of quality grade C is required')
+    if recommendation and recommendation.lower() == 'block' and not is_grade_c:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Quality gate blocks release')
     try:
         snapshot, digest, frontmatter = canonical_snapshot(db, job, collection)
@@ -273,13 +279,13 @@ def list_portal_documents(
         else or_(Job.owner_id == user.id, Collection.owner_id == user.id)
     )
     can_release_expr = and_(
+        ~select(KnowledgeWithdrawal.job_id).where(KnowledgeWithdrawal.job_id == Job.id).exists(),
         Job.status == JobStatus.FINISHED,
         func.length(func.coalesce(Job.result_markdown, '')) > 0,
         Job.password_hash.is_(None),
         control_expr,
         or_(Job.import_run_id.is_(None), ImportRun.status == ImportRunStatus.FINISHED),
-        or_(quality_recommendation_expr.is_(None), func.lower(quality_recommendation_expr) != 'block'),
-        or_(quality_grade_expr.is_(None), func.lower(quality_grade_expr) != 'c'),
+        or_(quality_recommendation_expr.is_(None), func.lower(quality_recommendation_expr) != 'block', func.lower(quality_grade_expr) == 'c'),
     )
 
     query = (
@@ -525,7 +531,7 @@ def release_portal_document(
     collection = _collection_for_job(db, job)
     if collection is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Job has no known collection')
-    snapshot, digest, frontmatter = _require_publishable(job, collection, db, user, payload.markdown_sha256)
+    snapshot, digest, frontmatter = _require_publishable(job, collection, db, user, payload.markdown_sha256, payload.accept_quality_warning)
     existing = db.scalar(select(DocumentRelease).where(DocumentRelease.job_id == job.id))
     if existing is not None:
         frozen = existing.payload if isinstance(existing.payload, dict) else {}
@@ -536,6 +542,8 @@ def release_portal_document(
     release_id = str(uuid.uuid4())
     try:
         event_payload = build_release_payload(job, release_id, digest, frontmatter)
+        if (_quality(job)[0] or '').lower() == 'c':
+            event_payload['quality_override'] = True
     except PublicationValidationError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     release = DocumentRelease(
@@ -577,12 +585,16 @@ def _release_control(db, release: DocumentRelease, user: User) -> tuple[Job, Col
     return job, collection
 
 
-@router.get('/releases/{release_id}/download', response_class=PlainTextResponse)
-def download_release(release_id: str, db=Depends(get_db), user: User = Depends(get_current_user)) -> PlainTextResponse:
+@knowledge_router.get('/releases/{release_id}/download', response_class=PlainTextResponse)
+def download_release(release_id: str, db=Depends(get_db), user: User | None = Depends(get_knowledge_reader)) -> PlainTextResponse:
     release = db.get(DocumentRelease, release_id)
     if release is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Release not found')
-    job = _load_visible_job(db, release.job_id, user)
+    if db.get(KnowledgeWithdrawal, release.job_id) is not None:
+        raise HTTPException(status_code=410, detail='Document was withdrawn from Knowledge')
+    job = db.get(Job, release.job_id) if user is None else _load_visible_job(db, release.job_id, user)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Job not found')
     _protected(job)
     return PlainTextResponse(release.markdown_snapshot, media_type='text/markdown; charset=utf-8')
 

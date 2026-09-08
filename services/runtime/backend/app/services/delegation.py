@@ -136,6 +136,7 @@ def mint_delegation_token(user: ChatUser, collections: list[str], bot_id: str | 
         'sub': user.id or '',
         'username': user.username or user.id or '',
         'team': user.team,
+        'teams': user.effective_teams,
         'collections': collections,
         'bot': bot_id,
         'iat': issued_at,

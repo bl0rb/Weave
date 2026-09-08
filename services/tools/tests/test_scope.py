@@ -57,9 +57,17 @@ def test_valid_delegation_token_resolves_expected_scope():
         user_id='user-42',
         username='alice',
         team='kundenservice',
+        teams=['kundenservice'],
         allowed_collections=['handbuch', 'faq'],
         bot_id='bot-1',
     )
+
+
+@pytest.mark.parametrize('teams', [['sales', 'legal'], []])
+def test_signed_memberships_override_legacy_team(teams):
+    token = issue_delegation_token(user_id='multi-user', username='multi', team='legacy', teams=teams, collections=['handbuch'])
+    scope = resolve_scope(f'Bearer {token}')
+    assert scope.effective_teams == teams
 
 
 def test_valid_delegation_token_may_carry_none_team_and_none_bot():
@@ -280,6 +288,7 @@ def test_configured_secret_delegation_flow_is_unaffected_by_the_fix():
         user_id='user-9',
         username='dana',
         team='vertrieb',
+        teams=['vertrieb'],
         allowed_collections=['handbuch'],
         bot_id=None,
     )

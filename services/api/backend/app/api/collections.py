@@ -23,6 +23,6 @@ router = APIRouter(prefix='/v1', tags=['collections'])
 @router.get('/collections')
 def get_collections(user: User = Depends(enforce_rate_limit)) -> list:
     try:
-        return list_collections(team=user.team)
+        return list_collections(team=user.effective_teams)
     except RetrievalClientError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc

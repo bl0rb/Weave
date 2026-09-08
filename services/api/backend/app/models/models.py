@@ -62,6 +62,12 @@ class User(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     username: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     team: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    teams: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+
+    @property
+    def effective_teams(self) -> list[str]:
+        return list(self.teams) if self.teams is not None else ([self.team] if self.team else [])
+
     disabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # Surfaced by POST /internal/tokens/introspect (app/api/internal.py) so a
     # later service-token-authenticated caller (a future MCP service, per

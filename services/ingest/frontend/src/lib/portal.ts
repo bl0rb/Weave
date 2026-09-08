@@ -42,6 +42,7 @@ export function documentState(document: PortalDocument, live?: IndexingItem): { 
   if (document.status === 'FAILED') return { label: 'Verarbeitung fehlgeschlagen', tone: 'error' };
   if (document.status === 'RUNNING') return { label: 'Wird verarbeitet', tone: 'working' };
   if (document.status === 'PENDING') return { label: 'In der Warteschlange', tone: 'neutral' };
+  if (document.quality_grade?.toUpperCase() === 'C') return { label: 'Stufe C – Prüfung erforderlich', tone: 'warning' };
   if (document.quality_recommendation === 'block') return { label: 'Qualitätsprüfung blockiert', tone: 'error' };
   return { label: 'Bereit zur Prüfung', tone: 'warning' };
 }

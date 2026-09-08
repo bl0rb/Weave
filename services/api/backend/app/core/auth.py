@@ -31,6 +31,7 @@ from app.core.db import get_db
 from app.core.security import hash_session_token
 from app.models.models import ApiToken, User
 from app.models.models import Session as SessionModel
+from app.services.ingest_identity import IngestIdentityError, fetch_identity
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,24 @@ def _aware_utc(value: datetime) -> datetime:
     return value
 
 
+def _refresh_ingest_identity(db: Session, user: User) -> User | None:
+    prefix = 'weave-ingest:'
+    if not user.oidc_subject or not user.oidc_subject.startswith(prefix):
+        return user
+    try:
+        identity = fetch_identity(user.oidc_subject[len(prefix):])
+    except IngestIdentityError:
+        raise HTTPException(status_code=503, detail='Identity authority unavailable') from None
+    if identity is None:
+        return None
+    if user.team != identity.team or user.teams != identity.effective_teams or user.is_admin != identity.is_admin:
+        user.team = identity.team
+        user.teams = identity.effective_teams
+        user.is_admin = identity.is_admin
+        db.commit()
+    return user
+
+
 def resolve_api_token(db: Session, raw_token: str) -> User | None:
     """Resolve a raw bearer token to its User, or `None` if it's unknown,
     expired, or belongs to a disabled user -- every failure mode collapsed
@@ -99,7 +118,7 @@ def resolve_api_token(db: Session, raw_token: str) -> User | None:
         token.last_used_at = now
         db.commit()
 
-    return user
+    return _refresh_ingest_identity(db, user)
 
 
 def _authenticate_session_cookie(request: Request, db: Session) -> User:
@@ -134,6 +153,9 @@ def _authenticate_session_cookie(request: Request, db: Session) -> User:
         db.commit()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Not authenticated')
 
+    user = _refresh_ingest_identity(db, user)
+    if user is None:
+        raise HTTPException(status_code=401, detail='Not authenticated')
     return user
 
 

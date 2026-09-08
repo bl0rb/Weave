@@ -26,6 +26,12 @@ class ChatUser(BaseModel):
     # "member of every team".
     id: str | None = None
     team: str | None = None
+    teams: list[str] | None = None
+
+    @property
+    def effective_teams(self) -> list[str]:
+        return list(self.teams) if self.teams is not None else ([self.team] if self.team else [])
+
     # A human-readable display name, propagated (optionally -- unset is a
     # normal, common case, not just an anonymous chat) alongside `id`/`team`
     # by whatever gateway resolved this caller's identity. Unlike `id`/

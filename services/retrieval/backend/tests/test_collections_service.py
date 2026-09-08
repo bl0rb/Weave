@@ -85,6 +85,9 @@ def test_readable_collections_mixes_public_and_team_restricted():
 
         assert _slugs(readable_collections(db, 'Engineering')) == {'public-docs', 'eng-docs'}
         assert _slugs(readable_collections(db, 'Kundenservice')) == {'public-docs', 'support-docs'}
+        assert _slugs(readable_collections(db, teams=['Engineering', 'Kundenservice'])) == {'public-docs', 'eng-docs', 'support-docs'}
+        assert _slugs(readable_collections(db, 'Engineering', teams=[])) == {'public-docs'}
+        assert _slugs(readable_collections(db, teams=['Unknown'])) == {'public-docs'}
     finally:
         db.query(Collection).delete()
         db.commit()

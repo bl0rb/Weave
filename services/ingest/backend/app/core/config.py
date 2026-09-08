@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     # Shared bearer credential presented by Weave-Runtime when reading the
     # decrypted effective configuration. Empty fails closed with 503.
     chat_config_service_token: str = ''
+    knowledge_ingest_api_token: str = ''
+    bootstrap_admin_username: str = ''
+    bootstrap_admin_email: str = ''
+    bootstrap_admin_password: str = ''
 
     # Celery worker log capture into worker_log_entries (see
     # app/workers/log_capture.py) -- lets the admin UI tail worker container

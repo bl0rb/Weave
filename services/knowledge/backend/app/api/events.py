@@ -86,13 +86,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.db import SessionLocal, get_db
-from app.models.models import Collection, Document, DocumentStatus, IngestEvent
+from app.models.models import Chunk, Collection, Document, DocumentStatus, IngestEvent
 from app.schemas.events import DocumentReleasedEvent
 from app.services.collection_sync import CollectionSyncError, sync_collections
 from app.workers.tasks import index_document
@@ -342,6 +342,34 @@ def _upsert_document(db: Session, event: DocumentReleasedEvent, frontmatter: dic
     return document, is_new
 
 
+def _lock_source_job(db: Session, job_id: str) -> None:
+    if db.bind.dialect.name == 'postgresql':
+        key = int.from_bytes(hashlib.sha256(job_id.encode()).digest()[:8], signed=True)
+        db.execute(text('SELECT pg_advisory_xact_lock(:key)'), {'key': key})
+
+
+def _handle_withdrawal(db: Session, raw_payload: dict, raw_body: bytes) -> Response:
+    try:
+        job_id = str(UUID(raw_payload['job_id']))
+    except (KeyError, TypeError, ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail='Invalid withdrawal job_id') from None
+    _lock_source_job(db, job_id)
+    event_key = f'withdrawn:{job_id}'
+    if db.scalar(select(IngestEvent.id).where(IngestEvent.event_key == event_key)) is None:
+        db.add(IngestEvent(event_key=event_key, event_type='document.withdrawn', payload_sha256=hashlib.sha256(raw_body).hexdigest()))
+        try:
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            _lock_source_job(db, job_id)
+    document = db.scalar(select(Document).where(Document.source_job_id == job_id).with_for_update())
+    if document is not None:
+        db.execute(delete(Chunk).where(Chunk.document_id == document.id))
+        db.delete(document)
+    db.commit()
+    return JSONResponse(status_code=200, content={'status': 'withdrawn', 'job_id': job_id})
+
+
 @router.post('/ingest')
 def ingest_event(
     raw_body: bytes = Depends(_read_raw_body),
@@ -358,6 +386,9 @@ def ingest_event(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='request body must be a JSON object')
 
     event_type = raw_payload.get('event')
+
+    if event_type == 'document.withdrawn':
+        return _handle_withdrawal(db, raw_payload, raw_body)
 
     if event_type == 'collection.updated':
         return _handle_collection_updated(db)
@@ -377,6 +408,9 @@ def ingest_event(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     event_key = f'release:{event.release_id}'
+    _lock_source_job(db, event.job_id)
+    if db.scalar(select(IngestEvent.id).where(IngestEvent.event_key == f'withdrawn:{event.job_id}')) is not None:
+        return JSONResponse(status_code=200, content={'status': 'withdrawn', 'job_id': event.job_id})
     payload_sha256 = hashlib.sha256(raw_body).hexdigest()
 
     # Flushed (not committed) so the unique-constraint check and the
@@ -412,6 +446,8 @@ def ingest_event(
 
     frontmatter = _canonicalize_release_frontmatter(event.frontmatter, event)
     recommendation = event.quality.recommendation or 'warn'
+    if event.quality.grade == 'C' and event.quality_override:
+        recommendation = 'warn'
 
     try:
         document, is_new = _upsert_document(db, event, frontmatter, recommendation)

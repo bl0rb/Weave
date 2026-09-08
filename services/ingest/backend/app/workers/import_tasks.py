@@ -220,6 +220,9 @@ class _RunState:
         self.visited: dict[str, str | None] = dict(visited)
         errors = raw.get('errors') if isinstance(raw.get('errors'), list) else []
         self.errors: list[dict] = [entry for entry in errors if isinstance(entry, dict)]
+        self.missing_pages: list[dict] = list(raw.get('missing_pages') or [])
+        self.discovery_complete = raw.get('discovery_complete', True)
+        self.unavailable_pages = set(raw.get('unavailable_pages') or [])
         # The run root's space key, resolved once via fetch_context on the
         # first chunk (see import_confluence's "first chunk" block) and
         # persisted so a resumed run never re-fetches it.
@@ -268,6 +271,9 @@ class _RunState:
         # add_error) would mutate the committed value too and SQLAlchemy's
         # equality-based change detection would silently skip the UPDATE.
         run.state = {
+            'unavailable_pages': sorted(self.unavailable_pages),
+            'missing_pages': [dict(entry) for entry in self.missing_pages],
+            'discovery_complete': self.discovery_complete,
             'frontier': [list(entry) for entry in self.frontier],
             'visited': dict(self.visited),
             'errors': [dict(entry) for entry in self.errors],
@@ -392,6 +398,37 @@ def _cancel_run(db, run: ImportRun, state: _RunState, claimed_seq: int) -> None:
     _commit_owned(db, run.id, claimed_seq)
 
 
+def _detect_missing_pages(db, run: ImportRun, state: _RunState) -> None:
+    if not (run.options or {}).get('is_refresh') or not run.source_id:
+        return
+    complete = not (state.errors or state.frontier or run.pages_failed) and state.discovery_complete
+    previous_runs = db.scalars(select(ImportRun).where(
+        ImportRun.source_id == run.source_id, ImportRun.id != run.id,
+        ImportRun.scope_type == run.scope_type, ImportRun.scope_value == run.scope_value,
+        ImportRun.status == ImportRunStatus.FINISHED,
+    )).all()
+    page_ids = set()
+    for previous in previous_runs:
+        page_ids.update((previous.state or {}).get('visited', {}))
+    previous_ids = [previous.id for previous in previous_runs]
+    for job in db.scalars(select(Job).where(Job.import_run_id.in_(previous_ids)).options(
+        defer(Job.upload_content), defer(Job.result_markdown),
+    )).all():
+        job_settings = (job.processing_info or {}).get('settings') or {}
+        if job_settings.get('mode') == 'import':
+            page_id = (job_settings.get('import') or {}).get('source_page_id')
+            if page_id:
+                page_ids.add(str(page_id))
+    missing_ids = page_ids.difference(state.visited) if complete else page_ids.intersection(state.unavailable_pages)
+    tracked = db.scalars(select(ImportPageState).where(
+        ImportPageState.source_id == run.source_id, ImportPageState.page_id.in_(missing_ids),
+    )).all()
+    state.missing_pages = [
+        {'page_id': page.page_id, 'title': page.title, 'job_id': page.job_id, 'url': page.url}
+        for page in tracked if page.job_id
+    ]
+
+
 def _finalize_run(db, run: ImportRun, state: _RunState, claimed_seq: int) -> None:
     """End-of-run cross-page link rewrite (§2.2) + children_titles stamp
     (spec AUFGABE 2) + terminal transition + re-enqueue backstop for
@@ -425,6 +462,7 @@ def _finalize_run(db, run: ImportRun, state: _RunState, claimed_seq: int) -> Non
             if rewritten != job.result_markdown:
                 job.result_markdown = rewritten
 
+    _detect_missing_pages(db, run, state)
     run.status = ImportRunStatus.FINISHED
     run.finished_at = datetime.now(timezone.utc)
     run.current_page_title = ''
@@ -1195,6 +1233,8 @@ def import_confluence(self, run_id: str, chunk_seq: int) -> None:
                     if run is None:
                         return
                     run.pages_failed += 1
+                    if isinstance(exc, ConfluenceError) and exc.status_code in (404, 410):
+                        state.unavailable_pages.add(page_id)
                     state.visited[page_id] = None
                     state.add_error(page_id, '', str(exc))
                     state.persist(run)
@@ -1203,12 +1243,15 @@ def import_confluence(self, run_id: str, chunk_seq: int) -> None:
                     continue
 
                 if byte_cap_hit:
+                    state.discovery_complete = False
                     state.frontier = []
                     state.persist(run)
                     _commit_owned(db, run.id, claimed_seq)
                     break
                 if page is not None and int(depth) < max_depth:
                     _discover_children(db, run, state, client, page, int(depth), max_pages, claimed_seq, path_titles=path_titles)
+                elif page is not None:
+                    state.discovery_complete = False
                 in_flight = None
         except SoftTimeLimitExceeded:
             # Same continuation path as a full chunk, but first discard the

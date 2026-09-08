@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_admin
 from app.api.routes import _apply_visible_filter
 from app.database.session import get_db
-from app.models.models import Collection, DocumentRelease, ImportRun, ImportRunStatus, Job, JobStatus, User
+from app.models.models import Collection, DocumentRelease, ImportRun, ImportRunStatus, Job, JobStatus, KnowledgeWithdrawal, User
 from app.schemas.portal_management import (
     PortalActivityCounts,
     PortalActivityItem,
@@ -50,8 +50,8 @@ def _reviewable_job_expression(quality_grade, quality_recommendation):
         Job.password_hash.is_(None),
         or_(Job.import_run_id.is_(None), ImportRun.status == ImportRunStatus.FINISHED),
         DocumentRelease.id.is_(None),
-        or_(quality_recommendation.is_(None), func.lower(quality_recommendation) != 'block'),
-        or_(quality_grade.is_(None), func.lower(quality_grade) != 'c'),
+        ~select(KnowledgeWithdrawal.job_id).where(KnowledgeWithdrawal.job_id == Job.id).exists(),
+        or_(quality_recommendation.is_(None), func.lower(quality_recommendation) != 'block', func.lower(quality_grade) == 'c'),
     )
 
 

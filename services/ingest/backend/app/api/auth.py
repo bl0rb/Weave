@@ -210,6 +210,7 @@ def _user_response(user: User) -> UserResponse:
         email=user.email,
         role=user.role,
         team_id=user.team_id,
+        team_ids=user.team_ids,
         is_active=user.is_active,
         oidc_provider_id=user.oidc_provider_id,
         created_at=user.created_at,
@@ -298,6 +299,33 @@ def _generate_unique_username(db: Session, base: str) -> str:
 def setup_status(db: Session = Depends(get_db)) -> SetupStatusResponse:
     count = db.scalar(select(func.count()).select_from(User)) or 0
     return SetupStatusResponse(needs_setup=count == 0)
+
+
+def bootstrap_admin(db: Session) -> None:
+    values = (settings.bootstrap_admin_username, settings.bootstrap_admin_email, settings.bootstrap_admin_password)
+    if not any(values):
+        return
+    if not all(values):
+        raise RuntimeError('All BOOTSTRAP_ADMIN fields must be configured together')
+    try:
+        payload = SetupRequest(username=values[0], email=values[1], password=values[2])
+        if not payload.username.strip():
+            raise ValueError('empty username')
+    except ValueError:
+        raise RuntimeError('Invalid BOOTSTRAP_ADMIN configuration') from None
+    if db.bind.dialect.name == 'postgresql':
+        db.execute(text('SELECT pg_advisory_xact_lock(:key)'), {'key': _SETUP_ADVISORY_LOCK_KEY})
+    if db.scalar(select(func.count()).select_from(User)):
+        return
+    db.add(User(
+        username=payload.username.strip().lower(),
+        email=str(payload.email).strip(),
+        password_hash=hash_password(payload.password),
+        role=UserRole.ADMIN,
+        is_active=True,
+    ))
+    _log_auth_event(db, 'INFO', 'first administrator provisioned by deployment bootstrap')
+    db.commit()
 
 
 @router_public.post('/setup', response_model=UserResponse)
@@ -1059,16 +1087,34 @@ def handoff_exchange(
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid or expired handoff code')
 
-    team = db.get(Team, user.team_id) if user.team_id else None
     _log_auth_event(db, 'INFO', f'login handoff redeemed for user {user.username}')
     db.commit()
+    return _handoff_identity(db, user)
+
+
+def _handoff_identity(db: Session, user: User) -> HandoffExchangeResponse:
+    team = db.get(Team, user.team_id) if user.team_id else None
     return HandoffExchangeResponse(
         subject=user.id,
         username=user.username,
         email=user.email,
         team=team.name if team else None,
+        teams=list(db.scalars(select(Team.name).where(Team.id.in_(user.team_ids))).all()),
         is_admin=user.role == UserRole.ADMIN,
     )
+
+
+@router_public.get('/handoff/identity/{user_id}', response_model=HandoffExchangeResponse)
+def current_handoff_identity(user_id: str, request: Request, db: Session = Depends(get_db)) -> HandoffExchangeResponse:
+    secret = settings.handoff_secret
+    if not secret:
+        raise HTTPException(status_code=503, detail='service misconfigured')
+    if not hmac.compare_digest(request.headers.get(_HANDOFF_SECRET_HEADER, '').encode(), secret.encode()):
+        raise HTTPException(status_code=401, detail='Invalid handoff credentials')
+    user = db.get(User, user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=404, detail='Identity unavailable')
+    return _handoff_identity(db, user)
 
 
 # --- admin: users --------------------------------------------------------------
@@ -1098,6 +1144,7 @@ def admin_create_user(payload: AdminUserCreateRequest, db: Session = Depends(get
         team_id=payload.team_id,
         is_active=payload.is_active,
     )
+    _set_user_teams(db, user, payload.team_ids, payload.team_id)
     db.add(user)
     db.commit()
     return _user_response(user)
@@ -1128,16 +1175,28 @@ def admin_update_user(user_id: str, payload: AdminUserUpdateRequest, db: Session
     if payload.role is not None:
         user.role = payload.role
     if payload.clear_team:
-        user.team_id = None
-    elif payload.team_id is not None:
-        if db.get(Team, payload.team_id) is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Team not found')
-        user.team_id = payload.team_id
+        _set_user_teams(db, user, [], None)
+    elif payload.team_ids is not None or payload.team_id is not None:
+        _set_user_teams(db, user, payload.team_ids, payload.team_id)
     if payload.is_active is not None:
         user.is_active = payload.is_active
 
     db.commit()
     return _user_response(user)
+
+
+def _set_user_teams(db: Session, user: User, team_ids: list[str] | None, primary: str | None) -> None:
+    selected = list(dict.fromkeys(
+        team_ids if team_ids is not None else
+        [member_id for member_id in user.team_ids if member_id != user.team_id] + ([primary] if primary else [])
+    ))
+    if primary and primary not in selected:
+        raise HTTPException(status_code=422, detail='Primary team must be a membership')
+    teams = db.scalars(select(Team).where(Team.id.in_(selected))).all() if selected else []
+    if len(teams) != len(selected):
+        raise HTTPException(status_code=404, detail='Team not found')
+    user.memberships = teams
+    user.team_id = primary or (user.team_id if user.team_id in selected else next(iter(selected), None))
 
 
 @router_admin.delete('/users/{user_id}')

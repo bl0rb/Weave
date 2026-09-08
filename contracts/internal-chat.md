@@ -32,11 +32,19 @@ Ein einzelner Chat-Turn: Weave-API schickt eine Nutzer-Nachricht plus bisherigen
 | `role` | `"user"` \| `"assistant"` | ja | **Kein** `"system"` — der System-Prompt gehört ausschliesslich zur Bot-YAML (`BotConfig.system_prompt`), wird nie pro Request mitgeschickt. |
 | `content` | `string` | ja | |
 
-`ChatUser` (alle drei Felder optional — `null` bedeutet "nicht propagiert", nicht "Mitglied in jedem Team"):
+`ChatUser` (Identität wird ausschließlich vom authentifizierten Gateway gesetzt):
+
+Neue Gateway-Aufrufe senden immer `teams`. Eine vorhandene leere Liste bedeutet
+keine Teamrechte und darf nie durch das alte `team` oder Botberechtigungen
+ersetzt werden. Bei alten Aufrufern ohne Liste bleibt das Einzelteamformat
+kompatibel. Botzugriff verlangt eine Überschneidung mit `permissions.teams`;
+lesbare Collections sind die Vereinigung der für die Mitgliedschaften erlaubten
+Collections, anschließend eingeschränkt durch Bot- und Anfragefilter.
 
 | Feld | Typ | Bedeutung |
 |---|---|---|
 | `id` | `string \| null` | Anonyme/Systemaufrufe haben keine `id`. |
+| `teams` | `list[string] \| null` | Vollständige verifizierte Teammitgliedschaften. `[]` erteilt keine Teamrechte; `null` ist ausschließlich das Legacy-Format. |
 | `team` | `string \| null` | Wird gegen `BotConfig.permissions.teams` geprüft (siehe Fehlerbild 403) und bestimmt, welche Teams die anschliessende Weave-Retrieval-Anfrage sehen darf (`allowed_teams` — siehe `backend/app/services/chat.py:_allowed_teams`: bevorzugt `[user.team]`, fällt nur ohne `user.team` auf `bot.permissions.teams` zurück). |
 | `username` | `string \| null` | Anzeigename, unabhängig von `id` propagierbar. Von KEINEM Teil dieser Pipeline für Routing/Retrieval/Permissions gelesen — ausschliesslich für den `n8n`-Bot-Provider relevant (`backend/app/services/delegation.py:mint_delegation_token`, siehe `contracts/n8n-flow.md`), der es in das Delegations-Token einbettet. |
 

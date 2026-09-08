@@ -71,7 +71,7 @@ def chat(
             bot_id=body.bot_id,
             message=body.message,
             history=history,
-            user={'id': str(user.id), 'team': user.team},
+            user={'id': str(user.id), 'team': user.team, 'teams': user.effective_teams},
             collections=body.collections,
         )
     except runtime_client.RuntimeUnavailable as exc:
@@ -243,7 +243,7 @@ def chat_stream(
             bot_id=body.bot_id,
             message=body.message,
             history=history,
-            user={'id': str(user.id), 'team': user.team},
+            user={'id': str(user.id), 'team': user.team, 'teams': user.effective_teams},
             collections=body.collections,
         )
     except runtime_client.RuntimeUnavailable as exc:

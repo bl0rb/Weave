@@ -41,6 +41,20 @@ it('requires explicit confirmation and submits exactly the preview hash', async 
   const mutation = api.mock.calls.find(([path]) => path.endsWith('/release'));
   expect(JSON.parse(mutation?.[1]?.body as string)).toEqual({ markdown_sha256: content.markdown_sha256 });
 });
+it('permits explicitly confirmed grade C without rewriting its quality', async () => {
+  mockDocument({ quality_grade: 'C', quality_recommendation: 'block', can_release: true });
+  render(<ReviewDocument id="doc" />);
+  const checkbox = await screen.findByRole('checkbox', { name: /trotz Qualitätsstufe C/ });
+  const button = screen.getByRole('button', { name: 'Geprüften Stand freigeben' });
+  expect((button as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(checkbox);
+  api.mockResolvedValueOnce({ id: 'release', created_at: content.created_at, status: 'pending' });
+  fireEvent.click(button);
+  await screen.findByText('Freigabe gespeichert');
+  const mutation = api.mock.calls.find(([path]) => path.endsWith('/release'));
+  expect(JSON.parse(mutation?.[1]?.body as string)).toEqual({ markdown_sha256: content.markdown_sha256, accept_quality_warning: true });
+});
+
 it('does not offer approval to a reader', async () => {
   mockDocument({ can_release: false, can_reprocess: false });
   render(<ReviewDocument id="doc" />);

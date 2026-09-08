@@ -15,7 +15,7 @@ from redis import Redis
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session, defer
 
-from app.api.deps import get_current_user, require_admin
+from app.api.deps import get_current_user, require_admin, require_knowledge_registry_reader
 from app.core.config import settings
 from app.database.session import get_db
 from app.models.models import (
@@ -85,6 +85,7 @@ from app.workers.tasks import process_job
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix='/api/v1')
+knowledge_router = APIRouter(prefix='/api/v1')
 
 UPLOAD_MODE_VALUES = {'single', 'collection'}
 _JOB_LIST_PAGE_LIMIT_MAX = 500
@@ -189,8 +190,8 @@ def _visible_job_filter(user: User):
     if user.role == UserRole.ADMIN:
         return None
     conditions = [Job.owner_id == user.id]
-    if user.team_id is not None:
-        teammate_ids = select(User.id).where(User.team_id == user.team_id)
+    if user.team_ids:
+        teammate_ids = select(User.id).where(User.team_id.in_(user.team_ids))
         conditions.append(Job.owner_id.in_(teammate_ids))
     return or_(*conditions)
 
@@ -221,10 +222,10 @@ def _owner_visible(db: Session, owner_id: str | None, user: User) -> bool:
         return False
     if owner_id == user.id:
         return True
-    if user.team_id is None:
+    if not user.team_ids:
         return False
     owner_team_id = db.scalar(select(User.team_id).where(User.id == owner_id))
-    return owner_team_id == user.team_id
+    return owner_team_id in user.team_ids
 
 
 def _require_visible(db: Session, job: Job, user: User) -> None:
@@ -246,8 +247,8 @@ def _visible_collection_filter(user: User):
     if user.role == UserRole.ADMIN:
         return None
     conditions = [Collection.owner_id == user.id]
-    if user.team_id is not None:
-        teammate_ids = select(User.id).where(User.team_id == user.team_id)
+    if user.team_ids:
+        teammate_ids = select(User.id).where(User.team_id.in_(user.team_ids))
         conditions.append(Collection.owner_id.in_(teammate_ids))
     return or_(*conditions)
 
@@ -964,9 +965,9 @@ def list_collections(db: Session = Depends(get_db), user: User = Depends(get_cur
     return CollectionListResponse(items=[_collection_to_response(collection, user) for collection in collections])
 
 
-@router.get('/collections/registry', response_model=CollectionRegistryResponse)
+@knowledge_router.get('/collections/registry', response_model=CollectionRegistryResponse)
 def get_collections_registry(
-    db: Session = Depends(get_db), user: User = Depends(require_admin)
+    db: Session = Depends(get_db), user: User | None = Depends(require_knowledge_registry_reader)
 ) -> CollectionRegistryResponse:
     """Sync source for Weave-Knowledge's `collections` registry table (see
     the Collections contract in README.md) and, transitively, for

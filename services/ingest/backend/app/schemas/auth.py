@@ -27,6 +27,7 @@ class UserResponse(BaseModel):
     email: str
     role: UserRole
     team_id: str | None = None
+    team_ids: list[str] = Field(default_factory=list)
     is_active: bool
     oidc_provider_id: str | None = None
     created_at: datetime
@@ -52,6 +53,7 @@ class AdminUserCreateRequest(BaseModel):
     password: str | None = Field(default=None, min_length=8, max_length=200)
     role: UserRole = UserRole.USER
     team_id: str | None = None
+    team_ids: list[str] | None = None
     is_active: bool = True
 
 
@@ -60,6 +62,7 @@ class AdminUserUpdateRequest(BaseModel):
     password: str | None = Field(default=None, min_length=8, max_length=200)
     role: UserRole | None = None
     team_id: str | None = None
+    team_ids: list[str] | None = None
     # team_id=None is ambiguous ("unchanged" vs "clear it"); this makes
     # clearing explicit.
     clear_team: bool = False
@@ -310,4 +313,5 @@ class HandoffExchangeResponse(BaseModel):
     username: str
     email: str
     team: str | None = None
+    teams: list[str] = Field(default_factory=list)
     is_admin: bool

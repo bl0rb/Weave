@@ -47,7 +47,7 @@ def list_collections_for_scope(scope: Scope) -> list[CollectionOut]:
     collection's slug and is simply absent from this listing -- it has no
     name/description to show, only a meaning for search_for_scope below.
     """
-    params = {'team': scope.team} if scope.team is not None else {}
+    params = {'teams': scope.teams} if scope.teams is not None else ({'team': scope.team} if scope.team is not None else {})
     response = httpx.get(
         f'{settings.retrieval_base_url}/api/v1/collections',
         params=params,
@@ -111,7 +111,7 @@ def search_for_scope(
         # wraps it into `[]` ("no team authorized", i.e. zero results)
         # rather than `[None]`, which is not even a valid `list[str]` value
         # and would fail Weave-Retrieval's own request validation outright.
-        'allowed_teams': [scope.team] if scope.team is not None else [],
+        'allowed_teams': scope.effective_teams,
     }
     if top_k is not None:
         body['top_k'] = top_k

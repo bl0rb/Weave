@@ -278,7 +278,7 @@ def search(
         raise RetrievalUnavailable(f'Weave-Retrieval returned a malformed result for POST {url}: {exc}') from exc
 
 
-def list_collections(team: str | None = None) -> list[Collection]:
+def list_collections(team: str | list[str] | None = None) -> list[Collection]:
     """GET `{settings.retrieval_base_url}/api/v1/collections` with
     `Authorization: Bearer {settings.retrieval_api_token}` and, when `team`
     is given, `?team=<team>` -- Weave-Retrieval's own Collections
@@ -303,7 +303,7 @@ def list_collections(team: str | None = None) -> list[Collection]:
     base_url = settings.retrieval_base_url.rstrip('/')
     url = f'{base_url}/api/v1/collections'
     headers = {'Authorization': f'Bearer {settings.retrieval_api_token}'}
-    params = {'team': team} if team is not None else None
+    params = {'teams': team} if isinstance(team, list) else ({'team': team} if team is not None else None)
 
     try:
         response = httpx.get(url, headers=headers, params=params, timeout=settings.retrieval_timeout_seconds)

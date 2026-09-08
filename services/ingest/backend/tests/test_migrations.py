@@ -104,6 +104,30 @@ def _alembic_config() -> Config:
     return cfg
 
 
+def test_user_team_migration_preserves_primary_membership(tmp_path, monkeypatch) -> None:
+    db_url = f'sqlite:///{tmp_path / "membership_migration.db"}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+    engine = create_engine(db_url, future=True)
+    _build_legacy_metadata().create_all(bind=engine)
+    cfg = _alembic_config()
+    command.stamp(cfg, '0003_job_markdown_versions')
+    command.upgrade(cfg, '0019_managed_bots')
+    with engine.begin() as connection:
+        connection.execute(text("INSERT INTO teams (id, name, created_at) VALUES ('team-a', 'A', '2026-01-01')"))
+        connection.execute(text(
+            "INSERT INTO users (id, username, email, role, is_active, team_id, created_at, updated_at) "
+            "VALUES ('member', 'member', 'member@example.com', 'user', 1, 'team-a', '2026-01-01', '2026-01-01')"
+        ))
+    command.upgrade(cfg, 'head')
+    with engine.connect() as connection:
+        assert connection.execute(text('SELECT user_id, team_id FROM user_teams')).all() == [('member', 'team-a')]
+    command.downgrade(cfg, '0019_managed_bots')
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT team_id FROM users WHERE id = 'member'")).scalar_one() == 'team-a'
+    assert 'user_teams' not in inspect(engine).get_table_names()
+    engine.dispose()
+
+
 def test_0004_auth_migration_upgrade_downgrade_round_trip(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / 'migration_scratch.db'
     db_url = f'sqlite:///{db_path}'

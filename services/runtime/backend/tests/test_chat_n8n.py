@@ -221,7 +221,7 @@ def test_delegation_token_embeds_the_resolved_collection_scope(monkeypatch):
     # (from _readable_collections()' default) -> real_scope == ['vertraege'],
     # plus the NO_COLLECTION_SENTINEL (include_uncollected defaults True).
     assert body['allowed_collections'] == ['vertraege', '__none__']
-    assert body['user'] == {'id': 'u-1', 'username': 'j.schmidt', 'team': 'legal'}
+    assert body['user'] == {'id': 'u-1', 'username': 'j.schmidt', 'team': 'legal', 'teams': ['legal']}
     assert body['bot_id'] == 'n8n-agent'
     assert body['tools_base_url'] == 'https://weave-tools.internal.example.com'
 

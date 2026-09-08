@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 from app.models.models import Collection
 
 
-def readable_collections(db: Session, team: str | None) -> list[Collection]:
+def readable_collections(db: Session, team: str | None = None, *, teams: list[str] | None = None) -> list[Collection]:
     """Every `Collection` row `team` is allowed to read: every PUBLIC
     collection (`read_teams == []`, the contract's own "readable by
     everyone" sentinel -- see `Collection.read_teams`'s docstring) plus,
@@ -43,9 +43,10 @@ def readable_collections(db: Session, team: str | None) -> list[Collection]:
     apply_filters() this is not a hot, high-cardinality path that would need
     to push the check down into SQL.
     """
+    memberships = set(teams if teams is not None else ([team] if team else []))
     collections = db.execute(select(Collection)).scalars().all()
     return [
         collection
         for collection in collections
-        if not collection.read_teams or (team is not None and team in collection.read_teams)
+        if not collection.read_teams or memberships.intersection(collection.read_teams)
     ]

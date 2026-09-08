@@ -41,6 +41,7 @@ class PortalDocumentDetail(PortalDocumentItem):
 
 class PortalReleaseRequest(BaseModel):
     markdown_sha256: str = Field(pattern=r'^[0-9a-fA-F]{64}$')
+    accept_quality_warning: bool = False
 
 
 class PortalReprocessRequest(BaseModel):

@@ -2,7 +2,7 @@
 
 Das Portal trennt Verarbeitung und Veröffentlichung. `document.processed` bestätigt nur authentifiziert, dass ein Job verarbeitet wurde; die Antwort `awaiting_release` bedeutet, dass noch kein Index-Lauf erfolgt. Regulär indexiert Knowledge ausschließlich `document.released`.
 
-Eine Freigabe ist ein unveränderlicher Snapshot: Pro Job gibt es genau eine Freigabe. Sie darf nur der Dokument- oder Wissensbereichseigentümer oder ein Admin auslösen. Ein Quality-Block verweigert die Freigabe. Bei Confluence muss der gesamte Import erfolgreich abgeschlossen sein, damit abschließende Links und Hierarchiemetadaten enthalten sind. Für Dokumente ohne Collection zunächst im Portal einen Wissensbereich wählen und die Quelle dort erneut hinzufügen. Eine nachträgliche Zuordnung beliebiger Altaufträge ist noch nicht Teil dieser Oberfläche. Bereits indexierte Legacy-Daten bleiben unverändert.
+Eine Freigabe ist ein unveränderlicher Snapshot: Pro Job gibt es genau eine Freigabe. Sie darf nur der Dokument- oder Wissensbereichseigentümer oder ein Admin auslösen. Qualitätsstufe C kann nach ausdrücklicher Bestätigung trotz Qualitätswarnung freigegeben werden. Die Bewertung C und die ursprüngliche Empfehlung bleiben unverändert; der signierte Freigabeauftrag enthält `quality_override: true`. Andere Quality-Blocks, Passwortschutz und fehlende Berechtigungen bleiben Sperren. Bei Confluence muss der Import abgeschlossen sein, damit abschließende Links und Hierarchiemetadaten enthalten sind. Für Dokumente ohne Collection zunächst im Portal einen Wissensbereich wählen und die Quelle dort erneut hinzufügen. Eine nachträgliche Zuordnung beliebiger Altaufträge ist noch nicht Teil dieser Oberfläche. Bereits indexierte Legacy-Daten bleiben unverändert.
 
 Der Delivery-Status (`pending`, `sent`, `failed`) beschreibt nur die Zustellung des Webhooks, niemals den Abschluss der Indexierung. Der Chat bleibt eine separate, über `WEAVE_CHAT_PUBLIC_URL` verlinkte Oberfläche.
 
@@ -18,7 +18,7 @@ Die Abfrage läuft über die bestehende Ingest-Anmeldung. Nur sichtbare Dokument
 
 Ingest API und Worker verwenden `PORTAL_KNOWLEDGE_BASE_URL` (im Compose-Stack `http://weave-knowledge:8000`) und `PORTAL_KNOWLEDGE_WEBHOOK_SECRET`. Knowledge verwendet denselben Wert als `WEAVE_INGEST_WEBHOOK_SECRET`. `WEBHOOK_PRIVATE_HOST_ALLOWLIST` behält bestehende n8n-/Admin-Hosts; `weave-knowledge` muss zusätzlich enthalten sein, z. B. `["n8n", "admin-webhook", "weave-knowledge"]`. Fehlt der Portal-Secret, bleibt die Portal-Publikation deaktiviert, während Ingest weiter startet. Im Kubernetes-Chart wird der gemeinsame Wert über ein vorhandenes Secret referenziert.
 
-Knowledge benötigt außerdem einen gültigen Ingest-API-Token zum Lesen der freigegebenen Snapshots und der Collection-Registry. Ein Administrator erzeugt ihn unter **Konto → API-Tokens**. Im lokalen Compose-Deployment wird er ausschließlich in `deploy/.env` als `WEAVE_KNOWLEDGE_INGEST_API_TOKEN` hinterlegt; API und Worker von Knowledge erhalten ihn als `WEAVE_INGEST_API_TOKEN`. Dieser Lesezugang ist vom Webhook-Signaturschlüssel unabhängig. Ein frei gewählter Wert oder ein gelöschter Token führt zu HTTP 401. Nach einer Änderung beide Knowledge-Container neu erstellen:
+Knowledge benötigt außerdem das vor dem Deployment erzeugte Service-Credential `WEAVE_KNOWLEDGE_INGEST_API_TOKEN`. Der Konfigurationsrenderer spiegelt es für Ingest nach `KNOWLEDGE_INGEST_API_TOKEN`; API und Worker von Knowledge erhalten es als `WEAVE_INGEST_API_TOKEN`. Ein persönlicher Admin-Token ist nicht erforderlich. Dieser Lesezugang ist vom Webhook-Signaturschlüssel unabhängig. Bei Rotation Ingest und beide Knowledge-Container mit identischem neuem Wert neu erstellen:
 
 ```sh
 docker compose --env-file deploy/.env -f deploy/docker-compose.weave.yml -f deploy/docker-compose.local.yml up -d --no-deps weave-knowledge weave-knowledge-worker
@@ -28,11 +28,46 @@ Der Portal-Konfigurationshinweis prüft in dieser Ausbaustufe nur das Vorhandens
 
 Confluence-Zugangsdaten sind weiterhin nur für den jeweiligen Eigentümer nutzbar. Die optionale tägliche Aktualisierung verwendet den Umfang des zuletzt gestarteten Imports dieser Verbindung. Sie gilt noch nicht getrennt je Startseite. Neue Dokumentversionen müssen erneut geprüft und freigegeben werden. Individuelle Confluence-Seitenrechte werden nicht automatisch übertragen.
 
-Vollständiges ACL-Mapping, Entzug bereits publizierter Inhalte, Umschalten publizierter Versionen und ein vollständiger Kubernetes-Stack sind noch nicht implementiert.
+Individuelle Confluence-Seitenrechte werden nicht automatisch als Weave-ACL übernommen. Die unten beschriebene Rücknahme entfernt Inhalte aus Knowledge, nicht aus der Importhistorie oder bereits gespeicherten Chat-Antworten.
+
+## Confluence synchronisieren und fehlende Seiten entfernen
+
+In der Importhistorie (`/imports`) und im einzelnen vergangenen Lauf startet
+**Jetzt synchronisieren** einen inkrementellen Sync mit genau dessen Quelle,
+Startseite und Optionen. Das funktioniert auch ohne aktivierten Scheduler.
+Nur der Quelleigentümer kann deren Zugangsdaten nutzen; parallel aktive Läufe
+derselben Quelle verhindern einen weiteren Sync.
+
+Nach vollständigen Syncs werden zuvor importierte, nicht mehr gefundene Seiten
+gemeldet. Verglichen wird nur derselbe Startbereich dieser Verbindung. Bei
+abgeschnittenen Crawls, Zeitlimits oder Abruffehlern entsteht kein pauschaler
+Löschvorschlag. Explizite HTTP-404/410-Antworten melden nur die konkret betroffene
+früher importierte Seite. Confluence kann fehlende Berechtigungen ebenfalls als
+404 melden: **Nicht mehr in Confluence gefunden** ist deshalb kein Beweis für
+eine Löschung beim Quellsystem.
+
+Im Laufdetail kann der Eigentümer **Aus Wissen entfernen** bestätigen. Das
+entfernt alle noch zuordenbaren Versionen und OCR-Anhänge dieser Seite aus
+Knowledge. Neuere Sync-Ergebnisse und aktive Läufe verhindern veraltete
+Löschaktionen. Die Importhistorie und Freigabe-Snapshots bleiben zu
+Nachvollziehbarkeitszwecken erhalten; die zurückgezogenen Jobs können nicht
+erneut freigegeben werden. Wieder aufgetauchte Seiten erhalten beim nächsten
+Sync einen neuen Job und benötigen eine neue Freigabe.
+
+**Löschung ausstehend** bedeutet noch nicht gelöscht. Die Datenbank-Outbox
+wiederholt fehlgeschlagene Zustellungen über den bestehenden Publication-Tick.
+Erst nach bestätigter Entfernung steht **Aus Wissen entfernt**. Knowledge
+entfernt Dokumenttext und Chunks und behält ausschließlich den Widerrufsbeleg
+zur Job-ID, damit verspätete Freigabe-Events keine Inhalte wiederherstellen.
+Details: [document.withdrawn](../contracts/events/document.withdrawn.md).
 
 ## Migration
 
-Vor dem Start des neuen Ingest-Images `0017_document_releases` ausführen (`alembic upgrade head`). Die Migration legt die Release- und Delivery-Outbox-Tabelle an; sie verändert keine bereits indizierten Legacy-Daten.
+Vor dem Start des neuen Ingest-Images `alembic upgrade head` bis einschließlich
+`0021_knowledge_withdrawals` ausführen. Zuerst Knowledge aktualisieren, danach
+Ingest-API, Ingest-Worker und Frontend. Alte Knowledge-Versionen verstehen weder
+den C-Override noch die Löschereignisse. Ein nicht unterstützter Löschauftrag
+(HTTP 204 statt 200) wird deshalb nicht als erfolgreich zugestellt markiert.
 
 ## Ablauf für Fachbereiche
 
@@ -44,7 +79,7 @@ Vor dem Start des neuen Ingest-Images `0017_document_releases` ausführen (`alem
 
 Im geöffneten Wissensbereich lädt **Alle als ZIP** sämtliche für den angemeldeten Nutzer sichtbaren, fertig verarbeiteten und nicht passwortgeschützten Markdown-Dateien. Das Download-Symbol in einer Dokumentzeile lädt nur dieses Markdown. Bei bereits freigegebenen Dokumenten wird immer der unveränderliche Freigabe-Snapshot exportiert; spätere lokale Änderungen können ihn nicht ersetzen. Doppelte Dateinamen werden im ZIP mit einem kurzen Dokumentbezug eindeutig gemacht. Der Export ändert weder Freigabe noch Indexierungsstatus.
 
-Bereits freigegebene Aufträge können in dieser Version nicht gelöscht werden (HTTP 409); zuerst wird eine nachvollziehbare Rücknahme mit Entfernung aus dem Index benötigt. Für den lokalen Start müssen API, Ingest-Worker und Knowledge-Worker gemeinsam aktualisiert werden. Die vorhandenen OIDC-/Benutzer- und Verbindungseinstellungen bleiben unter **Administration** bzw. **Administration → Werkzeuge → Verbindungen** erreichbar. Eigene Confluence-Verbindungen sind außerdem direkt aus der Quellenauswahl erreichbar.
+Direktes Löschen freigegebener Aufträge bleibt gesperrt (HTTP 409). Fehlende Confluence-Seiten können über die oben beschriebene Rücknahme aus dem Wissen entfernt werden. Die vorhandenen OIDC-/Benutzer- und Verbindungseinstellungen bleiben unter **Administration** bzw. **Administration → Werkzeuge → Verbindungen** erreichbar. Eigene Confluence-Verbindungen sind außerdem direkt aus der Quellenauswahl erreichbar.
 
 
 ## Verarbeitung und Profilauswahl

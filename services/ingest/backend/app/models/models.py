@@ -35,6 +35,14 @@ job_tags = Table(
 )
 
 
+user_teams = Table(
+    'user_teams',
+    Base.metadata,
+    Column('user_id', String(36), ForeignKey('users.id', ondelete='CASCADE'), primary_key=True),
+    Column('team_id', String(36), ForeignKey('teams.id', ondelete='CASCADE'), primary_key=True),
+)
+
+
 class JobStatus(str, enum.Enum):
     PENDING = 'PENDING'
     RUNNING = 'RUNNING'
@@ -390,6 +398,12 @@ class User(Base):
     )
 
     team: Mapped[Team | None] = relationship(back_populates='users')
+    memberships: Mapped[list[Team]] = relationship(secondary=user_teams, lazy='selectin')
+
+    @property
+    def team_ids(self) -> list[str]:
+        return list(dict.fromkeys(([self.team_id] if self.team_id else []) + [team.id for team in self.memberships]))
+
     oidc_provider: Mapped[AuthProvider | None] = relationship(back_populates='users')
     sessions: Mapped[list['Session']] = relationship(back_populates='user', cascade='all, delete-orphan')
     owned_jobs: Mapped[list[Job]] = relationship(back_populates='owner')
@@ -1013,6 +1027,17 @@ class LoginHandoffCode(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class KnowledgeWithdrawal(Base):
+    __tablename__ = 'knowledge_withdrawals'
+
+    job_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    status: Mapped[str] = mapped_column(String(16), default='pending', nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
 
 class DocumentRelease(Base):

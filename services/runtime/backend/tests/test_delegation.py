@@ -62,7 +62,8 @@ def test_token_is_exactly_two_b64url_segments_joined_by_a_dot():
 def test_payload_contains_exactly_the_documented_field_set():
     token = mint_delegation_token(ChatUser(id='u-1', username='j.schmidt', team='legal'), ['vertraege'], 'legal-agent')
     payload = _decode_payload(token)
-    assert set(payload) == {'v', 'sub', 'username', 'team', 'collections', 'bot', 'iat', 'exp'}
+    assert set(payload) == {'v', 'sub', 'username', 'team', 'teams', 'collections', 'bot', 'iat', 'exp'}
+    assert payload['teams'] == ['legal']
 
 
 def test_payload_fields_match_the_given_arguments():

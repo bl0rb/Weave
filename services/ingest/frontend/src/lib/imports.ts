@@ -83,6 +83,8 @@ export type ImportRun = {
   scope_type: string;
   scope_value: string;
   root_page_title: string;
+  can_sync?: boolean;
+  missing_page_count?: number;
   pages_discovered: number;
   pages_imported: number;
   pages_failed: number;
@@ -113,11 +115,22 @@ export type ImportRunJobSummary = {
 };
 
 export type ImportRunDetail = ImportRun & {
+  missing_pages?: MissingConfluencePage[];
+  can_remove_missing?: boolean;
   current_page_title: string;
   error_message: string | null;
   cancel_requested: boolean;
   errors: ImportRunError[];
   jobs: ImportRunJobSummary[];
+};
+
+export type MissingConfluencePage = {
+  page_id: string;
+  title: string;
+  job_id: string | null;
+  url: string;
+  withdrawal_status?: 'pending' | 'sent';
+  withdrawal_error?: string | null;
 };
 
 export type ImportRunCancelResponse = {

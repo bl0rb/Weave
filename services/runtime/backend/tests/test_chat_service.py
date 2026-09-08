@@ -18,6 +18,7 @@ at all involved), unlike tests/test_chat_e2e.py's full-pipeline
 """
 
 from unittest.mock import patch
+import pytest
 
 import logging
 
@@ -92,6 +93,16 @@ def test_check_permissions_allows_any_team_when_bot_has_no_team_restriction():
 
 def test_check_permissions_allows_a_member_of_an_allowed_team():
     _check_permissions(_bot(teams=['legal', 'management']), ChatUser(team='legal'))
+
+
+def test_multiple_memberships_and_explicit_revocation():
+    user = ChatUser(team='sales', teams=['sales', 'legal'])
+    _check_permissions(_bot(teams=['legal']), user)
+    assert _allowed_teams(_bot(), user) == ['sales', 'legal']
+    revoked = ChatUser(team='legal', teams=[])
+    with pytest.raises(BotPermissionDenied):
+        _check_permissions(_bot(teams=['legal']), revoked)
+    assert _allowed_teams(_bot(), revoked) == []
 
 
 def test_check_permissions_denies_a_team_not_on_the_allowlist():

@@ -46,7 +46,7 @@ Der Intent-Router (`backend/app/services/router.py`) läuft für einen n8n-Bot *
 |---|---|---|
 | `message` | `string` | Die aktuelle Nutzer-Nachricht (`ChatRequest.message`, unveraendert). |
 | `history` | `list[{role, content}]` | Bisheriger Verlauf, aelteste zuerst, OHNE `message` selbst — identisch zu `ChatRequest.history` (`backend/app/schemas/chat.py`), nur zu Klartext-Dicts entpackt. |
-| `user` | `{id, username, team}` | Propagierte Identitaet (`ChatUser`) — alle drei Felder koennen `null` sein (anonymer/System-Chat). |
+| `user` | `{id, username, team, teams}` | Propagierte Identitaet. `teams` ist die vollstaendige Mitgliederliste; `team` bleibt das primaere Team zur Abwaertskompatibilitaet. |
 | `bot_id` | `string` | `BotConfig.id` — der n8n-Flow kann darueber (falls ein Flow mehrere Bots bedient) sein eigenes Prompting/Verhalten adressieren; der Bot-eigene `system_prompt` wird NICHT separat mitgeschickt (siehe "Warum kein `system_prompt`-Feld" unten). |
 | `allowed_collections` | `list[string]` | Der von `resolve_collection_scope` aufgeloeste Scope, UNVERAENDERT — kann den Sentinel `"__none__"` enthalten (Altbestand, siehe `contracts/internal-chat.md`). Eine bequeme, unsignierte Kopie desselben Scopes, der auch im `delegation_token` signiert steckt — siehe "Grundregel Rechte" oben: ein Flow, der SICH SELBST auf dieses Feld statt auf die Token-Pruefung verlaesst, verlaesst sich auf unsignierte Daten. |
 | `delegation_token` | `string` | Frisch fuer GENAU diesen Aufruf ausgestellt (siehe "Delegations-Token" unten) — niemals wiederverwendet, niemals gecacht. |
@@ -72,6 +72,7 @@ token = b64url(json(payload)) + "." + b64url(hmac_sha256(secret, b64url(json(pay
 | `sub` | `string` | `user.id`, oder `""` wenn nicht propagiert. |
 | `username` | `string` | `user.username`, faellt auf `user.id` zurueck, dann auf `""` — nie `null` (anders als `team`/`bot`). |
 | `team` | `string \| null` | `user.team`, unveraendert. |
+| `teams` | `list[string]` | Vollstaendige verifizierte Mitgliedschaften. Eine leere Liste erteilt keine Teamrechte; niemals auf `team` zurueckfallen, wenn `teams` vorhanden ist. |
 | `collections` | `list[string]` | Der von `resolve_collection_scope` aufgeloeste Scope — kann `"__none__"` (Altbestand-Sentinel) enthalten. **Das ist der eigentliche Umfang, den dieses Token gewaehrt.** |
 | `bot` | `string \| null` | `BotConfig.id` — bei jedem heutigen Aufrufer (`_run_n8n_turn`) immer gesetzt. |
 | `iat` | `int` | Ausstellungszeitpunkt, Unix-Sekunden. |
@@ -88,6 +89,11 @@ token = b64url(json(payload)) + "." + b64url(hmac_sha256(secret, b64url(json(pay
 5. Der derart verifizierte `payload.collections` (plus `payload.team`, falls fuer eine feinere Pruefung noetig) ist der GESAMTE erlaubte Umfang fuer diesen Aufruf — jede Collection, die ein MCP-Tool-Argument oder ein REST-Body-Feld zusaetzlich nennt, ist wie in der Grundregel oben nur eine Einschraenkung DAVON, nie eine Erweiterung.
 
 **Geheimhaltung:** das Token ist ein Bearer-Geheimnis, exakt wie `RUNTIME_API_TOKEN`/`RETRIEVAL_API_TOKEN`. NIE in Logs, NIE in einer Fehlermeldung, NIE in einer Trace-Ausgabe — weder auf Weave-Runtime- noch auf n8n-/Weave-Tools-Seite. `backend/app/services/n8n_client.py` und `backend/app/services/delegation.py` halten sich beide explizit daran (siehe deren eigene Docstrings); ein n8n-Flow, der das Token in seinem eigenen Execution-Log mitschreibt (n8n tut das standardmaessig fuer JEDEN Node-Input/Output!), verletzt diesen Vertrag — ein produktiver Flow MUSS das Token-Feld vor dem Logging redigieren oder n8ns "Save Manual Executions"/Log-Level entsprechend einschraenken.
+
+Teamlisten werden vor Verwendung typgeprüft. Neue Tokens enthalten `teams`;
+alte Tokens ohne dieses Feld verwenden weiterhin das Einzelteam `team`.
+Bestehende Delegationstokens sind ein Snapshot der Rechte bis `exp`, keine
+Live-Abfrage der Mitgliedschaften. Der Standard-TTL beträgt 300 Sekunden.
 
 ## Wie der n8n-Flow Weave-Tools damit aufruft (REST vs. MCP)
 

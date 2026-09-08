@@ -46,7 +46,7 @@ def _client() -> httpx.Client:
     return httpx.Client(base_url=settings.retrieval_base_url, headers=headers, timeout=timeout)
 
 
-def list_collections(*, team: str | None) -> list:
+def list_collections(*, team: str | list[str] | None) -> list:
     """GET /api/v1/collections?team=<team> -- the collections `team` may
     read, verbatim from Weave-Retrieval (that service's own `CollectionOut`:
     `slug`/`name`/`description`/`public`). `team=None` (a user with no team
@@ -55,7 +55,7 @@ def list_collections(*, team: str | None) -> list:
     (team=None)` semantics on that side ("no team context" -> public
     collections only), the same way a caller there is expected to behave
     (see that service's app/api/collections.py)."""
-    params = {'team': team} if team is not None else None
+    params = {'teams': team} if isinstance(team, list) else ({'team': team} if team is not None else None)
 
     try:
         with _client() as client:

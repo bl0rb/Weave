@@ -117,6 +117,8 @@ class ImportRunResponse(BaseModel):
     scope_type: str
     scope_value: str
     root_page_title: str = ''
+    can_sync: bool = False
+    missing_page_count: int = 0
     pages_discovered: int = 0
     pages_imported: int = 0
     pages_failed: int = 0
@@ -152,6 +154,8 @@ class ImportRunJobSummary(BaseModel):
 
 
 class ImportRunDetailResponse(ImportRunResponse):
+    missing_pages: list[dict] = Field(default_factory=list)
+    can_remove_missing: bool = False
     # Needed to prefill the "edit & run again" wizard; the source may since
     # have been deleted (source_id goes NULL on delete, runs keep history).
     source_id: str | None = None
@@ -171,6 +175,10 @@ class ImportRunCancelResponse(BaseModel):
     id: str
     status: ImportRunStatus
     cancel_requested: bool = False
+
+
+class ImportWithdrawalRequest(BaseModel):
+    confirm: bool = False
 
 
 class ImportRunDeleteResponse(BaseModel):

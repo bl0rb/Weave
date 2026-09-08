@@ -6,6 +6,7 @@ import { ChevronDown, ChevronRight, LoaderCircle, RotateCcw } from 'lucide-react
 import { useParams } from 'next/navigation';
 
 import { Button } from '@/components/ui/button';
+import { ImportSyncButton, MissingConfluencePages } from '@/components/portal/import-sync';
 import { ApiError, apiJson } from '@/lib/api';
 import { formatBytes } from '@/components/dashboard/shared';
 import {
@@ -39,6 +40,7 @@ export default function ImportRunPage() {
   const [cancelBusy, setCancelBusy] = useState(false);
   const [cancelMessage, setCancelMessage] = useState<string | null>(null);
   const [jobsHref, setJobsHref] = useState('/jobs');
+  const withdrawalPending = run?.missing_pages?.some(page => page.withdrawal_status === 'pending') ?? false;
 
   // Poll the run detail every 2.5 s while pending/running; the timeout chain
   // ends on terminal status and is cleared on unmount.
@@ -53,7 +55,7 @@ export default function ImportRunPage() {
         if (cancelled) return;
         setRun(detail);
         setLoadError(null);
-        if (isRunActive(detail.status)) {
+        if (isRunActive(detail.status) || detail.missing_pages?.some(page => page.withdrawal_status === 'pending')) {
           timer = setTimeout(() => void tick(), POLL_INTERVAL_MS);
         }
       } catch (error) {
@@ -73,7 +75,7 @@ export default function ImportRunPage() {
       cancelled = true;
       if (timer !== null) clearTimeout(timer);
     };
-  }, [runId]);
+  }, [runId, withdrawalPending]);
 
   // "View in Jobs" filtered to the run's folder: the run payload does not
   // carry its options, so read folder/subfolder off the first created job.
@@ -168,7 +170,8 @@ export default function ImportRunPage() {
               {` · ${new Date(run.created_at).toLocaleString()}`}
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {run.can_sync && <ImportSyncButton runId={run.id} />}
             <span className={`rounded px-2 py-1 text-xs ${runStatusChip[run.status]}`}>{run.status}</span>
             {!active && (
               <Link href={`/imports/new?from=${run.id}`}>
@@ -187,6 +190,7 @@ export default function ImportRunPage() {
 
         {loadError && <p className="mb-4 text-sm text-amber-700">{loadError} Retrying...</p>}
         {cancelMessage && <p className="mb-4 text-sm text-slate-600">{cancelMessage}</p>}
+        <MissingConfluencePages runId={run.id} pages={run.missing_pages ?? []} canRemove={run.can_remove_missing ?? false} onChanged={async () => setRun(await apiJson<ImportRunDetail>(`/api/v1/import/runs/${run.id}`, { cache: 'no-store' }))} />
         {run.error_message && (
           <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {run.error_message}

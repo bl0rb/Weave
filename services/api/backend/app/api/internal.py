@@ -52,5 +52,6 @@ def introspect_token(body: TokenIntrospectionRequest, db: Session = Depends(get_
         'user_id': str(user.id),
         'username': user.username,
         'team': user.team,
+        'teams': user.effective_teams,
         'is_admin': user.is_admin,
     }
