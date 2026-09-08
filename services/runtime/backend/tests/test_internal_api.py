@@ -23,10 +23,14 @@ def test_list_bots_returns_both_example_bots_with_expected_shape():
     general = by_id['general-assistant']
     assert general['name'] == 'Allgemeiner Assistent'
     assert general['description']
-    assert general['retrieval'] == {'enabled': False}
+    assert general['retrieval'] == {'enabled': True}
+    assert general['teams'] == []
+    assert general['collections'] == []
 
     legal = by_id['legal-support']
     assert legal['retrieval'] == {'enabled': True}
+    assert legal['teams'] == ['legal', 'management']
+    assert legal['collections'] == ['vertraege']
 
 
 def test_list_bots_response_does_not_leak_system_prompt():
@@ -36,7 +40,7 @@ def test_list_bots_response_does_not_leak_system_prompt():
     resp = client.get('/internal/bots', headers=AUTH_HEADERS)
     body = resp.json()
     for bot in body:
-        assert set(bot) == {'id', 'name', 'description', 'retrieval'}
+        assert set(bot) == {'id', 'name', 'description', 'retrieval', 'teams', 'collections'}
 
 
 # --- POST /internal/chat --------------------------------------------------
