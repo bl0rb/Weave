@@ -361,7 +361,9 @@ function EditUserModal({
   const [role, setRole] = useState<UserRole>(user.role);
   const [teamId, setTeamId] = useState<string>(user.team_id === null ? NO_TEAM : String(user.team_id));
   const [teamIds, setTeamIds] = useState<string[]>(user.team_ids ?? (user.team_id ? [user.team_id] : []));
-  const [teamRoles, setTeamRoles] = useState<Record<string, 'member' | 'reader'>>(user.team_roles ?? {});
+  const [teamRoles, setTeamRoles] = useState<Record<string, 'member' | 'reader'>>(
+    Object.fromEntries((user.team_ids ?? (user.team_id ? [user.team_id] : [])).map((id) => [id, user.team_roles?.[id] ?? 'member'])),
+  );
   const [isActive, setIsActive] = useState(user.is_active);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
