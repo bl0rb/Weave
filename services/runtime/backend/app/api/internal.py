@@ -42,6 +42,8 @@ def list_bots_endpoint() -> list[BotSummary]:
             name=bot.name,
             description=bot.description,
             retrieval=BotRetrievalSummary(enabled=bot.retrieval.enabled),
+            teams=list(bot.permissions.teams),
+            collections=list(bot.retrieval.collections),
         )
         for bot in bots
     ]

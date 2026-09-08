@@ -37,6 +37,8 @@ type ManagedBot = {
   no_context_reply: string;
   created_at: string;
   updated_at: string;
+  source?: 'managed' | 'runtime';
+  editable?: boolean;
 };
 
 type BotDraft = Omit<ManagedBot, 'has_auth_token' | 'created_at' | 'updated_at'> & {
@@ -75,8 +77,8 @@ export function BotsTab() {
 
   return <div className="space-y-6">
     <SectionCard
-      title="n8n-Bots"
-      description="Verbinde fachliche Chat-Bots mit n8n-Workflows und begrenze ihre Nutzung auf Anwendergruppen und Wissensbereiche."
+      title="Bots"
+      description="Lokale Konfigurationsbots und verwaltete n8n-Bots. Verwaltete Bots können hier bearbeitet und Teams zugewiesen werden."
       actions={<Button variant="outline" size="sm" onClick={() => { setEditing('new'); setNotice(''); }}><Plus size={15} />Bot hinzufügen</Button>}
     >
       <ErrorNotice message={error} />
@@ -90,12 +92,12 @@ export function BotsTab() {
       ) : <ul className="divide-y divide-slate-100">
         {bots.items.map(item => <li key={item.id} className="flex flex-wrap items-start justify-between gap-4 py-4">
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2"><Bot size={18} className="text-emerald-700" /><h3 className="font-semibold text-slate-950">{item.name}</h3><Badge tone={item.enabled ? 'emerald' : 'slate'}>{item.enabled ? 'Aktiv' : 'Inaktiv'}</Badge>{item.streaming && <Badge tone="amber">Streaming konfiguriert</Badge>}{item.has_auth_token && <Badge tone="amber">Bearer-Token hinterlegt</Badge>}</div>
+            <div className="flex flex-wrap items-center gap-2"><Bot size={18} className="text-emerald-700" /><h3 className="font-semibold text-slate-950">{item.name}</h3><Badge tone={item.enabled ? 'emerald' : 'slate'}>{item.enabled ? 'Aktiv' : 'Inaktiv'}</Badge><Badge tone={item.source === 'runtime' ? 'slate' : 'emerald'}>{item.source === 'runtime' ? 'Konfigurationsbot' : 'Verwaltet'}</Badge>{item.streaming && <Badge tone="amber">Streaming konfiguriert</Badge>}{item.has_auth_token && <Badge tone="amber">Bearer-Token hinterlegt</Badge>}</div>
             <p className="mt-1 text-sm text-slate-600">{item.description || item.id}</p>
-            <p className="mt-2 break-all text-xs text-slate-400">{item.webhook_url}</p>
+            {item.webhook_url && <p className="mt-2 break-all text-xs text-slate-400">{item.webhook_url}</p>}
             <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-500"><span>Anwendergruppen: {item.teams.length ? item.teams.join(', ') : 'alle'}</span><span>Wissensbereiche: {item.collections.length ? item.collections.length : 'alle berechtigten'}</span></div>
           </div>
-          <div className="flex gap-1"><Button variant="ghost" size="sm" onClick={() => setEditing(item)} aria-label={`${item.name} bearbeiten`}><Pencil size={15} />Bearbeiten</Button><Button variant="ghost" size="sm" onClick={() => setDeleting(item)} aria-label={`${item.name} löschen`}><Trash2 size={15} /></Button></div>
+          {item.editable !== false && <div className="flex gap-1"><Button variant="ghost" size="sm" onClick={() => setEditing(item)} aria-label={`${item.name} bearbeiten`}><Pencil size={15} />Bearbeiten</Button><Button variant="ghost" size="sm" onClick={() => setDeleting(item)} aria-label={`${item.name} löschen`}><Trash2 size={15} /></Button></div>}
         </li>)}
       </ul>}
     </SectionCard>

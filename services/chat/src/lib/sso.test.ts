@@ -74,6 +74,15 @@ describe('buildSsoLoginUrl', () => {
     const expectedQuery = new URLSearchParams({ return_to: `http://localhost:3000${SSO_CALLBACK_PATH}` }).toString();
     expect(url).toBe(`http://localhost:8004/v1/auth/oidc/login?${expectedQuery}`);
   });
+
+  it('uses CHAT_APP_BASE_URL when the deployment config has not renamed it to APP_BASE_URL', () => {
+    vi.stubEnv('WEAVE_API_PUBLIC_BASE_URL', 'https://api.example.com');
+    vi.stubEnv('APP_BASE_URL', '');
+    vi.stubEnv('CHAT_APP_BASE_URL', 'https://chat.example.com');
+
+    const url = new URL(buildSsoLoginUrl());
+    expect(url.searchParams.get('return_to')).toBe(`https://chat.example.com${SSO_CALLBACK_PATH}`);
+  });
 });
 
 

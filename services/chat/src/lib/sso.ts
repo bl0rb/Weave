@@ -61,7 +61,9 @@ export function isSsoLoginEnabled(): boolean {
  * setting defaults for local development.
  */
 function resolveAppBaseUrl(): string {
-  const configured = process.env.APP_BASE_URL?.trim();
+  const configured = [process.env.APP_BASE_URL, process.env.CHAT_APP_BASE_URL]
+    .map(value => value?.trim())
+    .find(value => Boolean(value));
   const base = configured && configured.length > 0 ? configured : 'http://localhost:3000';
   return base.replace(/\/+$/, '');
 }

@@ -548,17 +548,14 @@ def test_complex_intent_with_retrieval_enabled_runs_the_knowledge_path(monkeypat
     assert data['sources'][0]['document_id'] == 'doc-7'
 
 
-def test_complex_intent_without_retrieval_still_gets_the_v1_placeholder():
-    # general-assistant has retrieval disabled -> no knowledge fallback exists,
-    # so 'complex' keeps the polite placeholder.
+def test_complex_intent_on_general_assistant_requires_retrieval_service():
+    # general-assistant now searches approved knowledge. A missing Retrieval
+    # service is therefore surfaced as an unavailable dependency, not hidden
+    # behind the old no-retrieval placeholder.
     body = {
         'bot_id': 'general-assistant',
         'message': 'Vergleiche die Regelungen aus Vertrag A und Vertrag B.',
         'user': {'id': 'u-1', 'team': 'legal'},
     }
     resp = client.post('/internal/chat', json=body, headers=AUTH_HEADERS)
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data['trace']['intent'] == 'complex'
-    assert data['sources'] == []
-    assert '[context:' not in data['answer']
+    assert resp.status_code == 503

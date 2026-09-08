@@ -19,6 +19,18 @@ export const metadata: Metadata = {
   description: "Weave Wissensportal",
 };
 
+const THEME_INIT_SCRIPT = `
+(function () {
+  try {
+    var stored = window.localStorage.getItem('weave-ingest-theme');
+    var theme = stored === 'light' || stored === 'dark'
+      ? stored
+      : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    document.documentElement.classList.add(theme);
+  } catch (_) {}
+})();
+`;
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -27,6 +39,7 @@ export default function RootLayout({
   return (
     <html lang="de" className={`h-full antialiased ${sourceSans.variable} ${lora.variable}`}>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
         {/*
           `beforeInteractive` is Next.js's blessed way to run a script
           synchronously, before hydration/any client bundle executes —

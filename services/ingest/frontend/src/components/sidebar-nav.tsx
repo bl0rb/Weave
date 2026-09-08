@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { WeaveIngestLogo } from '@/components/weave-ingest-logo';
+import { ThemeToggle } from '@/components/theme-toggle';
 
 const navItems = [
   { href: '/', label: 'Übersicht', icon: Home },
@@ -182,6 +183,7 @@ export function SidebarNav() {
                     {user.role}
                   </span>
                 </div>
+                <ThemeToggle />
                 <button
                   onClick={() => logout()}
                   aria-label="Abmelden"

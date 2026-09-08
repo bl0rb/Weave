@@ -34,6 +34,14 @@
   color-scheme: light;
 }
 
+:root.dark {
+  --background: #172d27;
+  --foreground: #e8f2e4;
+  --surface: #203b33;
+  --border: #3e5248;
+  color-scheme: dark;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -50,6 +58,27 @@ body {
   font-family: var(--font-sans), 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
   text-rendering: optimizeLegibility;
 }
+
+html.dark body { background: var(--background); }
+html.dark .bg-white { background-color: #203b33 !important; }
+html.dark .bg-slate-50 { background-color: #203b33 !important; }
+html.dark .bg-slate-100 { background-color: #2d4439 !important; }
+html.dark .bg-emerald-50 { background-color: #214b38 !important; }
+html.dark .bg-emerald-100 { background-color: #28563f !important; }
+html.dark .text-slate-950 { color: #eef2ec !important; }
+html.dark .text-slate-900, html.dark .text-slate-800 { color: #e8f2e4 !important; }
+html.dark .text-slate-700, html.dark .text-slate-600 { color: #c9d4c8 !important; }
+html.dark .text-slate-500, html.dark .text-slate-400 { color: #a9c9a3 !important; }
+html.dark .text-emerald-800, html.dark .text-emerald-700 { color: #a9c9a3 !important; }
+html.dark [class*="border-slate-"], html.dark [class*="border-emerald-"] { border-color: #3e5248 !important; }
+html.dark input, html.dark select, html.dark textarea { background: #203b33 !important; color: #eef2ec !important; border-color: #53655c !important; }
+html.dark .portal-page { background: #172d27; color: #e8f2e4; }
+html.dark .portal-panel { background: #203b33; border-color: #3e5248; }
+html.dark .portal-journey { background: #203b33; border-color: #3e5248; }
+html.dark .portal-assurance { background: #214b38; border-color: #3e5248; }
+html.dark .portal-table thead { background: #2d4439; color: #c9d4c8; }
+html.dark .portal-table tr:hover td { background: #28563f; }
+html.dark .portal-description, html.dark .portal-field-hint, html.dark .portal-loading { color: #a9c9a3; }
 
 body :is(a, button, input, select, textarea):focus-visible {
   outline: 3px solid #228268;

@@ -1,6 +1,8 @@
 """Admin CRUD and Runtime-only projection for n8n-backed bots."""
 
 import hmac
+import httpx
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
@@ -49,7 +51,32 @@ def _admin_response(row: ManagedBot) -> ManagedBotAdminResponse:
         no_context_reply=row.no_context_reply,
         created_at=row.created_at,
         updated_at=row.updated_at,
+        source='managed',
+        editable=True,
     )
+
+
+def _runtime_bots() -> list[ManagedBotAdminResponse]:
+    if not settings.runtime_api_token:
+        return []
+    try:
+        response = httpx.get(
+            f'{settings.runtime_bots_base_url.rstrip("/")}/internal/bots',
+            headers={'Authorization': f'Bearer {settings.runtime_api_token}'},
+            timeout=5,
+        )
+        response.raise_for_status()
+        items = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=f'Runtime-Botliste nicht verfügbar: {exc}') from exc
+    return [ManagedBotAdminResponse(
+        id=item['id'], name=item['name'], description=item.get('description'), enabled=True,
+        webhook_url='', streaming=False, has_auth_token=False, timeout_seconds=0,
+        teams=list(item.get('teams') or []), collections=list(item.get('collections') or []),
+        require_sources=bool(item.get('retrieval', {}).get('enabled')), no_context_reply='',
+        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+        source='runtime', editable=False,
+    ) for item in items]
 
 
 def _require_runtime_token(request: Request) -> None:
@@ -106,7 +133,10 @@ def _apply(row: ManagedBot, payload: ManagedBotCreate | ManagedBotUpdate, admin:
 def list_managed_bots(request: Request, db: Session = Depends(get_db)) -> ManagedBotListResponse:
     enforce_rate_limit(request)
     rows = db.scalars(select(ManagedBot).order_by(ManagedBot.name, ManagedBot.id)).all()
-    return ManagedBotListResponse(items=[_admin_response(row) for row in rows])
+    managed = [_admin_response(row) for row in rows]
+    managed_ids = {item.id for item in managed}
+    runtime = [item for item in _runtime_bots() if item.id not in managed_ids]
+    return ManagedBotListResponse(items=sorted(managed + runtime, key=lambda item: (item.name, item.id)))
 
 
 @router_admin.post('', response_model=ManagedBotAdminResponse, status_code=status.HTTP_201_CREATED)

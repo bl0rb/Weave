@@ -76,6 +76,8 @@ class Settings(BaseSettings):
     bootstrap_admin_username: str = ''
     bootstrap_admin_email: str = ''
     bootstrap_admin_password: str = ''
+    runtime_bots_base_url: str = 'http://weave-runtime:8000'
+    runtime_api_token: str = ''
 
     # Celery worker log capture into worker_log_entries (see
     # app/workers/log_capture.py) -- lets the admin UI tail worker container

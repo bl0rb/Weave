@@ -179,6 +179,8 @@ DEVIATIONS: dict[str, dict[str, Deviation]] = {
             "CORS_ORIGINS",
             "HANDOFF_CALLBACK_URL",
             "HANDOFF_SECRET",
+            "RUNTIME_API_TOKEN",
+            "RUNTIME_BOTS_BASE_URL",
             "PORTAL_KNOWLEDGE_BASE_URL",
             "PORTAL_KNOWLEDGE_WEBHOOK_SECRET",
             "POSTGRES_DB",

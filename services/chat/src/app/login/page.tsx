@@ -6,6 +6,10 @@ import {
 } from '@/lib/sso';
 import { LoginForm } from './login-form';
 
+// The SSO URL depends on runtime deployment environment variables. Without
+// this, Next.js can prerender the login page with the localhost fallback.
+export const dynamic = 'force-dynamic';
+
 interface LoginPageProps {
   searchParams: Promise<{ error?: string | string[] }>;
 }

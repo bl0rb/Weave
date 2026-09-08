@@ -258,6 +258,7 @@ shared:
     targets:
       - {service: runtime, var: RUNTIME_API_TOKEN}
       - {service: api, var: RUNTIME_API_TOKEN}
+      - {service: ingest, var: RUNTIME_API_TOKEN}
     comment: >
       Runtime verifies it on every route; API's gateway presents it when
       proxying GET /v1/bots and friends. Drift: API's calls into Runtime's
@@ -438,6 +439,11 @@ services:
 
   ingest:
     settings:
+      RUNTIME_BOTS_BASE_URL:
+        secret: false
+        value: http://weave-runtime:8000
+        type: string
+        required: false
       BOOTSTRAP_ADMIN_USERNAME:
         secret: false
         value: ""

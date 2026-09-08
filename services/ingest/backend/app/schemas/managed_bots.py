@@ -110,6 +110,8 @@ class ManagedBotAdminResponse(BaseModel):
     no_context_reply: str
     created_at: datetime
     updated_at: datetime
+    source: str = 'managed'
+    editable: bool = True
 
 
 class ManagedBotListResponse(BaseModel):
