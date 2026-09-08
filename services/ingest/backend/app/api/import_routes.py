@@ -475,7 +475,7 @@ def create_import_run(
         # Visibility and control are deliberately separate: a teammate may
         # read a collection, but only its owner or an admin may write into it.
         _require_visible_collection(db, collection, user)
-        _require_collection_control(collection, user)
+        _require_collection_control(db, collection, user)
 
     if payload.scope.type == 'page':
         scope_value = extract_page_id(payload.scope.value)

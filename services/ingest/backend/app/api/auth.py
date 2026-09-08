@@ -25,7 +25,7 @@ from authlib.common.security import generate_token
 from authlib.oauth2.rfc7636 import create_s256_code_challenge
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import func, select, text, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -48,6 +48,7 @@ from app.models.models import (
     Team,
     User,
     UserRole,
+    user_teams,
     VlConnection,
     WorkerLogEntry,
 )
@@ -203,14 +204,16 @@ def _create_session(db: Session, request: Request, response: Response, user: Use
     _set_session_cookie(response, token, request)
 
 
-def _user_response(user: User) -> UserResponse:
+def _user_response(user: User, db: Session | None = None) -> UserResponse:
+    roles = dict(db.execute(select(user_teams.c.team_id, user_teams.c.role).where(user_teams.c.user_id == user.id)).all()) if db else {}
     return UserResponse(
         id=user.id,
         username=user.username,
         email=user.email,
         role=user.role,
         team_id=user.team_id,
-        team_ids=user.team_ids,
+        team_ids=list(roles) if db is not None else user.team_ids,
+        team_roles=roles,
         is_active=user.is_active,
         oidc_provider_id=user.oidc_provider_id,
         created_at=user.created_at,
@@ -1122,7 +1125,7 @@ def current_handoff_identity(user_id: str, request: Request, db: Session = Depen
 @router_admin.get('/users', response_model=AdminUserListResponse)
 def admin_list_users(db: Session = Depends(get_db)) -> AdminUserListResponse:
     users = db.scalars(select(User).order_by(User.created_at)).all()
-    return AdminUserListResponse(items=[_user_response(u) for u in users])
+    return AdminUserListResponse(items=[_user_response(u, db) for u in users])
 
 
 @router_admin.post('/users', response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -1144,10 +1147,10 @@ def admin_create_user(payload: AdminUserCreateRequest, db: Session = Depends(get
         team_id=payload.team_id,
         is_active=payload.is_active,
     )
-    _set_user_teams(db, user, payload.team_ids, payload.team_id)
+    _set_user_teams(db, user, payload.team_ids, payload.team_id, payload.team_roles)
     db.add(user)
     db.commit()
-    return _user_response(user)
+    return _user_response(user, db)
 
 
 @router_admin.patch('/users/{user_id}', response_model=UserResponse)
@@ -1175,17 +1178,17 @@ def admin_update_user(user_id: str, payload: AdminUserUpdateRequest, db: Session
     if payload.role is not None:
         user.role = payload.role
     if payload.clear_team:
-        _set_user_teams(db, user, [], None)
+        _set_user_teams(db, user, [], None, {})
     elif payload.team_ids is not None or payload.team_id is not None:
-        _set_user_teams(db, user, payload.team_ids, payload.team_id)
+        _set_user_teams(db, user, payload.team_ids, payload.team_id, payload.team_roles)
     if payload.is_active is not None:
         user.is_active = payload.is_active
 
     db.commit()
-    return _user_response(user)
+    return _user_response(user, db)
 
 
-def _set_user_teams(db: Session, user: User, team_ids: list[str] | None, primary: str | None) -> None:
+def _set_user_teams(db: Session, user: User, team_ids: list[str] | None, primary: str | None, roles: dict[str, str] | None = None) -> None:
     selected = list(dict.fromkeys(
         team_ids if team_ids is not None else
         [member_id for member_id in user.team_ids if member_id != user.team_id] + ([primary] if primary else [])
@@ -1195,7 +1198,14 @@ def _set_user_teams(db: Session, user: User, team_ids: list[str] | None, primary
     teams = db.scalars(select(Team).where(Team.id.in_(selected))).all() if selected else []
     if len(teams) != len(selected):
         raise HTTPException(status_code=404, detail='Team not found')
-    user.memberships = teams
+    if roles is None:
+        roles = dict(db.execute(select(user_teams.c.team_id, user_teams.c.role).where(user_teams.c.user_id == user.id)).all())
+        roles = {team_id: role for team_id, role in roles.items() if team_id in selected}
+    if set(roles) - set(selected) or any(role not in {'member', 'reader'} for role in roles.values()):
+        raise HTTPException(status_code=422, detail='Team roles must be member or reader and reference memberships')
+    db.execute(delete(user_teams).where(user_teams.c.user_id == user.id))
+    if teams:
+        db.execute(user_teams.insert(), [{'user_id': user.id, 'team_id': team.id, 'role': roles.get(team.id, 'member')} for team in teams])
     user.team_id = primary or (user.team_id if user.team_id in selected else next(iter(selected), None))
 
 

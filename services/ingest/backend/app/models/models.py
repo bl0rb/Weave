@@ -40,6 +40,7 @@ user_teams = Table(
     Base.metadata,
     Column('user_id', String(36), ForeignKey('users.id', ondelete='CASCADE'), primary_key=True),
     Column('team_id', String(36), ForeignKey('teams.id', ondelete='CASCADE'), primary_key=True),
+    Column('role', String(16), nullable=False, server_default='member'),
 )
 
 

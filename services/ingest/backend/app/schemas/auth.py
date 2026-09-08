@@ -28,6 +28,7 @@ class UserResponse(BaseModel):
     role: UserRole
     team_id: str | None = None
     team_ids: list[str] = Field(default_factory=list)
+    team_roles: dict[str, str] = Field(default_factory=dict)
     is_active: bool
     oidc_provider_id: str | None = None
     created_at: datetime
@@ -54,6 +55,7 @@ class AdminUserCreateRequest(BaseModel):
     role: UserRole = UserRole.USER
     team_id: str | None = None
     team_ids: list[str] | None = None
+    team_roles: dict[str, str] | None = None
     is_active: bool = True
 
 
@@ -63,6 +65,7 @@ class AdminUserUpdateRequest(BaseModel):
     role: UserRole | None = None
     team_id: str | None = None
     team_ids: list[str] | None = None
+    team_roles: dict[str, str] | None = None
     # team_id=None is ambiguous ("unchanged" vs "clear it"); this makes
     # clearing explicit.
     clear_team: bool = False

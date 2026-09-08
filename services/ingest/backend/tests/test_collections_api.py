@@ -125,7 +125,7 @@ def test_multiple_memberships_grant_reads_without_resharing_owned_collections():
     collection_b = client_b.post('/api/v1/collections', json={'name': 'Owned in B'}).json()['collection_id']
     collection_c = login_as(owner_c.username).post('/api/v1/collections', json={'name': 'Owned in C'}).json()['collection_id']
     assert reader_client.get(f'/api/v1/collections/{collection_b}').status_code == 404
-    updated = admin_client.patch(f'/api/v1/auth/admin/users/{reader.id}', json={'team_ids': [team_a, team_b], 'team_id': team_a})
+    updated = admin_client.patch(f'/api/v1/auth/admin/users/{reader.id}', json={'team_ids': [team_a, team_b], 'team_id': team_a, 'team_roles': {team_a: 'reader', team_b: 'reader'}})
     assert updated.status_code == 200, updated.text
     assert set(updated.json()['team_ids']) == {team_a, team_b}
     legacy_update = admin_client.patch(f'/api/v1/auth/admin/users/{reader.id}', json={'team_id': team_a})

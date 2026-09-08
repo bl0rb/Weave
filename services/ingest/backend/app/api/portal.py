@@ -21,6 +21,7 @@ from app.api.routes import (
     _content_disposition,
     _is_import_page_job,
     _owner_visible,
+    _can_manage_owner_team,
     _require_visible_collection,
     restart_job,
 )
@@ -75,7 +76,7 @@ def _quality(job: Job) -> tuple[str | None, str | None]:
 
 
 def _job_is_controlled(db, job: Job, collection: Collection, user: User) -> bool:
-    return user.role == UserRole.ADMIN or job.owner_id == user.id or collection.owner_id == user.id
+    return user.role == UserRole.ADMIN or job.owner_id == user.id or collection.owner_id == user.id or _can_manage_owner_team(db, collection.owner_id, user)
 
 
 def _import_run_finished(db, job: Job) -> bool:

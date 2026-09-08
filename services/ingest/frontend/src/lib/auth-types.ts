@@ -13,6 +13,7 @@ export interface AuthUser {
   role: UserRole;
   team_id: string | null;
   team_ids?: string[];
+  team_roles?: Record<string, 'member' | 'reader'>;
   is_active: boolean;
   oidc_provider_id: string | null;
   created_at: string;
@@ -78,6 +79,7 @@ export interface AdminUserCreateRequest {
   role: UserRole;
   team_id?: string | null;
   team_ids?: string[];
+  team_roles?: Record<string, 'member' | 'reader'>;
   is_active: boolean;
 }
 
@@ -88,6 +90,7 @@ export interface AdminUserUpdateRequest {
   role?: UserRole;
   team_id?: string | null;
   team_ids?: string[];
+  team_roles?: Record<string, 'member' | 'reader'>;
   /** Explicit team removal (distinct from "leave unchanged"). */
   clear_team?: boolean;
   is_active?: boolean;

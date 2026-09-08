@@ -91,7 +91,7 @@ export function UsersTab() {
                     </td>
                     <td className="hidden py-3 pr-3 text-slate-700 lg:table-cell">
                       <span className="block max-w-xs break-words">
-                        {(u.team_ids ?? (u.team_id ? [u.team_id] : [])).map(teamName).join(', ') || '—'}
+                        {(u.team_ids ?? (u.team_id ? [u.team_id] : [])).map((id) => `${teamName(id)} (${u.team_roles?.[id] ?? 'member'})`).join(', ') || '—'}
                       </span>
                     </td>
                     <td className="py-3 pr-3">
@@ -188,12 +188,14 @@ function TeamMembershipFields({
   teams,
   primary,
   selected,
+  roles,
   onChange,
 }: {
   teams: Team[];
   primary: string;
   selected: string[];
-  onChange: (primary: string, selected: string[]) => void;
+  roles: Record<string, 'member' | 'reader'>;
+  onChange: (primary: string, selected: string[], roles: Record<string, 'member' | 'reader'>) => void;
 }) {
   return (
     <div className="space-y-3">
@@ -203,7 +205,7 @@ function TeamMembershipFields({
           value={primary}
           onChange={(event) => {
             const next = event.target.value;
-            onChange(next, next ? Array.from(new Set([...selected, next])) : []);
+            onChange(next, next ? Array.from(new Set([...selected, next])) : [], roles);
           }}
           className={inputClass}
         >
@@ -222,11 +224,12 @@ function TeamMembershipFields({
                 disabled={team.id === primary}
                 onChange={(event) => {
                   const next = event.target.checked ? [...selected, team.id] : selected.filter((id) => id !== team.id);
-                  onChange(primary || next[0] || NO_TEAM, next);
+                  onChange(primary || next[0] || NO_TEAM, next, { ...roles, ...(event.target.checked ? { [team.id]: roles[team.id] ?? 'member' } : {}) });
                 }}
                 className="mt-1 shrink-0"
               />
               <span className="min-w-0 break-words">{team.name}</span>
+              {selected.includes(team.id) && <select aria-label={`${team.name} role`} value={roles[team.id] ?? 'member'} onChange={(event) => onChange(primary, selected, { ...roles, [team.id]: event.target.value as 'member' | 'reader' })} className="ml-auto rounded border border-slate-200 px-1 py-0.5 text-xs"><option value="member">Member</option><option value="reader">Reader</option></select>}
             </label>
           ))}
         </div>
@@ -250,6 +253,7 @@ function CreateUserModal({
   const [role, setRole] = useState<UserRole>('user');
   const [teamId, setTeamId] = useState<string>(NO_TEAM);
   const [teamIds, setTeamIds] = useState<string[]>([]);
+  const [teamRoles, setTeamRoles] = useState<Record<string, 'member' | 'reader'>>({});
   const [isActive, setIsActive] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -266,6 +270,7 @@ function CreateUserModal({
       ...(password ? { password } : {}),
       ...(teamId !== NO_TEAM ? { team_id: teamId } : {}),
       team_ids: teamIds,
+      team_roles: teamRoles,
     };
     try {
       await apiJson<AuthUser>('/api/v1/auth/admin/users', {
@@ -323,7 +328,7 @@ function CreateUserModal({
             </select>
           </Field>
         </div>
-        <TeamMembershipFields teams={teams} primary={teamId} selected={teamIds} onChange={(primary, selected) => { setTeamId(primary); setTeamIds(selected); }} />
+        <TeamMembershipFields teams={teams} primary={teamId} selected={teamIds} roles={teamRoles} onChange={(primary, selected, roles) => { setTeamId(primary); setTeamIds(selected); setTeamRoles(roles); }} />
         <Toggle checked={isActive} onChange={setIsActive} label="Active" />
         <ErrorNotice message={error} />
         <div className="flex flex-wrap justify-end gap-2 pt-1">
@@ -356,6 +361,7 @@ function EditUserModal({
   const [role, setRole] = useState<UserRole>(user.role);
   const [teamId, setTeamId] = useState<string>(user.team_id === null ? NO_TEAM : String(user.team_id));
   const [teamIds, setTeamIds] = useState<string[]>(user.team_ids ?? (user.team_id ? [user.team_id] : []));
+  const [teamRoles, setTeamRoles] = useState<Record<string, 'member' | 'reader'>>(user.team_roles ?? {});
   const [isActive, setIsActive] = useState(user.is_active);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -371,6 +377,7 @@ function EditUserModal({
       ...(password ? { password } : {}),
       ...(teamId === NO_TEAM ? { clear_team: true } : { team_id: teamId }),
       team_ids: teamIds,
+      team_roles: teamRoles,
     };
     try {
       await apiJson<AuthUser>(`/api/v1/auth/admin/users/${user.id}`, {
@@ -419,7 +426,7 @@ function EditUserModal({
             </select>
           </Field>
         </div>
-        <TeamMembershipFields teams={teams} primary={teamId} selected={teamIds} onChange={(primary, selected) => { setTeamId(primary); setTeamIds(selected); }} />
+        <TeamMembershipFields teams={teams} primary={teamId} selected={teamIds} roles={teamRoles} onChange={(primary, selected, roles) => { setTeamId(primary); setTeamIds(selected); setTeamRoles(roles); }} />
         <Toggle checked={isActive} onChange={setIsActive} label="Active" />
         <ErrorNotice message={error} />
         <div className="flex flex-wrap justify-end gap-2 pt-1">

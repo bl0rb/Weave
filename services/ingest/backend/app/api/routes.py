@@ -32,6 +32,7 @@ from app.models.models import (
     Team,
     User,
     UserRole,
+    user_teams,
     VlConnection,
     WebhookConnection,
 )
@@ -253,11 +254,20 @@ def _visible_collection_filter(user: User):
     return or_(*conditions)
 
 
-def _require_collection_control(collection: Collection, user: User) -> None:
+def _can_manage_owner_team(db: Session, owner_id: str | None, user: User) -> bool:
+    if user.role == UserRole.ADMIN or owner_id is None:
+        return user.role == UserRole.ADMIN
+    owner_team_id = db.scalar(select(User.team_id).where(User.id == owner_id))
+    if owner_team_id is None:
+        return False
+    return db.scalar(select(user_teams.c.role).where(user_teams.c.user_id == user.id, user_teams.c.team_id == owner_team_id)) == 'member'
+
+
+def _require_collection_control(db: Session, collection: Collection, user: User) -> None:
     """Read (GET, via `_require_visible_collection`) is not control: a
     teammate may see a collection but not PATCH it -- same read-vs-control
     split as import_routes._require_run_control/benchmarks._require_benchmark_control."""
-    if user.role != UserRole.ADMIN and collection.owner_id != user.id:
+    if user.role != UserRole.ADMIN and collection.owner_id != user.id and not _can_manage_owner_team(db, collection.owner_id, user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail='Only the collection owner or an admin can do this'
         )
@@ -1028,7 +1038,7 @@ def update_collection(
     if collection is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
     _require_visible_collection(db, collection, user)
-    _require_collection_control(collection, user)
+    _require_collection_control(db, collection, user)
 
     if payload.name is not None:
         name = payload.name.strip()
@@ -1072,7 +1082,7 @@ def delete_collection(
     if collection is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
     _require_visible_collection(db, collection, user)
-    _require_collection_control(collection, user)
+    _require_collection_control(db, collection, user)
     slug = collection.slug
 
     collection_ref = Job.processing_info['settings']['collection_id'].as_string()
@@ -1134,7 +1144,7 @@ def upload_document_to_collection(
     if collection is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
     _require_visible_collection(db, collection, user)
-    _require_collection_control(collection, user)
+    _require_collection_control(db, collection, user)
 
     file_id = str(uuid.uuid4())
     folder_value = folder.strip() or collection.folder or ''
@@ -1183,7 +1193,7 @@ def start_collection_processing(
     if collection is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
     _require_visible_collection(db, collection, user)
-    _require_collection_control(collection, user)
+    _require_collection_control(db, collection, user)
 
     # Raises 422 for an unknown/disabled 'vl:<connection_id>' selection;
     # {} for a static profile (see resolve_profile_selection). Resolved once
