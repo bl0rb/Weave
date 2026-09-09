@@ -13,3 +13,6 @@
 onnxruntime==1.29.0
 pypdfium2==5.13.0
 paddleocr[doc-parser]
+# PaddleOCR's HTTP stack; pin the patched release for streaming, framing and
+# multipart-header vulnerabilities reported by GitHub Dependabot.
+httpx2==2.12.0
