@@ -34,6 +34,25 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+
+
+def refresh_control_plane() -> None:
+    if not settings.chat_config_base_url or not settings.chat_config_service_token:
+        return
+    try:
+        response = httpx.get(
+            f'{settings.chat_config_base_url.rstrip("/")}/api/v1/internal/retrieval-provider',
+            headers={'Authorization': f'Bearer {settings.chat_config_service_token}'}, timeout=2,
+        )
+        if response.status_code != 200:
+            return
+        values = response.json()
+        for name in ('embedding_provider', 'embedding_base_url', 'embedding_model', 'embedding_dimension', 'embedding_batch_size'):
+            if name in values:
+                setattr(settings, name, values[name])
+        settings.embedding_api_key = values.get('embedding_api_key', settings.embedding_api_key)
+    except (httpx.HTTPError, ValueError):
+        return
 from app.models.models import Chunk, Document
 
 logger = logging.getLogger(__name__)
@@ -321,6 +340,7 @@ def get_provider() -> EmbeddingProvider:
     at startup/CLI-invocation time rather than silently falling back to a
     provider nobody asked for.
     """
+    refresh_control_plane()
     provider_name = settings.embedding_provider.strip().lower()
     if provider_name == 'fake':
         return FakeEmbeddingProvider()

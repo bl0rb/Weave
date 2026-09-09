@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     # instead of silently accepting an empty bearer token as a match (see
     # that dependency's docstring) -- a real deployment MUST set this.
     retrieval_api_token: str = ''
+    chat_config_base_url: str = ''
+    chat_config_service_token: str = ''
 
     # --- Embedding provider. MUST match the model/dimension Weave-Knowledge
     # indexed chunks.embedding with -- a query embedded under a different
@@ -70,6 +72,8 @@ class Settings(BaseSettings):
     search_top_k: int = 20
     search_final_k: int = 5
     rrf_k: int = 60
+    semantic_weight: float = 0.5
+    lexical_weight: float = 0.5
 
     # --- DB connection pool (SQLAlchemy QueuePool; see app/core/db.py).
     # Only applied for a real server backend (postgres) -- sqlite's default

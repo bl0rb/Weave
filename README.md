@@ -32,7 +32,7 @@ evaluated before any data or budget leaves the building.
 does not decide anything. It answers questions from documents that someone
 deliberately published, and it shows its work.
 
-The current release is **v0.1.0** — nine services, running and tested end to
+The current release is **v0.2.8** — nine services, running and tested end to
 end. The [wiki](https://github.com/bl0rb/Weave/wiki) is the place to
 start reading; this README covers the repository itself.
 
@@ -62,6 +62,21 @@ another.
 The [knowledge portal guide](docs/wissensportal.md) explains the separation
 between processing and publication. Under the normal workflow, only content
 that a user explicitly releases is indexed.
+
+### Administration and retrieval controls
+
+The Ingest administration UI supports persistent overrides for bundled Runtime
+bots and confirmed ZIP backups of local `uploads/` and `results/` storage. No
+admin file browser or unrestricted individual-file read endpoint is exposed.
+The **Suche & Modelle** screen configures embedding providers and optional
+reranking, including an explicit **Aus** mode (`RERANK_PROVIDER=none`) and a
+slider between lexical full-text and semantic vector search. Embedding model
+or dimension changes require a complete reindex; reranking can be disabled
+without reindexing.
+
+The Helm chart exposes the deployment-level choice through `reranker.enabled`
+and `config.retrieval.RERANK_PROVIDER`; use `reranker.enabled=false` and
+`RERANK_PROVIDER=none` when reranking is not desired.
 
 Each service also has its own README for service-specific details. Its
 `.env.example` file applies when that service is run independently. The Compose

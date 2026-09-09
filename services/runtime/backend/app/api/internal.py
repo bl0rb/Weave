@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 
 from app.core.auth import require_service_token
-from app.schemas.bot import BotRetrievalSummary, BotSummary
+from app.schemas.bot import BotConfig, BotRetrievalSummary, BotSummary
 from app.schemas.chat import ChatRequest, ChatResponse, ChatStreamEvent
 from app.services import chat as chat_service
 from app.services.botconfig import BotNotFoundError, list_bots
@@ -48,6 +48,16 @@ def list_bots_endpoint() -> list[BotSummary]:
         )
         for bot in bots
     ]
+
+
+@router.get('/bots/{bot_id}', response_model=BotConfig)
+def get_bot_endpoint(bot_id: str) -> BotConfig:
+    try:
+        return next(bot for bot in list_bots() if bot.id == bot_id)
+    except StopIteration as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='bot not found') from exc
+    except ChatConfigUnavailable as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
 def _run_pipeline_step(step: Callable[[], _T]) -> _T:

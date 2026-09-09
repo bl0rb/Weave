@@ -310,6 +310,31 @@ class ChatProviderConfig(Base):
     )
 
 
+class RetrievalProviderConfig(Base):
+    """Singleton admin configuration projected to Knowledge and Retrieval."""
+
+    __tablename__ = 'retrieval_provider_config'
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default='default')
+    embedding_provider: Mapped[str] = mapped_column(String(32), default='fake', server_default='fake', nullable=False)
+    embedding_base_url: Mapped[str] = mapped_column(String(1024), default='', server_default='', nullable=False)
+    embedding_model: Mapped[str] = mapped_column(String(255), default='fake-embed', server_default='fake-embed', nullable=False)
+    embedding_dimension: Mapped[int] = mapped_column(Integer, default=1536, server_default='1536', nullable=False)
+    embedding_batch_size: Mapped[int] = mapped_column(Integer, default=64, server_default='64', nullable=False)
+    embedding_api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rerank_provider: Mapped[str] = mapped_column(String(32), default='none', server_default='none', nullable=False)
+    rerank_base_url: Mapped[str] = mapped_column(String(1024), default='', server_default='', nullable=False)
+    rerank_model: Mapped[str] = mapped_column(String(255), default='', server_default='', nullable=False)
+    rerank_max_documents: Mapped[int] = mapped_column(Integer, default=50, server_default='50', nullable=False)
+    rerank_batch_size: Mapped[int] = mapped_column(Integer, default=16, server_default='16', nullable=False)
+    rerank_threads: Mapped[int] = mapped_column(Integer, default=4, server_default='4', nullable=False)
+    rerank_api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    semantic_weight: Mapped[float] = mapped_column(Float, default=0.5, server_default='0.5', nullable=False)
+    lexical_weight: Mapped[float] = mapped_column(Float, default=0.5, server_default='0.5', nullable=False)
+    updated_by_id: Mapped[str | None] = mapped_column(String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now(), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
+
 class ManagedBot(Base):
     """Admin-managed n8n bot exposed to Weave-Runtime.
 

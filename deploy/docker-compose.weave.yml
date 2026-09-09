@@ -409,6 +409,8 @@ services:
       # token of a dedicated service user) to fetch a job's markdown_url --
       # see contracts/events/document.processed.md's markdown_url section.
       WEAVE_INGEST_BASE_URL: http://weave-ingest-backend:8000
+      CHAT_CONFIG_BASE_URL: http://weave-ingest-backend:8000
+      CHAT_CONFIG_SERVICE_TOKEN: ${CHAT_CONFIG_SERVICE_TOKEN:?CHAT_CONFIG_SERVICE_TOKEN is required}
       WEAVE_INGEST_API_TOKEN: ${WEAVE_KNOWLEDGE_INGEST_API_TOKEN:?WEAVE_KNOWLEDGE_INGEST_API_TOKEN is required}
       WEAVE_INGEST_WEBHOOK_SECRET: ${WEAVE_KNOWLEDGE_WEBHOOK_SECRET:?WEAVE_KNOWLEDGE_WEBHOOK_SECRET is required}
       # Guards THIS service's own read API (GET /api/v1/documents,
@@ -503,6 +505,8 @@ services:
       # the file header's RETRIEVAL_API_TOKEN entry for who all shares it
       # (weave-runtime, weave-tools-backend, weave-api).
       RETRIEVAL_API_TOKEN: ${RETRIEVAL_API_TOKEN:?RETRIEVAL_API_TOKEN is required}
+      CHAT_CONFIG_BASE_URL: http://weave-ingest-backend:8000
+      CHAT_CONFIG_SERVICE_TOKEN: ${CHAT_CONFIG_SERVICE_TOKEN:?CHAT_CONFIG_SERVICE_TOKEN is required}
       # Same shared `x-embedding-env` anchor weave-knowledge (+worker) use
       # above -- MUST resolve to the identical model/dimension weave-
       # knowledge indexed chunks with, since embedding a query in a

@@ -181,7 +181,7 @@ Since chart 1.1.0 a `SECRET_KEY` is required — the chart refuses to render wit
 - Password-gated view/download/edit/delete per job
 - OpenAI-compatible page-by-page vision profile
 - User accounts with per-user/team data visibility, local login and OIDC SSO
-- Admin console for knowledge areas, n8n-backed bots, users, teams, identity providers, worker logs, sign-in logs, Paddle runtime settings, and VL connections
+- Admin console for knowledge areas, n8n-backed bots, users, teams, identity providers, worker logs, sign-in logs, Paddle runtime settings, VL connections, retrieval providers, and confirmed storage backups
 
 ## Product Walkthrough
 
@@ -307,6 +307,8 @@ Common endpoints:
 - `GET` / `POST /api/v1/auth/admin/bots`, `PUT` / `DELETE /api/v1/auth/admin/bots/{id}` — centrally manage n8n-backed bots (admin; secret values are write-only)
 - `GET /api/v1/internal/bots` — enabled bot projection for Weave Runtime (service token; `Cache-Control: no-store`)
 - `GET /api/v1/auth/admin/worker-logs` — worker logs (admin)
+- `GET` / `PUT /api/v1/auth/admin/retrieval-provider` — embedding, hybrid-search, and reranker configuration (admin; API keys are write-only)
+- `GET /api/v1/admin/backup.zip` — confirmed admin-only ZIP of local `uploads/` and `results/` storage; no file listing is exposed
 - `GET /api/v1/stats`, `GET /api/v1/health`, `GET /api/v1/paddle/status`, `GET /api/v1/paddle/capabilities`
 
 ## Collections

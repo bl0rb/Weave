@@ -39,6 +39,7 @@ import logging
 import math
 import re
 import time
+import httpx
 from dataclasses import dataclass
 
 from sqlalchemy import Float, Select, Text, bindparam, cast, func, literal_column, or_, select
@@ -47,6 +48,26 @@ from sqlalchemy.dialects.postgresql import array as pg_array
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+
+
+def refresh_control_plane() -> None:
+    if not settings.chat_config_base_url or not settings.chat_config_service_token:
+        return
+    try:
+        response = httpx.get(
+            f'{settings.chat_config_base_url.rstrip("/")}/api/v1/internal/retrieval-provider',
+            headers={'Authorization': f'Bearer {settings.chat_config_service_token}'}, timeout=2,
+        )
+        if response.status_code != 200:
+            return
+        values = response.json()
+        for name in ('embedding_provider', 'embedding_base_url', 'embedding_model', 'embedding_dimension', 'embedding_batch_size', 'rerank_provider', 'rerank_base_url', 'rerank_model', 'rerank_max_documents', 'rerank_batch_size', 'rerank_threads', 'semantic_weight', 'lexical_weight'):
+            if name in values:
+                setattr(settings, name, values[name])
+        settings.embedding_api_key = values.get('embedding_api_key', settings.embedding_api_key)
+        settings.rerank_api_key = values.get('rerank_api_key', settings.rerank_api_key)
+    except (httpx.HTTPError, ValueError):
+        return
 from app.models.models import Chunk, Document, DocumentStatus
 from app.schemas.search import SearchFilters, SearchRequest, SearchResult, SearchScores, SearchTrace
 from app.services.embeddings import embed_query
@@ -480,7 +501,7 @@ def rrf_fuse(
         if entry is None:
             entry = FusedResult(chunk=chunk, rrf_score=0.0, vector_score=None, fulltext_score=None)
             contributions[chunk.id] = entry
-        entry.rrf_score += 1.0 / (k + rank)
+        entry.rrf_score += settings.semantic_weight / (k + rank)
         entry.vector_score = score
 
     for rank, (chunk, score) in enumerate(fulltext_results, start=1):
@@ -488,7 +509,7 @@ def rrf_fuse(
         if entry is None:
             entry = FusedResult(chunk=chunk, rrf_score=0.0, vector_score=None, fulltext_score=None)
             contributions[chunk.id] = entry
-        entry.rrf_score += 1.0 / (k + rank)
+        entry.rrf_score += settings.lexical_weight / (k + rank)
         entry.fulltext_score = score
 
     fused = list(contributions.values())
@@ -584,6 +605,7 @@ def search(db: Session, request: SearchRequest) -> tuple[list[SearchResult], Sea
     the response envelope (echoing `request.query` back) is the API layer's
     job, not this service's.
     """
+    refresh_control_plane()
     timings_ms: dict[str, float] = {}
     top_k = resolve_top_k(request)
     final_k = resolve_final_k(request)

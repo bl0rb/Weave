@@ -81,14 +81,35 @@ def _runtime_bots() -> list[ManagedBotAdminResponse]:
         # Managed n8n bots remain administrable when Runtime is temporarily
         # unavailable; the next refresh exposes local YAML bots again.
         return []
-    return [ManagedBotAdminResponse(
-        id=item['id'], kind=item.get('kind', 'llm'), name=item['name'], description=item.get('description'), enabled=True,
-        webhook_url='', streaming=False, has_auth_token=False, timeout_seconds=0,
-        teams=list(item.get('teams') or []), collections=list(item.get('collections') or []),
-        require_sources=bool(item.get('retrieval', {}).get('enabled')), no_context_reply='',
-        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        source='runtime', editable=False,
-    ) for item in items]
+    result = []
+    for item in items:
+        try:
+            detail = httpx.get(
+                f'{settings.runtime_bots_base_url.rstrip("/")}/internal/bots/{item["id"]}',
+                headers={'Authorization': f'Bearer {settings.runtime_api_token}'}, timeout=5,
+            )
+            detail.raise_for_status()
+            config = detail.json()
+        except (httpx.HTTPError, ValueError):
+            config = item
+        if not isinstance(config, dict):
+            config = item
+        retrieval = config.get('retrieval') or {}
+        model = config.get('model') or {}
+        n8n = config.get('n8n') or {}
+        guard = config.get('guard') or {}
+        result.append(ManagedBotAdminResponse(
+            id=item['id'], kind=item.get('kind', 'llm'), name=item['name'], description=item.get('description'), enabled=True,
+            webhook_url=n8n.get('webhook_url'), system_prompt=config.get('system_prompt'), temperature=model.get('temperature'),
+            retrieval_enabled=bool(retrieval.get('enabled')), retrieval_filters=retrieval.get('filters') or {},
+            top_k=retrieval.get('top_k', 20), final_k=retrieval.get('final_k', 5), rerank=bool(retrieval.get('rerank', True)),
+            include_uncollected=bool(retrieval.get('include_uncollected', True)), streaming=bool(n8n.get('streaming', False)),
+            has_auth_token=bool(n8n.get('auth_token')), timeout_seconds=n8n.get('timeout_seconds', 120),
+            teams=list((config.get('permissions') or {}).get('teams') or []), collections=list(retrieval.get('collections') or []),
+            require_sources=bool(guard.get('require_sources', True)), no_context_reply=guard.get('no_context_reply', ''),
+            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc), source='runtime', editable=True,
+        ))
+    return result
 
 
 def _require_runtime_token(request: Request) -> None:
@@ -190,7 +211,10 @@ def update_managed_bot(
     enforce_rate_limit(request)
     row = db.get(ManagedBot, bot_id)
     if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bot nicht gefunden.')
+        if bot_id not in {item.id for item in _runtime_bots()}:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bot nicht gefunden.')
+        row = ManagedBot(id=bot_id, name=payload.name, webhook_url=payload.webhook_url)
+        db.add(row)
     _validate_references(payload, db)
     _apply(row, payload, admin)
     db.commit()

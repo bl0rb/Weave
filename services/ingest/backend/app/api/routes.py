@@ -2305,6 +2305,36 @@ def get_markdown_file(
     return PlainTextResponse(job.result_markdown)
 
 
+@router.get('/admin/backup.zip')
+def download_admin_backup(user: User = Depends(require_admin)) -> StreamingResponse:
+    """Download the raw local storage as one deliberate admin backup.
+
+    There is intentionally no listing or per-file read endpoint here. Symlinks
+    are skipped so the archive cannot escape the two configured storage roots.
+    """
+    archive_buffer = io.BytesIO()
+    exported_files = 0
+    roots = (('uploads', settings.uploads_dir.resolve()), ('results', settings.results_dir.resolve()))
+    with zipfile.ZipFile(archive_buffer, mode='w', compression=zipfile.ZIP_DEFLATED) as archive:
+        for label, root in roots:
+            if not root.exists():
+                continue
+            for path in sorted(root.rglob('*')):
+                if not path.is_file() or path.is_symlink():
+                    continue
+                archive.write(path, arcname=str(Path(label) / path.relative_to(root)))
+                exported_files += 1
+
+    if exported_files == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Keine Dateien für ein Backup vorhanden')
+    archive_buffer.seek(0)
+    return StreamingResponse(
+        archive_buffer,
+        media_type='application/zip',
+        headers={'Content-Disposition': 'attachment; filename="weave-storage-backup.zip"'},
+    )
+
+
 @router.post('/folders', response_model=FolderActionResponse)
 def create_folder(payload: FolderActionRequest) -> FolderActionResponse:
     folder_path = '/'.join(filter(None, [_sanitize_storage_path(payload.folder), _sanitize_storage_path(payload.subfolder)]))

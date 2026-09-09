@@ -92,6 +92,8 @@ class Settings(BaseSettings):
     # env var flip (see that migration's comment on chunks.embedding).
     embedding_dimension: int = 1536
     embedding_batch_size: int = 64
+    chat_config_base_url: str = ''
+    chat_config_service_token: str = ''
 
     # --- Structure-aware chunking (see app/services -- filled in a later
     # stage). Chars, not tokens: cheap to compute against raw markdown

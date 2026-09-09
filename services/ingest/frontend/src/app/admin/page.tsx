@@ -3,7 +3,7 @@
 import { useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import Link from 'next/link';
-import { Bot, FolderOpen, Wrench, ArrowRight, Cpu, KeyRound, MessageSquareText, ScanEye, ShieldAlert, Terminal, Users, UsersRound } from 'lucide-react';
+import { Archive, Bot, FolderOpen, Wrench, ArrowRight, Cpu, KeyRound, MessageSquareText, ScanEye, ShieldAlert, Terminal, Users, UsersRound } from 'lucide-react';
 
 import { useAuth } from '@/lib/auth-context';
 import { UsersTab } from '@/components/admin/users-tab';
@@ -14,9 +14,12 @@ import { VlConnectionsTab } from '@/components/admin/vl-connections-tab';
 import { PaddleTab } from '@/components/admin/paddle-tab';
 import { CollectionsTab } from '@/components/admin/collections-tab';
 import { ChatProviderTab } from '@/components/admin/chat-provider-tab';
+import { RetrievalProviderTab } from '@/components/admin/retrieval-provider-tab';
 import { BotsTab } from '@/components/admin/bots-tab';
+import { ConfirmDialog } from '@/components/admin/admin-shared';
+import { apiFetch } from '@/lib/api';
 
-type TabId = 'collections' | 'tools' | 'users' | 'teams' | 'bots' | 'providers' | 'logs' | 'chat-provider' | 'vl-connections' | 'paddle';
+type TabId = 'collections' | 'tools' | 'users' | 'teams' | 'bots' | 'providers' | 'logs' | 'chat-provider' | 'retrieval-provider' | 'vl-connections' | 'paddle';
 
 const tabs: { id: TabId; label: string; icon: typeof Users }[] = [
   { id: 'collections', label: 'Wissensbereiche', icon: FolderOpen },
@@ -25,6 +28,7 @@ const tabs: { id: TabId; label: string; icon: typeof Users }[] = [
   { id: 'bots', label: 'Bots', icon: Bot },
   { id: 'providers', label: 'Anmeldung', icon: KeyRound },
   { id: 'chat-provider', label: 'Chat & LLM', icon: MessageSquareText },
+  { id: 'retrieval-provider', label: 'Suche & Modelle', icon: ScanEye },
   { id: 'logs', label: 'Worker-Logs', icon: Terminal },
   { id: 'vl-connections', label: 'Dokument-KI', icon: ScanEye },
   // Placed after VL Connections: both are runtime/processing configuration
@@ -38,6 +42,8 @@ const TAB_IDS: TabId[] = tabs.map((t) => t.id);
 export default function AdminPage() {
   const { user } = useAuth();
   const [tab, setTab] = useState<TabId>('collections');
+  const [backupOpen, setBackupOpen] = useState(false);
+  const [backupBusy, setBackupBusy] = useState(false);
   const tabRefs = useRef<Partial<Record<TabId, HTMLButtonElement | null>>>({});
 
   const focusTab = (id: TabId) => {
@@ -62,6 +68,26 @@ export default function AdminPage() {
     }
   };
 
+  const downloadBackup = async () => {
+    setBackupBusy(true);
+    try {
+      const response = await apiFetch('/api/v1/admin/backup.zip');
+      if (!response.ok) throw new Error('Backup konnte nicht erstellt werden.');
+      const blob = await response.blob();
+      const href = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = href;
+      link.download = 'weave-storage-backup.zip';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(href);
+      setBackupOpen(false);
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
   if (!user || user.role !== 'admin') {
     return (
       <main className="min-h-screen">
@@ -82,10 +108,13 @@ export default function AdminPage() {
     <main className="min-h-screen">
       <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <header className="mb-6">
-          <h1 className="text-3xl font-semibold text-slate-950">Administration</h1>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div><h1 className="text-3xl font-semibold text-slate-950">Administration</h1>
           <p className="mt-1 text-sm text-slate-500">
             Wissensbereiche, Zugriffsrechte, Anmeldung und Verarbeitung zentral verwalten.
-          </p>
+          </p></div>
+            <button type="button" onClick={() => setBackupOpen(true)} className="inline-flex items-center gap-2 rounded-md border border-emerald-200 bg-white px-3 py-2 text-sm font-medium text-emerald-950 hover:bg-emerald-50"><Archive size={16} />Backup herunterladen</button>
+          </div>
         </header>
 
         <div
@@ -174,6 +203,11 @@ export default function AdminPage() {
             <ChatProviderTab />
           </div>
         )}
+        {tab === 'retrieval-provider' && (
+          <div role="tabpanel" id="admin-panel-retrieval-provider" aria-labelledby="admin-tab-retrieval-provider">
+            <RetrievalProviderTab />
+          </div>
+        )}
         {tab === 'vl-connections' && (
           <div
             role="tabpanel"
@@ -189,6 +223,7 @@ export default function AdminPage() {
           </div>
         )}
       </div>
+      {backupOpen && <ConfirmDialog title="Storage-Backup herunterladen" body={<p>Das ZIP enthält alle lokalen Upload- und Ergebnisdateien. Der Download kann vertrauliche Inhalte enthalten. Fortfahren?</p>} confirmLabel={backupBusy ? 'Wird erstellt…' : 'Backup herunterladen'} onClose={() => { if (!backupBusy) setBackupOpen(false); }} onConfirm={downloadBackup} />}
     </main>
   );
 }

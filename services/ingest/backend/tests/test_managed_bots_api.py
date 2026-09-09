@@ -142,7 +142,7 @@ def test_admin_bot_list_projects_nonempty_runtime_roster(monkeypatch):
     item = next(item for item in response.json()['items'] if item['id'] == 'general-assistant')
     assert item['kind'] == 'llm'
     assert item['source'] == 'runtime'
-    assert item['editable'] is False
+    assert item['editable'] is True
 
 def test_non_admin_cannot_manage_bots_and_unknown_scope_is_rejected():
     admin = _identity('bot-reference-admin', role=UserRole.ADMIN)

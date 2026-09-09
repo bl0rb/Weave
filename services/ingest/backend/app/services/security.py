@@ -210,6 +210,7 @@ _OIDC_CLIENT_SECRET_HKDF_INFO = b'oidc-client-secret'
 _IMPORT_CREDENTIAL_HKDF_INFO = b'import-source-credential'
 _VL_CONNECTION_API_KEY_HKDF_INFO = b'vl-connection-api-key'
 _CHAT_PROVIDER_API_KEY_HKDF_INFO = b'chat-provider-api-key'
+_RETRIEVAL_PROVIDER_API_KEY_HKDF_INFO = b'retrieval-provider-api-key'
 _MANAGED_BOT_AUTH_TOKEN_HKDF_INFO = b'managed-bot-auth-token'
 _WEBHOOK_CONNECTION_SECRET_HKDF_INFO = b'webhook-connection-secret'
 
@@ -317,6 +318,19 @@ def decrypt_chat_provider_api_key(ciphertext: str) -> str:
         return fernet.decrypt(ciphertext.encode('utf-8')).decode('utf-8')
     except InvalidToken as exc:
         raise ValueError('chat provider API key could not be decrypted') from exc
+
+
+def encrypt_retrieval_provider_api_key(plaintext: str) -> str:
+    fernet = Fernet(_derive_fernet_key(_RETRIEVAL_PROVIDER_API_KEY_HKDF_INFO))
+    return fernet.encrypt(plaintext.encode('utf-8')).decode('utf-8')
+
+
+def decrypt_retrieval_provider_api_key(ciphertext: str) -> str:
+    fernet = Fernet(_derive_fernet_key(_RETRIEVAL_PROVIDER_API_KEY_HKDF_INFO))
+    try:
+        return fernet.decrypt(ciphertext.encode('utf-8')).decode('utf-8')
+    except InvalidToken as exc:
+        raise ValueError('retrieval provider API key could not be decrypted') from exc
 
 
 def encrypt_managed_bot_auth_token(plaintext: str) -> str:
