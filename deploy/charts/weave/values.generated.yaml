@@ -70,6 +70,11 @@ config:
     CELERY_WORKER_CONCURRENCY: "1"
     CHAT_LLM_PRIVATE_HOST_ALLOWLIST: "[\"host.docker.internal\",\"ollama\",\"vllm\",\"llm\"]"
     CORS_ORIGINS: "[\"http://localhost:3000\"]"
+    EMBEDDING_BASE_URL: ""
+    EMBEDDING_BATCH_SIZE: "64"
+    EMBEDDING_DIMENSION: "1536"
+    EMBEDDING_MODEL: "fake-embed"
+    EMBEDDING_PROVIDER: "fake"
     FRONTEND_PORT: "3000"
     HANDOFF_CALLBACK_URL: ""
     PORTAL_KNOWLEDGE_BASE_URL: "http://weave-knowledge:8000"
@@ -77,6 +82,9 @@ config:
     POSTGRES_PORT: "5432"
     POSTGRES_USER: "weave"
     PUBLIC_API_URL: "http://localhost:8000"
+    RERANK_BASE_URL: ""
+    RERANK_MODEL: ""
+    RERANK_PROVIDER: "none"
     RUNTIME_BOTS_BASE_URL: "http://weave-runtime:8000"
     SERVICE_NAME: "ingest-worker"
     WEAVE_INGEST_PUBLIC_API_URL: ""
@@ -156,11 +164,13 @@ secrets:
   ingest:
     - BOOTSTRAP_ADMIN_PASSWORD
     - CHAT_CONFIG_SERVICE_TOKEN
+    - EMBEDDING_API_KEY
     - HANDOFF_SECRET
     - KNOWLEDGE_INGEST_API_TOKEN
     - PORTAL_KNOWLEDGE_WEBHOOK_SECRET
     - POSTGRES_PASSWORD
     - REDIS_PASSWORD
+    - RERANK_API_KEY
     - RUNTIME_API_TOKEN
     - SECRET_KEY
   knowledge:

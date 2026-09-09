@@ -49,6 +49,7 @@ from app.workers.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 INDEX_TASK_NAME = 'weave.knowledge.index_document'
+REINDEX_TASK_NAME = 'weave.knowledge.reindex_all'
 
 # Total attempts a document gets at fetching its markdown before this task
 # gives up and marks it status='failed' for good (attempt 1 is the initial
@@ -70,6 +71,14 @@ def _document_lock(document_id: str) -> threading.Lock:
             lock = threading.Lock()
             _DOCUMENT_LOCKS[document_id] = lock
         return lock
+
+
+@celery_app.task(name=REINDEX_TASK_NAME)
+def reindex_all() -> int:
+    """Re-embed all indexed documents with the current provider settings."""
+    from app.cli import reindex
+
+    return reindex()
 
 
 def _release_metadata(document: Document) -> tuple[str, str] | None:

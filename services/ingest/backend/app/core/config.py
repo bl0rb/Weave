@@ -73,6 +73,19 @@ class Settings(BaseSettings):
     # Shared bearer credential presented by Weave-Runtime when reading the
     # decrypted effective configuration. Empty fails closed with 503.
     chat_config_service_token: str = ''
+    embedding_provider: str = 'fake'
+    embedding_base_url: str = ''
+    embedding_api_key: str = ''
+    embedding_model: str = 'fake-embed'
+    embedding_dimension: int = 1536
+    embedding_batch_size: int = 64
+    rerank_provider: str = 'none'
+    rerank_base_url: str = ''
+    rerank_api_key: str = ''
+    rerank_model: str = ''
+    rerank_max_documents: int = 50
+    rerank_batch_size: int = 16
+    rerank_threads: int = 4
     knowledge_ingest_api_token: str = ''
     bootstrap_admin_username: str = ''
     bootstrap_admin_email: str = ''

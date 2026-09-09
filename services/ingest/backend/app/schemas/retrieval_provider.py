@@ -10,6 +10,7 @@ class RetrievalProviderAdminResponse(BaseModel):
     embedding_dimension: int
     embedding_batch_size: int
     embedding_has_api_key: bool
+    embedding_key_source: str
     rerank_provider: str
     rerank_base_url: str
     rerank_model: str
@@ -17,9 +18,11 @@ class RetrievalProviderAdminResponse(BaseModel):
     rerank_batch_size: int
     rerank_threads: int
     rerank_has_api_key: bool
+    rerank_key_source: str
     semantic_weight: float
     lexical_weight: float
     updated_at: datetime | None
+    reindex_started: bool = False
 
 
 class RetrievalProviderUpdateRequest(BaseModel):
@@ -40,6 +43,7 @@ class RetrievalProviderUpdateRequest(BaseModel):
     rerank_threads: int = Field(default=4, ge=1, le=64)
     rerank_api_key: str | None = Field(default=None, max_length=8192)
     clear_rerank_api_key: bool = False
+    confirm_reindex: bool = False
     semantic_weight: float = Field(default=0.5, ge=0, le=1)
     lexical_weight: float = Field(default=0.5, ge=0, le=1)
 

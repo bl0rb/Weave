@@ -316,6 +316,7 @@ shared:
     targets:
       - {service: knowledge, var: EMBEDDING_PROVIDER}
       - {service: retrieval, var: EMBEDDING_PROVIDER}
+      - {service: ingest, var: EMBEDDING_PROVIDER}
     comment: >
       'fake' is the deterministic, dependency-free default -- the entire
       hybrid-search chain works end to end with no API key and no network
@@ -332,6 +333,7 @@ shared:
     targets:
       - {service: knowledge, var: EMBEDDING_MODEL}
       - {service: retrieval, var: EMBEDDING_MODEL}
+      - {service: ingest, var: EMBEDDING_MODEL}
     comment: >
       Vector search compares only chunks whose stored model name matches
       this EXACTLY. If Retrieval's value drifts from what Knowledge indexed
@@ -346,6 +348,7 @@ shared:
     targets:
       - {service: knowledge, var: EMBEDDING_DIMENSION}
       - {service: retrieval, var: EMBEDDING_DIMENSION}
+      - {service: ingest, var: EMBEDDING_DIMENSION}
     comment: >
       1536 is a no-op default matching both services' own settings.py
       default -- NOT the 384 dimensions of the prescribed real model
@@ -364,6 +367,7 @@ shared:
     targets:
       - {service: knowledge, var: EMBEDDING_BASE_URL}
       - {service: retrieval, var: EMBEDDING_BASE_URL}
+      - {service: ingest, var: EMBEDDING_BASE_URL}
     comment: >
       Empty means the 'fake' provider (no outbound call at all). Point both
       at http://weave-embeddings:8000 together when switching providers.
@@ -376,6 +380,7 @@ shared:
     targets:
       - {service: knowledge, var: EMBEDDING_BATCH_SIZE}
       - {service: retrieval, var: EMBEDDING_BATCH_SIZE}
+      - {service: ingest, var: EMBEDDING_BATCH_SIZE}
     comment: "How many texts go into one embedding-provider call."
 
   EMBEDDING_API_KEY:
@@ -385,6 +390,7 @@ shared:
     targets:
       - {service: knowledge, var: EMBEDDING_API_KEY}
       - {service: retrieval, var: EMBEDDING_API_KEY}
+      - {service: ingest, var: EMBEDDING_API_KEY}
       - {service: embeddings, var: EMBEDDINGS_API_TOKEN}
     comment: >
       One of the two conditional pairs docs/betrieb.md section 5 calls out:
@@ -401,6 +407,7 @@ shared:
     required: false
     targets:
       - {service: retrieval, var: RERANK_API_KEY}
+      - {service: ingest, var: RERANK_API_KEY}
       - {service: reranker, var: RERANKER_API_TOKEN}
     comment: >
       Only relevant once RERANK_BASE_URL points at weave-reranker AND
@@ -654,6 +661,9 @@ services:
         value: none
         type: string
         required: false
+        targets:
+          - {service: retrieval, var: RERANK_PROVIDER}
+          - {service: ingest, var: RERANK_PROVIDER}
         comment: >
           'none' skips reranking entirely -- RRF-fused results go out
           as-is. Set to 'api' together with RERANK_BASE_URL/RERANK_MODEL
@@ -663,11 +673,17 @@ services:
         value: ""
         type: string
         required: false
+        targets:
+          - {service: retrieval, var: RERANK_BASE_URL}
+          - {service: ingest, var: RERANK_BASE_URL}
       RERANK_MODEL:
         secret: false
         value: ""
         type: string
         required: false
+        targets:
+          - {service: retrieval, var: RERANK_MODEL}
+          - {service: ingest, var: RERANK_MODEL}
       SEARCH_TOP_K:
         secret: false
         value: 20

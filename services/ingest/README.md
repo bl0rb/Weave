@@ -182,6 +182,7 @@ Since chart 1.1.0 a `SECRET_KEY` is required — the chart refuses to render wit
 - OpenAI-compatible page-by-page vision profile
 - User accounts with per-user/team data visibility, local login and OIDC SSO
 - Admin console for knowledge areas, n8n-backed bots, users, teams, identity providers, worker logs, sign-in logs, Paddle runtime settings, VL connections, retrieval providers, and confirmed storage backups
+- Retrieval provider keys use a clear precedence: an encrypted Admin-UI override wins; otherwise the key and provider settings come from the deployment environment or Vault-injected environment variables. The UI shows only the source (`admin`, `env/vault`, or `none`) and never exposes the secret.
 
 ## Product Walkthrough
 
