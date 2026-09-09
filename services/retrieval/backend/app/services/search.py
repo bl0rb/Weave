@@ -501,7 +501,10 @@ def rrf_fuse(
         if entry is None:
             entry = FusedResult(chunk=chunk, rrf_score=0.0, vector_score=None, fulltext_score=None)
             contributions[chunk.id] = entry
-        entry.rrf_score += settings.semantic_weight / (k + rank)
+        # The legacy 50/50 default must remain numerically identical to plain
+        # RRF. Weights are UI percentages, so scale the normalized 0..1 value
+        # by two before applying it to the legacy unit contribution.
+        entry.rrf_score += (2.0 * settings.semantic_weight) / (k + rank)
         entry.vector_score = score
 
     for rank, (chunk, score) in enumerate(fulltext_results, start=1):
@@ -509,7 +512,7 @@ def rrf_fuse(
         if entry is None:
             entry = FusedResult(chunk=chunk, rrf_score=0.0, vector_score=None, fulltext_score=None)
             contributions[chunk.id] = entry
-        entry.rrf_score += settings.lexical_weight / (k + rank)
+        entry.rrf_score += (2.0 * settings.lexical_weight) / (k + rank)
         entry.fulltext_score = score
 
     fused = list(contributions.values())
