@@ -3,6 +3,7 @@
 import hmac
 import httpx
 from datetime import datetime, timezone
+from pydantic import ValidationError
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
@@ -76,12 +77,12 @@ def _runtime_bots() -> list[ManagedBotAdminResponse]:
         )
         response.raise_for_status()
         items = response.json()
-    except (httpx.HTTPError, ValueError):
+    except (httpx.HTTPError, ValueError, ValidationError):
         # Managed n8n bots remain administrable when Runtime is temporarily
         # unavailable; the next refresh exposes local YAML bots again.
         return []
     return [ManagedBotAdminResponse(
-        id=item['id'], name=item['name'], description=item.get('description'), enabled=True,
+        id=item['id'], kind=item.get('kind', 'llm'), name=item['name'], description=item.get('description'), enabled=True,
         webhook_url='', streaming=False, has_auth_token=False, timeout_seconds=0,
         teams=list(item.get('teams') or []), collections=list(item.get('collections') or []),
         require_sources=bool(item.get('retrieval', {}).get('enabled')), no_context_reply='',

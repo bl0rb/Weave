@@ -121,6 +121,29 @@ def test_admin_crud_is_redacted_and_runtime_projection_requires_service_token(mo
     assert admin_client.get('/api/v1/auth/admin/bots').json()['items'] == []
 
 
+def test_admin_bot_list_projects_nonempty_runtime_roster(monkeypatch):
+    admin = _identity('runtime-list-admin', role=UserRole.ADMIN)
+    admin_client = login_as(admin.username)
+    monkeypatch.setattr(settings, 'runtime_api_token', 'runtime-token')
+    monkeypatch.setattr(settings, 'runtime_bots_base_url', 'http://runtime.test')
+    monkeypatch.setattr(
+        'app.api.managed_bots.httpx.get',
+        lambda *args, **kwargs: type('Response', (), {
+            'raise_for_status': lambda self: None,
+            'json': lambda self: [{
+                'id': 'general-assistant', 'name': 'Allgemeiner Assistent',
+                'description': 'YAML bot', 'kind': 'llm',
+                'retrieval': {'enabled': True}, 'teams': [], 'collections': [],
+            }],
+        })(),
+    )
+    response = admin_client.get('/api/v1/auth/admin/bots')
+    assert response.status_code == 200, response.text
+    item = next(item for item in response.json()['items'] if item['id'] == 'general-assistant')
+    assert item['kind'] == 'llm'
+    assert item['source'] == 'runtime'
+    assert item['editable'] is False
+
 def test_non_admin_cannot_manage_bots_and_unknown_scope_is_rejected():
     admin = _identity('bot-reference-admin', role=UserRole.ADMIN)
     regular = _identity('bot-reference-user')

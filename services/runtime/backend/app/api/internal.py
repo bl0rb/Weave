@@ -42,6 +42,7 @@ def list_bots_endpoint() -> list[BotSummary]:
             name=bot.name,
             description=bot.description,
             retrieval=BotRetrievalSummary(enabled=bot.retrieval.enabled),
+            kind='n8n' if bot.model.provider == 'n8n' else 'llm',
             teams=list(bot.permissions.teams),
             collections=list(bot.retrieval.collections),
         )

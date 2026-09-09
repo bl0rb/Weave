@@ -262,5 +262,6 @@ class BotSummary(BaseModel):
     name: str
     description: str | None = None
     retrieval: BotRetrievalSummary
+    kind: str = 'llm'
     teams: list[str] = Field(default_factory=list)
     collections: list[str] = Field(default_factory=list)
