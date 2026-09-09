@@ -111,7 +111,8 @@ spec:
                   "DATABASE_URL" (include "weave.databaseUrl" (dict "ctx" $
                       "database" $.Values.postgresql.databases.knowledge
                       "user" (include "weave.retrievalDbUser" $)
-                      "passwordVar" "RETRIEVAL_DB_PASSWORD")) }}
+                      "passwordVar" "RETRIEVAL_DB_PASSWORD"))
+                  "CHAT_CONFIG_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "ingestBackend")) }}
             {{- /*
             Die beiden Modelldienste, jeweils nur wenn dieses Release sie
             mitbringt und die Konfiguration die Adresse leer laesst -- sonst

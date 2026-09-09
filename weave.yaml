@@ -272,11 +272,15 @@ shared:
     targets:
       - {service: ingest, var: CHAT_CONFIG_SERVICE_TOKEN}
       - {service: runtime, var: CHAT_CONFIG_SERVICE_TOKEN}
+      - {service: knowledge, var: CHAT_CONFIG_SERVICE_TOKEN}
+      - {service: retrieval, var: CHAT_CONFIG_SERVICE_TOKEN}
     comment: >
       Runtime presents this bearer token when it reads the centrally managed
       OpenAI-compatible provider from Ingest. Ingest returns the decrypted
       provider key only on that protected internal route; drift fails every
       direct chat turn closed with 503/502 instead of falling back silently.
+      Knowledge and Retrieval present the same token to read the centrally
+      managed embedding/reranker configuration (retrieval_provider_config).
 
   WEAVE_KNOWLEDGE_WEBHOOK_SECRET:
     secret: true

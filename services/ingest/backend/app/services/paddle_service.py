@@ -29,7 +29,6 @@ from app.services.field_validation import validate_document
 from app.services.mail_ingest import (
     _parse_bytes as _parse_eml_bytes,
     _walk_tree,
-    _render_body,
     _extract_envelope,
 )
 
@@ -1676,6 +1675,21 @@ def _eml_to_markdown(
 
     sections: list[str] = []
     total_attachment_pages = 0
+
+    # Envelope header first -- otherwise a directly-uploaded .eml silently
+    # loses From/To/Subject/Date (only the mail-ingestion inbox path put
+    # these into frontmatter; this standalone conversion path did not).
+    header_lines = []
+    if envelope.from_address:
+        header_lines.append(f'**From:** {envelope.from_address}')
+    if envelope.to:
+        header_lines.append(f'**To:** {", ".join(envelope.to)}')
+    if envelope.subject:
+        header_lines.append(f'**Subject:** {envelope.subject}')
+    if envelope.sent_at:
+        header_lines.append(f'**Date:** {envelope.sent_at.isoformat()}')
+    if header_lines:
+        sections.append('\n'.join(header_lines))
 
     # Render the email body
     if chosen_body is not None:

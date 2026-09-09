@@ -117,7 +117,8 @@ spec:
                       "user" (include "weave.postgresUser" $)
                       "passwordVar" "POSTGRES_PASSWORD"))
                   "REDIS_URL" (include "weave.redisUrl" (dict "ctx" $ "db" 1))
-                  "WEAVE_INGEST_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "ingestBackend")) }}
+                  "WEAVE_INGEST_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "ingestBackend"))
+                  "CHAT_CONFIG_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "ingestBackend")) }}
             {{- /*
             Nur, wenn dieses Release den Embedding-Dienst mitbringt UND die
             Konfiguration die Adresse leer laesst -- sonst gewinnt, was in

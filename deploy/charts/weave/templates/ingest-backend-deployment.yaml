@@ -90,12 +90,26 @@ spec:
             # loest ein $(VAR) nur aus einem Eintrag auf, der WEITER OBEN in
             # derselben env-Liste steht. Siehe den Kopf von _helpers.tpl.
             {{- include "weave.secretEnv" (dict "ctx" $ "service" "ingest") | nindent 12 }}
-            {{- include "weave.env" (dict "ctx" $ "service" "ingest" "overrides" (dict
+            {{- $ov := dict
                   "POSTGRES_HOST" (include "weave.postgresHost" $)
                   "POSTGRES_PORT" (include "weave.postgresPort" $)
                   "REDIS_URL" (include "weave.redisUrl" (dict "ctx" $ "db" 0))
-                  "PORTAL_KNOWLEDGE_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "knowledge"))
-                )) | nindent 12 }}
+                  "PORTAL_KNOWLEDGE_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "knowledge")) }}
+            {{- /*
+            Dieselbe Adressierung wie fuer knowledge/retrieval: nur wenn
+            dieses Release den jeweiligen Modelldienst mitbringt UND die
+            Konfiguration die Adresse leer laesst -- sonst gewinnt weave.yaml.
+            Ohne diesen Block muesste EMBEDDING_BASE_URL/RERANK_BASE_URL fuer
+            ingest von Hand gesetzt werden, obwohl knowledge/retrieval sie
+            geschenkt bekommen. Siehe weave.embeddingBaseUrl/weave.rerankBaseUrl.
+            */}}
+            {{- with (include "weave.embeddingBaseUrl" (dict "ctx" $ "service" "ingest")) }}
+            {{- $_ := set $ov "EMBEDDING_BASE_URL" . }}
+            {{- end }}
+            {{- with (include "weave.rerankBaseUrl" (dict "ctx" $)) }}
+            {{- $_ := set $ov "RERANK_BASE_URL" . }}
+            {{- end }}
+            {{- include "weave.env" (dict "ctx" $ "service" "ingest" "overrides" $ov) | nindent 12 }}
             # Kein Wert aus weave.yaml, sondern eine Entscheidung dieser
             # Installation: entrypoint.sh faehrt Alembic beim Start, sofern
             # RUN_ALEMBIC_ON_STARTUP nicht "false" ist. Bei mehr als einer

@@ -1267,6 +1267,33 @@ def test_eml_plain_text_body_no_attachments(tmp_path, monkeypatch):
     assert details['quality_gate']['grade'] in {'A', 'B', 'C'}
 
 
+def test_eml_conversion_preserves_envelope_fields(tmp_path, monkeypatch):
+    """Regression: the parsed envelope (From/To/Subject/Date) was extracted
+    but never written into the markdown, silently dropping it for a
+    directly-uploaded .eml (unlike the mail-ingestion inbox path)."""
+    from email.mime.text import MIMEText
+
+    msg = MIMEText('Body text.', 'plain')
+    msg['Subject'] = 'Quarterly Report'
+    msg['From'] = 'sender@example.com'
+    msg['To'] = 'recipient@example.com'
+    msg['Date'] = 'Mon, 1 Sep 2026 10:00:00 +0000'
+
+    eml_file = tmp_path / 'envelope.eml'
+    eml_file.write_bytes(msg.as_bytes())
+
+    monkeypatch.setattr(paddle_service, 'get_paddle_settings', lambda: {
+        'default_profile': 'ppocrv6_tiny', 'timeout_seconds': 30,
+    })
+
+    markdown, _ = paddle_service.convert_to_markdown_with_details(str(eml_file), profile_id='ppocrv6_tiny')
+
+    assert 'sender@example.com' in markdown
+    assert 'recipient@example.com' in markdown
+    assert 'Quarterly Report' in markdown
+    assert '2026-09-01' in markdown
+
+
 def test_eml_html_body(tmp_path, monkeypatch):
     """Test .eml conversion with HTML body."""
     from email.mime.text import MIMEText

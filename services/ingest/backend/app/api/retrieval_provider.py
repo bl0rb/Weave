@@ -1,7 +1,7 @@
 import hmac
 import httpx
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
 from app.api.deps import origin_guard, require_admin
@@ -85,7 +85,6 @@ def get_retrieval_provider(request: Request, db: Session = Depends(get_db)) -> R
 def update_retrieval_provider(payload: RetrievalProviderUpdateRequest, request: Request, admin: User = Depends(require_admin), db: Session = Depends(get_db)) -> RetrievalProviderAdminResponse:
     enforce_rate_limit(request)
     row = _row(db)
-    effective = _effective(row)
     if row.embedding_dimension != payload.embedding_dimension:
         raise HTTPException(
             status_code=409,
@@ -126,10 +125,11 @@ def internal_retrieval_provider(response: Response, db: Session = Depends(get_db
     response.headers['Cache-Control'] = 'no-store'
     row = _row(db)
     try:
-        embedding_key = effective['embedding_key']
-        rerank_key = effective['rerank_key']
+        effective = _effective(row)
     except ValueError as exc:
         raise HTTPException(status_code=503, detail='stored credential unavailable') from exc
+    embedding_key = effective['embedding_key']
+    rerank_key = effective['rerank_key']
     return RetrievalProviderInternalResponse(
         embedding_provider=effective['embedding_provider'], embedding_base_url=effective['embedding_base_url'], embedding_model=effective['embedding_model'], embedding_dimension=effective['embedding_dimension'], embedding_batch_size=effective['embedding_batch_size'], embedding_api_key=embedding_key,
         rerank_provider=effective['rerank_provider'], rerank_base_url=effective['rerank_base_url'], rerank_model=effective['rerank_model'], rerank_max_documents=effective['rerank_max_documents'], rerank_batch_size=effective['rerank_batch_size'], rerank_threads=effective['rerank_threads'],
