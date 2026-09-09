@@ -257,6 +257,21 @@ n8n and MCP receive short-lived delegated scopes and cannot widen them. Shared
 service credentials remain server-side and are checked fail-closed. Run
 `python scripts/weave_config.py check` after every secret or endpoint change.
 
+## Roadmap
+
+- **Agent bots with tool calling** — add an optional `agent` bot kind backed by
+  LangChain/LangGraph. Agents will be able to use Weave Retrieval, approved
+  MCP servers, and other explicit tools; complex workflows may delegate to
+  scoped subagents.
+- **Guarded agent execution** — define per-bot tool allowlists, preserve the
+  requesting user's team and collection scope for every call, and enforce
+  step, timeout, token-budget, and audit-trace limits. Agents will never get
+  direct database or filesystem access, and subagents cannot gain broader
+  permissions than their parent turn.
+- **Administration** — configure agent tools, MCP connections, subagents, and
+  execution limits through the existing admin UI without exposing credentials
+  to the browser.
+
 ## Testing
 
 Every Python service has its own virtual environment and pinned requirements.
