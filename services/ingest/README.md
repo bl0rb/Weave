@@ -313,7 +313,7 @@ Common endpoints:
 
 A **collection** is a named batch-upload target with its own storage path, department/email defaults, and an optional password — the same thing behind the upload wizard's "collection" mode and `POST /collections/{id}/upload` / `/start`. Every collection now also carries a **slug** (a stable, lowercase-hyphen identifier — auto-derived from its name if you don't set one) and a **name**, `description`, and `read_teams`.
 
-`read_teams` is a **read permission list**, not an upload permission: it names which teams may *read* the collection's documents once they're indexed downstream, and enforcing it is entirely Weave-Retrieval's job — Weave-Ingest only stores and publishes the list, it never filters anything by it itself (who may *upload into* a collection is still governed by the existing owner/team visibility rule, same as jobs). An empty `read_teams` list means the collection is readable by every team.
+`read_teams` is the **read permission list** for downstream retrieval. A team member with the `member` membership role in one of these teams may also upload and process documents for the collection; a `reader` may only read. Collection settings and deletion remain restricted to the owner or an administrator. An empty `read_teams` list means the collection is readable by every team, but does not grant upload rights by itself.
 
 Every document processed through a collection carries that collection's slug in its frontmatter (`collection: <slug>`, plus `collection_name` for display) — this is what lets a downstream RAG pipeline resolve "which collection is this chunk from" back to an access policy, without ever needing to look inside the document itself.
 

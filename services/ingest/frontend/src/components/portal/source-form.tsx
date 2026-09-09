@@ -40,8 +40,10 @@ export function SourceForm({ initialCollection = '' }: { initialCollection?: str
   }
   const load = useCallback(async () => {
     setError('');
-    try { const data = await apiJson<{ items: KnowledgeSpace[] }>('/api/v1/collections'); setSpaces(data.items.filter(space => space.can_manage)); }
-    catch (err) { setError(portalError(err)); }
+    try {
+      const data = await apiJson<{ items: KnowledgeSpace[] }>('/api/v1/collections');
+      setSpaces(data.items.filter(space => space.can_upload ?? space.can_manage));
+    } catch (err) { setError(portalError(err)); }
   }, []);
   const loadSources = useCallback(async () => {
     setSourceError('');

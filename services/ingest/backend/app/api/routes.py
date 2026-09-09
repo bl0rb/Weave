@@ -236,8 +236,20 @@ def _require_visible(db: Session, job: Job, user: User) -> None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Job not found')
 
 
+def _user_team_names(db: Session, user: User) -> set[str]:
+    if not user.team_ids:
+        return set()
+    return set(db.scalars(select(Team.name).where(Team.id.in_(user.team_ids))).all())
+
+
+def _can_read_collection(db: Session, collection: Collection, user: User) -> bool:
+    if _owner_visible(db, collection.owner_id, user):
+        return True
+    return bool(set(collection.read_teams or []).intersection(_user_team_names(db, user)))
+
+
 def _require_visible_collection(db: Session, collection: Collection, user: User) -> None:
-    if not _owner_visible(db, collection.owner_id, user):
+    if not _can_read_collection(db, collection, user):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
 
 
@@ -263,13 +275,30 @@ def _can_manage_owner_team(db: Session, owner_id: str | None, user: User) -> boo
     return db.scalar(select(user_teams.c.role).where(user_teams.c.user_id == user.id, user_teams.c.team_id == owner_team_id)) == 'member'
 
 
+def _can_manage_collection(db: Session, collection: Collection, user: User) -> bool:
+    if user.role == UserRole.ADMIN or collection.owner_id == user.id:
+        return True
+    if _can_manage_owner_team(db, collection.owner_id, user):
+        return True
+    memberships = db.execute(
+        select(Team.name)
+        .join(user_teams, user_teams.c.team_id == Team.id)
+        .where(user_teams.c.user_id == user.id, user_teams.c.role == 'member')
+    ).all()
+    return any(name in collection.read_teams for (name,) in memberships)
+
+
+def _require_collection_owner_control(collection: Collection, user: User) -> None:
+    if user.role != UserRole.ADMIN and collection.owner_id != user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Only the collection owner or an admin can do this')
+
+
 def _require_collection_control(db: Session, collection: Collection, user: User) -> None:
-    """Read (GET, via `_require_visible_collection`) is not control: a
-    teammate may see a collection but not PATCH it -- same read-vs-control
-    split as import_routes._require_run_control/benchmarks._require_benchmark_control."""
-    if user.role != UserRole.ADMIN and collection.owner_id != user.id and not _can_manage_owner_team(db, collection.owner_id, user):
+    """Eligible members of a collection's configured reader teams may upload
+    and operate its documents, while collection settings remain owner-only."""
+    if not _can_manage_collection(db, collection, user):
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail='Only the collection owner or an admin can do this'
+            status_code=status.HTTP_403_FORBIDDEN, detail='Only the collection owner, an eligible team member, or an admin can do this'
         )
 
 
@@ -323,10 +352,11 @@ def _unique_collection_slug(db: Session, base: str) -> str:
     return candidate
 
 
-def _collection_to_response(collection: Collection, user: User, *, job_ids: list[str] | None = None) -> CollectionResponse:
+def _collection_to_response(db: Session, collection: Collection, user: User, *, job_ids: list[str] | None = None) -> CollectionResponse:
     return CollectionResponse(
         collection_id=collection.id,
         can_manage=user.role == UserRole.ADMIN or collection.owner_id == user.id,
+        can_upload=_can_manage_collection(db, collection, user),
         slug=collection.slug,
         name=collection.name,
         description=collection.description,
@@ -958,7 +988,7 @@ def create_collection(
             publication_tasks.notify_collection_registry_changed.delay(collection.slug)
     except Exception:  # pragma: no cover - notification must never break collection creation
         logger.exception('Knowledge registry notification failed for collection %s', collection.id)
-    return _collection_to_response(collection, user)
+    return _collection_to_response(db, collection, user)
 
 
 @router.get('/collections', response_model=CollectionListResponse)
@@ -967,12 +997,10 @@ def list_collections(db: Session = Depends(get_db), user: User = Depends(get_cur
     current-teammates' + (for an admin) every collection. Does not populate
     `job_ids` per item -- see CollectionResponse's docstring -- use GET
     /collections/{id} for a single collection's job membership."""
-    query = select(Collection).order_by(Collection.created_at.desc())
-    visible_filter = _visible_collection_filter(user)
-    if visible_filter is not None:
-        query = query.where(visible_filter)
-    collections = db.scalars(query).all()
-    return CollectionListResponse(items=[_collection_to_response(collection, user) for collection in collections])
+    collections = db.scalars(select(Collection).order_by(Collection.created_at.desc())).all()
+    if user.role != UserRole.ADMIN:
+        collections = [collection for collection in collections if _can_read_collection(db, collection, user)]
+    return CollectionListResponse(items=[_collection_to_response(db, collection, user) for collection in collections])
 
 
 @knowledge_router.get('/collections/registry', response_model=CollectionRegistryResponse)
@@ -1022,7 +1050,7 @@ def get_collection(collection_id: str, db: Session = Depends(get_db), user: User
     if collection is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
     _require_visible_collection(db, collection, user)
-    return _collection_to_response(collection, user, job_ids=_collection_job_ids(db, collection.id, user))
+    return _collection_to_response(db, collection, user, job_ids=_collection_job_ids(db, collection.id, user))
 
 
 @router.patch('/collections/{collection_id}', response_model=CollectionResponse)
@@ -1038,7 +1066,7 @@ def update_collection(
     if collection is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
     _require_visible_collection(db, collection, user)
-    _require_collection_control(db, collection, user)
+    _require_collection_owner_control(collection, user)
 
     if payload.name is not None:
         name = payload.name.strip()
@@ -1059,7 +1087,7 @@ def update_collection(
             publication_tasks.notify_collection_registry_changed.delay(collection.slug)
     except Exception:  # pragma: no cover - notification must never break an update
         logger.exception('Knowledge registry notification failed for collection %s', collection.id)
-    return _collection_to_response(collection, user, job_ids=_collection_job_ids(db, collection.id, user))
+    return _collection_to_response(db, collection, user, job_ids=_collection_job_ids(db, collection.id, user))
 
 
 @router.delete('/collections/{collection_id}')
@@ -1082,7 +1110,7 @@ def delete_collection(
     if collection is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
     _require_visible_collection(db, collection, user)
-    _require_collection_control(db, collection, user)
+    _require_collection_owner_control(collection, user)
     slug = collection.slug
 
     collection_ref = Job.processing_info['settings']['collection_id'].as_string()

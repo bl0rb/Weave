@@ -1149,6 +1149,11 @@
             "title": "Can Manage",
             "type": "boolean"
           },
+          "can_upload": {
+            "default": false,
+            "title": "Can Upload",
+            "type": "boolean"
+          },
           "collection_id": {
             "title": "Collection Id",
             "type": "string"

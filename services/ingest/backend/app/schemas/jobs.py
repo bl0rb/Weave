@@ -43,6 +43,7 @@ class CollectionUpdateRequest(BaseModel):
 
 class CollectionResponse(BaseModel):
     can_manage: bool = False
+    can_upload: bool = False
     collection_id: str
     slug: str
     name: str

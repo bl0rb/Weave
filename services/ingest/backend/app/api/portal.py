@@ -18,10 +18,10 @@ from app.api.deps import aware_utc, get_current_user, get_knowledge_reader
 from app.api.routes import (
     _active_process_job_ids,
     _apply_visible_filter,
+    _can_manage_collection,
     _content_disposition,
     _is_import_page_job,
     _owner_visible,
-    _can_manage_owner_team,
     _require_visible_collection,
     restart_job,
 )
@@ -76,7 +76,7 @@ def _quality(job: Job) -> tuple[str | None, str | None]:
 
 
 def _job_is_controlled(db, job: Job, collection: Collection, user: User) -> bool:
-    return user.role == UserRole.ADMIN or job.owner_id == user.id or collection.owner_id == user.id or _can_manage_owner_team(db, collection.owner_id, user)
+    return user.role == UserRole.ADMIN or job.owner_id == user.id or _can_manage_collection(db, collection, user)
 
 
 def _import_run_finished(db, job: Job) -> bool:
@@ -313,7 +313,11 @@ def list_portal_documents(
     if collection_id is not None:
         query = query.where(Collection.id == collection_id)
     if review_only:
-        query = query.where(Job.status == JobStatus.FINISHED, DocumentRelease.id.is_(None))
+        query = query.where(
+            Job.status == JobStatus.FINISHED,
+            DocumentRelease.id.is_(None),
+            or_(ImportRun.id.is_(None), ImportRun.status == ImportRunStatus.FINISHED),
+        )
 
     count_query = (
         select(func.count())
@@ -326,7 +330,9 @@ def list_portal_documents(
         count_query = count_query.where(Collection.id == collection_id)
     if review_only:
         count_query = count_query.outerjoin(DocumentRelease, DocumentRelease.job_id == Job.id).where(
-            Job.status == JobStatus.FINISHED, DocumentRelease.id.is_(None)
+            Job.status == JobStatus.FINISHED,
+            DocumentRelease.id.is_(None),
+            or_(ImportRun.id.is_(None), ImportRun.status == ImportRunStatus.FINISHED),
         )
     total = int(db.scalar(count_query) or 0)
     rows = db.execute(query.offset(offset).limit(limit)).all()

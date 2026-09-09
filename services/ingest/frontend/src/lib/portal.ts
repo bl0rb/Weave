@@ -1,7 +1,7 @@
 import { ApiError, apiFetch, apiJson } from '@/lib/api';
 import { currentReleaseStatus, publicationState, type IndexingItem } from './indexing-status';
 
-export type KnowledgeSpace = { collection_id: string; slug: string; name: string; description: string | null; read_teams: string[]; can_manage: boolean };
+export type KnowledgeSpace = { collection_id: string; slug: string; name: string; description: string | null; read_teams: string[]; can_manage: boolean; can_upload: boolean };
 export type Publication = { id: string; created_at: string; status: 'pending' | 'sent' | 'failed'; error_message: string | null };
 export type PortalDocument = {
   id: string; original_filename: string; status: 'PENDING' | 'RUNNING' | 'FINISHED' | 'FAILED';
@@ -20,7 +20,7 @@ export function portalError(error: unknown): string {
     if (error.status === 404) return 'Dieser Inhalt ist nicht verfügbar oder wurde noch nicht für dich freigegeben.';
     if (error.status === 409) return 'Der Stand hat sich geändert oder kann noch nicht freigegeben werden. Bitte lade ihn erneut und prüfe die Hinweise.';
     if (error.status === 413) return 'Die Datei ist zu groß. Bitte wähle eine kleinere Datei.';
-    if (error.status === 422) return 'Bitte prüfe deine Eingaben. Ein Wert ist ungültig oder fehlt.';
+    if (error.status === 422) return error.detail || 'Bitte prüfe deine Eingaben. Ein Wert ist ungültig oder fehlt.';
     if (error.status === 429) return 'Zu viele Anfragen. Bitte versuche es gleich noch einmal.';
     if (error.status === 503) return 'Der Dienst ist noch nicht bereit. Bitte versuche es später erneut oder wende dich an die Administration.';
   }
@@ -43,7 +43,7 @@ export function documentState(document: PortalDocument, live?: IndexingItem): { 
   if (document.status === 'RUNNING') return { label: 'Wird verarbeitet', tone: 'working' };
   if (document.status === 'PENDING') return { label: 'In der Warteschlange', tone: 'neutral' };
   if (document.quality_grade?.toUpperCase() === 'C') return { label: 'Stufe C – Prüfung erforderlich', tone: 'warning' };
-  if (document.quality_recommendation === 'block') return { label: 'Qualitätsprüfung blockiert', tone: 'error' };
+  if (document.quality_recommendation?.trim().toLowerCase() === 'block') return { label: 'Qualitätsprüfung blockiert', tone: 'error' };
   return { label: 'Bereit zur Prüfung', tone: 'warning' };
 }
 export const documentUrl = (document: PortalDocument) => document.status === 'FINISHED' ? `/reviews/${document.id}` : `/jobs/${document.id}`;
