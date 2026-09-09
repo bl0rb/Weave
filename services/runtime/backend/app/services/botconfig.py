@@ -332,6 +332,16 @@ def list_bots() -> list[BotConfig]:
     return [merged[bot_id] for bot_id in sorted(merged)]
 
 
+def list_local_bots() -> list[BotConfig]:
+    """Validate only image/local YAML bots for the liveness probe.
+
+    Health must stay independent of the optional Ingest control plane; the
+    authenticated roster endpoint still uses list_bots() and reports that
+    dependency separately.
+    """
+    return sorted((_load_bot_file(path) for path in _bot_files()), key=lambda bot: bot.id)
+
+
 def load_bot(bot_id: str) -> BotConfig:
     """The single bot whose validated `id` matches `bot_id` -- NOT the
     filename stem. An operator could name a file differently from the slug

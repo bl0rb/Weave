@@ -21,7 +21,16 @@ def upgrade() -> None:
     op.add_column('managed_bots', sa.Column('include_uncollected', sa.Boolean(), nullable=True))
     with op.batch_alter_table('managed_bots') as batch:
         batch.alter_column('webhook_url', existing_type=sa.String(2048), nullable=True)
-    op.execute("UPDATE managed_bots SET kind='n8n', retrieval_enabled=0, retrieval_filters='{}', top_k=20, final_k=5, rerank=1, include_uncollected=1 WHERE kind IS NULL")
+    op.execute(
+        sa.text(
+            "UPDATE managed_bots SET kind='n8n', retrieval_enabled=:disabled, "
+            "retrieval_filters='{}', top_k=20, final_k=5, rerank=:enabled, "
+            "include_uncollected=:enabled WHERE kind IS NULL"
+        ).bindparams(
+            sa.bindparam('disabled', False, type_=sa.Boolean()),
+            sa.bindparam('enabled', True, type_=sa.Boolean()),
+        )
+    )
     op.execute("UPDATE managed_bots SET system_prompt='Du führst Anfragen über den konfigurierten n8n-Workflow aus.' WHERE system_prompt IS NULL")
     # The application model supplies defaults for newly inserted rows. Keeping
     # these added columns nullable keeps the fresh-install migration portable

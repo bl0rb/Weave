@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from app.api.internal import router as internal_router
 from app.core.config import settings
 from app.schemas.health import HealthResponse
-from app.services.botconfig import BotConfigError, list_bots
+from app.services.botconfig import BotConfigError, list_local_bots
 from app.services.chat_config_client import ChatConfigUnavailable
 
 app = FastAPI(title=settings.app_name)
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 @app.get('/health', response_model=HealthResponse)
 def healthcheck() -> HealthResponse:
     try:
-        bots = list_bots()
+        bots = list_local_bots()
     except OSError as exc:
         logger.error('BOTS_DIR (%s) is not readable: %s', settings.bots_dir, exc)
         return HealthResponse(status='degraded', bots=0, detail=f'BOTS_DIR not readable: {exc}')

@@ -14,7 +14,7 @@ def upgrade() -> None:
     op.create_table(
         'chat_provider_config',
         sa.Column('id', sa.String(length=36), primary_key=True),
-        sa.Column('enabled', sa.Boolean(), nullable=False, server_default='0'),
+        sa.Column('enabled', sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column('base_url', sa.String(length=1024), nullable=False, server_default=''),
         sa.Column('model', sa.String(length=255), nullable=False, server_default=''),
         sa.Column('api_key_encrypted', sa.Text(), nullable=True),

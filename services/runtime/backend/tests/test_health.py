@@ -64,3 +64,11 @@ def test_health_reflects_only_the_real_bots_dir_again_after_override(monkeypatch
     assert settings.bots_dir == str(REPO_BOTS_DIR)
     resp = client.get('/health')
     assert resp.json()['bots'] == 2
+
+
+def test_health_stays_healthy_when_managed_bot_control_plane_is_unavailable(monkeypatch):
+    monkeypatch.setattr('app.services.botconfig.fetch_managed_bots', lambda: (_ for _ in ()).throw(RuntimeError('down')))
+    resp = client.get('/health')
+    assert resp.status_code == 200
+    assert resp.json()['status'] == 'healthy'
+    assert resp.json()['bots'] == 2
