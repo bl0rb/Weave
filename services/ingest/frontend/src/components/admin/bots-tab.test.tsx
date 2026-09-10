@@ -50,7 +50,7 @@ it('starts new bots as LLM bots and labels the dialog accordingly', async () => 
   fireEvent.click(await screen.findByRole('button', { name: 'Bot hinzufügen' }));
 
   expect(screen.getByRole('heading', { name: 'LLM-Bot hinzufügen' })).toBeTruthy();
-  expect(screen.getByRole('combobox', { name: 'Bot-Typ' })).toHaveValue('llm');
+  expect((screen.getByRole('combobox', { name: 'Bot-Typ' }) as HTMLSelectElement).value).toBe('llm');
   expect(screen.getByRole('textbox', { name: 'System-Prompt' })).toBeTruthy();
 });
 

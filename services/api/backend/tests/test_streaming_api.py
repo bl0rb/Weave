@@ -290,6 +290,10 @@ def test_chat_stream_forwards_events_and_persists_the_assistant_message_once_at_
     ]
 
     def handler(request: httpx.Request) -> httpx.Response:
+        # See test_chat_e2e.py::test_chat_sends_the_real_internal_chat_request_shape
+        # for why /internal/conversation-title needs its own stubbed branch.
+        if request.url.path == '/internal/conversation-title':
+            return httpx.Response(200, json={'title': 'Titel'})
         assert request.url.path == '/internal/chat/stream'
         return httpx.Response(200, content=_sse_body(sent_events), headers={'content-type': 'text/event-stream'})
 
@@ -332,6 +336,8 @@ def test_chat_stream_forwards_a_collections_filter_in_the_real_request_body(db_s
     db_session.commit()
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == '/internal/conversation-title':
+            return httpx.Response(200, json={'title': 'Titel'})
         assert request.url.path == '/internal/chat/stream'
         assert json.loads(request.content)['collections'] == ['legal-internal']
         return httpx.Response(200, content=_sse_body([DONE_EVENT]), headers={'content-type': 'text/event-stream'})

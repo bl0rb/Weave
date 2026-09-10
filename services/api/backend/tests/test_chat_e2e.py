@@ -86,6 +86,12 @@ def test_chat_sends_the_real_internal_chat_request_shape(db_session, runtime):
     db_session.commit()
 
     def handler(request: httpx.Request) -> httpx.Response:
+        # The first assistant turn also triggers a follow-up
+        # POST /internal/conversation-title (see app/api/chat.py) -- stub
+        # it separately so this test can still assert on the /internal/chat
+        # request shape below without it being the request seen last.
+        if request.url.path == '/internal/conversation-title':
+            return httpx.Response(200, json={'title': 'Titel'})
         assert request.method == 'POST'
         assert request.url.path == '/internal/chat'
         return httpx.Response(200, json=_runtime_chat_response(answer='Hallo zurück!'))
@@ -98,7 +104,7 @@ def test_chat_sends_the_real_internal_chat_request_shape(db_session, runtime):
     assert resp.status_code == 200
     assert resp.json()['answer'] == 'Hallo zurück!'
 
-    assert len(runtime.requests) == 1
+    assert len(runtime.requests) == 2
     sent = runtime.requests[0]
     assert sent.headers['authorization'].startswith('Bearer ')
     body = _request_json(sent)
