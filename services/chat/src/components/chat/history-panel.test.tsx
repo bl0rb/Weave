@@ -4,7 +4,7 @@
 // collapsible right-hand column — these are the sidebar's former history
 // tests, plus the collapse toggle that only exists here.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { HistoryPanel } from '@/components/chat/history-panel';
 
 const CONVERSATIONS = [
@@ -108,7 +108,7 @@ describe('HistoryPanel', () => {
     expect(onDeleteAllConversations).toHaveBeenCalledOnce();
   });
 
-  it('collapses the panel and restores it from the collapsed strip', () => {
+  it('collapses the panel and restores it from the collapsed strip', async () => {
     render(
       <HistoryPanel
         conversations={CONVERSATIONS}
@@ -121,9 +121,15 @@ describe('HistoryPanel', () => {
     );
 
     screen.getByRole('button', { name: 'Verlauf ausblenden' }).click();
-    expect(screen.queryByText('VPN-Frage')).toBeNull();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Verlauf einblenden' })).not.toBeNull();
+      expect(screen.queryByRole('button', { name: 'Verlauf ausblenden' })).toBeNull();
+    });
 
     screen.getByRole('button', { name: 'Verlauf einblenden' }).click();
-    expect(screen.getByText('VPN-Frage')).not.toBeNull();
+    await waitFor(() => {
+      expect(screen.getByText('VPN-Frage')).not.toBeNull();
+    });
   });
 });

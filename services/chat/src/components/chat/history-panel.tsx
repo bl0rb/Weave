@@ -66,7 +66,6 @@ export function HistoryPanel({
           </button>
         ) : null}
 
-        {/* Same aria-live rationale as the sidebar's own lists. */}
         <div aria-live="polite">
           {conversationsError ? (
             <ErrorBanner error={conversationsError} />
