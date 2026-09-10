@@ -16,23 +16,35 @@ export function NewKnowledgeSpace() {
   const [saving, setSaving] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [selectedTeams, setSelectedTeams] = useState<string[]>([]);
   const [shareAll, setShareAll] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const load = useCallback(() => apiJson<PortalConfig>('/api/v1/portal/config')
-    .then(configuration => { setConfig(configuration); setError(''); })
+    .then(configuration => {
+      setConfig(configuration);
+      setSelectedTeams(configuration.team_names);
+      setError('');
+    })
     .catch(err => setError(portalError(err))), []);
   useEffect(() => { void load(); }, [load]);
 
+  const hasOwnTeams = Boolean(config?.team_names.length);
+  const canSave = Boolean(name.trim() && config && (shareAll ? confirmed : selectedTeams.length > 0));
+
+  function toggleTeam(team: string) {
+    setSelectedTeams(current => current.includes(team) ? current.filter(value => value !== team) : [...current, team]);
+  }
+
   async function create(event: FormEvent) {
     event.preventDefault();
-    if (saving || !name.trim() || !config || (shareAll ? !confirmed : !config.team_name)) return;
+    if (saving || !canSave) return;
     setSaving(true);
     setError('');
     try {
       const space = await apiJson<KnowledgeSpace>('/api/v1/collections', jsonBody({
         name: name.trim(),
         description: description.trim(),
-        read_teams: shareAll ? [] : [config.team_name],
+        read_teams: shareAll ? [] : selectedTeams,
       }));
       // Continue the journey with the new area already selected.
       router.replace(`/sources/new?collection=${encodeURIComponent(space.collection_id)}`);
@@ -59,18 +71,24 @@ export function NewKnowledgeSpace() {
         <fieldset disabled={saving || !config}>
           <legend>Wer darf dieses Wissen abfragen?</legend>
           <label className="portal-choice"><input type="radio" name="readers" checked={!shareAll}
-            onChange={() => { setShareAll(false); setConfirmed(false); }} disabled={!config?.team_name} />
-            <span>Mein Team{config?.team_name ? `: ${config.team_name}` : ' – noch nicht zugeordnet'}</span>
+            onChange={() => { setShareAll(false); setConfirmed(false); }} disabled={!hasOwnTeams} />
+            <span>Ausgewählte Teams</span>
           </label>
+          {!shareAll && hasOwnTeams && <div className="ml-6">
+            {config?.team_names.map(team => <label className="portal-choice" key={team}>
+              <input type="checkbox" checked={selectedTeams.includes(team)} onChange={() => toggleTeam(team)} disabled={saving} />
+              {team}
+            </label>)}
+          </div>}
           <label className="portal-choice"><input type="radio" name="readers" checked={shareAll}
             onChange={() => setShareAll(true)} />Alle angemeldeten Teams</label>
-          {config && !config.team_name && <p className="portal-field-hint">Für einen eingeschränkten Wissensbereich muss dir die Administration zuerst ein Team zuordnen.</p>}
+          {config && !hasOwnTeams && <p className="portal-field-hint">Für einen eingeschränkten Wissensbereich muss dir die Administration zuerst ein Team zuordnen.</p>}
           {shareAll && <label className="portal-choice portal-access-confirm"><input type="checkbox" checked={confirmed}
             onChange={event => setConfirmed(event.target.checked)} />Ich bestätige, dass freigegebene Inhalte allen angemeldeten Teams zur Verfügung stehen dürfen.</label>}
         </fieldset>
         <p className="portal-field-hint">Du und die Administration verwalten den Wissensbereich. Du legst fest, welche Teams als Berechtigte freigegebene Inhalte über Chat, Bots und Suche verwenden dürfen.</p>
         <div className="portal-form-actions">
-          <Button type="submit" disabled={saving || !name.trim() || !config || (shareAll ? !confirmed : !config.team_name)}>
+          <Button type="submit" disabled={!canSave || saving}>
             {saving ? 'Wird angelegt …' : 'Anlegen und Quelle hinzufügen'}<ArrowRight size={16} aria-hidden="true" />
           </Button>
           {!saving && <Link href="/knowledge" className={buttonVariants({ variant: 'ghost' })}>Abbrechen</Link>}

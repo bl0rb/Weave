@@ -17,9 +17,9 @@ beforeEach(() => { api.mockReset(); navigation.replace.mockReset(); });
 afterEach(cleanup);
 
 it('creates the area for the own team and continues with that area selected', async () => {
-  api.mockResolvedValueOnce({ team_name: 'Service', publication_configured: true });
+  api.mockResolvedValueOnce({ team_name: 'Service', team_names: ['Service'], publication_configured: true });
   render(<NewKnowledgeSpace />);
-  await screen.findByRole('radio', { name: 'Mein Team: Service' });
+  await screen.findByRole('checkbox', { name: 'Service' });
   fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: '  Servicewissen  ' } });
   api.mockResolvedValueOnce(area);
   fireEvent.click(screen.getByRole('button', { name: 'Anlegen und Quelle hinzufügen' }));
@@ -27,8 +27,22 @@ it('creates the area for the own team and continues with that area selected', as
   expect(JSON.parse(api.mock.calls[1][1]?.body as string)).toEqual({ name: 'Servicewissen', description: '', read_teams: ['Service'] });
 });
 
+it('preselects all of the caller\'s own teams and allows narrowing the selection', async () => {
+  api.mockResolvedValueOnce({ team_name: 'Service', team_names: ['Service', 'Vertrieb'], publication_configured: true });
+  render(<NewKnowledgeSpace />);
+  await screen.findByRole('checkbox', { name: 'Service' });
+  expect((screen.getByRole('checkbox', { name: 'Service' }) as HTMLInputElement).checked).toBe(true);
+  expect((screen.getByRole('checkbox', { name: 'Vertrieb' }) as HTMLInputElement).checked).toBe(true);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Vertrieb' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Übergreifendes Wissen' } });
+  api.mockResolvedValueOnce(area);
+  fireEvent.click(screen.getByRole('button', { name: 'Anlegen und Quelle hinzufügen' }));
+  await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
+  expect(JSON.parse(api.mock.calls[1][1]?.body as string).read_teams).toEqual(['Service']);
+});
+
 it('does not accidentally open an area to everyone when a user has no team', async () => {
-  api.mockResolvedValue({ team_name: null, publication_configured: true });
+  api.mockResolvedValue({ team_name: null, team_names: [], publication_configured: true });
   render(<NewKnowledgeSpace />);
   await screen.findByText(/muss dir die Administration zuerst ein Team/);
   fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Bereich' } });

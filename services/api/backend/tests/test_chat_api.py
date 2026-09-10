@@ -39,7 +39,7 @@ class _RecordingChat:
 
 
 def _seed_conversation(db_session, *, user_id, bot_id: str = 'faq-bot') -> Conversation:
-    conversation = Conversation(user_id=user_id, bot_id=bot_id)
+    conversation = Conversation(user_id=user_id, bot_id=bot_id, title='Erste Frage')
     db_session.add(conversation)
     db_session.flush()
     db_session.add_all(
@@ -106,6 +106,7 @@ def test_chat_with_new_conversation_persists_the_turn_and_returns_the_answer(db_
     assert conversation is not None
     assert conversation.user_id == user.id
     assert conversation.bot_id == 'faq-bot'
+    assert conversation.title == 'Wie setze ich mein VPN-Passwort zurueck?'
 
     messages = db_session.query(Message).filter(Message.conversation_id == conversation_id).order_by(Message.id).all()
     assert len(messages) == 2
@@ -191,6 +192,12 @@ def test_chat_with_existing_conversation_forwards_history_and_appends_the_new_tu
     assert messages[2].content == 'Zweite Frage'
     assert messages[3].role == MessageRole.ASSISTANT
     assert messages[3].content == 'Zweite Antwort'
+
+    # The title was set from the FIRST turn only -- a later turn must never
+    # overwrite a name the user has since seen and recognised their
+    # conversation by (app/services/conversations.py's append_message).
+    db_session.refresh(conversation)
+    assert conversation.title == 'Erste Frage'
 
 
 def test_chat_on_another_users_conversation_returns_404(db_session, monkeypatch):

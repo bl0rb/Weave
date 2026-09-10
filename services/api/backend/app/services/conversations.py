@@ -101,9 +101,34 @@ def append_message(
         trace=trace,
     )
     db.add(message)
+
+    # First user turn of a still-untitled conversation names it -- purely
+    # cosmetic (GET /v1/conversations' history-sidebar list, see
+    # app/api/conversations.py), never touched again afterwards so a later
+    # turn can't overwrite a name the user has since seen and recognised
+    # their conversation by.
+    if role == MessageRole.USER and conversation.title is None:
+        conversation.title = _title_from_first_message(content)
+        db.add(conversation)
+
     db.commit()
     db.refresh(message)
     return message
+
+
+_TITLE_MAX_LENGTH = 80
+
+
+def _title_from_first_message(content: str) -> str:
+    """First line, collapsed and capped -- good enough to recognise a
+    conversation in a list without needing a dedicated summarisation call
+    for what is ultimately just a label."""
+    first_line = content.strip().splitlines()[0].strip() if content.strip() else ''
+    if not first_line:
+        return 'Neue Konversation'
+    if len(first_line) <= _TITLE_MAX_LENGTH:
+        return first_line
+    return first_line[: _TITLE_MAX_LENGTH - 1].rstrip() + '…'
 
 
 def build_history(

@@ -39,3 +39,18 @@ async function toJsonResult<T>(response: Response): Promise<JsonResult<T>> {
   const parsed = (await response.json().catch(() => null)) as MappedError | null;
   return { ok: false, error: parsed ?? mappedError('unknown', null) };
 }
+
+/** DELETEs one of this app's own `/api/*` Route Handlers. Handles `204 No
+ * Content` explicitly (unlike `toJsonResult` above, which always expects a
+ * JSON body) since that is what a successful delete returns. */
+export async function deleteJson(path: string): Promise<JsonResult<void>> {
+  let response: Response;
+  try {
+    response = await fetch(path, { method: 'DELETE' });
+  } catch (cause) {
+    return { ok: false, error: errorForNetworkFailure(cause) };
+  }
+  if (response.status === 204) return { ok: true, data: undefined };
+  const parsed = (await response.json().catch(() => null)) as MappedError | null;
+  return { ok: false, error: parsed ?? mappedError('unknown', null) };
+}

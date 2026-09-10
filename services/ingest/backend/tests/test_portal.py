@@ -8,7 +8,7 @@ import yaml
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.models.models import Collection, DocumentRelease, ImportRun, ImportRunStatus, Job, JobStatus, Team, UserRole
+from app.models.models import Collection, DocumentRelease, ImportRun, ImportRunStatus, Job, JobStatus, Team, UserRole, user_teams
 from app.workers import publication_tasks
 from tests.conftest import TestingSessionLocal, client, create_test_user, login_as
 
@@ -140,7 +140,24 @@ def test_portal_config_returns_authenticated_team_name(monkeypatch):
     )
     response = login_as(user.username).get('/api/v1/portal/config')
     assert response.status_code == 200
-    assert response.json() == {'publication_configured': False, 'team_name': team.name}
+    assert response.json() == {'publication_configured': False, 'team_name': team.name, 'team_names': [team.name]}
+
+
+def test_portal_config_lists_every_team_membership_not_only_the_primary(monkeypatch):
+    primary = _team('Support')
+    secondary = _team('Sales')
+    user = create_test_user(
+        username=f'portal-config-multi-{uuid.uuid4().hex[:8]}',
+        email=f'portal-config-multi-{uuid.uuid4().hex[:8]}@example.com',
+        team_id=primary.id,
+    )
+    with _db() as db:
+        db.execute(user_teams.insert().values(user_id=user.id, team_id=secondary.id, role='member'))
+        db.commit()
+    response = login_as(user.username).get('/api/v1/portal/config')
+    assert response.status_code == 200
+    assert response.json()['team_name'] == primary.name
+    assert sorted(response.json()['team_names']) == sorted([primary.name, secondary.name])
 
 
 def test_portal_preview_hash_canonicalizes_authoritative_collection_and_release(monkeypatch):

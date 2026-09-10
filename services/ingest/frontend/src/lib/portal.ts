@@ -10,7 +10,7 @@ export type PortalDocument = {
 };
 export type DocumentPage = { items: PortalDocument[]; total: number };
 export type DocumentPreview = PortalDocument & { markdown: string; markdown_sha256: string; profile_id: string | null; can_reprocess: boolean };
-export type PortalConfig = { publication_configured: boolean; team_name: string | null };
+export type PortalConfig = { publication_configured: boolean; team_name: string | null; team_names: string[] };
 export const jsonBody = (body: unknown): RequestInit => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
 export function portalError(error: unknown): string {

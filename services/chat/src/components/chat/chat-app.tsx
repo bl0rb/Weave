@@ -7,11 +7,11 @@ import { Sidebar } from '@/components/chat/sidebar';
 import { MessageList } from '@/components/chat/message-list';
 import { Composer } from '@/components/chat/composer';
 import { Button } from '@/components/ui/button';
-import { getJson, postJson } from '@/lib/api-client';
+import { deleteJson, getJson, postJson } from '@/lib/api-client';
 import { errorForInterruptedStream, errorForNetworkFailure, errorForStreamEvent, mappedError, type MappedError } from '@/lib/errors';
 import { consumeChatStream } from '@/lib/run-chat-stream';
-import { buildChatRequestBody, newId, pendingAssistantMessage, userMessage, type UiMessage } from '@/lib/chat-types';
-import type { Bot, ChatRequestBody, ChatResponseBody, Collection } from '@/types/weave-api';
+import { buildChatRequestBody, newId, pendingAssistantMessage, uiMessageFromStored, userMessage, type UiMessage } from '@/lib/chat-types';
+import type { Bot, ChatRequestBody, ChatResponseBody, Collection, ConversationSummary, StoredConversation } from '@/types/weave-api';
 
 export function ChatApp() {
   const router = useRouter();
@@ -36,9 +36,25 @@ export function ChatApp() {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
 
+  const [conversations, setConversations] = useState<ConversationSummary[] | null>(null);
+  const [conversationsError, setConversationsError] = useState<MappedError | null>(null);
+
   // Guards against setting state from a turn the user has since abandoned
   // (switched bot / started a new one) while its request was in flight.
   const activeTurnRef = useRef<string | null>(null);
+
+  // Re-fetches the history sidebar's list — called on mount and again
+  // after anything that can change it (a turn creating/renaming a
+  // conversation, or a delete) so the sidebar never goes stale.
+  const refreshConversations = useCallback(async () => {
+    const result = await getJson<ConversationSummary[]>('/api/conversations');
+    if (result.ok) {
+      setConversations(result.data);
+    } else {
+      setConversationsError(result.error);
+      if (result.error.kind === 'auth_expired') router.replace('/login');
+    }
+  }, [router]);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,6 +82,8 @@ export function ChatApp() {
       } else {
         setCollectionsError(collectionsResult.error);
       }
+
+      await refreshConversations();
     })();
 
     return () => {
@@ -246,6 +264,61 @@ export function ChatApp() {
       }
     } finally {
       if (activeTurnRef.current === turnId) setSending(false);
+      // The turn above may have created a brand-new conversation or
+      // changed an existing one's title/updated_at — refresh regardless of
+      // whether this turn was since abandoned, so the sidebar never shows
+      // a stale list.
+      void refreshConversations();
+    }
+  }
+
+  // Loads one past conversation's full transcript (GET
+  // /api/conversations/{id}) back into view — same abandon-safety pattern
+  // as handleSelectBot/handleNewConversation above: any turn still in
+  // flight for whatever was open before is abandoned first.
+  async function handleSelectConversation(id: string) {
+    if (id === conversationId) return;
+    activeTurnRef.current = null;
+    setSending(false);
+
+    const result = await getJson<StoredConversation>(`/api/conversations/${id}`);
+    if (!result.ok) {
+      if (result.error.kind === 'auth_expired') {
+        router.replace('/login');
+        return;
+      }
+      setConversationsError(result.error);
+      return;
+    }
+
+    setSelectedBotId(result.data.bot_id);
+    setConversationId(result.data.id);
+    setMessages(result.data.messages.map(uiMessageFromStored));
+  }
+
+  // Permanently removes one past conversation (DELETE
+  // /api/conversations/{id}). A destructive, irreversible action — same
+  // window.confirm discipline as this codebase's other delete actions
+  // (e.g. Weave-Ingest's import-sync.tsx / imports/[id]/page.tsx).
+  async function handleDeleteConversation(id: string) {
+    if (!window.confirm('Diese Konversation und alle ihre Nachrichten unwiderruflich löschen?')) return;
+
+    const result = await deleteJson(`/api/conversations/${id}`);
+    if (!result.ok) {
+      if (result.error.kind === 'auth_expired') {
+        router.replace('/login');
+        return;
+      }
+      setConversationsError(result.error);
+      return;
+    }
+
+    setConversations((prev) => prev?.filter((c) => c.id !== id) ?? prev);
+    if (id === conversationId) {
+      activeTurnRef.current = null;
+      setSending(false);
+      setConversationId(null);
+      setMessages([]);
     }
   }
 
@@ -263,6 +336,11 @@ export function ChatApp() {
         selectedCollections={selectedCollections}
         onToggleCollection={handleToggleCollection}
         onClearCollections={handleClearCollections}
+        conversations={conversations}
+        conversationsError={conversationsError}
+        selectedConversationId={conversationId}
+        onSelectConversation={handleSelectConversation}
+        onDeleteConversation={handleDeleteConversation}
       />
 
       <main className="flex min-w-0 flex-1 flex-col">

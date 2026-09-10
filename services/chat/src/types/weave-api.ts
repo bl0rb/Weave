@@ -172,3 +172,42 @@ export interface ChatRequestBody {
   conversation_id?: string;
   collections?: string[];
 }
+
+/** One row of Weave-API's GET /v1/conversations (`ConversationSummary`,
+ * backend/app/schemas/conversations.py) — the history sidebar's own list.
+ * No messages here by design; the full transcript is a follow-up
+ * GET /v1/conversations/{id} (see `StoredConversation` below), only
+ * fetched once a particular entry is actually opened. */
+export interface ConversationSummary {
+  id: string;
+  bot_id: string;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One stored message as Weave-API persisted it (`MessageResponse`,
+ * backend/app/schemas/conversations.py) — the shape GET
+ * /v1/conversations/{id} returns each entry in, distinct from `UiMessage`
+ * (lib/chat-types.ts) which also tracks in-flight streaming state this
+ * already-finished, already-persisted shape never has. */
+export interface StoredMessage {
+  id: number;
+  role: 'user' | 'assistant';
+  content: string;
+  sources: Source[] | null;
+  trace: ChatTrace | null;
+  created_at: string;
+}
+
+/** GET /v1/conversations/{id} response body (`ConversationResponse`,
+ * backend/app/schemas/conversations.py) — messages ordered oldest-first,
+ * exactly the order a transcript reads in. */
+export interface StoredConversation {
+  id: string;
+  bot_id: string;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+  messages: StoredMessage[];
+}

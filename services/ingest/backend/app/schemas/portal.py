@@ -58,3 +58,9 @@ class PortalReprocessResponse(BaseModel):
 class PortalConfigResponse(BaseModel):
     publication_configured: bool
     team_name: str | None
+    # Names of every team the caller belongs to (primary team included,
+    # deduplicated) -- lets the knowledge-space form offer a real
+    # multi-select instead of only the single primary team. Never the
+    # system-wide team directory: a non-admin only ever sees their own
+    # memberships here.
+    team_names: list[str] = Field(default_factory=list)

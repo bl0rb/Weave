@@ -1,4 +1,4 @@
-import type { ChatRequestBody, ChatTrace, Source } from '@/types/weave-api';
+import type { ChatRequestBody, ChatTrace, Source, StoredMessage } from '@/types/weave-api';
 import type { MappedError } from '@/lib/errors';
 
 /** One transcript entry as the UI renders it — a superset of what any
@@ -33,6 +33,25 @@ export function userMessage(content: string): UiMessage {
 
 export function pendingAssistantMessage(): UiMessage {
   return { id: newId(), role: 'assistant', content: '', streaming: true, sources: null, trace: null, error: null, viaFallback: false };
+}
+
+/** Turns one already-persisted `StoredMessage` (GET
+ * /v1/conversations/{id}, types/weave-api.ts) into the same `UiMessage`
+ * shape a live turn produces — used when the history sidebar loads a
+ * past conversation's transcript back into view. Always finished
+ * (`streaming: false`, `error: null`): a stored message is by definition
+ * one that already completed. */
+export function uiMessageFromStored(message: StoredMessage): UiMessage {
+  return {
+    id: String(message.id),
+    role: message.role,
+    content: message.content,
+    streaming: false,
+    sources: message.sources,
+    trace: message.trace,
+    error: null,
+    viaFallback: false,
+  };
 }
 
 /**

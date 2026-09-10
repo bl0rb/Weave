@@ -256,9 +256,13 @@ def _require_publishable(job: Job, collection: Collection, db, user: User, suppl
 @router.get('/config', response_model=PortalConfigResponse)
 def portal_config(db=Depends(get_db), user: User = Depends(get_current_user)) -> PortalConfigResponse:
     team = db.get(Team, user.team_id) if user.team_id else None
+    team_names = list(db.scalars(
+        select(Team.name).where(Team.id.in_(user.team_ids)).order_by(Team.name)
+    )) if user.team_ids else []
     return PortalConfigResponse(
         publication_configured=publication_configured(),
         team_name=team.name if team is not None else None,
+        team_names=team_names,
     )
 
 

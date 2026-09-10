@@ -16,7 +16,7 @@ const capabilities = { profiles: [
   { value: 'openai_vision', label: 'Unconfigured vision', description: '', kind: 'vl' },
 ] };
 const api = vi.mocked(apiJson);
-const config = { publication_configured: true, team_name: 'Service' };
+const config = { publication_configured: true, team_name: 'Service', team_names: ['Service'] };
 function mockDocument(overrides = {}) {
   api.mockImplementation(async path => path === '/api/v1/portal/config' ? config
     : path === '/api/v1/paddle/capabilities' ? capabilities : { ...content, ...overrides });
