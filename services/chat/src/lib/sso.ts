@@ -60,7 +60,7 @@ export function isSsoLoginEnabled(): boolean {
  * on when unset, matching how every other Weave frontend's own base-URL
  * setting defaults for local development.
  */
-function resolveAppBaseUrl(): string {
+export function resolveAppBaseUrl(): string {
   const configured = [process.env.APP_BASE_URL, process.env.CHAT_APP_BASE_URL]
     .map(value => value?.trim())
     .find(value => Boolean(value));

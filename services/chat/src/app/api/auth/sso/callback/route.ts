@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { setSessionCookie } from '@/lib/session';
+import { resolveAppBaseUrl } from '@/lib/sso';
 import { GatewayError, exchangeSessionCode } from '@/lib/weave-api-server';
 
 // Always dynamic: this handler reads a one-time query param and sets a
@@ -45,13 +46,15 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const code = request.nextUrl.searchParams.get('code');
   if (!code) {
-    return redirectToLogin(request, 'missing_code');
+    return redirectToLogin('missing_code');
   }
 
   try {
     const { sessionToken, expiresAt } = await exchangeSessionCode(code);
 
-    const redirectResponse = NextResponse.redirect(new URL('/', request.url));
+    // Behind a reverse proxy `request.url` carries this container's own
+    // internal origin, so the browser-facing target comes from config.
+    const redirectResponse = NextResponse.redirect(new URL('/', resolveAppBaseUrl()));
     setSessionCookie(request, redirectResponse, sessionToken, {
       kind: 'session',
       maxAgeSeconds: secondsUntil(expiresAt),
@@ -59,19 +62,19 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return redirectResponse;
   } catch (cause) {
     if (cause instanceof GatewayError && cause.kind === 'unreachable') {
-      return redirectToLogin(request, 'gateway_unreachable');
+      return redirectToLogin('gateway_unreachable');
     }
     // Weave-API's own exchange endpoint never distinguishes "unknown",
     // "expired", and "already used" from one another (its own
     // non-enumeration discipline) — neither does this route; every other
     // rejection (including a malformed response body) is the same
     // generic "invalid_code" as far as the end user is concerned.
-    return redirectToLogin(request, 'invalid_code');
+    return redirectToLogin('invalid_code');
   }
 }
 
-function redirectToLogin(request: NextRequest, error: string): NextResponse {
-  const loginUrl = new URL('/login', request.url);
+function redirectToLogin(error: string): NextResponse {
+  const loginUrl = new URL('/login', resolveAppBaseUrl());
   loginUrl.searchParams.set('error', error);
   return NextResponse.redirect(loginUrl);
 }

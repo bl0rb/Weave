@@ -158,6 +158,13 @@ def get_bot(bot_id: str) -> dict:
     return _get(f'/internal/bots/{bot_id}')
 
 
+def conversation_title(*, question: str, answer: str) -> str:
+    result = _post('/internal/conversation-title', {'question': question, 'answer': answer})
+    if not isinstance(result, dict) or not isinstance(result.get('title'), str):
+        raise RuntimeUnavailable('Weave-Runtime returned an invalid conversation title')
+    return result['title']
+
+
 def _chat_payload(*, bot_id: str, message: str, history: list[dict], user: dict, collections: list[str] | None) -> dict:
     """Shared request-body assembly for chat() and chat_stream() below.
     `collections` is only added to the payload when it isn't `None` -- the

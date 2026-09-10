@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { CheckCheck, RefreshCw, ShieldCheck } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { CheckCheck, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { ApiError, apiJson } from '@/lib/api';
 import { Button, buttonVariants } from '@/components/ui/button';
+import { ConfirmDialog, apiSend } from '@/components/admin/admin-shared';
 import { MarkdownView } from '@/components/markdown/markdown-view';
 import { dateLabel, documentState, jsonBody, loadDocuments, portalError, type DocumentPage, type DocumentPreview, type PortalConfig, type Publication } from '@/lib/portal';
 import { DocumentTable, EmptyState, Notice, Pagination, PortalPage } from './shared';
@@ -34,6 +36,7 @@ export function ReviewDocument({ id }: { id: string }) {
 }
 
 function ReviewDocumentContent({ id }: { id: string }) {
+  const router = useRouter();
   const [preview, setPreview] = useState<DocumentPreview | null>(null);
   const [config, setConfig] = useState<PortalConfig | null>(null);
   const [error, setError] = useState('');
@@ -41,6 +44,7 @@ function ReviewDocumentContent({ id }: { id: string }) {
   const [saving, setSaving] = useState(false);
   const [reprocessOpen, setReprocessOpen] = useState(false);
   const [reprocessStarted, setReprocessStarted] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const startedHeading = useRef<HTMLHeadingElement>(null);
   const load = useCallback(() => Promise.all([apiJson<DocumentPreview>(`/api/v1/portal/documents/${encodeURIComponent(id)}`), apiJson<PortalConfig>('/api/v1/portal/config')])
     .then(([content, configuration]) => { setPreview(content); setConfig(configuration); setError(''); setConfirmed(false); setReprocessOpen(false); })
@@ -99,6 +103,7 @@ function ReviewDocumentContent({ id }: { id: string }) {
         {(!preview.quality_recommendation || preview.quality_recommendation.trim().toLowerCase() === 'warn') && <Notice>Bitte prüfe diesen Inhalt besonders sorgfältig. Die automatische Bewertung liefert keine uneingeschränkte Empfehlung.</Notice>}
         {preview.release ? <><div className="portal-release-receipt"><CheckCheck size={23} /><strong>Freigabe gespeichert</strong><span>{dateLabel(preview.release.created_at)}</span></div><p>Dieser Stand ist freigegeben und bleibt unverändert.</p>{delivery === 'failed' && <><Notice error>Die Übergabe ist fehlgeschlagen. Eine berechtigte Person kann sie erneut anstoßen.</Notice>{preview.can_release && <Button disabled={saving} onClick={retry}>Übergabe erneut versuchen</Button>}</>}<IndexingProgress release={preview.release} live={live} /></> : reprocessOpen ? <ReprocessForm currentProfileId={preview.profile_id} busy={saving} onSubmit={reprocess} onCancel={() => { setReprocessOpen(false); setError(''); }} /> : <>
           {preview.can_reprocess && <Button className="w-full whitespace-normal h-auto py-3" variant="outline" disabled={saving} onClick={() => { setReprocessOpen(true); setConfirmed(false); setError(''); }}>Mit anderem Profil neu verarbeiten</Button>}
+          <Button className="w-full" variant="outline" disabled={saving} onClick={() => setDeleting(true)}><Trash2 size={16} />Dokument löschen</Button>
           {!config?.publication_configured && <Notice>Die Administration muss die Verbindung zur Wissensindexierung noch einrichten.</Notice>}
           {!preview.can_release && preview.quality_recommendation !== 'block' && <p className="portal-field-hint">Freigeben können der Dokument- oder Wissensbereichseigentümer sowie Administratoren. Geschützte Inhalte und Seiten aus noch nicht vollständig abgeschlossenen Importen lassen sich hier nicht freigeben.</p>}
           <label className="portal-choice portal-approval"><input type="checkbox" checked={confirmed} disabled={saving || !preview.can_release || !config?.publication_configured} onChange={event => setConfirmed(event.target.checked)} />{preview.quality_grade?.toUpperCase() === 'C' ? 'Ich habe den Inhalt geprüft und gebe ihn trotz Qualitätsstufe C für die Berechtigten des Wissensbereichs frei.' : 'Ich habe den Inhalt geprüft und möchte diesen Stand für die Berechtigten des Wissensbereichs freigeben.'}</label>
@@ -106,5 +111,6 @@ function ReviewDocumentContent({ id }: { id: string }) {
           <Link href="/reviews" className="portal-defer">Später prüfen</Link>
         </>}
       </aside></div></>}
+    {deleting && preview && <ConfirmDialog title="Dokument löschen" body={<p>Das Dokument <strong className="text-slate-950">{preview.original_filename}</strong> unwiderruflich löschen?</p>} confirmLabel="Dokument löschen" onClose={() => setDeleting(false)} onConfirm={async () => { await apiSend(`/api/v1/jobs/${encodeURIComponent(id)}`, { method: 'DELETE' }); router.push('/reviews'); router.refresh(); }} />}
   </PortalPage>;
 }

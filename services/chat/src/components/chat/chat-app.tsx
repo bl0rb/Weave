@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { RotateCcw } from 'lucide-react';
 import { Sidebar } from '@/components/chat/sidebar';
+import { HistoryPanel } from '@/components/chat/history-panel';
 import { MessageList } from '@/components/chat/message-list';
 import { Composer } from '@/components/chat/composer';
 import { Button } from '@/components/ui/button';
@@ -322,6 +323,26 @@ export function ChatApp() {
     }
   }
 
+  async function handleDeleteAllConversations() {
+    if (!window.confirm('Den gesamten Chat-Verlauf mit allen Nachrichten unwiderruflich löschen?')) return;
+
+    const result = await deleteJson('/api/conversations');
+    if (!result.ok) {
+      if (result.error.kind === 'auth_expired') {
+        router.replace('/login');
+        return;
+      }
+      setConversationsError(result.error);
+      return;
+    }
+
+    activeTurnRef.current = null;
+    setSending(false);
+    setConversationId(null);
+    setMessages([]);
+    setConversations([]);
+  }
+
   const selectedBot = bots?.find((bot) => bot.id === selectedBotId) ?? null;
 
   return (
@@ -336,11 +357,6 @@ export function ChatApp() {
         selectedCollections={selectedCollections}
         onToggleCollection={handleToggleCollection}
         onClearCollections={handleClearCollections}
-        conversations={conversations}
-        conversationsError={conversationsError}
-        selectedConversationId={conversationId}
-        onSelectConversation={handleSelectConversation}
-        onDeleteConversation={handleDeleteConversation}
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
@@ -361,6 +377,15 @@ export function ChatApp() {
 
         <Composer value={draft} onChange={setDraft} onSend={handleSend} disabled={sending} botSelected={!!selectedBotId} />
       </main>
+
+      <HistoryPanel
+        conversations={conversations}
+        conversationsError={conversationsError}
+        selectedConversationId={conversationId}
+        onSelectConversation={handleSelectConversation}
+        onDeleteConversation={handleDeleteConversation}
+        onDeleteAllConversations={handleDeleteAllConversations}
+      />
     </div>
   );
 }

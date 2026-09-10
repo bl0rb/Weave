@@ -1,14 +1,15 @@
 """GET /v1/conversations -- list the caller's own chat history.
 GET /v1/conversations/{id} -- fetch one conversation, scoped to its
 owner, including every message (with sources/trace).
-DELETE /v1/conversations/{id} -- permanently remove one conversation and
-its messages (cascade, see Conversation.messages relationship).
+DELETE /v1/conversations -- permanently remove all conversations owned by
+the caller. DELETE /v1/conversations/{id} removes one conversation. Messages
+cascade in both cases (see Conversation.messages relationship).
 """
 
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -32,6 +33,15 @@ def list_conversations(
         select(Conversation).where(Conversation.user_id == user.id).order_by(Conversation.updated_at.desc())
     ).all()
     return ConversationListResponse(items=list(conversations))
+
+
+@router.delete('/conversations', status_code=status.HTTP_204_NO_CONTENT)
+def delete_all_conversations(
+    db: Session = Depends(get_db),
+    user: User = Depends(enforce_rate_limit),
+) -> None:
+    db.execute(delete(Conversation).where(Conversation.user_id == user.id))
+    db.commit()
 
 
 @router.get('/conversations/{conversation_id}', response_model=ConversationResponse)

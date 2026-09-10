@@ -58,7 +58,7 @@ type BotDraft = Omit<ManagedBot, 'has_auth_token' | 'created_at' | 'updated_at'>
 
 const emptyDraft = (): BotDraft => ({
   id: '',
-  kind: 'n8n',
+  kind: 'llm',
   name: '',
   description: null,
   enabled: true,
@@ -104,7 +104,7 @@ export function BotsTab() {
       {loading ? <LoadingState label="Bots und Berechtigungen werden geladen…" /> : bots.items.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-10 text-center">
           <Workflow className="h-9 w-9 text-slate-300" />
-          <div><p className="font-medium text-slate-800">Noch keine verwalteten Bots</p><p className="mt-1 text-sm text-slate-500">Lege einen n8n-Bot an, damit berechtigte Nutzer ihn im Chat auswählen können.</p></div>
+          <div><p className="font-medium text-slate-800">Noch keine verwalteten Bots</p><p className="mt-1 text-sm text-slate-500">Lege einen Bot an, damit berechtigte Nutzer ihn im Chat auswählen können.</p></div>
           <Button variant="outline" size="sm" onClick={() => setEditing('new')}><Plus size={15} />Ersten Bot hinzufügen</Button>
         </div>
       ) : <ul className="divide-y divide-slate-100">
@@ -177,7 +177,7 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
     } catch (err) { setError(errorMessage(err)); setSaving(false); }
   }
 
-  return <Modal title={bot ? `${bot.name} bearbeiten` : 'n8n-Bot hinzufügen'} onClose={onClose}>
+  return <Modal title={bot ? `${bot.name} bearbeiten` : `${draft.kind === 'n8n' ? 'n8n' : 'LLM'}-Bot hinzufügen`} onClose={onClose}>
     <ErrorNotice message={error} />
     <form className="space-y-5" onSubmit={save}>
       <div className="grid gap-4 sm:grid-cols-2">

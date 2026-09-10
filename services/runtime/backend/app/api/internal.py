@@ -15,6 +15,7 @@ from typing import TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from app.core.auth import require_service_token
 from app.schemas.bot import BotConfig, BotRetrievalSummary, BotSummary
@@ -22,12 +23,23 @@ from app.schemas.chat import ChatRequest, ChatResponse, ChatStreamEvent
 from app.services import chat as chat_service
 from app.services.botconfig import BotNotFoundError, list_bots
 from app.services.chat_config_client import ChatConfigUnavailable
+from app.services.chat_config_client import fetch_chat_provider
+from app.services.llm import LLMError, OpenAICompatibleLLM
 from app.services.n8n_client import N8nUnavailable
 from app.services.retrieval_client import RetrievalUnavailable
 
 router = APIRouter(prefix='/internal', dependencies=[Depends(require_service_token)])
 
 _T = TypeVar('_T')
+
+
+class ConversationTitleRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+    answer: str = Field(min_length=1, max_length=4000)
+
+
+class ConversationTitleResponse(BaseModel):
+    title: str
 
 
 @router.get('/bots', response_model=list[BotSummary])
@@ -58,6 +70,30 @@ def get_bot_endpoint(bot_id: str) -> BotConfig:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='bot not found') from exc
     except ChatConfigUnavailable as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+
+@router.post('/conversation-title', response_model=ConversationTitleResponse)
+def conversation_title(request: ConversationTitleRequest) -> ConversationTitleResponse:
+    try:
+        config = fetch_chat_provider()
+        if config is None or not config.enabled:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Chat provider is disabled')
+        result = OpenAICompatibleLLM(
+            base_url=config.base_url,
+            api_key=config.api_key,
+            model=config.model,
+            timeout=min(config.timeout_seconds, 8.0),
+            max_attempts=1,
+        ).chat([
+            {'role': 'system', 'content': 'Erzeuge einen kurzen deutschen Titel mit höchstens acht Wörtern. Antworte ausschließlich mit dem Titel.'},
+            {'role': 'user', 'content': f'Frage: {request.question}\nAntwort: {request.answer}'},
+        ], temperature=0.2)
+    except (ChatConfigUnavailable, LLMError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Titel konnte nicht erzeugt werden') from exc
+    title = ' '.join(result.content.strip().strip('"').split())[:80].rstrip()
+    if not title:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Titel konnte nicht erzeugt werden')
+    return ConversationTitleResponse(title=title)
 
 
 def _run_pipeline_step(step: Callable[[], _T]) -> _T:

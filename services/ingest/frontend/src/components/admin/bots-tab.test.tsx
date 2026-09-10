@@ -45,9 +45,20 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
+it('starts new bots as LLM bots and labels the dialog accordingly', async () => {
+  render(<BotsTab />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Bot hinzufügen' }));
+
+  expect(screen.getByRole('heading', { name: 'LLM-Bot hinzufügen' })).toBeTruthy();
+  expect(screen.getByRole('combobox', { name: 'Bot-Typ' })).toHaveValue('llm');
+  expect(screen.getByRole('textbox', { name: 'System-Prompt' })).toBeTruthy();
+});
+
 it('creates a scoped n8n bot and keeps pending delivery options disabled', async () => {
   render(<BotsTab />);
   fireEvent.click(await screen.findByRole('button', { name: 'Bot hinzufügen' }));
+
+  fireEvent.change(screen.getByRole('combobox', { name: 'Bot-Typ' }), { target: { value: 'n8n' } });
 
   fireEvent.change(screen.getByRole('textbox', { name: /^Bot-ID/ }), { target: { value: 'service-assistent' } });
   fireEvent.change(screen.getByRole('textbox', { name: 'Anzeigename' }), { target: { value: 'Service-Assistent' } });

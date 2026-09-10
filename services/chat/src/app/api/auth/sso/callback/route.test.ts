@@ -10,6 +10,7 @@ function callbackRequest(query = ''): NextRequest {
 describe('GET /api/auth/sso/callback', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it('redirects to /login?error=missing_code without ever calling fetch when there is no code', async () => {
@@ -19,7 +20,7 @@ describe('GET /api/auth/sso/callback', () => {
     const res = await GET(callbackRequest());
 
     expect(res.status).toBe(307);
-    expect(res.headers.get('location')).toBe('http://localhost/login?error=missing_code');
+    expect(res.headers.get('location')).toBe('http://localhost:3000/login?error=missing_code');
     expect(fetchMock).not.toHaveBeenCalled();
     expect(res.headers.get('set-cookie')).toBeNull();
   });
@@ -46,7 +47,7 @@ describe('GET /api/auth/sso/callback', () => {
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(res.status).toBe(307);
-      expect(res.headers.get('location')).toBe('http://localhost/');
+      expect(res.headers.get('location')).toBe('http://localhost:3000/');
 
       const setCookie = res.headers.get('set-cookie') ?? '';
       expect(setCookie).toContain(`${SESSION_COOKIE_NAME}=${TOKEN}`);
@@ -77,7 +78,7 @@ describe('GET /api/auth/sso/callback', () => {
 
     const res = await GET(callbackRequest('?code=bad-code'));
 
-    expect(res.headers.get('location')).toBe('http://localhost/login?error=invalid_code');
+    expect(res.headers.get('location')).toBe('http://localhost:3000/login?error=invalid_code');
     expect(res.headers.get('set-cookie')).toBeNull();
   });
 
@@ -91,7 +92,7 @@ describe('GET /api/auth/sso/callback', () => {
 
     const res = await GET(callbackRequest('?code=some-code'));
 
-    expect(res.headers.get('location')).toBe('http://localhost/login?error=gateway_unreachable');
+    expect(res.headers.get('location')).toBe('http://localhost:3000/login?error=gateway_unreachable');
     expect(res.headers.get('set-cookie')).toBeNull();
   });
 
@@ -100,6 +101,27 @@ describe('GET /api/auth/sso/callback', () => {
 
     const res = await GET(callbackRequest('?code=some-code'));
 
-    expect(res.headers.get('location')).toBe('http://localhost/login?error=invalid_code');
+    expect(res.headers.get('location')).toBe('http://localhost:3000/login?error=invalid_code');
+  });
+
+  it('redirects to the configured public origin, never to the internal host behind the proxy', async () => {
+    // Behind the ingress `request.url` is http://localhost:3000 — sending the
+    // browser there produced ERR_CONNECTION_REFUSED after the SSO handoff.
+    vi.stubEnv('CHAT_APP_BASE_URL', 'https://chat.example.com');
+    const expiresAt = new Date(Date.now() + 3600_000).toISOString();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ session_token: 'token', expires_at: expiresAt }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          })
+      )
+    );
+
+    const res = await GET(callbackRequest('?code=the-one-time-code'));
+
+    expect(res.headers.get('location')).toBe('https://chat.example.com/');
   });
 });

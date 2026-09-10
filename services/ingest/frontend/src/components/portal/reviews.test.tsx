@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { ApiError, apiJson } from '@/lib/api';
+import { ApiError, apiFetch, apiJson } from '@/lib/api';
 import { ReviewDocument } from './reviews';
 import { useVisiblePolling } from '@/lib/data-cache';
 
-vi.mock('@/lib/api', async importOriginal => ({ ...await importOriginal<typeof import('@/lib/api')>(), apiJson: vi.fn() }));
+const push = vi.fn();
+const refresh = vi.fn();
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push, refresh }) }));
+vi.mock('@/lib/api', async importOriginal => ({ ...await importOriginal<typeof import('@/lib/api')>(), apiFetch: vi.fn(), apiJson: vi.fn() }));
 vi.mock('@/lib/data-cache', () => ({ useVisiblePolling: vi.fn() }));
 vi.mock('@/components/markdown/markdown-view', () => ({ MarkdownView: ({ markdown }: { markdown: string }) => <div>{markdown}</div> }));
 const content = { id: 'doc', original_filename: 'Regelwerk.pdf', status: 'FINISHED', collection_id: 'area', collection_name: 'Service', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, can_reprocess: true, profile_id: 'ppocrv6_tiny_structurev3', release: null, markdown: 'Geprüfter Text', markdown_sha256: 'a'.repeat(64) };
@@ -16,6 +19,7 @@ const capabilities = { profiles: [
   { value: 'openai_vision', label: 'Unconfigured vision', description: '', kind: 'vl' },
 ] };
 const api = vi.mocked(apiJson);
+const fetcher = vi.mocked(apiFetch);
 const config = { publication_configured: true, team_name: 'Service', team_names: ['Service'] };
 function mockDocument(overrides = {}) {
   api.mockImplementation(async path => path === '/api/v1/portal/config' ? config
@@ -23,6 +27,10 @@ function mockDocument(overrides = {}) {
 }
 beforeEach(() => {
   api.mockReset();
+  fetcher.mockReset();
+  fetcher.mockResolvedValue({ ok: true } as Response);
+  push.mockReset();
+  refresh.mockReset();
   vi.mocked(useVisiblePolling).mockClear();
   mockDocument();
 });
@@ -40,6 +48,16 @@ it('requires explicit confirmation and submits exactly the preview hash', async 
   await screen.findByText('Freigabe gespeichert');
   const mutation = api.mock.calls.find(([path]) => path.endsWith('/release'));
   expect(JSON.parse(mutation?.[1]?.body as string)).toEqual({ markdown_sha256: content.markdown_sha256 });
+});
+
+it('deletes an unreleased document only after danger confirmation', async () => {
+  render(<ReviewDocument id="doc" />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Dokument löschen' }));
+  expect(fetcher).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Dokument löschen' }));
+  await waitFor(() => expect(fetcher).toHaveBeenCalledWith('/api/v1/jobs/doc', { method: 'DELETE' }));
+  expect(push).toHaveBeenCalledWith('/reviews');
 });
 it('permits explicitly confirmed grade C without rewriting its quality', async () => {
   mockDocument({ quality_grade: 'C', quality_recommendation: 'block', can_release: true });

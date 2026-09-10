@@ -55,7 +55,11 @@ class ManagedBotWrite(BaseModel):
 
     @field_validator('webhook_url')
     @classmethod
-    def validate_webhook_url(cls, value: str) -> str:
+    def validate_webhook_url(cls, value: str | None) -> str | None:
+        # LLM bots carry no webhook at all; `validate_kind` below owns the
+        # "required for n8n" rule.
+        if not value:
+            return None
         if _UNSAFE_URL_CHARS.search(value):
             raise ValueError('webhook_url must be an unambiguous HTTP(S) URL')
         try:

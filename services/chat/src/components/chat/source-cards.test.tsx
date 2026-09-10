@@ -5,7 +5,7 @@
 // See vitest.config.ts's own docstring for why this file opts into jsdom
 // via a per-file pragma while the rest of the suite stays plain Node.
 import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { SourceCards } from '@/components/chat/source-cards';
 import type { Source } from '@/types/weave-api';
 
@@ -29,11 +29,14 @@ describe('SourceCards', () => {
 
   it('shows the collection slug when one is set', () => {
     render(<SourceCards sources={[makeSource({ collection: 'handbuch' })]} />);
+    expect(screen.queryByText('Collection: handbuch')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Belege (1)' }));
     expect(screen.getByText('Collection: handbuch')).toBeTruthy();
   });
 
   it('renders an explicit "ohne Collection" label for a null collection, never omitting the field', () => {
     render(<SourceCards sources={[makeSource({ chunk_id: 1, collection: null })]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Belege (1)' }));
     expect(screen.getByText('Collection: ohne Collection')).toBeTruthy();
   });
 });

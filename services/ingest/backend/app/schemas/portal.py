@@ -44,6 +44,15 @@ class PortalReleaseRequest(BaseModel):
     accept_quality_warning: bool = False
 
 
+class PortalCollectionReleaseRequest(BaseModel):
+    accept_quality_warnings: bool = False
+
+
+class PortalCollectionReleaseResponse(BaseModel):
+    released: int
+    skipped: int
+
+
 class PortalReprocessRequest(BaseModel):
     profile_id: str = Field(min_length=1)
     markdown_sha256: str = Field(pattern=r'^[0-9a-fA-F]{64}$')

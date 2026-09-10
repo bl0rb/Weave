@@ -131,6 +131,15 @@ def _title_from_first_message(content: str) -> str:
     return first_line[: _TITLE_MAX_LENGTH - 1].rstrip() + '…'
 
 
+def replace_title(db: Session, conversation: Conversation, title: str) -> None:
+    normalized = ' '.join(title.strip().split())
+    if not normalized:
+        return
+    conversation.title = normalized[:_TITLE_MAX_LENGTH]
+    db.add(conversation)
+    db.commit()
+
+
 def build_history(
     conversation: Conversation,
     *,

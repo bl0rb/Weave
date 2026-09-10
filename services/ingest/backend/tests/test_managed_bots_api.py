@@ -220,3 +220,43 @@ def test_managed_bot_rejects_ambiguous_or_non_http_webhook_urls(url):
         json=_payload(team_name, collection_slug, webhook_url=url, auth_token=None),
     )
     assert response.status_code == 422
+
+
+def test_llm_bot_without_a_webhook_is_created_instead_of_crashing_the_validator():
+    """A missing webhook_url used to raise TypeError inside the field
+    validator, and the resulting 500 bypassed CORS -- the browser only ever
+    saw "Failed to fetch"."""
+    admin = _identity('bot-llm-admin', role=UserRole.ADMIN)
+    admin_client = login_as(admin.username)
+    team_name = _team()
+    collection_slug = _scope(admin_client, team_name)
+
+    response = admin_client.post(
+        '/api/v1/auth/admin/bots',
+        json=_payload(
+            team_name,
+            collection_slug,
+            kind='llm',
+            webhook_url=None,
+            auth_token=None,
+            system_prompt='Du antwortest nur mit belegten Quellen.',
+        ),
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()['kind'] == 'llm'
+    assert response.json()['webhook_url'] is None
+
+
+def test_n8n_bot_still_requires_a_webhook():
+    admin = _identity('bot-n8n-admin', role=UserRole.ADMIN)
+    admin_client = login_as(admin.username)
+    team_name = _team()
+    collection_slug = _scope(admin_client, team_name)
+
+    response = admin_client.post(
+        '/api/v1/auth/admin/bots',
+        json=_payload(team_name, collection_slug, webhook_url=None, auth_token=None),
+    )
+
+    assert response.status_code == 422

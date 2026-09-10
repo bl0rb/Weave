@@ -31,6 +31,8 @@ from app.models.models import Collection, DocumentRelease, ImportRun, ImportRunS
 from app.schemas.jobs import JobRestartRequest
 from app.schemas.portal import (
     PortalConfigResponse,
+    PortalCollectionReleaseRequest,
+    PortalCollectionReleaseResponse,
     PortalDocumentDetail,
     PortalDocumentItem,
     PortalDocumentListResponse,
@@ -584,6 +586,77 @@ def release_portal_document(
     except Exception:
         logger.exception('publication queue unavailable for release %s', release.id)
     return _summary(release)  # type: ignore[return-value]
+
+
+@router.post(
+    '/collections/{collection_id}/release-all',
+    response_model=PortalCollectionReleaseResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def release_collection_documents(
+    collection_id: str,
+    payload: PortalCollectionReleaseRequest,
+    db=Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> PortalCollectionReleaseResponse:
+    if not publication_configured():
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Portal publication is not configured')
+    collection = db.get(Collection, collection_id)
+    if collection is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
+    if user.role != UserRole.ADMIN and not _can_manage_collection(db, collection, user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='User cannot release this collection')
+
+    collection_id_expr = Job.processing_info['settings']['collection_id'].as_string()
+    jobs = db.scalars(
+        select(Job)
+        .outerjoin(DocumentRelease, DocumentRelease.job_id == Job.id)
+        .where(collection_id_expr == collection.id, DocumentRelease.id.is_(None))
+        .order_by(Job.created_at.asc(), Job.id.asc())
+    ).all()
+    pending: list[tuple[Job, str, str, dict]] = []
+    skipped = 0
+    for job in jobs:
+        if not _can_release_light(db, job, collection, user):
+            skipped += 1
+            continue
+        try:
+            snapshot, digest, frontmatter = canonical_snapshot(db, job, collection)
+        except PublicationValidationError:
+            skipped += 1
+            continue
+        grade, _recommendation = _quality(job)
+        if (grade or '').lower() == 'c' and not payload.accept_quality_warnings:
+            skipped += 1
+            continue
+        pending.append((job, snapshot, digest, frontmatter))
+
+    releases: list[DocumentRelease] = []
+    for job, snapshot, digest, frontmatter in pending:
+        release_id = str(uuid.uuid4())
+        event_payload = build_release_payload(job, release_id, digest, frontmatter)
+        if (_quality(job)[0] or '').lower() == 'c':
+            event_payload['quality_override'] = True
+        release = DocumentRelease(
+            id=release_id,
+            job_id=job.id,
+            owner_id=user.id,
+            markdown_snapshot=snapshot,
+            markdown_sha256=digest,
+            payload=event_payload,
+            status='pending',
+            next_attempt_at=datetime.now(timezone.utc),
+        )
+        db.add(release)
+        releases.append(release)
+    db.commit()
+
+    for release in releases:
+        try:
+            publication_tasks.deliver_release.delay(release.id)
+        except Exception:
+            logger.exception('publication queue unavailable for release %s', release.id)
+    return PortalCollectionReleaseResponse(released=len(releases), skipped=skipped)
 
 
 def _release_control(db, release: DocumentRelease, user: User) -> tuple[Job, Collection]:

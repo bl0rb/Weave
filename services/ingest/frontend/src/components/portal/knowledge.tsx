@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import Link from 'next/link';
-import { ArrowRight, Archive, BookOpen, Pencil, Plus, Trash2, Users } from 'lucide-react';
+import { ArrowRight, Archive, BookOpen, CheckCheck, Pencil, Plus, Trash2, Users } from 'lucide-react';
 import { apiJson } from '@/lib/api';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { apiSend, ConfirmDialog, Modal, inputClass } from '@/components/admin/admin-shared';
@@ -63,6 +63,9 @@ export function KnowledgeDetail({ id }: { id: string }) {
   const [error, setError] = useState('');
   const [downloadError, setDownloadError] = useState('');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [confirmReleaseAll, setConfirmReleaseAll] = useState(false);
+  const [releasingAll, setReleasingAll] = useState(false);
+  const [notice, setNotice] = useState('');
   const load = useCallback(() => Promise.all([apiJson<KnowledgeSpace>(`/api/v1/collections/${encodeURIComponent(id)}`), loadDocuments(id, offset)])
     .then(([area, docs]) => { setSpace(area); setDocuments(docs); setError(''); })
     .catch(err => setError(portalError(err))), [id, offset]);
@@ -94,12 +97,24 @@ export function KnowledgeDetail({ id }: { id: string }) {
       setDownloadingId(null);
     }
   };
+  const releaseAll = async () => {
+    if (!confirmReleaseAll || releasingAll) return;
+    setReleasingAll(true); setError(''); setNotice('');
+    try {
+      const result = await apiJson<{ released: number; skipped: number }>(`/api/v1/portal/collections/${encodeURIComponent(id)}/release-all`, jsonBody({ accept_quality_warnings: true }));
+      setNotice(`${result.released} Dokumente wurden freigegeben${result.skipped ? `, ${result.skipped} übersprungen` : ''}.`);
+      setConfirmReleaseAll(false);
+      await load();
+    } catch (err) { setError(portalError(err)); }
+    finally { setReleasingAll(false); }
+  };
   return <PortalPage title={space?.name || 'Wissensbereich'} description={space?.description || 'Quellen hinzufügen, Inhalte prüfen und den nächsten Schritt im Blick behalten.'} eyebrow="DEINE WISSENSBASIS">
     <Link className="portal-back" href="/knowledge">← Alle Wissensbereiche</Link>
     {error && <Notice error action={load}>{error}</Notice>}
+    {notice && <Notice>{notice}</Notice>}
     {downloadError && <Notice error>{downloadError}</Notice>}
     {space && <div className="portal-context-bar"><span><Users size={17} />Berechtigte: {space.read_teams.length ? space.read_teams.join(', ') : 'Alle angemeldeten Teams'}</span><span>Veröffentlichung nach manueller Freigabe</span></div>}
-    <section className="portal-panel"><div className="portal-section-heading"><div><p className="portal-eyebrow">INHALTE</p><h2>Dokumente{documents ? ` · ${documents.total}` : ''}</h2></div><div className="flex flex-wrap items-center gap-2">{Boolean(documents?.total) && <Button variant="outline" size="sm" disabled={downloadingId !== null} onClick={() => void downloadAll()}><Archive size={15} />{downloadingId === 'collection' ? 'ZIP wird erstellt …' : 'Alle als ZIP'}</Button>}{(space?.can_upload ?? space?.can_manage) && Boolean(documents?.total) && <Link href={`/sources/new?collection=${encodeURIComponent(id)}`} className={buttonVariants({ variant: 'outline', size: 'sm' })}><Plus size={15} />Quelle hinzufügen</Link>}<Button variant="ghost" size="sm" onClick={load}>Aktualisieren</Button></div></div>
+    <section className="portal-panel"><div className="portal-section-heading"><div><p className="portal-eyebrow">INHALTE</p><h2>Dokumente{documents ? ` · ${documents.total}` : ''}</h2></div><div className="flex flex-wrap items-center gap-2">{space?.can_manage && Boolean(documents?.items.some(document => document.can_release)) && (confirmReleaseAll ? <><Button variant="outline" size="sm" disabled={releasingAll} onClick={() => setConfirmReleaseAll(false)}>Abbrechen</Button><Button variant="danger" size="sm" disabled={releasingAll} onClick={() => void releaseAll()}><CheckCheck size={15} />{releasingAll ? 'Wird freigegeben …' : 'Ja, Sammlung freigeben'}</Button></> : <Button variant="outline" size="sm" onClick={() => setConfirmReleaseAll(true)}><CheckCheck size={15} />Sammlung freigeben</Button>)}{Boolean(documents?.total) && <Button variant="outline" size="sm" disabled={downloadingId !== null} onClick={() => void downloadAll()}><Archive size={15} />{downloadingId === 'collection' ? 'ZIP wird erstellt …' : 'Alle als ZIP'}</Button>}{(space?.can_upload ?? space?.can_manage) && Boolean(documents?.total) && <Link href={`/sources/new?collection=${encodeURIComponent(id)}`} className={buttonVariants({ variant: 'outline', size: 'sm' })}><Plus size={15} />Quelle hinzufügen</Link>}<Button variant="ghost" size="sm" onClick={load}>Aktualisieren</Button></div></div>
       {!documents && !error ? <p className="portal-loading" role="status">Dokumente werden geladen …</p> : documents?.items.length ? <><DocumentTable documents={documents.items} onDownloadMarkdown={document => void downloadDocument(document)} downloadingId={downloadingId} /><Pagination offset={offset} total={documents.total} onChange={value => { setDocuments(null); setOffset(value); }} /></> : !error && <EmptyState title="Hier ist Platz für dein Wissen" href={(space?.can_upload ?? space?.can_manage) ? `/sources/new?collection=${encodeURIComponent(id)}` : undefined} action={(space?.can_upload ?? space?.can_manage) ? "Quelle hinzufügen" : undefined}>Die Eigentümer des Wissensbereichs können eine Quelle hinzufügen. Verbinde eine Confluence-Seite oder lade Dokumente hoch. Nach der Verarbeitung prüfst du den Inhalt.</EmptyState>}
     </section>
   </PortalPage>;

@@ -1,4 +1,7 @@
-import { FileText } from 'lucide-react';
+'use client';
+
+import { useState } from 'react';
+import { ChevronDown, FileText } from 'lucide-react';
 import type { Source } from '@/types/weave-api';
 
 function formatPages(source: Source): string {
@@ -32,15 +35,22 @@ function formatCollection(source: Source): string {
  * pre-Collections legacy document) and not a sign of missing data.
  */
 export function SourceCards({ sources }: { sources: Source[] }) {
+  const [expanded, setExpanded] = useState(false);
   if (sources.length === 0) return null;
 
   return (
     <div className="mt-3">
-      <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-[var(--foreground-muted)]">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((current) => !current)}
+        className="mb-1.5 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-[var(--foreground-muted)] hover:text-[var(--foreground)]"
+      >
         <FileText className="h-3.5 w-3.5" aria-hidden="true" />
         Belege ({sources.length})
-      </p>
-      <ul className="flex flex-col gap-1.5">
+        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} aria-hidden="true" />
+      </button>
+      {expanded ? <ul className="flex flex-col gap-1.5">
         {sources.map((source) => (
           <li
             key={`${source.document_id}-${source.chunk_id}`}
@@ -61,7 +71,7 @@ export function SourceCards({ sources }: { sources: Source[] }) {
             </div>
           </li>
         ))}
-      </ul>
+      </ul> : null}
     </div>
   );
 }

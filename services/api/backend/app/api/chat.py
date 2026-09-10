@@ -79,6 +79,7 @@ def chat(
     except runtime_client.RuntimeRejected as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail or str(exc)) from exc
 
+    is_first_assistant = len(conversation.messages) == 1
     assistant_message = conversations_service.append_message(
         db,
         conversation,
@@ -87,6 +88,12 @@ def chat(
         sources=result.get('sources'),
         trace=result.get('trace'),
     )
+    if is_first_assistant:
+        try:
+            title = runtime_client.conversation_title(question=body.message, answer=assistant_message.content)
+            conversations_service.replace_title(db, conversation, title)
+        except runtime_client.RuntimeClientError:
+            pass
 
     return ChatResponse(
         conversation_id=conversation.id,
@@ -167,6 +174,7 @@ def _stream_and_persist(db, conversation: Conversation, events: Iterator[dict]) 
                 # Persist BEFORE yielding this event -- if append_message
                 # itself somehow fails, our caller must never see a `done`
                 # for a turn that was never actually written to disk.
+                is_first_assistant = len(conversation.messages) == 1
                 conversations_service.append_message(
                     db,
                     conversation,
@@ -175,6 +183,15 @@ def _stream_and_persist(db, conversation: Conversation, events: Iterator[dict]) 
                     sources=sources,
                     trace=trace,
                 )
+                if is_first_assistant:
+                    try:
+                        title = runtime_client.conversation_title(
+                            question=conversation.messages[0].content,
+                            answer=''.join(answer_parts),
+                        )
+                        conversations_service.replace_title(db, conversation, title)
+                    except runtime_client.RuntimeClientError:
+                        pass
 
             yield _sse_line(event)
 

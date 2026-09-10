@@ -108,6 +108,24 @@ def test_owner_can_delete_their_conversation_and_its_messages(db_session):
     assert client.get(f'/v1/conversations/{conversation_id}', headers=auth_headers(raw_token)).status_code == 404
 
 
+def test_owner_can_delete_their_complete_history_without_affecting_other_users(db_session):
+    user, raw_token = make_user_with_token(db_session, username='owner-all')
+    other, _ = make_user_with_token(db_session, username='owner-keep')
+    mine = [Conversation(user_id=user.id, bot_id='faq-bot') for _ in range(2)]
+    keep = Conversation(user_id=other.id, bot_id='faq-bot')
+    db_session.add_all([*mine, keep])
+    db_session.commit()
+    mine_ids = [conversation.id for conversation in mine]
+    keep_id = keep.id
+
+    response = client.delete('/v1/conversations', headers=auth_headers(raw_token))
+
+    assert response.status_code == 204
+    db_session.expire_all()
+    assert all(db_session.get(Conversation, conversation_id) is None for conversation_id in mine_ids)
+    assert db_session.get(Conversation, keep_id) is not None
+
+
 def test_cannot_delete_another_user_conversation(db_session):
     owner, _ = make_user_with_token(db_session, username='owner-h')
     _, intruder_token = make_user_with_token(db_session, username='intruder-b')

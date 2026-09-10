@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { requireSessionCredential } from '@/lib/require-session';
-import { GatewayError, weaveApiFetchJson } from '@/lib/weave-api-server';
+import { GatewayError, weaveApiFetch, weaveApiFetchJson } from '@/lib/weave-api-server';
 import { errorForHttpStatus, errorForNetworkFailure } from '@/lib/errors';
 import type { ConversationSummary } from '@/types/weave-api';
 
@@ -25,6 +25,23 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       const status = cause.kind === 'unauthorized' ? 401 : 502;
       return NextResponse.json(errorForHttpStatus(cause.status ?? status, cause.detail), { status });
     }
+    return NextResponse.json(errorForNetworkFailure(cause), { status: 502 });
+  }
+}
+
+/** DELETE /api/conversations — permanently removes the caller's complete
+ * history. The upstream route is ownership-scoped and returns 204. */
+export async function DELETE(request: NextRequest): Promise<NextResponse> {
+  const session = requireSessionCredential(request);
+  if ('response' in session) return session.response;
+
+  try {
+    const response = await weaveApiFetch('/v1/conversations', session.credential, { method: 'DELETE' });
+    if (response.status === 204) return new NextResponse(null, { status: 204 });
+    if (response.status === 401) return NextResponse.json(errorForHttpStatus(401, null), { status: 401 });
+    if (response.status >= 500) return NextResponse.json(errorForHttpStatus(502, null), { status: 502 });
+    return NextResponse.json(errorForHttpStatus(response.status, null), { status: response.status });
+  } catch (cause) {
     return NextResponse.json(errorForNetworkFailure(cause), { status: 502 });
   }
 }
