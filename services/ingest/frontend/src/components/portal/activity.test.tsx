@@ -84,12 +84,12 @@ describe('ProcessingActivity', () => {
     expect(screen.getByText(/3 Textabschnitte/)).toBeTruthy();
   });
 
-  it('blocks release for quality grade C regardless of case', async () => {
+  it('marks quality grade C as requiring review regardless of case', async () => {
     api.mockResolvedValueOnce(response([item({ quality_grade: ' c ', quality_recommendation: 'ALLOW' })]));
     render(<ProcessingActivity />);
 
-    expect(await screen.findByText('Qualitätsprüfung blockiert')).toBeTruthy();
-    expect(screen.getByText(/Freigabe ist wegen der Qualitätsprüfung blockiert/)).toBeTruthy();
+    expect(await screen.findByText('Qualitätsprüfung erforderlich')).toBeTruthy();
+    expect(screen.getByText(/Stufe C erfordert eine inhaltliche Prüfung/)).toBeTruthy();
     expect(screen.queryByText('Bereit zur Prüfung')).toBeNull();
   });
 
@@ -104,6 +104,7 @@ describe('ProcessingActivity', () => {
     expect(await screen.findByText(label)).toBeTruthy();
     expect(screen.queryByText('Bereit zur Prüfung')).toBeNull();
     expect(screen.getByRole('link', { name: /Confluence-Import ansehen/ }).getAttribute('href')).toBe('/imports/run-1');
+    expect(screen.getByRole('link', { name: 'Handbuch.pdf öffnen' }).getAttribute('href')).toBe('/imports/run-1');
   });
 
   it('keeps a finished legacy job as processed until a source is assigned to a knowledge area', async () => {

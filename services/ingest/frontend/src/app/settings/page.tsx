@@ -137,13 +137,13 @@ export default function SettingsPage() {
     <main className="min-h-screen">
       <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <header className="mb-6">
-          <h1 className="text-3xl font-semibold text-slate-950">Settings</h1>
-          <p className="mt-1 text-sm text-slate-500">Manage your personal account settings.</p>
+          <h1 className="text-3xl font-semibold text-slate-950">API-Zugriff</h1>
+          <p className="mt-1 text-sm text-slate-500">Verwalte persönliche Zugriffstoken für die API.</p>
         </header>
 
         <SectionCard
-          title="API tokens"
-          description="Create personal access tokens to use the API programmatically — sent as an Authorization: Bearer header."
+          title="Persönliche Zugriffstoken"
+          description="Erstelle Zugriffstoken für programmatische API-Aufrufe. Sende sie als Authorization: Bearer-Header."
         >
           {unavailable ? (
             <p className="py-6 text-center text-sm text-slate-500">Not available on this backend yet.</p>

@@ -61,6 +61,10 @@ function dateLabel(value: string): string {
 }
 
 function activityUrl(item: ActivityItem): string {
+  const importStatus = normalized(item.import_status);
+  if (item.import_run_id && ['pending', 'running', 'failed', 'cancelled'].includes(importStatus)) {
+    return `/imports/${item.import_run_id}`;
+  }
   return item.status === 'FINISHED' && item.collection_id ? `/reviews/${item.id}` : `/jobs/${item.id}`;
 }
 
@@ -94,7 +98,7 @@ function activityState(item: ActivityItem, live?: IndexingItem): { label: string
     return { label: 'Verarbeitet', tone: 'warning', hint: 'Für eine Freigabe füge die Quelle einem Wissensbereich hinzu.' };
   }
   if (releaseBlocked(item)) {
-    return { label: 'Qualitätsprüfung blockiert', tone: 'error', hint: 'Die Freigabe ist wegen der Qualitätsprüfung blockiert. Bitte kläre den Inhalt vor einer Freigabe.' };
+    return { label: 'Qualitätsprüfung erforderlich', tone: 'warning', hint: 'Stufe C erfordert eine inhaltliche Prüfung. Eine bewusste Freigabe ist danach möglich.' };
   }
   return { label: 'Bereit zur Prüfung', tone: 'warning', hint: 'Prüfe den Inhalt und entscheide anschließend über die Freigabe.' };
 }

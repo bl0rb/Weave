@@ -156,6 +156,13 @@ def test_render_writes_shared_value_once_and_mirrors_it(tmp_path, config_path):
     ) == 1
 
 
+def test_render_creates_secret_file_with_restrictive_permissions(tmp_path, config_path):
+    out = tmp_path / "out.env"
+    rc = wc.render(config_path, out, environ=dict(REQUIRED_SECRET_ENV))
+    assert rc == 0
+    assert out.stat().st_mode & 0o777 == 0o600
+
+
 def test_render_mirrors_cross_named_shared_secret_into_both_variables(tmp_path, config_path):
     out = tmp_path / "out.env"
     environ = dict(REQUIRED_SECRET_ENV, TEST_CROSS_NAMED_SECRET="cross-value")

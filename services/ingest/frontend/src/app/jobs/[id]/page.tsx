@@ -7,7 +7,7 @@ import { useParams, useSearchParams } from 'next/navigation';
 import { Mail, Pencil, Settings2, Webhook } from 'lucide-react';
 
 import { ErrorNotice, Field, inputClass, LoadingState, Modal } from '@/components/admin/admin-shared';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import type { PaddleCapabilities } from '@/components/dashboard/shared';
 import type { JobArtifact } from '@/components/markdown/markdown-view';
 import { WebhookSendDialog } from '@/components/webhook-send-dialog';
@@ -412,6 +412,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
   const qualityGrade = typeof qualityGate?.grade === 'string' ? qualityGate.grade : null;
   const qualityScore = typeof qualityGate?.score === 'number' ? qualityGate.score : null;
   const qualityRecommendation = typeof qualityGate?.recommendation === 'string' ? qualityGate.recommendation : null;
+  const collectionId = typeof settings?.collection_id === 'string' ? settings.collection_id : null;
 
   const saveMarkdown = async () => {
     setIsSaving(true);
@@ -420,29 +421,31 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
     if (password) {
       url.searchParams.set('password', password);
     }
-    const response = await apiFetch(url.toString(), {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ markdown: draftMarkdown }),
-      skipAuthRedirect: true,
-    });
-    if (!response.ok) {
-      if (response.status === 401 && (await redirectIfSessionExpired())) {
+    try {
+      const response = await apiFetch(url.toString(), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ markdown: draftMarkdown }),
+        skipAuthRedirect: true,
+      });
+      if (!response.ok) {
+        if (response.status === 401 && (await redirectIfSessionExpired())) return;
+        setSaveMessage(
+          response.status === 401
+            ? 'Speichern fehlgeschlagen: Das Dokumentpasswort ist falsch.'
+            : 'Speichern fehlgeschlagen. Prüfe, dass das YAML-Frontmatter erhalten bleibt.'
+        );
         return;
       }
-      setSaveMessage(
-        response.status === 401
-          ? 'Save failed: wrong document password.'
-          : 'Save failed. Ensure YAML frontmatter remains intact.'
-      );
+      const payload = await response.json();
+      setMarkdown(draftMarkdown);
+      setSaveMessage(`Als Version ${payload.version} gespeichert.`);
+      setIsEditing(false);
+    } catch {
+      setSaveMessage('Speichern fehlgeschlagen. Dein Entwurf bleibt erhalten. Bitte versuche es erneut.');
+    } finally {
       setIsSaving(false);
-      return;
     }
-    const payload = await response.json();
-    setMarkdown(draftMarkdown);
-    setSaveMessage(`Saved as version ${payload.version}.`);
-    setIsEditing(false);
-    setIsSaving(false);
   };
 
   return (
@@ -453,7 +456,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
             <Button variant="outline">Back to jobs</Button>
           </Link>
         </div>
-        <h1 className="font-serif text-3xl font-semibold">Job Details</h1>
+        <h1 className="font-serif text-3xl font-semibold">Auftragsdetails</h1>
         <p>Filename: {job.original_filename}</p>
         {job.tags && job.tags.length > 0 && <p>Tags: {job.tags.join(', ')}</p>}
         <p className="flex items-center gap-2">
@@ -569,12 +572,19 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
             </div>
           </section>
         )}
-        <section>
-          <h2 className="mb-2 text-lg font-semibold">Processing Info</h2>
+        {!collectionId && (
+          <section className="rounded-md border border-amber-300 bg-amber-50 p-4 text-amber-950">
+            <h2 className="font-semibold">Keinem Wissensbereich zugeordnet</h2>
+            <p className="mt-1 text-sm">Dieser Auftrag kann nicht freigegeben werden. Starte den Import erneut und wähle dabei einen Wissensbereich aus.</p>
+            <Link href="/sources/new" className={`${buttonVariants({ variant: 'outline' })} mt-3`}>Quelle erneut importieren</Link>
+          </section>
+        )}
+        <details>
+          <summary className="cursor-pointer font-semibold">Technische Verarbeitungsdetails</summary>
           <pre className="overflow-x-auto rounded-md border border-slate-200 bg-white p-4 text-sm text-emerald-800">
             {JSON.stringify(job.processing_info ?? {}, null, 2)}
           </pre>
-        </section>
+        </details>
         {job.status === 'FINISHED' && (
           <div className="flex flex-wrap gap-2">
             <a href={`${API}/api/v1/jobs/${job.id}/download${password ? `?password=${encodeURIComponent(password)}` : ''}`}>

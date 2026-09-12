@@ -12,20 +12,51 @@ import { EmptyState, Notice, PortalPage } from './shared';
 
 type UploadResult = { name: string; id?: string; ok: boolean; message: string };
 
+const SOURCE_DRAFT_KEY = 'weave-source-form-draft';
+type SourceDraft = { collectionId: string; kind: 'files' | 'confluence'; sourceId: string; pageUrl: string; automatic: boolean; confirmedAccess: boolean; profileId: string };
+
 export function SourceForm({ initialCollection = '' }: { initialCollection?: string }) {
   const [spaces, setSpaces] = useState<KnowledgeSpace[] | null>(null);
   const [sources, setSources] = useState<ImportSource[]>([]);
-  const [collectionId, setCollectionId] = useState(initialCollection);
-  const [kind, setKind] = useState<'files' | 'confluence'>('files');
+  const [collectionId, setCollectionId] = useState(() => {
+    if (typeof window === 'undefined') return initialCollection;
+    try { return (JSON.parse(sessionStorage.getItem(SOURCE_DRAFT_KEY) || 'null') as SourceDraft | null)?.collectionId || initialCollection; }
+    catch { return initialCollection; }
+  });
+  const [kind, setKind] = useState<'files' | 'confluence'>(() => {
+    if (typeof window === 'undefined') return 'files';
+    try { return (JSON.parse(sessionStorage.getItem(SOURCE_DRAFT_KEY) || 'null') as SourceDraft | null)?.kind || 'files'; }
+    catch { return 'files'; }
+  });
   const [files, setFiles] = useState<File[]>([]);
-  const [sourceId, setSourceId] = useState('');
+  const [sourceId, setSourceId] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    try { return (JSON.parse(sessionStorage.getItem(SOURCE_DRAFT_KEY) || 'null') as SourceDraft | null)?.sourceId || ''; }
+    catch { return ''; }
+  });
   const [profiles, setProfiles] = useState<PortalProfile[] | null>(null);
-  const [profileId, setProfileId] = useState('');
+  const [profileId, setProfileId] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    try { return (JSON.parse(sessionStorage.getItem(SOURCE_DRAFT_KEY) || 'null') as SourceDraft | null)?.profileId || ''; }
+    catch { return ''; }
+  });
   const [profileError, setProfileError] = useState('');
   const selectedProfile = profiles?.find(profile => profile.value === profileId);
-  const [pageUrl, setPageUrl] = useState('');
-  const [automatic, setAutomatic] = useState(false);
-  const [confirmedAccess, setConfirmedAccess] = useState(false);
+  const [pageUrl, setPageUrl] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    try { return (JSON.parse(sessionStorage.getItem(SOURCE_DRAFT_KEY) || 'null') as SourceDraft | null)?.pageUrl || ''; }
+    catch { return ''; }
+  });
+  const [automatic, setAutomatic] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    try { return Boolean((JSON.parse(sessionStorage.getItem(SOURCE_DRAFT_KEY) || 'null') as SourceDraft | null)?.automatic); }
+    catch { return false; }
+  });
+  const [confirmedAccess, setConfirmedAccess] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    try { return Boolean((JSON.parse(sessionStorage.getItem(SOURCE_DRAFT_KEY) || 'null') as SourceDraft | null)?.confirmedAccess); }
+    catch { return false; }
+  });
   const [saving, setSaving] = useState(false);
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
@@ -34,6 +65,9 @@ export function SourceForm({ initialCollection = '' }: { initialCollection?: str
   const [run, setRun] = useState<ImportRun | null>(null);
   const completed = !saving && (results.length > 0 || run !== null);
   const completedHeading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    sessionStorage.setItem(SOURCE_DRAFT_KEY, JSON.stringify({ collectionId, kind, sourceId, pageUrl, automatic, confirmedAccess, profileId } satisfies SourceDraft));
+  }, [collectionId, kind, sourceId, pageUrl, automatic, confirmedAccess, profileId]);
   useEffect(() => { if (completed) completedHeading.current?.focus(); }, [completed]);
   function addMore() {
     setResults([]); setRun(null); setFiles([]); setError(''); setSourceError(''); setProgress('');
@@ -98,6 +132,7 @@ export function SourceForm({ initialCollection = '' }: { initialCollection?: str
           catch { setError('Der Import wurde gestartet. Die tägliche Aktualisierung konnte nicht aktiviert werden. Bitte prüfe die Verbindungseinstellungen.'); }
         }
       }
+      sessionStorage.removeItem(SOURCE_DRAFT_KEY);
     } catch (err) { setError(portalError(err)); }
     finally { setSaving(false); setProgress(''); }
   }

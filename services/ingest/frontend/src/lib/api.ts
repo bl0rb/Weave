@@ -31,6 +31,12 @@ function onAuthPage(): boolean {
   return AUTH_PAGES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
+function loginUrl(): string {
+  if (typeof window === 'undefined') return '/login';
+  const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  return `/login?returnTo=${encodeURIComponent(returnTo)}`;
+}
+
 /**
  * Fetch wrapper for all backend API calls.
  *
@@ -50,7 +56,7 @@ export async function apiFetch(path: string, init?: ApiFetchInit): Promise<Respo
   });
 
   if (res.status === 401 && !skipAuthRedirect && typeof window !== 'undefined' && !onAuthPage()) {
-    window.location.assign('/login');
+    window.location.assign(loginUrl());
   }
 
   return res;
@@ -68,7 +74,7 @@ export async function redirectIfSessionExpired(): Promise<boolean> {
   try {
     const res = await apiFetch('/api/v1/auth/me', { skipAuthRedirect: true });
     if (res.status === 401 && typeof window !== 'undefined' && !onAuthPage()) {
-      window.location.assign('/login');
+      window.location.assign(loginUrl());
       return true;
     }
   } catch {

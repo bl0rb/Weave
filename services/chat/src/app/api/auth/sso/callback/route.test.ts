@@ -104,6 +104,21 @@ describe('GET /api/auth/sso/callback', () => {
     expect(res.headers.get('location')).toBe('http://localhost:3000/login?error=invalid_code');
   });
 
+  it.each(['not-a-date', new Date(Date.now() - 60_000).toISOString()])(
+    'does not set a session cookie for an invalid or expired exchange timestamp (%s)',
+    async (expiresAt) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response(JSON.stringify({ session_token: 'token', expires_at: expiresAt }), { status: 200 })),
+      );
+
+      const res = await GET(callbackRequest('?code=some-code'));
+
+      expect(res.headers.get('location')).toBe('http://localhost:3000/login?error=invalid_code');
+      expect(res.headers.get('set-cookie')).toBeNull();
+    },
+  );
+
   it('redirects to the configured public origin, never to the internal host behind the proxy', async () => {
     // Behind the ingress `request.url` is http://localhost:3000 — sending the
     // browser there produced ERR_CONNECTION_REFUSED after the SSO handoff.

@@ -47,6 +47,15 @@ def _bot(*, timeout_seconds: int = 120) -> BotConfig:
     )
 
 
+def _bot_with_n8n_token() -> BotConfig:
+    return BotConfig.model_validate({
+        'id': 'n8n-agent', 'name': 'n8n Agent',
+        'model': {'provider': 'n8n', 'model': 'n8n-agent-flow'},
+        'system_prompt': 'Delegates to n8n.',
+        'n8n': {'webhook_url': _WEBHOOK_URL, 'auth_token': 'n8n-secret-token'},
+    })
+
+
 class _FakeResponse:
     """Mirrors tests/test_retrieval_client.py's/tests/test_llm.py's own
     identical helper -- just enough of an httpx.Response for this module's
@@ -172,6 +181,19 @@ def test_run_flow_content_type_header_is_json(monkeypatch):
     monkeypatch.setattr('app.services.n8n_client.httpx.post', _fake_post)
     run_flow(_bot(), 'hi', [], ChatUser(id='u-1'), [])
     assert captured['headers']['Content-Type'] == 'application/json'
+
+
+def test_run_flow_sends_configured_bearer_token(monkeypatch):
+    captured = {}
+
+    def _fake_post(url, content=None, headers=None, timeout=None):
+        captured['headers'] = headers
+        return _FakeResponse(200, {'answer': 'hi'})
+
+    monkeypatch.setattr('app.services.n8n_client.httpx.post', _fake_post)
+    run_flow(_bot_with_n8n_token(), 'hi', [], ChatUser(id='u-1'), [])
+
+    assert captured['headers']['Authorization'] == 'Bearer n8n-secret-token'
 
 
 def test_run_flow_propagates_delegation_config_error_when_secret_missing(monkeypatch):

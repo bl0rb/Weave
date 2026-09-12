@@ -478,6 +478,8 @@ services:
       WEAVE_INGEST_BASE_URL: http://weave-ingest-backend:8000
       WEAVE_INGEST_API_TOKEN: ${WEAVE_KNOWLEDGE_INGEST_API_TOKEN:?WEAVE_KNOWLEDGE_INGEST_API_TOKEN is required}
       WEAVE_INGEST_WEBHOOK_SECRET: ${WEAVE_KNOWLEDGE_WEBHOOK_SECRET:?WEAVE_KNOWLEDGE_WEBHOOK_SECRET is required}
+      CHAT_CONFIG_BASE_URL: http://weave-ingest-backend:8000
+      CHAT_CONFIG_SERVICE_TOKEN: ${CHAT_CONFIG_SERVICE_TOKEN:?CHAT_CONFIG_SERVICE_TOKEN is required}
       # Same shared `x-embedding-env` anchor as weave-knowledge above --
       # the worker is what actually calls the embedding provider during
       # indexing, so it needs the identical values, not just "similar" ones.

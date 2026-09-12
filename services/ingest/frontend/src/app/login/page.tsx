@@ -25,6 +25,10 @@ interface Handoff {
   state: string | null;
 }
 
+function safeReturnTo(value: string | null): string | null {
+  return value?.startsWith('/') && !value.startsWith('//') ? value : null;
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [checking, setChecking] = useState(true);
@@ -34,11 +38,14 @@ export default function LoginPage() {
   // useSearchParams() would force one (it opts the route out of static
   // prerendering). The value is only ever needed after mount anyway.
   const [handoff, setHandoff] = useState<Handoff | null>(null);
+  const [returnTo, setReturnTo] = useState<string | null>(null);
 
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [checkError, setCheckError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
 
   // First run must go through /setup instead; also load enabled OIDC providers.
   useEffect(() => {
@@ -48,7 +55,14 @@ export default function LoginPage() {
       const params = new URLSearchParams(window.location.search);
       const requestedHandoff =
         params.get('handoff') === '1' ? { state: params.get('handoff_state') } : null;
+      if (!cancelled) setReturnTo(safeReturnTo(params.get('returnTo')));
       if (!cancelled) setHandoff(requestedHandoff);
+      const timeout = window.setTimeout(() => {
+        if (!cancelled) {
+          setChecking(false);
+          setCheckError('Die Anmeldung konnte nicht rechtzeitig geprüft werden. Bitte versuche es erneut.');
+        }
+      }, 10000);
 
       if (requestedHandoff) {
         // Already signed in here? Then there is nothing to ask: continue
@@ -77,6 +91,7 @@ export default function LoginPage() {
         // Backend unreachable — show the form; the POST will surface the error.
       }
       if (!cancelled) setChecking(false);
+      window.clearTimeout(timeout);
 
       try {
         const list = await apiJson<ListResponse<PublicProvider>>('/api/v1/auth/providers', {
@@ -91,7 +106,7 @@ export default function LoginPage() {
     return () => {
       cancelled = true;
     };
-  }, [router]);
+  }, [retry, router]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -108,7 +123,7 @@ export default function LoginPage() {
       });
       // Session cookie is set by the response — enter the app, or hand the
       // freshly authenticated session back to whoever sent us here.
-      window.location.assign(handoff ? handoffStartUrl(handoff.state) : '/');
+      window.location.assign(handoff ? handoffStartUrl(handoff.state) : returnTo || '/');
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         setError('Benutzername oder Passwort ist falsch.');
@@ -152,6 +167,14 @@ export default function LoginPage() {
       }
     >
       <form onSubmit={onSubmit} className="flex flex-col gap-4">
+        {checkError && (
+          <div className="space-y-2">
+            <FormError message={checkError} />
+            <Button type="button" variant="outline" onClick={() => { setCheckError(null); setChecking(true); setRetry((value) => value + 1); }}>
+              Erneut prüfen
+            </Button>
+          </div>
+        )}
         <AuthField
           id="identifier"
           label="Benutzername oder E-Mail"

@@ -138,7 +138,7 @@ export function SidebarNav() {
                       : 'text-slate-400'
                   }`}
                 />
-                Konto
+                API-Zugriff
               </Link>
               {user.role === 'admin' && (
                 <Link

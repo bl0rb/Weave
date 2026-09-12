@@ -47,7 +47,9 @@ import argparse
 import hashlib
 import json
 import os
+import os
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -269,7 +271,17 @@ def render(config_path: Path, out_path: Path, environ: dict[str, str] | None = N
     lines.append("")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text("\n".join(lines), encoding="utf-8")
+    fd, temp_name = tempfile.mkstemp(prefix=f'.{out_path.name}.', dir=out_path.parent, text=True)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as temp_file:
+            temp_file.write("\n".join(lines))
+        os.replace(temp_name, out_path)
+    except BaseException:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+        raise
 
     manual_notes = [
         (item.key, note)

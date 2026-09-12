@@ -176,6 +176,12 @@ DEVIATIONS: dict[str, dict[str, Deviation]] = {
             "CELERY_WORKER_CONCURRENCY",
             "CHAT_CONFIG_SERVICE_TOKEN",
             "CHAT_LLM_PRIVATE_HOST_ALLOWLIST",
+            "EMBEDDING_API_KEY",
+            "EMBEDDING_BASE_URL",
+            "EMBEDDING_BATCH_SIZE",
+            "EMBEDDING_DIMENSION",
+            "EMBEDDING_MODEL",
+            "EMBEDDING_PROVIDER",
             "CORS_ORIGINS",
             "HANDOFF_CALLBACK_URL",
             "HANDOFF_SECRET",
@@ -189,6 +195,10 @@ DEVIATIONS: dict[str, dict[str, Deviation]] = {
             "POSTGRES_USER",
             "PUBLIC_API_URL",
             "REDIS_PASSWORD",
+            "RERANK_API_KEY",
+            "RERANK_BASE_URL",
+            "RERANK_MODEL",
+            "RERANK_PROVIDER",
             "SECRET_KEY",
             "SERVICE_NAME",
             "WEBHOOK_PRIVATE_HOST_ALLOWLIST",
@@ -224,11 +234,21 @@ DEVIATIONS: dict[str, dict[str, Deviation]] = {
             "einzeln. Die Compose-Datei reicht sie hier ebenfalls nicht durch.",
         ),
         "POSTGRES_PORT": Deviation("dropped", "wie POSTGRES_USER"),
+        "CHAT_CONFIG_BASE_URL": Deviation(
+            "chart",
+            "Die interne Ingest-Adresse wird vom Chart gesetzt; sie steht "
+            "nicht als Knowledge-Dienstwert in weave.yaml.",
+        ),
     },
     "knowledge-worker": {
         "DATABASE_URL": Deviation("chart", "wie knowledge"),
         "REDIS_URL": Deviation("chart", "wie knowledge"),
         "WEAVE_INGEST_BASE_URL": Deviation("chart", "wie knowledge"),
+        "CHAT_CONFIG_BASE_URL": Deviation(
+            "chart",
+            "Compose traegt die interne Ingest-Adresse fest ein; im Cluster "
+            "setzt das Chart weave.internalUrl.",
+        ),
         "POSTGRES_USER": Deviation("dropped", "wie knowledge"),
         "POSTGRES_PORT": Deviation("dropped", "wie knowledge"),
     },
@@ -243,6 +263,11 @@ DEVIATIONS: dict[str, dict[str, Deviation]] = {
             "dropped",
             "Geht nur in die DATABASE_URL ein. Die Compose-Datei reicht sie "
             "ebenfalls nicht durch.",
+        ),
+        "CHAT_CONFIG_BASE_URL": Deviation(
+            "chart",
+            "Die interne Ingest-Adresse wird vom Chart gesetzt; sie steht "
+            "nicht als Retrieval-Dienstwert in weave.yaml.",
         ),
     },
     "runtime": {

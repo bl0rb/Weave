@@ -51,13 +51,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   try {
     const { sessionToken, expiresAt } = await exchangeSessionCode(code);
+    const maxAgeSeconds = secondsUntil(expiresAt);
+    if (maxAgeSeconds === null) {
+      return redirectToLogin('invalid_code');
+    }
 
     // Behind a reverse proxy `request.url` carries this container's own
     // internal origin, so the browser-facing target comes from config.
     const redirectResponse = NextResponse.redirect(new URL('/', resolveAppBaseUrl()));
     setSessionCookie(request, redirectResponse, sessionToken, {
       kind: 'session',
-      maxAgeSeconds: secondsUntil(expiresAt),
+      maxAgeSeconds,
     });
     return redirectResponse;
   } catch (cause) {
@@ -83,9 +87,9 @@ function redirectToLogin(error: string): NextResponse {
  * `SessionExchangeResponse.expires_at`), or `undefined` — falling back to
  * `setSessionCookie`'s own default — if that value is missing, malformed,
  * or already in the past by the time this runs. */
-function secondsUntil(expiresAtIso: string): number | undefined {
+function secondsUntil(expiresAtIso: string): number | null {
   const expiresAtMs = Date.parse(expiresAtIso);
-  if (Number.isNaN(expiresAtMs)) return undefined;
+  if (Number.isNaN(expiresAtMs)) return null;
   const seconds = Math.floor((expiresAtMs - Date.now()) / 1000);
-  return seconds > 0 ? seconds : undefined;
+  return seconds > 0 ? seconds : null;
 }

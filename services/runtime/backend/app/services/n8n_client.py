@@ -228,6 +228,8 @@ def run_flow(
     }
     body = _canonical_body_bytes(payload)
     headers = {'Content-Type': 'application/json', 'X-Weave-Signature': _signature(body)}
+    if bot.n8n.auth_token:
+        headers['Authorization'] = f'Bearer {bot.n8n.auth_token.get_secret_value()}'
     webhook_url = bot.n8n.webhook_url  # never None here -- see BotConfig's own _n8n_block_matches_provider
 
     try:

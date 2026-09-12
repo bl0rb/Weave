@@ -218,32 +218,31 @@ export function ConfluenceConnectionsTab() {
   return (
     <div className="space-y-6">
       <SectionCard
-        title="Confluence connections"
-        description="Private connections used to import Confluence pages; stored credentials are never displayed."
+        title="Confluence-Verbindungen"
+        description="Private Verbindungen zum Import von Confluence-Seiten. Gespeicherte Zugangsdaten werden nie angezeigt."
         actions={
           <Button size="sm" onClick={() => setCreating(true)}>
             <Plus className="h-4 w-4" />
-            Add connection
+            Verbindung hinzufügen
           </Button>
         }
       >
         <ErrorNotice message={listError} />
         {unavailable && (
           <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            Confluence import is not available on this backend yet. This page starts showing data automatically
-            once the endpoint is deployed.
+            Der Confluence-Import ist auf diesem Backend noch nicht verfügbar. Diese Seite zeigt Verbindungen automatisch an, sobald der Endpunkt bereitsteht.
           </div>
         )}
         {!unavailable && actionError && <ErrorNotice message={actionError} />}
         {loading ? (
-          <LoadingState label="Loading connections..." />
+          <LoadingState label="Verbindungen werden geladen ..." />
         ) : unavailable ? null : sources.length === 0 ? (
           <div className="flex flex-col items-center gap-3 py-10 text-center">
             <Cable className="h-8 w-8 text-slate-300" />
-            <p className="text-sm text-slate-500">No Confluence connections yet. Add one to start importing pages.</p>
+            <p className="text-sm text-slate-500">Noch keine Confluence-Verbindung vorhanden. Füge eine Verbindung hinzu, um Seiten zu importieren.</p>
             <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
               <Plus className="h-4 w-4" />
-              Add connection
+              Verbindung hinzufügen
             </Button>
           </div>
         ) : (
@@ -257,7 +256,7 @@ export function ConfluenceConnectionsTab() {
                         <input
                           value={renameValue}
                           onChange={(event) => setRenameValue(event.target.value)}
-                          aria-label="Connection name"
+                          aria-label="Name der Verbindung"
                           onKeyDown={(event) => {
                             if (event.key === 'Enter') void saveRename(source);
                             if (event.key === 'Escape') setRenamingId(null);
@@ -266,10 +265,10 @@ export function ConfluenceConnectionsTab() {
                           autoFocus
                         />
                         <Button size="sm" onClick={() => void saveRename(source)} disabled={busyId === source.id}>
-                          Save
+                          Speichern
                         </Button>
                         <Button size="sm" variant="outline" onClick={() => setRenamingId(null)}>
-                          Cancel
+                          Abbrechen
                         </Button>
                       </div>
                     ) : (
@@ -284,20 +283,20 @@ export function ConfluenceConnectionsTab() {
                             ? 'Cloud'
                             : source.server_kind === 'datacenter'
                               ? 'Server/DC'
-                              : 'untested'}
+                              : 'nicht geprüft'}
                         </span>
                         <Badge tone="slate">
-                          {source.auth_type === 'cloud_basic' ? 'Email + API token' : 'Personal access token'}
+                          {source.auth_type === 'cloud_basic' ? 'E-Mail + API-Token' : 'Persönlicher Zugriffstoken'}
                         </Badge>
                       </div>
                     )}
                     <dl className="mt-2 space-y-1 text-xs text-slate-500">
                       <div className="flex gap-2">
-                        <dt className="w-16 flex-shrink-0 font-medium">Base URL</dt>
+                        <dt className="w-16 flex-shrink-0 font-medium">Basis-URL</dt>
                         <dd className="break-all">{source.base_url}</dd>
                       </div>
                       <div className="flex gap-2">
-                        <dt className="w-16 flex-shrink-0 font-medium">Created</dt>
+                        <dt className="w-16 flex-shrink-0 font-medium">Angelegt</dt>
                         <dd>{new Date(source.created_at).toLocaleDateString()}</dd>
                       </div>
                     </dl>
@@ -305,7 +304,7 @@ export function ConfluenceConnectionsTab() {
                       <Toggle
                         checked={source.refresh_enabled ?? false}
                         onChange={(next) => void updateRefresh(source, { refresh_enabled: next })}
-                        label="Auto-refresh"
+                        label="Automatisch aktualisieren"
                         disabled={busyId === source.id}
                       />
                       <select
@@ -336,8 +335,8 @@ export function ConfluenceConnectionsTab() {
                     {(source.refresh_enabled ?? false) && (
                       <p className="mt-1 text-xs text-slate-500">
                         {source.last_refresh_at
-                          ? `Last refreshed ${new Date(source.last_refresh_at).toLocaleString()}`
-                          : 'Not refreshed yet.'}
+                          ? `Zuletzt aktualisiert: ${new Date(source.last_refresh_at).toLocaleString()}`
+                          : 'Noch nicht aktualisiert.'}
                       </p>
                     )}
                     {source.last_refresh_error && (
@@ -356,12 +355,12 @@ export function ConfluenceConnectionsTab() {
                       ) : (
                         <PlugZap className="h-4 w-4" />
                       )}
-                      {cooldownSecondsFor(source.id) > 0 ? `Test (${cooldownSecondsFor(source.id)}s)` : 'Test'}
+                      {cooldownSecondsFor(source.id) > 0 ? `Prüfen (${cooldownSecondsFor(source.id)} s)` : 'Verbindung prüfen'}
                     </Button>
                     <button
                       onClick={() => startRename(source)}
-                      aria-label={`Rename ${source.name}`}
-                      title="Rename"
+                      aria-label={`${source.name} umbenennen`}
+                      title="Umbenennen"
                       disabled={busyId === source.id}
                       className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-700 disabled:pointer-events-none disabled:opacity-50"
                     >
@@ -369,8 +368,8 @@ export function ConfluenceConnectionsTab() {
                     </button>
                     <button
                       onClick={() => setDeleting(source)}
-                      aria-label={`Delete ${source.name}`}
-                      title="Delete"
+                      aria-label={`${source.name} löschen`}
+                      title="Löschen"
                       disabled={busyId === source.id}
                       className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-red-50 hover:text-red-600 disabled:pointer-events-none disabled:opacity-50"
                     >
@@ -388,7 +387,7 @@ export function ConfluenceConnectionsTab() {
       <p className="text-sm text-slate-500">
         Import runs live under{' '}
         <Link href="/imports" className="text-emerald-700 hover:text-emerald-800">
-          Processing &gt; Confluence Import
+          Verarbeitung &gt; Confluence-Import
         </Link>
         .
       </p>
@@ -405,14 +404,13 @@ export function ConfluenceConnectionsTab() {
 
       {deleting && (
         <ConfirmDialog
-          title="Delete Confluence connection"
+          title="Confluence-Verbindung löschen"
           body={
             <p>
-              Delete <span className="font-semibold text-slate-950">{deleting.name}</span>? Past import runs
-              keep their history.
+              <span className="font-semibold text-slate-950">{deleting.name}</span> löschen? Frühere Importe behalten ihre Historie.
             </p>
           }
-          confirmLabel="Delete connection"
+          confirmLabel="Verbindung löschen"
           onClose={() => setDeleting(null)}
           onConfirm={async () => {
             await apiSend(`/api/v1/import/sources/${deleting.id}`, { method: 'DELETE' });
@@ -434,7 +432,7 @@ function TestResult({ result }: { result: ImportSourceTestResponse }) {
     >
       <div className="flex items-center gap-2 font-medium">
         {result.ok ? <CircleCheck className="h-4 w-4 flex-shrink-0" /> : <CircleX className="h-4 w-4 flex-shrink-0" />}
-        {result.ok ? 'Connection successful' : 'Connection failed'}
+        {result.ok ? 'Verbindung erfolgreich' : 'Verbindung fehlgeschlagen'}
       </div>
       {result.detail && <p className="mt-1 text-xs">{result.detail}</p>}
     </div>
@@ -464,7 +462,7 @@ function CreateSourceModal({ onClose, onCreated }: { onClose: () => void; onCrea
     e.preventDefault();
     const trimmedEmail = email.trim();
     if (authType === 'cloud_basic' && !trimmedEmail) {
-      setError('The Atlassian account email is required for Cloud connections.');
+      setError('Für Cloud-Verbindungen ist die E-Mail-Adresse des Atlassian-Kontos erforderlich.');
       return;
     }
     setBusy(true);
@@ -489,7 +487,7 @@ function CreateSourceModal({ onClose, onCreated }: { onClose: () => void; onCrea
   }
 
   return (
-    <Modal title="Add Confluence connection" onClose={onClose}>
+    <Modal title="Confluence-Verbindung hinzufügen" onClose={onClose}>
       <form onSubmit={submit} className="space-y-4">
         <Field label="Name">
           <input
@@ -501,7 +499,7 @@ function CreateSourceModal({ onClose, onCreated }: { onClose: () => void; onCrea
             placeholder="ACME Confluence"
           />
         </Field>
-        <Field label="Base URL">
+        <Field label="Basis-URL">
           <input
             type="url"
             value={baseUrl}
@@ -512,7 +510,7 @@ function CreateSourceModal({ onClose, onCreated }: { onClose: () => void; onCrea
           />
         </Field>
         <div>
-          <p className="text-sm font-medium text-slate-700">Authentication</p>
+          <p className="text-sm font-medium text-slate-700">Authentifizierung</p>
           <div className="mt-1 grid gap-3 sm:grid-cols-2">
             <button
               type="button"
@@ -522,7 +520,7 @@ function CreateSourceModal({ onClose, onCreated }: { onClose: () => void; onCrea
               }`}
             >
               <p className="text-sm font-semibold text-slate-950">Confluence Cloud</p>
-              <p className="mt-1 text-xs text-slate-600">Atlassian account email + API token.</p>
+              <p className="mt-1 text-xs text-slate-600">E-Mail-Adresse des Atlassian-Kontos + API-Token.</p>
             </button>
             <button
               type="button"
@@ -532,12 +530,12 @@ function CreateSourceModal({ onClose, onCreated }: { onClose: () => void; onCrea
               }`}
             >
               <p className="text-sm font-semibold text-slate-950">Server / Data Center</p>
-              <p className="mt-1 text-xs text-slate-600">Personal access token (PAT).</p>
+              <p className="mt-1 text-xs text-slate-600">Persönlicher Zugriffstoken (PAT).</p>
             </button>
           </div>
         </div>
         {authType === 'cloud_basic' && (
-          <Field label="Atlassian account email">
+          <Field label="E-Mail-Adresse des Atlassian-Kontos">
             <input
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -548,7 +546,7 @@ function CreateSourceModal({ onClose, onCreated }: { onClose: () => void; onCrea
             />
           </Field>
         )}
-        <Field label={authType === 'cloud_basic' ? 'API token' : 'Personal access token'} hint="Stored encrypted and write-only: it is never shown again.">
+        <Field label={authType === 'cloud_basic' ? 'API-Token' : 'Persönlicher Zugriffstoken'} hint="Verschlüsselt und nur zur Eingabe gespeichert: Der Token wird später nicht erneut angezeigt.">
           <input
             value={credential}
             onChange={(e) => setCredential(e.target.value)}
@@ -558,17 +556,17 @@ function CreateSourceModal({ onClose, onCreated }: { onClose: () => void; onCrea
             autoComplete="new-password"
             data-1p-ignore
             data-lpignore="true"
-            placeholder={authType === 'cloud_basic' ? 'Atlassian API token' : 'Confluence PAT'}
+            placeholder={authType === 'cloud_basic' ? 'Atlassian-API-Token' : 'Confluence-PAT'}
           />
         </Field>
         <ErrorNotice message={error} />
         <div className="flex justify-end gap-2 pt-1">
           <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={busy}>
-            Cancel
+            Abbrechen
           </Button>
           <Button type="submit" size="sm" disabled={busy}>
             {busy && <LoaderCircle className="h-4 w-4 animate-spin" />}
-            Add connection
+            Verbindung hinzufügen
           </Button>
         </div>
       </form>
