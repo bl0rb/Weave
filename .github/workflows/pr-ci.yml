@@ -108,7 +108,27 @@ jobs:
 
       - name: Validate central Compose configuration syntax
         run: |
-          export $(python -c 'import yaml; c=yaml.safe_load(open("weave.yaml")); print(" ".join(item["env_var"] + "=ci-placeholder" for item in c["shared"].values() if item.get("secret") and item.get("env_var")))')
+          eval "$(python - <<'PY'
+          import yaml
+          from pathlib import Path
+
+          names = []
+
+          def walk(value):
+            if isinstance(value, dict):
+              if value.get('secret') and isinstance(value.get('env_var'), str):
+                names.append(value['env_var'])
+              for child in value.values():
+                walk(child)
+            elif isinstance(value, list):
+              for child in value:
+                walk(child)
+
+          walk(yaml.safe_load(Path('weave.yaml').read_text()))
+          for name in dict.fromkeys(names):
+            print(f'export {name}=ci-placeholder')
+          PY
+          )"
           python scripts/weave_config.py render --out "$RUNNER_TEMP/compose.env"
           docker compose --env-file "$RUNNER_TEMP/compose.env" -f deploy/docker-compose.weave.yml config --quiet
 
