@@ -31,7 +31,9 @@ function onAuthPage(): boolean {
   return AUTH_PAGES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
-function loginUrl(): string {
+/** Shared by auth-context.tsx's own mount-time redirect so both paths to
+ * /login carry the same returnTo target. */
+export function loginUrl(): string {
   if (typeof window === 'undefined') return '/login';
   const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
   return `/login?returnTo=${encodeURIComponent(returnTo)}`;

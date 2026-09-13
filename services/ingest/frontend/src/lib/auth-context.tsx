@@ -9,7 +9,7 @@ import {
   useState,
 } from 'react';
 import { useRouter } from 'next/navigation';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, loginUrl } from '@/lib/api';
 import type { AuthUser, SetupStatusResponse } from '@/lib/auth-types';
 
 interface AuthContextValue {
@@ -98,7 +98,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             }
             if (!cancelled) {
               redirected = true;
-              router.replace(needsSetup ? '/setup' : '/login');
+              router.replace(needsSetup ? '/setup' : loginUrl());
             }
           }
         }
