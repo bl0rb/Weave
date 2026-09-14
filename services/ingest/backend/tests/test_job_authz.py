@@ -13,8 +13,9 @@ import uuid
 import zipfile
 
 import pytest
+from sqlalchemy import select
 
-from app.models.models import Job, JobStatus, User, UserRole
+from app.models.models import Collection, Job, JobStatus, Team, User, UserRole, user_teams
 from app.services.security import rate_limiter
 from conftest import TestingSessionLocal, create_test_user, login_as
 
@@ -71,6 +72,15 @@ def _create_team(name: str) -> str:
         db.refresh(team)
         team_id = team.id
         return team_id
+    finally:
+        db.close()
+
+
+def _add_membership(user_id: str, team_id: str, role: str = 'member') -> None:
+    db = _db()
+    try:
+        db.execute(user_teams.insert().values(user_id=user_id, team_id=team_id, role=role))
+        db.commit()
     finally:
         db.close()
 
@@ -140,6 +150,70 @@ def test_team_members_share_job_visibility():
     assert job.id in items_by_id
     # Owner attribution is the job's actual owner, not the viewing teammate.
     assert items_by_id[job.id]['owner'] == {'id': owner.id, 'username': 'authz-team-owner'}
+
+
+def test_collection_member_can_edit_existing_job_from_shared_reader_team():
+    """A collection contributor may operate an existing document even when
+    its job owner belongs to another primary team.
+
+    Collection membership is a separate write grant from ordinary owner/team
+    visibility.  Keep the test on the real GET + PUT path because the
+    regression otherwise appears as an unexplained 404 in the editor.
+    """
+    owner_team_id = _create_team('authz-collection-owner-team')
+    contributor_team_id = _create_team('authz-collection-contributor-team')
+    owner = create_test_user(
+        username='authz-collection-job-owner',
+        email='authz-collection-job-owner@example.com',
+        team_id=owner_team_id,
+    )
+    contributor = create_test_user(
+        username='authz-collection-job-contributor',
+        email='authz-collection-job-contributor@example.com',
+        team_id=contributor_team_id,
+    )
+    _add_membership(contributor.id, contributor_team_id, role='member')
+
+    db = _db()
+    try:
+        team_name = db.scalar(select(Team.name).where(Team.id == contributor_team_id))
+        collection = Collection(
+            owner_id=owner.id,
+            slug='authz-collection-job',
+            name='Shared jobs',
+            read_teams=[team_name],
+        )
+        db.add(collection)
+        db.commit()
+        db.refresh(collection)
+        collection_id = collection.id
+    finally:
+        db.close()
+
+    job = _make_job(
+        owner_id=owner.id,
+        result_markdown='---\ntitle: Original\n---\noriginal body',
+        processing_info={'settings': {'collection_id': collection_id}},
+    )
+    contributor_client = login_as('authz-collection-job-contributor')
+
+    detail = contributor_client.get(f'/api/v1/jobs/{job.id}')
+    assert detail.status_code == 200, detail.text
+    listed = contributor_client.get('/api/v1/jobs')
+    assert listed.status_code == 200, listed.text
+    assert job.id in {item['id'] for item in listed.json()['items']}
+
+    saved = contributor_client.put(
+        f'/api/v1/jobs/{job.id}/save',
+        json={'markdown': '---\ntitle: Edited\n---\nedited body'},
+    )
+    assert saved.status_code == 200, saved.text
+
+    db = _db()
+    try:
+        assert db.get(Job, job.id).result_markdown == '---\ntitle: Edited\n---\nedited body'
+    finally:
+        db.close()
 
 
 def test_different_teams_do_not_share_visibility():

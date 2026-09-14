@@ -3,7 +3,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from app.models.models import DocumentRelease, ImportRunStatus, Job, JobStatus, VlConnection
+from app.models.models import DocumentRelease, ImportRunStatus, Job, JobStatus, VlConnection, user_teams
 from app.services import security
 from app.services.security import rate_limiter
 from tests.conftest import create_test_user, login_as
@@ -162,6 +162,11 @@ def test_portal_reprocess_reader_is_forbidden_and_cross_team_is_hidden():
     team = _team('Portal reprocess authz')
     owner = _user('portal-reprocess-control-owner', team_id=team.id)
     reader = _user('portal-reprocess-reader', team_id=team.id)
+    # Explicit readers remain read-only; absent legacy membership rows use
+    # the historical member default after the compatibility repair.
+    with _db() as db:
+        db.execute(user_teams.insert().values(user_id=reader.id, team_id=team.id, role='reader'))
+        db.commit()
     outsider = _user('portal-reprocess-outsider', team_id=_team('Portal reprocess other').id)
     collection = _collection(owner.id)
     job = _job(owner.id, collection)

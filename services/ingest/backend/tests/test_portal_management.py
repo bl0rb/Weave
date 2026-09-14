@@ -216,7 +216,8 @@ def test_activity_applies_visibility_before_counts_and_status_pagination():
     running = _job(user.id, filename=f'{marker}-running.pdf', collection_id=collection.id, status=JobStatus.RUNNING)
     finished = _job(user.id, filename=f'{marker}-finished.pdf', collection_id=collection.id)
     failed = _job(user.id, filename=f'{marker}-failed.pdf', collection_id=collection.id, status=JobStatus.FAILED)
-    _job(outsider.id, filename=f'{marker}-outsider.pdf', collection_id=collection.id)
+    foreign_collection = _collection(outsider.id, name=f'Foreign {marker}')
+    _job(outsider.id, filename=f'{marker}-outsider.pdf', collection_id=foreign_collection.id)
     legacy = _job(None, filename=f'{marker}-legacy.pdf')
 
     response = login_as(user.username).get('/api/v1/portal/activity', params={'q': marker, 'status': 'FINISHED', 'limit': 1})

@@ -188,7 +188,7 @@ def list_activity(
     quality_grade, quality_recommendation = _quality_expressions()
 
     def apply_activity_filters(statement, *, include_status: bool):
-        statement = _apply_visible_filter(statement, user)
+        statement = _apply_visible_filter(statement, user, db=db)
         if cleaned_q:
             statement = statement.where(func.lower(Job.original_filename).like(f'%{cleaned_q}%'))
         if include_status and status_filter is not None:

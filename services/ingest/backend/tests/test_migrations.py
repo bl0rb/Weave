@@ -128,6 +128,33 @@ def test_user_team_migration_preserves_primary_membership(tmp_path, monkeypatch)
     engine.dispose()
 
 
+def test_0026_repairs_missing_memberships_without_promoting_readers(tmp_path, monkeypatch):
+    db_url = f'sqlite:///{tmp_path / "legacy_memberships.db"}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+    engine = create_engine(db_url, future=True)
+    _build_legacy_metadata().create_all(bind=engine)
+    cfg = _alembic_config()
+    command.stamp(cfg, '0003_job_markdown_versions')
+    command.upgrade(cfg, '0025_retrieval_provider_config')
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO teams (id, name, created_at) VALUES ('t', 'Legacy', CURRENT_TIMESTAMP)"))
+        for user_id, team_id in [('legacy', 't'), ('reader', 't'), ('unassigned', None)]:
+            conn.execute(text(
+                "INSERT INTO users (id, username, email, role, is_active, team_id, created_at, updated_at) "
+                "VALUES (:id, :id, :email, 'user', 1, :team, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            ), {'id': user_id, 'email': f'{user_id}@example.com', 'team': team_id})
+        conn.execute(text("INSERT INTO user_teams (user_id, team_id, role) VALUES ('reader', 't', 'reader')"))
+
+    for _ in range(2):
+        command.upgrade(cfg, 'head')
+        with engine.connect() as conn:
+            assert conn.execute(text('SELECT user_id, team_id, role FROM user_teams ORDER BY user_id')).all() == [
+                ('legacy', 't', 'member'), ('reader', 't', 'reader'),
+            ]
+        command.downgrade(cfg, '0025_retrieval_provider_config')
+    engine.dispose()
+
+
 def test_0004_auth_migration_upgrade_downgrade_round_trip(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / 'migration_scratch.db'
     db_url = f'sqlite:///{db_path}'

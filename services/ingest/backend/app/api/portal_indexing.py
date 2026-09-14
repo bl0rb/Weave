@@ -33,7 +33,7 @@ def indexing_status(
     ).select_from(Job).outerjoin(DocumentRelease, DocumentRelease.job_id == Job.id).where(
         Job.id.in_([str(value) for value in job_id]), Job.password_hash.is_(None),
     )
-    rows = db.execute(_apply_visible_filter(query, user)).all()
+    rows = db.execute(_apply_visible_filter(query, user, db=db)).all()
     references = [ReleaseReference(row.job_id, row.release_id, row.markdown_sha256) for row in rows if row.release_id]
     statuses = fetch_indexing_status(references)
     return PortalIndexingResponse(items=[PortalIndexingItem(

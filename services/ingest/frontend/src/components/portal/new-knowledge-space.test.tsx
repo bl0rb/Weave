@@ -11,7 +11,7 @@ vi.mock('next/navigation', () => ({ useRouter: () => navigation }));
 vi.mock('@/lib/auth-context', () => ({ useAuth: () => ({ user: { username: 'Ada' } }) }));
 vi.mock('@/lib/api', async importOriginal => ({ ...await importOriginal<typeof import('@/lib/api')>(), apiJson: vi.fn() }));
 const api = vi.mocked(apiJson);
-const area = { collection_id: 'area', slug: 'service', name: 'Servicewissen', description: '', read_teams: ['Service'], can_manage: true };
+const area = { collection_id: 'area', slug: 'service', name: 'Servicewissen', description: '', read_teams: ['Service'], can_manage: true, can_upload: true };
 
 beforeEach(() => { api.mockReset(); navigation.replace.mockReset(); });
 afterEach(cleanup);
@@ -84,4 +84,34 @@ it('offers a collection ZIP and an individual Markdown download for finished doc
   render(<KnowledgeDetail id="area" />);
   expect(await screen.findByRole('button', { name: 'Alle als ZIP' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Leitfaden.pdf als Markdown herunterladen' })).toBeTruthy();
+});
+
+it('uses the upload capability for entitled existing team members', async () => {
+  const entitled = { ...area, can_manage: false, can_upload: true };
+  api.mockImplementation(async path => path === '/api/v1/collections/area' ? entitled : {
+    items: [{ id: 'doc', original_filename: 'Leitfaden.pdf', status: 'FINISHED', collection_id: 'area', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, release: null }],
+    total: 1,
+  });
+  render(<KnowledgeDetail id="area" />);
+  expect(await screen.findByRole('button', { name: 'Sammlung freigeben' })).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Quelle hinzufügen' })).toBeTruthy();
+});
+
+it('keeps bulk release available when eligible documents are on another page', async () => {
+  api.mockImplementation(async path => path === '/api/v1/collections/area' ? area : {
+    items: [{ id: 'doc', original_filename: 'Leitfaden.pdf', status: 'FINISHED', collection_id: 'area', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'C', quality_recommendation: 'block', can_release: false, release: null }],
+    total: 21,
+  });
+  render(<KnowledgeDetail id="area" />);
+  expect(await screen.findByRole('button', { name: 'Sammlung freigeben' })).toBeTruthy();
+});
+
+it('keeps explicit readers from uploading or releasing a collection', async () => {
+  api.mockImplementation(async path => path === '/api/v1/collections/area'
+    ? { ...area, can_manage: false, can_upload: false }
+    : { items: [], total: 1 });
+  render(<KnowledgeDetail id="area" />);
+  await screen.findByRole('heading', { name: 'Servicewissen' });
+  expect(screen.queryByRole('button', { name: 'Sammlung freigeben' })).toBeNull();
+  expect(screen.queryByRole('link', { name: 'Quelle hinzufügen' })).toBeNull();
 });

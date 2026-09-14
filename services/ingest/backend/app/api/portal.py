@@ -19,9 +19,10 @@ from app.api.routes import (
     _active_process_job_ids,
     _apply_visible_filter,
     _can_manage_collection,
+    _collection_control_job_filter,
     _content_disposition,
     _is_import_page_job,
-    _owner_visible,
+    _require_visible,
     _require_visible_collection,
     restart_job,
 )
@@ -43,6 +44,7 @@ from app.schemas.portal import (
 )
 from app.services.publications import (
     PublicationValidationError,
+    _markdown_from_job,
     build_release_payload,
     canonical_snapshot,
     publication_configured,
@@ -106,7 +108,9 @@ def _can_release_light(db, job: Job, collection: Collection, user: User) -> bool
     frontmatter validation belongs to the detail/release paths, where the
     markdown is intentionally loaded.
     """
-    if job.status != JobStatus.FINISHED or not job.result_markdown or job.password_hash:
+    if job.status != JobStatus.FINISHED or job.password_hash:
+        return False
+    if not _markdown_from_job(job):
         return False
     if db.get(KnowledgeWithdrawal, job.id) is not None:
         return False
@@ -170,8 +174,9 @@ def _load_visible_job(db, job_id: str, user: User, *, for_update: bool = False) 
     # no-op, but its single-writer transaction still prevents concurrent
     # commits in the test/runtime dialect used here.
     job = db.get(Job, job_id, with_for_update=for_update)
-    if job is None or job.benchmark_run_id is not None or not _owner_visible(db, job.owner_id, user):
+    if job is None or job.benchmark_run_id is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Document not found')
+    _require_visible(db, job, user)
     return job
 
 
@@ -214,12 +219,13 @@ def _export_markdown(db, job: Job, collection: Collection, release: DocumentRele
     """
     if release is not None:
         return release.markdown_snapshot
-    if not job.result_markdown:
+    markdown = _markdown_from_job(job)
+    if not markdown:
         return None
     try:
         return canonical_snapshot(db, job, collection)[0]
     except PublicationValidationError:
-        return job.result_markdown
+        return markdown
 
 
 def _stream_spooled_file(file):
@@ -280,15 +286,23 @@ def list_portal_documents(
     collection_id_expr = Job.processing_info['settings']['collection_id'].as_string()
     quality_grade_expr = Job.processing_info['execution']['quality_gate']['grade'].as_string()
     quality_recommendation_expr = Job.processing_info['execution']['quality_gate']['recommendation'].as_string()
-    control_expr = (
-        True
-        if user.role == UserRole.ADMIN
-        else or_(Job.owner_id == user.id, Collection.owner_id == user.id)
+    control_expr = True if user.role == UserRole.ADMIN else or_(
+        Job.owner_id == user.id,
+        _collection_control_job_filter(db, user),
     )
     can_release_expr = and_(
         ~select(KnowledgeWithdrawal.job_id).where(KnowledgeWithdrawal.job_id == Job.id).exists(),
         Job.status == JobStatus.FINISHED,
-        func.length(func.coalesce(Job.result_markdown, '')) > 0,
+        or_(
+            func.length(func.coalesce(Job.result_markdown, '')) > 0,
+            and_(
+                Job.result_markdown.is_(None),
+                or_(
+                    func.length(func.coalesce(Job.result_path, '')) > 0,
+                    func.length(func.coalesce(Job.processing_info['editor']['latest_result_path'].as_string(), '')) > 0,
+                ),
+            ),
+        ),
         Job.password_hash.is_(None),
         control_expr,
         or_(Job.import_run_id.is_(None), ImportRun.status == ImportRunStatus.FINISHED),
@@ -315,7 +329,7 @@ def list_portal_documents(
         )
         .order_by(Job.created_at.desc())
     )
-    query = _apply_visible_filter(query, user)
+    query = _apply_visible_filter(query, user, db=db)
     if collection_id is not None:
         query = query.where(Collection.id == collection_id)
     if review_only:
@@ -331,7 +345,7 @@ def list_portal_documents(
         .join(Collection, Collection.id == collection_id_expr)
         .outerjoin(ImportRun, ImportRun.id == Job.import_run_id)
     )
-    count_query = _apply_visible_filter(count_query, user)
+    count_query = _apply_visible_filter(count_query, user, db=db)
     if collection_id is not None:
         count_query = count_query.where(Collection.id == collection_id)
     if review_only:
@@ -444,7 +458,7 @@ def download_collection_markdown(
         .options(defer(Job.upload_content), defer(DocumentRelease.payload))
         .order_by(Job.created_at.asc(), Job.id.asc())
     )
-    rows = db.execute(_apply_visible_filter(query, user)).all()
+    rows = db.execute(_apply_visible_filter(query, user, db=db)).all()
 
     archive = tempfile.SpooledTemporaryFile(max_size=_EXPORT_SPOOL_BYTES, mode='w+b')
     used_names: set[str] = set()

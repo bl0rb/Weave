@@ -144,8 +144,6 @@ def build_release_payload(job: Job, release_id: str, snapshot_hash: str, frontma
         character not in '0123456789abcdef' for character in content_sha256
     ):
         raise PublicationValidationError('Job has no valid content SHA-256')
-    if not isinstance(payload.get('engine'), str) or not payload['engine']:
-        raise PublicationValidationError('Document has no valid processing engine in its frontmatter')
     payload['event'] = 'document.released'
     payload['release_id'] = release_id
     payload['markdown_sha256'] = snapshot_hash
@@ -153,6 +151,8 @@ def build_release_payload(job: Job, release_id: str, snapshot_hash: str, frontma
     payload['frontmatter'] = frontmatter
     if isinstance(frontmatter.get('engine'), str):
         payload['engine'] = frontmatter['engine']
+    if not isinstance(payload.get('engine'), str) or not payload['engine']:
+        raise PublicationValidationError('Document has no valid processing engine in its frontmatter')
     if isinstance(frontmatter.get('processed_at'), str):
         payload['processed_at'] = frontmatter['processed_at']
     return payload

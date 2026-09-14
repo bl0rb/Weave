@@ -31,6 +31,7 @@ from app.models.models import (
     User,
     UserRole,
     WorkerLogEntry,
+    user_teams,
 )
 from app.services.security import encrypt_client_secret, hash_password, rate_limiter
 from conftest import BROWSER_HEADERS, TestingSessionLocal
@@ -57,6 +58,33 @@ def client() -> TestClient:
 
 def _db():
     return TestingSessionLocal()
+
+
+def test_user_response_preserves_legacy_primary_team_and_explicit_reader(client):
+    _wipe_users_and_sessions()
+    user = _create_user(username='legacy-member', email='legacy-member@example.com')
+    with _db() as db:
+        team = Team(name='legacy-response-team')
+        db.add(team)
+        db.flush()
+        member = db.get(User, user.id)
+        member.team_id = team.id
+        db.flush()
+        response = auth_module._user_response(member, db)
+        assert response.team_ids == [team.id]
+        assert response.team_roles == {team.id: 'member'}
+        db.execute(user_teams.insert().values(user_id=member.id, team_id=team.id, role='reader'))
+        response = auth_module._user_response(member, db)
+        assert response.team_ids == [team.id]
+        assert response.team_roles == {team.id: 'reader'}
+        db.commit()
+        team_id = team.id
+    signed_in = _login(client, user.username, 'CorrectHorse1')
+    assert signed_in.status_code == 200, signed_in.text
+    assert signed_in.json()['team_roles'] == {team_id: 'reader'}
+    current_user = client.get('/api/v1/auth/me')
+    assert current_user.status_code == 200
+    assert current_user.json()['team_roles'] == {team_id: 'reader'}
 
 
 def test_handoff_identity_requires_service_secret_and_returns_current_memberships(client, monkeypatch):

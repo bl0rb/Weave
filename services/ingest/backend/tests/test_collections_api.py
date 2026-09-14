@@ -21,8 +21,9 @@ from unittest.mock import patch
 
 import pytest
 import yaml
+from sqlalchemy import select
 
-from app.models.models import ImportRun, ImportRunStatus, Job, JobStatus, ManagedBot, Team, UserRole
+from app.models.models import ImportRun, ImportRunStatus, Job, JobStatus, ManagedBot, Team, UserRole, user_teams
 from app.services.security import rate_limiter
 from conftest import TestingSessionLocal, create_test_user, login_as
 
@@ -109,6 +110,81 @@ def test_collections_visibility_and_patch_control_matrix():
     assert owner_patch.json()['read_teams'] == ['ops']
     # CollectionUpdateRequest carries no `slug` field -- it never changes.
     assert owner_patch.json()['slug'] == admin_patch.json()['slug']
+
+
+def test_legacy_primary_team_member_can_add_to_a_collection_after_upgrade():
+    """Accounts created before ``user_teams`` existed only have
+    ``users.team_id``. They remain members of that primary team, including
+    for collection uploads, until an explicit membership role says otherwise.
+    """
+    team_id = _make_team('legacy-collection-team')
+    owner = _user('legacy-collection-owner', team_id=team_id)
+    teammate = _user('legacy-collection-teammate', team_id=team_id)
+
+    owner_client = login_as(owner.username)
+    created = owner_client.post('/api/v1/collections', json={'name': 'Legacy team knowledge'})
+    assert created.status_code == 200, created.text
+    collection_id = created.json()['collection_id']
+
+    teammate_client = login_as(teammate.username)
+    detail = teammate_client.get(f'/api/v1/collections/{collection_id}')
+    assert detail.status_code == 200, detail.text
+    assert detail.json()['can_upload'] is True
+
+    uploaded = teammate_client.post(
+        f'/api/v1/collections/{collection_id}/upload',
+        files={'file': ('legacy-teammate.pdf', b'%PDF-legacy-teammate', 'application/pdf')},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+
+
+def test_explicit_reader_role_still_cannot_add_to_a_collection():
+    """The compatibility fallback must not turn an explicit ``reader`` role
+    into a writer merely because the account also retains ``team_id``."""
+    team_id = _make_team('legacy-reader-team')
+    owner = _user('legacy-reader-owner', team_id=team_id)
+    reader = _user('legacy-reader-user', team_id=team_id)
+    with TestingSessionLocal() as db:
+        db.execute(user_teams.insert().values(user_id=reader.id, team_id=team_id, role='reader'))
+        db.commit()
+
+    created = login_as(owner.username).post('/api/v1/collections', json={'name': 'Reader-only legacy team'})
+    assert created.status_code == 200, created.text
+    collection_id = created.json()['collection_id']
+    reader_client = login_as(reader.username)
+    assert reader_client.get(f'/api/v1/collections/{collection_id}').json()['can_upload'] is False
+    denied = reader_client.post(
+        f'/api/v1/collections/{collection_id}/upload',
+        files={'file': ('reader.pdf', b'%PDF-reader', 'application/pdf')},
+    )
+    assert denied.status_code == 403
+
+
+def test_legacy_primary_team_member_can_add_to_an_explicitly_shared_collection():
+    """The same fallback applies when the collection is owned by another
+    team and this legacy account is entitled through ``read_teams``."""
+    owner_team_id = _make_team('legacy-shared-owner-team')
+    reader_team_id = _make_team('legacy-shared-reader-team')
+    owner = _user('legacy-shared-owner', team_id=owner_team_id)
+    contributor = _user('legacy-shared-contributor', team_id=reader_team_id)
+    with TestingSessionLocal() as db:
+        reader_team_name = db.scalar(select(Team.name).where(Team.id == reader_team_id))
+
+    created = login_as(owner.username).post(
+        '/api/v1/collections',
+        json={'name': 'Explicitly shared legacy knowledge', 'read_teams': [reader_team_name]},
+    )
+    assert created.status_code == 200, created.text
+    collection_id = created.json()['collection_id']
+    contributor_client = login_as(contributor.username)
+    detail = contributor_client.get(f'/api/v1/collections/{collection_id}')
+    assert detail.status_code == 200, detail.text
+    assert detail.json()['can_upload'] is True
+    uploaded = contributor_client.post(
+        f'/api/v1/collections/{collection_id}/upload',
+        files={'file': ('legacy-shared-contributor.pdf', b'%PDF-legacy-shared-contributor', 'application/pdf')},
+    )
+    assert uploaded.status_code == 200, uploaded.text
 
 
 def test_multiple_memberships_grant_reads_without_resharing_owned_collections():

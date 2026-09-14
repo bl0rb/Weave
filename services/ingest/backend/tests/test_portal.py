@@ -272,7 +272,8 @@ def test_portal_collection_zip_contains_only_visible_ready_unprotected_markdown(
     frozen = _job(owner.id, collection, markdown='---\nengine: test\n---\n\n# Frozen marker\n')
     current = _job(owner.id, collection, markdown='---\nengine: test\n---\n\n# Current marker\n')
     protected = _job(owner.id, collection, markdown='---\nengine: test\n---\n\n# Protected marker\n')
-    hidden = _job(outsider.id, collection, markdown='---\nengine: test\n---\n\n# Hidden marker\n')
+    contributed = _job(outsider.id, collection, markdown='---\nengine: test\n---\n\n# Contributed marker\n')
+    hidden = _job(outsider.id, _collection(outsider.id), markdown='---\nengine: test\n---\n\n# Hidden marker\n')
     pending = _job(owner.id, collection, markdown='---\nengine: test\n---\n\n# Pending marker\n')
     other_collection = _collection(owner.id)
     other = _job(owner.id, other_collection, markdown='---\nengine: test\n---\n\n# Other marker\n')
@@ -303,11 +304,12 @@ def test_portal_collection_zip_contains_only_visible_ready_unprotected_markdown(
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
         names = archive.namelist()
         contents = '\n'.join(archive.read(name).decode() for name in names)
-    assert len(names) == 2
-    assert len({name.casefold() for name in names}) == 2
+    assert len(names) == 3
+    assert len({name.casefold() for name in names}) == 3
     assert all('/' not in name and '\\' not in name and name.endswith('.md') for name in names)
     assert '# Frozen marker' in contents
     assert '# Current marker' in contents
+    assert '# Contributed marker' in contents
     assert 'Later edit marker' not in contents
     assert 'Protected marker' not in contents
     assert 'Hidden marker' not in contents
@@ -388,6 +390,11 @@ def test_portal_release_requires_control_and_stale_preview_is_rejected(monkeypat
     teammate = create_test_user(
         username=f'portal-teammate-{uuid.uuid4().hex[:8]}', email=f'portal-teammate-{uuid.uuid4().hex[:8]}@example.com', team_id=team.id
     )
+    # Keep this negative case explicit: a missing row for the legacy primary
+    # team is now treated as the historical default member role.
+    with _db() as db:
+        db.execute(user_teams.insert().values(user_id=teammate.id, team_id=team.id, role='reader'))
+        db.commit()
     collection = _collection(owner.id)
     job = _job(owner.id, collection)
     owner_client = login_as(owner.username)
@@ -453,6 +460,12 @@ def test_collection_upload_and_start_require_collection_control(monkeypatch):
         email=f'portal-collection-teammate-{uuid.uuid4().hex[:8]}@example.com',
         team_id=team.id,
     )
+    # This test covers an explicitly read-only membership. A legacy
+    # ``users.team_id`` without a corresponding row is covered separately by
+    # the collection compatibility regressions and remains an implicit member.
+    with _db() as db:
+        db.execute(user_teams.insert().values(user_id=teammate.id, team_id=team.id, role='reader'))
+        db.commit()
     admin = create_test_user(
         username=f'portal-collection-admin-{uuid.uuid4().hex[:8]}',
         email=f'portal-collection-admin-{uuid.uuid4().hex[:8]}@example.com',

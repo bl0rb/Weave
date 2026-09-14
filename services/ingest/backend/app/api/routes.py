@@ -177,7 +177,41 @@ def _load_job_owners(db: Session, jobs: list[Job]) -> dict[str, JobOwner]:
     }
 
 
-def _visible_job_filter(user: User):
+def _collection_control_job_filter(db: Session, user: User):
+    """Return a job predicate for member contributors to shared collections.
+
+    Collection uploads may be owned by another user, while an explicitly
+    configured ``read_teams`` member is still allowed to operate those
+    documents.  Keep this separate from the ordinary owner/team job boundary
+    so a reader membership never becomes a write grant.
+    """
+    conditions = [Collection.owner_id == user.id]
+    member_team_ids = _member_team_ids(db, user)
+    collection_id_expr = Job.processing_info['settings']['collection_id'].as_string()
+    if member_team_ids:
+        conditions.append(Collection.owner_id.in_(select(User.id).where(User.team_id.in_(member_team_ids))))
+    member_team_names = set(db.scalars(select(Team.name).where(Team.id.in_(member_team_ids))).all()) if member_team_ids else set()
+    if member_team_names:
+        if db.bind.dialect.name == 'sqlite':
+            team_values = func.json_each(Collection.read_teams).table_valued('value').alias('job_collection_read_team')
+        else:
+            team_values = func.json_array_elements_text(Collection.read_teams).table_valued('value').render_derived(
+                name='job_collection_read_team'
+            )
+        conditions.append(
+            select(1)
+            .select_from(team_values)
+            .where(team_values.c.value.in_(member_team_names))
+            .exists()
+        )
+    return Job.id.in_(
+        select(Job.id)
+        .join(Collection, Collection.id == collection_id_expr)
+        .where(or_(*conditions))
+    )
+
+
+def _visible_job_filter(user: User, db: Session | None = None):
     """SQL WHERE fragment enforcing row-level job visibility, composed into
     `_apply_job_filters`/`_job_query`/`_job_count` and applied ad hoc to the
     `/markdown-files` and `/folders/*` queries below.
@@ -185,7 +219,8 @@ def _visible_job_filter(user: User):
     admin => None (no extra filter, sees everything).
     non-admin => owner_id == user.id, OR owner_id belongs to a user whose
     CURRENT team_id matches user.team_id (only when the caller is on a
-    team). Legacy owner_id IS NULL rows are never matched here, so they
+    team). When a database session is supplied, collection contributors
+    also see that collection's jobs. Ownerless rows without such a grant
     stay admin-only until claimed via POST /auth/admin/jobs/claim-ownerless.
     """
     if user.role == UserRole.ADMIN:
@@ -194,10 +229,12 @@ def _visible_job_filter(user: User):
     if user.team_ids:
         teammate_ids = select(User.id).where(User.team_id.in_(user.team_ids))
         conditions.append(Job.owner_id.in_(teammate_ids))
+    if db is not None:
+        conditions.append(_collection_control_job_filter(db, user))
     return or_(*conditions)
 
 
-def _apply_visible_filter(query, user: User):
+def _apply_visible_filter(query, user: User, *, db: Session | None = None):
     # Benchmark-variant children (see app/api/benchmarks.py) are excluded
     # here for the same reason `_apply_job_filters` excludes them: every
     # browse/aggregate surface built on this helper (/stats,
@@ -206,7 +243,7 @@ def _apply_visible_filter(query, user: User):
     # duplicate-409/version-chain logic and are surfaced only via GET
     # /benchmarks/*, though each stays individually fetchable by id.
     query = query.where(Job.benchmark_run_id.is_(None))
-    visible_filter = _visible_job_filter(user)
+    visible_filter = _visible_job_filter(user, db)
     if visible_filter is not None:
         query = query.where(visible_filter)
     return query
@@ -229,10 +266,22 @@ def _owner_visible(db: Session, owner_id: str | None, user: User) -> bool:
     return owner_team_id in user.team_ids
 
 
+def _job_visible(db: Session, job: Job, user: User) -> bool:
+    """Owner/team visibility plus an explicit collection contribution grant."""
+    if _owner_visible(db, job.owner_id, user):
+        return True
+    collection_id = None
+    info = job.processing_info if isinstance(job.processing_info, dict) else {}
+    settings_info = info.get('settings') if isinstance(info.get('settings'), dict) else {}
+    if isinstance(settings_info.get('collection_id'), str):
+        collection_id = settings_info['collection_id']
+    collection = db.get(Collection, collection_id) if collection_id else None
+    return collection is not None and _can_manage_collection(db, collection, user)
+
+
 def _require_visible(db: Session, job: Job, user: User) -> None:
-    """404 (not 403) for a job the caller cannot see -- avoids leaking
-    cross-team/cross-user existence via status code."""
-    if not _owner_visible(db, job.owner_id, user):
+    """Use 404 to avoid disclosing jobs outside the caller's access."""
+    if not _job_visible(db, job, user):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Job not found')
 
 
@@ -240,6 +289,35 @@ def _user_team_names(db: Session, user: User) -> set[str]:
     if not user.team_ids:
         return set()
     return set(db.scalars(select(Team.name).where(Team.id.in_(user.team_ids))).all())
+
+
+def _member_team_ids(db: Session, user: User) -> set[str]:
+    """Return the teams in which ``user`` may contribute to a collection.
+
+    ``users.team_id`` is the pre-multi-membership representation and remains
+    populated for existing accounts.  A deployment can therefore contain a
+    legacy primary-team user without a corresponding ``user_teams`` row (for
+    example when the row was created before the membership backfill ran).
+    Treat that *missing* primary row as the old default ``member`` role, but
+    honor an explicit row -- especially ``reader`` -- when one exists.
+    """
+    team_ids = set(user.team_ids)
+    if not team_ids:
+        return set()
+
+    rows = db.execute(
+        select(user_teams.c.team_id, user_teams.c.role).where(
+            user_teams.c.user_id == user.id,
+            user_teams.c.team_id.in_(team_ids),
+        )
+    ).all()
+    roles = {team_id: role for team_id, role in rows}
+    member_team_ids = {team_id for team_id, role in roles.items() if role == 'member'}
+    # Before user_teams existed, the legacy primary team was implicitly a
+    # member. Do not apply this fallback when an explicit role row exists.
+    if user.team_id in team_ids and user.team_id not in roles:
+        member_team_ids.add(user.team_id)
+    return member_team_ids
 
 
 def _can_read_collection(db: Session, collection: Collection, user: User) -> bool:
@@ -272,7 +350,7 @@ def _can_manage_owner_team(db: Session, owner_id: str | None, user: User) -> boo
     owner_team_id = db.scalar(select(User.team_id).where(User.id == owner_id))
     if owner_team_id is None:
         return False
-    return db.scalar(select(user_teams.c.role).where(user_teams.c.user_id == user.id, user_teams.c.team_id == owner_team_id)) == 'member'
+    return owner_team_id in _member_team_ids(db, user)
 
 
 def _can_manage_collection(db: Session, collection: Collection, user: User) -> bool:
@@ -280,12 +358,11 @@ def _can_manage_collection(db: Session, collection: Collection, user: User) -> b
         return True
     if _can_manage_owner_team(db, collection.owner_id, user):
         return True
-    memberships = db.execute(
-        select(Team.name)
-        .join(user_teams, user_teams.c.team_id == Team.id)
-        .where(user_teams.c.user_id == user.id, user_teams.c.role == 'member')
-    ).all()
-    return any(name in collection.read_teams for (name,) in memberships)
+    member_team_ids = _member_team_ids(db, user)
+    if not member_team_ids:
+        return False
+    member_team_names = set(db.scalars(select(Team.name).where(Team.id.in_(member_team_ids))).all())
+    return bool(member_team_names.intersection(collection.read_teams or []))
 
 
 def _require_collection_owner_control(collection: Collection, user: User) -> None:
@@ -421,7 +498,7 @@ def _job_query(
     query = _apply_job_filters(
         select(Job).order_by(Job.created_at.desc()).options(*_JOB_BLOB_DEFER_OPTIONS),
         q=q, tag=tag, from_date=from_date, to_date=to_date, status_filter=status_filter,
-        visible_filter=_visible_job_filter(user),
+        visible_filter=_visible_job_filter(user, db),
     )
 
     # Absent limit/offset (the default) preserves the historical unbounded
@@ -447,7 +524,7 @@ def _job_count(
     query = _apply_job_filters(
         select(func.count(Job.id.distinct())),
         q=q, tag=tag, from_date=from_date, to_date=to_date, status_filter=status_filter,
-        visible_filter=_visible_job_filter(user),
+        visible_filter=_visible_job_filter(user, db),
     )
     return db.scalar(query) or 0
 
@@ -923,7 +1000,7 @@ def _collection_job_ids(db: Session, collection_id: str, user: User) -> list[str
     of a collection's jobs they're allowed to see -- relevant mainly for
     admin-created collections a regular member later uploads into.
     """
-    jobs = db.scalars(_apply_visible_filter(select(Job).options(*_JOB_BLOB_DEFER_OPTIONS), user)).all()
+    jobs = db.scalars(_apply_visible_filter(select(Job).options(*_JOB_BLOB_DEFER_OPTIONS), user, db=db)).all()
     ids: list[str] = []
     for job in jobs:
         info = job.processing_info if isinstance(job.processing_info, dict) else {}
@@ -1449,7 +1526,7 @@ def get_job_versions(
     _require_visible(db, job, user)
 
     chain = _document_chain(db, job)
-    visible_chain = [member for member in chain if _owner_visible(db, member.owner_id, user)]
+    visible_chain = [member for member in chain if _job_visible(db, member, user)]
     # is_current is relative to the VISIBLE slice, not the full chain: a
     # caller who can't see the newest version must not learn (by seeing
     # every visible entry flagged not-current) that a newer, invisible
@@ -1772,7 +1849,7 @@ def restart_folder(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='Folder path required')
 
     active_job_ids = _active_process_job_ids()
-    jobs = db.scalars(_apply_visible_filter(select(Job).options(*_JOB_BLOB_DEFER_OPTIONS), user)).all()
+    jobs = db.scalars(_apply_visible_filter(select(Job).options(*_JOB_BLOB_DEFER_OPTIONS), user, db=db)).all()
     folder_jobs = [
         job
         for job in jobs
@@ -1821,13 +1898,13 @@ def restart_folder(
 @router.get('/stats', response_model=DashboardStatsResponse)
 def dashboard_stats(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> DashboardStatsResponse:
     processed_documents = db.scalar(
-        _apply_visible_filter(select(func.count()).select_from(Job).where(Job.status == JobStatus.FINISHED), user)
+        _apply_visible_filter(select(func.count()).select_from(Job).where(Job.status == JobStatus.FINISHED), user, db=db)
     ) or 0
     failed_documents = db.scalar(
-        _apply_visible_filter(select(func.count()).select_from(Job).where(Job.status == JobStatus.FAILED), user)
+        _apply_visible_filter(select(func.count()).select_from(Job).where(Job.status == JobStatus.FAILED), user, db=db)
     ) or 0
     finished_jobs = db.scalars(
-        _apply_visible_filter(select(Job).where(Job.status == JobStatus.FINISHED).options(*_JOB_BLOB_DEFER_OPTIONS), user)
+        _apply_visible_filter(select(Job).where(Job.status == JobStatus.FINISHED).options(*_JOB_BLOB_DEFER_OPTIONS), user, db=db)
     ).all()
     processed_pages = 0
     for job in finished_jobs:
@@ -2276,7 +2353,7 @@ def list_markdown_files(db: Session = Depends(get_db), user: User = Depends(get_
             select(Job)
             .where(Job.status == JobStatus.FINISHED, Job.result_markdown.isnot(None))
             .options(*_JOB_DEFER_UPLOAD_CONTENT_ONLY),
-            user,
+            user, db=db,
         )
     ).all()
     entries = sorted((_markdown_entry_from_job(job) for job in jobs), key=lambda entry: entry.path)
@@ -2299,7 +2376,7 @@ def get_markdown_file(
         or job.status != JobStatus.FINISHED
         or job.result_markdown is None
         or _synthetic_markdown_path(job) != relative_path
-        or not _owner_visible(db, job.owner_id, user)
+        or not _job_visible(db, job, user)
     ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Markdown file not found')
     return PlainTextResponse(job.result_markdown)
@@ -2366,7 +2443,7 @@ def download_folder_markdown(
 
     jobs = db.scalars(
         _apply_visible_filter(
-            select(Job).where(Job.status == JobStatus.FINISHED).options(*_JOB_DEFER_UPLOAD_CONTENT_ONLY), user
+            select(Job).where(Job.status == JobStatus.FINISHED).options(*_JOB_DEFER_UPLOAD_CONTENT_ONLY), user, db=db
         )
     ).all()
     folder_jobs = [
@@ -2427,7 +2504,7 @@ def delete_folder(
     if not normalized:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='Folder path required')
 
-    jobs = db.scalars(_apply_visible_filter(select(Job).options(*_JOB_BLOB_DEFER_OPTIONS), user)).all()
+    jobs = db.scalars(_apply_visible_filter(select(Job).options(*_JOB_BLOB_DEFER_OPTIONS), user, db=db)).all()
     folder_jobs = [
         job
         for job in jobs

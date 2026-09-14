@@ -204,15 +204,19 @@ def _create_session(db: Session, request: Request, response: Response, user: Use
     _set_session_cookie(response, token, request)
 
 
-def _user_response(user: User, db: Session | None = None) -> UserResponse:
-    roles = dict(db.execute(select(user_teams.c.team_id, user_teams.c.role).where(user_teams.c.user_id == user.id)).all()) if db else {}
+def _user_response(user: User, db: Session) -> UserResponse:
+    roles = dict(db.execute(select(user_teams.c.team_id, user_teams.c.role).where(user_teams.c.user_id == user.id)).all())
+    # Primary-team assignments created by older versions remain memberships.
+    # Never replace an explicit reader role with the legacy member default.
+    if user.team_id:
+        roles.setdefault(user.team_id, 'member')
     return UserResponse(
         id=user.id,
         username=user.username,
         email=user.email,
         role=user.role,
         team_id=user.team_id,
-        team_ids=list(roles) if db is not None else user.team_ids,
+        team_ids=list(roles),
         team_roles=roles,
         is_active=user.is_active,
         oidc_provider_id=user.oidc_provider_id,
@@ -368,7 +372,7 @@ def setup(payload: SetupRequest, request: Request, response: Response, db: Sessi
     db.commit()
 
     _create_session(db, request, response, user)
-    return _user_response(user)
+    return _user_response(user, db)
 
 
 def _login_locked(user: User | None, now: datetime) -> bool:
@@ -452,7 +456,7 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
     _clear_failed_logins(db, user)
     _log_auth_event(db, 'INFO', f'user {user.username} signed in')
     _create_session(db, request, response, user)  # commits, carrying the log line above along with it
-    return _user_response(user)
+    return _user_response(user, db)
 
 
 # --- authenticated: logout / me ------------------------------------------------
@@ -471,8 +475,8 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)) 
 
 
 @router_authenticated.get('/me', response_model=UserResponse)
-def me(user: User = Depends(get_current_user)) -> UserResponse:
-    return _user_response(user)
+def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> UserResponse:
+    return _user_response(user, db)
 
 
 # --- authenticated: personal API bearer tokens ---------------------------------
