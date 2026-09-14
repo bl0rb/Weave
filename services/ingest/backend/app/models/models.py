@@ -388,6 +388,29 @@ class ManagedBot(Base):
     )
 
 
+class BotTombstone(Base):
+    """Persisted suppression for a bot supplied by Runtime's YAML roster.
+
+    Runtime bots are read-only projections from the Ingest admin UI.  A
+    deletion therefore needs a durable marker, otherwise the bundled bot
+    would come back on the next roster refresh after its managed row is
+    removed.
+    """
+
+    __tablename__ = 'bot_tombstones'
+
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    deleted_by_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True
+    )
+    deleted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
 class User(Base):
     __tablename__ = 'users'
     __table_args__ = (

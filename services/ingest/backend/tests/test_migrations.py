@@ -155,6 +155,28 @@ def test_0026_repairs_missing_memberships_without_promoting_readers(tmp_path, mo
     engine.dispose()
 
 
+def test_0027_bot_tombstones_round_trip(tmp_path, monkeypatch):
+    db_url = f'sqlite:///{tmp_path / "bot_tombstones.db"}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+    engine = create_engine(db_url, future=True)
+    _build_legacy_metadata().create_all(bind=engine)
+    cfg = _alembic_config()
+    command.stamp(cfg, '0003_job_markdown_versions')
+    command.upgrade(cfg, '0026_legacy_team_memberships')
+    command.upgrade(cfg, 'head')
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO bot_tombstones (id) VALUES ('general-assistant')"))
+        row = conn.execute(text('SELECT id, deleted_at FROM bot_tombstones')).one()
+        assert row.id == 'general-assistant'
+        assert row.deleted_at is not None
+    command.downgrade(cfg, '0026_legacy_team_memberships')
+    assert 'bot_tombstones' not in inspect(engine).get_table_names()
+    assert 'managed_bots' in inspect(engine).get_table_names()
+    command.upgrade(cfg, 'head')
+    assert 'bot_tombstones' in inspect(engine).get_table_names()
+    engine.dispose()
+
+
 def test_0004_auth_migration_upgrade_downgrade_round_trip(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / 'migration_scratch.db'
     db_url = f'sqlite:///{db_path}'

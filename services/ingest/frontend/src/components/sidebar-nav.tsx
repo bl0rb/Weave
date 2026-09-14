@@ -8,6 +8,7 @@ import {
   Menu,
   X,
   Cpu,
+  FileInput,
   FilePlus,
   FolderOpen,
   Inbox,
@@ -24,6 +25,7 @@ const navItems = [
   { href: '/knowledge', label: 'Wissensbereiche', icon: FolderOpen },
   { href: '/sources/new', label: 'Quelle hinzufügen', icon: FilePlus },
   { href: '/processing', label: 'Verarbeitung', icon: Cpu },
+  { href: '/imports', label: 'Confluence-Importe', icon: FileInput },
   { href: '/reviews', label: 'Prüfen & freigeben', icon: Shield },
   { href: '/chat', label: 'Chat', icon: Inbox },
 ];
@@ -97,7 +99,7 @@ export function SidebarNav() {
           <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Portal</p>
           {navItems.map(({ href, label, icon: Icon }) => {
             const active = href === '/' ? pathname === '/' : href === '/processing'
-              ? ['/processing', '/jobs', '/imports'].some(route => isChildActive(route, pathname))
+              ? ['/processing', '/jobs'].some(route => isChildActive(route, pathname))
               : isChildActive(href, pathname);
             return <Link key={href} href={href} aria-current={active ? 'page' : undefined}
               onClick={() => setOpen(false)}

@@ -1,12 +1,13 @@
 """Central administration and Runtime projection for n8n-backed bots."""
 
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import delete
 
 from app.core.config import settings
-from app.models.models import ManagedBot, Team, UserRole
+from app.models.models import BotTombstone, ManagedBot, Team, UserRole
 from app.services.security import rate_limiter
 from conftest import TestingSessionLocal, create_test_user, login_as
 
@@ -16,10 +17,12 @@ def _clean_managed_bots():
     rate_limiter.reset()
     with TestingSessionLocal() as db:
         db.execute(delete(ManagedBot))
+        db.execute(delete(BotTombstone))
         db.commit()
     yield
     with TestingSessionLocal() as db:
         db.execute(delete(ManagedBot))
+        db.execute(delete(BotTombstone))
         db.commit()
 
 
@@ -201,6 +204,75 @@ def test_internal_projection_omits_disabled_bots(monkeypatch):
     )
     assert internal.status_code == 200
     assert internal.json()['items'] == []
+    assert payload['id'] in internal.json()['disabled_ids']
+
+
+def test_admin_roster_with_eight_bots_uses_one_runtime_request(monkeypatch):
+    admin_client = login_as(_identity('many-bots-admin', role=UserRole.ADMIN).username)
+    monkeypatch.setattr(settings, 'runtime_api_token', 'runtime-token')
+    calls = []
+    def get(url, **kwargs):
+        calls.append(url)
+        return SimpleNamespace(status_code=200, raise_for_status=lambda: None, json=lambda: [
+            {'id': f'sample-{index}', 'name': f'Sample {index}', 'system_prompt': 'Help.',
+             'model': {'provider': 'fake'}, 'retrieval': {'enabled': False}}
+            for index in range(8)
+        ])
+    monkeypatch.setattr('app.api.managed_bots.httpx.get', get)
+    response = admin_client.get('/api/v1/auth/admin/bots')
+    assert response.status_code == 200, response.text
+    assert len(response.json()['items']) == 8
+    assert len(calls) == 1
+    assert calls[0].endswith('/internal/bot-configs')
+
+
+def test_deleting_a_runtime_bot_persists_suppression_and_hides_it(monkeypatch):
+    admin = _identity('runtime-delete-admin', role=UserRole.ADMIN)
+    admin_client = login_as(admin.username)
+    runtime_bot = SimpleNamespace(id='general-assistant')
+    monkeypatch.setattr('app.api.managed_bots._runtime_bots', lambda: [runtime_bot])
+
+    deleted = admin_client.delete('/api/v1/auth/admin/bots/general-assistant')
+    assert deleted.status_code == 200, deleted.text
+
+    listed = admin_client.get('/api/v1/auth/admin/bots')
+    assert listed.status_code == 200
+    assert listed.json()['items'] == []
+    with TestingSessionLocal() as db:
+        tombstone = db.get(BotTombstone, 'general-assistant')
+        assert tombstone is not None
+        assert tombstone.deleted_by_id == admin.id
+
+    monkeypatch.setattr(settings, 'chat_config_service_token', 'runtime-control-token')
+    internal = admin_client.get(
+        '/api/v1/internal/bots',
+        headers={'Authorization': 'Bearer runtime-control-token'},
+    )
+    assert internal.status_code == 200
+    assert internal.json()['items'] == []
+    assert internal.json()['disabled_ids'] == ['general-assistant']
+
+
+def test_recreating_a_deleted_bot_clears_runtime_suppression(monkeypatch):
+    admin = _identity('runtime-recreate-admin', role=UserRole.ADMIN)
+    admin_client = login_as(admin.username)
+    team_name = _team()
+    collection_slug = _scope(admin_client, team_name)
+    payload = _payload(team_name, collection_slug)
+
+    created = admin_client.post('/api/v1/auth/admin/bots', json=payload)
+    assert created.status_code == 201, created.text
+    assert admin_client.delete(f"/api/v1/auth/admin/bots/{payload['id']}").status_code == 200
+    assert admin_client.post('/api/v1/auth/admin/bots', json=payload).status_code == 201
+
+    with TestingSessionLocal() as db:
+        assert db.get(BotTombstone, payload['id']) is None
+    monkeypatch.setattr(settings, 'chat_config_service_token', 'runtime-control-token')
+    internal = admin_client.get(
+        '/api/v1/internal/bots',
+        headers={'Authorization': 'Bearer runtime-control-token'},
+    )
+    assert payload['id'] not in internal.json()['disabled_ids']
 
 
 @pytest.mark.parametrize('url', [

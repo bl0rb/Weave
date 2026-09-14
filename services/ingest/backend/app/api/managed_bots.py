@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import origin_guard, require_admin
 from app.core.config import settings
 from app.database.session import get_db
-from app.models.models import Collection, ManagedBot, Team, User
+from app.models.models import BotTombstone, Collection, ManagedBot, Team, User
 from app.schemas.managed_bots import (
     ManagedBotAdminResponse,
     ManagedBotCreate,
@@ -69,43 +69,64 @@ def _admin_response(row: ManagedBot) -> ManagedBotAdminResponse:
 def _runtime_bots() -> list[ManagedBotAdminResponse]:
     if not settings.runtime_api_token:
         return []
+    base_url = settings.runtime_bots_base_url.rstrip('/')
+    headers = {'Authorization': f'Bearer {settings.runtime_api_token}'}
     try:
-        response = httpx.get(
-            f'{settings.runtime_bots_base_url.rstrip("/")}/internal/bots',
-            headers={'Authorization': f'Bearer {settings.runtime_api_token}'},
-            timeout=5,
-        )
-        response.raise_for_status()
-        items = response.json()
-    except (httpx.HTTPError, ValueError, ValidationError):
+        # Runtime exposes the complete validated roster in one request. The
+        # old summary-plus-detail sequence made admin refreshes grow linearly
+        # with the number of bots and could time out as bots were added.
+        response = httpx.get(f'{base_url}/internal/bot-configs', headers=headers, timeout=5)
+        if getattr(response, 'status_code', 200) == 404:
+            # Keep admin compatibility while an older Runtime rolls forward.
+            response = httpx.get(f'{base_url}/internal/bots', headers=headers, timeout=5)
+            response.raise_for_status()
+            items = response.json()
+            configs = []
+            for item in items:
+                try:
+                    detail = httpx.get(
+                        f'{base_url}/internal/bots/{item["id"]}', headers=headers, timeout=5,
+                    )
+                    detail.raise_for_status()
+                    config = detail.json()
+                except (httpx.HTTPError, ValueError, KeyError, TypeError):
+                    config = item
+                configs.append(config if isinstance(config, dict) else item)
+            items = configs
+        else:
+            response.raise_for_status()
+            items = response.json()
+        if not isinstance(items, list):
+            return []
+    except (httpx.HTTPError, ValueError, TypeError, ValidationError):
         # Managed n8n bots remain administrable when Runtime is temporarily
         # unavailable; the next refresh exposes local YAML bots again.
         return []
     result = []
     for item in items:
         try:
-            detail = httpx.get(
-                f'{settings.runtime_bots_base_url.rstrip("/")}/internal/bots/{item["id"]}',
-                headers={'Authorization': f'Bearer {settings.runtime_api_token}'}, timeout=5,
-            )
-            detail.raise_for_status()
-            config = detail.json()
-        except (httpx.HTTPError, ValueError):
+            if not isinstance(item, dict):
+                continue
             config = item
-        if not isinstance(config, dict):
-            config = item
+            bot_id = str(config['id'])
+            name = str(config['name'])
+        except (KeyError, TypeError, ValueError):
+            continue
         retrieval = config.get('retrieval') or {}
         model = config.get('model') or {}
         n8n = config.get('n8n') or {}
         guard = config.get('guard') or {}
+        permissions = config.get('permissions') or {}
+        provider = model.get('provider') if isinstance(model, dict) else None
+        kind = config.get('kind') or ('n8n' if provider == 'n8n' else 'llm')
         result.append(ManagedBotAdminResponse(
-            id=item['id'], kind=item.get('kind', 'llm'), name=item['name'], description=item.get('description'), enabled=True,
+            id=bot_id, kind=kind, name=name, description=config.get('description'), enabled=True,
             webhook_url=n8n.get('webhook_url'), system_prompt=config.get('system_prompt'), temperature=model.get('temperature'),
             retrieval_enabled=bool(retrieval.get('enabled')), retrieval_filters=retrieval.get('filters') or {},
             top_k=retrieval.get('top_k', 20), final_k=retrieval.get('final_k', 5), rerank=bool(retrieval.get('rerank', True)),
             include_uncollected=bool(retrieval.get('include_uncollected', True)), streaming=bool(n8n.get('streaming', False)),
             has_auth_token=bool(n8n.get('auth_token')), timeout_seconds=n8n.get('timeout_seconds', 120),
-            teams=list((config.get('permissions') or {}).get('teams') or []), collections=list(retrieval.get('collections') or []),
+            teams=list(permissions.get('teams') or []), collections=list(retrieval.get('collections') or []),
             require_sources=bool(guard.get('require_sources', True)), no_context_reply=guard.get('no_context_reply', ''),
             created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc), source='runtime', editable=True,
         ))
@@ -177,7 +198,8 @@ def list_managed_bots(request: Request, db: Session = Depends(get_db)) -> Manage
     rows = db.scalars(select(ManagedBot).order_by(ManagedBot.name, ManagedBot.id)).all()
     managed = [_admin_response(row) for row in rows]
     managed_ids = {item.id for item in managed}
-    runtime = [item for item in _runtime_bots() if item.id not in managed_ids]
+    tombstoned_ids = set(db.scalars(select(BotTombstone.id)).all())
+    runtime = [item for item in _runtime_bots() if item.id not in managed_ids and item.id not in tombstoned_ids]
     return ManagedBotListResponse(items=sorted(managed + runtime, key=lambda item: (item.name, item.id)))
 
 
@@ -192,6 +214,10 @@ def create_managed_bot(
     if db.get(ManagedBot, payload.id) is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Diese Bot-ID wird bereits verwendet.')
     _validate_references(payload, db)
+    # Re-creating a previously deleted Runtime/YAML bot restores it.
+    tombstone = db.get(BotTombstone, payload.id)
+    if tombstone is not None:
+        db.delete(tombstone)
     row = ManagedBot(id=payload.id, name=payload.name, webhook_url=payload.webhook_url)
     _apply(row, payload, admin)
     db.add(row)
@@ -213,8 +239,17 @@ def update_managed_bot(
     if row is None:
         if bot_id not in {item.id for item in _runtime_bots()}:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bot nicht gefunden.')
+        # Updating a read-only Runtime/YAML bot creates a managed override and
+        # must undo a prior delete suppression for that same ID.
+        tombstone = db.get(BotTombstone, bot_id)
+        if tombstone is not None:
+            db.delete(tombstone)
         row = ManagedBot(id=bot_id, name=payload.name, webhook_url=payload.webhook_url)
         db.add(row)
+    else:
+        tombstone = db.get(BotTombstone, bot_id)
+        if tombstone is not None:
+            db.delete(tombstone)
     _validate_references(payload, db)
     _apply(row, payload, admin)
     db.commit()
@@ -224,13 +259,26 @@ def update_managed_bot(
 
 @router_admin.delete('/{bot_id}')
 def delete_managed_bot(
-    bot_id: str, request: Request, db: Session = Depends(get_db)
+    bot_id: str,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
 ) -> dict[str, str]:
     enforce_rate_limit(request)
     row = db.get(ManagedBot, bot_id)
     if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bot nicht gefunden.')
-    db.delete(row)
+        # Runtime's bundled YAML bots are visible in this admin surface but
+        # cannot be removed from disk.  Record their deletion so Runtime can
+        # suppress them across roster refreshes.
+        if bot_id not in {item.id for item in _runtime_bots()}:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bot nicht gefunden.')
+    else:
+        db.delete(row)
+    tombstone = db.get(BotTombstone, bot_id)
+    if tombstone is None:
+        db.add(BotTombstone(id=bot_id, deleted_by_id=admin.id))
+    else:
+        tombstone.deleted_by_id = admin.id
     db.commit()
     return {'status': 'deleted'}
 
@@ -239,6 +287,8 @@ def delete_managed_bot(
 def internal_managed_bots(response: Response, db: Session = Depends(get_db)) -> ManagedBotInternalListResponse:
     response.headers['Cache-Control'] = 'no-store'
     rows = db.scalars(select(ManagedBot).where(ManagedBot.enabled.is_(True)).order_by(ManagedBot.id)).all()
+    disabled_ids = set(db.scalars(select(BotTombstone.id)).all())
+    disabled_ids.update(db.scalars(select(ManagedBot.id).where(ManagedBot.enabled.is_(False))).all())
     items: list[ManagedBotInternalResponse] = []
     for row in rows:
         try:
@@ -270,4 +320,4 @@ def internal_managed_bots(response: Response, db: Session = Depends(get_db)) -> 
             require_sources=row.require_sources,
             no_context_reply=row.no_context_reply,
         ))
-    return ManagedBotInternalListResponse(items=items)
+    return ManagedBotInternalListResponse(items=items, disabled_ids=sorted(disabled_ids))

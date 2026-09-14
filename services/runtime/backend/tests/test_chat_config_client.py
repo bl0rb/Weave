@@ -40,7 +40,7 @@ def test_fetches_enabled_managed_bots_with_service_auth(monkeypatch):
     assert get.call_args.kwargs['headers'] == {'Authorization': 'Bearer shared-token'}
 
 
-@pytest.mark.parametrize('body', [{}, {'items': {}}, {'items': ['not-an-object']}])
+@pytest.mark.parametrize('body', [{}, {'items': {}}, {'items': ['not-an-object']}, {'items': [], 'disabled_ids': 'sample'}, {'items': [], 'disabled_ids': [None]}])
 def test_managed_bot_snapshot_rejects_invalid_shapes(monkeypatch, body):
     monkeypatch.setattr(settings, 'chat_config_base_url', 'http://ingest:8000')
     monkeypatch.setattr(settings, 'chat_config_service_token', 'shared-token')
@@ -49,6 +49,15 @@ def test_managed_bot_snapshot_rejects_invalid_shapes(monkeypatch, body):
     with patch('app.services.chat_config_client.httpx.get', return_value=response):
         with pytest.raises(ChatConfigUnavailable):
             fetch_managed_bots()
+
+
+def test_bot_snapshot_carries_durable_sample_suppression(monkeypatch):
+    monkeypatch.setattr(settings, 'chat_config_base_url', 'http://ingest:8000')
+    monkeypatch.setattr(settings, 'chat_config_service_token', 'shared-token')
+    response = Mock(status_code=200)
+    response.json.return_value = {'items': [], 'disabled_ids': ['general-assistant']}
+    with patch('app.services.chat_config_client.httpx.get', return_value=response):
+        assert fetch_managed_bots() == [{'id': 'general-assistant', 'enabled': False}]
 
 
 def test_fetches_a_fresh_authenticated_snapshot(monkeypatch):

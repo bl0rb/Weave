@@ -176,3 +176,6 @@ class ManagedBotInternalResponse(BaseModel):
 
 class ManagedBotInternalListResponse(BaseModel):
     items: list[ManagedBotInternalResponse] = Field(default_factory=list)
+    # IDs explicitly removed from the effective Runtime roster.  This lets
+    # Runtime suppress bundled YAML bots whose config is read-only here.
+    disabled_ids: list[str] = Field(default_factory=list)

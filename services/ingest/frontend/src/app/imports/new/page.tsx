@@ -41,6 +41,7 @@ const SERVER_DEFAULT_MAX_DEPTH = 10;
 // (backend/app/schemas/import_.py) -- not yet part of the shared ImportRun
 // type in lib/imports.ts, so it is typed locally to this "prefill" use.
 type ImportRunOptionsPayload = {
+  collection_id?: string | null;
   max_pages: number | null;
   max_depth: number | null;
   include_attachments: boolean;
@@ -111,6 +112,7 @@ function NewImportPageInner() {
 
   // --- Step 3: options + metadata ---
   const [maxPages, setMaxPages] = useState('');
+  const [collectionId, setCollectionId] = useState<string | null>(null);
   const [maxDepth, setMaxDepth] = useState('');
   const [includeAttachments, setIncludeAttachments] = useState(true);
   const [ocrAttachments, setOcrAttachments] = useState(false);
@@ -183,6 +185,7 @@ function NewImportPageInner() {
           setScopeType(prefillRun.scope_type === 'page' ? 'page' : 'space');
           setScopeValue(prefillRun.scope_value);
           const options = prefillRun.options;
+          setCollectionId(options.collection_id ?? null);
           setMaxPages(options.max_pages != null ? String(options.max_pages) : '');
           setMaxDepth(options.max_depth != null ? String(options.max_depth) : '');
           setIncludeAttachments(options.include_attachments);
@@ -192,12 +195,12 @@ function NewImportPageInner() {
           setSubfolder(options.subfolder ?? '');
           setTags((options.tags ?? []).join(', '));
           setEmail(options.email ?? '');
-          setWebhookConnectionId(options.webhook_connection_id ?? '');
+          setWebhookConnectionId(webhookConnectionsPayload.items.some(connection => connection.enabled && connection.id === options.webhook_connection_id) ? options.webhook_connection_id ?? '' : '');
           if (prefillSourceStillExists) {
             setWizardStep(3);
             setPrefillNotice('Prefilled from a previous run — adjust anything and start.');
           } else {
-            setConnectionMessage('The connection this run used no longer exists.');
+            setConnectionMessage('The original connection is not available to your account. Choose or create your own connection.');
             setPrefillNotice('Prefilled from a previous run — adjust anything and start.');
           }
         } else if (prefillFromRunId) {
@@ -414,6 +417,7 @@ function NewImportPageInner() {
           source_id: selectedSourceId,
           scope: { type: scopeType, value: scopeValue.trim() },
           options: {
+            ...(collectionId ? { collection_id: collectionId } : {}),
             max_pages: parsedMaxPages,
             max_depth: parsedMaxDepth,
             include_attachments: includeAttachments,

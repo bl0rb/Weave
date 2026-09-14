@@ -64,11 +64,13 @@ def fetch_chat_provider() -> ChatProviderSnapshot | None:
 
 
 def fetch_managed_bots() -> list[dict] | None:
-    """Fetch enabled admin-managed bots from the same control plane.
+    """Fetch managed bots and suppression entries from the control plane.
 
     ``None`` means standalone mode (both central settings absent).  An empty
     list is a valid configured response and leaves the bundled YAML bots as
     the roster; centrally managed ids override an identically named YAML bot.
+    Deleted/disabled ids become minimal ``enabled=False`` entries so callers
+    can suppress bundled YAML without storing state in Runtime replicas.
     """
     base_url = settings.chat_config_base_url.rstrip('/')
     token = settings.chat_config_service_token
@@ -91,6 +93,9 @@ def fetch_managed_bots() -> list[dict] | None:
         items = body['items']
         if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
             raise TypeError
-        return items
+        disabled_ids = body.get('disabled_ids', [])
+        if not isinstance(disabled_ids, list) or not all(isinstance(bot_id, str) and bot_id for bot_id in disabled_ids):
+            raise TypeError
+        return [*items, *({'id': bot_id, 'enabled': False} for bot_id in disabled_ids)]
     except (ValueError, TypeError, KeyError) as exc:
         raise ChatConfigUnavailable('Zentrale Bot-Konfiguration hat ungültige Daten geliefert.') from exc

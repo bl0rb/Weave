@@ -107,15 +107,15 @@ export function BotsTab() {
           <div><p className="font-medium text-slate-800">Noch keine verwalteten Bots</p><p className="mt-1 text-sm text-slate-500">Lege einen Bot an, damit berechtigte Nutzer ihn im Chat auswählen können.</p></div>
           <Button variant="outline" size="sm" onClick={() => setEditing('new')}><Plus size={15} />Ersten Bot hinzufügen</Button>
         </div>
-      ) : <ul className="divide-y divide-slate-100">
-        {bots.items.map(item => <li key={item.id} className="flex flex-wrap items-start justify-between gap-4 py-4">
+      ) : <ul className={bots.items.length > 3 ? 'grid gap-3 md:grid-cols-2 xl:grid-cols-3' : 'divide-y divide-slate-100'}>
+        {bots.items.map(item => <li key={item.id} className={`flex flex-wrap items-start justify-between gap-4 ${bots.items.length > 3 ? 'min-w-0 rounded-xl border border-slate-200 p-3' : 'py-4'}`}>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2"><Bot size={18} className="text-emerald-700" /><h3 className="font-semibold text-slate-950">{item.name}</h3><Badge tone={item.enabled ? 'emerald' : 'slate'}>{item.enabled ? 'Aktiv' : 'Inaktiv'}</Badge><Badge tone={item.source === 'runtime' ? 'slate' : 'emerald'}>{item.source === 'runtime' ? 'Konfigurationsbot' : 'Verwaltet'}</Badge>{item.streaming && <Badge tone="amber">Streaming konfiguriert</Badge>}{item.has_auth_token && <Badge tone="amber">Bearer-Token hinterlegt</Badge>}</div>
             <p className="mt-1 text-sm text-slate-600">{item.description || item.id}</p>
             {item.webhook_url && <p className="mt-2 break-all text-xs text-slate-400">{item.webhook_url}</p>}
             <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-500"><span>Anwendergruppen: {item.teams.length ? item.teams.join(', ') : 'alle'}</span><span>Wissensbereiche: {item.collections.length ? item.collections.length : 'alle berechtigten'}</span></div>
           </div>
-          {item.editable !== false && <div className="flex gap-1"><Button variant="ghost" size="sm" onClick={() => setEditing(item)} aria-label={`${item.name} bearbeiten`}><Pencil size={15} />Bearbeiten</Button>{item.source !== 'runtime' && <Button variant="ghost" size="sm" onClick={() => setDeleting(item)} aria-label={`${item.name} löschen`}><Trash2 size={15} /></Button>}</div>}
+          {item.editable !== false && <div className="flex gap-1"><Button variant="ghost" size="sm" onClick={() => setEditing(item)} aria-label={`${item.name} bearbeiten`}><Pencil size={15} />Bearbeiten</Button><Button variant="ghost" size="sm" onClick={() => setDeleting(item)} aria-label={`${item.name} löschen`}><Trash2 size={15} /></Button></div>}
         </li>)}
       </ul>}
     </SectionCard>

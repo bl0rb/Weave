@@ -84,6 +84,9 @@ export type ImportRun = {
   scope_value: string;
   root_page_title: string;
   can_sync?: boolean;
+  // Optional while older API deployments are rolling forward. A missing
+  // value preserves the existing terminal-run edit affordance.
+  can_edit?: boolean;
   missing_page_count?: number;
   pages_discovered: number;
   pages_imported: number;

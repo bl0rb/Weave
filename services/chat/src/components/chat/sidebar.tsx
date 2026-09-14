@@ -85,7 +85,8 @@ export function Sidebar({
                         onClick={() => onSelectBot(bot.id)}
                         aria-pressed={active}
                         className={cn(
-                          'w-full rounded-lg border px-3 py-2 text-left text-sm transition-colors',
+                          'w-full rounded-lg border px-3 text-left text-sm transition-colors',
+                          bots.length > 3 ? 'py-1.5' : 'py-2',
                           active
                             ? 'border-[var(--accent)] bg-[var(--accent-soft)]'
                             : 'border-transparent hover:bg-[var(--surface-muted)]'
@@ -93,7 +94,7 @@ export function Sidebar({
                       >
                         <div className="font-medium">{bot.name}</div>
                         {bot.description ? (
-                          <div className="mt-0.5 text-xs text-[var(--foreground-muted)]">{bot.description}</div>
+                          <div className={cn('mt-0.5 text-xs text-[var(--foreground-muted)]', bots.length > 3 && 'line-clamp-1')} title={bot.description}>{bot.description}</div>
                         ) : null}
                         <div className="mt-1 text-[11px] text-[var(--foreground-muted)]">
                           {bot.retrieval.enabled ? 'durchsucht eine Wissensbasis' : 'ohne Wissensbasis (reines Gespräch)'}

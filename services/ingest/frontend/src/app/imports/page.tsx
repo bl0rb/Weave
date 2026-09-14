@@ -123,7 +123,7 @@ export default function ImportsPage() {
                     <td className="hidden py-3 text-slate-700 md:table-cell">{new Date(run.created_at).toLocaleString()}</td>
                     <td className="py-3 text-right">
                       {run.can_sync && <ImportSyncButton runId={run.id} compact />}
-                      {!isRunActive(run.status) && (
+                      {!isRunActive(run.status) && run.can_edit !== false && (
                         <Link
                           href={`/imports/new?from=${run.id}`}
                           title="Edit & run again"

@@ -118,6 +118,7 @@ class ImportRunResponse(BaseModel):
     scope_value: str
     root_page_title: str = ''
     can_sync: bool = False
+    can_edit: bool = False
     missing_page_count: int = 0
     pages_discovered: int = 0
     pages_imported: int = 0

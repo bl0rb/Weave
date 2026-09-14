@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import _aware_utc, get_current_user
 from app.api.routes import (
     _JOB_BLOB_DEFER_OPTIONS,
-    _owner_visible,
+    _can_manage_collection,
     _parse_tags,
     _require_collection_control,
     _require_visible_collection,
@@ -80,10 +80,10 @@ from app.workers.celery_app import celery_app
 IMPORT_TASK_NAME = 'import_confluence'
 
 
-def _require_import_enabled() -> None:
-    # Kill-switch: with IMPORT_ENABLED=false the whole /import surface 404s
-    # as if the feature does not exist.
-    if not settings.import_enabled:
+def _require_import_enabled(request: Request) -> None:
+    # Disabling imports stops new work, but must not hide stored history.
+    history_read = request.method == 'GET' and bool(re.search(r'/import/runs(?:/[^/]+)?/?$', request.url.path))
+    if not settings.import_enabled and not history_read:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Not found')
 
 
@@ -136,7 +136,7 @@ def _get_owned_source(db: Session, source_id: str, user: User) -> ImportSource:
     return source
 
 
-def _visible_run_filter(user: User):
+def _visible_run_filter(user: User, db: Session | None = None):
     # Mirrors routes._visible_job_filter: own + current-teammates + admin-all;
     # legacy NULL-owner runs stay admin-only.
     if user.role == UserRole.ADMIN:
@@ -145,14 +145,36 @@ def _visible_run_filter(user: User):
     if user.team_ids:
         teammate_ids = select(User.id).where(User.team_id.in_(user.team_ids))
         conditions.append(ImportRun.owner_id.in_(teammate_ids))
+    if db is not None:
+        collections = db.scalars(select(Collection)).all()
+        controlled_ids = [collection.id for collection in collections if _can_manage_collection(db, collection, user)]
+        if controlled_ids:
+            conditions.append(ImportRun.options['collection_id'].as_string().in_(controlled_ids))
     return or_(*conditions)
 
 
 def _get_visible_run(db: Session, run_id: str, user: User) -> ImportRun:
-    run = db.get(ImportRun, run_id)
-    if run is None or not _owner_visible(db, run.owner_id, user):
+    query = select(ImportRun).where(ImportRun.id == run_id)
+    visible_filter = _visible_run_filter(user, db)
+    if visible_filter is not None:
+        query = query.where(visible_filter)
+    run = db.scalar(query)
+    if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Import run not found')
     return run
+
+
+def _can_edit_run(run: ImportRun, user: User) -> bool:
+    return (settings.import_enabled and run.kind == 'confluence'
+            and run.status not in (ImportRunStatus.PENDING, ImportRunStatus.RUNNING)
+            and (run.owner_id == user.id or user.role == UserRole.ADMIN))
+
+
+def _can_sync_run(db: Session, run: ImportRun, user: User) -> bool:
+    if not _can_edit_run(run, user) or not run.source_id:
+        return False
+    source = db.get(ImportSource, run.source_id)
+    return source is not None and source.owner_id == run.owner_id
 
 
 def _require_run_control(run: ImportRun, user: User) -> None:
@@ -598,12 +620,13 @@ def list_import_runs(
     db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ) -> ImportRunListResponse:
     query = select(ImportRun).order_by(ImportRun.created_at.desc())
-    visible_filter = _visible_run_filter(user)
+    visible_filter = _visible_run_filter(user, db)
     if visible_filter is not None:
         query = query.where(visible_filter)
     runs = db.scalars(query).all()
     return ImportRunListResponse(items=[ImportRunResponse.model_validate(run).model_copy(update={
-        'can_sync': run.kind == 'confluence' and run.owner_id == user.id and run.source_id is not None and run.status not in (ImportRunStatus.PENDING, ImportRunStatus.RUNNING),
+        'can_sync': _can_sync_run(db, run, user),
+        'can_edit': _can_edit_run(run, user),
         'missing_page_count': len((run.state or {}).get('missing_pages') or []),
     }) for run in runs])
 
@@ -634,7 +657,8 @@ def get_import_run(
     ]
 
     base = ImportRunResponse.model_validate(run)
-    base.can_sync = run.kind == 'confluence' and run.owner_id == user.id and run.source_id is not None and run.status not in (ImportRunStatus.PENDING, ImportRunStatus.RUNNING)
+    base.can_sync = _can_sync_run(db, run, user)
+    base.can_edit = _can_edit_run(run, user)
     base.missing_page_count = len(state.get('missing_pages') or [])
     stored_options = run.options if isinstance(run.options, dict) else {}
     missing_pages = [dict(entry) for entry in state.get('missing_pages') or []]
@@ -671,7 +695,7 @@ def sync_import_run(
     if template.kind != 'confluence' or template.status in (ImportRunStatus.PENDING, ImportRunStatus.RUNNING):
         raise HTTPException(status_code=409, detail='Only completed Confluence runs can be synchronized')
     source = db.get(ImportSource, template.source_id) if template.source_id else None
-    if source is None or source.owner_id != user.id:
+    if source is None or source.owner_id != template.owner_id:
         raise HTTPException(status_code=404, detail='Import source not found')
     try:
         run = _start_refresh_run(db, source, template=template)

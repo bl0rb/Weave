@@ -98,6 +98,18 @@ def test_load_bot_raises_bot_not_found_error_for_unknown_id(bots_dir):
         load_bot('does-not-exist')
 
 
+def test_deleted_sample_stays_hidden_on_repeated_roster_loads(bots_dir, monkeypatch):
+    (bots_dir / 'minimal.yaml').write_text(_MINIMAL_BOT, encoding='utf-8')
+    monkeypatch.setattr('app.services.botconfig.fetch_managed_bots', lambda: [
+        {'id': 'minimal', 'enabled': False},
+    ])
+    assert list_bots() == []
+    assert list_bots() == []
+    with pytest.raises(BotNotFoundError):
+        load_bot('minimal')
+    assert (bots_dir / 'minimal.yaml').exists()
+
+
 def test_centrally_managed_bot_is_merged_with_local_roster(bots_dir, monkeypatch):
     (bots_dir / 'minimal.yaml').write_text(_MINIMAL_BOT, encoding='utf-8')
     monkeypatch.setattr(settings, 'n8n_allowed_base_urls', ['https://n8n.example.test/webhook/'])

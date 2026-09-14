@@ -9,6 +9,29 @@ of the suite exercises."""
 
 from tests.conftest import AUTH_HEADERS, client
 
+
+def test_bulk_bot_configs_use_one_snapshot_and_mask_credentials(monkeypatch):
+    from app.schemas.bot import BotConfig
+
+    bots = [BotConfig.model_validate({
+        'id': f'bot-{index}', 'name': f'Bot {index}',
+        'model': {'provider': 'n8n', 'model': 'agent'},
+        'system_prompt': 'Assist.',
+        'n8n': {'webhook_url': 'https://example.test/webhook/agent', 'auth_token': 'private-token'},
+    }) for index in range(8)]
+    calls = []
+    def snapshot():
+        calls.append(True)
+        return bots
+    monkeypatch.setattr('app.api.internal.list_bots', snapshot)
+    assert client.get('/internal/bot-configs').status_code == 401
+    response = client.get('/internal/bot-configs', headers=AUTH_HEADERS)
+    assert response.status_code == 200, response.text
+    assert len(response.json()) == 8
+    assert len(calls) == 1
+    assert 'private-token' not in response.text
+    assert response.json()[0]['n8n']['auth_token'] == '**********'
+
 # --- GET /internal/bots -------------------------------------------------------
 
 

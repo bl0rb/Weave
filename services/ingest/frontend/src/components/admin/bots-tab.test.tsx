@@ -104,3 +104,19 @@ it('deletes an existing bot only after confirmation', async () => {
     { method: 'DELETE' },
   ));
 });
+
+it('allows deleting a bundled Runtime bot after confirmation', async () => {
+  json.mockImplementation(async path => {
+    if (path === '/api/v1/auth/admin/bots') return { items: [{ ...savedBot, source: 'runtime', editable: true }] };
+    if (path === '/api/v1/auth/admin/teams') return { items: [] };
+    if (path === '/api/v1/collections') return { items: [] };
+    throw new Error(`unexpected request: ${path}`);
+  });
+  render(<BotsTab />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Service-Assistent löschen' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Bot löschen' }));
+  await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
+    '/api/v1/auth/admin/bots/service-assistent',
+    { method: 'DELETE' },
+  ));
+});

@@ -326,10 +326,11 @@ def list_bots() -> list[BotConfig]:
     managed_raw = fetch_managed_bots()
     if managed_raw is None:
         return local
-    managed = [_managed_bot(raw) for raw in managed_raw]
+    disabled_ids = {raw['id'] for raw in managed_raw if raw.get('enabled') is False}
+    managed = [_managed_bot(raw) for raw in managed_raw if raw.get('enabled') is not False and raw.get('id') not in disabled_ids]
     merged = {bot.id: bot for bot in local}
     merged.update({bot.id: bot for bot in managed})
-    return [merged[bot_id] for bot_id in sorted(merged)]
+    return [merged[bot_id] for bot_id in sorted(merged) if bot_id not in disabled_ids]
 
 
 def list_local_bots() -> list[BotConfig]:

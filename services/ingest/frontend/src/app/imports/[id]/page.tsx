@@ -173,7 +173,7 @@ export default function ImportRunPage() {
           <div className="flex flex-wrap items-center gap-2">
             {run.can_sync && <ImportSyncButton runId={run.id} />}
             <span className={`rounded px-2 py-1 text-xs ${runStatusChip[run.status]}`}>{run.status}</span>
-            {!active && (
+            {!active && run.can_edit !== false && (
               <Link href={`/imports/new?from=${run.id}`}>
                 <Button variant="outline" size="sm">
                   <RotateCcw className="mr-2 h-4 w-4" /> Edit & run again

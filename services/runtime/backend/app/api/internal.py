@@ -62,6 +62,19 @@ def list_bots_endpoint() -> list[BotSummary]:
     ]
 
 
+@router.get('/bot-configs', response_model=list[BotConfig])
+def list_bot_configs_endpoint() -> list[BotConfig]:
+    """One authenticated snapshot for admin editing, independent of roster size.
+
+    BotConfig's SecretStr fields retain the existing detail endpoint's
+    masked serialization; this route never exports credential plaintext.
+    """
+    try:
+        return list_bots()
+    except ChatConfigUnavailable as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+
 @router.get('/bots/{bot_id}', response_model=BotConfig)
 def get_bot_endpoint(bot_id: str) -> BotConfig:
     try:

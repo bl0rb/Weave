@@ -1296,14 +1296,21 @@ def test_import_attachment_children_remain_restartable(monkeypatch):
 
 # --- Kill-switch --------------------------------------------------------------
 
-def test_import_disabled_kill_switch_404s_the_surface(monkeypatch):
+def test_import_disabled_stops_new_work_but_preserves_history(monkeypatch):
     user = _user('imp-killswitch')
     source = _make_source(user.id, server_kind='cloud')
+    run = _make_run(owner_id=user.id, source_id=source.id, status=ImportRunStatus.FINISHED)
     client = login_as(user.username)
 
     monkeypatch.setattr(settings, 'import_enabled', False)
     assert client.get('/api/v1/import/sources').status_code == 404
-    assert client.get('/api/v1/import/runs').status_code == 404
+    history = client.get('/api/v1/import/runs')
+    assert history.status_code == 200
+    assert any(item['id'] == run.id for item in history.json()['items'])
+    detail = client.get(f'/api/v1/import/runs/{run.id}')
+    assert detail.status_code == 200
+    assert detail.json()['can_sync'] is False
+    assert detail.json()['can_edit'] is False
     assert client.post(f'/api/v1/import/sources/{source.id}/test').status_code == 404
     assert client.post(
         '/api/v1/import/runs', json={'source_id': source.id, 'scope': {'type': 'page', 'value': '123'}}
