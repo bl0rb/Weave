@@ -49,6 +49,9 @@ claude.ai werden aus genau diesen Dateien neu veröffentlicht.
 - **[integrations/mail-ingestion.md](integrations/mail-ingestion.md)** — wie
   Dokumente per Mail hereinkommen und warum die frühere separate Mail-API
   entfernt wurde.
+- **[integrations/jira-mcp.md](integrations/jira-mcp.md)** — Entwurf für einen
+  Helpdesk-Bot mit Jira Data Center: MCP über n8n, native Erweiterungsoption,
+  Ticket-/JSM-Werkzeuge und getrennte Benutzerrechte.
 
 Die Datenverträge zwischen den Diensten liegen nicht hier, sondern zentral in
 [../contracts/](../contracts/).

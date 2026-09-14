@@ -1,0 +1,34 @@
+# One-off overlay to run a second chat UI (weave-tools-frontend) instance for
+# local testing, since the base service has a fixed container_name/host port
+# and cannot simply be `--scale`d.
+#
+# Usage (combine with the files you already use to start the stack):
+#   docker compose -p weave-ingest \
+#     -f docker-compose.weave.yml -f docker-compose.local.yml -f docker-compose.chat-scale-test.yml \
+#     up -d weave-tools-frontend-2
+#
+# Drop the last -f once you are done testing; nothing else depends on this file.
+services:
+  weave-tools-frontend-2:
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    build:
+      context: ../services/chat
+      dockerfile: Dockerfile
+    image: ghcr.io/bl0rb/weave-tools-frontend:${WEAVE_TOOLS_FRONTEND_TAG:-latest}
+    restart: always
+    container_name: weave_tools_frontend_2
+    ports:
+      - ${TOOLS_FRONTEND_PORT_2:-3002}:3000
+    environment:
+      WEAVE_API_BASE_URL: http://weave-api:8000
+      WEAVE_API_OIDC_ENABLED: ${WEAVE_API_OIDC_ENABLED:-}
+      WEAVE_API_PUBLIC_BASE_URL: ${WEAVE_API_PUBLIC_BASE_URL:-}
+      APP_BASE_URL: ${CHAT_APP_BASE_URL_2:-http://localhost:3002}
+      WEAVE_API_INGEST_LOGIN_ENABLED: ${WEAVE_API_INGEST_LOGIN_ENABLED:-}
+    depends_on:
+      - weave-api
+    networks:
+      - weave_netbridge
