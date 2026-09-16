@@ -5,11 +5,13 @@ import { ApiError, apiFetch, apiJson } from '@/lib/api';
 import { ReviewDocument } from './reviews';
 import { useVisiblePolling } from '@/lib/data-cache';
 
+const auth = vi.hoisted(() => ({ user: { role: 'admin' as 'admin' | 'user' } }));
 const push = vi.fn();
 const refresh = vi.fn();
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push, refresh }) }));
 vi.mock('@/lib/api', async importOriginal => ({ ...await importOriginal<typeof import('@/lib/api')>(), apiFetch: vi.fn(), apiJson: vi.fn() }));
 vi.mock('@/lib/data-cache', () => ({ useVisiblePolling: vi.fn() }));
+vi.mock('@/lib/auth-context', () => ({ useAuth: () => auth }));
 vi.mock('@/components/markdown/markdown-view', () => ({ MarkdownView: ({ markdown }: { markdown: string }) => <div>{markdown}</div> }));
 const content = { id: 'doc', original_filename: 'Regelwerk.pdf', status: 'FINISHED', collection_id: 'area', collection_name: 'Service', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, can_reprocess: true, profile_id: 'ppocrv6_tiny_structurev3', release: null, markdown: 'Geprüfter Text', markdown_sha256: 'a'.repeat(64) };
 const capabilities = { profiles: [
@@ -28,7 +30,7 @@ function mockDocument(overrides = {}) {
 beforeEach(() => {
   api.mockReset();
   fetcher.mockReset();
-  fetcher.mockResolvedValue({ ok: true } as Response);
+  fetcher.mockResolvedValue({ ok: true, blob: async () => new Blob(['{}'], { type: 'application/json' }) } as Response);
   push.mockReset();
   refresh.mockReset();
   vi.mocked(useVisiblePolling).mockClear();
@@ -139,6 +141,23 @@ it('keeps issued releases protected even if stale capabilities say reprocessing 
   render(<ReviewDocument id="doc" />);
   await screen.findByText('Freigabe gespeichert');
   expect(screen.queryByRole('button', { name: 'Mit anderem Profil neu verarbeiten' })).toBeNull();
+});
+
+it('offers indexing diagnostics to admins for released documents', async () => {
+  mockDocument({ release: { id: 'released', created_at: content.created_at, status: 'sent', error_message: null } });
+  render(<ReviewDocument id="doc" />);
+  const button = await screen.findByRole('button', { name: 'Indizierungsdiagnose herunterladen' });
+  fireEvent.click(button);
+  await waitFor(() => expect(fetcher).toHaveBeenCalledWith('/api/v1/portal/documents/doc/indexing-diagnostics'));
+});
+
+it('does not offer indexing diagnostics to regular users', async () => {
+  auth.user = { role: 'user' };
+  mockDocument({ release: { id: 'released', created_at: content.created_at, status: 'sent', error_message: null } });
+  render(<ReviewDocument id="doc" />);
+  await screen.findByText('Freigabe gespeichert');
+  expect(screen.queryByRole('button', { name: 'Indizierungsdiagnose herunterladen' })).toBeNull();
+  auth.user = { role: 'admin' };
 });
 
 it('shows a reprocessing conflict and does not claim the job was started', async () => {

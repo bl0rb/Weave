@@ -61,6 +61,49 @@ def _get(authed, *ids):
     return authed.get('/api/v1/portal/indexing-status', params=[('job_id', value) for value in ids])
 
 
+def test_admin_diagnostics_uses_stored_release_and_separate_signature(publication, monkeypatch):
+    _, reference = publication
+    admin = _user(username=f'diagnostics-{uuid.uuid4().hex[:8]}', role=UserRole.ADMIN)
+    real_client = httpx.Client
+
+    def handle(request):
+        assert str(request.url) == 'https://knowledge.example/api/v1/indexing/diagnostics'
+        assert json.loads(request.content) == reference
+        stamp = request.headers['X-Weave-Status-Timestamp']
+        signature = hmac.new(b'secret', b'weave.indexing-diagnostics.v1\n' + stamp.encode() + b'\n' + request.content, hashlib.sha256).hexdigest()
+        assert request.headers['X-Weave-Status-Signature'] == f'sha256={signature}'
+        return httpx.Response(200, json={'state': 'failed', 'failure': {'code': 'embedding_dimension_mismatch', 'expected': 1536, 'actual': 384}})
+
+    monkeypatch.setattr(indexing_status.httpx, 'Client', lambda **kwargs: real_client(transport=httpx.MockTransport(handle), **kwargs))
+    response = login_as(admin.username).get(f"/api/v1/portal/documents/{reference['job_id']}/indexing-diagnostics")
+    assert response.status_code == 200, response.text
+    assert response.headers['cache-control'] == 'no-store'
+    assert 'attachment' in response.headers['content-disposition']
+    assert response.json()['release']['id'] == reference['release_id']
+    assert response.json()['indexing']['failure']['actual'] == 384
+    assert 'private document' not in response.text and 'secret' not in response.text
+
+
+def test_diagnostics_denies_non_admin_without_contacting_knowledge(publication, monkeypatch):
+    user, reference = publication
+    calls = _upstream(monkeypatch, [])
+    response = login_as(user.username).get(f"/api/v1/portal/documents/{reference['job_id']}/indexing-diagnostics")
+    assert response.status_code == 403
+    assert calls == []
+
+
+def test_diagnostics_denies_protected_document(publication, monkeypatch):
+    _, reference = publication
+    admin = _user(username=f'diagnostics-{uuid.uuid4().hex[:8]}', role=UserRole.ADMIN)
+    with TestingSessionLocal() as db:
+        db.get(Job, reference['job_id']).password_hash = 'protected'
+        db.commit()
+    calls = _upstream(monkeypatch, [])
+    response = login_as(admin.username).get(f"/api/v1/portal/documents/{reference['job_id']}/indexing-diagnostics")
+    assert response.status_code == 404
+    assert calls == []
+
+
 def test_authorized_status_uses_server_release_and_never_exposes_secrets_or_contents(publication, monkeypatch):
     user, reference = publication
     authed = login_as(user.username)

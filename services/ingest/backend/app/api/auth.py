@@ -42,8 +42,10 @@ from app.database.session import get_db
 from app.models.models import (
     ApiToken,
     AuthProvider,
+    Collection,
     Job,
     LoginHandoffCode,
+    ManagedBot,
     Session as SessionModel,
     Team,
     User,
@@ -114,6 +116,7 @@ from app.services.security import (
     unsign_value,
     verify_password,
 )
+from app.workers import publication_tasks
 from app.services.storage import find_orphaned_files
 
 logger = logging.getLogger(__name__)
@@ -1253,8 +1256,27 @@ def admin_update_team(team_id: str, payload: TeamUpdateRequest, db: Session = De
     conflict = db.scalar(select(Team.id).where(Team.name == name, Team.id != team.id))
     if conflict is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Team already exists')
+    old_name = team.name
     team.name = name
+
+    # Runtime permissions and collection ACLs use the team name as their
+    # cross-service identifier. Keep those denormalized references in sync
+    # with the canonical Team row when an admin renames it.
+    changed_collection_slugs: list[str] = []
+    for collection in db.scalars(select(Collection)).all():
+        if old_name in (collection.read_teams or []):
+            collection.read_teams = [name if value == old_name else value for value in collection.read_teams]
+            changed_collection_slugs.append(collection.slug)
+    for bot in db.scalars(select(ManagedBot)).all():
+        if old_name in (bot.teams or []):
+            bot.teams = [name if value == old_name else value for value in bot.teams]
     db.commit()
+    try:
+        if publication_tasks.publication_configured():
+            for slug in changed_collection_slugs:
+                publication_tasks.notify_collection_registry_changed.delay(slug)
+    except Exception:  # pragma: no cover - notification must never break a rename
+        logger.exception('Knowledge registry notification failed after team rename %s', team.id)
     return _team_response(team)
 
 

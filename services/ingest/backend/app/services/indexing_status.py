@@ -55,6 +55,7 @@ def fetch_indexing_status(references: list[ReleaseReference]) -> dict[str, Porta
     secret = settings.portal_knowledge_webhook_secret
     if not base_url or not secret or len(references) > 50:
         return unavailable
+
     body = json.dumps({'items': [vars(ref) for ref in references]}, separators=(',', ':')).encode('utf-8')
     timestamp = str(int(time.time()))
     signed = _SIGNING_CONTEXT + timestamp.encode('ascii') + b'\n' + body
@@ -92,3 +93,31 @@ def fetch_indexing_status(references: list[ReleaseReference]) -> dict[str, Porta
         # worker errors. Operators can inspect Knowledge's own logs.
         logger.warning('Knowledge indexing status lookup unavailable')
         return unavailable
+
+
+def fetch_indexing_diagnostics(reference: ReleaseReference) -> dict:
+    """Admin-only caller, separately signed from the normal user status lookup."""
+    base_url = settings.portal_knowledge_base_url.rstrip('/')
+    secret = settings.portal_knowledge_webhook_secret
+    if not base_url or not secret:
+        return {'state': 'unavailable', 'reason': 'knowledge_not_configured'}
+    body = json.dumps(vars(reference), separators=(',', ':')).encode('utf-8')
+    timestamp = str(int(time.time()))
+    signed = b'weave.indexing-diagnostics.v1\n' + timestamp.encode('ascii') + b'\n' + body
+    signature = 'sha256=' + hmac.new(secret.encode('utf-8'), signed, hashlib.sha256).hexdigest()
+    try:
+        with httpx.Client(timeout=3.0, follow_redirects=False, trust_env=False) as client:
+            response = client.post(f'{base_url}/api/v1/indexing/diagnostics', content=body, headers={
+                'Content-Type': 'application/json',
+                'X-Weave-Status-Timestamp': timestamp,
+                'X-Weave-Status-Signature': signature,
+            })
+            response.raise_for_status()
+            result = response.json()
+            if not isinstance(result, dict) or 'state' not in result:
+                raise ValueError('invalid diagnostics response')
+            return result
+    except httpx.HTTPStatusError as exc:
+        return {'state': 'unavailable', 'reason': 'knowledge_http_error', 'http_status': exc.response.status_code}
+    except (httpx.HTTPError, httpx.InvalidURL, ValueError):
+        return {'state': 'unavailable', 'reason': 'knowledge_connection_or_response_error'}

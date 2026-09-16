@@ -1,17 +1,42 @@
+from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_admin
 from app.api.routes import _apply_visible_filter
 from app.database.session import get_db
 from app.models.models import DocumentRelease, Job, User
 from app.schemas.indexing import PortalIndexingItem, PortalIndexingResponse
 from app.schemas.portal import PortalReleaseSummary
-from app.services.indexing_status import ReleaseReference, fetch_indexing_status
+from app.services.indexing_status import ReleaseReference, fetch_indexing_status, fetch_indexing_diagnostics
 
 router = APIRouter(prefix='/api/v1/portal')
+
+
+@router.get('/documents/{job_id}/indexing-diagnostics')
+def indexing_diagnostics(
+    job_id: UUID, response: Response, db=Depends(get_db), user: User = Depends(require_admin),
+) -> dict:
+    job = db.get(Job, str(job_id))
+    if job is None or job.password_hash is not None:
+        raise HTTPException(404, 'Document not found')
+    release = db.scalar(select(DocumentRelease).where(DocumentRelease.job_id == job.id))
+    if release is None:
+        raise HTTPException(409, 'Document has not been released')
+    response.headers['Cache-Control'] = 'no-store'
+    response.headers['Content-Disposition'] = f'attachment; filename="indexing-diagnostics-{job_id}.json"'
+    return {
+        'format_version': 1, 'generated_at': datetime.now(timezone.utc), 'job_id': job.id,
+        'release': {
+            'id': release.id, 'status': release.status, 'delivery_attempts': release.attempts,
+            'created_at': release.created_at, 'updated_at': release.updated_at,
+            'next_attempt_at': release.next_attempt_at,
+        },
+        'indexing': fetch_indexing_diagnostics(ReleaseReference(job.id, release.id, release.markdown_sha256)),
+        'scope': 'Stored publication/indexing diagnostics; Kubernetes pod logs are not included. Raw errors and document contents are omitted.',
+    }
 
 
 @router.get('/indexing-status', response_model=PortalIndexingResponse)

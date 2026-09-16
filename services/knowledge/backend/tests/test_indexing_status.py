@@ -48,6 +48,57 @@ def _post(items, *, timestamp=None, context=CONTEXT, mutate=False):
     })
 
 
+def _diagnostics(reference, context=b'weave.indexing-diagnostics.v1\n'):
+    body = json.dumps(reference).encode()
+    timestamp = str(int(time.time()))
+    signature = 'sha256=' + hmac.new(SECRET.encode(), context + timestamp.encode() + b'\n' + body, hashlib.sha256).hexdigest()
+    return client.post('/api/v1/indexing/diagnostics', content=body, headers={
+        'Content-Type': 'application/json', 'X-Weave-Status-Timestamp': timestamp, 'X-Weave-Status-Signature': signature,
+    })
+
+
+def test_diagnostics_reports_dimension_failure_without_sql_contents_or_credentials(corpus):
+    reference, doc_id = corpus
+    with TestingSessionLocal() as db:
+        doc = db.get(Document, doc_id)
+        doc.status = DocumentStatus.FAILED
+        doc.error = '(builtins.ValueError) expected 1536 dimensions, not 384\n[SQL: INSERT ...]\n[parameters: PRIVATE CONTENT secret]'
+        db.commit()
+    response = _diagnostics(reference)
+    assert response.status_code == 200
+    assert response.headers['cache-control'] == 'no-store'
+    assert response.json()['document_id'] == str(doc_id)
+    assert response.json()['failure'] == {'code': 'embedding_dimension_mismatch', 'expected': 1536, 'actual': 384}
+    assert not any(value in response.text for value in ['PRIVATE', 'secret', 'INSERT', 'parameters'])
+
+
+def test_status_signature_cannot_authorize_diagnostics(corpus):
+    reference, _ = corpus
+    assert _diagnostics(reference, context=CONTEXT).status_code == 401
+
+
+@pytest.mark.parametrize('field', ['job_id', 'release_id', 'markdown_sha256'])
+def test_diagnostics_requires_exact_release(corpus, field):
+    reference, _ = corpus
+    changed = {**reference, field: 'f' * 64 if field == 'markdown_sha256' else str(uuid.uuid4())}
+    assert _diagnostics(changed).json() == {'state': 'not_received_or_mismatch'}
+
+
+@pytest.mark.parametrize('error,expected', [
+    ('fetching https://secret/path returned HTTP 401', {'code': 'upstream_http_error', 'stage': 'snapshot_download', 'http_status': 401}),
+    ('embedding request to https://secret returned HTTP 400: PRIVATE CONTENT', {'code': 'upstream_http_error', 'stage': 'embedding', 'http_status': 400}),
+    ('Object of type datetime is not JSON serializable: PRIVATE CONTENT', {'code': 'metadata_not_json_serializable'}),
+])
+def test_diagnostics_classifies_errors_without_raw_details(corpus, error, expected):
+    reference, doc_id = corpus
+    with TestingSessionLocal() as db:
+        db.get(Document, doc_id).error = error
+        db.commit()
+    response = _diagnostics(reference)
+    assert response.json()['failure'] == expected
+    assert 'secret' not in response.text and 'PRIVATE' not in response.text
+
+
 def test_confirms_exact_release_and_committed_embeddings_without_exposing_content(corpus):
     reference, _ = corpus
     response = _post([reference])

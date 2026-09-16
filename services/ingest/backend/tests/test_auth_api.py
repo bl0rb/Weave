@@ -23,9 +23,11 @@ from app.core.config import settings
 from app.main import app
 from app.models.models import (
     AuthProvider,
+    Collection,
     Job,
     JobStatus,
     LoginHandoffCode,
+    ManagedBot,
     Session as SessionModel,
     Team,
     User,
@@ -378,6 +380,31 @@ def test_admin_can_create_team_and_assign_user(client: TestClient) -> None:
     update_resp = client.patch(f'/api/v1/auth/admin/users/{target.id}', json={'team_id': team_id})
     assert update_resp.status_code == 200
     assert update_resp.json()['team_id'] == team_id
+
+
+def test_renaming_team_updates_collection_and_bot_permissions(client: TestClient, monkeypatch) -> None:
+    _create_user(username='renameadmin', email='renameadmin@example.com', password='CorrectHorse1', role=UserRole.ADMIN)
+    with _db() as db:
+        team = Team(name='Old Team')
+        db.add(team)
+        db.flush()
+        collection = Collection(slug='rename-team-collection', name='Knowledge', read_teams=['Old Team'])
+        bot = ManagedBot(id='rename-team-bot', name='Bot', teams=['Old Team'])
+        db.add_all([collection, bot])
+        db.commit()
+        team_id = team.id
+    _login(client, 'renameadmin', 'CorrectHorse1')
+    notified: list[str] = []
+    monkeypatch.setattr(auth_module.publication_tasks, 'publication_configured', lambda: True)
+    monkeypatch.setattr(auth_module.publication_tasks.notify_collection_registry_changed, 'delay', notified.append)
+
+    response = client.patch(f'/api/v1/auth/admin/teams/{team_id}', json={'name': 'New Team'})
+
+    assert response.status_code == 200
+    with _db() as db:
+        assert db.get(Collection, collection.id).read_teams == ['New Team']
+        assert db.get(ManagedBot, bot.id).teams == ['New Team']
+    assert notified == ['rename-team-collection']
 
 
 def test_admin_cannot_demote_or_delete_last_active_admin(client: TestClient) -> None:

@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { CheckCheck, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
+import { CheckCheck, Download, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { ApiError, apiJson } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { ConfirmDialog, apiSend } from '@/components/admin/admin-shared';
 import { MarkdownView } from '@/components/markdown/markdown-view';
-import { dateLabel, documentState, jsonBody, loadDocuments, portalError, type DocumentPage, type DocumentPreview, type PortalConfig, type Publication } from '@/lib/portal';
+import { dateLabel, documentState, downloadPortalFile, jsonBody, loadDocuments, markdownDownloadName, portalError, type DocumentPage, type DocumentPreview, type PortalConfig, type Publication } from '@/lib/portal';
 import { DocumentTable, EmptyState, Notice, Pagination, PortalPage } from './shared';
 import { ReprocessForm } from './reprocess-form';
 import { IndexingProgress } from './indexing-progress';
@@ -37,6 +38,7 @@ export function ReviewDocument({ id }: { id: string }) {
 
 function ReviewDocumentContent({ id }: { id: string }) {
   const router = useRouter();
+  const { user } = useAuth();
   const [preview, setPreview] = useState<DocumentPreview | null>(null);
   const [config, setConfig] = useState<PortalConfig | null>(null);
   const [error, setError] = useState('');
@@ -45,6 +47,7 @@ function ReviewDocumentContent({ id }: { id: string }) {
   const [reprocessOpen, setReprocessOpen] = useState(false);
   const [reprocessStarted, setReprocessStarted] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [downloadingDiagnostics, setDownloadingDiagnostics] = useState(false);
   const startedHeading = useRef<HTMLHeadingElement>(null);
   const load = useCallback(() => Promise.all([apiJson<DocumentPreview>(`/api/v1/portal/documents/${encodeURIComponent(id)}`), apiJson<PortalConfig>('/api/v1/portal/config')])
     .then(([content, configuration]) => { setPreview(content); setConfig(configuration); setError(''); setConfirmed(false); setReprocessOpen(false); })
@@ -64,6 +67,14 @@ function ReviewDocumentContent({ id }: { id: string }) {
     setSaving(true); setError('');
     try { const publication = await apiJson<Publication>(`/api/v1/portal/releases/${preview.release.id}/retry`, { method: 'POST' }); setPreview({ ...preview, release: publication }); }
     catch (err) { setError(portalError(err)); } finally { setSaving(false); }
+  }
+  async function downloadDiagnostics() {
+    if (downloadingDiagnostics || !preview?.release || user?.role !== 'admin') return;
+    setDownloadingDiagnostics(true); setError('');
+    try {
+      const filename = `${markdownDownloadName(preview.original_filename).slice(0, -3)}-indexing-diagnostics.json`;
+      await downloadPortalFile(`/api/v1/portal/documents/${encodeURIComponent(id)}/indexing-diagnostics`, filename);
+    } catch (err) { setError(portalError(err)); } finally { setDownloadingDiagnostics(false); }
   }
   async function reprocess(profileId: string) {
     if (saving || reprocessStarted || !preview?.can_reprocess || preview.release) return;
@@ -101,7 +112,7 @@ function ReviewDocumentContent({ id }: { id: string }) {
         <dl><dt>Qualitätsbewertung</dt><dd>{preview.quality_grade ? `Stufe ${preview.quality_grade}` : 'Keine automatische Bewertung'}</dd><dt>Hinzugefügt</dt><dd>{dateLabel(preview.created_at)}</dd></dl>
         {preview.quality_grade?.trim().toUpperCase() === 'C' ? <Notice>Stufe C: Die automatische Prüfung meldet Qualitätsmängel. Eine bewusste Freigabe nach inhaltlicher Prüfung ist möglich.</Notice> : preview.quality_recommendation?.trim().toLowerCase() === 'block' && <Notice error>Die Qualitätsprüfung blockiert diesen Stand. Bitte korrigiere oder verarbeite das Dokument erneut.</Notice>}
         {(!preview.quality_recommendation || preview.quality_recommendation.trim().toLowerCase() === 'warn') && <Notice>Bitte prüfe diesen Inhalt besonders sorgfältig. Die automatische Bewertung liefert keine uneingeschränkte Empfehlung.</Notice>}
-        {preview.release ? <><div className="portal-release-receipt"><CheckCheck size={23} /><strong>Freigabe gespeichert</strong><span>{dateLabel(preview.release.created_at)}</span></div><p>Dieser Stand ist freigegeben und bleibt unverändert.</p>{delivery === 'failed' && <><Notice error>Die Übergabe ist fehlgeschlagen. Eine berechtigte Person kann sie erneut anstoßen.</Notice>{preview.can_release && <Button disabled={saving} onClick={retry}>Übergabe erneut versuchen</Button>}</>}<IndexingProgress release={preview.release} live={live} /></> : reprocessOpen ? <ReprocessForm currentProfileId={preview.profile_id} busy={saving} onSubmit={reprocess} onCancel={() => { setReprocessOpen(false); setError(''); }} /> : <>
+        {preview.release ? <><div className="portal-release-receipt"><CheckCheck size={23} /><strong>Freigabe gespeichert</strong><span>{dateLabel(preview.release.created_at)}</span></div><p>Dieser Stand ist freigegeben und bleibt unverändert.</p>{delivery === 'failed' && <><Notice error>Die Übergabe ist fehlgeschlagen. Eine berechtigte Person kann sie erneut anstoßen.</Notice>{preview.can_release && <Button disabled={saving} onClick={retry}>Übergabe erneut versuchen</Button>}</>}<IndexingProgress release={preview.release} live={live} />{user?.role === 'admin' && <Button className="w-full whitespace-normal h-auto py-3" variant="outline" disabled={downloadingDiagnostics} onClick={() => void downloadDiagnostics()}><Download size={16} />{downloadingDiagnostics ? 'Diagnose wird heruntergeladen …' : 'Indizierungsdiagnose herunterladen'}</Button>}</> : reprocessOpen ? <ReprocessForm currentProfileId={preview.profile_id} busy={saving} onSubmit={reprocess} onCancel={() => { setReprocessOpen(false); setError(''); }} /> : <>
           {preview.can_reprocess && <Button className="w-full whitespace-normal h-auto py-3" variant="outline" disabled={saving} onClick={() => { setReprocessOpen(true); setConfirmed(false); setError(''); }}>Mit anderem Profil neu verarbeiten</Button>}
           {!deleting && <Button className="w-full" variant="outline" disabled={saving} onClick={() => setDeleting(true)}><Trash2 size={16} />Dokument löschen</Button>}
           {!config?.publication_configured && <Notice>Die Administration muss die Verbindung zur Wissensindexierung noch einrichten.</Notice>}
