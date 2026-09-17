@@ -22,6 +22,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the normal source upload, review and release workflow.
 
 ### Added
+- Portal review: documents can be ticked in the review inbox and in a knowledge space and
+  released, skipped or deleted together (`POST /api/v1/portal/documents/bulk`). A document
+  can be marked "Nicht freigeben / überspringen" and brought back for review; skipped
+  documents leave the inbox and get their own filter.
+- Quality grades are explained: the review page shows why a document is A, B or C (OCR
+  confidence, structure and text quality with the thresholds behind them), what the grades
+  mean, and why a grade can be missing. Every document list can be filtered by grade,
+  including "Ohne Bewertung".
+- Documents show where they come from (upload folder, Confluence page or mail) and, once
+  released, who released them (`source`, `released_by` in the portal API).
+- Images from Confluence pages reach the chat: release snapshots carry absolute artifact
+  URLs (`GET /api/v1/portal/releases/{id}/artifacts/{filename}`), Weave-Runtime lists them
+  per source, Weave-API proxies them for Weave-Chat (`INGEST_SERVICE_TOKEN`, the same value
+  as `WEAVE_KNOWLEDGE_INGEST_API_TOKEN`), and the chat renders them under the answer.
 - Form fields keep their labels. Where the pipeline does not recognise a form section as a
   table, its fields decay into one-word paragraphs and label and value come apart —
   `Nachname:` / `Vorname:` / `Peter` / `Anschrift:`, in which nothing can tell you whose
@@ -94,6 +108,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the run's error list. Personal spaces (`~` keys) get an explicit hint
 
 ### Changed
+- "Mit anderem Profil neu verarbeiten" is now "Erneut prüfen".
+- Saving a manually edited markdown recomputes the quality gate against the edited text
+  instead of keeping the grade of the original extraction.
 - The OpenWebUI push honours the quality gate. A job graded `block` was previously uploaded
   into the knowledge collection anyway, so the grade had no consequence whatsoever — every
   document in the nine-document sample landed in the vector index despite grading C. A job
@@ -134,6 +151,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *Upgrading an existing installation*.
 
 ### Fixed
+- `PUT /jobs/{id}/save` mutated the job's `processing_info` in place before reassigning it,
+  so SQLAlchemy saw no change and silently dropped the editor/version metadata.
 - Tables no longer lose their first row to the header. `_html_table_to_markdown` promoted
   `rows[0]` unconditionally, so in a form the first label/value pair became the column
   heading and its value left the data — six of twenty-five tables in the sample corpus were

@@ -100,6 +100,11 @@ class Source(BaseModel):
     # falls outside that scope is dropped before ever reaching a caller,
     # never trusted on the strength of this field alone.
     collection: str | None = None
+    # Absolute http(s) image URLs pulled out of this chunk's own markdown
+    # (e.g. Confluence attachments rewritten to release-artifact URLs at
+    # release time) -- see app/services/chat.py's `_images_for`. Empty for
+    # a chunk with no images, deduplicated, capped at 8.
+    images: list[str] = Field(default_factory=list)
 
 
 class RetrievalTrace(BaseModel):

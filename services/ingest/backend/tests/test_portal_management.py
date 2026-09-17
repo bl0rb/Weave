@@ -250,6 +250,23 @@ def test_activity_applies_visibility_before_counts_and_status_pagination():
     assert {item['id'] for item in admin_body['items']} >= {pending.id, finished.id, failed.id}
 
 
+def test_activity_applies_quality_grade_filter():
+    user = _user('portal-activity-grade')
+    marker = uuid.uuid4().hex[:10]
+    collection = _collection(user.id, name=f'Activity grade {marker}')
+    graded = _job(user.id, filename=f'{marker}-graded.pdf', collection_id=collection.id, grade='A')
+    ungraded = _job(user.id, filename=f'{marker}-ungraded.pdf', collection_id=collection.id, grade=None, recommendation=None)
+
+    authed = login_as(user.username)
+    response = authed.get('/api/v1/portal/activity', params={'q': marker, 'quality_grade': 'a'})
+    assert response.status_code == 200, response.text
+    assert {item['id'] for item in response.json()['items']} == {graded.id}
+
+    response = authed.get('/api/v1/portal/activity', params={'q': marker, 'quality_grade': 'none'})
+    assert response.status_code == 200, response.text
+    assert {item['id'] for item in response.json()['items']} == {ungraded.id}
+
+
 def test_activity_serializes_import_enum_and_release_status_and_nulls():
     user = _user('portal-activity-contract')
     marker = uuid.uuid4().hex[:10]

@@ -885,6 +885,59 @@ def test_save_markdown_creates_new_version(tmp_path):
     db.close()
 
 
+def test_save_markdown_recomputes_stale_quality_gate(tmp_path):
+    """A manual edit invalidates the OCR-time quality gate; saving must
+    recompute it against the new markdown so review-UI badges/filters stop
+    reflecting the original (now-overwritten) OCR output."""
+    db = TestingSessionLocal()
+    result_file = tmp_path / 'result.md'
+    result_file.write_text('---\nsource: "x"\n---\n\n# done', encoding='utf-8')
+    job = Job(
+        id='job-save-quality',
+        original_filename='a.pdf',
+        upload_path=str(tmp_path / 'a.pdf'),
+        result_path=str(result_file),
+        upload_content=b'x',
+        upload_mime_type='application/pdf',
+        upload_size_bytes=1,
+        status=JobStatus.FINISHED,
+        processing_info={
+            'execution': {
+                'quality_gate': {
+                    'grade': 'C',
+                    'score': 0.1,
+                    'recommendation': 'block',
+                    'signals': {},
+                    'issues': ['stale'],
+                },
+            },
+        },
+    )
+    db.add(job)
+    db.commit()
+    db.close()
+
+    save_resp = client.put(
+        '/api/v1/jobs/job-save-quality/save',
+        json={'markdown': '---\nsource: "x"\nmode: "single"\nemail: "x@y.com"\n---\n\n# edited'},
+    )
+    assert save_resp.status_code == 200
+
+    db = TestingSessionLocal()
+    saved = db.get(Job, 'job-save-quality')
+    assert saved is not None
+    quality_gate = saved.processing_info['execution']['quality_gate']
+    assert quality_gate != {
+        'grade': 'C',
+        'score': 0.1,
+        'recommendation': 'block',
+        'signals': {},
+        'issues': ['stale'],
+    }
+    assert quality_gate['grade'] in ('A', 'B', 'C')
+    db.close()
+
+
 def test_save_markdown_response_path_is_null_and_no_disk_file_written(tmp_path):
     """Editor saves no longer write '.v{n}.md' files to disk; the response
     keeps its 'path' field (backward-compatible shape) but the value is now

@@ -7,6 +7,7 @@ import { useParams, useSearchParams } from 'next/navigation';
 import { Mail, Pencil, Settings2, Webhook } from 'lucide-react';
 
 import { ErrorNotice, Field, inputClass, LoadingState, Modal } from '@/components/admin/admin-shared';
+import { QualityGradeLegend } from '@/components/portal/shared';
 import { Button, buttonVariants } from '@/components/ui/button';
 import type { PaddleCapabilities } from '@/components/dashboard/shared';
 import type { JobArtifact } from '@/components/markdown/markdown-view';
@@ -34,6 +35,12 @@ const MarkdownView = dynamic(() => import('@/components/markdown/markdown-view')
     </div>
   ),
 });
+
+const qualityRecommendationLabels: Record<string, string> = {
+  allow: 'zur Freigabe geeignet',
+  warn: 'sorgfältig prüfen',
+  block: 'Freigabe blockiert',
+};
 
 const LOWER_PROFILE_RETRY_MAP: Record<string, string> = {
   ppocrv6_medium_structurev3: 'ppocrv6_small_structurev3',
@@ -522,11 +529,14 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
           </div>
         )}
         {qualityGrade && (
-          <p>
-            Quality gate: {qualityGrade}
-            {qualityScore !== null ? ` (${qualityScore.toFixed(3)})` : ''}
-            {qualityRecommendation ? ` - ${qualityRecommendation}` : ''}
-          </p>
+          <div>
+            <p>
+              Qualitätsstufe {qualityGrade}
+              {qualityScore !== null ? ` (${Math.round(qualityScore * 100)} %)` : ''}
+              {qualityRecommendation ? ` – ${qualityRecommendationLabels[qualityRecommendation] ?? qualityRecommendation}` : ''}
+            </p>
+            <QualityGradeLegend />
+          </div>
         )}
         {versions && versions.length > 1 && (
           <section>

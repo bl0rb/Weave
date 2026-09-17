@@ -1,3 +1,4 @@
+import type { ImgHTMLAttributes } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
@@ -7,6 +8,18 @@ import { SourceCards } from '@/components/chat/source-cards';
 import { TracePanel } from '@/components/chat/trace-panel';
 import { GuardBanner } from '@/components/chat/guard-banner';
 import { ErrorBanner } from '@/components/chat/error-banner';
+import { toProxiedImageUrl } from '@/lib/portal-artifact-url';
+
+// Rewrites an inline `![alt](url)` image's src to this app's own proxy
+// route (see lib/portal-artifact-url.ts) before it ever reaches the DOM —
+// the model is instructed to keep source image markdown verbatim
+// (Weave-Runtime's `_context_block`), so an answer can contain a
+// Weave-Ingest release-artifact URL the browser must never fetch directly.
+function AnswerImage({ src, alt }: ImgHTMLAttributes<HTMLImageElement>) {
+  if (!src || typeof src !== 'string') return null;
+  // eslint-disable-next-line @next/next/no-img-element -- proxied, per-message remote image, not a static asset
+  return <img src={toProxiedImageUrl(src)} alt={alt ?? ''} className="max-w-full rounded-lg" />;
+}
 
 export function MessageBubble({ message }: { message: UiMessage }) {
   const isUser = message.role === 'user';
@@ -27,7 +40,7 @@ export function MessageBubble({ message }: { message: UiMessage }) {
           <p className="whitespace-pre-wrap">{message.content}</p>
         ) : message.content ? (
           <div className="prose-chat">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]} components={{ img: AnswerImage }}>
               {message.content}
             </ReactMarkdown>
           </div>

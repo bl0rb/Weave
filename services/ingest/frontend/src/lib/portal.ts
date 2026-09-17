@@ -2,14 +2,33 @@ import { ApiError, apiFetch, apiJson } from '@/lib/api';
 import { currentReleaseStatus, publicationState, type IndexingItem } from './indexing-status';
 
 export type KnowledgeSpace = { collection_id: string; slug: string; name: string; description: string | null; read_teams: string[]; can_manage: boolean; can_upload: boolean };
-export type Publication = { id: string; created_at: string; status: 'pending' | 'sent' | 'failed'; error_message: string | null };
+export type Publication = { id: string; created_at: string; status: 'pending' | 'sent' | 'failed'; error_message: string | null; released_by: string | null };
+export type PortalSource = { kind: 'upload' | 'confluence' | 'mail' | 'unknown'; label: string; path: string | null; url: string | null };
 export type PortalDocument = {
   id: string; original_filename: string; status: 'PENDING' | 'RUNNING' | 'FINISHED' | 'FAILED';
   collection_id: string; collection_name: string; created_at: string;
   quality_grade: string | null; quality_recommendation: string | null; can_release: boolean; release: Publication | null;
+  source: PortalSource; review_decision: string | null;
 };
 export type DocumentPage = { items: PortalDocument[]; total: number };
-export type DocumentPreview = PortalDocument & { markdown: string; markdown_sha256: string; profile_id: string | null; can_reprocess: boolean };
+export type ReviewStateFilter = 'review' | 'all' | 'skipped';
+export type BulkAction = 'release' | 'skip' | 'unskip' | 'delete';
+export type BulkActionResult = { done: number; errors: { job_id: string; reason: string }[] };
+export type QualityGradeFilter = '' | 'A' | 'B' | 'C' | 'none';
+export type QualitySignals = {
+  ocr_confidence: number | null; confidence_sample_size: number;
+  structure_quality: number; noise_penalty: number; text_quality: number;
+  field_validation: Record<string, number> | null;
+};
+export type QualityDetail = {
+  grade: string | null; score: number | null; recommendation: string | null;
+  thresholds: { A: number; B: number }; signals: QualitySignals; issues: string[];
+};
+export type QualityMissingReason = 'not_finished' | 'failed' | 'legacy' | 'import_without_gate' | 'unknown';
+export type DocumentPreview = PortalDocument & {
+  markdown: string; markdown_sha256: string; profile_id: string | null; can_reprocess: boolean;
+  quality: QualityDetail | null; quality_missing_reason: QualityMissingReason | null;
+};
 export type PortalConfig = { publication_configured: boolean; team_name: string | null; team_names: string[] };
 export const jsonBody = (body: unknown): RequestInit => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
@@ -39,6 +58,7 @@ export function documentState(document: PortalDocument, live?: IndexingItem): { 
     const { delivery, indexing } = currentReleaseStatus(document.release, live);
     return publicationState(delivery, indexing);
   }
+  if (document.review_decision === 'skipped') return { label: 'Übersprungen', tone: 'neutral' };
   if (document.status === 'FAILED') return { label: 'Verarbeitung fehlgeschlagen', tone: 'error' };
   if (document.status === 'RUNNING') return { label: 'Wird verarbeitet', tone: 'working' };
   if (document.status === 'PENDING') return { label: 'In der Warteschlange', tone: 'neutral' };
@@ -48,11 +68,23 @@ export function documentState(document: PortalDocument, live?: IndexingItem): { 
 }
 export const documentUrl = (document: PortalDocument) => document.status === 'FINISHED' ? `/reviews/${document.id}` : `/jobs/${document.id}`;
 export const dateLabel = (value: string) => new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value));
-export function loadDocuments(collectionId?: string, offset = 0, reviewOnly = false): Promise<DocumentPage> {
-  const params = new URLSearchParams({ offset: String(offset), limit: '20' });
+export function loadDocuments(collectionId?: string, offset = 0, reviewState: ReviewStateFilter = 'all', qualityGrade?: QualityGradeFilter): Promise<DocumentPage> {
+  const params = new URLSearchParams({ offset: String(offset), limit: '20', review_state: reviewState });
   if (collectionId) params.set('collection_id', collectionId);
-  if (reviewOnly) params.set('review_only', 'true');
+  if (qualityGrade) params.set('quality_grade', qualityGrade);
   return apiJson(`/api/v1/portal/documents?${params}`);
+}
+
+export function bulkPortalAction(jobIds: string[], action: BulkAction, acceptQualityWarnings = false): Promise<BulkActionResult> {
+  return apiJson('/api/v1/portal/documents/bulk', jsonBody({ job_ids: jobIds, action, accept_quality_warnings: acceptQualityWarnings }));
+}
+
+export function skipPortalDocument(jobId: string): Promise<PortalDocument> {
+  return apiJson(`/api/v1/portal/documents/${encodeURIComponent(jobId)}/skip`, { method: 'POST' });
+}
+
+export function unskipPortalDocument(jobId: string): Promise<PortalDocument> {
+  return apiJson(`/api/v1/portal/documents/${encodeURIComponent(jobId)}/unskip`, { method: 'POST' });
 }
 
 export function markdownDownloadName(originalFilename: string): string {

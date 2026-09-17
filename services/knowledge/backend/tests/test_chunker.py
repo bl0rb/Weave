@@ -157,6 +157,16 @@ def test_blocks_before_any_page_marker_have_no_page():
     assert chunks[0].page_end is None
 
 
+def test_image_markdown_survives_chunking_verbatim():
+    # Confluence release snapshots carry absolute-URL image links
+    # (![alt](https://.../artifacts/<file>)); chunking must not strip or
+    # alter that markdown so it still reaches Weave-Runtime/Chat intact.
+    body = '# Report\n\n![Diagram](https://ingest.example/api/v1/portal/releases/r1/artifacts/diagram.png)\n'
+    chunks = chunk_body(body, max_chars=1000, overlap_chars=0)
+    assert len(chunks) == 1
+    assert '![Diagram](https://ingest.example/api/v1/portal/releases/r1/artifacts/diagram.png)' in chunks[0].text
+
+
 # --- heading paths: nesting, level jumps, refresh mid-chunk --------------------
 
 

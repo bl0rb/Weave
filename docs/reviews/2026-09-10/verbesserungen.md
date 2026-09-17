@@ -167,6 +167,47 @@ der Quelle eindeutig rekonstruierbare OCR-Fehler.
   Qualitätsprüfung überprüfen. Eine wiederholte Ausführung darf bereits
   behobene Punkte nicht erneut verändern.
 
+## Gemeldete Probleme vom 16.09.2026
+
+Beide Punkte sind offene Nutzermeldungen; Reproduktion und Ursachenprüfung
+stehen aus. UI-14 hat innerhalb dieser beiden Prüfaufträge Vorrang.
+
+### UI-14 · Hohe Priorität · Nach Dokumentfreigabe startet die Indexierung nicht
+
+**Gemeldet:** Nach der Freigabe eines Dokuments wird die Indexierung nicht
+mehr gestartet. In der Oberfläche ist keine Fehlermeldung erkennbar.
+
+**Prüfauftrag:** Den Ablauf von der gespeicherten Freigabe über die Übergabe
+an die Verarbeitung bis zum Indexierungs-Worker und zur Statusanzeige
+nachverfolgen. Feststellen, ob der Auftrag nicht erzeugt, nicht zugestellt,
+nicht verarbeitet oder lediglich falsch angezeigt wird. Fehlende sichtbare
+Fehler allein belegen noch keine bestimmte Ursache.
+
+**Abnahme:** Ein neu freigegebenes Dokument wird ohne manuellen Eingriff
+indexiert und anschließend als „Für KI verfügbar“ angezeigt. Währenddessen
+ist der tatsächliche Fortschritt sichtbar. Fehlgeschlagene oder ausbleibende
+Übergaben und Verarbeitungsfehler zeigen einen verständlichen Status mit
+nächster Handlung; eine Wiederholung erzeugt keine doppelte Indexierung.
+Den Erfolgsfall sowie unterbrochene Übergabe und Workerfehler gezielt prüfen.
+
+### UI-15 · Zuweisungen und Rechte nach Umbenennung prüfen
+
+**Gemeldet:** Nach dem Umbenennen von Teams oder Wissensbereichen funktionieren
+Zuweisungen und Berechtigungen nicht mehr zuverlässig.
+
+**Prüfauftrag:** Team- und Wissensbereichsumbenennung getrennt reproduzieren.
+Bestehende Mitgliedschaften, Dokumentzuordnungen, Leserechte und
+Bearbeitungsrechte vor und nach der Änderung vergleichen. Prüfen, ob
+Referenzen an veränderlichen Namen hängen oder Berechtigungsprojektionen,
+Indexdaten bzw. Caches nach einer Umbenennung veraltet bleiben.
+
+**Abnahme:** Eine reine Namensänderung erhält bestehende Zuweisungen und
+Rechte. Berechtigte Mitglieder können weiterhin dieselben Inhalte im Portal
+und über Chat/Suche nutzen; unberechtigte Nutzer erhalten keinen zusätzlichen
+Zugriff. Neue Namen werden konsistent angezeigt. Beide Umbenennungen mit
+Eigentümer, weiterem Teammitglied und Nutzer außerhalb des Teams prüfen,
+jeweils auch nach Neuladen und erneuter Anmeldung.
+
 ## Ergänzende Verbesserungen ohne bestätigten Exploit
 
 ### Tests näher an den Betrieb bringen

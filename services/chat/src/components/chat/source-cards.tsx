@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { ChevronDown, FileText } from 'lucide-react';
 import type { Source } from '@/types/weave-api';
+import { toProxiedImageUrl } from '@/lib/portal-artifact-url';
 
 function formatPages(source: Source): string {
   if (source.page_start == null) return '–';
@@ -38,8 +39,28 @@ export function SourceCards({ sources }: { sources: Source[] }) {
   const [expanded, setExpanded] = useState(false);
   if (sources.length === 0) return null;
 
+  const images = Array.from(new Set(sources.flatMap((source) => source.images ?? [])));
+
   return (
     <div className="mt-3">
+      {images.length > 0 ? (
+        <div className="mb-2">
+          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-[var(--foreground-muted)]">
+            Bilder aus den Quellen
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {images.map((image) => (
+              // eslint-disable-next-line @next/next/no-img-element -- proxied, per-message remote image, not a static asset
+              <img
+                key={image}
+                src={toProxiedImageUrl(image)}
+                alt=""
+                className="h-20 w-20 rounded-lg border border-[var(--border)] object-cover"
+              />
+            ))}
+          </div>
+        </div>
+      ) : null}
       <button
         type="button"
         aria-expanded={expanded}

@@ -10,8 +10,9 @@ vi.mock('@/lib/data-cache', () => ({ useVisiblePolling: vi.fn() }));
 afterEach(cleanup);
 
 it('shows each document’s own confirmed status in the knowledge-area table using one batch', async () => {
-  const release = { id: 'release', status: 'sent' as const, created_at: '2026-09-02T11:00:00Z', error_message: null };
-  const document: PortalDocument = { id: 'first', original_filename: 'Handbuch.pdf', status: 'FINISHED', collection_id: 'area', collection_name: 'Service', created_at: release.created_at, quality_grade: 'A', quality_recommendation: 'allow', can_release: false, release };
+  const release = { id: 'release', status: 'sent' as const, created_at: '2026-09-02T11:00:00Z', error_message: null, released_by: 'anna' };
+  const source = { kind: 'upload' as const, label: 'Hochgeladen', path: 'Kunden', url: null };
+  const document: PortalDocument = { id: 'first', original_filename: 'Handbuch.pdf', status: 'FINISHED', collection_id: 'area', collection_name: 'Service', created_at: release.created_at, quality_grade: 'A', quality_recommendation: 'allow', can_release: false, release, source, review_decision: null };
   vi.mocked(apiJson).mockResolvedValueOnce({ items: [
     { job_id: 'first', release, indexing: { state: 'indexed', indexed_at: '2026-09-02T11:31:12Z', chunk_count: 4 } },
     { job_id: 'second', release, indexing: { state: 'pending', indexed_at: null, chunk_count: 0 } },

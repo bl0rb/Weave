@@ -195,6 +195,13 @@ class Settings(BaseSettings):
     # Missing while the rest is configured is a 503, never a silent
     # unauthenticated attempt.
     ingest_handoff_secret: str = ''
+    # Service-to-service bearer presented to Weave-Ingest's
+    # get_knowledge_reader dependency (mirrors WEAVE_INGEST_API_TOKEN, the
+    # credential Weave-Knowledge already uses against the same dependency)
+    # -- lets /v1/portal/releases/{id}/artifacts/{filename} fetch release
+    # image bytes on a chat user's behalf without exposing this token to
+    # the browser.
+    ingest_service_token: str = ''
 
 
 settings = Settings()

@@ -85,11 +85,14 @@ shared:
     targets:
       - {service: ingest, var: KNOWLEDGE_INGEST_API_TOKEN}
       - {service: knowledge, var: WEAVE_KNOWLEDGE_INGEST_API_TOKEN}
+      - {service: api, var: INGEST_SERVICE_TOKEN}
     comment: >
       Deployment-provided service credential, generated before first startup.
       Ingest accepts it only for the collection registry and approved release
-      snapshots. Knowledge receives it as WEAVE_INGEST_API_TOKEN. No personal
-      administrator token or UI bootstrap is required.
+      snapshots. Knowledge receives it as WEAVE_INGEST_API_TOKEN. Api receives
+      it as INGEST_SERVICE_TOKEN, to fetch released document images on a chat
+      user's behalf (GET /v1/portal/releases/{id}/artifacts/{filename}). No
+      personal administrator token or UI bootstrap is required.
 
   # --- Postgres cluster credentials -----------------------------------------
   # Not called out in docs/betrieb.md section 5 (that section is about

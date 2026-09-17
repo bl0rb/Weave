@@ -364,6 +364,12 @@ services:
   weave-ingest-frontend:
     # SPA frontend (React/Next.js) for document upload, job monitoring,
     # and result browsing. Calls the backend API.
+    # NOTE: prebuilt image, not built from this checkout. UI source changes only
+    # land here after a `vX.Y.Z` tag (or workflow_dispatch) runs
+    # .github/workflows/release.yml and republishes this tag, followed by
+    # `docker compose pull && docker compose up -d --force-recreate weave-ingest-frontend`.
+    # For local UI changes, build services/ingest/frontend from source instead
+    # (e.g. services/ingest/docker-compose.dev.yml or `npm run dev`).
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -883,6 +889,15 @@ services:
       # HANDOFF_SECRET above. Without it the exchange goes out
       # unauthenticated and the callback answers 503 rather than trying.
       INGEST_HANDOFF_SECRET: ${INGEST_HANDOFF_SECRET:-}
+      # Service-to-service bearer for GET /v1/portal/releases/{id}/artifacts/{filename}
+      # (this gateway's own proxy onto Weave-Ingest's release-artifact
+      # endpoint, used by Weave-Chat to show source images -- see
+      # app/api/portal_artifacts.py). Weave-Ingest's get_knowledge_reader
+      # dependency checks a SINGLE shared secret (knowledge_ingest_api_token),
+      # so this reuses the exact same value already shared with
+      # weave-knowledge-backend below (WEAVE_INGEST_API_TOKEN there) rather
+      # than minting a second secret Weave-Ingest would also need to accept.
+      INGEST_SERVICE_TOKEN: ${WEAVE_KNOWLEDGE_INGEST_API_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy

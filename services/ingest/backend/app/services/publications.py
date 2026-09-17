@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 from datetime import date, datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 import yaml
 
@@ -48,6 +50,26 @@ def publication_configured() -> bool:
 
 def publication_url(release_id: str) -> str:
     return f'{settings.public_api_url.rstrip("/")}/api/v1/portal/releases/{release_id}/download'
+
+
+_RELATIVE_ARTIFACT_IMAGE_RE = re.compile(r'!\[([^\]]*)\]\(artifacts/([^)\s]+)\)')
+
+
+def rewrite_release_image_urls(snapshot: str, release_id: str) -> str:
+    """Rewrite relative 'artifacts/<file>' image links into absolute release-artifact URLs.
+
+    The stored snapshot must be resolvable outside the ingest UI (knowledge index,
+    runtime, chat), so relative attachment links from the Confluence importer are
+    turned into the public release-artifact endpoint. The pre-rewrite snapshot is
+    still what gets hashed for the optimistic-concurrency digest.
+    """
+    base = f'{settings.public_api_url.rstrip("/")}/api/v1/portal/releases/{release_id}/artifacts'
+
+    def _replace(match: re.Match) -> str:
+        alt, filename = match.group(1), match.group(2)
+        return f'![{alt}]({base}/{quote(filename)})'
+
+    return _RELATIVE_ARTIFACT_IMAGE_RE.sub(_replace, snapshot)
 
 
 def _markdown_from_job(job: Job) -> str | None:

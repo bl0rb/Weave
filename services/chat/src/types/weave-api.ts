@@ -64,6 +64,14 @@ export interface Source {
    * verbatim, honestly including `null` rather than hiding the field.
    */
   collection: string | null;
+  /**
+   * Absolute http(s) image URLs found in this chunk's own markdown (e.g.
+   * Confluence attachments rewritten to release-artifact URLs at release
+   * time). Optional so existing `Source` literals in this codebase's own
+   * tests stay valid; rewritten to the chat proxy route before display —
+   * see components/chat/source-cards.tsx.
+   */
+  images?: string[];
 }
 
 export interface RetrievalTrace {

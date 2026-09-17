@@ -21,7 +21,7 @@ it.each(['not_received', 'mismatch', 'empty', 'incomplete', 'failed', 'blocked',
 });
 
 it('does not use a status response for another release', () => {
-  const release = { id: 'current', status: 'sent' as const, created_at: '2026-09-02T11:30:00Z', error_message: null };
+  const release = { id: 'current', status: 'sent' as const, created_at: '2026-09-02T11:30:00Z', error_message: null, released_by: null };
   const live: IndexingItem = { job_id: 'job', release: { ...release, id: 'old' }, indexing: indexed };
   const state = currentReleaseStatus(release, live);
   expect(publicationState(state.delivery, state.indexing).label).toBe('Indexstatus nicht verfügbar');

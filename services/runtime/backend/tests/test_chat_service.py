@@ -31,6 +31,7 @@ from app.services.chat import (
     _check_permissions,
     _context_block,
     _filter_n8n_sources_by_scope,
+    _images_for,
     _score_for,
     _to_source,
     resolve_collection_scope,
@@ -388,7 +389,14 @@ def test_context_block_numbers_sections_with_source_and_page():
 def test_context_block_falls_back_to_document_id_without_a_source_and_no_page_without_page_start():
     chunk = _chunk(source=None, page_start=None, page_end=None, document_id='doc-42', text='body')
     block = _context_block([chunk])
-    assert block == '[source 1] doc-42\nbody'
+    assert block.endswith('[source 1] doc-42\nbody')
+
+
+def test_context_block_leading_instruction_never_matches_the_source_marker():
+    # The prepended image-preservation instruction must never itself be
+    # mistaken for a '[source N]' section by FakeLLM's marker regex.
+    block = _context_block([_chunk(chunk_id=1, source='confluence', text='first')])
+    assert not block.split('\n\n', 1)[0].lower().startswith('[source')
 
 
 def test_score_for_prefers_rerank_over_rrf():
@@ -417,6 +425,27 @@ def test_to_source_propagates_the_chunk_s_collection():
 def test_to_source_defaults_missing_collection_to_none():
     source = _to_source(_chunk())
     assert source.collection is None
+
+
+def test_images_for_extracts_dedupes_and_caps_http_image_urls():
+    text = (
+        '![a](https://x.example/a.png) text ![a](https://x.example/a.png) '
+        + ' '.join(f'![n](https://x.example/{i}.png)' for i in range(10))
+    )
+    urls = _images_for(_chunk(text=text))
+    assert urls[0] == 'https://x.example/a.png'
+    assert len(urls) == 8
+    assert len(set(urls)) == len(urls)
+
+
+def test_images_for_ignores_relative_and_non_http_image_links():
+    urls = _images_for(_chunk(text='![rel](artifacts/x.png) ![ftp](ftp://x.example/x.png)'))
+    assert urls == []
+
+
+def test_to_source_propagates_images_from_chunk_text():
+    source = _to_source(_chunk(text='![a](https://x.example/a.png)'))
+    assert source.images == ['https://x.example/a.png']
 
 
 # --- _filter_n8n_sources_by_scope ----------------------------------------------

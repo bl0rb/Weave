@@ -5,6 +5,7 @@ from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_admin
+from app.api.portal import _apply_quality_grade_filter
 from app.api.routes import _apply_visible_filter
 from app.database.session import get_db
 from app.models.models import Collection, DocumentRelease, ImportRun, ImportRunStatus, Job, JobStatus, KnowledgeWithdrawal, User
@@ -171,6 +172,7 @@ def list_admin_collections(
 def list_activity(
     q: str | None = None,
     status_filter: JobStatus | None = Query(default=None, alias='status'),
+    quality_grade_filter: str | None = Query(default=None, alias='quality_grade'),
     offset: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=_PAGE_LIMIT_MAX),
     db: Session = Depends(get_db),
@@ -193,6 +195,8 @@ def list_activity(
             statement = statement.where(func.lower(Job.original_filename).like(f'%{cleaned_q}%'))
         if include_status and status_filter is not None:
             statement = statement.where(Job.status == status_filter)
+        if include_status and quality_grade_filter is not None:
+            statement = _apply_quality_grade_filter(statement, quality_grade, quality_grade_filter)
         return statement
 
     count_query = apply_activity_filters(select(Job.status, func.count(Job.id)).group_by(Job.status), include_status=False)

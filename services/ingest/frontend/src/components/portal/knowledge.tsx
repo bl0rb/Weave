@@ -6,8 +6,8 @@ import { ArrowRight, Archive, BookOpen, CheckCheck, Pencil, Plus, Trash2, Users 
 import { apiJson } from '@/lib/api';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { apiSend, ConfirmDialog, Modal, inputClass } from '@/components/admin/admin-shared';
-import { collectionDownloadName, downloadPortalFile, jsonBody, loadDocuments, markdownDownloadName, portalDownloadError, portalError, type DocumentPage, type KnowledgeSpace, type PortalDocument } from '@/lib/portal';
-import { DocumentTable, EmptyState, Notice, Pagination, PortalPage } from './shared';
+import { bulkPortalAction, collectionDownloadName, downloadPortalFile, jsonBody, loadDocuments, markdownDownloadName, portalDownloadError, portalError, type DocumentPage, type KnowledgeSpace, type PortalDocument, type QualityGradeFilter } from '@/lib/portal';
+import { BulkActionBar, DocumentTable, EmptyState, Notice, Pagination, PortalPage, QualityGradeFilterRow, QualityGradeLegend } from './shared';
 
 export function KnowledgeSpaces() {
   const [spaces, setSpaces] = useState<KnowledgeSpace[] | null>(null);
@@ -60,15 +60,21 @@ export function KnowledgeDetail({ id }: { id: string }) {
   const [space, setSpace] = useState<KnowledgeSpace | null>(null);
   const [documents, setDocuments] = useState<DocumentPage | null>(null);
   const [offset, setOffset] = useState(0);
+  const [qualityGrade, setQualityGrade] = useState<QualityGradeFilter>('');
   const [error, setError] = useState('');
   const [downloadError, setDownloadError] = useState('');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [confirmReleaseAll, setConfirmReleaseAll] = useState(false);
   const [releasingAll, setReleasingAll] = useState(false);
   const [notice, setNotice] = useState('');
-  const load = useCallback(() => Promise.all([apiJson<KnowledgeSpace>(`/api/v1/collections/${encodeURIComponent(id)}`), loadDocuments(id, offset)])
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [acceptQualityWarnings, setAcceptQualityWarnings] = useState(false);
+  const [releaseConfirmed, setReleaseConfirmed] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const load = useCallback(() => Promise.all([apiJson<KnowledgeSpace>(`/api/v1/collections/${encodeURIComponent(id)}`), loadDocuments(id, offset, 'all', qualityGrade || undefined)])
     .then(([area, docs]) => { setSpace(area); setDocuments(docs); setError(''); })
-    .catch(err => setError(portalError(err))), [id, offset]);
+    .catch(err => setError(portalError(err))), [id, offset, qualityGrade]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
     const timer = setInterval(() => { if (document.visibilityState === 'visible') void load(); }, 15000);
@@ -108,14 +114,42 @@ export function KnowledgeDetail({ id }: { id: string }) {
     } catch (err) { setError(portalError(err)); }
     finally { setReleasingAll(false); }
   };
+  const selectedDocuments = documents?.items.filter(document => selectedIds.has(document.id)) ?? [];
+  const gradeCCount = selectedDocuments.filter(document => document.quality_grade?.toUpperCase() === 'C').length;
+  function clearSelection() { setSelectedIds(new Set()); setAcceptQualityWarnings(false); setReleaseConfirmed(false); }
+  async function runBulk(action: 'release' | 'skip' | 'delete') {
+    if (bulkBusy || selectedIds.size === 0) return;
+    setBulkBusy(true); setNotice('');
+    try {
+      const result = await bulkPortalAction([...selectedIds], action, acceptQualityWarnings);
+      setNotice(`${result.done} Dokument${result.done === 1 ? '' : 'e'} bearbeitet${result.errors.length ? `, ${result.errors.length} Fehler` : ''}.`);
+      clearSelection();
+      setDocuments(null);
+      await load();
+    } catch (err) { setError(portalError(err)); } finally { setBulkBusy(false); setBulkDeleting(false); }
+  }
   return <PortalPage title={space?.name || 'Wissensbereich'} description={space?.description || 'Quellen hinzufügen, Inhalte prüfen und den nächsten Schritt im Blick behalten.'} eyebrow="DEINE WISSENSBASIS">
     <Link className="portal-back" href="/knowledge">← Alle Wissensbereiche</Link>
     {error && <Notice error action={load}>{error}</Notice>}
     {notice && <Notice>{notice}</Notice>}
     {downloadError && <Notice error>{downloadError}</Notice>}
     {space && <div className="portal-context-bar"><span><Users size={17} />Berechtigte: {space.read_teams.length ? space.read_teams.join(', ') : 'Alle angemeldeten Teams'}</span><span>Veröffentlichung nach manueller Freigabe</span></div>}
-    <section className="portal-panel"><div className="portal-section-heading"><div><p className="portal-eyebrow">INHALTE</p><h2>Dokumente{documents ? ` · ${documents.total}` : ''}</h2></div><div className="flex flex-wrap items-center gap-2">{(space?.can_upload ?? space?.can_manage) && Boolean(documents?.total) && (confirmReleaseAll ? <><Button variant="outline" size="sm" disabled={releasingAll} onClick={() => setConfirmReleaseAll(false)}>Abbrechen</Button><Button variant="danger" size="sm" disabled={releasingAll} onClick={() => void releaseAll()}><CheckCheck size={15} />{releasingAll ? 'Wird freigegeben …' : 'Ja, Sammlung freigeben'}</Button></> : <Button variant="outline" size="sm" onClick={() => setConfirmReleaseAll(true)}><CheckCheck size={15} />Sammlung freigeben</Button>)}{Boolean(documents?.total) && <Button variant="outline" size="sm" disabled={downloadingId !== null} onClick={() => void downloadAll()}><Archive size={15} />{downloadingId === 'collection' ? 'ZIP wird erstellt …' : 'Alle als ZIP'}</Button>}{(space?.can_upload ?? space?.can_manage) && Boolean(documents?.total) && <Link href={`/sources/new?collection=${encodeURIComponent(id)}`} className={buttonVariants({ variant: 'outline', size: 'sm' })}><Plus size={15} />Quelle hinzufügen</Link>}<Button variant="ghost" size="sm" onClick={load}>Aktualisieren</Button></div></div>
-      {!documents && !error ? <p className="portal-loading" role="status">Dokumente werden geladen …</p> : documents?.items.length ? <><DocumentTable documents={documents.items} onDownloadMarkdown={document => void downloadDocument(document)} downloadingId={downloadingId} /><Pagination offset={offset} total={documents.total} onChange={value => { setDocuments(null); setOffset(value); }} /></> : !error && <EmptyState title="Hier ist Platz für dein Wissen" href={(space?.can_upload ?? space?.can_manage) ? `/sources/new?collection=${encodeURIComponent(id)}` : undefined} action={(space?.can_upload ?? space?.can_manage) ? "Quelle hinzufügen" : undefined}>Die Eigentümer des Wissensbereichs können eine Quelle hinzufügen. Verbinde eine Confluence-Seite oder lade Dokumente hoch. Nach der Verarbeitung prüfst du den Inhalt.</EmptyState>}
+    <section className="portal-panel"><div className="portal-section-heading"><div><p className="portal-eyebrow">INHALTE</p><h2>Dokumente{documents ? ` · ${documents.total}` : ''}</h2><QualityGradeFilterRow value={qualityGrade} onChange={value => { setQualityGrade(value); setOffset(0); setDocuments(null); }} /><QualityGradeLegend /></div><div className="flex flex-wrap items-center gap-2">{(space?.can_upload ?? space?.can_manage) && Boolean(documents?.total) && (confirmReleaseAll ? <><Button variant="outline" size="sm" disabled={releasingAll} onClick={() => setConfirmReleaseAll(false)}>Abbrechen</Button><Button variant="danger" size="sm" disabled={releasingAll} onClick={() => void releaseAll()}><CheckCheck size={15} />{releasingAll ? 'Wird freigegeben …' : 'Ja, Sammlung freigeben'}</Button></> : <Button variant="outline" size="sm" onClick={() => setConfirmReleaseAll(true)}><CheckCheck size={15} />Sammlung freigeben</Button>)}{Boolean(documents?.total) && <Button variant="outline" size="sm" disabled={downloadingId !== null} onClick={() => void downloadAll()}><Archive size={15} />{downloadingId === 'collection' ? 'ZIP wird erstellt …' : 'Alle als ZIP'}</Button>}{(space?.can_upload ?? space?.can_manage) && Boolean(documents?.total) && <Link href={`/sources/new?collection=${encodeURIComponent(id)}`} className={buttonVariants({ variant: 'outline', size: 'sm' })}><Plus size={15} />Quelle hinzufügen</Link>}<Button variant="ghost" size="sm" onClick={load}>Aktualisieren</Button></div></div>
+      <BulkActionBar
+        count={selectedIds.size}
+        gradeCCount={gradeCCount}
+        acceptQualityWarnings={acceptQualityWarnings}
+        onAcceptQualityWarningsChange={setAcceptQualityWarnings}
+        releaseConfirmed={releaseConfirmed}
+        onReleaseConfirmedChange={setReleaseConfirmed}
+        busy={bulkBusy}
+        onRelease={() => void runBulk('release')}
+        onSkip={() => void runBulk('skip')}
+        onDelete={() => setBulkDeleting(true)}
+        onClear={clearSelection}
+      />
+      {!documents && !error ? <p className="portal-loading" role="status">Dokumente werden geladen …</p> : documents?.items.length ? <><DocumentTable documents={documents.items} onDownloadMarkdown={document => void downloadDocument(document)} downloadingId={downloadingId} selectedIds={selectedIds} onToggle={docId => setSelectedIds(previous => { const next = new Set(previous); if (next.has(docId)) next.delete(docId); else next.add(docId); return next; })} onToggleAll={checked => setSelectedIds(checked ? new Set(documents.items.map(document => document.id)) : new Set())} /><Pagination offset={offset} total={documents.total} onChange={value => { setDocuments(null); setOffset(value); }} /></> : !error && <EmptyState title="Hier ist Platz für dein Wissen" href={(space?.can_upload ?? space?.can_manage) ? `/sources/new?collection=${encodeURIComponent(id)}` : undefined} action={(space?.can_upload ?? space?.can_manage) ? "Quelle hinzufügen" : undefined}>Die Eigentümer des Wissensbereichs können eine Quelle hinzufügen. Verbinde eine Confluence-Seite oder lade Dokumente hoch. Nach der Verarbeitung prüfst du den Inhalt.</EmptyState>}
     </section>
+    {bulkDeleting && <ConfirmDialog title="Dokumente löschen" body={<p>{selectedIds.size} Dokument{selectedIds.size === 1 ? '' : 'e'} unwiderruflich löschen?</p>} confirmLabel="Dokumente löschen" onClose={() => setBulkDeleting(false)} onConfirm={() => runBulk('delete')} />}
   </PortalPage>;
 }

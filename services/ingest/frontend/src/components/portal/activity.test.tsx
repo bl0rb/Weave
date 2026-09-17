@@ -39,7 +39,7 @@ describe('ProcessingActivity', () => {
     await screen.findByText('Handbuch.pdf');
 
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Confluence' } });
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'FAILED' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), { target: { value: 'FAILED' } });
 
     await waitFor(() => {
       const path = api.mock.calls.at(-1)?.[0] as string;
@@ -48,6 +48,20 @@ describe('ProcessingActivity', () => {
       expect(params.get('status')).toBe('FAILED');
       expect(params.get('offset')).toBe('0');
       expect(params.get('limit')).toBe('20');
+    });
+  });
+
+  it('filters by quality grade and resets pagination', async () => {
+    render(<ProcessingActivity />);
+    await screen.findByText('Handbuch.pdf');
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Qualitätsstufe' }), { target: { value: 'none' } });
+
+    await waitFor(() => {
+      const path = api.mock.calls.at(-1)?.[0] as string;
+      const params = new URL(path, 'http://localhost').searchParams;
+      expect(params.get('quality_grade')).toBe('none');
+      expect(params.get('offset')).toBe('0');
     });
   });
 

@@ -39,4 +39,25 @@ describe('SourceCards', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Belege (1)' }));
     expect(screen.getByText('Collection: ohne Collection')).toBeTruthy();
   });
+
+  it('renders a deduplicated image strip proxied through the portal-artifacts route', () => {
+    const imageUrl = 'http://ingest.example/api/v1/portal/releases/rel-1/artifacts/diagram.png';
+    const { container } = render(
+      <SourceCards
+        sources={[
+          makeSource({ chunk_id: 1, images: [imageUrl] }),
+          makeSource({ chunk_id: 2, images: [imageUrl] }),
+        ]}
+      />
+    );
+    expect(screen.getByText('Bilder aus den Quellen')).toBeTruthy();
+    const images = container.querySelectorAll('img');
+    expect(images).toHaveLength(1);
+    expect(images[0].getAttribute('src')).toBe('/api/portal-artifacts/rel-1/diagram.png');
+  });
+
+  it('renders no image strip when no source carries images', () => {
+    render(<SourceCards sources={[makeSource({})]} />);
+    expect(screen.queryByText('Bilder aus den Quellen')).toBeNull();
+  });
 });

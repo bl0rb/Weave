@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { apiFetch, apiJson } from '@/lib/api';
-import { KnowledgeSpaces } from './knowledge';
+import { KnowledgeDetail, KnowledgeSpaces } from './knowledge';
 
 vi.mock('@/lib/api', async importOriginal => ({
   ...await importOriginal<typeof import('@/lib/api')>(),
@@ -75,4 +75,22 @@ it('requires a confirmation before deleting an empty knowledge space', async () 
     { method: 'DELETE' },
   ));
   expect(await screen.findByText('Wissensbereich gelöscht.')).toBeTruthy();
+});
+
+it('filters a knowledge space\'s documents by quality grade and resets pagination', async () => {
+  const document = { id: 'd1', original_filename: 'Doc.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'B', quality_recommendation: 'warn', can_release: true, release: null, source: { kind: 'upload', label: 'Hochgeladen', path: null, url: null } };
+  json.mockImplementation(async path => typeof path === 'string' && path.startsWith('/api/v1/portal/documents')
+    ? { items: [document], total: 1 } : area);
+  render(<KnowledgeDetail id="area-1" />);
+  await screen.findByText('Doc.pdf');
+
+  fireEvent.click(screen.getByRole('button', { name: 'B' }));
+  expect(screen.getByRole('button', { name: 'B' }).getAttribute('aria-pressed')).toBe('true');
+  await waitFor(() => {
+    const call = json.mock.calls.filter(([path]) => typeof path === 'string' && path.startsWith('/api/v1/portal/documents')).at(-1);
+    const params = new URL(call?.[0] as string, 'http://localhost').searchParams;
+    expect(params.get('quality_grade')).toBe('B');
+    expect(params.get('offset')).toBe('0');
+    expect(params.get('collection_id')).toBe('area-1');
+  });
 });

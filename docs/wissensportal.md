@@ -73,7 +73,7 @@ den C-Override noch die Löschereignisse. Ein nicht unterstützter Löschauftrag
 
 1. **Wissensbereich anlegen** öffnet direkt das Formular (`/knowledge/new`). Nach dem Speichern folgt die Quellenauswahl mit dem neuen Bereich bereits ausgewählt. Als Berechtigte sind die Mitglieder des eigenen Teams vorausgewählt. Zugriff für alle Teams erfordert eine ausdrückliche Bestätigung; ohne Teamzuordnung hilft die Administration.
 2. **Quelle hinzufügen**: Dateien (auch einzelne `.eml`-E-Mails) hochladen oder eine bestehende Confluence-Verbindung und Startseite auswählen. Wähle ein Verarbeitungsprofil. Nach dem Upload ersetzt eine Abschlussansicht das Formular: **Weitere Quellen hinzufügen** behält den Wissensbereich bei; **Verarbeitung ansehen** öffnet den Fortschritt. Je nach Dokumentumfang und Auslastung kann die Verarbeitung einige Minuten dauern; die Seite muss nicht offen bleiben.
-3. Unter **Prüfen und freigeben** den aufbereiteten Text lesen. Reicht die Qualität nicht aus, **Mit anderem Profil neu verarbeiten** wählen. Erst die ausdrückliche Bestätigung und „Geprüften Stand freigeben“ speichern die Freigabe.
+3. Unter **Prüfen und freigeben** den aufbereiteten Text lesen. Reicht die Qualität nicht aus, **Erneut prüfen** wählen. Erst die ausdrückliche Bestätigung und „Geprüften Stand freigeben“ speichern die Freigabe.
 4. Den Fortschritt im Dokument verfolgen: **Freigegeben → Wird indiziert → Für KI verfügbar**. Die Anzeige aktualisiert sich automatisch und zeigt nach Abschluss Uhrzeit und Anzahl der durchsuchbaren Textabschnitte. Derselbe Status erscheint in der Dokumentliste des Wissensbereichs und unter **Verarbeitung**. Bearbeiten und erneutes Verarbeiten eines freigegebenen Auftrags werden mit HTTP 409 abgewiesen. Für geänderten Inhalt ist eine neue Dokumentversion notwendig.
 5. **Chat** öffnet die bestehende Chatoberfläche mit derselben föderierten Weave-Anmeldung. Die Integration des Chats direkt in die Portaloberfläche folgt separat.
 
@@ -96,9 +96,29 @@ Im normalen Quellenablauf werden nur diese Profile angeboten, sofern der Server 
 
 Ein gesetzter Serverstandard wird übernommen, wenn er zu diesen angebotenen Optionen gehört; andernfalls wird das erste verfügbare Portalprofil vorausgewählt. Die Auswahl wird als `profile_id` beim Start genau des neuen Upload-Auftrags gespeichert. Für Confluence wird sie als `ocr_profile_id` mit `ocr_attachments=true` übergeben: Das Profil verarbeitet unterstützte Anhänge, die Seiteninhalte werden direkt aus Confluence übernommen. Die vollständige technische Profilauswahl bleibt unter **Administration → Werkzeuge → Verarbeitung testen** verfügbar.
 
-## Ein Dokument mit anderem Profil neu verarbeiten
+## Qualitätsstufen
 
-In der Dokumentprüfung können Dokument- oder Wissensbereichseigentümer und Administratoren **Mit anderem Profil neu verarbeiten** wählen. Die Auswahl bietet dieselben verständlich benannten StructureV3-Profile und aktivierten KI-Verbindungen wie der Quellenablauf. Nach der Profilauswahl ersetzt **Neu verarbeiten** den bisherigen Entwurf. Die Abschlussansicht führt zur **Verarbeitung**; anschließend wird das neue Ergebnis erneut geprüft und ausdrücklich freigegeben.
+Nach der automatischen Verarbeitung bewertet die Qualitätsprüfung das Ergebnis mit einer Stufe:
+
+- **Stufe A** – sehr gut lesbar, direkt geeignet.
+- **Stufe B** – gut, aber mit Hinweisen; sorgfältig prüfen.
+- **Stufe C** – Qualitätsmängel; eine bewusste Freigabe ist erst nach inhaltlicher Prüfung möglich.
+- **Ohne Bewertung** – es liegt keine automatische Prüfung vor.
+
+Die Stufe ergibt sich aus einem Gesamtwert, der sich aus mehreren Signalen zusammensetzt: OCR-Konfidenz (Stichprobengröße der gemessenen Werte), Strukturqualität, Textqualität (abzüglich eines Rauschanteils) sowie einer separaten, regelbasierten Feldprüfung (z. B. IBAN, Datum, verwaiste Labels), deren Auffälligkeiten unabhängig von der Stufe angezeigt werden. Ab einem Gesamtwert von 90 % vergibt die Prüfung Stufe A, ab 75 % Stufe B, darunter Stufe C.
+
+Ein Dokument hat manchmal **keine Qualitätsstufe**, weil
+
+- die Verarbeitung noch nicht abgeschlossen ist,
+- die Verarbeitung fehlgeschlagen ist,
+- es vor Einführung der automatischen Qualitätsprüfung verarbeitet wurde (ältere Dokumente),
+- es über Confluence importiert wurde – Confluence-Importe durchlaufen keine OCR-Qualitätsprüfung.
+
+Im Portal lassen sich Dokumentlisten überall nach Qualitätsstufe filtern (Alle · A · B · C · Ohne Bewertung), und die Dokumentprüfung erklärt die vergebene Stufe samt Signalen, Schwellenwerten und Gesamtwert unter „Warum Stufe X?“.
+
+## Ein Dokument erneut prüfen (mit anderem Profil neu verarbeiten)
+
+In der Dokumentprüfung können Dokument- oder Wissensbereichseigentümer und Administratoren **Erneut prüfen** wählen. Die Auswahl bietet dieselben verständlich benannten StructureV3-Profile und aktivierten KI-Verbindungen wie der Quellenablauf. Nach der Profilauswahl ersetzt **Neu verarbeiten** den bisherigen Entwurf. Die Abschlussansicht führt zur **Verarbeitung**; anschließend wird das neue Ergebnis erneut geprüft und ausdrücklich freigegeben.
 
 Auch ein Qualitätsblock erlaubt eine erneute Verarbeitung. Bereits freigegebene Stände bleiben unveränderlich. Confluence-Seitentext wird direkt importiert und lässt sich nicht durch ein OCR-Profil neu aufbereiten; unterstützte Anhänge können nach abgeschlossenem Import erneut verarbeitet werden.
 

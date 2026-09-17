@@ -69,6 +69,7 @@ from app.schemas.jobs import (
     UploadResponse,
 )
 from app.schemas.import_ import JobArtifactListResponse, JobArtifactResponse
+from app.services.field_validation import validate_document
 from app.services.paddle_service import (
     effective_pipeline_profile_id,
     get_paddle_capabilities,
@@ -77,6 +78,7 @@ from app.services.paddle_service import (
     resolve_profile_selection,
     update_paddle_settings,
 )
+from app.services.quality_gate import evaluate_document_quality
 from app.services.security import DUMMY_PASSWORD_HASH, enforce_rate_limit, hash_password, verify_password
 from app.services.storage import build_result_path, save_upload
 from app.workers import publication_tasks
@@ -2178,7 +2180,11 @@ def save_markdown(
     if not content.startswith('---\n'):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='Markdown must start with YAML frontmatter')
 
-    info = job.processing_info if isinstance(job.processing_info, dict) else {}
+    # Copy rather than alias job.processing_info: mutating the attribute's own
+    # backing dict in place before reassigning it defeats SQLAlchemy's dirty
+    # check (old and new end up `==`), so the UPDATE for this column would be
+    # silently skipped and the edit lost on the next read.
+    info = dict(job.processing_info) if isinstance(job.processing_info, dict) else {}
     editor = info.get('editor') if isinstance(info.get('editor'), dict) else {}
 
     # DB-first: with no shared volume between backend and worker, version
@@ -2205,6 +2211,18 @@ def save_markdown(
         'updated_at': now.isoformat(),
         'versions': versions,
     }
+
+    # A manual edit invalidates the OCR-time quality gate (grade/score/signals
+    # all describe the *original* extraction, not the reviewer's rewrite) --
+    # recompute it against the saved markdown so review-UI badges/filters and
+    # the 'Warum Stufe X?' breakdown reflect what was actually released.
+    execution = info.get('execution') if isinstance(info.get('execution'), dict) else None
+    if isinstance(execution, dict) and execution.get('quality_gate'):
+        info['execution'] = {
+            **execution,
+            'quality_gate': evaluate_document_quality(content, field_validation=validate_document(content)),
+        }
+
     job.processing_info = {**info}
     job.result_markdown = payload.markdown
     db.commit()

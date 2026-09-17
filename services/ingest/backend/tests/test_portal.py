@@ -8,7 +8,22 @@ import yaml
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.models.models import Collection, DocumentRelease, ImportRun, ImportRunStatus, Job, JobStatus, Team, UserRole, user_teams
+from app.models.models import (
+    Collection,
+    DocumentRelease,
+    ImportAuthType,
+    ImportPageState,
+    ImportRun,
+    ImportRunStatus,
+    ImportSource,
+    Job,
+    JobStatus,
+    MailMessage,
+    Team,
+    UserRole,
+    user_teams,
+)
+from app.services import security
 from app.workers import publication_tasks
 from tests.conftest import TestingSessionLocal, client, create_test_user, login_as
 
@@ -55,6 +70,7 @@ def _job(
     markdown: str | None = None,
     quality: str = 'allow',
     import_run_id: str | None = None,
+    mail_message_id: str | None = None,
 ) -> Job:
     db = _db()
     try:
@@ -64,6 +80,7 @@ def _job(
             status=JobStatus.FINISHED,
             owner_id=owner_id,
             import_run_id=import_run_id,
+            mail_message_id=mail_message_id,
             content_sha256=hashlib.sha256(b'portal-upload').hexdigest(),
             result_markdown=markdown or '---\ncollection: edited\nengine: test\nprocessed_at: now\n---\n\n# Guide\n',
             processing_info={
@@ -76,6 +93,48 @@ def _job(
         db.refresh(value)
         db.expunge(value)
         return value
+    finally:
+        db.close()
+
+
+def _import_source(owner_id: str) -> ImportSource:
+    db = _db()
+    try:
+        source = ImportSource(
+            owner_id=owner_id,
+            name='Portal Confluence',
+            base_url='https://portal.example.atlassian.net',
+            server_kind='cloud',
+            api_base_path='/wiki/api/v2',
+            auth_type=ImportAuthType.CLOUD_BASIC,
+            auth_username='portal@example.com',
+            credential_encrypted=security.encrypt_import_credential('portal-token'),
+        )
+        db.add(source)
+        db.commit()
+        db.refresh(source)
+        db.expunge(source)
+        return source
+    finally:
+        db.close()
+
+
+def _import_page_state(source_id: str, job_id: str, *, title: str = 'Portal Page', url: str = 'https://portal.example.atlassian.net/wiki/spaces/X/pages/1') -> ImportPageState:
+    db = _db()
+    try:
+        page = ImportPageState(
+            source_id=source_id,
+            page_id=f'page-{uuid.uuid4().hex[:8]}',
+            page_version=1,
+            job_id=job_id,
+            title=title,
+            url=url,
+        )
+        db.add(page)
+        db.commit()
+        db.refresh(page)
+        db.expunge(page)
+        return page
     finally:
         db.close()
 
@@ -183,6 +242,7 @@ def test_portal_preview_hash_canonicalizes_authoritative_collection_and_release(
         json={'markdown_sha256': body['markdown_sha256']},
     )
     assert released.status_code == 202, released.text
+    assert released.json()['released_by'] == user.username
     release_id = released.json()['id']
     downloaded = authed.get(f'/api/v1/portal/releases/{release_id}/download')
     assert downloaded.status_code == 200
@@ -569,6 +629,118 @@ def test_portal_review_only_filters_finished_unreleased_and_paginates(monkeypatc
     assert response.json()['items'][0]['can_release'] is False
 
 
+def test_portal_documents_quality_grade_filter(monkeypatch):
+    _configure(monkeypatch)
+    user = create_test_user(
+        username=f'portal-grade-{uuid.uuid4().hex[:8]}', email=f'portal-grade-{uuid.uuid4().hex[:8]}@example.com'
+    )
+    collection = _collection(user.id)
+    graded_job = _job(user.id, collection)
+    ungraded_job = _job(user.id, collection)
+    db = _db()
+    try:
+        row = db.get(Job, ungraded_job.id)
+        row.processing_info = {**row.processing_info, 'execution': {}}
+        db.add(row)
+        db.commit()
+    finally:
+        db.close()
+    authed = login_as(user.username)
+
+    response = authed.get('/api/v1/portal/documents', params={'quality_grade': 'a'})
+    assert response.status_code == 200
+    assert {item['id'] for item in response.json()['items']} == {graded_job.id}
+
+    response = authed.get('/api/v1/portal/documents', params={'quality_grade': 'none'})
+    assert response.status_code == 200
+    assert {item['id'] for item in response.json()['items']} == {ungraded_job.id}
+
+
+def test_portal_document_detail_quality_and_missing_reason(monkeypatch):
+    _configure(monkeypatch)
+    user = create_test_user(
+        username=f'portal-quality-{uuid.uuid4().hex[:8]}', email=f'portal-quality-{uuid.uuid4().hex[:8]}@example.com'
+    )
+    collection = _collection(user.id)
+    graded_job = _job(user.id, collection)
+    ungraded_job = _job(user.id, collection)
+    db = _db()
+    try:
+        row = db.get(Job, ungraded_job.id)
+        row.processing_info = {**row.processing_info, 'execution': {}}
+        db.add(row)
+        db.commit()
+    finally:
+        db.close()
+    authed = login_as(user.username)
+
+    detail = authed.get(f'/api/v1/portal/documents/{graded_job.id}').json()
+    assert detail['quality']['grade'] == 'A'
+    assert detail['quality']['recommendation'] == 'allow'
+    assert detail['quality_missing_reason'] is None
+
+    detail = authed.get(f'/api/v1/portal/documents/{ungraded_job.id}').json()
+    assert detail['quality'] is None
+    assert detail['quality_missing_reason'] == 'legacy'
+
+
+def test_portal_document_detail_missing_reason_import_without_gate(monkeypatch):
+    _configure(monkeypatch)
+    user = create_test_user(
+        username=f'portal-quality-import-{uuid.uuid4().hex[:8]}',
+        email=f'portal-quality-import-{uuid.uuid4().hex[:8]}@example.com',
+    )
+    collection = _collection(user.id)
+    run = _import_run(ImportRunStatus.FINISHED)
+    job = _job(user.id, collection, import_run_id=run.id)
+    db = _db()
+    try:
+        row = db.get(Job, job.id)
+        row.processing_info = {**row.processing_info, 'execution': {}}
+        db.add(row)
+        db.commit()
+    finally:
+        db.close()
+    authed = login_as(user.username)
+
+    detail = authed.get(f'/api/v1/portal/documents/{job.id}').json()
+    assert detail['quality'] is None
+    assert detail['quality_missing_reason'] == 'import_without_gate'
+
+
+def test_portal_document_detail_missing_reason_not_finished_and_failed(monkeypatch):
+    _configure(monkeypatch)
+    user = create_test_user(
+        username=f'portal-quality-status-{uuid.uuid4().hex[:8]}',
+        email=f'portal-quality-status-{uuid.uuid4().hex[:8]}@example.com',
+    )
+    collection = _collection(user.id)
+    pending_job = _job(user.id, collection)
+    failed_job = _job(user.id, collection)
+    db = _db()
+    try:
+        pending_row = db.get(Job, pending_job.id)
+        pending_row.status = JobStatus.PENDING
+        pending_row.processing_info = {**pending_row.processing_info, 'execution': {}}
+        failed_row = db.get(Job, failed_job.id)
+        failed_row.status = JobStatus.FAILED
+        failed_row.processing_info = {**failed_row.processing_info, 'execution': {}}
+        db.add(pending_row)
+        db.add(failed_row)
+        db.commit()
+    finally:
+        db.close()
+    authed = login_as(user.username)
+
+    pending_detail = authed.get(f'/api/v1/portal/documents/{pending_job.id}').json()
+    assert pending_detail['quality'] is None
+    assert pending_detail['quality_missing_reason'] == 'not_finished'
+
+    failed_detail = authed.get(f'/api/v1/portal/documents/{failed_job.id}').json()
+    assert failed_detail['quality'] is None
+    assert failed_detail['quality_missing_reason'] == 'failed'
+
+
 def test_portal_retry_handles_sqlite_naive_lease_timestamp(monkeypatch):
     _configure(monkeypatch)
     user = create_test_user(
@@ -650,3 +822,121 @@ def test_failed_release_delivery_can_be_reconciled_and_download_stays_snapshot(m
         assert db.get(DocumentRelease, release_id).status == 'sent'
     finally:
         db.close()
+
+
+def test_portal_document_source_reflects_upload_folder(monkeypatch):
+    user = create_test_user(
+        username=f'portal-source-{uuid.uuid4().hex[:8]}',
+        email=f'portal-source-{uuid.uuid4().hex[:8]}@example.com',
+    )
+    collection = _collection(user.id)
+    job = _job(user.id, collection)
+    with _db() as db:
+        stored = db.get(Job, job.id)
+        stored.processing_info = {
+            **stored.processing_info,
+            'settings': {**stored.processing_info['settings'], 'folder': 'Kunden', 'subfolder': 'Vertraege'},
+        }
+        db.commit()
+    authed = login_as(user.username)
+
+    detail = authed.get(f'/api/v1/portal/documents/{job.id}').json()
+    assert detail['source'] == {'kind': 'upload', 'label': 'Hochgeladen', 'path': 'Kunden/Vertraege', 'url': None}
+
+    listing = authed.get('/api/v1/portal/documents', params={'collection_id': collection.id}).json()
+    item = next(item for item in listing['items'] if item['id'] == job.id)
+    assert item['source']['kind'] == 'upload'
+    assert item['source']['path'] == 'Kunden/Vertraege'
+
+
+def test_portal_document_source_reflects_confluence_page(monkeypatch):
+    user = create_test_user(
+        username=f'portal-confluence-{uuid.uuid4().hex[:8]}',
+        email=f'portal-confluence-{uuid.uuid4().hex[:8]}@example.com',
+    )
+    collection = _collection(user.id)
+    run = _import_run(ImportRunStatus.FINISHED)
+    job = _job(user.id, collection, import_run_id=run.id)
+    source = _import_source(user.id)
+    page = _import_page_state(source.id, job.id, title='Betriebshandbuch', url='https://portal.example.atlassian.net/wiki/spaces/X/pages/42')
+    authed = login_as(user.username)
+
+    detail = authed.get(f'/api/v1/portal/documents/{job.id}').json()
+    assert detail['source'] == {'kind': 'confluence', 'label': 'Betriebshandbuch', 'path': None, 'url': page.url}
+
+    listing = authed.get('/api/v1/portal/documents', params={'collection_id': collection.id}).json()
+    item = next(item for item in listing['items'] if item['id'] == job.id)
+    assert item['source'] == {'kind': 'confluence', 'label': 'Betriebshandbuch', 'path': None, 'url': page.url}
+
+
+def test_portal_document_source_reflects_mail_attachment(monkeypatch):
+    user = create_test_user(
+        username=f'portal-mail-{uuid.uuid4().hex[:8]}',
+        email=f'portal-mail-{uuid.uuid4().hex[:8]}@example.com',
+    )
+    collection = _collection(user.id)
+    db = _db()
+    try:
+        mail = MailMessage(
+            owner_id=user.id,
+            content_sha256=hashlib.sha256(b'portal-mail').hexdigest(),
+            subject='Rechnung 2026',
+            from_address='buchhaltung@example.com',
+            raw_content=b'raw',
+            raw_size_bytes=3,
+        )
+        db.add(mail)
+        db.commit()
+        db.refresh(mail)
+        mail_id = mail.id
+    finally:
+        db.close()
+    job = _job(user.id, collection, mail_message_id=mail_id)
+    authed = login_as(user.username)
+
+    detail = authed.get(f'/api/v1/portal/documents/{job.id}').json()
+    assert detail['source'] == {
+        'kind': 'mail',
+        'label': 'Rechnung 2026 (buchhaltung@example.com)',
+        'path': None,
+        'url': None,
+    }
+
+    listing = authed.get('/api/v1/portal/documents', params={'collection_id': collection.id}).json()
+    item = next(item for item in listing['items'] if item['id'] == job.id)
+    assert item['source']['kind'] == 'mail'
+
+
+def test_portal_document_source_confluence_job_without_page_state_is_not_upload(monkeypatch):
+    """A Job superseded by a Confluence refresh loses its ImportPageState row
+    (job_id there points at the newest import) but must not be reported as a
+    plain upload -- see the source-of-truth regression this guards."""
+    user = create_test_user(
+        username=f'portal-stale-{uuid.uuid4().hex[:8]}',
+        email=f'portal-stale-{uuid.uuid4().hex[:8]}@example.com',
+    )
+    collection = _collection(user.id)
+    run = _import_run(ImportRunStatus.FINISHED)
+    job = _job(user.id, collection, import_run_id=run.id)
+    with _db() as db:
+        stored = db.get(Job, job.id)
+        stored.processing_info = {
+            **stored.processing_info,
+            'settings': {
+                **stored.processing_info['settings'],
+                'import': {'source_page_id': '1', 'source_page_version': 1, 'source_url': 'https://portal.example.atlassian.net/wiki/spaces/X/pages/99'},
+            },
+        }
+        db.commit()
+    # No ImportPageState row is created for this job -- it was overwritten
+    # to point at a newer job by a subsequent refresh/re-import.
+    authed = login_as(user.username)
+
+    detail = authed.get(f'/api/v1/portal/documents/{job.id}').json()
+    assert detail['source']['kind'] != 'upload'
+    assert detail['source']['kind'] == 'confluence'
+    assert detail['source']['url'] == 'https://portal.example.atlassian.net/wiki/spaces/X/pages/99'
+
+    listing = authed.get('/api/v1/portal/documents', params={'collection_id': collection.id}).json()
+    item = next(item for item in listing['items'] if item['id'] == job.id)
+    assert item['source']['kind'] != 'upload'

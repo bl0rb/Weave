@@ -10,12 +10,13 @@ import { useVisiblePolling } from '@/lib/data-cache';
 import { portalError } from '@/lib/portal';
 import { publicationState, type IndexingItem } from '@/lib/indexing-status';
 import { useIndexingStatus } from '@/lib/use-indexing-status';
-import { EmptyState, Notice, PortalPage } from './shared';
+import { EmptyState, Notice, PortalPage, QualityGradeLegend } from './shared';
 
 const PAGE_SIZE = 20;
 type JobStatus = 'PENDING' | 'RUNNING' | 'FINISHED' | 'FAILED';
 type ReleaseStatus = 'pending' | 'sent' | 'failed' | null;
 type StatusFilter = JobStatus | '';
+type GradeFilter = 'A' | 'B' | 'C' | 'none' | '';
 
 export type ActivityItem = {
   id: string;
@@ -145,6 +146,7 @@ function ActivityRow({ item, live }: { item: ActivityItem; live?: IndexingItem }
 export function ProcessingActivity() {
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<StatusFilter>('');
+  const [grade, setGrade] = useState<GradeFilter>('');
   const [offset, setOffset] = useState(0);
   const [activity, setActivity] = useState<ActivityResponse | null>(null);
   const [loadedPath, setLoadedPath] = useState('');
@@ -156,8 +158,9 @@ export function ProcessingActivity() {
     const params = new URLSearchParams({ offset: String(offset), limit: String(PAGE_SIZE) });
     if (query.trim()) params.set('q', query.trim());
     if (status) params.set('status', status);
+    if (grade) params.set('quality_grade', grade);
     return `/api/v1/portal/activity?${params.toString()}`;
-  }, [offset, query, status]);
+  }, [offset, query, status, grade]);
 
   const load = useCallback(async () => {
     const currentRequest = ++requestId.current;
@@ -200,7 +203,12 @@ export function ProcessingActivity() {
     setOffset(0);
   };
 
-  const hasFilters = Boolean(query.trim() || status);
+  const selectGrade = (nextGrade: GradeFilter) => {
+    setGrade(nextGrade);
+    setOffset(0);
+  };
+
+  const hasFilters = Boolean(query.trim() || status || grade);
   const allCount = currentActivity
     ? status
       ? currentActivity.counts.pending + currentActivity.counts.running + currentActivity.counts.finished + currentActivity.counts.failed
@@ -276,8 +284,19 @@ export function ProcessingActivity() {
                 <option value="FAILED">Fehlgeschlagen</option>
               </select>
             </label>
+            <label className="min-w-[180px] text-sm font-semibold">
+              Qualitätsstufe
+              <select value={grade} onChange={(event) => selectGrade(event.target.value as GradeFilter)}>
+                <option value="">Alle Stufen</option>
+                <option value="A">A</option>
+                <option value="B">B</option>
+                <option value="C">C</option>
+                <option value="none">Ohne Bewertung</option>
+              </select>
+            </label>
           </div>
         </div>
+        <QualityGradeLegend />
 
         {currentActivity === null && !currentError ? (
           <Notice>Verarbeitungsaufträge werden geladen …</Notice>

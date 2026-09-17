@@ -210,6 +210,7 @@ request-shaped failure" reasoning.
 """
 
 import logging
+import re
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -820,7 +821,10 @@ def _context_block(chunks: list[RetrievedChunk]) -> str:
     end user directly -- it's LLM-prompt plumbing, not user-facing copy (see
     this module's own docstring note on why THOSE two stay German).
     """
-    sections = []
+    # Leading instruction line, not starting with '[source' (case-insensitive)
+    # so it never matches FakeLLM's `_SOURCE_MARKER_RE` (app/services/llm.py)
+    # and inflates its context-source count in tests.
+    sections = ['Keep any relevant image markdown (![alt](url)) from the context below verbatim in your answer.']
     for index, chunk in enumerate(chunks, start=1):
         location = chunk.source or chunk.document_id
         if chunk.page_start is not None:
@@ -844,6 +848,18 @@ def _score_for(chunk: RetrievedChunk) -> float | None:
     return scores.rerank if scores.rerank is not None else scores.rrf
 
 
+_IMAGE_MARKDOWN_RE = re.compile(r'!\[[^\]]*\]\((https?://[^)\s]+)\)')
+_MAX_IMAGES_PER_SOURCE = 8
+
+
+def _images_for(chunk: RetrievedChunk) -> list[str]:
+    """Absolute http(s) image URLs found in `chunk.text`'s own markdown,
+    deduplicated (order preserved) and capped at `_MAX_IMAGES_PER_SOURCE`.
+    """
+    urls = dict.fromkeys(_IMAGE_MARKDOWN_RE.findall(chunk.text or ''))
+    return list(urls)[:_MAX_IMAGES_PER_SOURCE]
+
+
 def _to_source(chunk: RetrievedChunk) -> Source:
     return Source(
         # chunk.source is optional at the retrieval layer (a chunk whose
@@ -862,6 +878,7 @@ def _to_source(chunk: RetrievedChunk) -> Source:
         chunk_id=chunk.chunk_id,
         score=_score_for(chunk),
         collection=chunk.collection,
+        images=_images_for(chunk),
     )
 
 
