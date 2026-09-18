@@ -24,7 +24,7 @@ httpx==0.28.1
 pypdf==6.16.1
 xlrd==2.0.2
 bcrypt==5.0.0
-cryptography==50.0.0
+cryptography==50.0.1
 authlib==1.8.0
 joserfc==1.7.4
 email-validator==2.3.0
