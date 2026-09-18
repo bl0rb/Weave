@@ -29,5 +29,5 @@ pytest==9.1.1
 # is pulled in transitively by authlib (RSA/EC signature verification) --
 # not imported directly by this codebase, so it's left unpinned here and
 # just frozen wherever pip resolves it into requirements.txt.
-authlib==1.7.2
+authlib==1.8.0
 joserfc==1.7.5
