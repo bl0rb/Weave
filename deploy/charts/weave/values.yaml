@@ -211,7 +211,8 @@ ingestBackend:
       failureThreshold: 6
     readiness:
       enabled: true
-      path: /api/v1/health
+      # AV-03: dependency-aware (DB + broker), unlike liveness's /api/v1/health above.
+      path: /api/v1/ready
       initialDelaySeconds: 5
       periodSeconds: 10
       timeoutSeconds: 3
@@ -354,7 +355,8 @@ knowledge:
       failureThreshold: 6
     readiness:
       enabled: true
-      path: /health
+      # AV-03: dependency-aware (SELECT 1), unlike liveness's no-I/O /health above.
+      path: /ready
       initialDelaySeconds: 5
       periodSeconds: 10
       timeoutSeconds: 3
@@ -391,7 +393,16 @@ knowledgeWorker:
       drop: ["ALL"]
   probes:
     liveness:
-      enabled: false
+      # AV-03: exec probe (celery -A app.workers.tasks inspect ping) --
+      # this container opens no port, so an httpGet probe cannot apply
+      # here; see the template's own comment for why. Timing is
+      # conservative on purpose: `inspect ping` waits on the worker's
+      # event loop, and a false positive restarts an in-progress OCR job.
+      enabled: true
+      initialDelaySeconds: 60
+      periodSeconds: 60
+      timeoutSeconds: 20
+      failureThreshold: 3
     readiness:
       enabled: false
 
@@ -694,7 +705,9 @@ embeddings:
       failureThreshold: 30
     readiness:
       enabled: true
-      path: /health
+      # AV-03: /ready is 503 until the model is actually warm, unlike
+      # liveness's /health above which answers 200 mid-download.
+      path: /ready
       initialDelaySeconds: 10
       periodSeconds: 10
       timeoutSeconds: 5

@@ -38,6 +38,7 @@ from app.models.models import (
     ImportSource,
     Job,
     JobArtifact,
+    JobStatus,
     KnowledgeWithdrawal,
     User,
     UserRole,
@@ -680,6 +681,8 @@ def get_import_run(
         cancel_requested=run.cancel_requested,
         errors=errors,
         jobs=[ImportRunJobSummary(id=job.id, title=job.original_filename, status=job.status) for job in jobs],
+        # SH-04: reuses the `jobs` query above, no extra DB round-trip.
+        pending_attachment_jobs=sum(1 for job in jobs if job.status == JobStatus.PENDING),
     )
 
 

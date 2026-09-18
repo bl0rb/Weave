@@ -219,14 +219,38 @@ services:
       - --save
       - "60"
       - "1"
+      # AV-02: RDB snapshots alone can lose up to a minute of accepted-but-
+      # not-yet-snapshotted broker state on pod replacement; AOF with
+      # everysec fsync bounds that to ~1s without fsync-per-write latency.
+      #
+      # AV-02 migration warning: on an EXISTING deployment (a redisdata
+      # volume already populated from RDB-only history), a plain restart
+      # onto this command starts Redis with AOF enabled but no
+      # appendonlydir/manifest yet -- Redis builds a fresh, empty AOF base
+      # and does NOT fall back to loading dump.rdb, silently dropping the
+      # whole dataset. Before rolling this out against a running instance,
+      # migrate it live first: `redis-cli -a $REDIS_PASSWORD CONFIG SET
+      # appendonly yes` followed by `BGREWRITEAOF` against the OLD (still
+      # running, --save-only) container, so the initial AOF base is built
+      # from the in-memory dataset -- only THEN restart with this command.
+      # See deploy/README.md "Produktionsbetrieb / Hochverfuegbarkeit".
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
       - --loglevel
       - warning
       - --requirepass
       - ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    environment:
+      # Only for the healthcheck below: an authenticated PING that must answer
+      # PONG. The previous unauthenticated `incr ping` exited 0 on NOAUTH and
+      # reported the container healthy regardless of authentication.
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
     volumes:
       - redisdata:/data:rw
     healthcheck:
-      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
       interval: 5s
       timeout: 5s
       retries: 36
@@ -309,7 +333,11 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=3)"]
+      # AV-03: weave-ingest-worker's own depends_on below waits on
+      # service_healthy specifically to not start against a DB/broker this
+      # backend can't reach yet -- /api/v1/health does no I/O, so this has
+      # to be the dependency-aware endpoint instead.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/ready', timeout=3)"]
       interval: 5s
       timeout: 5s
       retries: 36
@@ -456,7 +484,11 @@ services:
       weave-ingest-backend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      # AV-03: weave-knowledge-worker and weave-retrieval's depends_on below
+      # both wait on service_healthy to not start against an unreachable DB
+      # -- /health is now no-I/O liveness only, so this has to be the
+      # dependency-aware endpoint instead.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready', timeout=3)"]
       interval: 5s
       timeout: 5s
       retries: 36

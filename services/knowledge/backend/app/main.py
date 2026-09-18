@@ -1,7 +1,9 @@
 import logging
 
 from fastapi import Depends, FastAPI
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.events import router as events_router
@@ -20,14 +22,26 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name
 # has no session/token to present and shouldn't have to care about API
 # versioning either; contrast with the versioned /api/v1/documents surface
 # registered below.
+# AV-03: no I/O here -- this is what Helm now uses for liveness only, so an
+# ongoing DB outage no longer restart-loops the process. /ready below is the
+# dependency-aware endpoint for readiness.
 @app.get('/health', response_model=HealthResponse)
-def healthcheck(db: Session = Depends(get_db)) -> HealthResponse:
-    # Actually round-trips to the database (unlike Weave-Ingest's own
-    # /health, which is a pure liveness check) -- a fresh SELECT 1 catches a
-    # missing/unreachable weave_knowledge database, not just "the process is
-    # up", which is exactly what an index-pipeline readiness probe needs.
-    db.execute(text('SELECT 1'))
+def healthcheck() -> HealthResponse:
     return HealthResponse(status='healthy')
+
+
+# AV-03: the actual DB round-trip Weave-Ingest's own /health never did --
+# a fresh SELECT 1 catches a missing/unreachable weave_knowledge database,
+# which is exactly what an index-pipeline readiness probe needs, without
+# restarting a process that a DB outage can't fix anyway.
+@app.get('/ready')
+def readiness(db: Session = Depends(get_db)) -> JSONResponse:
+    try:
+        db.execute(text('SELECT 1'))
+    except SQLAlchemyError:
+        logging.getLogger(__name__).warning('readiness: database unavailable', exc_info=True)
+        return JSONResponse(status_code=503, content={'status': 'unavailable', 'reason': 'database'})
+    return JSONResponse(status_code=200, content={'status': 'ready'})
 
 
 app.include_router(router)

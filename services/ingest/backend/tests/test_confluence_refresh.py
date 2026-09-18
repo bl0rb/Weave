@@ -463,6 +463,61 @@ def test_tick_still_reenqueues_next_tick_when_lock_acquire_raises(sent, monkeypa
     assert args == ['token-abc']
 
 
+def test_tick_reclaims_a_lost_lock_and_reenqueues_with_a_new_token(sent, monkeypatch) -> None:
+    """SH-01: the carried token is no longer the current holder (expired,
+    Redis restart/eviction) but nobody else has taken it -- the tick must
+    reclaim the lock with a fresh token, run the dispatch, and re-enqueue
+    with that new token, instead of silently ending the chain."""
+    monkeypatch.setattr(refresh_tasks, '_renew_refresh_lock', lambda token: False)
+    monkeypatch.setattr(refresh_tasks, '_try_acquire_refresh_lock', lambda: 'new-token')
+    dispatched: list[bool] = []
+    monkeypatch.setattr(refresh_tasks, '_dispatch_due_refreshes', lambda: dispatched.append(True))
+
+    confluence_refresh_tick('stale-token')
+
+    assert dispatched == [True]
+    assert len(sent) == 1
+    name, args = sent[0]
+    assert name == 'confluence_refresh_tick'
+    assert args == ['new-token']
+
+
+def test_tick_stands_down_when_lock_is_lost_to_another_holder(sent, monkeypatch) -> None:
+    """SH-01: the carried token is lost AND another replica's chain already
+    holds the lock live -- this execution must not dispatch and must not
+    re-enqueue, so exactly one chain survives."""
+    monkeypatch.setattr(refresh_tasks, '_renew_refresh_lock', lambda token: False)
+    monkeypatch.setattr(refresh_tasks, '_try_acquire_refresh_lock', lambda: None)
+    dispatched: list[bool] = []
+    monkeypatch.setattr(refresh_tasks, '_dispatch_due_refreshes', lambda: dispatched.append(True))
+
+    confluence_refresh_tick('stale-token')
+
+    assert dispatched == []
+    assert sent == []
+
+
+def test_tick_reenqueue_retries_a_transient_send_task_failure_and_succeeds(monkeypatch) -> None:
+    """SH-01: the self-re-enqueue must survive a transient broker error
+    instead of ending the chain on the first failure."""
+    monkeypatch.setattr(refresh_tasks, '_acquire_or_renew', lambda lock_token: 'token-xyz')
+    monkeypatch.setattr(refresh_tasks, '_dispatch_due_refreshes', lambda: None)
+    monkeypatch.setattr(refresh_tasks.time, 'sleep', lambda seconds: None)
+
+    attempts: list[int] = []
+
+    def _flaky_send_task(name, args=None, **kw):
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise Exception('transient broker error')
+
+    monkeypatch.setattr(celery_app, 'send_task', _flaky_send_task)
+
+    confluence_refresh_tick(None)
+
+    assert len(attempts) == 3
+
+
 def test_dispatch_skips_source_with_an_already_active_run(sent) -> None:
     owner = _make_owner()
     source_id = _make_source(owner.id, last_refresh_at=datetime.now(timezone.utc) - timedelta(seconds=1000))

@@ -3,14 +3,17 @@ import zipfile
 from pathlib import Path
 
 import pytest
+import redis as redis_lib
 from fastapi import HTTPException, UploadFile
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.deps import get_current_user
 from app.api.routes import _JOB_LIST_PAGE_LIMIT_MAX
+from app.database.session import get_db
 from app.main import app
 from app.models.models import Collection, Job, JobMarkdownVersion, JobStatus, User, UserRole, VlConnection, WebhookConnection
 from app.services import security
-from conftest import TestingSessionLocal, client
+from conftest import TestingSessionLocal, client, override_get_db
 
 # These tests predate the Step 2 auth work and exercise business logic that
 # doesn't care about *who* is calling -- Step 3 is what adds per-row
@@ -58,6 +61,50 @@ def test_healthcheck():
     response = client.get('/api/v1/health')
     assert response.status_code == 200
     assert response.json() == {'status': 'healthy'}
+
+
+def test_readiness_ok():
+    response = client.get('/api/v1/ready')
+    assert response.status_code == 200
+    assert response.json() == {'status': 'ready'}
+
+
+def test_readiness_reports_database_failure(monkeypatch):
+    # AV-03: a dead DB must flip readiness without touching liveness. The
+    # route now takes its session via Depends(get_db) like every other
+    # route, so the failure is injected through the same dependency
+    # override the fixtures already use (conftest.override_get_db) instead
+    # of monkeypatching module-level SessionLocal.
+    class _BrokenSession:
+        def execute(self, *args, **kwargs):
+            raise SQLAlchemyError('db is down')
+
+    def _broken_get_db():
+        yield _BrokenSession()
+
+    app.dependency_overrides[get_db] = _broken_get_db
+    try:
+        response = client.get('/api/v1/ready')
+    finally:
+        # Restore conftest's shared override rather than popping it, since
+        # that override is process-wide for the rest of the test session.
+        app.dependency_overrides[get_db] = override_get_db
+    assert response.status_code == 503
+    assert response.json()['reason'] == 'database'
+
+
+def test_readiness_reports_broker_failure(monkeypatch):
+    # AV-03: a dead broker must also flip readiness (DB stays healthy here).
+    def _broken_ping():
+        raise redis_lib.RedisError('broker is down')
+
+    import app.main as main_module
+
+    fake_client = type('FakeClient', (), {'ping': staticmethod(_broken_ping)})()
+    monkeypatch.setattr(main_module, '_rate_limit_redis', lambda: fake_client)
+    response = client.get('/api/v1/ready')
+    assert response.status_code == 503
+    assert response.json()['reason'] == 'broker'
 
 
 def test_upload_rejects_unsupported_type():
@@ -1643,8 +1690,19 @@ def test_paddle_status_reports_queue_when_probe_degraded(monkeypatch, tmp_path):
 
 
 def test_worker_restart_requeues_running_jobs(monkeypatch, tmp_path):
+    # SH-02: startup recovery must only reset a RUNNING job whose updated_at
+    # is old enough that it cannot still be genuinely executing (older than
+    # the hard time limit + margin) -- a live job with a recent updated_at
+    # must be left alone, or a routine rolling restart duplicates OCR work.
+    from datetime import datetime, timedelta, timezone
+
+    from app.core.config import settings as app_settings
     from app.workers import tasks
     monkeypatch.setattr(tasks, 'SessionLocal', TestingSessionLocal)
+
+    stale_updated_at = datetime.now(timezone.utc) - timedelta(
+        seconds=app_settings.celery_task_time_limit_seconds, minutes=10
+    )
 
     db = TestingSessionLocal()
     db.query(Job).filter(Job.status == JobStatus.RUNNING).delete()
@@ -1658,6 +1716,28 @@ def test_worker_restart_requeues_running_jobs(monkeypatch, tmp_path):
             upload_mime_type='application/pdf',
             upload_size_bytes=1,
             status=JobStatus.RUNNING,
+            updated_at=stale_updated_at,
+            processing_info={
+                'settings': {
+                    'profile_id': 'ppocrv6_medium',
+                    'mode': 'collection',
+                    'email': 'ops@example.com',
+                    'department': 'ops',
+                },
+                'execution': {'status': 'running'},
+            },
+        )
+    )
+    db.add(
+        Job(
+            id='job-running-still-live',
+            original_filename='live.pdf',
+            upload_path=str(tmp_path / 'live.pdf'),
+            upload_content=b'l',
+            upload_mime_type='application/pdf',
+            upload_size_bytes=1,
+            status=JobStatus.RUNNING,
+            updated_at=datetime.now(timezone.utc),
             processing_info={
                 'settings': {
                     'profile_id': 'ppocrv6_medium',
@@ -1682,6 +1762,15 @@ def test_worker_restart_requeues_running_jobs(monkeypatch, tmp_path):
     assert 'job-running-restart' in queued_map
     assert queued_map['job-running-restart'][1] == 'ppocrv6_medium'
     assert queued_map['job-running-restart'][2] == 'collection'
+    # The live job must not be reset/requeued -- a second worker picking it
+    # up would duplicate the still-running OCR work.
+    assert 'job-running-still-live' not in queued_map
+
+    db = TestingSessionLocal()
+    live_job = db.get(Job, 'job-running-still-live')
+    assert live_job is not None
+    assert live_job.status == JobStatus.RUNNING
+    db.close()
 
     db = TestingSessionLocal()
     job = db.get(Job, 'job-running-restart')

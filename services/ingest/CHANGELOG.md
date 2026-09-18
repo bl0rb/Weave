@@ -108,6 +108,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the run's error list. Personal spaces (`~` keys) get an explicit hint
 
 ### Changed
+- Bundled Redis in Compose (and in Helm when `redis.bundled.persistence.enabled`) runs with
+  AOF (`appendonly yes`, `appendfsync everysec`). **Existing instances must enable AOF online
+  first** (`CONFIG SET appendonly yes` + `BGREWRITEAOF`) before restarting with the new
+  command, otherwise Redis starts from an empty AOF and drops the RDB dataset — see
+  deploy/README.md (AV-02).
 - "Mit anderem Profil neu verarbeiten" is now "Erneut prüfen".
 - Saving a manually edited markdown recomputes the quality gate against the edited text
   instead of keeping the grade of the original extraction.
@@ -151,6 +156,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *Upgrading an existing installation*.
 
 ### Fixed
+- Self-healing (review 2026-09-18): a periodic tick (publications, Confluence refresh,
+  session cleanup) whose Redis lock expired or vanished re-elects itself instead of ending
+  its chain, and the next-tick enqueue is retried before giving up (SH-01). Worker startup
+  no longer resets OCR jobs that are still genuinely running (staleness gated on the hard
+  time limit, SH-02) and re-queues attachment jobs stranded as PENDING under an already
+  finished import; the finalize backstop survives a broker error per child (SH-04).
+- Indexing status compared the pre-rewrite digest with what Knowledge downloaded, so every
+  released document with an image showed as "abweichend" although it was indexed (ST-01).
+- Ingest exposes `GET /api/v1/ready` (database + broker) separately from the no-I/O
+  `/api/v1/health`; Helm readiness and the Compose healthcheck use it (AV-03). The Compose
+  Redis healthcheck now authenticates and requires `PONG` (AV-04).
 - `PUT /jobs/{id}/save` mutated the job's `processing_info` in place before reassigning it,
   so SQLAlchemy saw no change and silently dropped the editor/version metadata.
 - Tables no longer lose their first row to the header. `_html_table_to_markdown` promoted

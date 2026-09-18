@@ -10,12 +10,14 @@ Redis/broker needed for any test here.
 
 from __future__ import annotations
 
+import uuid
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
 
 from app.core.config import settings
-from app.models.models import Collection
+from app.models.models import Collection, Document, DocumentStatus
 from app.workers import collection_sync_tasks
 from app.workers.celery_app import celery_app
 from app.workers.collection_sync_tasks import _run_sync, collection_sync_tick
@@ -30,7 +32,28 @@ def _cleanup():
     db = _db()
     try:
         db.query(Collection).delete()
+        db.query(Document).delete()
         db.commit()
+    finally:
+        db.close()
+
+
+def _make_document(*, status: DocumentStatus, index_attempts: int, updated_at: datetime) -> Document:
+    db = _db()
+    try:
+        document = Document(
+            source_job_id=str(uuid.uuid4()),
+            content_sha256='a' * 64,
+            engine='paddleocr',
+            processed_at=updated_at,
+            status=status,
+            index_attempts=index_attempts,
+            updated_at=updated_at,
+        )
+        db.add(document)
+        db.commit()
+        db.refresh(document)
+        return document
     finally:
         db.close()
 
@@ -143,3 +166,113 @@ def test_tick_task_name_is_namespaced_under_weave_knowledge():
     app/workers/celery_app.py) so it lands on this service's own queue,
     same discipline as INDEX_TASK_NAME."""
     assert collection_sync_tasks.TICK_TASK_NAME == 'weave.knowledge.collection_sync_tick'
+
+
+# --- SH-01: renewal failure reclaims an orphaned lock instead of stranding the chain --------
+
+
+def test_tick_reacquires_and_reenqueues_when_lock_was_lost_and_free(sent, monkeypatch):
+    """A renewal failure alone must not end the chain: if the lock key is
+    simply gone (expired, Redis restart) rather than held by another chain,
+    a fresh NX acquire must succeed and the chain continues with the new
+    token."""
+    monkeypatch.setattr(collection_sync_tasks, '_renew_sync_lock', lambda token: False)
+    monkeypatch.setattr(collection_sync_tasks, '_try_acquire_sync_lock', lambda: 'new-token')
+    monkeypatch.setattr(settings, 'weave_ingest_base_url', 'https://weave.local')
+
+    with patch('app.services.collection_sync.httpx.get', return_value=_FakeResponse(200, [])):
+        collection_sync_tick('stale-token')
+
+    assert len(sent) == 1
+    name, args = sent[0]
+    assert name == collection_sync_tasks.TICK_TASK_NAME
+    assert args == ['new-token']
+
+
+def test_tick_stands_down_when_lock_lost_to_another_holder(sent, monkeypatch):
+    """A renewal failure whose fresh acquire ALSO fails means another chain
+    genuinely holds the lock -- must stand down, no re-enqueue."""
+    monkeypatch.setattr(collection_sync_tasks, '_renew_sync_lock', lambda token: False)
+    monkeypatch.setattr(collection_sync_tasks, '_try_acquire_sync_lock', lambda: None)
+
+    collection_sync_tick('stale-token')
+
+    assert sent == []
+
+
+def test_tick_retries_reenqueue_on_transient_send_failure(sent, monkeypatch):
+    """A transient send_task failure while re-enqueuing the next tick must
+    be retried (bounded), not left to kill the chain."""
+    monkeypatch.setattr(collection_sync_tasks, '_acquire_or_renew', lambda lock_token: 'token-xyz')
+    monkeypatch.setattr(settings, 'weave_ingest_base_url', 'https://weave.local')
+    monkeypatch.setattr(collection_sync_tasks.time, 'sleep', lambda seconds: None)
+
+    calls = {'n': 0}
+
+    def flaky_send(name, args=None, **kw):
+        calls['n'] += 1
+        if calls['n'] < 2:
+            raise Exception('broker hiccup')
+        sent.append((name, list(args or [])))
+
+    monkeypatch.setattr(celery_app, 'send_task', flaky_send)
+
+    with patch('app.services.collection_sync.httpx.get', return_value=_FakeResponse(200, [])):
+        collection_sync_tick(None)
+
+    assert calls['n'] == 2
+    assert len(sent) == 1
+    name, args = sent[0]
+    assert name == collection_sync_tasks.TICK_TASK_NAME
+    assert args == ['token-xyz']
+
+
+def test_tick_reenqueue_gives_up_after_max_attempts_without_raising(sent, monkeypatch):
+    """After exhausting the bounded retries, the tick must log and return
+    normally rather than raise (a raised exception here would crash-loop
+    the Celery task redelivery instead of just ending the chain)."""
+    monkeypatch.setattr(collection_sync_tasks, '_acquire_or_renew', lambda lock_token: 'token-xyz')
+    monkeypatch.setattr(settings, 'weave_ingest_base_url', 'https://weave.local')
+    monkeypatch.setattr(collection_sync_tasks.time, 'sleep', lambda seconds: None)
+    monkeypatch.setattr(celery_app, 'send_task', lambda name, args=None, **kw: (_ for _ in ()).throw(Exception('down')))
+
+    with patch('app.services.collection_sync.httpx.get', return_value=_FakeResponse(200, [])):
+        collection_sync_tick(None)  # must not raise
+
+    assert sent == []
+
+
+# --- SH-03: periodic re-drive of stalled index retries ------------------------------------
+
+
+def test_redrive_resends_a_due_retry_eligible_document(sent, monkeypatch):
+    monkeypatch.setattr(collection_sync_tasks, '_acquire_or_renew', lambda lock_token: 'token-xyz')
+    monkeypatch.setattr(settings, 'weave_ingest_base_url', 'https://weave.local')
+
+    old_enough = datetime.now(timezone.utc) - timedelta(seconds=1000)
+    stalled = _make_document(status=DocumentStatus.PENDING, index_attempts=1, updated_at=old_enough)
+    _make_document(status=DocumentStatus.PENDING, index_attempts=1, updated_at=datetime.now(timezone.utc))  # too recent
+    _make_document(status=DocumentStatus.PENDING, index_attempts=0, updated_at=old_enough)  # never tried yet
+    _make_document(status=DocumentStatus.FAILED, index_attempts=5, updated_at=old_enough)  # already given up
+
+    with patch('app.services.collection_sync.httpx.get', return_value=_FakeResponse(200, [])):
+        collection_sync_tick(None)
+
+    index_sends = [args for name, args in sent if name == 'weave.knowledge.index_document']
+    assert index_sends == [[str(stalled.id)]]
+
+
+def test_redrive_skips_document_already_at_max_attempts(sent, monkeypatch):
+    from app.workers import tasks as tasks_module
+
+    monkeypatch.setattr(collection_sync_tasks, '_acquire_or_renew', lambda lock_token: 'token-xyz')
+    monkeypatch.setattr(settings, 'weave_ingest_base_url', 'https://weave.local')
+
+    old_enough = datetime.now(timezone.utc) - timedelta(seconds=10_000)
+    _make_document(status=DocumentStatus.PENDING, index_attempts=tasks_module._MAX_ATTEMPTS, updated_at=old_enough)
+
+    with patch('app.services.collection_sync.httpx.get', return_value=_FakeResponse(200, [])):
+        collection_sync_tick(None)
+
+    index_sends = [args for name, args in sent if name == 'weave.knowledge.index_document']
+    assert index_sends == []

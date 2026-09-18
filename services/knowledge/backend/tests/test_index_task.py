@@ -443,6 +443,38 @@ def test_transient_fetch_error_reenqueues_with_backoff_and_bumps_attempts():
         db.close()
 
 
+def test_transient_fetch_error_send_task_failure_leaves_document_retry_eligible():
+    """SH-03: a broker hiccup on the retry re-enqueue must not fall through
+    to the outer unexpected-failure handler and mark the document FAILED --
+    it must stay PENDING (attempts already incremented/committed) so the
+    periodic stalled-retry sweep can pick it up later."""
+    db = TestingSessionLocal()
+    try:
+        document = _make_document(db)
+    finally:
+        db.close()
+
+    with (
+        patch(
+            'app.workers.tasks.ingest_client.fetch_released_markdown',
+            side_effect=ingest_client.TransientFetchError('boom'),
+        ),
+        patch.object(tasks_module.celery_app, 'send_task', side_effect=Exception('broker hiccup')) as mock_send_task,
+    ):
+        index_document(str(document.id))
+
+    mock_send_task.assert_called_once()
+
+    db = TestingSessionLocal()
+    try:
+        refreshed = db.get(Document, document.id)
+        assert refreshed.status == DocumentStatus.PENDING
+        assert refreshed.index_attempts == 1
+        assert refreshed.error is None
+    finally:
+        db.close()
+
+
 def test_transient_fetch_error_backoff_grows_on_later_attempts():
     db = TestingSessionLocal()
     try:

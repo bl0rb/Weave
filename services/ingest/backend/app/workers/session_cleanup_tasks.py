@@ -28,6 +28,7 @@ requirement the way Doppelstart-Schutz is for starting an import run.
 """
 
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -86,9 +87,37 @@ def _acquire_or_renew(lock_token: str | None) -> str | None:
     """Returns the token this execution owns the lock with going forward, or
     None when it must stand down (do the sweep only if issued a token; never
     re-enqueue without one)."""
-    if lock_token is None:
-        return _try_acquire_cleanup_lock()
-    return lock_token if _renew_cleanup_lock(lock_token) else None
+    if lock_token is not None and _renew_cleanup_lock(lock_token):
+        return lock_token
+    # SH-01: no carried token, or the carried one was lost (TTL expiry,
+    # Redis restart/eviction) -- try a fresh acquisition instead of ending
+    # the chain here. Standing down (None) means another replica already
+    # holds it live, so exactly one chain survives.
+    return _try_acquire_cleanup_lock()
+
+
+_REENQUEUE_MAX_ATTEMPTS = 3
+_REENQUEUE_RETRY_SECONDS = (1, 2)
+
+
+def _reenqueue_tick(self, token: str | None) -> None:
+    """SH-01: this self-re-enqueue is what keeps the session-cleanup chain
+    alive -- a transient broker error here must not silently end it. Retry
+    a bounded number of times with a short backoff before giving up; log
+    at ERROR on final failure so operators can see the chain died."""
+    for attempt in range(1, _REENQUEUE_MAX_ATTEMPTS + 1):
+        try:
+            self.app.send_task(TICK_TASK_NAME, args=[token], countdown=settings.session_cleanup_tick_seconds)
+            return
+        except Exception:
+            if attempt >= _REENQUEUE_MAX_ATTEMPTS:
+                logger.error(
+                    'SH-01: session cleanup tick chain ended -- failed to re-enqueue next tick after %s attempt(s)',
+                    attempt,
+                    exc_info=True,
+                )
+                return
+            time.sleep(_REENQUEUE_RETRY_SECONDS[min(attempt - 1, len(_REENQUEUE_RETRY_SECONDS) - 1)])
 
 
 def delete_expired_sessions() -> int:
@@ -127,7 +156,7 @@ def session_cleanup_tick(self, lock_token: str | None = None) -> None:
         # simply retries instead of the whole chain silently dying on one
         # Redis blip.
         logger.exception('session cleanup: acquire/renew of the leadership lock failed; retrying next tick')
-        self.app.send_task(TICK_TASK_NAME, args=[lock_token], countdown=settings.session_cleanup_tick_seconds)
+        _reenqueue_tick(self, lock_token)
         return
     if token is None:
         logger.info(
@@ -141,4 +170,4 @@ def session_cleanup_tick(self, lock_token: str | None = None) -> None:
     except Exception:
         logger.exception('session cleanup tick failed')
     finally:
-        self.app.send_task(TICK_TASK_NAME, args=[token], countdown=settings.session_cleanup_tick_seconds)
+        _reenqueue_tick(self, token)

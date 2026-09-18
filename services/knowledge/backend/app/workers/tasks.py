@@ -208,7 +208,18 @@ def _run_pipeline(self, db: Session, document: Document) -> None:
             'index_document: transient fetch error for document %s (attempt %d/%d); retrying in %ds: %s',
             document.id, attempts, _MAX_ATTEMPTS, countdown, exc,
         )
-        self.app.send_task(INDEX_TASK_NAME, args=[str(document.id)], countdown=countdown)
+        try:
+            self.app.send_task(INDEX_TASK_NAME, args=[str(document.id)], countdown=countdown)
+        except Exception:
+            # SH-03: a broker hiccup here must not fail the document -- it's
+            # already retry-eligible (attempts incremented and committed
+            # above, status still PENDING). The periodic
+            # collection_sync_tick's stalled-retry sweep re-drives it if
+            # this send never lands.
+            logger.warning(
+                'index_document: failed to enqueue retry for document %s (attempt %d/%d); '
+                'will be re-driven by the periodic stalled-retry sweep', document.id, attempts, _MAX_ATTEMPTS,
+            )
         return
 
     document.markdown_body = markdown

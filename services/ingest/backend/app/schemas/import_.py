@@ -170,6 +170,10 @@ class ImportRunDetailResponse(ImportRunResponse):
     cancel_requested: bool = False
     errors: list[ImportRunError] = Field(default_factory=list)
     jobs: list[ImportRunJobSummary] = Field(default_factory=list)
+    # SH-04: lets a FINISHED run that still has unprocessed attachment-OCR
+    # children (backstop send failed / startup recovery hasn't caught up
+    # yet) be told apart from one that is genuinely all done.
+    pending_attachment_jobs: int = 0
 
 
 class ImportRunCancelResponse(BaseModel):

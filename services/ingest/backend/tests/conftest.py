@@ -123,6 +123,10 @@ class _FakeRedis:
             self._expires_at.pop(key, None)
         return deleted
 
+    def ping(self) -> bool:
+        # AV-03: /api/v1/ready pings the broker via this same fake client.
+        return True
+
 
 security_module._redis_client = _FakeRedis()
 

@@ -52,6 +52,7 @@ shape, not a stale cached one) at zero extra API cost per page.
 """
 
 import logging
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -116,9 +117,37 @@ def _acquire_or_renew(lock_token: str | None) -> str | None:
     """Returns the token this execution owns the lock with going forward, or
     None when it must stand down (do the dispatch work only if issued a
     token; never re-enqueue without one)."""
-    if lock_token is None:
-        return _try_acquire_refresh_lock()
-    return lock_token if _renew_refresh_lock(lock_token) else None
+    if lock_token is not None and _renew_refresh_lock(lock_token):
+        return lock_token
+    # SH-01: no carried token, or the carried one was lost (TTL expiry,
+    # Redis restart/eviction) -- try a fresh acquisition instead of ending
+    # the chain here. Standing down (None) means another replica already
+    # holds it live, so exactly one chain survives.
+    return _try_acquire_refresh_lock()
+
+
+_REENQUEUE_MAX_ATTEMPTS = 3
+_REENQUEUE_RETRY_SECONDS = (1, 2)
+
+
+def _reenqueue_tick(self, token: str | None) -> None:
+    """SH-01: this self-re-enqueue is what keeps the refresh-tick chain
+    alive -- a transient broker error here must not silently end it. Retry
+    a bounded number of times with a short backoff before giving up; log
+    at ERROR on final failure so operators can see the chain died."""
+    for attempt in range(1, _REENQUEUE_MAX_ATTEMPTS + 1):
+        try:
+            self.app.send_task(TICK_TASK_NAME, args=[token], countdown=settings.confluence_refresh_tick_seconds)
+            return
+        except Exception:
+            if attempt >= _REENQUEUE_MAX_ATTEMPTS:
+                logger.error(
+                    'SH-01: confluence refresh tick chain ended -- failed to re-enqueue next tick after %s attempt(s)',
+                    attempt,
+                    exc_info=True,
+                )
+                return
+            time.sleep(_REENQUEUE_RETRY_SECONDS[min(attempt - 1, len(_REENQUEUE_RETRY_SECONDS) - 1)])
 
 
 def _truncate(value: str, limit: int) -> str:
@@ -300,7 +329,7 @@ def confluence_refresh_tick(self, lock_token: str | None = None) -> None:
         # retries instead of the whole self-re-enqueuing chain silently
         # dying on one Redis blip.
         logger.exception('confluence refresh: acquire/renew of the leadership lock failed; retrying next tick')
-        self.app.send_task(TICK_TASK_NAME, args=[lock_token], countdown=settings.confluence_refresh_tick_seconds)
+        _reenqueue_tick(self, lock_token)
         return
     if token is None:
         logger.info('confluence refresh: leadership lock unavailable (already held elsewhere, or lease lost); standing down')
@@ -310,4 +339,4 @@ def confluence_refresh_tick(self, lock_token: str | None = None) -> None:
     except Exception:
         logger.exception('confluence refresh tick failed')
     finally:
-        self.app.send_task(TICK_TASK_NAME, args=[token], countdown=settings.confluence_refresh_tick_seconds)
+        _reenqueue_tick(self, token)

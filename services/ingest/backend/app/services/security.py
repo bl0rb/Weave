@@ -41,7 +41,17 @@ def _rate_limit_redis() -> 'redis_lib.Redis':
     """
     global _redis_client
     if _redis_client is None:
-        _redis_client = redis_lib.Redis.from_url(settings.redis_url, decode_responses=True)
+        # AV-03: bounded timeouts so a network partition to Redis (packets
+        # dropped, not connection-refused) fails fast with RedisError
+        # instead of blocking on the OS TCP timeout -- /api/v1/ready reuses
+        # this client for the broker check on a fixed probe interval, so an
+        # unbounded hang here would tie up a handling thread per probe.
+        _redis_client = redis_lib.Redis.from_url(
+            settings.redis_url,
+            decode_responses=True,
+            socket_connect_timeout=2,
+            socket_timeout=2,
+        )
     return _redis_client
 
 

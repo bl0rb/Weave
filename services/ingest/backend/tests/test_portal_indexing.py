@@ -118,6 +118,23 @@ def test_authorized_status_uses_server_release_and_never_exposes_secrets_or_cont
     assert not any(value in response.text for value in ['private document', 'secret', 'markdown_sha256', 'Signature'])
 
 
+def test_status_and_diagnostics_compare_the_released_digest_not_the_concurrency_digest(publication, monkeypatch):
+    # ST-01: the release payload carries the digest of the image-URL-rewritten
+    # snapshot that Knowledge actually downloaded; the row's markdown_sha256 is
+    # the pre-rewrite digest used only for the portal's concurrency check.
+    user, reference = publication
+    with TestingSessionLocal() as db:
+        release = db.get(DocumentRelease, reference['release_id'])
+        release.payload = {'markdown_sha256': 'c' * 64}
+        db.commit()
+    expected = {**reference, 'markdown_sha256': 'c' * 64}
+    calls = _upstream(monkeypatch, [expected])
+    response = _get(login_as(user.username), reference['job_id'])
+    assert response.status_code == 200, response.text
+    assert response.json()['items'][0]['indexing']['state'] == 'indexed'
+    assert len(calls) == 1  # _upstream asserts the request carried `expected`, i.e. the payload digest
+
+
 def test_unreleased_documents_do_not_call_knowledge(publication, monkeypatch):
     user, _ = publication
     job = _job(user.id, _collection(user.id))

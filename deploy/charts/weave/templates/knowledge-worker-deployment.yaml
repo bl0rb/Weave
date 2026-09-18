@@ -136,18 +136,38 @@ spec:
                   "except" (list "POSTGRES_USER" "POSTGRES_PORT")
                   "overrides" $ov) | nindent 12 }}
           {{- /*
-          Keine Proben. knowledgeWorker.probes.liveness/readiness stehen in
-          values.yaml auf enabled: false und haben bewusst weder Pfad noch
-          Schwellwerte: dieser Container oeffnet keinen Port, eine
-          httpGet-Probe haette hier nichts zum Abfragen und wuerde jeden Pod
-          im Minutentakt neu starten.
-
-          Wer sie trotzdem einschaltet, soll das erfahren, statt sich zu
-          fragen, warum keine Probe im Manifest steht -- deshalb hier ein
-          Abbruch statt eines stillen Weglassens.
+          AV-03: Fortschrittscheck statt reiner Prozesslebendigkeit -- eine
+          exec-Probe, weil dieser Container keinen Port oeffnet und eine
+          httpGet-Probe hier nichts zum Abfragen haette. `inspect ping`
+          beweist, dass der Worker-Prozess noch auf der Celery-Event-Loop
+          antwortet (nicht nur, dass er existiert); values.yaml haelt die
+          Zeiten deshalb bewusst grosszuegig.
           */}}
-          {{- if or $w.probes.liveness.enabled $w.probes.readiness.enabled }}
-          {{- fail "knowledgeWorker.probes.*.enabled=true, aber dieser Container oeffnet keinen Port: er holt seine Auftraege aus der Redis-Queue, statt HTTP zu bedienen. Eine httpGet-Probe kann es hier deshalb nicht geben; die Werte in values.yaml stehen aus genau diesem Grund auf false und tragen weder Pfad noch Schwellwerte. Eine echte Lebendpruefung fuer einen Celery-Worker ist `celery -A app.workers.tasks inspect ping` als exec-Probe -- eine andere Bauform, die ein Wrapper-Chart per Patch ergaenzt." }}
+          {{- if $w.probes.liveness.enabled }}
+          livenessProbe:
+            exec:
+              # AV-01: ohne -d antwortet JEDER Worker auf dem Broker auf den
+              # Broadcast -- bei replicas>1 wuerde ein haengender Pod von
+              # einem gesunden Geschwister-Pod "gedeckt". $HOSTNAME ist bei
+              # Kubernetes-Pods der Pod-Name und zugleich Celerys
+              # Standard-Node-Name (celery@<hostname>); ein exec-Probe ruft
+              # aber keine Shell auf, daher der sh -c Wrapper fuer die
+              # Variablenersetzung.
+              command: ["sh", "-c", "celery -A app.workers.tasks inspect ping -d celery@$HOSTNAME"]
+            initialDelaySeconds: {{ $w.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ $w.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ $w.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ $w.probes.liveness.failureThreshold }}
+          {{- end }}
+          {{- /*
+          Readiness bleibt ohne Probe: es gibt keinen sinnvollen exec- oder
+          httpGet-Fortschrittscheck fuer "bereit, aber noch nicht lebendig"
+          bei einem Celery-Worker -- Lebendigkeit UND Bereitschaft sind hier
+          dieselbe Frage. Wer sie trotzdem einschaltet, soll das erfahren,
+          statt sich zu fragen, warum keine Probe im Manifest steht.
+          */}}
+          {{- if $w.probes.readiness.enabled }}
+          {{- fail "knowledgeWorker.probes.readiness.enabled=true, aber dieser Container oeffnet keinen Port: er holt seine Auftraege aus der Redis-Queue, statt HTTP zu bedienen. Eine httpGet-Probe kann es hier deshalb nicht geben, und fuer Readiness gibt es keinen sinnvollen exec-Ersatz getrennt von der Lebendpruefung oben. Der Wert in values.yaml steht aus genau diesem Grund auf false." }}
           {{- end }}
           {{- with $w.resources }}
           resources:

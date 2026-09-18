@@ -1,7 +1,12 @@
 import logging
 
+import redis as redis_lib
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from app.api.auth import router_admin as auth_admin_router
 from app.api.auth import bootstrap_admin
@@ -24,8 +29,9 @@ from app.api.routes import router
 from app.api.routes import knowledge_router as knowledge_registry_router
 from app.api.webhook_routes import router as webhook_router
 from app.core.config import settings
-from app.database.session import SessionLocal
+from app.database.session import SessionLocal, get_db
 from app.schemas.jobs import HealthResponse
+from app.services.security import _rate_limit_redis
 from app.services.storage import ensure_storage_dirs
 
 app = FastAPI(title=settings.app_name)
@@ -55,6 +61,24 @@ public_router = APIRouter(prefix='/api/v1')
 @public_router.get('/health', response_model=HealthResponse)
 def healthcheck() -> HealthResponse:
     return HealthResponse(status='healthy')
+
+
+# AV-03: readiness observes the actual dependencies /health deliberately
+# doesn't touch, so Helm's readiness probe (unlike liveness) can flip
+# NotReady on a dead DB/broker without restart-looping the process.
+@public_router.get('/ready')
+def readiness(db: Session = Depends(get_db)) -> JSONResponse:
+    try:
+        db.execute(text('SELECT 1'))
+    except SQLAlchemyError:
+        logging.getLogger(__name__).warning('readiness: database unavailable', exc_info=True)
+        return JSONResponse(status_code=503, content={'status': 'unavailable', 'reason': 'database'})
+    try:
+        _rate_limit_redis().ping()
+    except redis_lib.RedisError:
+        logging.getLogger(__name__).warning('readiness: broker unavailable', exc_info=True)
+        return JSONResponse(status_code=503, content={'status': 'unavailable', 'reason': 'broker'})
+    return JSONResponse(status_code=200, content={'status': 'ready'})
 
 
 app.include_router(public_router)

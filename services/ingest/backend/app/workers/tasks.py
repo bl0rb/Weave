@@ -47,6 +47,14 @@ def _reset_db_pool_after_fork(sender=None, **kwargs) -> None:  # pragma: no cove
 
 _RECOVERY_LOCK_KEY = 'worker:recovery:startup-lock'
 _STALE_RUNNING_RETRY_AFTER = timedelta(minutes=2)
+# SH-02: process_job never touches Job.updated_at while running (only at
+# claim time and on terminal status -- no heartbeat), so a genuinely running
+# job's updated_at can be as old as the hard time limit. Startup recovery
+# (unlike process_job's own redelivery reclaim above, which only runs after
+# the broker's visibility_timeout already guarantees the original attempt is
+# dead) has no such guarantee, so it must gate on the hard time limit itself
+# plus a margin for clock skew/DB commit latency, not a short fixed window.
+_JOB_STALE_RUNNING_MARGIN = timedelta(minutes=5)
 _LOWER_PROFILE_RETRY_MAP = {
     'ppocrv6_medium_structurev3': 'ppocrv6_small_structurev3',
     'ppocrv6_small_structurev3': 'ppocrv6_tiny_structurev3',
@@ -140,7 +148,11 @@ def requeue_running_jobs_after_restart() -> int:
     db = SessionLocal()
     to_restart: list[tuple[str, str | None, str | None, str | None, str | None]] = []
     runs_to_requeue: list[tuple[str, int]] = []
+    stranded_pending_children: list[tuple[str, str | None, str | None, str | None, str | None]] = []
     stale_run_cutoff = datetime.now(timezone.utc) - timedelta(seconds=settings.import_stale_run_seconds)
+    job_stale_cutoff = datetime.now(timezone.utc) - (
+        timedelta(seconds=celery_app.conf.task_time_limit) + _JOB_STALE_RUNNING_MARGIN
+    )
     try:
         # Import runs whose worker died without redelivery (hard-limit kill /
         # lost message): stale 'running' runs are replayed with their previous
@@ -161,7 +173,15 @@ def requeue_running_jobs_after_restart() -> int:
             for run in stale_runs
         ]
 
-        running_jobs = db.scalars(select(Job).where(Job.status == JobStatus.RUNNING)).all()
+        # SH-02: only reset RUNNING jobs stale enough that they cannot still
+        # be genuinely executing (see _JOB_STALE_RUNNING_MARGIN above) --
+        # otherwise a routine rolling restart resets a job a still-live
+        # worker is mid-OCR on, and a second worker duplicates the work.
+        running_jobs = db.scalars(
+            select(Job)
+            .where(Job.status == JobStatus.RUNNING)
+            .where(Job.updated_at < job_stale_cutoff)
+        ).all()
         for job in running_jobs:
             info = job.processing_info if isinstance(job.processing_info, dict) else {}
             # Named job_settings (not `settings`): shadowing the module-level
@@ -188,6 +208,29 @@ def requeue_running_jobs_after_restart() -> int:
             job.error_message = None
             to_restart.append((job.id, profile_id, mode, email, department))
 
+        # SH-04: PENDING attachment-OCR children of a run that already
+        # finished (FINISHED/FAILED/CANCELLED) -- _finalize_run's backstop
+        # re-send may have failed for these, or never reached them. Gated by
+        # the same staleness cutoff as the ImportRun branch above so a child
+        # just committed by a still-in-progress run isn't double-sent.
+        terminal_pending_jobs = db.scalars(
+            select(Job)
+            .join(ImportRun, ImportRun.id == Job.import_run_id)
+            .where(Job.status == JobStatus.PENDING)
+            .where(Job.updated_at < stale_run_cutoff)
+            .where(ImportRun.status.in_([
+                ImportRunStatus.FINISHED, ImportRunStatus.FAILED, ImportRunStatus.CANCELLED,
+            ]))
+        ).all()
+        for job in terminal_pending_jobs:
+            info = job.processing_info if isinstance(job.processing_info, dict) else {}
+            job_settings = info.get('settings') if isinstance(info.get('settings'), dict) else {}
+            profile_id = job_settings.get('profile_id') if isinstance(job_settings.get('profile_id'), str) else None
+            mode = job_settings.get('mode') if isinstance(job_settings.get('mode'), str) else None
+            email = job_settings.get('email') if isinstance(job_settings.get('email'), str) else None
+            department = job_settings.get('department') if isinstance(job_settings.get('department'), str) else None
+            stranded_pending_children.append((job.id, profile_id, mode, email, department))
+
         db.commit()
     except Exception:
         db.rollback()
@@ -198,6 +241,13 @@ def requeue_running_jobs_after_restart() -> int:
     for job_id, profile_id, mode, email, department in to_restart:
         process_job.delay(job_id, profile_id, mode, email, department)
 
+    for job_id, profile_id, mode, email, department in stranded_pending_children:
+        # SH-04: still PENDING, so the normal PENDING->RUNNING claim in
+        # process_job makes a duplicate send (e.g. a concurrent late
+        # _finalize_run backstop) a no-op -- same idempotency as to_restart.
+        process_job.delay(job_id, profile_id, mode, email, department)
+        logger.warning('Requeued stranded PENDING child job %s of a terminal import run', job_id)
+
     for run_id, replay_seq in runs_to_requeue:
         # By name so this module keeps zero imports from import_tasks at call
         # time; running runs replay with the PREVIOUS seq (reclaim path),
@@ -205,7 +255,7 @@ def requeue_running_jobs_after_restart() -> int:
         celery_app.send_task('import_confluence', args=[run_id, replay_seq])
         logger.warning('Requeued stale import run %s at chunk_seq %s', run_id, replay_seq)
 
-    return len(to_restart) + len(runs_to_requeue)
+    return len(to_restart) + len(runs_to_requeue) + len(stranded_pending_children)
 
 
 @worker_ready.connect

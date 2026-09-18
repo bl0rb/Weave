@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -169,13 +170,40 @@ def _lock_ttl() -> int:
 
 def _acquire_or_renew(token: str | None) -> str | None:
     client = Redis.from_url(settings.redis_url, decode_responses=True)
-    if token is None:
+    if token is None or client.get(_LOCK_KEY) != token:
+        # SH-01: no carried token, or the carried one is no longer the
+        # current holder (TTL expiry, Redis restart/eviction) -- try a
+        # fresh NX acquisition instead of ending the chain here. None means
+        # another replica already holds it live, so this execution stands
+        # down and exactly one chain survives.
         candidate = str(uuid.uuid4())
         return candidate if client.set(_LOCK_KEY, candidate, nx=True, ex=_lock_ttl()) else None
-    if client.get(_LOCK_KEY) != token:
-        return None
     client.expire(_LOCK_KEY, _lock_ttl())
     return token
+
+
+_REENQUEUE_MAX_ATTEMPTS = 3
+_REENQUEUE_RETRY_SECONDS = (1, 2)
+
+
+def _reenqueue_tick(self, token: str | None) -> None:
+    """SH-01: this self-re-enqueue is what keeps the publication tick chain
+    alive -- a transient broker error here must not silently end it. Retry
+    a bounded number of times with a short backoff before giving up; log
+    at ERROR on final failure so operators can see the chain died."""
+    for attempt in range(1, _REENQUEUE_MAX_ATTEMPTS + 1):
+        try:
+            self.app.send_task(TICK_TASK_NAME, args=[token], countdown=settings.publication_tick_seconds)
+            return
+        except Exception:
+            if attempt >= _REENQUEUE_MAX_ATTEMPTS:
+                logger.error(
+                    'SH-01: publication tick chain ended -- failed to re-enqueue next tick after %s attempt(s)',
+                    attempt,
+                    exc_info=True,
+                )
+                return
+            time.sleep(_REENQUEUE_RETRY_SECONDS[min(attempt - 1, len(_REENQUEUE_RETRY_SECONDS) - 1)])
 
 
 @celery_app.task(name='deliver_knowledge_withdrawal', acks_late=True, reject_on_worker_lost=True)
@@ -245,11 +273,11 @@ def publication_tick(self, lock_token: str | None = None) -> None:
         token = _acquire_or_renew(lock_token)
     except Exception:
         logger.exception('publication tick lock failed; retrying next tick')
-        self.app.send_task(TICK_TASK_NAME, args=[lock_token], countdown=settings.publication_tick_seconds)
+        _reenqueue_tick(self, lock_token)
         return
     if token is None:
         return
     try:
         reconcile_due_releases()
     finally:
-        self.app.send_task(TICK_TASK_NAME, args=[token], countdown=settings.publication_tick_seconds)
+        _reenqueue_tick(self, token)

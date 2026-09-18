@@ -15,6 +15,16 @@ from app.services.indexing_status import ReleaseReference, fetch_indexing_status
 router = APIRouter(prefix='/api/v1/portal')
 
 
+def _released_sha256(payload: dict | None, fallback: str) -> str:
+    # Knowledge verifies the bytes it downloads against payload['markdown_sha256'],
+    # which is hashed AFTER image links are rewritten to absolute release URLs.
+    # DocumentRelease.markdown_sha256 keeps the pre-rewrite digest for the
+    # portal's optimistic-concurrency check, so comparing it here would report
+    # 'mismatch' for every correctly indexed release that contains an image.
+    released = payload.get('markdown_sha256') if isinstance(payload, dict) else None
+    return released if isinstance(released, str) and released else fallback
+
+
 @router.get('/documents/{job_id}/indexing-diagnostics')
 def indexing_diagnostics(
     job_id: UUID, response: Response, db=Depends(get_db), user: User = Depends(require_admin),
@@ -34,7 +44,7 @@ def indexing_diagnostics(
             'created_at': release.created_at, 'updated_at': release.updated_at,
             'next_attempt_at': release.next_attempt_at,
         },
-        'indexing': fetch_indexing_diagnostics(ReleaseReference(job.id, release.id, release.markdown_sha256)),
+        'indexing': fetch_indexing_diagnostics(ReleaseReference(job.id, release.id, _released_sha256(release.payload, release.markdown_sha256))),
         'scope': 'Stored publication/indexing diagnostics; Kubernetes pod logs are not included. Raw errors and document contents are omitted.',
     }
 
@@ -53,13 +63,13 @@ def indexing_status(
     # input can select jobs, never supply a release/hash or an upstream URL.
     query = select(
         Job.id.label('job_id'), DocumentRelease.id.label('release_id'),
-        DocumentRelease.markdown_sha256, DocumentRelease.status,
+        DocumentRelease.markdown_sha256, DocumentRelease.payload, DocumentRelease.status,
         DocumentRelease.created_at,
     ).select_from(Job).outerjoin(DocumentRelease, DocumentRelease.job_id == Job.id).where(
         Job.id.in_([str(value) for value in job_id]), Job.password_hash.is_(None),
     )
     rows = db.execute(_apply_visible_filter(query, user, db=db)).all()
-    references = [ReleaseReference(row.job_id, row.release_id, row.markdown_sha256) for row in rows if row.release_id]
+    references = [ReleaseReference(row.job_id, row.release_id, _released_sha256(row.payload, row.markdown_sha256)) for row in rows if row.release_id]
     statuses = fetch_indexing_status(references)
     return PortalIndexingResponse(items=[PortalIndexingItem(
         job_id=row.job_id,

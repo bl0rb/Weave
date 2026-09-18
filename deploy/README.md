@@ -201,6 +201,41 @@ When deploying to production:
 4. Set up monitoring (Prometheus, ELK, etc.)
 5. Consider Kubernetes deployment for scaling beyond single-host
 
+### Produktionsbetrieb / Hochverfügbarkeit
+
+Die Vorgaben dieses Stacks (Compose wie Helm-Defaults) sind ein
+Evaluierungspfad: eine PostgreSQL- und eine Redis-Instanz, eine Replik je
+Dienst, Autoscaling aus. Das reicht für einen Neustart, nicht für
+unterbrechungsfreien Failover. Für echten Produktivbetrieb: `postgresql.mode`
+auf `cnpg` (drei Instanzen) oder `external` stellen, `redis.mode` auf
+`external` mit überwachter Instanz, `redis.bundled.persistence.enabled`
+setzen, und Repliken/HPA erst hochsetzen, nachdem Failover und Restore
+tatsächlich gemessen wurden — AV-01 im Review nennt das explizit. Für
+Compose ist AOF im Redis-Command jetzt fest aktiv; im Helm-Pfad greift es
+nur, wenn `redis.bundled.persistence.enabled=true` gesetzt ist (Default:
+false, dann emptyDir und kein AOF/RDB-Erhalt über einen Pod-Ersatz hinaus).
+`ingestWorker.replicas > 1` setzt außerdem voraus, dass die Startup-Recovery gemäß SH-02 tatsächlich
+staleness-gated läuft — vor mehr Repliken dort prüfen, nicht danach.
+
+**AV-02 Migrationswarnung (existierende Redis-Instanz):** Auf einem bereits
+laufenden Redis mit befülltem Volume (bisher nur RDB, `--save 60 1`, nie
+`appendonly yes`) verliert ein einfacher Neustart auf das neue Compose-
+Kommando bzw. ein `helm upgrade` auf das neue Template den kompletten
+Broker-/Result-Backend-Zustand: Redis initialisiert beim Start mit aktivem
+AOF und fehlendem `appendonlydir` eine leere AOF-Basis und lädt **nicht**
+zusätzlich die vorhandene `dump.rdb` nach. Vor einem Rollout gegen eine
+bestehende Instanz daher zuerst live migrieren, während der alte (noch
+`--save`-only laufende) Container aktiv ist:
+
+```
+redis-cli -a "$REDIS_PASSWORD" CONFIG SET appendonly yes
+redis-cli -a "$REDIS_PASSWORD" BGREWRITEAOF
+```
+
+Erst danach den Container/Pod mit dem neuen Command bzw. Template neu
+starten. Ein `docker compose up -d` oder `helm upgrade` ohne diesen Schritt
+gegen eine bereits populierte Instanz ist kein Routine-Rollout.
+
 ## Architecture References
 
 - **docs/adr/0001** – Queue topology (Celery queues, Redis logical DBs)

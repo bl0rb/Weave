@@ -148,6 +148,61 @@ def test_tick_still_reenqueues_next_tick_when_lock_acquire_raises(sent, monkeypa
     assert args == ['token-abc']
 
 
+def test_tick_reclaims_a_lost_lock_and_reenqueues_with_a_new_token(sent, monkeypatch) -> None:
+    """SH-01: the carried token is no longer the current holder (expired,
+    Redis restart/eviction) but nobody else has taken it -- the tick must
+    reclaim the lock with a fresh token, run the sweep, and re-enqueue with
+    that new token, instead of silently ending the chain."""
+    monkeypatch.setattr(session_cleanup_tasks, '_renew_cleanup_lock', lambda token: False)
+    monkeypatch.setattr(session_cleanup_tasks, '_try_acquire_cleanup_lock', lambda: 'new-token')
+    swept: list[bool] = []
+    monkeypatch.setattr(session_cleanup_tasks, 'delete_expired_sessions', lambda: swept.append(True) or 0)
+
+    session_cleanup_tick('stale-token')
+
+    assert swept == [True]
+    assert len(sent) == 1
+    name, args = sent[0]
+    assert name == 'session_cleanup_tick'
+    assert args == ['new-token']
+
+
+def test_tick_stands_down_when_lock_is_lost_to_another_holder(sent, monkeypatch) -> None:
+    """SH-01: the carried token is lost AND another replica's chain already
+    holds the lock live -- this execution must not sweep and must not
+    re-enqueue, so exactly one chain survives."""
+    monkeypatch.setattr(session_cleanup_tasks, '_renew_cleanup_lock', lambda token: False)
+    monkeypatch.setattr(session_cleanup_tasks, '_try_acquire_cleanup_lock', lambda: None)
+    swept: list[bool] = []
+    monkeypatch.setattr(session_cleanup_tasks, 'delete_expired_sessions', lambda: swept.append(True) or 0)
+
+    session_cleanup_tick('stale-token')
+
+    assert swept == []
+    assert sent == []
+
+
+def test_tick_reenqueue_retries_a_transient_send_task_failure_and_succeeds(monkeypatch) -> None:
+    """SH-01: the self-re-enqueue must survive a transient broker error
+    instead of ending the chain on the first failure."""
+    monkeypatch.setattr(session_cleanup_tasks, '_acquire_or_renew', lambda lock_token: 'token-xyz')
+    monkeypatch.setattr(session_cleanup_tasks, 'delete_expired_sessions', lambda: 0)
+    monkeypatch.setattr(session_cleanup_tasks.time, 'sleep', lambda seconds: None)
+
+    attempts: list[int] = []
+
+    def _flaky_send_task(name, args=None, **kw):
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise Exception('transient broker error')
+
+    monkeypatch.setattr(celery_app, 'send_task', _flaky_send_task)
+
+    session_cleanup_tick(None)
+
+    assert len(attempts) == 3
+
+
 def test_tick_still_reenqueues_when_the_sweep_itself_raises(sent, monkeypatch) -> None:
     """A failure inside the sweep (e.g. a DB blip) must not kill the chain
     either -- the tick logs and re-enqueues with the token it just

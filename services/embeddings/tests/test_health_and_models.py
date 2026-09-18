@@ -26,6 +26,21 @@ def test_health_reports_warm_state_once_model_is_loaded():
     assert body['threads'] == 4
 
 
+def test_ready_is_503_while_cold():
+    # AV-03: /health answers 200 during load, so readiness needs its own
+    # endpoint that actually reflects `warm`.
+    resp = client.get('/ready')
+    assert resp.status_code == 503
+    assert resp.json()['status'] == 'starting'
+
+
+def test_ready_is_200_once_warm():
+    install_fake_embedder(dimension=384, threads=4)
+    resp = client.get('/ready')
+    assert resp.status_code == 200
+    assert resp.json()['status'] == 'ready'
+
+
 def test_models_endpoint_requires_auth():
     resp = client.get('/v1/models')
     assert resp.status_code == 401

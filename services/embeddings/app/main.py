@@ -30,6 +30,7 @@ import threading
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from app.core.auth import require_api_token
@@ -97,6 +98,16 @@ def health() -> HealthResponse:
         threads=embedder.threads if embedder is not None else encoder_module.resolve_thread_count(settings.embeddings_threads),
         warm=encoder_state.warm,
     )
+
+
+# AV-03: /health answers 200 during model load (see module docstring above),
+# so it can't be used to prove readiness -- this endpoint is 503 until
+# `warm` is actually set.
+@app.get('/ready')
+def ready():
+    if not encoder_state.warm:
+        return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content={'status': 'starting'})
+    return JSONResponse(status_code=status.HTTP_200_OK, content={'status': 'ready'})
 
 
 @app.get('/v1/models', response_model=ModelsResponse, dependencies=[Depends(require_api_token)])

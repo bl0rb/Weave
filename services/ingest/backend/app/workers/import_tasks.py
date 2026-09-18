@@ -501,16 +501,32 @@ def _finalize_run(db, run: ImportRun, state: _RunState, claimed_seq: int) -> Non
     pending_children = db.scalars(
         select(Job.id).where(Job.import_run_id == run.id).where(Job.status == JobStatus.PENDING)
     ).all()
+    # SH-04: each send guarded individually (unlike a bare loop) so a broker
+    # error for one child doesn't abort the backstop for the rest -- the run
+    # already committed FINISHED above and startup recovery's terminal-PENDING
+    # branch (app/workers/tasks.py) catches whatever is left unsent here.
+    failed_sends = 0
     for child_id in pending_children:
-        celery_app.send_task(
-            'process_job',
-            args=[
-                child_id,
-                effective_pipeline_profile_id(options.get('ocr_profile_id')),
-                'import_attachment',
-                options.get('email') or '',
-                None,
-            ],
+        try:
+            celery_app.send_task(
+                'process_job',
+                args=[
+                    child_id,
+                    effective_pipeline_profile_id(options.get('ocr_profile_id')),
+                    'import_attachment',
+                    options.get('email') or '',
+                    None,
+                ],
+            )
+        except Exception:
+            failed_sends += 1
+            logger.exception(
+                'backstop send failed for attachment job %s of finished import run %s', child_id, run.id
+            )
+    if failed_sends:
+        logger.warning(
+            'import run %s finished with %d/%d backstop attachment send(s) failed',
+            run.id, failed_sends, len(pending_children),
         )
 
 

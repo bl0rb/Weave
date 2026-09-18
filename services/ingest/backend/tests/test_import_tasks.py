@@ -755,6 +755,56 @@ def test_ocr_attachment_with_vl_profile_gets_vl_settings_and_dispatches_openai_v
     assert others == [('process_job', [child.id, 'openai_vision', 'import_attachment', '', None])] * 2
 
 
+def test_finalize_backstop_send_failure_does_not_abort_other_children_or_run(monkeypatch, client_holder) -> None:
+    """SH-04: a broker error re-sending one PENDING child at finalize must
+    not abort the backstop loop for the rest, and the run must still commit
+    FINISHED (the crash used to happen in the middle of the bare send loop,
+    with no try/except)."""
+    monkeypatch.setattr(import_tasks, 'SessionLocal', TestingSessionLocal)
+    monkeypatch.setattr(worker_tasks, 'SessionLocal', TestingSessionLocal)
+    pages = {'300': _page('300', 'Two Attachments', '<p>body</p>')}
+    attachments = {'300': [_attachment('300', 'a.pdf', PDF_BYTES), _attachment('300', 'b.pdf', PDF_BYTES)]}
+    client_holder['client'] = FakeClient(pages, {}, attachments, root_id='300')
+
+    owner = _make_owner()
+    run_id = _make_run(
+        owner.id, _make_source(owner.id),
+        scope_value='300',
+        options={'ocr_attachments': True, 'ocr_profile_id': 'ppocrv6_small'},
+    )
+
+    calls: list[tuple[str, list]] = []
+    process_job_call_count = 0
+
+    def flaky_send(name, args=None, **kw):
+        nonlocal process_job_call_count
+        args = list(args or [])
+        calls.append((name, args))
+        if name == 'process_job':
+            process_job_call_count += 1
+            # Fail the finalize backstop's first re-send (calls 1-2 are the
+            # per-page-commit sends, made before the run ever finalizes).
+            if process_job_call_count == 3:
+                raise ConnectionError('broker unavailable')
+
+    monkeypatch.setattr(celery_app, 'send_task', flaky_send)
+
+    import_confluence(run_id, 0)
+
+    run = _get_run(run_id)
+    assert run.status == ImportRunStatus.FINISHED
+
+    process_job_sends = [args for name, args in calls if name == 'process_job']
+    # 2 page-commit sends + 2 backstop sends: one backstop send raised, but
+    # the other child's backstop send still went out.
+    assert len(process_job_sends) == 4
+    jobs = _run_jobs(run_id)
+    children = [j for j in jobs if j.processing_info['settings']['mode'] == 'import_attachment']
+    assert len(children) == 2
+    backstop_child_ids = {args[0] for args in process_job_sends[2:]}
+    assert backstop_child_ids == {child.id for child in children}
+
+
 def test_attachment_rules_svg_never_image_and_magic_bytes_enforced(sent, client_holder) -> None:
     pages = {'200': _page('200', 'Attachment Rules', '<p>body</p>')}
     attachments = {
@@ -1117,6 +1167,67 @@ def test_worker_restart_requeues_stale_import_runs(sent, client_holder, monkeypa
     assert ('import_confluence', [stale_run_id, 2]) in sent
     assert ('import_confluence', [lost_pending_run_id, 0]) in sent
     assert all(args[0] != fresh_run_id for name, args in sent if name == 'import_confluence')
+
+
+def test_worker_restart_redispatches_stranded_pending_children_of_terminal_run(monkeypatch, tmp_path) -> None:
+    """SH-04: a PENDING attachment-OCR child of a run that already finished
+    (its _finalize_run backstop send failed or never ran) must be re-sent by
+    startup recovery. A child that was just committed a moment ago is left
+    alone -- it may still be the run's own in-flight backstop send."""
+    monkeypatch.setattr(worker_tasks, 'SessionLocal', TestingSessionLocal)
+    owner = _make_owner()
+    finished_run_id = _make_run(owner.id, _make_source(owner.id))
+    stale = datetime.now(timezone.utc) - timedelta(seconds=settings.import_stale_run_seconds * 2)
+    fresh = datetime.now(timezone.utc)
+
+    def _pending_child(job_id: str, run_id: str, updated_at: datetime) -> None:
+        db = _db()
+        try:
+            db.add(
+                Job(
+                    id=job_id,
+                    original_filename=f'{job_id}.pdf',
+                    upload_path=str(tmp_path / f'{job_id}.pdf'),
+                    upload_content=b'x',
+                    upload_mime_type='application/pdf',
+                    upload_size_bytes=1,
+                    status=JobStatus.PENDING,
+                    import_run_id=run_id,
+                    updated_at=updated_at,
+                    processing_info={
+                        'settings': {
+                            'mode': 'import_attachment',
+                            'email': 'ops@example.com',
+                            'department': None,
+                            'profile_id': 'ppocrv6_small',
+                        },
+                    },
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+    _pending_child('stranded-child', finished_run_id, stale)
+    _pending_child('fresh-child', finished_run_id, fresh)
+
+    db = _db()
+    try:
+        db.execute(update(ImportRun).where(ImportRun.id == finished_run_id).values(status=ImportRunStatus.FINISHED))
+        db.commit()
+    finally:
+        db.close()
+
+    delayed: list[tuple] = []
+    monkeypatch.setattr(worker_tasks.process_job, 'delay', lambda *args, **kwargs: delayed.append(tuple(args)))
+    # Keep the pre-existing RUNNING-job/import-run recovery from touching the broker.
+    monkeypatch.setattr(celery_app, 'send_task', lambda *args, **kwargs: None)
+
+    worker_tasks.requeue_running_jobs_after_restart()
+
+    queued_map = {entry[0]: entry for entry in delayed}
+    assert queued_map['stranded-child'] == ('stranded-child', 'ppocrv6_small', 'import_attachment', 'ops@example.com', None)
+    assert 'fresh-child' not in queued_map
 
 
 # --- Diagnostic logging ---------------------------------------------------------

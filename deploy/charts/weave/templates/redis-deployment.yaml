@@ -108,6 +108,29 @@ spec:
             - --save
             - "60"
             - "1"
+            {{- if $r.persistence.enabled }}
+            # AV-02: only meaningful with the persistent /data volume below
+            # (persistence.enabled) -- with emptyDir neither the RDB
+            # snapshot above nor an AOF file survives a pod replacement, so
+            # there is nothing to gain from enabling it there. everysec
+            # bounds broker-state loss on pod replacement to ~1s instead of
+            # up to the 60s the --save snapshot alone allows.
+            #
+            # AV-02 migration warning: if this release ALREADY had
+            # persistence.enabled=true (a PVC populated from RDB-only
+            # history), a plain `helm upgrade` onto this template starts
+            # Redis with AOF enabled but no appendonlydir/manifest on the
+            # PVC yet -- Redis builds a fresh, empty AOF base instead of
+            # loading the existing dump.rdb, silently dropping the whole
+            # dataset. Migrate the running pod live first (CONFIG SET
+            # appendonly yes + BGREWRITEAOF against the old, --save-only
+            # pod) before upgrading to this template -- see
+            # deploy/README.md "Produktionsbetrieb / Hochverfuegbarkeit".
+            - --appendonly
+            - "yes"
+            - --appendfsync
+            - everysec
+            {{- end }}
             - --loglevel
             - warning
             - --requirepass
@@ -157,10 +180,12 @@ spec:
           persistentVolumeClaim:
             claimName: {{ $r.persistence.existingClaim | default $name }}
           {{- else }}
-          # Ohne Persistenz ueberlebt der RDB-Schnappschuss aus `--save 60 1`
-          # zwar einen Neustart des Containers, aber nicht den des Pods.
-          # Genau das ist die Vorgabe: ein Broker-Zustand, den niemand
-          # sichert, ist im Zweifel irrefuehrender als gar keiner.
+          # Ohne Persistenz ueberlebt weder der RDB-Schnappschuss aus
+          # `--save 60 1` noch eine AOF-Datei einen Neustart des Pods (nur
+          # den des Containers) -- deshalb bleibt --appendonly oben aus,
+          # solange dieses Volume ein emptyDir ist: es gaebe nichts zu
+          # gewinnen. Genau das ist die Vorgabe: ein Broker-Zustand, den
+          # niemand sichert, ist im Zweifel irrefuehrender als gar keiner.
           emptyDir: {}
           {{- end }}
 {{- end }}
