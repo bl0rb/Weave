@@ -46,13 +46,36 @@ export function MessageBubble({ message }: { message: UiMessage }) {
           </div>
         ) : message.streaming ? (
           <span className="inline-flex items-center gap-1 text-[var(--foreground-muted)]" aria-live="polite">
-            <span className="sr-only">Antwort wird erzeugt…</span>
+            {/* Default placeholder stays screen-reader-only (see sidebar.tsx's
+                comment referencing this same pattern) — only the slow-response
+                variant below is ever shown visibly. */}
+            <span className="sr-only">
+              {message.slowResponse ? 'Der Assistent arbeitet noch …' : 'Antwort wird erzeugt…'}
+            </span>
+            {message.slowResponse ? (
+              <span className="text-xs" aria-hidden="true">
+                Der Assistent arbeitet noch …
+              </span>
+            ) : null}
             <ThinkingDots />
           </span>
         ) : null}
 
         {!isUser && message.streaming && message.content ? (
           <span className="ml-0.5 inline-block h-4 w-[2px] animate-pulse bg-[var(--foreground-muted)] align-text-bottom" aria-hidden="true" />
+        ) : null}
+
+        {/* The 30s-idle "still working" indicator must also fire mid-stream,
+            once the answer already has partial content — the empty-content
+            branch above only covers require_sources-buffered bots whose
+            content stays "" until the final delta. An incrementally
+            forwarding bot (the actual long-running n8n-agent case) has
+            non-empty content from the first delta onward, so it needs its
+            own visible cue here instead of relying on that branch. */}
+        {!isUser && message.streaming && message.content && message.slowResponse ? (
+          <p className="mt-1 text-xs text-[var(--foreground-muted)]" aria-live="polite">
+            Der Assistent arbeitet noch …
+          </p>
         ) : null}
 
         {!isUser && message.sources ? <SourceCards sources={message.sources} /> : null}

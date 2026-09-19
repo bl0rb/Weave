@@ -93,6 +93,18 @@ class Settings(BaseSettings):
     http_connect_timeout_seconds: float = 5.0
     http_read_timeout_seconds: float = 10.0
 
+    # --- Read timeout for the NON-streaming chat call only (runtime_client.
+    # chat(), POST /internal/chat -- app/services/runtime_client.py). A
+    # long-running n8n agent flow (Weave-Runtime's n8n bots, see that
+    # service's contracts/n8n-flow.md) can legitimately take far longer than
+    # `http_read_timeout_seconds` (10s) to answer a single blocking turn --
+    # that 10s value stays as-is for every OTHER call this client makes
+    # (list_bots/get_bot/conversation_title, and each individual chunk read
+    # of chat_stream(), which keepalive frames from Weave-Runtime already
+    # keep well under 10s apart) -- only the one-shot chat() call gets this
+    # much longer allowance.
+    chat_read_timeout_seconds: float = 900.0
+
     # --- POST /v1/chat request body (app/schemas/chat.py's ChatRequest).
     # Caps a single chat message's length -- both to keep one request's
     # outbound payload to Weave-Runtime bounded and to give a caller sending

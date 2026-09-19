@@ -212,17 +212,42 @@ export function ChatApp() {
         return;
       }
 
-      const outcome = await consumeChatStream(response.body, {
-        onTrace: (trace) => {
-          if (activeTurnRef.current === turnId) updateMessage(assistantId, (m) => ({ ...m, trace }));
-        },
-        onDelta: (text) => {
-          if (activeTurnRef.current === turnId) updateMessage(assistantId, (m) => ({ ...m, content: m.content + text }));
-        },
-        onSources: (sources) => {
-          if (activeTurnRef.current === turnId) updateMessage(assistantId, (m) => ({ ...m, sources }));
-        },
-      });
+      // Long n8n agent runs can now legitimately go minutes between
+      // deltas (kept alive underneath by the transport's own keepalive
+      // comments — see sse.ts), which would otherwise leave the
+      // "Antwort wird erzeugt…" placeholder looking stuck. Re-armed on
+      // every delta; fires once after 30s of silence to swap the
+      // placeholder copy. Cleared in the `finally` below so it never fires
+      // after the turn has already ended, including when consumeChatStream
+      // itself throws (e.g. a genuine transport error from reader.read()).
+      let slowTimer: ReturnType<typeof setTimeout> | null = null;
+      const armSlowTimer = () => {
+        if (slowTimer) clearTimeout(slowTimer);
+        slowTimer = setTimeout(() => {
+          if (activeTurnRef.current === turnId) updateMessage(assistantId, (m) => ({ ...m, slowResponse: true }));
+        }, 30_000);
+      };
+      armSlowTimer();
+
+      let outcome: Awaited<ReturnType<typeof consumeChatStream>>;
+      try {
+        outcome = await consumeChatStream(response.body, {
+          onTrace: (trace) => {
+            if (activeTurnRef.current === turnId) updateMessage(assistantId, (m) => ({ ...m, trace }));
+          },
+          onDelta: (text) => {
+            armSlowTimer();
+            if (activeTurnRef.current === turnId) {
+              updateMessage(assistantId, (m) => ({ ...m, content: m.content + text, slowResponse: false }));
+            }
+          },
+          onSources: (sources) => {
+            if (activeTurnRef.current === turnId) updateMessage(assistantId, (m) => ({ ...m, sources }));
+          },
+        });
+      } finally {
+        if (slowTimer) clearTimeout(slowTimer);
+      }
 
       if (activeTurnRef.current !== turnId) return;
 

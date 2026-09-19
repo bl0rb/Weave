@@ -31,7 +31,7 @@ class ManagedBotWrite(BaseModel):
     streaming: bool = False
     auth_token: str | None = Field(default=None, max_length=8192)
     clear_auth_token: bool = False
-    timeout_seconds: int = Field(default=120, ge=1, le=600)
+    timeout_seconds: int = Field(default=120, ge=1, le=14400)
     teams: list[str] = Field(default_factory=list, max_length=100)
     collections: list[str] = Field(default_factory=list, max_length=500)
     require_sources: bool = True

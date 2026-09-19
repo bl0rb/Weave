@@ -50,6 +50,26 @@ class Settings(BaseSettings):
     chat_config_service_token: str = ''
     chat_config_timeout_seconds: float = 5.0
 
+    # --- Streaming keepalive (see app/services/chat.py's
+    # `_stream_deferred_n8n`, app/api/internal.py). How often, at most, an
+    # otherwise-silent POST /internal/chat/stream response emits an SSE
+    # comment line (`': keepalive\n\n'`, never a `ChatStreamEvent` -- see
+    # `chat.Keepalive`'s own docstring) while a deferred n8n-provider bot
+    # turn is still waiting for its next event from n8n. Exists because a
+    # bot's own `n8n.timeout_seconds` (app/schemas/bot.py's N8nConfig,
+    # default 120s, and per contracts/n8n-flow.md rateable up to hours for
+    # a long agent run) is an IDLE budget for the n8n call itself, not a
+    # promise that SOME byte crosses this response's own wire that often --
+    # without a keepalive, every hop between here and an eventual browser
+    # (this service's own reverse proxy, Weave-API's gateway, any load
+    # balancer in front of either) is free to decide the connection is dead
+    # and close it long before n8n's own flow actually finishes. Must stay
+    # comfortably below the SHORTEST read timeout any such hop enforces on
+    # this response -- Weave-API's gateway's own streaming client keeps its
+    # existing 10s read timeout specifically because this default (5s)
+    # satisfies it (see that service's own app/core/config.py).
+    stream_keepalive_seconds: float = 5.0
+
     # --- Intent router (see app/services -- filled in a later stage).
     # 'rules': a deterministic, dependency-free keyword/heuristic classifier.
     # 'llm': delegates the classification itself to llm_provider. Plain str

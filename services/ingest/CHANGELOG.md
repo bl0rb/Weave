@@ -22,6 +22,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the normal source upload, review and release workflow.
 
 ### Added
+- n8n bots stream (contract v2, `contracts/n8n-flow.md`): with "n8n-Streaming" enabled,
+  Weave-Runtime reads the flow's response incrementally — n8n's native "Streaming
+  response" (JSON lines `begin`/`item`/`end`/`error`) as well as the documented SSE
+  contract (`delta`/`sources`/`done`/`error`); a plain JSON reply still works. The
+  webhook call now runs inside the open stream with `: keepalive` comment lines every
+  5 s (`STREAM_KEEPALIVE_SECONDS`), relayed by Weave-API and tolerated by Weave-Chat,
+  so a single agent turn may run for hours; the bot timeout is an idle timeout between
+  chunks. Bots that require sources are buffered until their evidence is known — the
+  response guard cannot be bypassed by streaming. The chat shows "Der Assistent arbeitet
+  noch …" after 30 s without output. The admin toggle is no longer disabled.
+- Weave-Runtime skips a centrally managed bot whose data is invalid (typically a webhook
+  URL outside `N8N_ALLOWED_BASE_URLS`) with a warning instead of failing
+  `GET /internal/bots` — and every chat — with HTTP 500.
 - Portal review: documents can be ticked in the review inbox and in a knowledge space and
   released, skipped or deleted together (`POST /api/v1/portal/documents/bulk`). A document
   can be marked "Nicht freigeben / überspringen" and brought back for review; skipped
@@ -108,6 +121,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the run's error list. Personal spaces (`~` keys) get an explicit hint
 
 ### Changed
+- The managed n8n bot timeout can now be set up to 14400 seconds (4 hours) to
+  accommodate long-running streaming agent flows; the field is documented as an idle
+  timeout between response chunks, not a total run cap.
 - Bundled Redis in Compose (and in Helm when `redis.bundled.persistence.enabled`) runs with
   AOF (`appendonly yes`, `appendfsync everysec`). **Existing instances must enable AOF online
   first** (`CONFIG SET appendonly yes` + `BGREWRITEAOF`) before restarting with the new

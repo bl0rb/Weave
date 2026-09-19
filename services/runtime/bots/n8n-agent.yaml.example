@@ -66,6 +66,14 @@ n8n:
   # Dienst in ein beliebiges Netz ruft, nur weil irgendeine Bot-Datei das
   # so vorsieht.
   # webhook_url: "https://n8n.internal.example.com/webhook/weave-agent"
+  # Vertrag v2 (contracts/n8n-flow.md, Abschnitt "Streaming"): true liest die
+  # Antwort fortlaufend -- n8n-natives "Streaming response" (JSON-Zeilen) oder
+  # der dokumentierte SSE-Vertrag; eine normale JSON-Antwort funktioniert
+  # weiterhin. Weave-Runtime sendet waehrenddessen Keepalives, so dass ein
+  # einzelner Agentenlauf Stunden dauern darf.
+  streaming: false
+  # Bei streaming: true ein Leerlauf-Timeout zwischen zwei Antwortteilen,
+  # kein Gesamtlimit (z. B. 7200 fuer lange Agentenlaeufe).
   timeout_seconds: 120
 
 retrieval:

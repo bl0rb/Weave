@@ -210,7 +210,9 @@ request-shaped failure" reasoning.
 """
 
 import logging
+import queue
 import re
+import threading
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -242,6 +244,39 @@ from app.services.botconfig import load_bot
 from app.services.retrieval_client import RetrievedChunk
 
 logger = logging.getLogger(__name__)
+
+
+class Keepalive:
+    """A transport-level marker `_stream_prepared_turn` yields in place of a
+    `ChatStreamEvent` (app/schemas/chat.py) while a deferred n8n-provider
+    bot turn (`_DeferredN8nTurn`, `_stream_deferred_n8n`) is still waiting
+    for its next event from n8n -- app/api/internal.py's own `_iter_sse`
+    recognises this EXACT singleton (`KEEPALIVE` below, never a fresh
+    instance -- callers compare with `is`, not `==`) and turns it into the
+    literal SSE comment line `': keepalive\\n\\n'` instead of a `data: ...`
+    line.
+
+    Deliberately NOT a member of the `ChatStreamEvent` union: it carries no
+    `type` field and is never JSON-serialized, so an existing consumer that
+    only ever parses `'data:'`-prefixed lines (Weave-Chat's own
+    src/lib/sse.ts, contracts/internal-chat.md's own reading of the SSE
+    spec) ignores it by construction, exactly like it already ignores any
+    other SSE comment. Exists because a bot's own `n8n.timeout_seconds`
+    (app/schemas/bot.py's N8nConfig) is an IDLE budget for the n8n call
+    itself -- possibly hours long, for a genuinely long-running agent flow,
+    per contracts/n8n-flow.md's "Streaming" section -- not a promise that
+    this response's own wire stays busy that whole time; without this
+    marker, a reverse proxy or gateway between here and an eventual browser
+    would be free to decide a silent connection is dead and close it long
+    before n8n's own flow actually finishes. See
+    `app/core/config.py`'s `stream_keepalive_seconds` for how often
+    `_stream_deferred_n8n` emits one.
+    """
+
+    __slots__ = ()
+
+
+KEEPALIVE = Keepalive()
 
 # Mirrors Weave-Retrieval's own NO_COLLECTION_SENTINEL (app/services/search.py
 # in that service) byte-for-byte -- there is no shared Python module to import
@@ -642,6 +677,59 @@ def _filter_n8n_sources_by_scope(
     return kept, dropped_count
 
 
+def _run_n8n_flow_blocking(
+    bot: BotConfig, message: str, history: list[dict[str, str]], user: ChatUser, scope: list[str]
+) -> n8n_client.N8nResult:
+    """The n8n webhook call `_run_n8n_turn` performs -- i.e. `handle_chat`'s
+    own blocking POST /internal/chat, which never defers anything into a
+    stream phase (see `_prepare_turn`'s own docstring on `defer_n8n`) --
+    picking `n8n_client.run_flow` or `run_flow_stream` by `bot.n8n.
+    streaming`, so a bot's choice to enable contract-v2 streaming for its
+    STREAMING route never has to mean choosing a second, streaming-only
+    flow deployment just to keep its blocking route working too.
+
+    `bot.n8n.streaming=False` (the default): `run_flow` unchanged, exactly
+    as before this function existed.
+
+    `bot.n8n.streaming=True`: `run_flow_stream` instead, but every one of
+    its events is consumed to completion RIGHT HERE, assembled into the
+    identical `N8nResult` shape `run_flow` itself returns, before this
+    function's own caller (`_run_n8n_turn`) ever sees anything -- this
+    route's own contract (one blocking `ChatResponse`, see
+    app/api/internal.py's `chat`) is completely unaffected by which wire
+    protocol happened to talk to n8n underneath it. Every `N8nStreamDelta.
+    text` is concatenated, in order, into `answer` (the identical string
+    `run_flow` would have returned for the same flow's own non-streaming
+    JSON reply -- see `N8nStreamDelta`'s own docstring); the last
+    `N8nStreamSources` seen (n8n's own contract sends at most one, see that
+    dataclass's own docstring) becomes `sources`, `[]` if none arrived at
+    all (n8n's native streaming contract never sends one -- same default
+    `N8nResult.sources` already documents for an omitted-on-the-wire
+    `sources` field). A flow-reported `N8nStreamError` is raised here as an
+    ordinary `N8nError` (with the same `detail` text) -- the identical
+    "flow itself is misconfigured or broken, left uncaught, this service's
+    default 500" classification `run_flow`'s own docstring already
+    describes for a malformed non-streaming reply, now covering a
+    streaming flow's own explicit failure report too.
+    """
+    if not bot.n8n.streaming:
+        return n8n_client.run_flow(bot, message, history, user, scope)
+
+    parts: list[str] = []
+    sources: list[Source] = []
+    for event in n8n_client.run_flow_stream(bot, message, history, user, scope):
+        if isinstance(event, n8n_client.N8nStreamDelta):
+            if event.text:
+                parts.append(event.text)
+        elif isinstance(event, n8n_client.N8nStreamSources):
+            sources = event.sources
+        elif isinstance(event, n8n_client.N8nStreamError):
+            raise n8n_client.N8nError(event.detail)
+        elif isinstance(event, n8n_client.N8nStreamDone):
+            break
+    return n8n_client.N8nResult(answer=''.join(parts), sources=sources)
+
+
 def _run_n8n_turn(
     bot: BotConfig,
     request: ChatRequest,
@@ -749,7 +837,7 @@ def _run_n8n_turn(
     history = [{'role': turn.role, 'content': turn.content} for turn in request.history]
 
     n8n_start = time.perf_counter()
-    result = n8n_client.run_flow(bot, request.message, history, request.user, allowed_collections)
+    result = _run_n8n_flow_blocking(bot, request.message, history, request.user, allowed_collections)
     timings_ms['n8n_ms'] = _elapsed_ms(n8n_start)
 
     kept_sources, dropped_count = _filter_n8n_sources_by_scope(result.sources, allowed_collections, bot_id=bot.id)
@@ -1002,6 +1090,36 @@ def _run_knowledge_turn(
 
 
 @dataclass(frozen=True)
+class _DeferredN8nTurn:
+    """Everything `_stream_deferred_n8n` needs to perform an n8n-provider
+    bot's webhook call ITSELF, from inside the stream phase, instead of
+    `_prepare_turn` performing it up front the way `_run_n8n_turn` still
+    does for `handle_chat`'s own blocking path (see `_prepare_turn`'s own
+    docstring for why the two routes deliberately differ here). Built by
+    `_prepare_turn` only when it is called with `defer_n8n=True` (i.e. only
+    from `handle_chat_stream`) and only for a non-conversational n8n-
+    provider bot turn -- a conversational one never reaches n8n at all (see
+    `_run_n8n_turn`'s own docstring) and is represented by an ordinary
+    `final_answer` on `_PreparedTurn` instead, streamed exactly like the
+    blocking path's identical smalltalk reply.
+
+    `scope` is already the FULLY RESOLVED Collections scope
+    (`resolve_collection_scope`'s return value) -- resolving it can itself
+    raise `retrieval_client.RetrievalUnavailable`/`RetrievalError`, which
+    must still surface as a pre-stream HTTP status exactly like every other
+    `_prepare_turn` failure (see that function's own docstring), so it runs
+    synchronously in `_prepare_turn`, BEFORE this dataclass is even built --
+    never deferred into the stream phase alongside the webhook call itself.
+    """
+
+    bot: BotConfig
+    message: str
+    history: list[dict[str, str]]
+    user: ChatUser
+    scope: list[str]
+
+
+@dataclass(frozen=True)
 class _PreparedTurn:
     """Output of `_prepare_turn` -- the bot-load/permission/router/
     retrieval/guard pipeline stage `handle_chat` and `handle_chat_stream`
@@ -1060,6 +1178,21 @@ class _PreparedTurn:
     conversational-smalltalk one, see that function's own docstring -- and
     stays at its own default (`None`) for every non-n8n bot and for that one
     conversational exception, exactly mirroring `N8nTrace`'s own docstring.
+
+    `deferred_n8n` is the one exception to "`final_answer is not None` XOR
+    `messages is not None`" above: set (never `None`) ONLY when
+    `_prepare_turn` was called with `defer_n8n=True` (`handle_chat_stream`)
+    for a non-conversational n8n-provider bot -- in that one case BOTH
+    `final_answer` and `messages` stay `None`, since neither the answer NOR
+    the LLM-ready transcript exists yet; `_stream_deferred_n8n` is what
+    finally performs the webhook call this field describes, from inside
+    `_stream_prepared_turn`, once the `trace` event has already gone out.
+    `n8n_single_delta`/`n8n_trace`/`sources` stay at their own defaults
+    here -- there is no n8n RESULT yet to report any of the three from; the
+    streaming trace event's own `timings_ms` therefore never carries
+    `n8n_ms` for such a turn (see `ChatStreamTraceEvent`'s own docstring:
+    that event already only ever carries what is known at trace-TIME, and
+    for a deferred n8n turn nothing about the n8n call itself is, yet).
     """
 
     bot: BotConfig
@@ -1074,19 +1207,37 @@ class _PreparedTurn:
     messages: list[dict[str, str]] | None
     n8n_single_delta: bool = False
     n8n_trace: N8nTrace | None = None
+    deferred_n8n: _DeferredN8nTurn | None = None
 
 
-def _prepare_turn(request: ChatRequest) -> _PreparedTurn:
+def _prepare_turn(request: ChatRequest, *, defer_n8n: bool = False) -> _PreparedTurn:
     """Bot lookup through the response guard -- everything this module's own
-    docstring describes EXCEPT the final LLM-generation call itself. Raises
-    exactly what that docstring says `handle_chat` raises/propagates
-    (BotNotFoundError, BotPermissionDenied, retrieval_client.
-    RetrievalUnavailable/RetrievalError, and -- for an n8n-provider bot,
-    see step 3a -- n8n_client.N8nUnavailable/N8nError/delegation.
-    DelegationConfigError); both `handle_chat` and `handle_chat_stream` call
-    this directly (not from inside a generator) so those exceptions surface
-    to app/api/internal.py exactly the same way for either route, before
+    docstring describes EXCEPT the final LLM-generation call itself, and
+    (see `defer_n8n` below) except the n8n webhook call itself for a
+    streaming turn. Raises exactly what that docstring says `handle_chat`
+    raises/propagates (BotNotFoundError, BotPermissionDenied,
+    retrieval_client.RetrievalUnavailable/RetrievalError, and -- for an
+    n8n-provider bot with `defer_n8n=False`, see step 3a --
+    n8n_client.N8nUnavailable/N8nError/delegation.DelegationConfigError);
+    both `handle_chat` and `handle_chat_stream` call this directly (not
+    from inside a generator) so those exceptions surface to
+    app/api/internal.py exactly the same way for either route, before
     either one has produced so much as its first byte of response.
+
+    `defer_n8n=True` (passed only by `handle_chat_stream`) changes exactly
+    one thing: a non-conversational n8n-provider bot's turn is NOT run to
+    completion here -- Collections-scope resolution still happens
+    synchronously (see `_DeferredN8nTurn`'s own docstring for why that part
+    specifically cannot move), but the webhook call itself is handed to the
+    returned `_PreparedTurn.deferred_n8n` instead of being made right here,
+    for `_stream_deferred_n8n` to perform once the stream's own `trace`
+    event has already gone out. `handle_chat`'s blocking path always calls
+    with the default `defer_n8n=False`: it has no `trace` event to emit
+    early and nothing to gain from delaying a call it is about to block on
+    regardless, so it keeps using `_run_n8n_turn` exactly as before this
+    field existed. A conversational n8n-bot turn is UNAFFECTED by
+    `defer_n8n` either way -- it never reaches n8n at all (see
+    `_run_n8n_turn`'s own docstring), so there is nothing to defer.
     """
     timings_ms: dict[str, float] = {}
     total_start = time.perf_counter()
@@ -1137,6 +1288,29 @@ def _prepare_turn(request: ChatRequest) -> _PreparedTurn:
     timings_ms['router_ms'] = _elapsed_ms(router_start)
 
     if is_n8n_bot:
+        if defer_n8n and decision.intent != 'conversational':
+            # See `_DeferredN8nTurn`'s own docstring: scope resolution
+            # still runs here, synchronously (it can itself raise
+            # retrieval_client.RetrievalUnavailable/RetrievalError, which
+            # must still surface pre-stream) -- only the webhook call is
+            # handed off.
+            allowed_collections = resolve_collection_scope(bot, request.user, request.collections)
+            history = [{'role': turn.role, 'content': turn.content} for turn in request.history]
+            return _PreparedTurn(
+                bot=bot,
+                llm_provider=None,
+                decision=decision,
+                timings_ms=timings_ms,
+                total_start=total_start,
+                sources=[],
+                retrieval_trace=None,
+                guard=None,
+                final_answer=None,
+                messages=None,
+                deferred_n8n=_DeferredN8nTurn(
+                    bot=bot, message=request.message, history=history, user=request.user, scope=allowed_collections
+                ),
+            )
         return _run_n8n_turn(bot, request, decision, timings_ms, total_start)
 
     complex_knowledge_fallback = (
@@ -1276,18 +1450,20 @@ def handle_chat(request: ChatRequest) -> ChatResponse:
     )
 
 
-def handle_chat_stream(request: ChatRequest) -> Iterator[ChatStreamEvent]:
+def handle_chat_stream(request: ChatRequest) -> Iterator[ChatStreamEvent | Keepalive]:
     """The one entry point app/api/internal.py's POST /internal/chat/stream
     calls -- see contracts/internal-chat.md's stream section for the full
     event contract this produces (`trace` once, then zero or more `delta`,
-    then either `sources`+`done` or a single terminal `error`).
+    then either `sources`+`done` or a single terminal `error`) plus
+    `Keepalive`'s own docstring for the one non-`ChatStreamEvent` marker
+    that can also come out of this iterator.
 
     Deliberately NOT a generator function itself (nothing in this function's
-    own body uses `yield`): `_prepare_turn(request)` -- bot lookup,
-    permissions, intent routing, retrieval, the Collections scope, and the
-    response guard, ALL of it, per this module's own docstring -- runs to
-    completion right here, synchronously, before this function returns
-    anything at all. That is what lets app/api/internal.py catch
+    own body uses `yield`): `_prepare_turn(request, defer_n8n=True)` -- bot
+    lookup, permissions, intent routing, retrieval, the Collections scope,
+    and the response guard, ALL of it, per this module's own docstring --
+    runs to completion right here, synchronously, before this function
+    returns anything at all. That is what lets app/api/internal.py catch
     BotNotFoundError/BotPermissionDenied/retrieval_client.
     RetrievalUnavailable from THIS call, exactly like it does for
     `handle_chat`, and answer with a normal 401/403/404/503 -- BEFORE any
@@ -1297,19 +1473,36 @@ def handle_chat_stream(request: ChatRequest) -> Iterator[ChatStreamEvent]:
     the route started iterating it -- i.e., after the response had already
     started streaming as `200 OK`.
 
+    `defer_n8n=True` is the one difference from `handle_chat`'s own
+    `_prepare_turn(request)` call: for a non-conversational n8n-provider
+    bot, the webhook call itself is NOT one of the things that runs
+    synchronously here -- see `_prepare_turn`'s and `_DeferredN8nTurn`'s own
+    docstrings for exactly what still does (Collections-scope resolution,
+    with its own RetrievalUnavailable/RetrievalError surfacing pre-stream
+    exactly as before) versus what `_stream_prepared_turn` now performs
+    itself, from inside the stream phase, via `_stream_deferred_n8n`. This
+    is a deliberate, documented departure from this function's own name:
+    `n8n_client.N8nUnavailable`/`N8nError` can no longer surface as an HTTP
+    status for such a bot's STREAMING turn the way they still do for its
+    blocking one -- see `_stream_deferred_n8n`'s own docstring for why (by
+    the time the webhook call runs, `200 OK`/`text/event-stream` is already
+    committed, exactly like a real LLM provider's mid-stream `LLMError`
+    already could never become one either).
+
     Only `_stream_prepared_turn` below -- called here, its generator handed
     back unstarted -- ever actually yields an event; a failure from THAT
-    point on (an LLMError a real provider raises mid-generation) can no
-    longer become an HTTP status the way `_prepare_turn`'s own exceptions
-    can, so it becomes an in-band `ChatStreamErrorEvent` instead, exactly
-    per contracts/internal-chat.md's own documented distinction between
-    "error before the stream" and "error during the stream".
+    point on (an LLMError a real provider raises mid-generation, or an
+    n8n-provider bot's deferred webhook call failing) can no longer become
+    an HTTP status the way `_prepare_turn`'s own exceptions can, so it
+    becomes an in-band `ChatStreamErrorEvent` instead, exactly per
+    contracts/internal-chat.md's own documented distinction between "error
+    before the stream" and "error during the stream".
     """
-    prepared = _prepare_turn(request)
+    prepared = _prepare_turn(request, defer_n8n=True)
     return _stream_prepared_turn(prepared)
 
 
-def _stream_prepared_turn(prepared: _PreparedTurn) -> Iterator[ChatStreamEvent]:
+def _stream_prepared_turn(prepared: _PreparedTurn) -> Iterator[ChatStreamEvent | Keepalive]:
     """The actual event generator behind `handle_chat_stream`, operating
     purely on an already-fully-prepared `_PreparedTurn` -- see that
     function's own docstring for why the two are split apart at all (so
@@ -1342,13 +1535,30 @@ def _stream_prepared_turn(prepared: _PreparedTurn) -> Iterator[ChatStreamEvent]:
         needs_retrieval=prepared.decision.needs_retrieval,
         needs_tool=prepared.decision.needs_tool,
         retrieval=prepared.retrieval_trace,
-        model=None if prepared.final_answer is not None else prepared.bot.model.model,
+        # `deferred_n8n is not None` is the ONE outcome where `final_answer
+        # is not None` is false yet no LLM call is ever going to happen
+        # either (see `_DeferredN8nTurn`'s own docstring) -- `model` must
+        # stay None for it exactly like every other n8n-provider outcome.
+        model=None if prepared.final_answer is not None or prepared.deferred_n8n is not None else prepared.bot.model.model,
         router_mode=settings.router_mode,
         timings_ms=prepared.timings_ms,
         guard=prepared.guard,
         n8n=prepared.n8n_trace,
     )
     yield ChatStreamTraceEvent(trace=trace)
+
+    if prepared.deferred_n8n is not None:
+        # See `_DeferredN8nTurn`/`_stream_deferred_n8n`'s own docstrings --
+        # this is the ONE outcome that reaches neither the single-delta nor
+        # the chunked-`final_answer` branch immediately below, nor the
+        # LLM-streaming `else` branch at the bottom: the webhook call this
+        # turn needs has not happened yet at all, `_stream_deferred_n8n`
+        # performs it (blocking or n8n's own streaming contract, per
+        # `prepared.deferred_n8n.bot.n8n.streaming`) and yields this
+        # stream's remaining events (`delta`*, then `sources`+`done` or a
+        # terminal `error`) itself.
+        yield from _stream_deferred_n8n(prepared.deferred_n8n)
+        return
 
     if prepared.n8n_single_delta:
         # A SUCCESSFUL n8n answer (`_run_n8n_turn`'s own last branch) --
@@ -1400,4 +1610,167 @@ def _stream_prepared_turn(prepared: _PreparedTurn) -> Iterator[ChatStreamEvent]:
         return
 
     yield ChatStreamSourcesEvent(sources=prepared.sources)
+    yield ChatStreamDoneEvent()
+
+
+def _stream_deferred_n8n(deferred: _DeferredN8nTurn) -> Iterator[ChatStreamEvent | Keepalive]:
+    """Perform `deferred`'s n8n webhook call from INSIDE the stream phase
+    (`_stream_prepared_turn`'s own caller has already emitted `trace` by
+    the time this runs) and yield this stream's remaining events -- `delta`
+    zero or more times, then either `sources`+`done` or a terminal `error`,
+    exactly the same shape `_stream_prepared_turn`'s other branches produce
+    for the exact same reason `_run_n8n_turn`'s docstring gives for the
+    blocking path: the response guard's "never a silent, unsourced answer
+    for a bot that requires one" promise must hold here too.
+
+    The call itself runs on a background THREAD, feeding a `queue.Queue`
+    this generator drains -- not because Python needs threads for
+    concurrency here, but because there is no other way to let this
+    generator ALSO emit a `Keepalive` marker (see that class's own
+    docstring) every `settings.stream_keepalive_seconds` while nothing has
+    arrived from n8n yet: a plain generator built directly on
+    `n8n_client.run_flow`/`run_flow_stream` can only ever produce its NEXT
+    value by blocking this exact call stack on the next socket read, with
+    no chance to interleave a keepalive in between. `deferred.bot.n8n.
+    streaming` picks which of the two client functions the thread calls --
+    `run_flow` (one blocking call, its whole result pushed as a single
+    delta+sources+done once it returns, exactly like `_run_n8n_turn`'s own
+    `n8n_single_delta` treatment) or `run_flow_stream` (n8n's own real,
+    incremental deltas, see that function's own docstring for the two wire
+    shapes it accepts).
+
+    Buffering mirrors `_run_n8n_turn`'s guard exactly, just spread across
+    time instead of collapsed into one return value: `bot.guard.
+    require_sources` BUFFERS every delta (never forwarding one) until
+    `sources`/`done` arrives, THEN applies `_filter_n8n_sources_by_scope`
+    and the guard -- a triggered guard discards the buffered text entirely
+    and emits `bot.guard.no_context_reply` (chunked, exactly like the
+    blocking path's identical outcome) instead; otherwise the WHOLE
+    buffered answer is emitted as one delta, never the flow's own original
+    chunking, since by the time this stream is allowed to say anything at
+    all about this answer, the guard has already had to see the whole
+    thing anyway. A bot WITHOUT `require_sources` forwards every delta the
+    instant it arrives instead -- a genuinely incremental stream for one
+    with `n8n.streaming=True` -- then still applies
+    `_filter_n8n_sources_by_scope` to whatever `sources` this call reported
+    (or `[]`, if none did -- see `N8nStreamSources`'s own docstring) before
+    emitting the final `sources`+`done`; scope-filtering never depends on
+    having seen every delta first, only on having seen every reported
+    source, so it is never a reason to buffer text this bot's own guard
+    configuration doesn't otherwise require buffering.
+
+    A transport-level failure (`n8n_client.N8nUnavailable`/`N8nError`,
+    `delegation.DelegationConfigError` -- everything `_run_n8n_turn`'s own
+    docstring maps to a status code for the BLOCKING path) or a flow-
+    reported `N8nStreamError` becomes this stream's own terminal
+    `ChatStreamErrorEvent` instead, for the exact same reason a real LLM
+    provider's mid-stream `LLMError` already does in `_stream_prepared_turn`
+    above: `200 OK`/`text/event-stream` is already committed by the time
+    ANY of this runs. Only the exception's own `str()` becomes `detail` --
+    never `deferred`'s own `message`/`history`/`user` -- so nothing beyond
+    what today's already-uncaught N8nError/N8nUnavailable messages
+    themselves carry (see n8n_client.py's own docstrings on both) reaches
+    this response's body either.
+
+    On `GeneratorExit` (the client disconnected, or `_stream_prepared_turn`
+    itself was closed early for any other reason) the background thread's
+    own `cancel` Event is set before this function re-raises -- see
+    `n8n_client.run_flow_stream`'s own docstring for exactly how far that
+    reaches: it stops the thread from forwarding any FURTHER event on its
+    next parsed line, it does not abort a read already blocked waiting for
+    one (there is no lower-level hook for that), and it has no effect at
+    all on a `bot.n8n.streaming=False` turn's single blocking `run_flow`
+    call, which was never interruptible mid-flight even before this
+    function existed.
+    """
+    require_sources = deferred.bot.guard.require_sources
+    result_queue: queue.Queue = queue.Queue()
+    cancel = threading.Event()
+
+    def _worker() -> None:
+        try:
+            if deferred.bot.n8n.streaming:
+                for stream_event in n8n_client.run_flow_stream(
+                    deferred.bot, deferred.message, deferred.history, deferred.user, deferred.scope, cancel=cancel
+                ):
+                    result_queue.put(stream_event)
+                    if cancel.is_set():
+                        return
+            else:
+                result = n8n_client.run_flow(deferred.bot, deferred.message, deferred.history, deferred.user, deferred.scope)
+                if result.answer:
+                    result_queue.put(n8n_client.N8nStreamDelta(text=result.answer))
+                result_queue.put(n8n_client.N8nStreamSources(sources=result.sources))
+                result_queue.put(n8n_client.N8nStreamDone())
+        except Exception as exc:  # noqa: BLE001 -- forwarded to the reader thread, never raised on this one
+            result_queue.put(exc)
+
+    thread = threading.Thread(target=_worker, name='n8n-stream-turn', daemon=True)
+    thread.start()
+
+    buffered_text: list[str] = []
+    sources: list[Source] = []
+    error_detail: str | None = None
+
+    try:
+        while True:
+            try:
+                item = result_queue.get(timeout=settings.stream_keepalive_seconds)
+            except queue.Empty:
+                yield KEEPALIVE
+                continue
+
+            if isinstance(item, BaseException):
+                # The exception text names the webhook_url and may quote raw
+                # n8n response fragments (see n8n_client's error classes) --
+                # fine for the server log, never for a browser: unlike the
+                # blocking route, this `detail` travels through Weave-API's
+                # stream passthrough verbatim to the end user.
+                logger.warning('n8n stream turn failed for bot %s: %s', deferred.bot.id, item)
+                if isinstance(item, n8n_client.N8nUnavailable):
+                    error_detail = 'Der n8n-Agentenflow ist derzeit nicht erreichbar oder hat nicht rechtzeitig geantwortet.'
+                elif isinstance(item, n8n_client.N8nError):
+                    error_detail = 'Der n8n-Agentenflow hat eine ungültige Antwort geliefert.'
+                else:
+                    error_detail = 'Der n8n-Agentenflow ist unerwartet fehlgeschlagen.'
+                break
+            if isinstance(item, n8n_client.N8nStreamDelta):
+                if item.text:
+                    if require_sources:
+                        buffered_text.append(item.text)
+                    else:
+                        yield ChatStreamDeltaEvent(text=item.text)
+            elif isinstance(item, n8n_client.N8nStreamSources):
+                sources = item.sources
+            elif isinstance(item, n8n_client.N8nStreamError):
+                # Authored by the flow itself (like its answer text), so it
+                # may be shown -- capped, and never empty.
+                error_detail = (item.detail or '').strip()[:500] or 'Der n8n-Agentenflow hat einen Fehler gemeldet.'
+                break
+            elif isinstance(item, n8n_client.N8nStreamDone):
+                break
+    finally:
+        # See this function's own docstring's last paragraph -- best-effort
+        # only, reached on ordinary completion too (a no-op at that point).
+        cancel.set()
+
+    if error_detail is not None:
+        yield ChatStreamErrorEvent(detail=error_detail)
+        return
+
+    kept_sources, _dropped_count = _filter_n8n_sources_by_scope(sources, deferred.scope, bot_id=deferred.bot.id)
+
+    if require_sources and not kept_sources:
+        for delta in llm_service.iter_text_deltas(deferred.bot.guard.no_context_reply):
+            yield ChatStreamDeltaEvent(text=delta)
+        yield ChatStreamSourcesEvent(sources=[])
+        yield ChatStreamDoneEvent()
+        return
+
+    if require_sources:
+        full_text = ''.join(buffered_text)
+        if full_text:
+            yield ChatStreamDeltaEvent(text=full_text)
+
+    yield ChatStreamSourcesEvent(sources=kept_sources)
     yield ChatStreamDoneEvent()

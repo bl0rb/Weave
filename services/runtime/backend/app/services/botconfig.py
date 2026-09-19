@@ -11,6 +11,7 @@ either a restart or a file-watcher to pick up an edited bot -- is complexity
 this service has no need for at this size.
 """
 
+import logging
 import re
 from pathlib import Path
 from urllib.parse import SplitResult, unquote, urlsplit
@@ -21,6 +22,8 @@ from pydantic import ValidationError
 from app.core.config import settings
 from app.schemas.bot import BotConfig
 from app.services.chat_config_client import fetch_managed_bots
+
+logger = logging.getLogger(__name__)
 
 
 class BotConfigError(Exception):
@@ -318,16 +321,27 @@ def list_bots() -> list[BotConfig]:
 
     Local YAML is read first.  Centrally managed ids then override matching
     local ids, and the final list is sorted by bot id for stable API output.
-    Invalid local or control-plane data fails the roster as a whole: every
-    caller (health, listing, and a chat turn) needs one unambiguous config,
-    never a silently partial mix of old and new definitions.
+    Invalid local data fails the roster as a whole: every caller (health,
+    listing, and a chat turn) needs one unambiguous config, never a silently
+    partial mix of old and new definitions. A centrally managed bot that
+    fails validation (typically a webhook_url outside N8N_ALLOWED_BASE_URLS,
+    entered by an administrator in the Ingest UI) is skipped with a warning
+    instead: one misconfigured managed bot must not turn GET /internal/bots
+    -- and with it every chat -- into a 500.
     """
     local = [_load_bot_file(path) for path in _bot_files()]
     managed_raw = fetch_managed_bots()
     if managed_raw is None:
         return local
     disabled_ids = {raw['id'] for raw in managed_raw if raw.get('enabled') is False}
-    managed = [_managed_bot(raw) for raw in managed_raw if raw.get('enabled') is not False and raw.get('id') not in disabled_ids]
+    managed = []
+    for raw in managed_raw:
+        if raw.get('enabled') is False or raw.get('id') in disabled_ids:
+            continue
+        try:
+            managed.append(_managed_bot(raw))
+        except BotConfigError as exc:
+            logger.warning('skipping managed bot %r: %s', raw.get('id'), exc)
     merged = {bot.id: bot for bot in local}
     merged.update({bot.id: bot for bot in managed})
     return [merged[bot_id] for bot_id in sorted(merged) if bot_id not in disabled_ids]

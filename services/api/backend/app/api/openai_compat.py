@@ -119,6 +119,14 @@ def _stream_openai_chunks(*, chunk_id: str, created: int, model: str, events: It
       is set here instead, so the very first chunk THIS function ever
       emits always carries it, no matter which event triggered it), then
       the literal `'data: [DONE]\\n\\n'` sentinel line, then returns.
+    - `keepalive`: a synthetic marker (not one of Weave-Runtime's five real
+      event types, see runtime_client._iter_chat_stream_events) standing in
+      for one of Weave-Runtime's own `': keepalive\\n\\n'` SSE comment
+      lines -- re-sent here as OUR OWN comment line (SSE-spec-legal; OpenAI
+      clients ignore comment lines) so a caller of THIS endpoint doesn't hit
+      its own idle-read timeout while a long-running n8n agent flow behind
+      this bot is still going, and otherwise skipped entirely (it maps to
+      no OpenAI chunk shape).
     - `error`: Weave-Runtime's generation failed mid-stream, i.e. AFTER
       this shim's own `200`/`text/event-stream` response already committed
       -- there is no HTTP status left to change, and OpenAI's own
@@ -135,6 +143,9 @@ def _stream_openai_chunks(*, chunk_id: str, created: int, model: str, events: It
     try:
         for event in events:
             event_type = event.get('type')
+            if event_type == 'keepalive':
+                yield ': keepalive\n\n'
+                continue
             if event_type == 'delta':
                 delta = OpenAIChatCompletionChunkDelta(
                     role=None if sent_role else 'assistant', content=event.get('text', '')

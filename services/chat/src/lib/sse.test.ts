@@ -68,4 +68,21 @@ describe('parseSseStream', () => {
     const events = await collect(['data: {"type":"ping"}\n\n', 'data: {"type":"done"}\n\n']);
     expect(events).toEqual([{ type: 'done' }]);
   });
+
+  it('ignores SSE comment lines (e.g. keepalives) interleaved with real events', async () => {
+    // Weave-API now writes ': keepalive\n\n' comment lines into this same
+    // body while a long-running n8n turn is idle (see runtime_client.py /
+    // internal.py's keepalive passthrough). parseEventBlock only ever
+    // looks for a `data:`-prefixed line, so a comment-only block yields no
+    // event at all, and a block mixing a comment with a `data:` line still
+    // yields that event normally.
+    const events = await collect([
+      ': keepalive\n\n',
+      'data: {"type":"delta","text":"hi"}\n\n',
+      ': keepalive\n\n',
+      ': keepalive\n\n',
+      'data: {"type":"done"}\n\n',
+    ]);
+    expect(events).toEqual([{ type: 'delta', text: 'hi' }, { type: 'done' }]);
+  });
 });

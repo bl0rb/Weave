@@ -163,6 +163,16 @@ def _stream_and_persist(db, conversation: Conversation, events: Iterator[dict]) 
     try:
         for event in events:
             event_type = event.get('type')
+            if event_type == 'keepalive':
+                # Not one of contracts/internal-chat.md's five event types --
+                # a synthetic marker runtime_client._iter_chat_stream_events
+                # makes out of Weave-Runtime's own SSE comment line, re-sent
+                # here as OUR OWN comment line so a caller sitting behind a
+                # proxy with its own idle-read timeout stays alive too,
+                # without ever touching answer_parts/sources/trace or
+                # counting as a `done`/`error` terminal event below.
+                yield ': keepalive\n\n'
+                continue
             if event_type == 'trace':
                 trace = event.get('trace')
             elif event_type == 'delta':

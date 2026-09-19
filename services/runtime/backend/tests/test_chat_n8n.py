@@ -560,7 +560,15 @@ def test_streaming_successful_n8n_answer_is_emitted_as_exactly_one_delta(monkeyp
     assert delta_events[0]['text'] == 'Eine ganze mehrwortige Antwort in einem Stueck.'
 
     trace = events[0]['trace']
-    assert 'n8n_ms' in trace['timings_ms']
+    # Unlike the non-streaming response, `n8n_ms` is NOT in this trace --
+    # the webhook call now runs INSIDE the stream phase (see chat.py's
+    # `_stream_deferred_n8n`/`_DeferredN8nTurn`), after this `trace` event
+    # has already gone out, so its own duration is not yet known at the
+    # point this event is built (see `ChatStreamTraceEvent`'s own
+    # docstring: it only ever carries what is known at trace-TIME, exactly
+    # like `llm_ms`/`total_ms` never appear here for an LLM-backed bot
+    # either).
+    assert 'n8n_ms' not in trace['timings_ms']
     assert trace['model'] is None
 
 

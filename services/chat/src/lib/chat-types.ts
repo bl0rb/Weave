@@ -20,6 +20,13 @@ export interface UiMessage {
    * fallback (used once the stream itself could not be reached) rather
    * than word-by-word. */
   viaFallback: boolean;
+  /** True once a streaming turn has gone >30s without a `delta` event —
+   * the placeholder switches from "Antwort wird erzeugt…" to "Der
+   * Assistent arbeitet noch …" so a long-running n8n agent turn (which
+   * can now legitimately take minutes between keepalive-covered idle
+   * gaps) doesn't look stuck. Reset to false whenever content starts
+   * arriving; see chat-app.tsx's per-turn idle timer. */
+  slowResponse: boolean;
 }
 
 export function newId(): string {
@@ -28,11 +35,11 @@ export function newId(): string {
 }
 
 export function userMessage(content: string): UiMessage {
-  return { id: newId(), role: 'user', content, streaming: false, sources: null, trace: null, error: null, viaFallback: false };
+  return { id: newId(), role: 'user', content, streaming: false, sources: null, trace: null, error: null, viaFallback: false, slowResponse: false };
 }
 
 export function pendingAssistantMessage(): UiMessage {
-  return { id: newId(), role: 'assistant', content: '', streaming: true, sources: null, trace: null, error: null, viaFallback: false };
+  return { id: newId(), role: 'assistant', content: '', streaming: true, sources: null, trace: null, error: null, viaFallback: false, slowResponse: false };
 }
 
 /** Turns one already-persisted `StoredMessage` (GET
@@ -51,6 +58,7 @@ export function uiMessageFromStored(message: StoredMessage): UiMessage {
     trace: message.trace,
     error: null,
     viaFallback: false,
+    slowResponse: false,
   };
 }
 

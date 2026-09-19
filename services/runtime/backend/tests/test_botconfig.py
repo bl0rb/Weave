@@ -139,6 +139,21 @@ def test_centrally_managed_bot_is_merged_with_local_roster(bots_dir, monkeypatch
     assert 'secret-token' not in repr(managed)
 
 
+def test_managed_bot_outside_allowlist_is_skipped_not_fatal(bots_dir, monkeypatch, caplog):
+    # A webhook_url outside N8N_ALLOWED_BASE_URLS entered in the Ingest UI
+    # used to raise out of list_bots() and turn GET /internal/bots into a 500.
+    (bots_dir / 'minimal.yaml').write_text(_MINIMAL_BOT, encoding='utf-8')
+    monkeypatch.setattr(settings, 'n8n_allowed_base_urls', [])
+    monkeypatch.setattr('app.services.botconfig.fetch_managed_bots', lambda: [{
+        'id': 'unlisted-agent', 'name': 'Unlisted', 'webhook_url': 'https://n8n.example.test/webhook/x',
+    }])
+
+    with caplog.at_level('WARNING', logger='app.services.botconfig'):
+        bots = list_bots()
+    assert [bot.id for bot in bots] == ['minimal']
+    assert any('unlisted-agent' in record.getMessage() for record in caplog.records)
+
+
 def test_centrally_managed_llm_bot_is_projected_with_retrieval(bots_dir, monkeypatch):
     (bots_dir / 'minimal.yaml').write_text(_MINIMAL_BOT, encoding='utf-8')
     monkeypatch.setattr('app.services.botconfig.fetch_managed_bots', lambda: [{

@@ -1171,12 +1171,25 @@ ingress:
   chat:
     enabled: false
     className: ""
-    annotations: {}
+    # Lange n8n-Streaming-Turns halten die SSE-Verbindung u.U. sehr lange
+    # offen (Keepalives alle stream_keepalive_seconds, siehe
+    # contracts/internal-chat.md). Diese Vorgaben passen fuer den
+    # ingress-nginx-Controller; ein anderer Controller-Typ (className)
+    # ueberschreibt annotations ohnehin per Wrapper-Chart.
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-buffering: "off"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
     hosts: []
     tls: []
   api:
     enabled: false
     className: ""
-    annotations: {}
+    # Siehe Kommentar bei ingress.chat.annotations -- die API terminiert
+    # denselben n8n-Streaming-Traffic (POST /v1/chat/stream).
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-buffering: "off"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
     hosts: []
     tls: []

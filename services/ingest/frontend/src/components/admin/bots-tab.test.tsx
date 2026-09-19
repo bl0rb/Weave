@@ -54,7 +54,7 @@ it('starts new bots as LLM bots and labels the dialog accordingly', async () => 
   expect(screen.getByRole('textbox', { name: 'System-Prompt' })).toBeTruthy();
 });
 
-it('creates a scoped n8n bot and keeps pending delivery options disabled', async () => {
+it('creates a scoped n8n bot and keeps pending bearer delivery disabled', async () => {
   render(<BotsTab />);
   fireEvent.click(await screen.findByRole('button', { name: 'Bot hinzufügen' }));
 
@@ -68,7 +68,7 @@ it('creates a scoped n8n bot and keeps pending delivery options disabled', async
 
   const streaming = screen.getByRole('switch', { name: /n8n-Streaming/ }) as HTMLButtonElement;
   const bearer = screen.getByLabelText(/^Bearer-Token/) as HTMLInputElement;
-  expect(streaming.disabled).toBe(true);
+  expect(streaming.disabled).toBe(false);
   expect(bearer.disabled).toBe(true);
 
   fireEvent.click(screen.getByRole('button', { name: 'Bot speichern' }));
@@ -86,7 +86,7 @@ it('creates a scoped n8n bot and keeps pending delivery options disabled', async
 it('explains that bot scope narrows rather than grants document access', async () => {
   render(<BotsTab />);
   expect(await screen.findByText(/Schnittmenge aus Bot-Auswahl und Nutzerrechten/)).toBeTruthy();
-  expect(screen.getByText(/Streaming und Bearer-Weitergabe werden erst/)).toBeTruthy();
+  expect(screen.getByText(/Die Bearer-Weitergabe wird erst/)).toBeTruthy();
 });
 
 it('deletes an existing bot only after confirmation', async () => {

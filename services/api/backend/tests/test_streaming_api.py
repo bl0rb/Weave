@@ -442,3 +442,153 @@ def test_chat_stream_route_is_rate_limited(db_session, monkeypatch, runtime):
 def test_chat_stream_requires_authentication():
     response = client.post('/v1/chat/stream', json={'bot_id': 'legal-support', 'message': 'hi'})
     assert response.status_code == 401
+
+
+# --- Keepalive comment lines (DESIGN item 3) ----------------------------------
+#
+# Weave-Runtime sends a `': keepalive\n\n'` SSE comment line (not a `data:`
+# event) while an n8n agent flow behind a bot is still running with nothing
+# new to say yet. runtime_client._iter_chat_stream_events turns each one
+# into a synthetic `{"type": "keepalive"}` marker; both consumers of that
+# iterator (this gateway's own /v1/chat/stream and the OpenAI-compatible
+# /v1/chat/completions shim) must re-emit their OWN `': keepalive\n\n'`
+# comment line so a caller sitting behind a proxy with its own idle-read
+# timeout stays alive too, and must not treat it as one of the five real
+# ChatStreamEvent types (never persisted, never a delta, never terminal).
+
+
+def _sse_body_with_keepalives(events: list[dict]) -> bytes:
+    """Like `_sse_body` above, but with a `': keepalive\\n\\n'` comment line
+    spliced in before every event -- exactly the framing Weave-Runtime's own
+    stream uses while waiting on a slow n8n flow."""
+    return ''.join(f': keepalive\n\ndata: {json.dumps(event)}\n\n' for event in events).encode('utf-8')
+
+
+def test_iter_chat_stream_events_turns_comment_lines_into_a_keepalive_marker(runtime):
+    """Unit-level check directly on runtime_client.chat_stream(), independent
+    of either HTTP route above -- the marker exists at the SOURCE of the
+    iterator, not something a route invents itself."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=_sse_body_with_keepalives([TRACE_EVENT, DONE_EVENT]),
+            headers={'content-type': 'text/event-stream'},
+        )
+
+    runtime.handle(handler)
+
+    events = list(
+        runtime_client.chat_stream(bot_id='legal-support', message='Hi', history=[], user={'id': 'u1', 'team': None})
+    )
+    assert events == [{'type': 'keepalive'}, TRACE_EVENT, {'type': 'keepalive'}, DONE_EVENT]
+
+
+def test_chat_stream_route_relays_keepalive_comment_lines(db_session, runtime):
+    """POST /v1/chat/stream must forward Weave-Runtime's keepalive comment
+    lines as its OWN `': keepalive\\n\\n'` comment lines, and must not
+    persist an assistant message from them or count them as `done`/`error`."""
+    user, raw_token = make_user_with_token(db_session, username='own-stream-keepalive')
+    db_session.commit()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == '/internal/conversation-title':
+            return httpx.Response(200, json={'title': 'Titel'})
+        assert request.url.path == '/internal/chat/stream'
+        body = _sse_body_with_keepalives([TRACE_EVENT, {'type': 'delta', 'text': 'Hallo'}, SOURCES_EVENT, DONE_EVENT])
+        return httpx.Response(200, content=body, headers={'content-type': 'text/event-stream'})
+
+    runtime.handle(handler)
+
+    response = client.post(
+        '/v1/chat/stream', json={'bot_id': 'legal-support', 'message': 'Hi'}, headers=auth_headers(raw_token)
+    )
+    assert response.status_code == 200
+    assert response.text.count(': keepalive\n\n') == 4
+    # The five real events still come through unchanged, in order, once the
+    # keepalive comment lines are stripped out by `_parse_sse_events` (which
+    # only ever looks at `data:` lines).
+    assert _parse_sse_events(response.text) == [
+        TRACE_EVENT,
+        {'type': 'delta', 'text': 'Hallo'},
+        SOURCES_EVENT,
+        DONE_EVENT,
+    ]
+
+    messages = db_session.query(Message).join(Conversation).filter(Conversation.user_id == user.id).all()
+    assert len(messages) == 2
+    assistant_message = next(m for m in messages if m.role == MessageRole.ASSISTANT)
+    assert assistant_message.content == 'Hallo'  # keepalives never leaked into the persisted answer text
+
+
+def test_chat_completions_stream_tolerates_keepalive_comment_lines(db_session, runtime):
+    """The OpenAI-compatible shim must also pass keepalives through as its
+    own SSE comment lines (spec-legal; OpenAI clients ignore comments) and
+    must not let one break the delta/done chunk translation around it."""
+    _, raw_token = make_user_with_token(db_session, username='shim-stream-keepalive')
+    db_session.commit()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = _sse_body_with_keepalives([TRACE_EVENT, {'type': 'delta', 'text': 'Hallo'}, SOURCES_EVENT, DONE_EVENT])
+        return httpx.Response(200, content=body, headers={'content-type': 'text/event-stream'})
+
+    runtime.handle(handler)
+
+    response = client.post(
+        '/v1/chat/completions',
+        json={'model': 'legal-support', 'messages': [{'role': 'user', 'content': 'Hi'}], 'stream': True},
+        headers=auth_headers(raw_token),
+    )
+    assert response.status_code == 200
+    assert response.text.count(': keepalive\n\n') == 4
+
+    events = _parse_sse_events(response.text)
+    assert events[-1] == '[DONE]'
+    chunks = events[:-1]
+    content_pieces = [c['choices'][0]['delta'].get('content') for c in chunks if c['choices'][0]['delta'].get('content')]
+    assert ''.join(content_pieces) == 'Hallo'
+    assert chunks[-1]['choices'][0]['finish_reason'] == 'stop'
+
+
+# --- chat_read_timeout_seconds (DESIGN item 3) --------------------------------
+
+
+def test_chat_uses_the_dedicated_chat_read_timeout_not_the_default_http_read_timeout(db_session, monkeypatch, runtime):
+    """runtime_client.chat() (POST /internal/chat, the blocking call) must
+    build its httpx.Client with `settings.chat_read_timeout_seconds` as the
+    read timeout -- deliberately NOT `http_read_timeout_seconds`, which
+    every other call this client makes (list_bots/get_bot/
+    conversation-title, and each chunk of chat_stream()) still uses
+    unchanged, since a long-running n8n agent flow behind a blocking chat
+    turn can take far longer than that default 10s."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, 'chat_read_timeout_seconds', 12345.0)
+    _, raw_token = make_user_with_token(db_session, username='chat-timeout-caller', team='legal')
+    db_session.commit()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == '/internal/conversation-title':
+            return httpx.Response(200, json={'title': 'Titel'})
+        assert request.url.path == '/internal/chat'
+        return httpx.Response(200, json={'answer': 'Hi.', 'sources': [], 'trace': None})
+
+    runtime.handle(handler)  # installs the MockTransport-backed Client first
+
+    seen_timeouts: list[httpx.Timeout] = []
+    mock_transport_client_cls = runtime_client.httpx.Client  # already patched by `runtime` above
+
+    def _recording_client_cls(*args, **kwargs):
+        seen_timeouts.append(kwargs.get('timeout'))
+        return mock_transport_client_cls(*args, **kwargs)
+
+    monkeypatch.setattr(runtime_client.httpx, 'Client', _recording_client_cls)
+
+    response = client.post('/v1/chat', json={'bot_id': 'legal-support', 'message': 'Hi'}, headers=auth_headers(raw_token))
+    assert response.status_code == 200
+
+    chat_timeout = next(t for t in seen_timeouts if t.read == 12345.0)
+    assert chat_timeout.read == 12345.0
+    # The conversation-title call right after it is a DIFFERENT `_post`
+    # call with no override -- it must still get the unchanged default.
+    assert any(t.read == runtime_client.settings.http_read_timeout_seconds for t in seen_timeouts)

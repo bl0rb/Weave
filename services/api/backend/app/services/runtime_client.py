@@ -73,12 +73,19 @@ class RuntimeRejected(RuntimeClientError):
         self.detail = detail
 
 
-def _client() -> httpx.Client:
+def _client(*, read_timeout: float | None = None) -> httpx.Client:
+    """`read_timeout` overrides the default `http_read_timeout_seconds` for
+    this one client -- used only by `chat()` below, which passes
+    `settings.chat_read_timeout_seconds` (a long-running n8n agent flow can
+    take far longer than the default 10s to answer a single blocking turn,
+    see that setting's own docstring in app/core/config.py). Every other
+    caller of `_client()` gets the unchanged default."""
+    read = settings.http_read_timeout_seconds if read_timeout is None else read_timeout
     timeout = httpx.Timeout(
         connect=settings.http_connect_timeout_seconds,
-        read=settings.http_read_timeout_seconds,
-        write=settings.http_read_timeout_seconds,
-        pool=settings.http_read_timeout_seconds,
+        read=read,
+        write=read,
+        pool=read,
     )
     headers = {'Authorization': f'Bearer {settings.runtime_api_token}'}
     return httpx.Client(base_url=settings.runtime_base_url, headers=headers, timeout=timeout)
@@ -134,10 +141,10 @@ def _get(path: str) -> dict | list:
     return _parse_json(response, description=description)
 
 
-def _post(path: str, json_body: dict) -> dict | list:
+def _post(path: str, json_body: dict, *, read_timeout: float | None = None) -> dict | list:
     description = f'POST {path}'
     try:
-        with _client() as client:
+        with _client(read_timeout=read_timeout) as client:
             response = client.post(path, json=json_body)
     except httpx.RequestError as exc:
         raise RuntimeUnavailable(f'Weave-Runtime unreachable: {exc}') from exc
@@ -224,7 +231,7 @@ def chat(
     docstring for exactly why that distinction matters.
     """
     payload = _chat_payload(bot_id=bot_id, message=message, history=history, user=user, collections=collections)
-    return _post('/internal/chat', payload)
+    return _post('/internal/chat', payload, read_timeout=settings.chat_read_timeout_seconds)
 
 
 def chat_stream(
@@ -243,7 +250,12 @@ def chat_stream(
     ChatStreamEvent union): `{"type": "trace", "trace": {...}}` exactly
     once first, then zero or more `{"type": "delta", "text": ...}`, then
     either `{"type": "sources", "sources": [...]}` + `{"type": "done"}` or
-    a single terminal `{"type": "error", "detail": ...}` in their place.
+    a single terminal `{"type": "error", "detail": ...}` in their place. A
+    sixth, synthetic `{"type": "keepalive"}` marker may also appear anywhere
+    before a terminal event -- see `_iter_chat_stream_events` below for
+    where it comes from; every caller of `chat_stream()` must tolerate
+    seeing it (it carries no `text`/`sources`/`detail` field), even one that
+    otherwise only cares about the five real event types.
     Deliberately returned as plain dicts, not typed pydantic models of our
     own mirroring Weave-Runtime's ChatStreamEvent -- both of this
     function's callers only ever re-serialize each event (either passed
@@ -305,9 +317,23 @@ def _iter_chat_stream_events(client: httpx.Client, response: httpx.Response) -> 
     so by the EVENTS they actually saw (a `done`/`error` event, or neither),
     not by whether iterating this generator raised -- see app/api/chat.py's
     own `_stream_and_persist` for why that distinction matters there.
+
+    A `':'`-prefixed line is Weave-Runtime's own SSE comment framing for a
+    keepalive (`': keepalive\\n\\n'`, sent while an n8n agent flow behind
+    this bot is still running with nothing new to say yet -- see
+    contracts/internal-chat.md's stream section) rather than an actual
+    event -- passed through here as the synthetic `{"type": "keepalive"}`
+    marker (see this function's own docstring above) instead of being
+    silently dropped, so app/api/chat.py's `_stream_and_persist` and
+    app/api/openai_compat.py's `_stream_openai_chunks` can each re-emit
+    their OWN keepalive comment line to keep their own caller's connection
+    alive too, rather than that 5s cadence being invisible past this point.
     """
     try:
         for line in response.iter_lines():
+            if line.startswith(':'):
+                yield {'type': 'keepalive'}
+                continue
             if not line.startswith('data: '):
                 continue
             yield json.loads(line[len('data: '):])

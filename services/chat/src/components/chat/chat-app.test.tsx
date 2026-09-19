@@ -11,7 +11,7 @@
 // environment via React Testing Library; every other test in this suite
 // still runs in plain Node.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { ChatApp } from '@/components/chat/chat-app';
 
 vi.mock('next/navigation', () => ({
@@ -100,6 +100,64 @@ describe('ChatApp turn lifecycle', () => {
       const streamCalls = fetchMock.mock.calls.filter(([req]) => String(req).endsWith('/api/chat/stream'));
       expect(streamCalls.length).toBe(2);
     });
+  });
+
+  it('shows the still-working indicator after 30s of silence mid-stream, even once content has already arrived', async () => {
+    // Regression test for the gap where armSlowTimer's 30s idle check was
+    // only ever surfaced by message-bubble.tsx's empty-content branch — so
+    // it silently stopped showing anything the moment the first delta of
+    // an incrementally-streamed answer (the actual long-running n8n-agent
+    // case) arrived. Uses fake timers to advance past the 30s threshold
+    // without a real wait, and a ReadableStream that emits one delta and
+    // then simply never closes, exactly like a live n8n run mid tool-call.
+    // `shouldAdvanceTime` lets the fake clock tick forward alongside real
+    // wall-clock time (so `vi.waitFor`'s own polling still progresses),
+    // while `vi.advanceTimersByTimeAsync` below still lets us jump the 30s
+    // idle threshold instantly instead of actually waiting for it.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>((input) => {
+        const url = String(input);
+        if (url.endsWith('/api/bots')) return Promise.resolve(jsonResponse([BOTS[0]]));
+        if (url.endsWith('/api/collections')) return Promise.resolve(jsonResponse([]));
+        if (url.endsWith('/api/chat/stream')) {
+          const encoder = new TextEncoder();
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(encoder.encode('data: {"type":"delta","text":"Hallo"}\n\n'));
+              // Deliberately never closed/enqueued again -- simulates a
+              // multi-minute gap between tool-call deltas.
+            },
+          });
+          return Promise.resolve(
+            new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } })
+          );
+        }
+        throw new Error(`unexpected fetch to ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      render(<ChatApp />);
+
+      const textarea = (await screen.findByPlaceholderText('Nachricht schreiben…')) as HTMLTextAreaElement;
+      fireEvent.change(textarea, { target: { value: 'Erste Frage' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Nachricht senden' }));
+
+      await vi.waitFor(() => expect(screen.getByText('Hallo')).toBeTruthy());
+
+      // Not yet -- fewer than 30s of silence have passed since the delta.
+      expect(screen.queryByText('Der Assistent arbeitet noch …')).toBeNull();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+
+      expect(
+        screen.getByText((_, element) => element?.textContent === 'Der Assistent arbeitet noch …')
+      ).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('re-enables the composer after starting a new conversation mid-turn', async () => {

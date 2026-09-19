@@ -178,9 +178,21 @@ def _sse_event(event: ChatStreamEvent) -> str:
     return f'data: {event.model_dump_json()}\n\n'
 
 
-def _iter_sse(events: Iterator[ChatStreamEvent]) -> Iterator[str]:
+def _iter_sse(events: Iterator[ChatStreamEvent | chat_service.Keepalive]) -> Iterator[str]:
+    """One SSE line per item from `events` -- `_sse_event` for an ordinary
+    `ChatStreamEvent`, or the literal comment line `': keepalive\\n\\n'` for
+    `chat_service.KEEPALIVE` (see that sentinel's own docstring for why it
+    is never one of the five JSON event shapes `_sse_event` itself handles,
+    and app/services/chat.py's `_stream_deferred_n8n` for the one caller
+    that ever actually yields it). Compared with `is`, not `==` --
+    `Keepalive` carries no data of its own to equal-compare, and `is`
+    matches this module's own singleton-sentinel style elsewhere.
+    """
     for event in events:
-        yield _sse_event(event)
+        if event is chat_service.KEEPALIVE:
+            yield ': keepalive\n\n'
+        else:
+            yield _sse_event(event)
 
 
 @router.post('/chat/stream')
