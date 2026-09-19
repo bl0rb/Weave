@@ -40,22 +40,22 @@ class SearchToolRequest(BaseModel):
 class SearchSourceOut(BaseModel):
     """Where one search hit's text came from.
 
-    `collection` here is the SINGLE collection the underlying Weave-
-    Retrieval call was actually restricted to when the caller named one
-    (`SearchToolRequest.collection` / the MCP `search` tool's own
-    `collection` argument) -- every hit in that response necessarily
-    belongs to it. When no `collection` was named, this is `None`: the
-    query ran across the caller's ENTIRE resolved scope, and this service
-    does not currently attribute each hit individually. Weave-Retrieval
-    DOES return a per-chunk slug (`SearchResult.collection`, see that
-    service's app/schemas/search.py) -- echoing it through here instead of
-    the request-level value is an open improvement, not a limitation of the
-    upstream contract. `document`/`page` remain fully precise either way;
-    only this one field is coarser when the search wasn't scoped to a
-    single collection to begin with.
+    `collection`, `document_id` and `chunk_id` are the hit's OWN, actual
+    values, taken verbatim from Weave-Retrieval's per-chunk response
+    (`SearchResult.collection`/`document_id`/`chunk_id`, see that service's
+    app/schemas/search.py) -- never inferred from the request. `collection`
+    is `None` only when Weave-Retrieval itself reports no collection for
+    that chunk (a legacy, uncollected document), regardless of whether the
+    caller's own request/MCP-argument named a single collection or left the
+    search unscoped across their whole resolved scope. `document_id` and
+    `chunk_id` are stable identifiers a caller (e.g. an orchestrating agent
+    merging hits from several searches) can use to deduplicate or attribute
+    hits by identity; `document`/`page` remain the human-readable label.
     """
 
     document: str
+    document_id: str
+    chunk_id: int
     page: str | None = None
     collection: str | None = None
 

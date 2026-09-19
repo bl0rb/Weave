@@ -22,6 +22,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the normal source upload, review and release workflow.
 
 ### Added
+- Agent mode for LLM bots (Weave-Runtime's `BotConfig.agent`, rollout plan "Schritt 2 --
+  Tool-Calls und ein Subagent"): a direct-LLM bot can now configure one or more subagents,
+  each with its own mission, explicitly allowed collections/filters, allowed tools (only
+  `search_knowledge` in this round), optional model override and search/runtime limits.
+  Enabling agent mode requires the configured model to declare tool-call support
+  (`ModelConfig.supports_tools`; the `fake` provider always qualifies) and is rejected for
+  `n8n`-provider bots. Weave-Runtime's LLM provider abstraction (`app/services/llm.py`)
+  gained a `chat_with_tools()` call (structured tool calls/results, argument validation)
+  implemented for both `FakeLLM` (deterministic, test-scriptable via `tool_responses`) and
+  the OpenAI-compatible provider. A new `app/services/agents.py` runs one subagent's bounded
+  `search_knowledge` research loop per turn; the chat pipeline defers an agent-mode turn's
+  research and final answer into the streaming phase (reusing the existing n8n
+  thread/queue/keepalive pattern) or runs it synchronously for the blocking endpoint. The
+  chat trace gained an optional `agent` field (`trace.agent`: subagent id/status/searches
+  used/hit count, turn budget) — see `contracts/internal-chat.md`'s "Agentenmodus" section.
+  Managed (admin-configured) LLM bots can now persist an opaque `agent` JSON block
+  (`ManagedBot.agent_config`, migration `0028_managed_bot_agent_config`), projected
+  unvalidated through the admin and internal (Runtime-facing) APIs — there is no dedicated
+  editor UI for this block yet. A new example bot, `services/runtime/bots/research-agent.yaml.example`,
+  documents the YAML shape. Bots without `agent.enabled: true` are unaffected — the existing
+  direct RAG pipeline is unchanged.
+- Multi-subagent orchestration for Weave-Runtime's agent mode (rollout plan "Schritt 3 --
+  LangGraph mit mehreren Subagenten", new `app/services/agent_graph.py`): a bot configured
+  with more than one subagent now runs a LangGraph orchestrator-worker pipeline instead of
+  the single-subagent path above (which stays unchanged, byte-for-byte, for a bot with
+  exactly one subagent). The main bot's own LLM plans subquestions via one `research_area`
+  tool offered only for subagents with a non-empty effective scope; a `Send`-based fan-out
+  runs up to `agent.limits.max_parallel` research workers concurrently (each still Schritt
+  2's own `run_subagent`, budgeted by both its own `SubagentLimits` and a turn-wide shared
+  `budget_searches`); results are deduplicated by `(document_id, chunk_id)`, contradicting
+  facts are lexically flagged, and up to `agent.limits.max_followups` follow-up rounds run
+  for any subquestion that came back incomplete while budget remains. A failed/incomplete
+  subagent never reads as "no information": with other usable evidence, the final answer
+  names the gap in a fixed German sentence; with no evidence at all, the existing
+  `require_sources` guard applies exactly as before. `langgraph`/`langchain-core` are now
+  direct dependencies of Weave-Runtime's backend (`requirements.in`/`requirements.txt`).
+  `ChatTrace.agent` (`contracts/internal-chat.md`) gained a new `mode: "graph"` value plus
+  optional `plan`/`followups`/`budget_used` fields, additive and `null`/`0` for the
+  unchanged `"single"` mode. `services/runtime/bots/research-agent.yaml.example` now
+  configures two subagents (`it-support`, `hr-support`) to exercise this path.
+- Weave-Tools search hits (REST `POST /api/v1/tools/search` and the MCP `search` tool) now
+  carry each hit's own actual `collection`, `document_id` and `chunk_id`, taken straight
+  from Weave-Retrieval's per-chunk response instead of the request-level collection — a
+  caller merging or deduplicating results from several searches (e.g. an orchestrating
+  agent) can now do so by stable identity. Scope enforcement is unchanged: a requested
+  collection outside the caller's scope still yields an empty result. Also: a new pure
+  `effective_scope()` helper in Weave-Runtime (`app/services/scope.py`) computes the
+  4-way Collections intersection (user rights ∩ main-bot collections ∩ subagent
+  collections ∩ per-request filter) that a future agent-mode subagent's own knowledge
+  search will use; the existing single-bot retrieval path is unchanged.
 - n8n bots stream (contract v2, `contracts/n8n-flow.md`): with "n8n-Streaming" enabled,
   Weave-Runtime reads the flow's response incrementally — n8n's native "Streaming
   response" (JSON lines `begin`/`item`/`end`/`error`) as well as the documented SSE

@@ -36,6 +36,22 @@ class ModelConfig(BaseModel):
     model: str
     temperature: float | None = None
 
+    # Whether THIS model actually supports OpenAI-compatible tool calling
+    # (`app/services/llm.py`'s `chat_with_tools`) -- required, hand-declared
+    # configuration, not something this service probes at runtime (a
+    # provider's error mode for an unsupported `tools` field on the request
+    # varies -- some ignore it silently, some 400 -- so probing it cheaply/
+    # safely before every agent-mode turn is not possible; see
+    # `BotConfig`'s own `_agent_requires_tool_support` validator for where
+    # this is actually enforced). `None` (the default) means "unknown",
+    # deliberately treated as "does NOT support tool calls" wherever it
+    # matters (that same validator) -- an operator must explicitly opt a
+    # model INTO agent mode, never have it silently assumed. The 'fake'
+    # provider is the one deliberate exception: `FakeLLM` always implements
+    # `chat_with_tools` (app/services/llm.py), so this field is never even
+    # consulted for it -- see that validator's own docstring.
+    supports_tools: bool | None = None
+
 
 class N8nConfig(BaseModel):
     """Configuration for the 'n8n' bot provider (see app/services/chat.py's
@@ -153,6 +169,163 @@ class RetrievalConfig(BaseModel):
     include_uncollected: bool = True
 
 
+class SubagentLimits(BaseModel):
+    """Per-subagent research budget (rollout plan step 1/3) -- enforced by
+    `app/services/agents.py`'s `run_subagent`, never here: this model only
+    carries the numbers, it has no access to a running turn to bound."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    # How many `search_knowledge` tool calls this ONE subagent may actually
+    # execute in a single turn -- a call received after this many have
+    # already run gets a budget-exhausted error result instead of a real
+    # search (see `run_subagent`'s own docstring).
+    max_searches: int = 3
+    # Caps `top_k`/`final_k` for every one of this subagent's own
+    # `search_knowledge` calls -- a model-requested `top_k` above this is
+    # clamped, never rejected as an argument-shape error.
+    max_results: int = 5
+    # Wall-clock budget for this ONE subagent's entire research loop
+    # (checked between loop iterations, never mid-call) -- exceeding it
+    # ends the loop with whatever facts/hits were already gathered
+    # (`SubagentResult.status = 'partial'`), never an exception.
+    timeout_seconds: int = 60
+
+
+class SubagentConfig(BaseModel):
+    """One research profile inside an agent-mode bot's roster (rollout
+    plan's "Subagents are research profiles managed inside the main bot") --
+    NOT a separate bot, NOT a separate identity: a subagent inherits the
+    asking user's own rights entirely (see app/services/scope.py's
+    `effective_scope`), it only ever NARROWS what the main bot itself may
+    already search, both by `collections` and, optionally, by its own
+    `filters`/`model`/`limits`.
+    """
+
+    model_config = ConfigDict(extra='forbid')
+
+    # Unique within one bot's own `agent.subagents` list (see AgentConfig's
+    # own `_unique_subagent_ids` validator) -- addressed by the main
+    # agent's own `research_area(agent_id, question)` tool call (rollout
+    # plan step 3), never exposed to the model as anything richer than this
+    # slug plus `description`.
+    id: str
+    name: str
+    description: str | None = None
+    # Fachlicher Auftrag -- the German-language mission statement handed to
+    # this subagent's own system prompt (`app/services/agents.py`'s
+    # `run_subagent`) so it stays inside its intended research scope even
+    # though nothing on the wire could ever ENFORCE that beyond the
+    # Collections boundary below (a model instruction is guidance, not a
+    # permission boundary -- `collections`/`filters` are the only things
+    # here that actually are one).
+    mission: str
+    # Explicitly allowed Collections for THIS subagent -- narrows, never
+    # widens, whatever the main bot's own `RetrievalConfig.collections`
+    # already resolved to for the asking user (see app/services/scope.py's
+    # `effective_scope`). Empty is legitimate ONLY alongside
+    # `include_uncollected=True` (see `_collections_or_uncollected` below)
+    # -- unlike `RetrievalConfig.collections`'s own "empty = no restriction"
+    # convention, a subagent's empty `collections` never means "inherit
+    # everything": the whole point of "explicitly allowed collections" per
+    # the rollout plan is that a subagent's own reach is always named, not
+    # defaulted.
+    collections: list[str] = Field(default_factory=list)
+    filters: RetrievalFilters = Field(default_factory=RetrievalFilters)
+    # Whether documents with NO collection at all (pre-Collections legacy
+    # content, `NO_COLLECTION_SENTINEL`) stay visible to THIS subagent, on
+    # top of `collections` -- combined with the main bot's own
+    # `RetrievalConfig.include_uncollected` by AND (see
+    # app/services/chat.py's `_resolve_agent_scope`): both must allow it.
+    # Defaults to `False`, unlike `RetrievalConfig.include_uncollected`'s
+    # own default of `True` -- a subagent's reach must be named explicitly,
+    # including whether Altbestand is part of that reach at all.
+    include_uncollected: bool = False
+    # Which tools this subagent may call -- a plain allow-list of tool
+    # NAMES, not JSON schemas (those live in app/services/agents.py, next
+    # to the one function that actually builds/executes them). Only
+    # 'search_knowledge' exists in this rollout round; the field is a list
+    # already so a later rollout round can add more without a schema
+    # migration.
+    tools: list[str] = Field(default_factory=lambda: ['search_knowledge'])
+    # Falls back to the main bot's own `BotConfig.model` when unset (see
+    # app/services/chat.py's own `subagent.model or bot.model` pattern) --
+    # a subagent researching with a smaller/cheaper model than the main
+    # bot's own answer-writing model is a common, deliberate choice this
+    # leaves open without requiring every subagent to repeat the main
+    # bot's model configuration verbatim.
+    model: ModelConfig | None = None
+    limits: SubagentLimits = Field(default_factory=SubagentLimits)
+
+    @field_validator('id')
+    @classmethod
+    def _id_must_be_a_slug(cls, value: str) -> str:
+        if not _SLUG_PATTERN.match(value):
+            raise ValueError(
+                f"'{value}' is not a valid subagent id: expected a slug of lowercase letters, digits and "
+                "hyphens (e.g. 'it-support')"
+            )
+        return value
+
+    @model_validator(mode='after')
+    def _collections_or_uncollected(self) -> 'SubagentConfig':
+        if not self.collections and not self.include_uncollected:
+            raise ValueError(
+                f"subagent {self.id!r} must set at least one collection, or include_uncollected: true for an "
+                "Altbestand-only research profile -- a subagent's reach is never defaulted to 'everything'"
+            )
+        return self
+
+
+class AgentLimits(BaseModel):
+    """Turn-wide agent-mode budget, on top of each subagent's own
+    `SubagentLimits` -- rollout plan step 4's "Start values" (this rollout
+    round only actually enforces `timeout_seconds`/`max_searches`-shaped
+    numbers via ONE subagent, see app/services/chat.py's own agent-turn
+    docstring; `max_parallel`/`max_followups`/`budget_searches` are carried
+    here now so a bot's YAML already declares its full intended budget
+    ahead of the later rollout step -- LangGraph fan-out -- that actually
+    spends `max_parallel`/`max_followups`, and so `budget_searches` is
+    already available as this turn's own trace/reporting figure)."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    max_parallel: int = 3
+    max_followups: int = 1
+    budget_searches: int = 9
+    timeout_seconds: int = 120
+
+
+class AgentConfig(BaseModel):
+    """`BotConfig.agent` -- opts one LLM bot into agent mode (rollout plan's
+    "Aktivierung ist pro Bot"). `enabled=False` (the default) keeps the
+    existing direct-RAG turn byte-for-byte unchanged for every bot that
+    doesn't set this block at all, or sets it with `enabled: false` --
+    exactly like `N8nConfig`'s own presence never changes anything for a
+    bot whose provider isn't 'n8n'.
+    """
+
+    model_config = ConfigDict(extra='forbid')
+
+    enabled: bool = False
+    subagents: list[SubagentConfig] = Field(default_factory=list)
+    limits: AgentLimits = Field(default_factory=AgentLimits)
+
+    @model_validator(mode='after')
+    def _enabled_requires_subagents(self) -> 'AgentConfig':
+        if self.enabled and not self.subagents:
+            raise ValueError('agent.enabled is true but agent.subagents is empty -- at least one subagent is required')
+        return self
+
+    @model_validator(mode='after')
+    def _unique_subagent_ids(self) -> 'AgentConfig':
+        ids = [subagent.id for subagent in self.subagents]
+        duplicates = sorted({sid for sid in ids if ids.count(sid) > 1})
+        if duplicates:
+            raise ValueError(f'agent.subagents ids must be unique -- duplicated: {duplicates}')
+        return self
+
+
 class PermissionsConfig(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
@@ -199,6 +372,11 @@ class BotConfig(BaseModel):
     # `model.provider == 'n8n'`, see `_n8n_block_matches_provider` below and
     # N8nConfig's own docstring.
     n8n: N8nConfig | None = None
+    # None (the default) for every bot without agent mode -- see
+    # AgentConfig's own docstring, and `_agent_requires_tool_support`/
+    # `_agent_forbidden_for_n8n_provider` below for the two structural
+    # rules this field's presence is checked against.
+    agent: AgentConfig | None = None
 
     @field_validator('id')
     @classmethod
@@ -238,6 +416,59 @@ class BotConfig(BaseModel):
                 f"an 'n8n:' block is configured but model.provider is {self.model.provider!r}, not 'n8n' -- "
                 "either set model.provider to 'n8n' or remove the 'n8n:' block"
             )
+        return self
+
+    @model_validator(mode='after')
+    def _agent_mode_is_valid(self) -> 'BotConfig':
+        """Two structural rules for `agent.enabled` (rollout plan step 3's
+        "Aktivierung ist pro Bot", "nur fuer provider != 'n8n'", "vor
+        Aktivierung pruefen, dass das konfigurierte Modell Tool-Calls
+        unterstuetzt"):
+
+        1. Agent mode is never valid for an n8n-provider bot: n8n runs its
+           OWN agent flow (contracts/n8n-flow.md, `_run_n8n_turn`) entirely
+           outside this pipeline's own LLM-tool-calling loop -- the two are
+           mutually exclusive ways for one bot to do agentic work, never
+           combined.
+        2. `self.model` must actually declare tool-call support -- `'fake'`
+           unconditionally does (see `ModelConfig.supports_tools`'s own
+           docstring: `FakeLLM` always implements `chat_with_tools`,
+           app/services/llm.py), any other provider only when
+           `model.supports_tools` is explicitly `True` (`None`/`False`
+           both mean "unsupported" here, exactly `supports_tools`'s own
+           documented default). This is a LOAD-TIME check against the
+           bot's own hand-authored configuration -- see that field's own
+           docstring for why this service never probes a live provider for
+           this fact instead. The same rule applies to every subagent's own
+           optional `model` override (`SubagentConfig.model`, actually used
+           via `subagent.model or bot.model` in app/services/chat.py's
+           `_run_subagent`) -- a subagent left with no override inherits
+           the main bot's already-checked model, but one configured with
+           its own model needs the identical check, or it silently answers
+           with zero tool calls at runtime instead of failing at load time.
+        """
+        if self.agent is None or not self.agent.enabled:
+            return self
+        if self.model.provider == 'n8n':
+            raise ValueError("agent.enabled is true but model.provider is 'n8n' -- n8n bots run their own agent flow")
+        provider_supports_tools = self.model.provider == 'fake' or bool(self.model.supports_tools)
+        if not provider_supports_tools:
+            raise ValueError(
+                f"agent.enabled is true but model {self.model.provider!r}/{self.model.model!r} does not declare "
+                "tool-call support -- set model.supports_tools: true once the configured model/deployment actually "
+                "supports OpenAI-compatible tool calling"
+            )
+        for subagent in self.agent.subagents:
+            if subagent.model is None:
+                continue
+            subagent_supports_tools = subagent.model.provider == 'fake' or bool(subagent.model.supports_tools)
+            if not subagent_supports_tools:
+                raise ValueError(
+                    f"agent.enabled is true but subagent {subagent.id!r}'s own model "
+                    f"{subagent.model.provider!r}/{subagent.model.model!r} does not declare tool-call support -- "
+                    "set model.supports_tools: true once the configured model/deployment actually supports "
+                    "OpenAI-compatible tool calling"
+                )
         return self
 
 

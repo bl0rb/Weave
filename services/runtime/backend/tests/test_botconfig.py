@@ -173,6 +173,51 @@ def test_centrally_managed_llm_bot_is_projected_with_retrieval(bots_dir, monkeyp
     assert managed.n8n is None
 
 
+def test_centrally_managed_llm_bot_projects_agent_config(bots_dir, monkeypatch):
+    (bots_dir / 'minimal.yaml').write_text(_MINIMAL_BOT, encoding='utf-8')
+    monkeypatch.setattr('app.services.botconfig.fetch_managed_bots', lambda: [{
+        'id': 'agent-bot', 'name': 'Agent Bot', 'kind': 'llm', 'system_prompt': 'Research first.',
+        'retrieval_enabled': True, 'teams': [], 'collections': [], 'require_sources': True,
+        'no_context_reply': 'Nichts gefunden.',
+        'agent': {
+            'enabled': True,
+            'subagents': [
+                {'id': 'it-support', 'name': 'IT Support', 'mission': 'Answer IT questions.', 'collections': ['it-docs']}
+            ],
+        },
+    }])
+    managed = {bot.id: bot for bot in list_bots()}['agent-bot']
+    assert managed.agent is not None
+    assert managed.agent.enabled is True
+    assert managed.agent.subagents[0].id == 'it-support'
+
+
+def test_centrally_managed_bot_with_no_agent_config_has_none(bots_dir, monkeypatch):
+    (bots_dir / 'minimal.yaml').write_text(_MINIMAL_BOT, encoding='utf-8')
+    monkeypatch.setattr('app.services.botconfig.fetch_managed_bots', lambda: [{
+        'id': 'plain-bot', 'name': 'Plain Bot', 'kind': 'llm', 'system_prompt': 'Answer.',
+        'teams': [], 'collections': [], 'require_sources': True, 'no_context_reply': 'Nichts.',
+    }])
+    managed = {bot.id: bot for bot in list_bots()}['plain-bot']
+    assert managed.agent is None
+
+
+def test_centrally_managed_n8n_bot_ignores_agent_config(monkeypatch):
+    # `is_llm` gates the `agent` passthrough -- an n8n-kind managed bot's
+    # `agent` (however it got there) must never reach BotConfig at
+    # all, since agent mode is never valid for provider 'n8n'.
+    from app.services.botconfig import _managed_bot
+
+    monkeypatch.setattr(settings, 'n8n_allowed_base_urls', ['https://n8n.example.test/webhook/'])
+    bot = _managed_bot({
+        'id': 'n8n-bot', 'name': 'N8n Bot', 'kind': 'n8n',
+        'webhook_url': 'https://n8n.example.test/webhook/x',
+        'teams': [], 'collections': [], 'require_sources': True, 'no_context_reply': 'x',
+        'agent': {'enabled': True, 'subagents': [{'id': 'x', 'name': 'x', 'mission': 'x', 'collections': ['x']}]},
+    })
+    assert bot.agent is None
+
+
 def test_central_bot_with_same_id_overrides_local_yaml(bots_dir, monkeypatch):
     (bots_dir / 'minimal.yaml').write_text(_MINIMAL_BOT, encoding='utf-8')
     monkeypatch.setattr(settings, 'n8n_allowed_base_urls', ['https://n8n.example.test/webhook/'])

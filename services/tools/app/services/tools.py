@@ -130,12 +130,12 @@ def search_for_scope(
             text=hit['text'],
             source=SearchSourceOut(
                 document=hit.get('original_filename') or hit['document_id'],
+                document_id=hit['document_id'],
+                chunk_id=hit['chunk_id'],
                 page=_format_page(hit.get('page_start'), hit.get('page_end')),
-                # The request-level collection, not the hit's own: an
-                # unscoped query leaves this None even though Weave-
-                # Retrieval returns a per-chunk slug. See SearchSourceOut's
-                # docstring.
-                collection=collection,
+                # The hit's own actual collection, not the request-level
+                # closure variable -- see SearchSourceOut's docstring.
+                collection=hit.get('collection'),
             ),
         )
         for hit in payload.get('results', [])

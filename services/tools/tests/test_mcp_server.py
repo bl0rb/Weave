@@ -62,6 +62,7 @@ def test_search_tool_intersects_collection_and_maps_result():
                     'page_start': 2,
                     'page_end': 2,
                     'original_filename': 'handbuch.pdf',
+                    'collection': 'handbuch',
                 }
             ]
         },
@@ -70,7 +71,13 @@ def test_search_tool_intersects_collection_and_maps_result():
         result = asyncio.run(search(query='hallo', collection='handbuch', top_k=None, ctx=_ctx(token)))
 
     assert result['results'][0]['text'] == 'hallo'
-    assert result['results'][0]['source'] == {'document': 'handbuch.pdf', 'page': '2', 'collection': 'handbuch'}
+    assert result['results'][0]['source'] == {
+        'document': 'handbuch.pdf',
+        'document_id': 'doc-1',
+        'chunk_id': 1,
+        'page': '2',
+        'collection': 'handbuch',
+    }
     assert mock_post.call_args.kwargs['json']['allowed_collections'] == ['handbuch']
 
 

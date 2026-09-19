@@ -367,6 +367,16 @@ class ManagedBot(Base):
     teams: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     collections: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     require_sources: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1', nullable=False)
+    # Opaque agent-mode configuration (Weave-Runtime's `BotConfig.agent`,
+    # app/schemas/bot.py in that service -- rollout plan "Schritt 2 --
+    # Tool-Calls und ein Subagent"). Stored and projected verbatim, with NO
+    # shape validation on this side at all (same posture as
+    # `retrieval_filters` above) -- Runtime's own pydantic validation is
+    # what actually rejects a malformed block, when that bot is next
+    # loaded there; this column only exists so an admin-managed LLM bot can
+    # persist one at all. `None` (the default) means "agent mode off",
+    # matching Runtime's own `agent: AgentConfig | None = None` default.
+    agent_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     no_context_reply: Mapped[str] = mapped_column(
         Text,
         default='Ich habe dazu keine belegten Informationen gefunden.',

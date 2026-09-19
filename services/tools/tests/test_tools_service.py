@@ -144,6 +144,7 @@ def test_search_maps_hits_to_text_and_source():
                     'page_start': 3,
                     'page_end': 3,
                     'original_filename': 'handbuch.pdf',
+                    'collection': 'handbuch',
                 },
                 {
                     'chunk_id': 2,
@@ -152,6 +153,7 @@ def test_search_maps_hits_to_text_and_source():
                     'page_start': 5,
                     'page_end': 7,
                     'original_filename': None,
+                    'collection': 'handbuch',
                 },
             ]
         },
@@ -164,6 +166,8 @@ def test_search_maps_hits_to_text_and_source():
     first = result.results[0]
     assert first.text == 'Die Kundennummer steht oben rechts.'
     assert first.source.document == 'handbuch.pdf'
+    assert first.source.document_id == 'doc-1'
+    assert first.source.chunk_id == 1
     assert first.source.page == '3'
     assert first.source.collection == 'handbuch'
 
@@ -174,7 +178,34 @@ def test_search_maps_hits_to_text_and_source():
     assert second.source.page == '5-7'
 
 
-def test_search_source_collection_is_none_when_query_was_not_scoped_to_one():
+def test_search_source_collection_reflects_the_hits_own_value_when_query_was_not_scoped_to_one():
+    retrieval_resp = fake_response(
+        200,
+        {
+            'results': [
+                {
+                    'chunk_id': 1,
+                    'document_id': 'doc-1',
+                    'text': 'x',
+                    'page_start': None,
+                    'page_end': None,
+                    'collection': 'faq',
+                }
+            ]
+        },
+    )
+    with patch('app.services.tools.httpx.post', return_value=retrieval_resp):
+        result = search_for_scope(_PERSONAL_SCOPE, query='x', collection=None, top_k=None)
+
+    # Even though the request wasn't scoped to a single collection, the
+    # hit's own actual collection is echoed through -- not None.
+    assert result.results[0].source.collection == 'faq'
+    assert result.results[0].source.document_id == 'doc-1'
+    assert result.results[0].source.chunk_id == 1
+    assert result.results[0].source.page is None
+
+
+def test_search_source_collection_is_none_when_the_hit_itself_has_none():
     retrieval_resp = fake_response(
         200,
         {'results': [{'chunk_id': 1, 'document_id': 'doc-1', 'text': 'x', 'page_start': None, 'page_end': None}]},

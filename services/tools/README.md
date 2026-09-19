@@ -72,7 +72,7 @@ und würde ohnehin nie zur Scope-Bestimmung herangezogen.
 **Output:**
 
 - `GET /api/v1/tools/collections`: `[{ slug, name, description }, ...]`
-- `POST /api/v1/tools/search`: `{ query, results: [{ text, source: { document, page, collection } }] }`
+- `POST /api/v1/tools/search`: `{ query, results: [{ text, source: { document, document_id, chunk_id, page, collection } }] }`
 - Beide MCP-Tools liefern dieselben Formen als einfache Dicts (`model_dump()`)
 - `GET /health`: `{ "status": "healthy" }`
 
@@ -363,9 +363,15 @@ curl -s http://localhost:8005/api/v1/tools/search \
   -d '{"query": "Kündigungsfrist", "collection": "handbuch", "top_k": 5}' | jq
 ```
 
-`source.collection` wird nur gefüllt, wenn der Aufrufer eine einzelne
-Collection benannt hat; bei einer nicht eingegrenzten Anfrage bleibt es `null`.
-`source.document` und `source.page` sind in beiden Fällen präzise.
+`source.collection`, `source.document_id` und `source.chunk_id` sind die
+tatsächlichen, per-Hit-Werte aus Weave-Retrieval — unabhängig davon, ob der
+Aufrufer eine einzelne Collection benannt hat oder scope-weit gesucht wurde.
+`source.collection` bleibt nur `null`, wenn Weave-Retrieval selbst keine
+Collection für diesen Chunk kennt (unverschlagwortete Altbestände).
+`source.document_id`/`source.chunk_id` sind stabile Kennungen, mit denen ein
+Aufrufer (z. B. ein orchestrierender Agent) Treffer mehrerer Suchen anhand
+ihrer Identität zusammenführen oder deduplizieren kann. `source.document` und
+`source.page` bleiben die menschenlesbare Bezeichnung.
 
 ### Docker
 

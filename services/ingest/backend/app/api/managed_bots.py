@@ -59,6 +59,7 @@ def _admin_response(row: ManagedBot) -> ManagedBotAdminResponse:
         collections=list(row.collections or []),
         require_sources=row.require_sources,
         no_context_reply=row.no_context_reply,
+        agent=dict(row.agent_config) if row.agent_config else None,
         created_at=row.created_at,
         updated_at=row.updated_at,
         source='managed',
@@ -128,6 +129,7 @@ def _runtime_bots() -> list[ManagedBotAdminResponse]:
             has_auth_token=bool(n8n.get('auth_token')), timeout_seconds=n8n.get('timeout_seconds', 120),
             teams=list(permissions.get('teams') or []), collections=list(retrieval.get('collections') or []),
             require_sources=bool(guard.get('require_sources', True)), no_context_reply=guard.get('no_context_reply', ''),
+            agent=config.get('agent'),
             created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc), source='runtime', editable=True,
         ))
     return result
@@ -185,6 +187,7 @@ def _apply(row: ManagedBot, payload: ManagedBotCreate | ManagedBotUpdate, admin:
     row.collections = list(payload.collections)
     row.require_sources = payload.require_sources
     row.no_context_reply = payload.no_context_reply
+    row.agent_config = dict(payload.agent) if payload.agent else None
     row.updated_by_id = admin.id
     if payload.auth_token:
         row.auth_token_encrypted = encrypt_managed_bot_auth_token(payload.auth_token.strip())
@@ -319,5 +322,6 @@ def internal_managed_bots(response: Response, db: Session = Depends(get_db)) -> 
             collections=list(row.collections or []),
             require_sources=row.require_sources,
             no_context_reply=row.no_context_reply,
+            agent=dict(row.agent_config) if row.agent_config else None,
         ))
     return ManagedBotInternalListResponse(items=items, disabled_ids=sorted(disabled_ids))

@@ -218,8 +218,9 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 
 from app.core.config import settings
-from app.schemas.bot import BotConfig
+from app.schemas.bot import BotConfig, SubagentConfig
 from app.schemas.chat import (
+    AgentTrace,
     ChatRequest,
     ChatResponse,
     ChatStreamDeltaEvent,
@@ -234,7 +235,10 @@ from app.schemas.chat import (
     N8nTrace,
     RetrievalTrace,
     Source,
+    SubagentTrace,
 )
+from app.services import agent_graph as agent_graph_service
+from app.services import agents as agents_service
 from app.services import llm as llm_service
 from app.services.chat_config_client import fetch_chat_provider
 from app.services import n8n_client
@@ -242,6 +246,14 @@ from app.services import retrieval_client
 from app.services import router as router_service
 from app.services.botconfig import load_bot
 from app.services.retrieval_client import RetrievedChunk
+
+# Imported lazily (inside `_resolve_agent_scope`), not at module load time
+# here: app/services/scope.py itself imports `NO_COLLECTION_SENTINEL` FROM
+# this module (see that module's own docstring for why it isn't redefined
+# there) -- a top-level `from app.services import scope` here would be a
+# genuine import cycle (this module partially initialized, `scope`
+# importing back from it, before `NO_COLLECTION_SENTINEL` below even
+# exists yet).
 
 logger = logging.getLogger(__name__)
 
@@ -1089,6 +1101,481 @@ def _run_knowledge_turn(
     )
 
 
+# --- Agent-mode turn: `bot.agent.enabled` (app/schemas/bot.py) runs one or
+# more subagents' own bounded research loops (app/services/agents.py's
+# `run_subagent`) instead of this pipeline's own direct `retrieval_client.
+# search()` call, then hands the gathered facts to the main bot's own LLM
+# for the final answer. A bot configured with EXACTLY one subagent uses
+# Schritt 2's own single-subagent path unchanged (`_select_subagent` below,
+# `_run_agent_turn_blocking`/`_stream_deferred_agent`); more than one always
+# goes through Schritt 3's LangGraph orchestrator-worker flow instead
+# (app/services/agent_graph.py's `run_graph`, `_run_multi_agent_turn_
+# blocking`/`_stream_deferred_multi_agent` below) -- which can itself still
+# choose to research with just one agent per turn (its own planner's
+# "simple path").
+_AGENT_ELIGIBLE_INTENTS = frozenset({'knowledge', 'document', 'action', 'complex'})
+
+
+def _select_subagent(bot: BotConfig, user: ChatUser) -> SubagentConfig:
+    """The ONE subagent this turn researches with: the first configured
+    subagent (`bot.agent.subagents`, in YAML/config order) whose own
+    `collections` intersects this bot+caller's Collections read-authority
+    (`_resolve_rights_scope`) -- or, if none does (every subagent's own
+    Collections fall outside what this caller may read at all, or every
+    subagent is an Altbestand-only one with no real `collections`), simply
+    the FIRST configured subagent, per the rollout plan's own "the first
+    configured, or the one whose collections intersect the effective
+    scope". `bot.agent.subagents` is never empty here -- `AgentConfig`'s
+    own `_enabled_requires_subagents` validator (app/schemas/bot.py)
+    already guarantees at least one whenever `agent.enabled` is True.
+    """
+    rights_scope = set(_resolve_rights_scope(bot, user))
+    for subagent in bot.agent.subagents:
+        if subagent.collections and rights_scope.intersection(subagent.collections):
+            return subagent
+    return bot.agent.subagents[0]
+
+
+def _resolve_agent_scope(
+    bot: BotConfig,
+    subagent: SubagentConfig,
+    user: ChatUser,
+    requested_collections: list[str] | None,
+    *,
+    user_readable: list[str] | None = None,
+) -> list[str]:
+    """The effective Collections scope for ONE subagent's own
+    `search_knowledge` calls -- rollout plan step 2's "effective scope =
+    user rights ∩ main-bot collections ∩ subagent collections ∩ request
+    filter". Reuses app/services/scope.py's pure `effective_scope()`
+    (Schritt 1) for the ordinary case, a subagent with its own non-empty
+    `collections`.
+
+    A subagent with NO real `collections` of its own is handled directly
+    here instead of via `effective_scope()`: `SubagentConfig`'s own
+    validator (app/schemas/bot.py) only permits that when
+    `include_uncollected=True` -- an Altbestand-only research profile --
+    and `effective_scope()`'s own documented contract explicitly does NOT
+    represent "this axis narrows to legacy-content-only, not to zero
+    collections and not to 'axis not in play at all'" (see that function's
+    own docstring: an empty, non-`None` `subagent_collections` is always a
+    real restriction there, never eligible for its sentinel-only
+    exception). `NO_COLLECTION_SENTINEL` alone is returned when BOTH the
+    bot's own `RetrievalConfig.include_uncollected` AND this subagent's own
+    `include_uncollected` allow it (see `SubagentConfig.include_
+    uncollected`'s own docstring on why the two are combined by AND);
+    `[]` otherwise. Either way, `requested_collections` (`ChatRequest.
+    collections`) is applied afterwards, identically to every other scope
+    resolution in this module -- a filter narrows, never widens.
+
+    Calls `retrieval_client.list_collections()` -- propagates
+    RetrievalUnavailable/RetrievalError unchanged, exactly like every other
+    Collections-scope resolution in this module -- UNLESS `user_readable` is
+    already supplied (rollout plan "Schritt 3": `_available_agents_for_graph`
+    below calls this function once per configured subagent for the SAME
+    user/request, and would otherwise repeat the identical
+    `list_collections()` HTTP call once per subagent for no reason; passing
+    the already-resolved list through skips that redundant round-trip).
+    `None` (the default) preserves this function's original, single-call
+    behavior byte-for-byte for every other caller.
+    """
+    if user_readable is None:
+        user_readable = [
+            collection.slug
+            for collection in retrieval_client.list_collections(user.teams if user.teams is not None else user.team)
+        ]
+    combined_include_uncollected = bot.retrieval.include_uncollected and subagent.include_uncollected
+
+    if subagent.collections:
+        from app.services import scope as scope_service  # see this module's own top-of-file note
+
+        return scope_service.effective_scope(
+            user_readable=user_readable,
+            bot_collections=bot.retrieval.collections,
+            subagent_collections=subagent.collections,
+            request_filter=requested_collections,
+            include_uncollected=combined_include_uncollected,
+        )
+
+    scoped = [NO_COLLECTION_SENTINEL] if combined_include_uncollected else []
+    if requested_collections is None:
+        return scoped
+    requested_set = set(requested_collections)
+    return [slug for slug in scoped if slug in requested_set]
+
+
+def _available_agents_for_graph(
+    bot: BotConfig, user: ChatUser, requested_collections: list[str] | None, allowed_teams: list[str] | None
+) -> list[agent_graph_service.AvailableAgent]:
+    """`app/services/agent_graph.py`'s own `AvailableAgent` roster for a
+    multi-subagent (`len(bot.agent.subagents) > 1`) turn -- one entry per
+    configured subagent whose `_resolve_agent_scope` comes back non-empty
+    (rollout plan step 3: "the model only sees available agents", "empty
+    scope = no hits" -- a subagent with nothing to search is never even
+    offered to the planner at all), ordered so index 0 is exactly the
+    subagent `_select_subagent` (Schritt 2) would itself have picked --
+    `agent_graph._plan`'s own "simple path" fallback relies on that
+    ordering (see its own docstring).
+
+    `retrieval_client.list_collections()` is called exactly ONCE here
+    (`user_readable`, then threaded through every `_resolve_agent_scope`
+    call below via that function's own `user_readable` parameter) rather
+    than once per subagent -- see that parameter's own docstring.
+    """
+    user_readable = [
+        collection.slug
+        for collection in retrieval_client.list_collections(user.teams if user.teams is not None else user.team)
+    ]
+    preferred = _select_subagent(bot, user)
+    ordered = [preferred, *[subagent for subagent in bot.agent.subagents if subagent.id != preferred.id]]
+
+    available: list[agent_graph_service.AvailableAgent] = []
+    for subagent in ordered:
+        scope = _resolve_agent_scope(bot, subagent, user, requested_collections, user_readable=user_readable)
+        if scope:
+            available.append({'agent_id': subagent.id, 'effective_scope': scope, 'allowed_teams': allowed_teams})
+    return available
+
+
+@dataclass(frozen=True)
+class _DeferredMultiAgentTurn:
+    """Everything `_stream_deferred_multi_agent` needs to run a
+    multi-subagent turn's LangGraph orchestrator-worker flow
+    (app/services/agent_graph.py's `run_graph`) from inside the stream
+    phase -- the graph-mode analogue of `_DeferredAgentTurn`, used
+    (`_prepare_turn`) exactly when `len(bot.agent.subagents) > 1`. Every
+    Collections-scope resolution this turn will ever need
+    (`_available_agents_for_graph`, called once, up front) already ran
+    synchronously before this dataclass is even built -- see
+    `_DeferredAgentTurn`'s own docstring for why that part specifically
+    cannot move into the deferred work itself (RetrievalUnavailable/
+    RetrievalError must still surface as a pre-stream HTTP status).
+
+    `subagent_llm_providers` resolves ONE `LLMProvider` instance per
+    subagent in `available`, ALWAYS via a fresh `llm_service.get_llm(...)`
+    call -- even for a subagent with no `model` override of its own, i.e.
+    one that would otherwise share the main bot's own model/provider --
+    deliberately never reusing `llm_provider` itself the way Schritt 2's
+    single-subagent path does: `agent_graph.run_graph` can run several
+    subagents' own tool-calling loops CONCURRENTLY (`RunnableConfig(
+    max_concurrency=...)`), and two of them sharing one mutable
+    `FakeLLM.tool_responses` queue (or, for a real provider, simply
+    resolving to the very same connection-pool-owning object from two
+    threads with no reason to) is never a well-scoped thing to allow.
+    `llm_service.get_llm()` itself already makes this cheap: neither
+    provider caches anything across calls (see that function's own
+    docstring).
+    """
+
+    bot: BotConfig
+    message: str
+    history: list[dict[str, str]]
+    available: list[agent_graph_service.AvailableAgent]
+    subagents_by_id: dict[str, SubagentConfig]
+    subagent_llm_providers: dict[str, llm_service.LLMProvider]
+    main_llm_provider: llm_service.LLMProvider
+    cancel: threading.Event
+
+
+def _run_multi_agent_graph(deferred: '_DeferredMultiAgentTurn') -> agent_graph_service.GraphOutcome:
+    return agent_graph_service.run_graph(
+        deferred.bot, deferred.message, deferred.history, deferred.available,
+        deferred.subagents_by_id, deferred.subagent_llm_providers, deferred.main_llm_provider,
+        cancel=deferred.cancel,
+    )
+
+
+def _run_multi_agent_turn_blocking(
+    deferred: '_DeferredMultiAgentTurn',
+    decision: router_service.RouterDecision,
+    timings_ms: dict[str, float],
+    total_start: float,
+) -> '_PreparedTurn':
+    """`handle_chat`'s own blocking path for a multi-subagent (graph-mode)
+    turn -- runs the ENTIRE LangGraph orchestrator-worker flow
+    synchronously, exactly like `_run_agent_turn_blocking` does for the
+    single-subagent case, and returns an already-fully-decided
+    `_PreparedTurn` for the identical reason that function's own docstring
+    gives."""
+    agent_start = time.perf_counter()
+    outcome = _run_multi_agent_graph(deferred)
+    timings_ms['agent_ms'] = _elapsed_ms(agent_start)
+
+    return _PreparedTurn(
+        bot=deferred.bot, llm_provider=deferred.main_llm_provider, decision=decision, timings_ms=timings_ms,
+        total_start=total_start, sources=outcome.sources, retrieval_trace=None,
+        guard=GuardTrace(triggered=True, reason='no_context') if outcome.guard_triggered else None,
+        final_answer=outcome.final_answer, messages=None, agent_trace=outcome.agent_trace,
+    )
+
+
+def _stream_deferred_multi_agent(deferred: '_DeferredMultiAgentTurn') -> Iterator[ChatStreamEvent | Keepalive]:
+    """The graph-mode analogue of `_stream_deferred_agent` -- same
+    thread+queue+keepalive mechanics (see that function's own docstring),
+    but the worker thread here runs the ENTIRE LangGraph flow as a single
+    call (`agent_graph.run_graph`) rather than two separate phases: the
+    graph's own `answer` node already produces one complete final-answer
+    string via a single blocking `llm_provider.chat(...)` call (LangGraph's
+    node-returns-a-state-update model has no notion of a partial/streamed
+    return), so this streams that finished string out chunked via
+    `llm_service.iter_text_deltas` -- exactly like a fixed guard/
+    V1-unsupported reply already does elsewhere in this module -- rather
+    than genuine incremental token generation. A deliberate, documented
+    simplification for this rollout step; a later one could teach the
+    `answer` node itself to push deltas onto this same queue instead.
+
+    On `GeneratorExit` (client disconnect, or this generator closed early
+    for any other reason) `deferred.cancel` is set before re-raising --
+    `agent_graph.run_graph`'s own graph checks it inside every `research`
+    worker (via `agents.run_subagent`'s own `cancel` parameter) and before
+    starting any follow-up round (`agent_graph._merge`), stopping further
+    work and letting the `answer` node produce a result from whatever was
+    already gathered -- the identical best-effort posture
+    `_stream_deferred_n8n`'s own docstring describes for its own `cancel`
+    Event.
+    """
+    result_queue: queue.Queue = queue.Queue()
+
+    def _worker() -> None:
+        try:
+            result_queue.put(('outcome', _run_multi_agent_graph(deferred)))
+        except Exception as exc:  # noqa: BLE001 -- forwarded to the reader thread, never raised on this one
+            result_queue.put(('error', exc))
+
+    thread = threading.Thread(target=_worker, name='multi-agent-stream-turn', daemon=True)
+    thread.start()
+
+    try:
+        while True:
+            try:
+                kind, payload = result_queue.get(timeout=settings.stream_keepalive_seconds)
+            except queue.Empty:
+                yield KEEPALIVE
+                continue
+
+            if kind == 'error':
+                logger.warning('multi-agent stream turn failed for bot %s: %s', deferred.bot.id, payload)
+                yield ChatStreamErrorEvent(detail='Die Recherche der Agenten ist unerwartet fehlgeschlagen.')
+                return
+
+            outcome: agent_graph_service.GraphOutcome = payload
+            for text_delta in llm_service.iter_text_deltas(outcome.final_answer):
+                yield ChatStreamDeltaEvent(text=text_delta)
+            yield ChatStreamSourcesEvent(sources=outcome.sources)
+            yield ChatStreamDoneEvent()
+            return
+    finally:
+        # Best-effort only -- see this function's own docstring; a no-op
+        # when reached on ordinary completion, after `outcome` already
+        # arrived.
+        deferred.cancel.set()
+
+
+def _facts_context_block(subagent: SubagentConfig, result: agents_service.SubagentResult) -> str:
+    """One system-role message summarizing a subagent's structured research
+    result for the main bot's own final-answer LLM call -- the agent-mode
+    analogue of `_context_block` above. Each fact becomes one numbered
+    `[source N]` section (the same convention `_context_block`/FakeLLM's
+    own `_SOURCE_MARKER_RE` use, app/services/llm.py) so `bot.guard.
+    require_sources`/FakeLLM's own `[context:N]` marker behave identically
+    for an agent-mode turn as for a direct retrieval turn.
+    """
+    sections = [
+        f"Subagent '{subagent.name}' research status: {result.status}. "
+        'Answer using only the facts below; name any open points explicitly rather than guessing.'
+    ]
+    for index, fact in enumerate(result.facts, start=1):
+        sections.append(f'[source {index}] {fact.text}')
+    if result.open_points:
+        sections.append('Open points from the subagent: ' + '; '.join(result.open_points))
+    return '\n\n'.join(sections)
+
+
+def _sources_from_result(result: agents_service.SubagentResult) -> list[Source]:
+    """The combined, deduplicated (by `(document_id, chunk_id)`) `Source`
+    list for every hit a subagent actually retrieved -- rollout plan step 5's
+    "Die endgültige Antwort trägt die kombinierten Quellen", built the same
+    way `_to_source` already does for a direct retrieval turn. Order
+    follows `SubagentResult.hits`' own order (first-retrieved-first)."""
+    seen: set[tuple[str, int]] = set()
+    sources: list[Source] = []
+    for chunk in result.hits:
+        key = (chunk.document_id, chunk.chunk_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        sources.append(_to_source(chunk))
+    return sources
+
+
+def _agent_trace_for(bot: BotConfig, result: agents_service.SubagentResult) -> AgentTrace:
+    return AgentTrace(
+        mode='single',
+        subagents=[
+            SubagentTrace(id=result.agent_id, status=result.status, searches_used=result.searches_used, hits=len(result.hits))
+        ],
+        budget=bot.agent.limits.budget_searches,
+    )
+
+
+@dataclass(frozen=True)
+class _DeferredAgentTurn:
+    """Everything `_stream_deferred_agent` needs to run one agent-mode
+    turn's subagent research plus the main bot's own final-answer LLM call
+    from inside the stream phase -- the agent-mode analogue of
+    `_DeferredN8nTurn` above; see that dataclass's own docstring for why
+    Collections-scope resolution (`_resolve_agent_scope`, which can itself
+    raise `retrieval_client.RetrievalUnavailable`/`RetrievalError`) runs
+    synchronously in `_prepare_turn`, BEFORE this dataclass is even built,
+    rather than inside the deferred work itself.
+    """
+
+    bot: BotConfig
+    message: str
+    history: list[dict[str, str]]
+    subagent: SubagentConfig
+    agent_scope: list[str]
+    allowed_teams: list[str] | None
+    llm_provider: llm_service.LLMProvider
+    subagent_llm_provider: llm_service.LLMProvider
+
+
+def _run_subagent(deferred: '_DeferredAgentTurn') -> agents_service.SubagentResult:
+    subagent_model = deferred.subagent.model or deferred.bot.model
+    return agents_service.run_subagent(
+        deferred.bot, deferred.subagent, deferred.message, deferred.agent_scope, deferred.subagent_llm_provider,
+        model=subagent_model.model, temperature=subagent_model.temperature, allowed_teams=deferred.allowed_teams,
+    )
+
+
+def _final_agent_messages(deferred: '_DeferredAgentTurn', result: agents_service.SubagentResult) -> list[dict[str, str]]:
+    return [
+        {'role': 'system', 'content': deferred.bot.system_prompt},
+        *deferred.history,
+        {'role': 'system', 'content': _facts_context_block(deferred.subagent, result)},
+        {'role': 'user', 'content': deferred.message},
+    ]
+
+
+def _run_agent_turn_blocking(
+    deferred: '_DeferredAgentTurn',
+    decision: router_service.RouterDecision,
+    timings_ms: dict[str, float],
+    total_start: float,
+) -> '_PreparedTurn':
+    """`handle_chat`'s own blocking path for an agent-mode turn -- runs the
+    subagent research AND the final-answer LLM call synchronously, exactly
+    like `_run_n8n_turn` runs an n8n-provider bot's entire turn
+    synchronously for the same caller. Every branch ends with
+    `final_answer` set (never `None`) for the identical reason
+    `_run_n8n_turn`'s own docstring gives: `handle_chat` must never itself
+    call the LLM again for a turn this function already fully decided.
+    """
+    agent_start = time.perf_counter()
+    result = _run_subagent(deferred)
+    timings_ms['agent_ms'] = _elapsed_ms(agent_start)
+
+    sources = _sources_from_result(result)
+    agent_trace = _agent_trace_for(deferred.bot, result)
+
+    if deferred.bot.guard.require_sources and not sources:
+        return _PreparedTurn(
+            bot=deferred.bot, llm_provider=deferred.llm_provider, decision=decision, timings_ms=timings_ms,
+            total_start=total_start, sources=[], retrieval_trace=None,
+            guard=GuardTrace(triggered=True, reason='no_context'), final_answer=deferred.bot.guard.no_context_reply,
+            messages=None, agent_trace=agent_trace,
+        )
+
+    llm_start = time.perf_counter()
+    answer = deferred.llm_provider.chat(
+        _final_agent_messages(deferred, result), model=deferred.bot.model.model, temperature=deferred.bot.model.temperature
+    ).content
+    timings_ms['llm_ms'] = _elapsed_ms(llm_start)
+
+    return _PreparedTurn(
+        bot=deferred.bot, llm_provider=deferred.llm_provider, decision=decision, timings_ms=timings_ms,
+        total_start=total_start, sources=sources, retrieval_trace=None, guard=None, final_answer=answer,
+        messages=None, agent_trace=agent_trace,
+    )
+
+
+def _stream_deferred_agent(deferred: '_DeferredAgentTurn') -> Iterator[ChatStreamEvent | Keepalive]:
+    """The agent-mode analogue of `_stream_deferred_n8n` -- see that
+    function's own docstring for the shared thread+queue+keepalive
+    mechanics this reuses verbatim: a background thread does the actual
+    work, a `queue.Queue` carries results back to this generator, and
+    `settings.stream_keepalive_seconds` of silence yields a `Keepalive`
+    marker instead of blocking this generator's own `next()` on it.
+
+    Unlike an n8n turn, the worker thread here has two sequential phases:
+    first `agents.run_subagent` (one or more blocking `chat_with_tools`/
+    `retrieval_client.search()` calls -- exactly why this needs the
+    keepalive machinery at all), then, ONLY once sources are known and the
+    guard decision is already made, the main bot's own final-answer LLM
+    call -- streamed incrementally via `llm_service.iter_chat_stream`, each
+    delta pushed onto the SAME queue as it arrives, so a caller sees
+    genuine incremental generation for the final answer exactly like the
+    ordinary (non-agent) knowledge-turn streaming path does. This is
+    simpler than `_stream_deferred_n8n`'s own require_sources-dependent
+    buffering: here the guard decision depends only on the subagent's own
+    retrieved hits, never on the final answer text itself, so the final
+    answer never needs to be buffered at all.
+
+    `ChatStreamTraceEvent.trace.agent` stays `None` for this turn (see
+    `AgentTrace`'s own docstring) -- exactly like `N8nTrace` stays `None`
+    on a deferred n8n turn's own initial `trace` event: the research loop
+    has not run yet by the time that event already went out, so there is
+    nothing about it to report there.
+    """
+    result_queue: queue.Queue = queue.Queue()
+
+    def _worker() -> None:
+        try:
+            result = _run_subagent(deferred)
+            sources = _sources_from_result(result)
+
+            if deferred.bot.guard.require_sources and not sources:
+                result_queue.put(('guard', deferred.bot.guard.no_context_reply))
+                return
+
+            for delta in llm_service.iter_chat_stream(
+                deferred.llm_provider, _final_agent_messages(deferred, result),
+                model=deferred.bot.model.model, temperature=deferred.bot.model.temperature,
+            ):
+                result_queue.put(('delta', delta))
+            result_queue.put(('sources', sources))
+        except Exception as exc:  # noqa: BLE001 -- forwarded to the reader thread, never raised on this one
+            result_queue.put(('error', exc))
+
+    thread = threading.Thread(target=_worker, name='agent-stream-turn', daemon=True)
+    thread.start()
+
+    while True:
+        try:
+            kind, payload = result_queue.get(timeout=settings.stream_keepalive_seconds)
+        except queue.Empty:
+            yield KEEPALIVE
+            continue
+
+        if kind == 'error':
+            logger.warning('agent stream turn failed for bot %s: %s', deferred.bot.id, payload)
+            yield ChatStreamErrorEvent(detail='Die Recherche des Agenten ist unerwartet fehlgeschlagen.')
+            return
+        if kind == 'guard':
+            for text_delta in llm_service.iter_text_deltas(payload):
+                yield ChatStreamDeltaEvent(text=text_delta)
+            yield ChatStreamSourcesEvent(sources=[])
+            yield ChatStreamDoneEvent()
+            return
+        if kind == 'delta':
+            yield ChatStreamDeltaEvent(text=payload)
+            continue
+        if kind == 'sources':
+            yield ChatStreamSourcesEvent(sources=payload)
+            yield ChatStreamDoneEvent()
+            return
+
+
 @dataclass(frozen=True)
 class _DeferredN8nTurn:
     """Everything `_stream_deferred_n8n` needs to perform an n8n-provider
@@ -1208,6 +1695,26 @@ class _PreparedTurn:
     n8n_single_delta: bool = False
     n8n_trace: N8nTrace | None = None
     deferred_n8n: _DeferredN8nTurn | None = None
+    # See AgentTrace's own docstring (app/schemas/chat.py) -- set (never
+    # None) for every outcome of an agent-mode turn that actually ran the
+    # research loop (`_run_agent_turn_blocking`), None for every other
+    # turn, including a DEFERRED agent turn (the loop hasn't run yet by the
+    # time this dataclass is built for one -- see `deferred_agent` below).
+    agent_trace: AgentTrace | None = None
+    # The agent-mode analogue of `deferred_n8n` -- set (never None) ONLY
+    # when `_prepare_turn` was called with `defer_n8n=True` for a bot in
+    # agent mode (`bot.agent.enabled`) whose intent is eligible
+    # (`_AGENT_ELIGIBLE_INTENTS`). See `_DeferredAgentTurn`'s own docstring;
+    # `_stream_deferred_agent` is what finally runs the research loop and
+    # the final-answer LLM call this field describes.
+    deferred_agent: _DeferredAgentTurn | None = None
+    # The MULTI-subagent (graph-mode, `len(bot.agent.subagents) > 1`)
+    # analogue of `deferred_agent` -- set (never None) ONLY when
+    # `_prepare_turn` was called with `defer_n8n=True` for such a turn. See
+    # `_DeferredMultiAgentTurn`'s own docstring; `_stream_deferred_multi_agent`
+    # is what finally runs the LangGraph orchestrator-worker flow this field
+    # describes.
+    deferred_multi_agent: _DeferredMultiAgentTurn | None = None
 
 
 def _prepare_turn(request: ChatRequest, *, defer_n8n: bool = False) -> _PreparedTurn:
@@ -1253,6 +1760,14 @@ def _prepare_turn(request: ChatRequest, *, defer_n8n: bool = False) -> _Prepared
     # completely different generation mechanism this module has to
     # special-case BEFORE ever reaching that factory).
     is_n8n_bot = bot.model.provider == 'n8n'
+    # Snapshot the originally-loaded model NAME before any central-provider
+    # override below can change it -- `supports_tools` was only ever
+    # declared true for THIS specific model, so the FIX-1 re-check further
+    # down must also catch an override that swaps `model.model` under an
+    # UNCHANGED provider label (e.g. 'openai' -> 'openai' with a different
+    # `central_provider.model`), not only one that changes the provider
+    # label itself.
+    original_model_name = bot.model.model
     central_provider = None if is_n8n_bot else fetch_chat_provider()
     if central_provider is not None and central_provider.enabled:
         resolved_temperature = (
@@ -1312,6 +1827,95 @@ def _prepare_turn(request: ChatRequest, *, defer_n8n: bool = False) -> _Prepared
                 ),
             )
         return _run_n8n_turn(bot, request, decision, timings_ms, total_start)
+
+    # `BotConfig`'s own `_agent_mode_is_valid` validator (app/schemas/bot.py)
+    # already guarantees `model.provider != 'n8n'` and tool-call support for
+    # the bot's own YAML-time `model` -- but the central-provider override
+    # just above (`bot.model.model_copy(update={...})`) can swap `bot.model`
+    # to an entirely different provider/model AFTER that validator already
+    # ran, without re-running it and without touching `model.supports_tools`
+    # (which still describes the ORIGINAL, pre-override model). Re-check the
+    # same predicate against the now-effective `bot.model` here so an active
+    # central-provider override can never silently point agent mode at a
+    # model whose real tool-call support was never checked -- including a
+    # same-provider-label swap (`model.model` changed under an unchanged
+    # `model.provider`, e.g. 'openai' -> 'openai' with a different central
+    # model), where `supports_tools` is inherited unchanged from the
+    # ORIGINAL model and would otherwise still read `True` for a model name
+    # whose tool-call support was never actually declared.
+    model_was_overridden = bot.model.model != original_model_name
+    agent_mode_supported = bot.model.provider == 'fake' or (bool(bot.model.supports_tools) and not model_was_overridden)
+    if (
+        bot.agent is not None
+        and bot.agent.enabled
+        and agent_mode_supported
+        and decision.intent in _AGENT_ELIGIBLE_INTENTS
+    ):
+        # `llm_provider` here is always a real provider -- never the
+        # n8n-only `None` case above (agent mode is never valid for an
+        # n8n-provider bot, enforced both at load time and by
+        # `agent_mode_supported`/`is_n8n_bot` here).
+        history = [{'role': turn.role, 'content': turn.content} for turn in request.history]
+
+        if len(bot.agent.subagents) > 1:
+            # Rollout plan "Schritt 3 -- LangGraph mit mehreren Subagenten":
+            # Schritt 2's own single-subagent path (below) is only ever used
+            # for a bot configured with EXACTLY one subagent -- more than
+            # one always goes through the LangGraph orchestrator-worker flow
+            # instead, which can itself still choose to research with just
+            # one agent per turn (the planner's own "simple path", see
+            # app/services/agent_graph.py's `_plan`).
+            allowed_teams = _allowed_teams(bot, request.user)
+            available = _available_agents_for_graph(bot, request.user, request.collections, allowed_teams)
+            subagents_by_id = {
+                subagent.id: subagent
+                for subagent in bot.agent.subagents
+                if subagent.id in {agent['agent_id'] for agent in available}
+            }
+            # See `_DeferredMultiAgentTurn`'s own docstring for why every
+            # subagent gets its OWN provider instance here, always, even one
+            # with no `model` override of its own.
+            subagent_llm_providers = {
+                subagent_id: llm_service.get_llm((subagents_by_id[subagent_id].model or bot.model).provider)
+                for subagent_id in subagents_by_id
+            }
+            deferred_multi_agent = _DeferredMultiAgentTurn(
+                bot=bot, message=request.message, history=history, available=available,
+                subagents_by_id=subagents_by_id, subagent_llm_providers=subagent_llm_providers,
+                main_llm_provider=llm_provider, cancel=threading.Event(),
+            )
+            if defer_n8n:
+                return _PreparedTurn(
+                    bot=bot, llm_provider=llm_provider, decision=decision, timings_ms=timings_ms,
+                    total_start=total_start, sources=[], retrieval_trace=None, guard=None, final_answer=None,
+                    messages=None, deferred_multi_agent=deferred_multi_agent,
+                )
+            return _run_multi_agent_turn_blocking(deferred_multi_agent, decision, timings_ms, total_start)
+
+        subagent = _select_subagent(bot, request.user)
+        agent_scope = _resolve_agent_scope(bot, subagent, request.user, request.collections)
+        subagent_model = subagent.model
+        subagent_llm_provider = (
+            llm_provider
+            if subagent_model is None or subagent_model.provider == bot.model.provider
+            else llm_service.get_llm(subagent_model.provider)
+        )
+        deferred_agent = _DeferredAgentTurn(
+            bot=bot, message=request.message, history=history, subagent=subagent, agent_scope=agent_scope,
+            allowed_teams=_allowed_teams(bot, request.user),
+            llm_provider=llm_provider, subagent_llm_provider=subagent_llm_provider,
+        )
+        if defer_n8n:
+            # See `_DeferredAgentTurn`'s own docstring -- Collections-scope
+            # resolution (`_resolve_agent_scope`, above) already ran
+            # synchronously; only the research loop + final LLM call are
+            # deferred into the stream phase.
+            return _PreparedTurn(
+                bot=bot, llm_provider=llm_provider, decision=decision, timings_ms=timings_ms, total_start=total_start,
+                sources=[], retrieval_trace=None, guard=None, final_answer=None, messages=None,
+                deferred_agent=deferred_agent,
+            )
+        return _run_agent_turn_blocking(deferred_agent, decision, timings_ms, total_start)
 
     complex_knowledge_fallback = (
         decision.intent == 'complex' and decision.needs_retrieval and bot.retrieval.enabled
@@ -1414,6 +2018,7 @@ def handle_chat(request: ChatRequest) -> ChatResponse:
                 timings_ms=timings_ms,
                 guard=prepared.guard,
                 n8n=prepared.n8n_trace,
+                agent=prepared.agent_trace,
             ),
         )
 
@@ -1539,13 +2144,44 @@ def _stream_prepared_turn(prepared: _PreparedTurn) -> Iterator[ChatStreamEvent |
         # is not None` is false yet no LLM call is ever going to happen
         # either (see `_DeferredN8nTurn`'s own docstring) -- `model` must
         # stay None for it exactly like every other n8n-provider outcome.
-        model=None if prepared.final_answer is not None or prepared.deferred_n8n is not None else prepared.bot.model.model,
+        # `deferred_agent is not None` is the agent-mode analogue: the
+        # research loop (and hence the final-answer LLM call) hasn't run
+        # yet either, for the identical reason.
+        model=(
+            None
+            if (
+                prepared.final_answer is not None
+                or prepared.deferred_n8n is not None
+                or prepared.deferred_agent is not None
+                or prepared.deferred_multi_agent is not None
+            )
+            else prepared.bot.model.model
+        ),
         router_mode=settings.router_mode,
         timings_ms=prepared.timings_ms,
         guard=prepared.guard,
         n8n=prepared.n8n_trace,
+        agent=prepared.agent_trace,
     )
     yield ChatStreamTraceEvent(trace=trace)
+
+    if prepared.deferred_multi_agent is not None:
+        # See `_DeferredMultiAgentTurn`/`_stream_deferred_multi_agent`'s own
+        # docstrings -- the multi-subagent (graph-mode) analogue of the
+        # `deferred_agent` branch immediately below: the LangGraph
+        # orchestrator-worker flow has not run yet at all.
+        yield from _stream_deferred_multi_agent(prepared.deferred_multi_agent)
+        return
+
+    if prepared.deferred_agent is not None:
+        # See `_DeferredAgentTurn`/`_stream_deferred_agent`'s own
+        # docstrings -- the agent-mode analogue of the `deferred_n8n`
+        # branch immediately below: the research loop has not happened yet
+        # at all, `_stream_deferred_agent` performs it and yields this
+        # stream's remaining events (`delta`*, then `sources`+`done` or a
+        # terminal `error`) itself.
+        yield from _stream_deferred_agent(prepared.deferred_agent)
+        return
 
     if prepared.deferred_n8n is not None:
         # See `_DeferredN8nTurn`/`_stream_deferred_n8n`'s own docstrings --

@@ -38,12 +38,33 @@ is actually expected to use instead of `provider.chat_stream(...)` directly
 any LLMProvider-shaped object as streaming-capable, even one that only ever
 implements the required `chat()` method, by falling back to that provider's
 whole answer as a single delta.
+
+Tool calling (rollout plan "Tool-Calls und ein Subagent", app/services/
+agents.py's `run_subagent`): both providers also implement `chat_with_tools(
+messages, tools, model, temperature) -> LLMToolResult`, the one additional
+method a bot needs for `bot.agent.enabled` (app/schemas/bot.py) -- a plain
+`chat()`/`chat_stream()` call never offers `tools` at all, since every
+non-agent bot's turn (the vast majority) has no use for them. `messages` may
+now also contain an assistant-role message carrying its own `tool_calls`
+list (the exact shape `LLMToolResult.tool_calls` is built from, echoed back
+so a follow-up request can reference it) and `role: 'tool'` result messages
+(`{'role': 'tool', 'tool_call_id': ..., 'content': ...}`) -- both are plain
+OpenAI-compatible wire shapes, passed through unchanged by
+OpenAICompatibleLLM, and simply additional dict keys FakeLLM's own message
+handling has no reason to inspect (see `_last_user_message`, which already
+only ever looks at `role`/`content`). `LLMToolResult.content` is `None`
+exactly when `tool_calls` is a non-empty list (the model wants to call a
+tool, not answer yet); otherwise `tool_calls` is `None` and `content` is the
+model's own final text -- never both filled in at once, mirroring the OpenAI
+wire contract's own `finish_reason in {'tool_calls', 'stop'}` split (see
+`_parse_tool_response`'s own docstring for the exact parsing).
 """
 
 import json
 import logging
 import re
 import time
+from collections import deque
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Protocol
@@ -64,6 +85,38 @@ class LLMUsage:
 @dataclass(frozen=True)
 class LLMResult:
     content: str
+    model: str
+    usage: LLMUsage | None = None
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    """One tool invocation the model asked for -- mirrors the OpenAI wire
+    shape's `message.tool_calls[i]`, except `arguments` is already parsed
+    JSON (a `dict`), not the raw JSON-encoded string the wire actually
+    carries: every caller of this dataclass (app/services/agents.py's
+    `run_subagent`) wants the parsed shape, and a response whose `arguments`
+    string doesn't even parse as JSON is exactly the "invalid tool
+    arguments" case that caller is expected to turn into a `role: 'tool'`
+    error result -- see `_parse_tool_response`'s own docstring for where
+    that parse failure is surfaced instead of silently swallowed here.
+    `id` is the provider's own call id, echoed back verbatim in the
+    matching `role: 'tool'` result message's `tool_call_id` (OpenAI's own
+    contract for correlating a result to its call)."""
+
+    id: str
+    name: str
+    arguments: dict
+
+
+@dataclass(frozen=True)
+class LLMToolResult:
+    """`chat_with_tools()`'s own return shape -- see this module's docstring
+    for the "never both filled in" contract between `content` and
+    `tool_calls`."""
+
+    content: str | None
+    tool_calls: list[ToolCall] | None
     model: str
     usage: LLMUsage | None = None
 
@@ -99,6 +152,14 @@ class LLMProvider(Protocol):
         model: str | None = None,
         temperature: float | None = None,
     ) -> Iterator[str]: ...
+
+    def chat_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        model: str | None = None,
+        temperature: float | None = None,
+    ) -> LLMToolResult: ...
 
 
 # --- FakeLLM ---------------------------------------------------------------
@@ -178,7 +239,31 @@ class FakeLLM:
 
     `temperature` is accepted (for LLMProvider conformance) and ignored --
     there is nothing stochastic here to temper.
+
+    `chat_with_tools()` is what makes this provider usable for testing an
+    agent-mode tool-calling loop (app/services/agents.py's `run_subagent`)
+    with no network in the loop at all -- see `tool_responses`' own
+    docstring below for exactly how a test scripts it. `supports_tools` is
+    always `True` (app/schemas/bot.py's capability check treats every
+    'fake'-provider bot as tool-capable unconditionally, see that module's
+    own validator) -- kept as a plain instance attribute rather than a
+    class constant purely so a hypothetical future test could still force
+    it `False` to exercise the "provider declares no tool support" path
+    without needing a second fake class.
     """
+
+    def __init__(self, tool_responses: list['LLMToolResult'] | None = None) -> None:
+        # A FIFO queue of scripted `chat_with_tools()` replies, one per
+        # call, in order -- e.g. `FakeLLM(tool_responses=[LLMToolResult(
+        # content=None, tool_calls=[ToolCall(...)]), LLMToolResult(
+        # content='{"facts": [...]}', tool_calls=None)])` scripts a
+        # "search once, then answer" loop deterministically. Exhausting the
+        # queue (or never providing one at all) falls back to `chat()`'s
+        # own ordinary deterministic reply, with `tool_calls=None` -- a
+        # scriptless FakeLLM is still a well-behaved, tool-capable
+        # provider, it just never itself asks to call one.
+        self._tool_responses: deque[LLMToolResult] = deque(tool_responses or [])
+        self.supports_tools = True
 
     def chat(
         self,
@@ -216,6 +301,36 @@ class FakeLLM:
         FakeLLM().chat(messages, model=model).content` always holds.
         """
         yield from iter_text_deltas(self.chat(messages, model=model, temperature=temperature).content)
+
+    def chat_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        model: str | None = None,
+        temperature: float | None = None,
+    ) -> LLMToolResult:
+        """The next scripted `tool_responses` entry (see `__init__`'s own
+        docstring), with `model` filled in to match this call regardless of
+        what the script itself set it to (a test scripting a reply cares
+        about `content`/`tool_calls`, never about echoing `model` back
+        correctly) -- or, once the queue is empty, `chat()`'s own
+        deterministic reply wrapped as a no-tool-calls `LLMToolResult`.
+        `tools` is accepted (for LLMProvider conformance, and because a
+        real caller always passes at least the `search_knowledge` schema)
+        but otherwise ignored -- this provider's whole point is to let a
+        test decide the tool-calling OUTCOME directly via `tool_responses`,
+        never by having FakeLLM itself interpret a JSON-schema `tools` list.
+        """
+        if self._tool_responses:
+            scripted = self._tool_responses.popleft()
+            return LLMToolResult(
+                content=scripted.content,
+                tool_calls=scripted.tool_calls,
+                model=model or _FAKE_DEFAULT_MODEL,
+                usage=scripted.usage,
+            )
+        result = self.chat(messages, model=model, temperature=temperature)
+        return LLMToolResult(content=result.content, tool_calls=None, model=result.model, usage=result.usage)
 
 
 # --- OpenAICompatibleLLM ----------------------------------------------------
@@ -272,6 +387,98 @@ def _parse_chat_response(response: httpx.Response, *, fallback_model: str) -> LL
         model_name = fallback_model
 
     return LLMResult(content=content, model=model_name, usage=usage)
+
+
+def _parse_tool_calls(raw_tool_calls: object) -> list[ToolCall] | None:
+    """Parse `message.tool_calls` from an OpenAI-compatible response
+    (`[{"id": ..., "type": "function", "function": {"name": ...,
+    "arguments": "<JSON string>"}}, ...]`) into `ToolCall`s with already-
+    parsed `arguments` dicts -- `None` when `raw_tool_calls` isn't a
+    non-empty list at all (the ordinary "model answered with plain text"
+    case). A `function.arguments` string that fails to parse as a JSON
+    OBJECT becomes `ToolCall(arguments={'_raw': <the original string>})`
+    rather than raising here -- exactly the "invalid tool arguments" shape
+    `app/services/agents.py`'s own argument validator is already built to
+    reject with a bounded, model-visible error, never an exception this
+    module itself should raise for content the UPSTREAM PROVIDER sent, not
+    this service's own request.
+    """
+    if not isinstance(raw_tool_calls, list) or not raw_tool_calls:
+        return None
+    calls: list[ToolCall] = []
+    for index, raw_call in enumerate(raw_tool_calls):
+        if not isinstance(raw_call, dict):
+            continue
+        call_id = raw_call.get('id') or f'call_{index}'
+        function = raw_call.get('function') if isinstance(raw_call.get('function'), dict) else {}
+        name = function.get('name') or ''
+        raw_arguments = function.get('arguments')
+        arguments: dict
+        if isinstance(raw_arguments, str):
+            try:
+                parsed = json.loads(raw_arguments)
+                arguments = parsed if isinstance(parsed, dict) else {'_raw': raw_arguments}
+            except ValueError:
+                arguments = {'_raw': raw_arguments}
+        elif isinstance(raw_arguments, dict):
+            arguments = raw_arguments
+        else:
+            arguments = {}
+        calls.append(ToolCall(id=str(call_id), name=name, arguments=arguments))
+    return calls or None
+
+
+def _parse_tool_response(response: httpx.Response, *, fallback_model: str) -> LLMToolResult:
+    """`_parse_chat_response`'s tool-calling counterpart: same response
+    shape and same defensive parsing, except `message.content` may now
+    legitimately be `None`/absent (the model asked to call a tool instead
+    of answering, `finish_reason == 'tool_calls'`) -- see this module's own
+    docstring for the "never both filled in" contract this enforces:
+    `tool_calls` wins whenever the response carries a non-empty one,
+    `content` (falling back to `''` when the provider omitted it
+    entirely, same permissiveness `_parse_chat_response` already has to
+    have for a bare-content response) otherwise.
+    """
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise LLMError('LLM response body is not valid JSON') from exc
+
+    choices = data.get('choices') if isinstance(data, dict) else None
+    if not isinstance(choices, list) or not choices:
+        raise LLMError("LLM response is missing a non-empty 'choices' list")
+
+    first_choice = choices[0]
+    message = first_choice.get('message') if isinstance(first_choice, dict) else None
+    if not isinstance(message, dict):
+        raise LLMError('LLM response choice has no message object')
+
+    tool_calls = _parse_tool_calls(message.get('tool_calls'))
+    content = message.get('content')
+    if not isinstance(content, str):
+        content = None
+
+    if tool_calls is None and content is None:
+        raise LLMError('LLM response message has neither content nor tool_calls')
+
+    usage = None
+    usage_raw = data.get('usage') if isinstance(data, dict) else None
+    if isinstance(usage_raw, dict):
+        prompt_tokens = usage_raw.get('prompt_tokens')
+        completion_tokens = usage_raw.get('completion_tokens')
+        if isinstance(prompt_tokens, int) and isinstance(completion_tokens, int):
+            usage = LLMUsage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+
+    model_name = data.get('model') if isinstance(data, dict) else None
+    if not isinstance(model_name, str) or not model_name:
+        model_name = fallback_model
+
+    return LLMToolResult(
+        content=None if tool_calls is not None else (content or ''),
+        tool_calls=tool_calls,
+        model=model_name,
+        usage=usage,
+    )
 
 
 def _iter_sse_deltas(response: httpx.Response, *, url: str) -> Iterator[str]:
@@ -412,6 +619,78 @@ class OpenAICompatibleLLM:
         # final iteration (attempt == self._max_attempts). Kept as a
         # defensive backstop rather than trusting that invariant silently.
         raise LLMError(f'LLM request to {url!r} did not complete', transient=True)
+
+    def chat_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        model: str | None = None,
+        temperature: float | None = None,
+    ) -> LLMToolResult:
+        """`chat()`'s tool-calling counterpart: identical request/retry
+        shape, plus `"tools": tools` and `"tool_choice": "auto"` in the
+        payload when `tools` is non-empty. An empty `tools` list is omitted
+        entirely (mirroring how `temperature` is only sent when not None)
+        rather than sent as `"tools": []"` -- real OpenAI-compatible
+        endpoints commonly reject an empty `tools` array with a 400 when
+        `tool_choice` is also set, and `app/services/agents.py`'s own
+        budget-exhausted final-answer call passes `tools=[]` to mean "no
+        more tool calls, answer now", which must not fail against a real
+        provider. `_parse_tool_response` (instead of `_parse_chat_response`)
+        reads the result back either way. See that function's own
+        docstring for exactly how `message.tool_calls` vs `message.content`
+        is resolved.
+        """
+        url = _chat_completions_url(self._base_url)
+        headers = {'Authorization': f'Bearer {self._api_key}', 'Content-Type': 'application/json'}
+        resolved_model = model or self._default_model
+        payload: dict = {'model': resolved_model, 'messages': messages}
+        if tools:
+            payload['tools'] = tools
+            payload['tool_choice'] = 'auto'
+        if temperature is not None:
+            payload['temperature'] = temperature
+
+        for attempt in range(1, self._max_attempts + 1):
+            try:
+                response = httpx.post(url, headers=headers, json=payload, timeout=self._timeout)
+            except httpx.HTTPError as exc:
+                if attempt >= self._max_attempts:
+                    raise LLMError(
+                        f'LLM tool-call request to {url!r} failed after {attempt} attempt(s): {exc}',
+                        transient=True,
+                    ) from exc
+                logger.warning(
+                    'LLM tool-call request to %r failed (attempt %d/%d): %s', url, attempt, self._max_attempts, exc
+                )
+                time.sleep(_backoff_seconds(attempt))
+                continue
+
+            if response.status_code == 200:
+                return _parse_tool_response(response, fallback_model=resolved_model)
+
+            if response.status_code == 429 or response.status_code >= 500:
+                if attempt >= self._max_attempts:
+                    raise LLMError(
+                        f'LLM tool-call request to {url!r} returned HTTP {response.status_code} '
+                        f'after {attempt} attempt(s)',
+                        transient=True,
+                        status_code=response.status_code,
+                    )
+                logger.warning(
+                    'LLM tool-call request to %r returned HTTP %d (attempt %d/%d); retrying',
+                    url, response.status_code, attempt, self._max_attempts,
+                )
+                time.sleep(_backoff_seconds(attempt))
+                continue
+
+            raise LLMError(
+                f'LLM tool-call request to {url!r} returned HTTP {response.status_code}: {response.text[:500]}',
+                transient=False,
+                status_code=response.status_code,
+            )
+
+        raise LLMError(f'LLM tool-call request to {url!r} did not complete', transient=True)
 
     def chat_stream(
         self,

@@ -14,8 +14,10 @@ from app.services.llm import (
     FakeLLM,
     LLMError,
     LLMResult,
+    LLMToolResult,
     LLMUsage,
     OpenAICompatibleLLM,
+    ToolCall,
     get_llm,
     iter_chat_stream,
     iter_text_deltas,
@@ -506,3 +508,120 @@ def test_get_llm_falls_back_to_settings_llm_provider_when_empty_string(monkeypat
 def test_get_llm_unknown_provider_raises_value_error():
     with pytest.raises(ValueError):
         get_llm('not-a-real-provider')
+
+
+# --- FakeLLM.chat_with_tools --------------------------------------------------
+
+def test_fake_llm_chat_with_tools_falls_back_to_chat_when_no_script_is_given():
+    messages = [{'role': 'user', 'content': 'hello'}]
+    result = FakeLLM().chat_with_tools(messages, tools=[{'type': 'function'}])
+    assert result.tool_calls is None
+    assert result.content == FakeLLM().chat(messages).content
+
+
+def test_fake_llm_chat_with_tools_replays_the_scripted_queue_in_order():
+    tool_call = ToolCall(id='call-1', name='search_knowledge', arguments={'query': 'x'})
+    scripted = [
+        LLMToolResult(content=None, tool_calls=[tool_call], model='fake-chat'),
+        LLMToolResult(content='final answer', tool_calls=None, model='fake-chat'),
+    ]
+    fake = FakeLLM(tool_responses=scripted)
+
+    first = fake.chat_with_tools([], tools=[])
+    assert first.tool_calls == [tool_call]
+    assert first.content is None
+
+    second = fake.chat_with_tools([], tools=[])
+    assert second.content == 'final answer'
+    assert second.tool_calls is None
+
+    # queue exhausted -- falls back to the ordinary chat() reply
+    third = fake.chat_with_tools([{'role': 'user', 'content': 'anything'}], tools=[])
+    assert third.tool_calls is None
+    assert 'anything' in third.content
+
+
+def test_fake_llm_supports_tools_flag_is_true():
+    assert FakeLLM().supports_tools is True
+
+
+# --- OpenAICompatibleLLM.chat_with_tools --------------------------------------
+
+def _tool_call_payload(name: str, arguments: str, *, call_id: str = 'call-1') -> dict:
+    return {
+        'choices': [{
+            'message': {
+                'content': None,
+                'tool_calls': [{'id': call_id, 'type': 'function', 'function': {'name': name, 'arguments': arguments}}],
+            },
+            'finish_reason': 'tool_calls',
+        }],
+        'model': 'gpt-test',
+    }
+
+
+def test_openai_compatible_llm_chat_with_tools_parses_tool_calls():
+    payload = _tool_call_payload('search_knowledge', '{"query": "vpn setup"}')
+
+    with patch('app.services.llm.httpx.post', return_value=_FakeResponse(200, payload)) as mock_post:
+        result = _provider().chat_with_tools(
+            [{'role': 'user', 'content': 'how does vpn work?'}],
+            tools=[{'type': 'function', 'function': {'name': 'search_knowledge'}}],
+        )
+
+    assert result.content is None
+    assert result.tool_calls == [ToolCall(id='call-1', name='search_knowledge', arguments={'query': 'vpn setup'})]
+    sent_json = mock_post.call_args.kwargs['json']
+    assert sent_json['tools'] == [{'type': 'function', 'function': {'name': 'search_knowledge'}}]
+    assert sent_json['tool_choice'] == 'auto'
+
+
+def test_openai_compatible_llm_chat_with_tools_parses_plain_content_when_no_tool_calls():
+    payload = _chat_payload('the final answer')
+
+    with patch('app.services.llm.httpx.post', return_value=_FakeResponse(200, payload)):
+        result = _provider().chat_with_tools([{'role': 'user', 'content': 'q'}], tools=[])
+
+    assert result.tool_calls is None
+    assert result.content == 'the final answer'
+
+
+def test_openai_compatible_llm_chat_with_tools_omits_tools_and_tool_choice_when_tools_empty():
+    # Real OpenAI-compatible endpoints commonly reject an empty `tools`
+    # array together with `tool_choice: 'auto'` with a 400 -- see
+    # agents.py's _finish_on_budget_exhaustion, which relies on
+    # chat_with_tools(tools=[]) working against a real provider.
+    payload = _chat_payload('the final answer')
+
+    with patch('app.services.llm.httpx.post', return_value=_FakeResponse(200, payload)) as mock_post:
+        _provider().chat_with_tools([{'role': 'user', 'content': 'q'}], tools=[])
+
+    sent_json = mock_post.call_args.kwargs['json']
+    assert 'tools' not in sent_json
+    assert 'tool_choice' not in sent_json
+
+
+def test_openai_compatible_llm_chat_with_tools_tolerates_a_non_json_arguments_string():
+    payload = _tool_call_payload('search_knowledge', 'not-json')
+
+    with patch('app.services.llm.httpx.post', return_value=_FakeResponse(200, payload)):
+        result = _provider().chat_with_tools([{'role': 'user', 'content': 'q'}], tools=[])
+
+    assert result.tool_calls[0].arguments == {'_raw': 'not-json'}
+
+
+def test_openai_compatible_llm_chat_with_tools_400_raises_llm_error_without_retry():
+    with patch('app.services.llm.httpx.post', return_value=_FakeResponse(400, text='bad request')) as mock_post:
+        with pytest.raises(LLMError) as exc_info:
+            _provider().chat_with_tools([{'role': 'user', 'content': 'q'}], tools=[])
+    assert exc_info.value.transient is False
+    mock_post.assert_called_once()
+
+
+def test_openai_compatible_llm_chat_with_tools_retries_5xx_then_succeeds(monkeypatch):
+    monkeypatch.setattr('app.services.llm.time.sleep', lambda _seconds: None)
+    responses = [_FakeResponse(500), _FakeResponse(200, _chat_payload('ok'))]
+    with patch('app.services.llm.httpx.post', side_effect=responses) as mock_post:
+        result = _provider().chat_with_tools([{'role': 'user', 'content': 'q'}], tools=[])
+    assert result.content == 'ok'
+    assert mock_post.call_count == 2

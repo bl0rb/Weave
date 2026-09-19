@@ -38,6 +38,13 @@ class ManagedBotWrite(BaseModel):
     no_context_reply: str = Field(
         default='Ich habe dazu keine belegten Informationen gefunden.', min_length=1, max_length=2000
     )
+    # Opaque agent-mode configuration (Weave-Runtime's `BotConfig.agent`,
+    # rollout plan "Schritt 2 -- Tool-Calls und ein Subagent") -- a plain
+    # passthrough dict, deliberately unvalidated here (same posture as
+    # `retrieval_filters` above): there is no admin editor UI for this
+    # block yet, and Runtime's own pydantic validation is what actually
+    # rejects a malformed one, when that bot is next loaded there.
+    agent: dict | None = Field(default=None)
 
     @field_validator('name', 'no_context_reply')
     @classmethod
@@ -141,6 +148,7 @@ class ManagedBotAdminResponse(BaseModel):
     collections: list[str]
     require_sources: bool
     no_context_reply: str
+    agent: dict | None = None
     created_at: datetime
     updated_at: datetime
     source: str = 'managed'
@@ -172,6 +180,7 @@ class ManagedBotInternalResponse(BaseModel):
     collections: list[str]
     require_sources: bool
     no_context_reply: str
+    agent: dict | None = None
 
 
 class ManagedBotInternalListResponse(BaseModel):

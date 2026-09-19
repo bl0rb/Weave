@@ -130,7 +130,9 @@ async def search(
     ctx: Context[Any, Any] | None = None,
 ) -> dict:
     """Hybrid search over THIS caller's own readable collections. Returns
-    text excerpts with their source (document, page, collection).
+    text excerpts with their source (document, document_id, chunk_id, page,
+    collection) -- collection/document_id/chunk_id are each hit's own
+    actual values, usable to merge or deduplicate hits across searches.
 
     `collection`, if given, narrows the search to that one collection --
     but only when it already lies within the caller's own resolved scope; a

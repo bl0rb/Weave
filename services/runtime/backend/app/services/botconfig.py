@@ -309,6 +309,24 @@ def _managed_bot(raw: dict) -> BotConfig:
                 'streaming': bool(raw.get('streaming', False)),
                 'auth_token': raw.get('auth_token') or None,
             } if not is_llm else None,
+            # Optional, opaque agent-mode block (rollout plan "Schritt 2 --
+            # Tool-Calls und ein Subagent") -- Ingest persists this verbatim
+            # as a JSON column (services/ingest/backend/app/models/models.py's
+            # `ManagedBot.agent_config`, projected over the wire under the
+            # `agent` key -- app/schemas/managed_bots.py's
+            # `ManagedBotInternalResponse.agent`) with no shape validation
+            # of its own; `BotConfig.agent`'s own pydantic validation
+            # (app/schemas/bot.py) is what actually rejects a malformed
+            # block, surfacing here as the ordinary ValidationError this
+            # function already catches below (a managed bot with an
+            # invalid `agent` block is skipped with a warning, same as any
+            # other invalid managed-bot field -- see `list_bots()`'s own
+            # docstring). `None`/absent for every bot without agent mode,
+            # and always `None` for a non-LLM (n8n) bot regardless of what
+            # raw data might claim -- agent mode is never valid for an
+            # n8n-provider bot (`BotConfig`'s own `_agent_mode_is_valid`
+            # validator).
+            'agent': raw.get('agent') if is_llm else None,
         })
     except (ValidationError, KeyError, TypeError) as exc:
         raise BotConfigError(f'managed bot {bot_id!r}: invalid control-plane data') from exc

@@ -332,3 +332,63 @@ def test_n8n_bot_still_requires_a_webhook():
     )
 
     assert response.status_code == 422
+
+
+def test_agent_config_round_trips_through_admin_and_internal_projections(monkeypatch):
+    """The `agent` block (Weave-Runtime's `BotConfig.agent`, rollout plan
+    "Schritt 2 -- Tool-Calls und ein Subagent") is a plain, unvalidated
+    passthrough dict here -- create it, see it echoed back on the admin
+    response, update it, and see the update echoed on both the admin AND
+    the internal (Runtime-facing) projection."""
+    admin = _identity('bot-agent-admin', role=UserRole.ADMIN)
+    admin_client = login_as(admin.username)
+    team_name = _team()
+    collection_slug = _scope(admin_client, team_name)
+
+    agent_config = {
+        'enabled': True,
+        'subagents': [
+            {'id': 'it-support', 'name': 'IT Support', 'mission': 'Answer IT questions.', 'collections': ['it-docs']}
+        ],
+    }
+    payload = _payload(
+        team_name, collection_slug, kind='llm', webhook_url=None, auth_token=None,
+        system_prompt='Du recherchierst zuerst.', agent=agent_config,
+    )
+
+    created = admin_client.post('/api/v1/auth/admin/bots', json=payload)
+    assert created.status_code == 201, created.text
+    assert created.json()['agent'] == agent_config
+
+    with TestingSessionLocal() as db:
+        row = db.get(ManagedBot, payload['id'])
+        assert row.agent_config == agent_config
+
+    updated_agent_config = {**agent_config, 'limits': {'budget_searches': 5}}
+    update_body = {key: value for key, value in payload.items() if key != 'id'}
+    update_body['agent'] = updated_agent_config
+    updated = admin_client.put(f"/api/v1/auth/admin/bots/{payload['id']}", json=update_body)
+    assert updated.status_code == 200, updated.text
+    assert updated.json()['agent'] == updated_agent_config
+
+    monkeypatch.setattr(settings, 'chat_config_service_token', 'runtime-control-token')
+    internal = admin_client.get(
+        '/api/v1/internal/bots',
+        headers={'Authorization': 'Bearer runtime-control-token'},
+    )
+    assert internal.status_code == 200, internal.text
+    projected = internal.json()['items'][0]
+    assert projected['id'] == payload['id']
+    assert projected['agent'] == updated_agent_config
+
+
+def test_bot_without_agent_config_projects_none():
+    admin = _identity('bot-no-agent-admin', role=UserRole.ADMIN)
+    admin_client = login_as(admin.username)
+    team_name = _team()
+    collection_slug = _scope(admin_client, team_name)
+    payload = _payload(team_name, collection_slug)
+
+    created = admin_client.post('/api/v1/auth/admin/bots', json=payload)
+    assert created.status_code == 201, created.text
+    assert created.json()['agent'] is None

@@ -156,3 +156,164 @@ def test_retrieval_filters_default_independently_per_instance():
     bot_a.retrieval.collections.append('only-on-a')
     assert bot_b.permissions.teams == []
     assert bot_b.retrieval.collections == []
+
+
+# --- agent mode / AgentConfig / SubagentConfig cross-field validation -----
+
+_ONE_SUBAGENT = {
+    'id': 'it-support',
+    'name': 'IT Support',
+    'mission': 'Answer IT/helpdesk questions.',
+    'collections': ['it-docs'],
+}
+
+
+def test_agent_mode_defaults_to_disabled_with_no_subagents():
+    bot = BotConfig.model_validate(_MINIMAL)
+    assert bot.agent is None
+
+
+def test_agent_mode_is_rejected_without_tool_support():
+    # `model.provider == 'fake'` is the one exception -- FakeLLM always
+    # implements chat_with_tools -- so this uses a non-fake provider with
+    # `supports_tools` left at its own default (None == unknown/unsupported).
+    with pytest.raises(ValidationError, match='tool-call support'):
+        BotConfig.model_validate({
+            **_MINIMAL,
+            'model': {'provider': 'openai', 'model': 'gpt-x'},
+            'agent': {'enabled': True, 'subagents': [_ONE_SUBAGENT]},
+        })
+
+
+def test_agent_mode_is_accepted_when_model_declares_tool_support():
+    bot = BotConfig.model_validate({
+        **_MINIMAL,
+        'model': {'provider': 'openai', 'model': 'gpt-x', 'supports_tools': True},
+        'agent': {'enabled': True, 'subagents': [_ONE_SUBAGENT]},
+    })
+    assert bot.agent.enabled is True
+    assert bot.agent.subagents[0].id == 'it-support'
+
+
+def test_agent_mode_is_accepted_for_the_fake_provider_regardless_of_supports_tools():
+    bot = BotConfig.model_validate({
+        **_MINIMAL,
+        'agent': {'enabled': True, 'subagents': [_ONE_SUBAGENT]},
+    })
+    assert bot.model.supports_tools is None
+    assert bot.agent.enabled is True
+
+
+def test_agent_mode_is_rejected_for_n8n_provider():
+    with pytest.raises(ValidationError, match="n8n"):
+        BotConfig.model_validate({
+            **_MINIMAL,
+            'model': {'provider': 'n8n', 'model': 'n8n-agent-flow'},
+            'n8n': {'webhook_url': 'https://n8n.example.test/webhook/agent'},
+            'agent': {'enabled': True, 'subagents': [_ONE_SUBAGENT]},
+        })
+
+
+def test_agent_mode_is_rejected_when_a_subagents_own_model_override_lacks_tool_support():
+    # SubagentConfig.model is optional and falls back to the main bot's own
+    # (already tool-capable) model when unset -- but a subagent configured
+    # with its OWN model override needs the identical check, or it silently
+    # answers with zero tool calls at runtime instead of failing at load time.
+    with pytest.raises(ValidationError, match="it-support.*tool-call support"):
+        BotConfig.model_validate({
+            **_MINIMAL,
+            'agent': {
+                'enabled': True,
+                'subagents': [{**_ONE_SUBAGENT, 'model': {'provider': 'openai', 'model': 'gpt-x'}}],
+            },
+        })
+
+
+def test_agent_mode_is_accepted_when_a_subagents_own_model_override_declares_tool_support():
+    bot = BotConfig.model_validate({
+        **_MINIMAL,
+        'agent': {
+            'enabled': True,
+            'subagents': [
+                {**_ONE_SUBAGENT, 'model': {'provider': 'openai', 'model': 'gpt-x', 'supports_tools': True}},
+            ],
+        },
+    })
+    assert bot.agent.subagents[0].model.supports_tools is True
+
+
+def test_agent_enabled_requires_at_least_one_subagent():
+    with pytest.raises(ValidationError, match='at least one subagent'):
+        BotConfig.model_validate({**_MINIMAL, 'agent': {'enabled': True, 'subagents': []}})
+
+
+def test_agent_disabled_with_no_subagents_is_fine():
+    bot = BotConfig.model_validate({**_MINIMAL, 'agent': {'enabled': False}})
+    assert bot.agent.enabled is False
+    assert bot.agent.subagents == []
+
+
+def test_subagent_ids_must_be_unique():
+    with pytest.raises(ValidationError, match='unique'):
+        BotConfig.model_validate({
+            **_MINIMAL,
+            'agent': {'enabled': True, 'subagents': [_ONE_SUBAGENT, _ONE_SUBAGENT]},
+        })
+
+
+def test_subagent_requires_collections_or_include_uncollected():
+    with pytest.raises(ValidationError, match='include_uncollected'):
+        BotConfig.model_validate({
+            **_MINIMAL,
+            'agent': {
+                'enabled': True,
+                'subagents': [{**_ONE_SUBAGENT, 'collections': []}],
+            },
+        })
+
+
+def test_subagent_with_no_collections_is_fine_when_include_uncollected():
+    bot = BotConfig.model_validate({
+        **_MINIMAL,
+        'agent': {
+            'enabled': True,
+            'subagents': [{**_ONE_SUBAGENT, 'collections': [], 'include_uncollected': True}],
+        },
+    })
+    assert bot.agent.subagents[0].collections == []
+    assert bot.agent.subagents[0].include_uncollected is True
+
+
+def test_subagent_defaults():
+    bot = BotConfig.model_validate({**_MINIMAL, 'agent': {'enabled': True, 'subagents': [_ONE_SUBAGENT]}})
+    subagent = bot.agent.subagents[0]
+    assert subagent.tools == ['search_knowledge']
+    assert subagent.model is None
+    assert subagent.include_uncollected is False
+    assert subagent.limits.max_searches == 3
+    assert subagent.limits.max_results == 5
+    assert subagent.limits.timeout_seconds == 60
+    assert bot.agent.limits.max_parallel == 3
+    assert bot.agent.limits.max_followups == 1
+    assert bot.agent.limits.budget_searches == 9
+    assert bot.agent.limits.timeout_seconds == 120
+
+
+def test_subagent_model_overrides_are_independent_of_the_bots_own_model():
+    bot = BotConfig.model_validate({
+        **_MINIMAL,
+        'agent': {
+            'enabled': True,
+            'subagents': [{**_ONE_SUBAGENT, 'model': {'provider': 'fake', 'model': 'fake-small'}}],
+        },
+    })
+    assert bot.agent.subagents[0].model.model == 'fake-small'
+    assert bot.model.model == 'fake-chat'
+
+
+def test_subagent_rejects_unknown_fields():
+    with pytest.raises(ValidationError):
+        BotConfig.model_validate({
+            **_MINIMAL,
+            'agent': {'enabled': True, 'subagents': [{**_ONE_SUBAGENT, 'typo_field': 'x'}]},
+        })

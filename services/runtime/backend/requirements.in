@@ -12,6 +12,24 @@
 # migrate and no task queue to run, only synchronous HTTP calls out to
 # Weave-Retrieval or an LLM provider (httpx) and YAML bot configs (PyYAML, see
 # app/services/botconfig.py).
+#
+# langgraph/langchain-core (rollout plan "Schritt 3 -- LangGraph mit mehreren
+# Subagenten", app/services/agent_graph.py): the one deliberate exception to
+# the "no framework, just httpx" posture above. The multi-subagent
+# orchestrator-worker flow -- parallel fan-out capped by `max_concurrency`,
+# map-reduce result merging, budget-aware follow-up rounds -- is exactly
+# the state-machine-with-parallel-branches problem LangGraph's `StateGraph`/
+# `Send` already solve correctly (cancellation-safe fan-out, a documented
+# concurrent-update contract for merged state); hand-rolling that
+# scheduling/merging logic with bare `threading`/`queue` (as this module's
+# own n8n-streaming code already does for a much simpler single-worker case)
+# would reproduce a materially more complex, materially less tested version
+# of the same thing. `langchain-core` is pulled in transitively for
+# `RunnableConfig` (the one type this module needs to pass `max_concurrency`
+# through to `graph.invoke()`) and is pinned directly here rather than left
+# implicit, so a future `langgraph` upgrade can't silently drift it.
+langgraph==1.2.11
+langchain-core==1.6.3
 fastapi==0.141.1
 uvicorn[standard]==0.52.4
 pydantic==2.13.5

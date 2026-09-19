@@ -1,0 +1,115 @@
+# Beispiel-Bot fuer den Agentenmodus (rollout plan "Schritt 2 -- Tool-Calls
+# und ein Subagent" / "Schritt 3 -- LangGraph mit mehreren Subagenten",
+# backend/app/schemas/bot.py's AgentConfig/SubagentConfig) -- ein LLM-Bot,
+# der Wissenssuche ueber EIN oder mehrere Subagenten ("Recherche-Profile")
+# statt ueber die direkte retrieval.enabled-Pipeline durchfuehrt, mit einer
+# bounded search_knowledge-Tool-Call-Schleife pro Subagent
+# (backend/app/services/agents.py's `run_subagent`). Zwei konfigurierte
+# Subagenten unten (it-support/hr-support) -- damit laeuft dieser Bot bereits
+# ueber die LangGraph-Orchestrator-Worker-Pipeline
+# (backend/app/services/agent_graph.py, README's "Agentenmodus (LangGraph)"),
+# nicht mehr ueber Schritt 2's Single-Subagent-Pfad.
+#
+# ABSICHTLICH mit der Endung ".yaml.example", NICHT ".yaml" -- siehe
+# n8n-agent.yaml.example's eigenen Kommentar fuer die Begruendung (list_bots()
+# laedt nur *.yaml/*.yml). Zum tatsaechlichen Aktivieren:
+#
+#   1. Diese Datei nach bots/research-agent.yaml kopieren (Endung ".example"
+#      entfernen).
+#   2. model.provider auf einen echten, tool-call-faehigen Provider setzen
+#      (z. B. 'openai') UND model.supports_tools: true, sofern das gewaehlte
+#      Modell tatsaechlich OpenAI-kompatible Tool-Calls unterstuetzt -- sonst
+#      lehnt BotConfig's eigener `_agent_mode_is_valid`-Validator den Bot
+#      beim Laden ab (siehe app/schemas/bot.py). 'fake' (wie unten belassen)
+#      funktioniert ohne diesen Schritt -- FakeLLM implementiert
+#      chat_with_tools() immer.
+#   3. subagents[].collections an die tatsaechlich in Weave-Knowledge
+#      existierenden Collection-Slugs anpassen.
+
+id: research-agent
+name: Recherche-Assistent (Agentenmodus)
+description: >-
+  Beantwortet Fragen ueber recherchierende Subagenten statt ueber eine
+  einzelne, direkte Wissenssuche -- jeder Subagent hat eine eigene, explizit
+  erlaubte Menge an Collections und ein eigenes Suchbudget.
+
+model:
+  provider: fake
+  model: fake-chat
+
+system_prompt: |
+  Du bist ein Assistent, der Fragen anhand der Recherche-Ergebnisse deiner
+  Subagenten beantwortest. Nenne offene Punkte explizit, statt zu spekulieren
+  -- wenn ein Subagent nur unvollstaendige Ergebnisse liefert, sag das.
+
+# Direktes Retrieval bleibt fuer diesen Bot ausgeschaltet -- im Agentenmodus
+# sucht nicht diese Pipeline selbst (retrieval.enabled/collections unten
+# wirken trotzdem noch als AEUSSERE Grenze, siehe agent.subagents[].collections
+# weiter unten: der effektive Scope pro Subagent ist Nutzerrechte ∩
+# retrieval.collections ∩ subagent.collections ∩ Anfrage-Filter).
+retrieval:
+  enabled: false
+  collections: []
+  include_uncollected: true
+
+permissions:
+  teams: []
+
+guard:
+  require_sources: true
+  no_context_reply: "Die Recherche hat dazu keine belegten Informationen gefunden."
+
+agent:
+  enabled: true
+  # Turn-weites Budget zusaetzlich zu jedem Subagenten eigenen Limits unten
+  # (rollout plan step 4's "Start values") -- mit MEHR als einem konfigurierten
+  # Subagenten (wie hier: it-support UND hr-support) wertet die LangGraph-
+  # Orchestrator-Worker-Pipeline (backend/app/services/agent_graph.py) alle
+  # vier Felder tatsaechlich aus: max_parallel begrenzt gleichzeitig laufende
+  # Recherche-Worker (RunnableConfig(max_concurrency=...)), max_followups die
+  # Anzahl zusaetzlicher Nachrecherche-Runden fuer unvollstaendige Teilfragen,
+  # budget_searches das ueber alle Subagenten UND Runden geteilte Such-Budget.
+  limits:
+    max_parallel: 3
+    max_followups: 1
+    budget_searches: 9
+    timeout_seconds: 120
+  subagents:
+    - id: it-support
+      name: IT-Support
+      description: Beantwortet Fragen zu internen IT-Themen (VPN, Hardware, Zugaenge).
+      mission: >-
+        Finde Belege zu IT-/Helpdesk-Fragen ausschliesslich in den
+        IT-Wissensdokumenten. Beantworte NIE Fragen ausserhalb dieses
+        Themengebiets.
+      collections:
+        - it-docs
+      filters:
+        department: it
+      include_uncollected: false
+      tools:
+        - search_knowledge
+      # model: null -- erbt model oben (bot.model), sofern nicht gesetzt.
+      limits:
+        max_searches: 3
+        max_results: 5
+        timeout_seconds: 60
+    - id: hr-support
+      name: HR-Support
+      description: Beantwortet Fragen zu Personalthemen (Urlaub, Kuendigungsfristen, Vertraege).
+      mission: >-
+        Finde Belege zu HR-/Personalfragen ausschliesslich in den
+        HR-Wissensdokumenten. Beantworte NIE Fragen ausserhalb dieses
+        Themengebiets.
+      collections:
+        - hr-docs
+      filters:
+        department: hr
+      include_uncollected: false
+      tools:
+        - search_knowledge
+      # model: null -- erbt model oben (bot.model), sofern nicht gesetzt.
+      limits:
+        max_searches: 3
+        max_results: 5
+        timeout_seconds: 60

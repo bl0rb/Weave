@@ -216,6 +216,58 @@ class N8nTrace(BaseModel):
     dropped_sources: int = 0
 
 
+class SubagentTrace(BaseModel):
+    """One subagent's own outcome within an agent-mode turn (see
+    `AgentTrace` below) -- `id`/`status`/`searches_used` mirror
+    app/services/agents.py's `SubagentResult` field-for-field, `hits` is
+    `len(SubagentResult.hits)` (how many distinct retrieved chunks backed
+    this subagent's own facts), not the final deduplicated `ChatResponse.
+    sources` count."""
+
+    id: str
+    status: str
+    searches_used: int
+    hits: int
+
+
+class AgentTrace(BaseModel):
+    """Diagnostics for an agent-mode bot's turn (rollout plan's
+    `trace.agent`, app/services/chat.py's `_run_agent_turn_blocking`) --
+    present on `ChatTrace.agent` ONLY for a turn that actually ran the
+    agent-mode research loop (never for a non-agent-mode bot, and never for
+    the STREAMING `trace` event of a deferred agent turn -- see
+    `_PreparedTurn.agent_trace`'s own docstring for why that mirrors
+    `N8nTrace`'s identical "not yet known at trace-emission time"
+    posture). `mode` is always `'single'` in this rollout round (one
+    subagent researched per turn -- see app/services/chat.py's own
+    agent-turn docstring); a later rollout round's multi-subagent
+    orchestration is expected to add further values here rather than
+    replace this one. `budget` is `bot.agent.limits.budget_searches`
+    (app/schemas/bot.py) -- the turn-wide search budget configured for this
+    bot, reported alongside each subagent's own `searches_used` so a caller
+    can see how much of it this turn actually spent.
+    """
+
+    mode: str = 'single'
+    subagents: list[SubagentTrace] = Field(default_factory=list)
+    budget: int = 0
+    # The three fields below are `'graph'`-mode-only (rollout plan "Schritt 3
+    # -- LangGraph mit mehreren Subagenten", app/services/agent_graph.py) --
+    # `None`/`0` for every `mode='single'` turn, exactly like `n8n_trace`
+    # stays `None` for a non-n8n bot. `plan` is the main agent's own
+    # resolved `research_area(agent_id, question)` calls for this turn (one
+    # dict per subquestion, `{'agent_id': ..., 'subquestion': ...}`) --
+    # internal reasoning/prompts themselves are never exposed (rollout
+    # plan's own failure-semantics promise), only which agent got which
+    # subquestion. `followups` is how many follow-up research ROUNDS
+    # actually ran (bounded by `AgentLimits.max_followups`); `budget_used`
+    # is how much of `budget` (`AgentLimits.budget_searches`) this turn
+    # actually spent, summed across every subagent and every round.
+    plan: list[dict] | None = None
+    followups: int = 0
+    budget_used: int = 0
+
+
 class ChatTrace(BaseModel):
     intent: str
     confidence: float
@@ -233,6 +285,10 @@ class ChatTrace(BaseModel):
     # (conversational smalltalk, any pipeline failure before the webhook
     # call).
     n8n: N8nTrace | None = None
+    # See AgentTrace's own docstring -- None for every non-agent-mode turn,
+    # and for a deferred (streaming) agent turn's own initial `trace` event
+    # (the research loop hasn't run yet at that point).
+    agent: AgentTrace | None = None
 
 
 class ChatResponse(BaseModel):
