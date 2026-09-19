@@ -28,9 +28,11 @@ def test_admin_config_is_redacted_and_internal_projection_requires_service_token
         'api_key': 'super-secret-provider-key',
         'timeout_seconds': 45,
         'temperature': 0.3,
+        'supports_tools': True,
     })
     assert saved.status_code == 200, saved.text
     assert saved.json()['has_api_key'] is True
+    assert saved.json()['supports_tools'] is True
     assert 'api_key' not in saved.json()
     assert 'super-secret' not in saved.text
 
@@ -49,6 +51,7 @@ def test_admin_config_is_redacted_and_internal_projection_requires_service_token
     assert internal.headers['cache-control'] == 'no-store'
     assert internal.json()['api_key'] == 'super-secret-provider-key'
     assert internal.json()['model'] == 'enterprise-chat'
+    assert internal.json()['supports_tools'] is True
 
 
 def test_non_admin_cannot_read_or_change_chat_provider():

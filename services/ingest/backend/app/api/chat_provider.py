@@ -34,7 +34,7 @@ def _admin_response(row: ChatProviderConfig | None) -> ChatProviderAdminResponse
     if row is None:
         return ChatProviderAdminResponse(
             configured=False, enabled=False, base_url='', model='', has_api_key=False,
-            timeout_seconds=60.0, temperature=None, updated_at=None,
+            timeout_seconds=60.0, temperature=None, supports_tools=False, updated_at=None,
         )
     return ChatProviderAdminResponse(
         configured=True,
@@ -44,6 +44,7 @@ def _admin_response(row: ChatProviderConfig | None) -> ChatProviderAdminResponse
         has_api_key=bool(row.api_key_encrypted),
         timeout_seconds=row.timeout_seconds,
         temperature=row.temperature,
+        supports_tools=row.supports_tools,
         updated_at=row.updated_at,
     )
 
@@ -84,6 +85,7 @@ def update_chat_provider(
     row.model = payload.model.strip()
     row.timeout_seconds = payload.timeout_seconds
     row.temperature = payload.temperature
+    row.supports_tools = payload.supports_tools
     row.updated_by_id = admin.id
 
     # A credential is scoped to the endpoint it was entered for. Moving to a
@@ -132,5 +134,6 @@ def internal_chat_provider(response: Response, db: Session = Depends(get_db)) ->
         api_key=api_key,
         timeout_seconds=row.timeout_seconds,
         temperature=row.temperature,
+        supports_tools=row.supports_tools,
         updated_at=row.updated_at,
     )

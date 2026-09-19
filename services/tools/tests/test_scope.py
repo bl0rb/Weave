@@ -453,3 +453,95 @@ def test_expired_delegation_token_ttl_uses_configured_default(monkeypatch):
     payload = json.loads(base64.urlsafe_b64decode(part1 + padding))
     assert payload['exp'] - payload['iat'] == 1
     assert payload['iat'] >= before
+
+
+# --- Technical-Identity-Token (Schritt 5) ------------------------------------
+
+
+def test_valid_technical_identity_token_resolves_scope_via_ingest():
+    introspect_resp = fake_response(
+        200, {'active': True, 'identity_id': 'ident-1', 'name': 'n8n-integration', 'allowed_collections': ['handbuch']}
+    )
+    with patch('app.services.scope.httpx.post', return_value=introspect_resp) as mock_post:
+        scope = resolve_scope('Bearer wti_some-technical-identity-token')
+
+    assert scope == Scope(
+        kind='technical', user_id='ident-1', username='n8n-integration', team=None, allowed_collections=['handbuch'],
+    )
+    args, kwargs = mock_post.call_args
+    assert args[0] == 'http://weave-ingest.test/api/v1/internal/technical-identities/introspect'
+    assert kwargs['headers']['Authorization'] == 'Bearer test-tools-introspection-token'
+    assert kwargs['json'] == {'token': 'wti_some-technical-identity-token'}
+
+
+def test_technical_identity_token_never_falls_through_to_personal_path():
+    introspect_resp = fake_response(200, {'active': True, 'identity_id': 'i', 'name': 'x', 'allowed_collections': []})
+    with patch('app.services.scope.httpx.post', return_value=introspect_resp) as mock_post, patch(
+        'app.services.scope.httpx.get'
+    ) as mock_get:
+        resolve_scope('Bearer wti_abc')
+    # No collections lookup against Weave-Retrieval for this path -- the
+    # identity's own allowed_collections IS the grant.
+    mock_get.assert_not_called()
+    mock_post.assert_called_once()
+
+
+def test_inactive_technical_identity_token_raises_generic_error():
+    with patch('app.services.scope.httpx.post', return_value=fake_response(200, {'active': False})):
+        with pytest.raises(ScopeError) as excinfo:
+            resolve_scope('Bearer wti_revoked-or-unknown')
+    assert str(excinfo.value) == _GENERIC_AUTH_ERROR
+
+
+def test_technical_identity_introspection_transport_failure_raises_generic_error():
+    with patch('app.services.scope.httpx.post', side_effect=httpx.ConnectError('boom')):
+        with pytest.raises(ScopeError):
+            resolve_scope('Bearer wti_whatever')
+
+
+def test_technical_identity_scope_is_cached_within_ttl():
+    introspect_resp = fake_response(
+        200, {'active': True, 'identity_id': 'ident-2', 'name': 'agent', 'allowed_collections': ['faq']}
+    )
+    with patch('app.services.scope.httpx.post', return_value=introspect_resp) as mock_post:
+        first = resolve_scope('Bearer wti_cached-token')
+        second = resolve_scope('Bearer wti_cached-token')
+
+    assert first == second
+    mock_post.assert_called_once()  # second call served from cache, no second HTTP round trip
+
+
+def test_technical_identity_negative_result_is_also_cached():
+    with patch('app.services.scope.httpx.post', return_value=fake_response(200, {'active': False})) as mock_post:
+        with pytest.raises(ScopeError):
+            resolve_scope('Bearer wti_bad-token')
+        with pytest.raises(ScopeError):
+            resolve_scope('Bearer wti_bad-token')
+
+    mock_post.assert_called_once()
+
+
+def test_technical_identity_cache_expires_after_configured_ttl(monkeypatch):
+    monkeypatch.setattr(settings, 'technical_identity_cache_seconds', 1)
+    introspect_resp = fake_response(
+        200, {'active': True, 'identity_id': 'ident-3', 'name': 'agent', 'allowed_collections': ['faq']}
+    )
+    fake_time = [1000.0]
+    with patch('app.services.scope.time.monotonic', side_effect=lambda: fake_time[0]), patch(
+        'app.services.scope.httpx.post', return_value=introspect_resp
+    ) as mock_post:
+        resolve_scope('Bearer wti_ttl-token')
+        fake_time[0] += 2  # past the 1s TTL
+        resolve_scope('Bearer wti_ttl-token')
+
+    assert mock_post.call_count == 2
+
+
+def test_technical_identity_transport_failure_is_never_cached():
+    with patch('app.services.scope.httpx.post', side_effect=httpx.ConnectError('boom')) as mock_post:
+        with pytest.raises(ScopeError):
+            resolve_scope('Bearer wti_transient')
+        with pytest.raises(ScopeError):
+            resolve_scope('Bearer wti_transient')
+
+    assert mock_post.call_count == 2

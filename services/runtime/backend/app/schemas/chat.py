@@ -377,10 +377,57 @@ class ChatStreamErrorEvent(BaseModel):
     detail: str
 
 
+class ChatStreamStatusEvent(BaseModel):
+    """A short, human-readable progress line for an agent-mode turn
+    (rollout plan "Schritt 4 -- Administration und Streaming") -- sent
+    zero to many times between `trace` and the terminal event (`done`/
+    `error`), never for a non-agent-mode turn. `message` is a fixed,
+    pre-rendered German string built from config on the Runtime side
+    (e.g. '<Subagent-Name> wird durchsucht', 'Ergebnisse werden
+    zusammengeführt', 'Antwort wird formuliert') -- exactly like
+    `bot.guard.no_context_reply` already ships fixed German text from this
+    service. It NEVER carries a prompt, a query, a token, or any private
+    reasoning: `stage`/`agent_id`/`agent_name`/`state` are the only
+    structured fields, purely for a UI to key a chip/label off of, and
+    `message` is always safe to show verbatim.
+
+    `stage` is which phase of the agent-mode turn this status describes;
+    `agent_id`/`agent_name` are set only for a `stage='researching'` event
+    (identifying which subagent), `None` for `planning`/`merging`/
+    `answering`. `state` is `None` for a stage's own start ("work has
+    begun"); `'complete'`/`'partial'`/`'failed'` on a `stage='researching'`
+    event that reports a subagent's own finished `SubagentResult.status`
+    (see AgentTrace/SubagentTrace's own docstrings for what each of those
+    three means) -- a caller can use `state is None` to mean "started",
+    matching `AgentTrace`'s own eventual (post-hoc) `SubagentTrace.status`
+    for the SAME agent once the turn's `trace` machinery would otherwise
+    report it.
+
+    This is purely a live UI affordance -- it is never persisted, and it
+    is safe for any consumer that doesn't recognise `type='status'` to
+    silently ignore it (see contracts/internal-chat.md's own additive-
+    event-type versioning rule), except services/chat's own `sse.ts`,
+    which must be taught this `type` explicitly or it never reaches the
+    UI at all.
+    """
+
+    type: Literal['status'] = 'status'
+    stage: Literal['planning', 'researching', 'merging', 'answering']
+    agent_id: str | None = None
+    agent_name: str | None = None
+    state: Literal['complete', 'partial', 'failed'] | None = None
+    message: str
+
+
 # The full discriminated union `handle_chat_stream` yields and the route
 # serializes one-event-per-SSE-line -- named for exactly what it is instead
 # of e.g. `ChatEvent`, since `ChatMessage` above is already a similarly-named
 # but unrelated shape (one turn of `ChatRequest.history`, not a stream event).
 ChatStreamEvent = (
-    ChatStreamTraceEvent | ChatStreamDeltaEvent | ChatStreamSourcesEvent | ChatStreamDoneEvent | ChatStreamErrorEvent
+    ChatStreamTraceEvent
+    | ChatStreamDeltaEvent
+    | ChatStreamSourcesEvent
+    | ChatStreamDoneEvent
+    | ChatStreamErrorEvent
+    | ChatStreamStatusEvent
 )

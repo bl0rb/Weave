@@ -228,6 +228,7 @@ from app.schemas.chat import (
     ChatStreamErrorEvent,
     ChatStreamEvent,
     ChatStreamSourcesEvent,
+    ChatStreamStatusEvent,
     ChatStreamTraceEvent,
     ChatTrace,
     ChatUser,
@@ -1313,16 +1314,15 @@ def _stream_deferred_multi_agent(deferred: '_DeferredMultiAgentTurn') -> Iterato
     """The graph-mode analogue of `_stream_deferred_agent` -- same
     thread+queue+keepalive mechanics (see that function's own docstring),
     but the worker thread here runs the ENTIRE LangGraph flow as a single
-    call (`agent_graph.run_graph`) rather than two separate phases: the
-    graph's own `answer` node already produces one complete final-answer
-    string via a single blocking `llm_provider.chat(...)` call (LangGraph's
-    node-returns-a-state-update model has no notion of a partial/streamed
-    return), so this streams that finished string out chunked via
-    `llm_service.iter_text_deltas` -- exactly like a fixed guard/
-    V1-unsupported reply already does elsewhere in this module -- rather
-    than genuine incremental token generation. A deliberate, documented
-    simplification for this rollout step; a later one could teach the
-    `answer` node itself to push deltas onto this same queue instead.
+    call (`agent_graph.run_graph`) rather than two separate phases. The
+    graph's own `answer` node streams genuine incremental token deltas by
+    calling `llm_service.iter_chat_stream` and forwarding each chunk to
+    `progress_cb('delta', ...)` (see `agent_graph.py`'s `_answer`); this
+    function simply relays those `('delta', payload)` messages off the
+    queue as `ChatStreamDeltaEvent`s as they arrive. `outcome.final_answer`
+    is only ever re-chunked via `llm_service.iter_text_deltas` for the
+    guard-triggered fallback case below, where no deltas were streamed by
+    the graph at all.
 
     On `GeneratorExit` (client disconnect, or this generator closed early
     for any other reason) `deferred.cancel` is set before re-raising --
@@ -1336,9 +1336,17 @@ def _stream_deferred_multi_agent(deferred: '_DeferredMultiAgentTurn') -> Iterato
     """
     result_queue: queue.Queue = queue.Queue()
 
+    def _progress_cb(kind: str, payload: object) -> None:
+        result_queue.put((kind, payload))
+
     def _worker() -> None:
         try:
-            result_queue.put(('outcome', _run_multi_agent_graph(deferred)))
+            outcome = agent_graph_service.run_graph(
+                deferred.bot, deferred.message, deferred.history, deferred.available,
+                deferred.subagents_by_id, deferred.subagent_llm_providers, deferred.main_llm_provider,
+                cancel=deferred.cancel, progress_cb=_progress_cb,
+            )
+            result_queue.put(('outcome', outcome))
         except Exception as exc:  # noqa: BLE001 -- forwarded to the reader thread, never raised on this one
             result_queue.put(('error', exc))
 
@@ -1357,10 +1365,31 @@ def _stream_deferred_multi_agent(deferred: '_DeferredMultiAgentTurn') -> Iterato
                 logger.warning('multi-agent stream turn failed for bot %s: %s', deferred.bot.id, payload)
                 yield ChatStreamErrorEvent(detail='Die Recherche der Agenten ist unerwartet fehlgeschlagen.')
                 return
+            if kind == 'status':
+                yield payload
+                continue
+            if kind == 'delta':
+                # A genuine incremental piece of the `answer` node's own
+                # streamed final-answer text (see agent_graph.py's `_answer`,
+                # the `progress_cb is not None` branch) -- pushed as it is
+                # generated, never re-chunked here.
+                yield ChatStreamDeltaEvent(text=payload)
+                continue
 
+            # `outcome` -- the graph's own final, reduced state. When the
+            # response guard fired, `_answer` returned before ever
+            # streaming anything (rollout plan's failure semantics: no
+            # evidence at all means the fixed guard reply, not a call to
+            # the LLM), so `outcome.final_answer` here is that fixed reply,
+            # not yet sent as any `delta` -- chunk it out now, exactly like
+            # `_stream_deferred_agent`'s own `guard` branch does. Every
+            # other outcome already had its full answer streamed via
+            # `progress_cb`'s own `'delta'` events above, so re-emitting it
+            # here would duplicate the answer.
             outcome: agent_graph_service.GraphOutcome = payload
-            for text_delta in llm_service.iter_text_deltas(outcome.final_answer):
-                yield ChatStreamDeltaEvent(text=text_delta)
+            if outcome.guard_triggered:
+                for text_delta in llm_service.iter_text_deltas(outcome.final_answer):
+                    yield ChatStreamDeltaEvent(text=text_delta)
             yield ChatStreamSourcesEvent(sources=outcome.sources)
             yield ChatStreamDoneEvent()
             return
@@ -1531,13 +1560,22 @@ def _stream_deferred_agent(deferred: '_DeferredAgentTurn') -> Iterator[ChatStrea
 
     def _worker() -> None:
         try:
+            result_queue.put(('status', ChatStreamStatusEvent(
+                stage='researching', agent_id=deferred.subagent.id, agent_name=deferred.subagent.name,
+                message=f'{deferred.subagent.name} wird durchsucht',
+            )))
             result = _run_subagent(deferred)
+            result_queue.put(('status', ChatStreamStatusEvent(
+                stage='researching', agent_id=deferred.subagent.id, agent_name=deferred.subagent.name,
+                state=result.status, message=f'{deferred.subagent.name} abgeschlossen',
+            )))
             sources = _sources_from_result(result)
 
             if deferred.bot.guard.require_sources and not sources:
                 result_queue.put(('guard', deferred.bot.guard.no_context_reply))
                 return
 
+            result_queue.put(('status', ChatStreamStatusEvent(stage='answering', message='Antwort wird formuliert')))
             for delta in llm_service.iter_chat_stream(
                 deferred.llm_provider, _final_agent_messages(deferred, result),
                 model=deferred.bot.model.model, temperature=deferred.bot.model.temperature,
@@ -1561,6 +1599,9 @@ def _stream_deferred_agent(deferred: '_DeferredAgentTurn') -> Iterator[ChatStrea
             logger.warning('agent stream turn failed for bot %s: %s', deferred.bot.id, payload)
             yield ChatStreamErrorEvent(detail='Die Recherche des Agenten ist unerwartet fehlgeschlagen.')
             return
+        if kind == 'status':
+            yield payload
+            continue
         if kind == 'guard':
             for text_delta in llm_service.iter_text_deltas(payload):
                 yield ChatStreamDeltaEvent(text=text_delta)
@@ -1760,14 +1801,6 @@ def _prepare_turn(request: ChatRequest, *, defer_n8n: bool = False) -> _Prepared
     # completely different generation mechanism this module has to
     # special-case BEFORE ever reaching that factory).
     is_n8n_bot = bot.model.provider == 'n8n'
-    # Snapshot the originally-loaded model NAME before any central-provider
-    # override below can change it -- `supports_tools` was only ever
-    # declared true for THIS specific model, so the FIX-1 re-check further
-    # down must also catch an override that swaps `model.model` under an
-    # UNCHANGED provider label (e.g. 'openai' -> 'openai' with a different
-    # `central_provider.model`), not only one that changes the provider
-    # label itself.
-    original_model_name = bot.model.model
     central_provider = None if is_n8n_bot else fetch_chat_provider()
     if central_provider is not None and central_provider.enabled:
         resolved_temperature = (
@@ -1780,6 +1813,12 @@ def _prepare_turn(request: ChatRequest, *, defer_n8n: bool = False) -> _Prepared
                 'provider': 'openai',
                 'model': central_provider.model,
                 'temperature': resolved_temperature,
+                # The effective (post-override) model's tool-call support
+                # is whatever the central provider itself declares -- never
+                # inherited from the original, now-replaced model, whose
+                # `supports_tools` describes a completely different model
+                # name. See `agent_mode_supported` below, the sole reader.
+                'supports_tools': central_provider.supports_tools,
             })
         })
         llm_provider = llm_service.OpenAICompatibleLLM(
@@ -1833,18 +1872,13 @@ def _prepare_turn(request: ChatRequest, *, defer_n8n: bool = False) -> _Prepared
     # the bot's own YAML-time `model` -- but the central-provider override
     # just above (`bot.model.model_copy(update={...})`) can swap `bot.model`
     # to an entirely different provider/model AFTER that validator already
-    # ran, without re-running it and without touching `model.supports_tools`
-    # (which still describes the ORIGINAL, pre-override model). Re-check the
-    # same predicate against the now-effective `bot.model` here so an active
-    # central-provider override can never silently point agent mode at a
-    # model whose real tool-call support was never checked -- including a
-    # same-provider-label swap (`model.model` changed under an unchanged
-    # `model.provider`, e.g. 'openai' -> 'openai' with a different central
-    # model), where `supports_tools` is inherited unchanged from the
-    # ORIGINAL model and would otherwise still read `True` for a model name
-    # whose tool-call support was never actually declared.
-    model_was_overridden = bot.model.model != original_model_name
-    agent_mode_supported = bot.model.provider == 'fake' or (bool(bot.model.supports_tools) and not model_was_overridden)
+    # ran. That override now sets its own `supports_tools` from the central
+    # provider's own declaration (see above), so re-checking the same
+    # predicate against the now-effective `bot.model` here is safe and
+    # correct whether or not an override happened -- a centrally managed
+    # model whose admin declared tool support can run agent mode, and one
+    # that didn't falls back to RAG, exactly like an un-overridden bot.
+    agent_mode_supported = bot.model.provider == 'fake' or bool(bot.model.supports_tools)
     if (
         bot.agent is not None
         and bot.agent.enabled

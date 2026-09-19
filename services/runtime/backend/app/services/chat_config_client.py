@@ -24,6 +24,14 @@ class ChatProviderSnapshot:
     api_key: str = ''
     timeout_seconds: float = 60.0
     temperature: float | None = None
+    # Whether the centrally managed model actually supports tool/function
+    # calls -- an admin-declared fact (Weave-Ingest's chat-provider config),
+    # not something this client can probe. Defaults to False (the safe,
+    # pre-existing behaviour) whenever the control plane doesn't send it,
+    # which also covers talking to an older Ingest version that predates
+    # this field. See app/services/chat.py's `agent_mode_supported`, which
+    # is the sole reader.
+    supports_tools: bool = False
 
 
 def fetch_chat_provider() -> ChatProviderSnapshot | None:
@@ -55,6 +63,7 @@ def fetch_chat_provider() -> ChatProviderSnapshot | None:
             api_key=str(body.get('api_key') or ''),
             timeout_seconds=float(body.get('timeout_seconds', 60.0)),
             temperature=float(body['temperature']) if body.get('temperature') is not None else None,
+            supports_tools=bool(body.get('supports_tools', False)),
         )
     except (ValueError, TypeError, KeyError) as exc:
         raise ChatConfigUnavailable('Zentrale Chat-Konfiguration hat ungültige Daten geliefert.') from exc

@@ -22,6 +22,60 @@ import {
   useAdminList,
 } from './admin-shared';
 
+// Mirrors Weave-Runtime's `AgentConfig`/`SubagentConfig`/`AgentLimits`
+// (services/runtime/backend/app/schemas/bot.py) and Weave-Ingest's own
+// pydantic mirror of it (services/ingest/backend/app/schemas/
+// managed_bots.py's `AgentConfig`) field-for-field -- the payload this
+// editor builds is exactly the `agent` JSON Weave-Runtime's own
+// `BotConfig.agent` accepts, so field names/shapes here must stay in sync
+// with both of those, never renamed independently.
+type AgentSubagentFilters = {
+  team?: string | null;
+  department?: string | null;
+  tags?: string[];
+  source?: string | null;
+  language?: string | null;
+  document_type?: string | null;
+};
+
+type AgentSubagentModel = {
+  provider: string;
+  model: string;
+  temperature?: number | null;
+  supports_tools?: boolean | null;
+};
+
+type AgentSubagentLimits = {
+  max_searches: number;
+  max_results: number;
+  timeout_seconds: number;
+};
+
+type AgentSubagent = {
+  id: string;
+  name: string;
+  description?: string | null;
+  mission: string;
+  collections: string[];
+  filters: AgentSubagentFilters;
+  include_uncollected: boolean;
+  model?: AgentSubagentModel | null;
+  limits: AgentSubagentLimits;
+};
+
+type AgentLimits = {
+  max_parallel: number;
+  max_followups: number;
+  budget_searches: number;
+  timeout_seconds: number;
+};
+
+type AgentConfig = {
+  enabled: boolean;
+  subagents: AgentSubagent[];
+  limits: AgentLimits;
+};
+
 type ManagedBot = {
   id: string;
   kind: 'n8n' | 'llm';
@@ -44,6 +98,7 @@ type ManagedBot = {
   final_k?: number;
   rerank?: boolean;
   include_uncollected?: boolean;
+  agent?: AgentConfig | null;
   created_at: string;
   updated_at: string;
   source?: 'managed' | 'runtime';
@@ -80,7 +135,70 @@ const emptyDraft = (): BotDraft => ({
   final_k: 5,
   rerank: true,
   include_uncollected: true,
+  agent: null,
 });
+
+const emptyAgentLimits = (): AgentLimits => ({ max_parallel: 3, max_followups: 1, budget_searches: 9, timeout_seconds: 120 });
+const emptyAgent = (): AgentConfig => ({ enabled: true, subagents: [], limits: emptyAgentLimits() });
+
+function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function emptySubagent(existingIds: string[]): AgentSubagent {
+  let id = 'subagent';
+  let suffix = 1;
+  while (existingIds.includes(id)) {
+    suffix += 1;
+    id = `subagent-${suffix}`;
+  }
+  return {
+    id, name: '', description: null, mission: '', collections: [], filters: {}, include_uncollected: false,
+    model: null, limits: { max_searches: 3, max_results: 5, timeout_seconds: 60 },
+  };
+}
+
+/** Client-side mirror of Weave-Runtime's own `AgentConfig` validation
+ * rules (services/runtime/backend/app/schemas/bot.py's `AgentConfig`/
+ * `SubagentConfig`) -- catches a malformed agent-mode configuration in the
+ * editor itself, with a German message, instead of only surfacing it as a
+ * 422 from Weave-Ingest's own mirror (schemas/managed_bots.py) after
+ * "Bot speichern" already failed. Returns an empty array when `agent` is
+ * `null` or disabled, since a disabled/absent agent block has nothing to
+ * validate. */
+function validateAgent(agent: AgentConfig | null): string[] {
+  if (!agent || !agent.enabled) return [];
+  const errors: string[] = [];
+  if (agent.subagents.length === 0) {
+    errors.push('Mindestens ein Subagent ist erforderlich, wenn der Agentenmodus aktiviert ist.');
+  }
+  const ids = agent.subagents.map(subagent => subagent.id);
+  const duplicates = [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))];
+  if (duplicates.length > 0) {
+    errors.push(`Die Subagenten-IDs müssen eindeutig sein: ${duplicates.join(', ')}.`);
+  }
+  for (const subagent of agent.subagents) {
+    const label = subagent.name.trim() || subagent.id || 'Unbenannter Subagent';
+    if (!subagent.id.trim()) errors.push(`Subagent "${label}": Die ID darf nicht leer sein.`);
+    if (!subagent.name.trim()) errors.push(`Subagent "${label}": Der Name darf nicht leer sein.`);
+    if (!subagent.mission.trim()) errors.push(`Subagent "${label}": Der fachliche Auftrag darf nicht leer sein.`);
+    if (subagent.collections.length === 0 && !subagent.include_uncollected) {
+      errors.push(
+        `Subagent "${label}": Mindestens ein Wissensbereich ist erforderlich, oder "Dokumente ohne ` +
+        'Wissensbereich einbeziehen" muss aktiviert sein.'
+      );
+    }
+    if (subagent.model && !subagent.model.model.trim()) {
+      errors.push(`Subagent "${label}": Das Modell des Modell-Override darf nicht leer sein.`);
+    }
+  }
+  return errors;
+}
 
 export function BotsTab() {
   const bots = useAdminList<ManagedBot>('/api/v1/auth/admin/bots');
@@ -139,7 +257,12 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
   const [error, setError] = useState<string | null>(null);
   const set = <K extends keyof BotDraft>(key: K, value: BotDraft[K]) => setDraft(current => ({ ...current, [key]: value }));
   const toggleValue = (key: 'teams' | 'collections', value: string) => set(key, draft[key].includes(value) ? draft[key].filter(item => item !== value) : [...draft[key], value]);
-  const canSave = Boolean(draft.id.trim() && draft.name.trim() && (draft.kind === 'llm' ? draft.system_prompt?.trim() : draft.webhook_url?.trim()) && !saving);
+  const agentErrors = draft.kind === 'llm' ? validateAgent(draft.agent ?? null) : [];
+  const canSave = Boolean(
+    draft.id.trim() && draft.name.trim() &&
+    (draft.kind === 'llm' ? draft.system_prompt?.trim() : draft.webhook_url?.trim()) &&
+    agentErrors.length === 0 && !saving
+  );
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -167,6 +290,7 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
       collections: draft.collections,
       require_sources: draft.require_sources,
       no_context_reply: draft.no_context_reply,
+      agent: draft.kind === 'llm' && draft.agent?.enabled ? draft.agent : null,
       ...(!bot ? { id: draft.id } : {}),
     };
     try {
@@ -192,6 +316,18 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
       {draft.kind === 'llm' && draft.retrieval_enabled && <div className="grid gap-4 sm:grid-cols-4"><Field label="Top-K"><input className={inputClass} type="number" min={1} value={draft.top_k} onChange={event => set('top_k', Number(event.target.value) || 20)} /></Field><Field label="Final-K"><input className={inputClass} type="number" min={1} max={draft.top_k} value={draft.final_k} onChange={event => set('final_k', Number(event.target.value) || 5)} /></Field><Field label="Temperatur"><input className={inputClass} type="number" min={0} max={2} step={0.1} value={draft.temperature ?? 0.2} onChange={event => set('temperature', Number(event.target.value))} /></Field><Toggle checked={Boolean(draft.rerank)} onChange={value => set('rerank', value)} label="Reranking" /></div>}
       {draft.kind === 'llm' && draft.retrieval_enabled && <Field label="Abteilung filtern" hint="Optionaler Metadatenfilter für die Wissenssuche."><input className={inputClass} value={String(draft.retrieval_filters?.department || '')} onChange={event => set('retrieval_filters', { ...draft.retrieval_filters, department: event.target.value || null })} placeholder="z. B. legal" /></Field>}
       {draft.require_sources && <Field label="Antwort ohne belegte Quellen"><textarea className={inputClass} rows={2} value={draft.no_context_reply} onChange={event => set('no_context_reply', event.target.value)} /></Field>}
+      {draft.kind === 'llm' && (
+        <div className="space-y-3 rounded-xl border border-slate-200 p-4">
+          <Toggle
+            checked={Boolean(draft.agent?.enabled)}
+            onChange={value => set('agent', value ? (draft.agent ?? emptyAgent()) : (draft.agent ? { ...draft.agent, enabled: false } : null))}
+            label="Agentenmodus (Subagenten recherchieren mit eigenem Suchbudget)"
+          />
+          {draft.agent?.enabled && (
+            <AgentEditor agent={draft.agent} spaces={spaces} onChange={next => set('agent', next)} errors={agentErrors} />
+          )}
+        </div>
+      )}
       <ScopeChoices title="Anwendergruppen" emptyLabel="Keine Auswahl: alle Anwendergruppen dürfen den Bot verwenden." items={teams.map(team => team.name)} selected={draft.teams} onToggle={value => toggleValue('teams', value)} />
       <ScopeChoices title="Wissensbereiche" emptyLabel="Keine Auswahl: alle Wissensbereiche, für die der jeweilige Nutzer berechtigt ist." items={spaces.map(space => space.slug)} selected={draft.collections} onToggle={value => toggleValue('collections', value)} />
       <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-4"><Button type="button" variant="outline" onClick={onClose} disabled={saving}>Abbrechen</Button><Button type="submit" disabled={!canSave}>{saving ? 'Wird gespeichert…' : 'Bot speichern'}</Button></div>
@@ -201,4 +337,136 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
 
 function ScopeChoices({ title, emptyLabel, items, selected, onToggle }: { title: string; emptyLabel: string; items: string[]; selected: string[]; onToggle: (value: string) => void }) {
   return <fieldset><legend className="text-sm font-medium text-slate-700">{title}</legend><p className="mt-1 text-xs text-slate-400">{emptyLabel}</p>{items.length ? <div className="mt-2 grid max-h-36 gap-2 overflow-y-auto rounded-xl border border-slate-200 p-3 sm:grid-cols-2">{items.map(item => <label key={item} className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={selected.includes(item)} onChange={() => onToggle(item)} />{item}</label>)}</div> : <p className="mt-2 text-sm text-amber-700">Noch keine Einträge verfügbar.</p>}</fieldset>;
+}
+
+function AgentEditor({
+  agent, spaces, onChange, errors,
+}: { agent: AgentConfig; spaces: KnowledgeSpace[]; onChange: (next: AgentConfig) => void; errors: string[] }) {
+  const setLimits = (limits: Partial<AgentLimits>) => onChange({ ...agent, limits: { ...agent.limits, ...limits } });
+  const setSubagent = (index: number, next: AgentSubagent) =>
+    onChange({ ...agent, subagents: agent.subagents.map((item, i) => (i === index ? next : item)) });
+  const removeSubagent = (index: number) => onChange({ ...agent, subagents: agent.subagents.filter((_, i) => i !== index) });
+  const addSubagent = () => onChange({ ...agent, subagents: [...agent.subagents, emptySubagent(agent.subagents.map(s => s.id))] });
+
+  return <div className="space-y-3">
+    {errors.length > 0 && (
+      <ul role="alert" className="list-disc space-y-1 rounded-xl border border-red-200 bg-red-50 px-4 py-3 pl-8 text-xs text-red-700">
+        {errors.map(err => <li key={err}>{err}</li>)}
+      </ul>
+    )}
+    {agent.subagents.length === 0 && <p className="text-sm text-amber-700">Noch keine Subagenten. Mindestens einer ist erforderlich.</p>}
+    <div className="space-y-3">
+      {agent.subagents.map((subagent, index) => (
+        <SubagentEditor
+          key={index}
+          subagent={subagent}
+          spaces={spaces}
+          onChange={next => setSubagent(index, next)}
+          onRemove={() => removeSubagent(index)}
+        />
+      ))}
+    </div>
+    <Button type="button" variant="outline" size="sm" onClick={addSubagent}><Plus size={15} />Subagent hinzufügen</Button>
+
+    <fieldset className="rounded-xl bg-slate-50 p-3">
+      <legend className="px-1 text-sm font-medium text-slate-700">Grenzen für den gesamten Agentenlauf</legend>
+      <div className="mt-2 grid gap-3 sm:grid-cols-2">
+        <Field label="Parallele Subagenten (max_parallel)"><input className={inputClass} type="number" min={1} max={20} value={agent.limits.max_parallel} onChange={event => setLimits({ max_parallel: Number(event.target.value) || 1 })} /></Field>
+        <Field label="Folgerunden (max_followups)"><input className={inputClass} type="number" min={0} max={10} value={agent.limits.max_followups} onChange={event => setLimits({ max_followups: Number(event.target.value) || 0 })} /></Field>
+        <Field label="Such-Budget insgesamt (budget_searches)"><input className={inputClass} type="number" min={0} max={500} value={agent.limits.budget_searches} onChange={event => setLimits({ budget_searches: Number(event.target.value) || 0 })} /></Field>
+        <Field label="Zeitlimit gesamt (Sekunden)"><input className={inputClass} type="number" min={1} max={3600} value={agent.limits.timeout_seconds} onChange={event => setLimits({ timeout_seconds: Number(event.target.value) || 120 })} /></Field>
+      </div>
+    </fieldset>
+  </div>;
+}
+
+function SubagentEditor({
+  subagent, spaces, onChange, onRemove,
+}: { subagent: AgentSubagent; spaces: KnowledgeSpace[]; onChange: (next: AgentSubagent) => void; onRemove: () => void }) {
+  // Auto-derives the id from the name until the id has been edited by hand
+  // (tracked locally, never sent to the backend) -- mirrors how the
+  // top-level bot editor above keeps the id user-editable while offering a
+  // sensible default.
+  const [idTouched, setIdTouched] = useState(Boolean(subagent.name) && subagent.id !== slugify(subagent.name));
+  const setModel = (updates: Partial<AgentSubagentModel>) =>
+    onChange({ ...subagent, model: { provider: 'openai', model: '', supports_tools: false, ...subagent.model, ...updates } });
+  const setLimits = (limits: Partial<AgentSubagentLimits>) => onChange({ ...subagent, limits: { ...subagent.limits, ...limits } });
+  const setFilter = (key: 'team' | 'department' | 'source' | 'language' | 'document_type', value: string) =>
+    onChange({ ...subagent, filters: { ...subagent.filters, [key]: value || undefined } });
+  const setTagsFilter = (value: string) =>
+    onChange({
+      ...subagent,
+      filters: {
+        ...subagent.filters,
+        tags: value.trim() ? value.split(',').map(tag => tag.trim()).filter(Boolean) : undefined,
+      },
+    });
+  const toggleCollection = (slug: string) =>
+    onChange({
+      ...subagent,
+      collections: subagent.collections.includes(slug)
+        ? subagent.collections.filter(item => item !== slug)
+        : [...subagent.collections, slug],
+    });
+
+  return <div className="space-y-3 rounded-xl border border-slate-200 p-3">
+    <div className="flex items-start justify-between gap-2">
+      <div className="grid flex-1 gap-3 sm:grid-cols-2">
+        <Field label="Name">
+          <input
+            className={inputClass}
+            value={subagent.name}
+            onChange={event => {
+              const name = event.target.value;
+              onChange({ ...subagent, name, id: idTouched ? subagent.id : slugify(name) });
+            }}
+            placeholder="IT Support"
+          />
+        </Field>
+        <Field label="ID (Slug)" hint="Wird aus dem Namen abgeleitet, kann angepasst werden.">
+          <input
+            className={inputClass}
+            value={subagent.id}
+            onChange={event => { setIdTouched(true); onChange({ ...subagent, id: event.target.value.toLowerCase() }); }}
+            placeholder="it-support"
+          />
+        </Field>
+      </div>
+      <Button type="button" variant="ghost" size="sm" onClick={onRemove} aria-label={`${subagent.name || subagent.id} entfernen`}><Trash2 size={15} /></Button>
+    </div>
+    <Field label="Beschreibung"><input className={inputClass} value={subagent.description || ''} onChange={event => onChange({ ...subagent, description: event.target.value || null })} /></Field>
+    <Field label="Fachlicher Auftrag"><textarea className={inputClass} rows={2} value={subagent.mission} onChange={event => onChange({ ...subagent, mission: event.target.value })} placeholder="Beantwortet IT-/Helpdesk-Fragen." /></Field>
+    <ScopeChoices title="Collections" emptyLabel="Mindestens eine Collection wählen, oder unten Altbestand einbeziehen." items={spaces.map(space => space.slug)} selected={subagent.collections} onToggle={toggleCollection} />
+    <Toggle checked={subagent.include_uncollected} onChange={value => onChange({ ...subagent, include_uncollected: value })} label="Dokumente ohne Wissensbereich einbeziehen" />
+    <div className="grid gap-3 sm:grid-cols-2">
+      <Field label="Team (Filter)"><input className={inputClass} value={subagent.filters.team || ''} onChange={event => setFilter('team', event.target.value)} /></Field>
+      <Field label="Abteilung (Filter)"><input className={inputClass} value={subagent.filters.department || ''} onChange={event => setFilter('department', event.target.value)} /></Field>
+      <Field label="Quelle (Filter)"><input className={inputClass} value={subagent.filters.source || ''} onChange={event => setFilter('source', event.target.value)} /></Field>
+      <Field label="Sprache (Filter)"><input className={inputClass} value={subagent.filters.language || ''} onChange={event => setFilter('language', event.target.value)} /></Field>
+      <Field label="Dokumenttyp (Filter)"><input className={inputClass} value={subagent.filters.document_type || ''} onChange={event => setFilter('document_type', event.target.value)} /></Field>
+      <Field label="Tags (Filter)" hint="Kommagetrennt.">
+        <input
+          className={inputClass}
+          value={(subagent.filters.tags || []).join(', ')}
+          onChange={event => setTagsFilter(event.target.value)}
+        />
+      </Field>
+    </div>
+    <fieldset className="rounded-xl bg-slate-50 p-3"><legend className="px-1 text-sm font-medium text-slate-700">Grenzen dieses Subagenten</legend>
+      <div className="mt-2 grid gap-3 sm:grid-cols-3">
+        <Field label="Max. Suchen"><input className={inputClass} type="number" min={1} max={50} value={subagent.limits.max_searches} onChange={event => setLimits({ max_searches: Number(event.target.value) || 1 })} /></Field>
+        <Field label="Max. Treffer/Suche"><input className={inputClass} type="number" min={1} max={50} value={subagent.limits.max_results} onChange={event => setLimits({ max_results: Number(event.target.value) || 1 })} /></Field>
+        <Field label="Zeitlimit (Sekunden)"><input className={inputClass} type="number" min={1} max={3600} value={subagent.limits.timeout_seconds} onChange={event => setLimits({ timeout_seconds: Number(event.target.value) || 60 })} /></Field>
+      </div>
+    </fieldset>
+    <details className="rounded-xl border border-slate-200 p-3">
+      <summary className="cursor-pointer text-sm font-medium text-slate-700">Modell-Override (optional)</summary>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <Field label="Provider"><input className={inputClass} value={subagent.model?.provider || ''} onChange={event => setModel({ provider: event.target.value })} placeholder="openai" /></Field>
+        <Field label="Modell"><input className={inputClass} value={subagent.model?.model || ''} onChange={event => setModel({ model: event.target.value })} placeholder="gpt-4o-mini" /></Field>
+      </div>
+      <Toggle checked={Boolean(subagent.model?.supports_tools)} onChange={value => setModel({ supports_tools: value })} label="Modell unterstützt Tool-Calls" />
+      <Button type="button" variant="ghost" size="sm" className="mt-2" onClick={() => onChange({ ...subagent, model: null })}>Override entfernen</Button>
+    </details>
+  </div>;
 }

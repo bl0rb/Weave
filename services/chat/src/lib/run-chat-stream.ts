@@ -1,10 +1,14 @@
 import { parseSseStream } from '@/lib/sse';
-import type { ChatTrace, Source } from '@/types/weave-api';
+import type { ChatStreamStatusEvent, ChatTrace, Source } from '@/types/weave-api';
 
 export interface ChatStreamCallbacks {
   onTrace?: (trace: ChatTrace) => void;
   onDelta?: (text: string) => void;
   onSources?: (sources: Source[]) => void;
+  /** One agent-mode progress line (Weave-Runtime's `status` event) — see
+   * `ChatStreamStatusEvent`'s own docstring. Never carries a prompt/query/
+   * token; always safe to render `message` verbatim. */
+  onStatus?: (event: ChatStreamStatusEvent) => void;
 }
 
 export type ChatStreamOutcome =
@@ -42,6 +46,9 @@ export async function consumeChatStream(
         break;
       case 'sources':
         callbacks.onSources?.(event.sources);
+        break;
+      case 'status':
+        callbacks.onStatus?.(event);
         break;
       case 'done':
         return { status: 'done' };

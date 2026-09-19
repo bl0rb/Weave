@@ -295,6 +295,11 @@ class ChatProviderConfig(Base):
     api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     timeout_seconds: Mapped[float] = mapped_column(Float, default=60.0, server_default='60', nullable=False)
     temperature: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Admin-declared fact: does the configured model actually support tool/
+    # function calls? Runtime reads this via the internal projection to
+    # decide whether a managed bot's agent mode may run -- see
+    # services/runtime/backend/app/services/chat_config_client.py.
+    supports_tools: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0', nullable=False)
     updated_by_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True
     )
@@ -1142,3 +1147,92 @@ class DocumentRelease(Base):
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     lease_token: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+
+class TechnicalIdentity(Base):
+    """A standalone integration's (or external MCP agent's) own credential
+    -- Step 5's "technische Identitaet": granted EXACTLY the collections
+    listed in `allowed_collections` (default `[]`, i.e. no knowledge access
+    at all until an admin explicitly grants some), never a user's or team's
+    wider rights. Weave-Tools resolves a caller's bearer token against this
+    table (via POST /api/v1/internal/technical-identities/introspect below)
+    the same way it resolves a Personal-Token against Weave-API -- see that
+    service's app/services/scope.py.
+
+    Same never-store-the-raw-value discipline as ApiToken/Session: only
+    sha256(token) lives in `token_hash` (app/services/security.hash_session_
+    token, reused here); the plaintext is returned exactly once, at
+    creation or rotation time. `token_prefix` (the first characters of the
+    raw `wti_...` token) lets the admin list recognize an identity without
+    ever re-displaying the full value.
+
+    `revoked_at` (set) is the irreversible, audited hard-stop -- once set it
+    is never cleared. `enabled` is the reversible admin on/off toggle for
+    day-to-day use (e.g. temporarily pausing an integration without losing
+    its token/grants). Both are checked wherever a credential is verified:
+    a revoked OR disabled OR expired identity must introspect as inactive.
+    """
+
+    __tablename__ = 'technical_identities'
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Collection slugs this identity may read -- default [] means NO
+    # knowledge access at all (Step 5: "neue Integrationen bekommen KEINEN
+    # Wissenszugriff, bis Sammlungen freigegeben werden"). Narrowing-only
+    # semantics against a caller-supplied `collection` parameter are already
+    # enforced generically by Weave-Tools' scope intersection -- nothing
+    # here needs to re-check that.
+    allowed_collections: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1', nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    token_prefix: Mapped[str] = mapped_column(String(12), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Touched at most once/60s by the introspection endpoint, same bound as
+    # ApiToken.last_used_at.
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class TechnicalIdentityAudit(Base):
+    """Append-only audit trail for TechnicalIdentity administration and
+    introspection, per Step 5's "Administration, Tokenausgabe, Ablauf,
+    Widerruf und Audit-Logging". One row per create/rotate/revoke/update and
+    per DENIED introspection attempt (a successful introspection is not
+    audited here -- that would be one row per tool call; see
+    TechnicalIdentity.last_used_at for "was this identity used recently").
+
+    SET NULL on the identity FK (mirrors WebhookDelivery.connection_id):
+    the audit trail is a log and must outlive the identity row it is about,
+    same reasoning throughout this module. `details` is JSON and must never
+    contain the raw token or any other secret -- only descriptive fields
+    (e.g. which collections changed).
+    """
+
+    __tablename__ = 'technical_identity_audit'
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    identity_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('technical_identities.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    # 'created' | 'rotated' | 'revoked' | 'updated' | 'introspected_denied'
+    event: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    details: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now(), nullable=False, index=True
+    )

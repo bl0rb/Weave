@@ -237,6 +237,26 @@ shared:
       master key: whoever holds it can resolve the identity behind ANY
       Personal-Token in API's database.
 
+  TOOLS_INTROSPECTION_TOKEN:
+    secret: true
+    env_var: TOOLS_INTROSPECTION_TOKEN
+    required: true
+    targets:
+      - {service: ingest, var: TOOLS_INTROSPECTION_TOKEN}
+      - {service: tools, var: TOOLS_INTROSPECTION_TOKEN}
+    comment: >
+      Schritt 5 (technische Identitaeten): Tools calls Ingest's own POST
+      /api/v1/internal/technical-identities/introspect to resolve a
+      standalone integration's 'wti_...' token into its granted
+      collections; Ingest verifies this token on that route. A completely
+      separate secret from INTROSPECTION_SERVICE_TOKEN above -- that one
+      gates Tools' calls to API's Personal-Token introspection, this one
+      gates Tools' calls to Ingest's technical-identity introspection, two
+      different upstreams with two different identity stores. Drift, or
+      Ingest not having it set: Ingest answers 401/503 to Tools' call, so
+      every technical-identity-authenticated MCP/REST call into Tools fails
+      closed the same way INTROSPECTION_SERVICE_TOKEN's own drift does.
+
   RETRIEVAL_API_TOKEN:
     secret: true
     env_var: RETRIEVAL_API_TOKEN
@@ -970,6 +990,23 @@ services:
         value: latest
         type: string
         required: false
+      TECHNICAL_IDENTITY_CACHE_SECONDS:
+        secret: false
+        value: 45
+        type: int
+        required: false
+        comment: >
+          The one deliberate exception to app/services/scope.py's "never
+          cache a scope" rule -- see that module's own docstring and
+          settings.technical_identity_cache_seconds. 30-60s is the
+          documented range; a revoked/edited technical identity can remain
+          effective for up to this long afterwards.
+      INGEST_TIMEOUT_SECONDS:
+        secret: false
+        value: 10
+        type: float
+        required: false
+        comment: "Tools' own timeout calling Ingest's technical-identity introspection. See WEAVE_API_TIMEOUT_SECONDS above."
 
   chat:
     settings:

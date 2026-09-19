@@ -83,6 +83,76 @@ it('creates a scoped n8n bot and keeps pending bearer delivery disabled', async 
   expect(await screen.findByText(/Bot-Konfiguration gespeichert/)).toBeTruthy();
 });
 
+it('shows the agent-mode toggle only for LLM bots, off by default', async () => {
+  render(<BotsTab />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Bot hinzufügen' }));
+
+  const agentToggle = screen.getByRole('switch', { name: /Agentenmodus/ }) as HTMLButtonElement;
+  expect(agentToggle.getAttribute('aria-checked')).toBe('false');
+  expect(screen.queryByRole('button', { name: 'Subagent hinzufügen' })).toBeNull();
+
+  fireEvent.change(screen.getByRole('combobox', { name: 'Bot-Typ' }), { target: { value: 'n8n' } });
+  expect(screen.queryByRole('switch', { name: /Agentenmodus/ })).toBeNull();
+});
+
+it('blocks saving an enabled agent mode with no subagent, then allows it once one is added and filled in', async () => {
+  render(<BotsTab />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Bot hinzufügen' }));
+
+  fireEvent.change(screen.getByRole('textbox', { name: /^Bot-ID/ }), { target: { value: 'agent-bot' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Anzeigename' }), { target: { value: 'Agent Bot' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'System-Prompt' }), { target: { value: 'Antworte anhand der Recherche.' } });
+
+  fireEvent.click(screen.getByRole('switch', { name: /Agentenmodus/ }));
+  expect(screen.getByText(/Mindestens ein Subagent ist erforderlich/)).toBeTruthy();
+  expect((screen.getByRole('button', { name: 'Bot speichern' }) as HTMLButtonElement).disabled).toBe(true);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Subagent hinzufügen' }));
+  expect(screen.getByText(/Der fachliche Auftrag darf nicht leer sein/)).toBeTruthy();
+  expect(screen.getByText(/Mindestens ein Wissensbereich ist erforderlich/)).toBeTruthy();
+
+  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'IT Support' } });
+  expect((screen.getByRole('textbox', { name: /^ID \(Slug\)/ }) as HTMLInputElement).value).toBe('it-support');
+
+  fireEvent.change(screen.getByRole('textbox', { name: 'Fachlicher Auftrag' }), { target: { value: 'Beantwortet IT-Fragen.' } });
+  // Two "servicewissen" checkboxes exist -- one for the subagent's own
+  // Collections picker (inside the agent section, first in DOM order) and
+  // one for the bot-level "Wissensbereiche" scope further down.
+  fireEvent.click(screen.getAllByRole('checkbox', { name: 'servicewissen' })[0]);
+
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect((screen.getByRole('button', { name: 'Bot speichern' }) as HTMLButtonElement).disabled).toBe(false);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Bot speichern' }));
+  await waitFor(() => expect(json.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true));
+  const mutation = json.mock.calls.find(([, init]) => init?.method === 'POST');
+  const body = JSON.parse(mutation?.[1]?.body as string);
+  expect(body.agent).toEqual({
+    enabled: true,
+    subagents: [{
+      id: 'it-support', name: 'IT Support', description: null, mission: 'Beantwortet IT-Fragen.',
+      collections: ['servicewissen'], filters: {}, include_uncollected: false, model: null,
+      limits: { max_searches: 3, max_results: 5, timeout_seconds: 60 },
+    }],
+    limits: { max_parallel: 3, max_followups: 1, budget_searches: 9, timeout_seconds: 120 },
+  });
+});
+
+it('sends agent: null when the agent-mode toggle stays off', async () => {
+  render(<BotsTab />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Bot hinzufügen' }));
+
+  fireEvent.change(screen.getByRole('textbox', { name: /^Bot-ID/ }), { target: { value: 'plain-bot' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Anzeigename' }), { target: { value: 'Plain Bot' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'System-Prompt' }), { target: { value: 'Antworte normal.' } });
+
+  fireEvent.click(screen.getByRole('button', { name: 'Bot speichern' }));
+  await waitFor(() => expect(json.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true));
+  const mutation = json.mock.calls.find(([, init]) => init?.method === 'POST');
+  const body = JSON.parse(mutation?.[1]?.body as string);
+  expect(body.agent).toBeNull();
+});
+
 it('explains that bot scope narrows rather than grants document access', async () => {
   render(<BotsTab />);
   expect(await screen.findByText(/Schnittmenge aus Bot-Auswahl und Nutzerrechten/)).toBeTruthy();

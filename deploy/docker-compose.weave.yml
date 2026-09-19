@@ -57,6 +57,18 @@
 #     needs scope resolution fails -- typically surfacing as Weave-Tools'
 #     own fail-closed 503 (unconfigured/rejected upstream dependency).
 #
+#   TOOLS_INTROSPECTION_TOKEN
+#     Shared by: weave-tools-backend (caller, resolves a technical-identity
+#     'wti_...' token into its granted collections -- Schritt 5) and
+#     weave-ingest-backend (verifier of POST /api/v1/internal/technical-
+#     identities/introspect). A distinct secret from
+#     INTROSPECTION_SERVICE_TOKEN above -- different upstream, different
+#     identity store.
+#     If they differ, or weave-ingest-backend doesn't have it set: it
+#     answers 401/503 to Weave-Tools' call, so every technical-identity-
+#     authenticated MCP/REST call into Weave-Tools fails the same way
+#     INTROSPECTION_SERVICE_TOKEN's own drift does.
+#
 #   RETRIEVAL_API_TOKEN
 #     Shared by: weave-retrieval (verifier) and EVERY caller of it --
 #     weave-runtime, weave-tools-backend, and weave-api all present this
@@ -318,6 +330,10 @@ services:
       RERANK_BATCH_SIZE: ${RERANKER_BATCH_SIZE:-16}
       RERANK_THREADS: ${RERANKER_THREADS:-4}
       KNOWLEDGE_INGEST_API_TOKEN: ${KNOWLEDGE_INGEST_API_TOKEN:?KNOWLEDGE_INGEST_API_TOKEN is required}
+      # Schritt 5 (technische Identitaeten): gates POST /api/v1/internal/
+      # technical-identities/introspect -- the SAME shared value documented
+      # in the file header, verified by weave-tools-backend below.
+      TOOLS_INTROSPECTION_TOKEN: ${TOOLS_INTROSPECTION_TOKEN:?TOOLS_INTROSPECTION_TOKEN is required}
       RUNTIME_BOTS_BASE_URL: ${RUNTIME_BOTS_BASE_URL:-http://weave-runtime:8000}
       RUNTIME_API_TOKEN: ${RUNTIME_API_TOKEN:?RUNTIME_API_TOKEN is required}
       BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-}
@@ -959,16 +975,15 @@ services:
     # /api/v1/tools/*). The image also bundles a SEPARATE ASGI app, the
     # MCP server (app/mcp_server.py, streamable-HTTP transport at /mcp) --
     # it is its own uvicorn process by design (see that module's
-    # docstring), not something this container also serves. Run it as an
-    # additional container from this SAME image with the CMD overridden,
-    # e.g.:
-    #   uvicorn app.mcp_server:mcp_app --host 0.0.0.0 --port 8000
-    # (see services/tools/README.md). Not started here because,
-    # unlike the REST surface (which needs its own TOOLS_API_TOKEN gate),
-    # the MCP surface authenticates every call solely via the
-    # Authorization header a caller already carries -- so whether to run
-    # it at all depends on whether any MCP client (n8n's MCP node, Claude,
-    # ...) actually needs one in this deployment.
+    # docstring), run below as its OWN container (weave-tools-mcp) from
+    # this SAME image with the CMD overridden. Schritt 5 deliberately
+    # enables it: an external integration or an external AI agent reaches
+    # Weave-Tools' knowledge access via MCP, so this compose stack -- not
+    # only the Helm chart -- starts it by default. Unlike the REST surface
+    # (which needs its own TOOLS_API_TOKEN gate), the MCP surface
+    # authenticates every call solely via the Authorization header a
+    # caller already carries (Personal-, Delegations- or, since Schritt 5,
+    # technical-identity token, all through the same resolve_scope()).
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -1002,13 +1017,76 @@ services:
       # issuer.
       WEAVE_DELEGATION_SECRET: ${WEAVE_DELEGATION_SECRET:?WEAVE_DELEGATION_SECRET is required}
       DELEGATION_TOKEN_TTL_SECONDS: ${DELEGATION_TOKEN_TTL_SECONDS:-300}
+      # Schritt 5 (technische Identitaeten): Weave-Tools is the CALLER here
+      # too, resolving a 'wti_...' token via Weave-Ingest's own technical-
+      # identity introspection -- TOOLS_INTROSPECTION_TOKEN is the SAME
+      # shared value documented in the file header, verified by
+      # weave-ingest-backend above.
+      INGEST_BASE_URL: http://weave-ingest-backend:8000
+      TOOLS_INTROSPECTION_TOKEN: ${TOOLS_INTROSPECTION_TOKEN:?TOOLS_INTROSPECTION_TOKEN is required}
+      INGEST_TIMEOUT_SECONDS: ${INGEST_TIMEOUT_SECONDS:-10}
+      # The one deliberate cache in app/services/scope.py -- see that
+      # module's own docstring for why only this path may cache at all.
+      TECHNICAL_IDENTITY_CACHE_SECONDS: ${TECHNICAL_IDENTITY_CACHE_SECONDS:-45}
     depends_on:
       weave-api:
         condition: service_healthy
       weave-retrieval:
         condition: service_healthy
+      weave-ingest-backend:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 36
+      start_period: 10s
+    networks:
+      - weave_netbridge
+
+  weave-tools-mcp:
+    # The MCP server (app/mcp_server.py, streamable-HTTP transport at
+    # /mcp), same image as weave-tools-backend above with the CMD
+    # overridden -- see that service's own comment for why it is a
+    # SEPARATE container/process rather than mounted into the REST app.
+    # Deliberately WITHOUT TOOLS_API_TOKEN: that gates the REST mirror's
+    # own X-Tools-Service-Token header only (app/api/deps.py); the MCP
+    # surface has no such door and never reads that setting.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    image: ghcr.io/bl0rb/weave-tools-backend:${WEAVE_TOOLS_TAG:-latest}
+    command: ["uvicorn", "app.mcp_server:mcp_app", "--host", "0.0.0.0", "--port", "8000"]
+    restart: always
+    container_name: weave_tools_mcp
+    ports:
+      - ${TOOLS_MCP_PORT:-8008}:8000
+    environment:
+      WEAVE_API_BASE_URL: http://weave-api:8000
+      INTROSPECTION_SERVICE_TOKEN: ${INTROSPECTION_SERVICE_TOKEN:?INTROSPECTION_SERVICE_TOKEN is required}
+      WEAVE_API_TIMEOUT_SECONDS: ${WEAVE_API_TIMEOUT_SECONDS:-10}
+      RETRIEVAL_BASE_URL: http://weave-retrieval:8000
+      RETRIEVAL_API_TOKEN: ${RETRIEVAL_API_TOKEN:?RETRIEVAL_API_TOKEN is required}
+      RETRIEVAL_TIMEOUT_SECONDS: ${RETRIEVAL_TIMEOUT_SECONDS:-10}
+      WEAVE_DELEGATION_SECRET: ${WEAVE_DELEGATION_SECRET:?WEAVE_DELEGATION_SECRET is required}
+      DELEGATION_TOKEN_TTL_SECONDS: ${DELEGATION_TOKEN_TTL_SECONDS:-300}
+      INGEST_BASE_URL: http://weave-ingest-backend:8000
+      TOOLS_INTROSPECTION_TOKEN: ${TOOLS_INTROSPECTION_TOKEN:?TOOLS_INTROSPECTION_TOKEN is required}
+      INGEST_TIMEOUT_SECONDS: ${INGEST_TIMEOUT_SECONDS:-10}
+      TECHNICAL_IDENTITY_CACHE_SECONDS: ${TECHNICAL_IDENTITY_CACHE_SECONDS:-45}
+    depends_on:
+      weave-api:
+        condition: service_healthy
+      weave-retrieval:
+        condition: service_healthy
+      weave-ingest-backend:
+        condition: service_healthy
+    # KEINE HTTP-Probe: mcp_app bedient ausschliesslich den MCP-Transport
+    # unter /mcp -- kein /health wie in app/main.py. Siehe die identische
+    # Begruendung in deploy/charts/weave/templates/tools-deployment.yaml.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8000), timeout=3)"]
       interval: 5s
       timeout: 5s
       retries: 36

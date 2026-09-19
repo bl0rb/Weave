@@ -103,6 +103,24 @@ export function TracePanel({ trace }: { trace: ChatTrace }) {
             )
           ) : null}
 
+          {trace.agent ? (
+            <div className="flex flex-col gap-1">
+              <span className="font-medium">Agent ({trace.agent.mode})</span>
+              <div className="flex flex-wrap gap-1.5">
+                {trace.agent.subagents.map((subagent) => (
+                  <Tag key={subagent.id}>
+                    {subagent.id}: {subagent.status} · {subagent.searches_used} Suchen · {subagent.hits} Treffer
+                  </Tag>
+                ))}
+                {trace.agent.mode === 'graph' ? (
+                  <Tag>
+                    {trace.agent.followups} Folgerunde(n) · Budget {trace.agent.budget_used}/{trace.agent.budget}
+                  </Tag>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
           {Object.keys(trace.timings_ms).length > 0 ? (
             <div className="flex flex-wrap gap-1.5">
               {Object.entries(trace.timings_ms).map(([key, ms]) => (

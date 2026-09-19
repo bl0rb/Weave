@@ -22,6 +22,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the normal source upload, review and release workflow.
 
 ### Added
+- Agent mode, rollout steps 4-5. Administration: the bot editor configures agent mode,
+  subagents (mission, collections, filters, optional model, limits) and budgets; the
+  control plane validates the shape (422 with a readable message); the central chat
+  provider declares `supports_tools`, which a managed bot needs before agent mode runs.
+  Streaming: an additive `status` event reports progress ("<Bereich> wird durchsucht",
+  "Ergebnisse werden zusammengeführt", "Antwort wird formuliert") without prompts or
+  tokens; Weave-Chat shows it as a transient progress line with per-subagent chips and
+  renders `trace.agent`; the graph's final answer streams token by token.
+- Technical identities (`contracts/technical-identities.md`): administrators create
+  standalone integrations with explicitly granted collections (none by default), a
+  `wti_…` bearer token shown exactly once, expiry, rotation, revocation and an audit
+  log. Weave-Tools verifies such tokens through Weave-Ingest's introspection endpoint
+  (`TOOLS_INTROSPECTION_TOKEN`, short cache) and applies the same scope rules to REST
+  and MCP: requested collections only narrow the grants, out-of-scope requests return
+  empty results without touching Weave-Retrieval, every request is audit-logged without
+  secrets. The MCP transport of Weave-Tools is enabled in Compose and Helm by default.
 - Agent mode for LLM bots (Weave-Runtime's `BotConfig.agent`, rollout plan "Schritt 2 --
   Tool-Calls und ein Subagent"): a direct-LLM bot can now configure one or more subagents,
   each with its own mission, explicitly allowed collections/filters, allowed tools (only

@@ -18,15 +18,17 @@ main.py bekaeme sie den nicht, und das faellt nicht beim Start auf, sondern
 erst beim ersten Werkzeugaufruf.
 
 Deshalb steht unten ein zweites Deployment aus DEMSELBEN Image mit
-ueberschriebenem command -- und deshalb ist es per Vorgabe AUS
-(toolsBackend.mcp.enabled=false). Die Begruendung ist die der Compose-Datei:
-anders als die REST-Spiegelung, die mit TOOLS_API_TOKEN eine eigene
-Diensttuer hat, authentifiziert die MCP-Oberflaeche jeden Aufruf allein
-ueber den Authorization-Header, den der Aufrufer ohnehin mitbringt. Ob sie
-gebraucht wird, haengt also einzig daran, ob es in dieser Installation
-ueberhaupt einen MCP-Client gibt (n8n-MCP-Node, Claude, ...). Beide
-Anwendungen sind zustandslos, also ist eine allein, die andere allein oder
-beide nebeneinander gleichermassen richtig.
+ueberschriebenem command -- und dessen Standard ist seit Schritt 5 AN
+(toolsBackend.mcp.enabled=true, siehe values.yaml: "Der MCP-Dienst wird in
+der Bereitstellung bewusst aktiviert"). Die Begruendung ist die der
+Compose-Datei: anders als die REST-Spiegelung, die mit TOOLS_API_TOKEN eine
+eigene Diensttuer hat, authentifiziert die MCP-Oberflaeche jeden Aufruf
+allein ueber den Authorization-Header, den der Aufrufer ohnehin mitbringt.
+Eine externe Integration oder ein externer KI-Agent braucht diesen Weg, um
+Weave-Tools ueberhaupt per MCP erreichen zu koennen; wer den MCP-Client-
+Zugang in einer bestimmten Installation nicht braucht, kann dies weiterhin
+auf false setzen. Beide Anwendungen sind zustandslos, also ist eine allein,
+die andere allein oder beide nebeneinander gleichermassen richtig.
 */}}
 {{- if .Values.toolsBackend.enabled }}
 {{- include "weave.validate" . }}
@@ -42,6 +44,7 @@ beide nebeneinander gleichermassen richtig.
 {{- $cfgEnv := include "weave.env" (dict "ctx" $ "service" "tools" "overrides" (dict
       "WEAVE_API_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "api"))
       "RETRIEVAL_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "retrieval"))
+      "INGEST_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "ingestBackend"))
     )) }}
 apiVersion: apps/v1
 kind: Deployment

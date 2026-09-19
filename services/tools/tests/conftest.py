@@ -25,9 +25,11 @@ TOOLS_API_TOKEN = 'test-tools-api-token'
 INTROSPECTION_SERVICE_TOKEN = 'test-introspection-service-token'
 RETRIEVAL_API_TOKEN = 'test-retrieval-api-token'
 WEAVE_DELEGATION_SECRET = 'test-weave-delegation-secret'
+TOOLS_INTROSPECTION_TOKEN = 'test-tools-introspection-token'
 
 WEAVE_API_BASE_URL = 'http://weave-api.test'
 RETRIEVAL_BASE_URL = 'http://weave-retrieval.test'
+INGEST_BASE_URL = 'http://weave-ingest.test'
 
 TOOLS_SERVICE_HEADERS = {'X-Tools-Service-Token': TOOLS_API_TOKEN}
 
@@ -42,6 +44,15 @@ def _configured_settings(monkeypatch):
     monkeypatch.setattr(settings, 'weave_delegation_secret', WEAVE_DELEGATION_SECRET)
     monkeypatch.setattr(settings, 'weave_api_base_url', WEAVE_API_BASE_URL)
     monkeypatch.setattr(settings, 'retrieval_base_url', RETRIEVAL_BASE_URL)
+    monkeypatch.setattr(settings, 'ingest_base_url', INGEST_BASE_URL)
+    monkeypatch.setattr(settings, 'tools_introspection_token', TOOLS_INTROSPECTION_TOKEN)
+    # Cleared on every test regardless of which one populated it -- this
+    # dict is process-global (see scope.py's own docstring for why), so a
+    # cache hit from an earlier test's token would otherwise leak into the
+    # next one.
+    from app.services import scope as scope_module
+
+    scope_module._technical_scope_cache.clear()
 
 
 def fake_response(status_code: int, json_body, *, method: str = 'GET', url: str = 'http://upstream.test/') -> httpx.Response:

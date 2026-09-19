@@ -64,7 +64,21 @@ describe('parseSseStream', () => {
     expect(events).toEqual([{ type: 'delta', text: 'after the bad frame' }]);
   });
 
-  it('ignores an event whose type is not one of the five known kinds', async () => {
+  it('parses a status event (rollout plan "Schritt 4 -- Administration und Streaming")', async () => {
+    const events = await collect([
+      'data: {"type":"status","stage":"researching","agent_id":"it-support","agent_name":"IT Support","state":null,"message":"IT Support wird durchsucht"}\n\n',
+      'data: {"type":"done"}\n\n',
+    ]);
+    expect(events).toEqual([
+      {
+        type: 'status', stage: 'researching', agent_id: 'it-support', agent_name: 'IT Support',
+        state: null, message: 'IT Support wird durchsucht',
+      },
+      { type: 'done' },
+    ]);
+  });
+
+  it('ignores an event whose type is not one of the known kinds', async () => {
     const events = await collect(['data: {"type":"ping"}\n\n', 'data: {"type":"done"}\n\n']);
     expect(events).toEqual([{ type: 'done' }]);
   });

@@ -127,6 +127,36 @@ export interface N8nTrace {
   dropped_sources: number;
 }
 
+/**
+ * One subagent's own outcome within an agent-mode turn (Weave-Runtime's
+ * own `SubagentTrace`, backend/app/schemas/chat.py) — `searches_used`/
+ * `hits` mirror that service's own `SubagentResult` field-for-field.
+ */
+export interface SubagentTrace {
+  id: string;
+  status: string;
+  searches_used: number;
+  hits: number;
+}
+
+/**
+ * Diagnostics for an agent-mode bot's turn (Weave-Runtime's own
+ * `AgentTrace`) — present on `ChatTrace.agent` only for a turn that
+ * actually ran the agent-mode research loop, `null` for every other turn
+ * (never for the streaming `trace` event's own initial snapshot either,
+ * where the research loop hasn't run yet — see that event's own comment
+ * below). `plan`/`followups`/`budget_used` are `'graph'`-mode-only,
+ * `null`/`0` for a `mode: 'single'` turn.
+ */
+export interface AgentTrace {
+  mode: string;
+  subagents: SubagentTrace[];
+  budget: number;
+  plan: Record<string, unknown>[] | null;
+  followups: number;
+  budget_used: number;
+}
+
 export interface ChatTrace {
   intent: string;
   confidence: number;
@@ -139,17 +169,43 @@ export interface ChatTrace {
   guard: GuardTrace | null;
   /** `null` for every turn that never reached n8n — see `N8nTrace` above. */
   n8n: N8nTrace | null;
+  /** `null` for every non-agent-mode turn, and for a streaming turn's own
+   * initial `trace` event (the research loop hasn't run yet at that
+   * point) — see `AgentTrace` above. */
+  agent: AgentTrace | null;
+}
+
+/**
+ * A short, transient progress line for an agent-mode turn (Weave-Runtime's
+ * own `ChatStreamStatusEvent`, rollout plan "Schritt 4 -- Administration
+ * und Streaming") — sent zero to many times between `trace` and the
+ * terminal event, never for a non-agent-mode turn. `message` is a fixed,
+ * pre-rendered German string built on the Runtime side; it never carries a
+ * prompt, a query, a token, or any private reasoning. `agent_id`/
+ * `agent_name` are set only for a `stage: 'researching'` event; `state` is
+ * `null` on a stage's own start, and one of the three subagent-result
+ * outcomes once a `stage: 'researching'` event reports that subagent's own
+ * finished result.
+ */
+export interface ChatStreamStatusEvent {
+  type: 'status';
+  stage: 'planning' | 'researching' | 'merging' | 'answering';
+  agent_id: string | null;
+  agent_name: string | null;
+  state: 'complete' | 'partial' | 'failed' | null;
+  message: string;
 }
 
 /** POST /v1/chat/stream event union (text/event-stream, one per `data:`
  * line), forwarded close to verbatim by Weave-API. Order is always
- * `trace` → (`delta`)* → (`sources` → `done`) | `error`. */
+ * `trace` → (`delta` | `status`)* → (`sources` → `done`) | `error`. */
 export type ChatStreamEvent =
   | { type: 'trace'; trace: ChatTrace }
   | { type: 'delta'; text: string }
   | { type: 'sources'; sources: Source[] }
   | { type: 'done' }
-  | { type: 'error'; detail: string };
+  | { type: 'error'; detail: string }
+  | ChatStreamStatusEvent;
 
 /** POST /v1/chat (non-streaming) response body. */
 export interface ChatResponseBody {

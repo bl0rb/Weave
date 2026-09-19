@@ -15,6 +15,7 @@ type ChatProviderConfig = {
   has_api_key: boolean;
   timeout_seconds: number;
   temperature: number | null;
+  supports_tools: boolean;
   updated_at: string | null;
 };
 
@@ -59,6 +60,7 @@ export function ChatProviderTab() {
           clear_api_key: clearKey,
           timeout_seconds: config.timeout_seconds,
           temperature: config.temperature,
+          supports_tools: config.supports_tools,
         }),
       });
       setConfig(next);
@@ -121,6 +123,12 @@ export function ChatProviderTab() {
               </Field>
             </div>
           </div>
+
+          <Toggle
+            checked={config.supports_tools}
+            onChange={supports_tools => setConfig({ ...config, supports_tools })}
+            label="Modell unterstützt Tool-Aufrufe (nötig für den Agentenmodus)"
+          />
 
           <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-4">
             <Button onClick={save} disabled={saving}>{saving && <LoaderCircle className="h-4 w-4 animate-spin" />}{saving ? 'Wird gespeichert…' : 'Speichern'}</Button>

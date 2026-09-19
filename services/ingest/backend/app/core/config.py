@@ -87,6 +87,13 @@ class Settings(BaseSettings):
     rerank_batch_size: int = 16
     rerank_threads: int = 4
     knowledge_ingest_api_token: str = ''
+    # Service-to-service credential for POST /api/v1/internal/technical-
+    # identities/introspect (app/api/technical_identities.py): the SAME
+    # value Weave-Tools presents as its own TOOLS_INTROSPECTION_TOKEN
+    # setting when resolving a technical-identity bearer token (Schritt 5).
+    # Same fail-closed discipline as knowledge_ingest_api_token above -- left
+    # empty, the endpoint answers 503 rather than accepting an empty match.
+    tools_introspection_token: str = ''
     bootstrap_admin_username: str = ''
     bootstrap_admin_email: str = ''
     bootstrap_admin_password: str = ''

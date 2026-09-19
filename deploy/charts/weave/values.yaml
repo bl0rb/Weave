@@ -592,13 +592,20 @@ toolsBackend:
       failureThreshold: 3
   # Dasselbe Image bringt einen ZWEITEN ASGI-Dienst mit, den MCP-Server
   # (app/mcp_server.py, streamable-HTTP unter /mcp). Er laeuft absichtlich
-  # als eigener uvicorn-Prozess, nicht im selben Container. Per Vorgabe aus:
-  # ob er gebraucht wird, haengt daran, ob in dieser Installation ueberhaupt
-  # ein MCP-Client existiert. Anders als die REST-Oberflaeche hat er kein
-  # eigenes Diensttoken -- er authentifiziert jeden Aufruf allein ueber den
-  # Authorization-Header, den der Aufrufer schon mitbringt.
+  # als eigener uvicorn-Prozess, nicht im selben Container. Anders als die
+  # REST-Oberflaeche hat er kein eigenes Diensttoken -- er authentifiziert
+  # jeden Aufruf allein ueber den Authorization-Header, den der Aufrufer
+  # schon mitbringt (Personal-, Delegations- oder seit Schritt 5 auch
+  # technische Identitaets-Token, alle ueber denselben resolve_scope()).
+  # Standardmaessig AN (Schritt 5: "Der MCP-Dienst wird in der Bereit-
+  # stellung bewusst aktiviert") -- eine externe Integration oder ein
+  # externer KI-Agent braucht diesen Weg, um Weave-Tools ueberhaupt per MCP
+  # erreichen zu koennen. Beide ASGI-Anwendungen sind zustandslos, also ist
+  # eine allein, die andere allein oder beide nebeneinander gleichermassen
+  # gueltig -- wer den MCP-Client-Zugang in einer bestimmten Installation
+  # nicht braucht, kann das hier weiterhin auf false setzen.
   mcp:
-    enabled: false
+    enabled: true
     replicas: 1
     service:
       type: ClusterIP

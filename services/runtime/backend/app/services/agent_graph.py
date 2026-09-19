@@ -62,20 +62,41 @@ import re
 import threading
 import time
 from dataclasses import dataclass
-from typing import Annotated, TypedDict
+from typing import Annotated, Callable, TypedDict
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
 from app.schemas.bot import BotConfig, SubagentConfig
-from app.schemas.chat import AgentTrace, Source, SubagentTrace
+from app.schemas.chat import AgentTrace, ChatStreamStatusEvent, Source, SubagentTrace
 from app.services import agents as agents_service
 from app.services import llm as llm_service
 
 logger = logging.getLogger(__name__)
 
 RESEARCH_AREA_TOOL = 'research_area'
+
+# `progress_cb`, threaded through `run_graph` -> `_build_graph` -> every node
+# below, is the graph's own analogue of app/services/chat.py's
+# `_stream_deferred_agent`/`_stream_deferred_multi_agent` worker functions
+# `result_queue.put((kind, payload))` calls: `kind` is `'status'` (a
+# `ChatStreamStatusEvent`, rollout plan "Schritt 4") or `'delta'` (one
+# incremental piece of the final answer's own text, `_answer`'s own
+# streaming below) -- calling it with `None` (the default, `handle_chat`'s
+# own blocking path, and `run_graph`'s own callers that pass nothing) is a
+# deliberate no-op everywhere below, so this stays fully backward
+# compatible with every existing blocking caller. `queue.Queue.put` (what
+# every real caller actually passes) is already thread-safe, which matters
+# here specifically because `research` workers within one round can run
+# CONCURRENTLY (this module's own docstring, `RunnableConfig(max_concurrency=
+# ...)`).
+ProgressCallback = Callable[[str, object], None]
+
+
+def _emit(progress_cb: ProgressCallback | None, kind: str, payload: object) -> None:
+    if progress_cb is not None:
+        progress_cb(kind, payload)
 
 
 class AvailableAgent(TypedDict):
@@ -179,10 +200,15 @@ _PLANNER_SYSTEM_PROMPT = (
 )
 
 
-def _plan(state: GraphState, *, bot: BotConfig, main_llm_provider: llm_service.LLMProvider) -> dict:
+def _plan(
+    state: GraphState, *, bot: BotConfig, main_llm_provider: llm_service.LLMProvider,
+    progress_cb: ProgressCallback | None = None,
+) -> dict:
     available = state['available']
     if not available:
         return {'plan': [], 'plan_history': []}
+
+    _emit(progress_cb, 'status', ChatStreamStatusEvent(stage='planning', message='Anfrage wird geplant'))
 
     messages = [
         {'role': 'system', 'content': _PLANNER_SYSTEM_PROMPT},
@@ -257,6 +283,7 @@ def _research(
     subagents_by_id: dict[str, SubagentConfig],
     subagent_llm_providers: dict[str, llm_service.LLMProvider],
     cancel: threading.Event | None,
+    progress_cb: ProgressCallback | None = None,
 ) -> dict:
     """One `Send('research', ...)` worker invocation -- Schritt 2's own
     `agents.run_subagent`, for exactly one planned subquestion. Runs however
@@ -270,13 +297,22 @@ def _research(
     """
     agent_id = payload['agent_id']
     subagent = subagents_by_id[agent_id]
+    _emit(progress_cb, 'status', ChatStreamStatusEvent(
+        stage='researching', agent_id=agent_id, agent_name=subagent.name,
+        message=f'{subagent.name} wird durchsucht',
+    ))
 
     if (cancel is not None and cancel.is_set()) or time.monotonic() >= payload['deadline']:
-        return {'results': [agents_service.SubagentResult(
+        result = agents_service.SubagentResult(
             agent_id=agent_id, status='failed', facts=[],
             open_points=['Recherche wurde wegen Zeitlimit oder Verbindungsabbruch nicht durchgeführt.'],
             hits=[], searches_used=0,
-        )]}
+        )
+        _emit(progress_cb, 'status', ChatStreamStatusEvent(
+            stage='researching', agent_id=agent_id, agent_name=subagent.name,
+            state=result.status, message=f'{subagent.name} abgeschlossen',
+        ))
+        return {'results': [result]}
 
     # Shared `AgentLimits.budget_searches` (rollout plan step 4's turn-wide
     # budget, on top of each subagent's own `SubagentLimits.max_searches`):
@@ -301,6 +337,10 @@ def _research(
         model=model_cfg.model, temperature=model_cfg.temperature,
         allowed_teams=payload['allowed_teams'], cancel=cancel,
     )
+    _emit(progress_cb, 'status', ChatStreamStatusEvent(
+        stage='researching', agent_id=agent_id, agent_name=subagent.name,
+        state=result.status, message=f'{subagent.name} abgeschlossen',
+    ))
     return {'results': [result]}
 
 
@@ -310,7 +350,7 @@ def _followup_question(question: str, gap: agents_service.SubagentResult) -> str
 
 
 def _merge(
-    state: GraphState, *, limits, cancel: threading.Event | None,
+    state: GraphState, *, limits, cancel: threading.Event | None, progress_cb: ProgressCallback | None = None,
 ) -> dict:
     """Runs once per completed `research` round (`add_edge('research',
     'merge')` -- LangGraph waits for every `Send`-ed worker of a round
@@ -330,6 +370,7 @@ def _merge(
     `len(state['plan'])` entries of the cumulative, `operator.add`-reduced
     `results` list are exactly, and only, this round's own.
     """
+    _emit(progress_cb, 'status', ChatStreamStatusEvent(stage='merging', message='Ergebnisse werden zusammengeführt'))
     this_round = state['results'][-len(state['plan']):] if state['plan'] else []
     budget = dict(state['budget'])
     budget['searches_left'] = max(0.0, budget['searches_left'] - sum(result.searches_used for result in this_round))
@@ -448,6 +489,7 @@ def _combined_context_block(
 def _answer(
     state: GraphState, *, bot: BotConfig, subagents_by_id: dict[str, SubagentConfig],
     main_llm_provider: llm_service.LLMProvider,
+    progress_cb: ProgressCallback | None = None,
 ) -> dict:
     from app.services.chat import _to_source  # lazy import -- see this module's own docstring
 
@@ -469,7 +511,26 @@ def _answer(
         {'role': 'system', 'content': context},
         {'role': 'user', 'content': state['question']},
     ]
-    answer = main_llm_provider.chat(messages, model=bot.model.model, temperature=bot.model.temperature).content
+    _emit(progress_cb, 'status', ChatStreamStatusEvent(stage='answering', message='Antwort wird formuliert'))
+    if progress_cb is None:
+        # Blocking callers (`handle_chat`, and `run_graph`'s own default)
+        # have nowhere to forward incremental deltas to -- one plain
+        # `chat()` call, exactly as before this rollout step.
+        answer = main_llm_provider.chat(messages, model=bot.model.model, temperature=bot.model.temperature).content
+    else:
+        # Streaming callers (`_stream_deferred_multi_agent`): push each
+        # delta onto the SAME queue as it arrives, exactly like the
+        # single-subagent path's own final-answer call already does
+        # (app/services/chat.py's `_stream_deferred_agent`) -- this removes
+        # this module's own previously-documented Schritt-3 simplification
+        # (one blocking `chat()` call, chunked back out after the fact).
+        pieces: list[str] = []
+        for delta in llm_service.iter_chat_stream(
+            main_llm_provider, messages, model=bot.model.model, temperature=bot.model.temperature,
+        ):
+            pieces.append(delta)
+            _emit(progress_cb, 'delta', delta)
+        answer = ''.join(pieces)
     if gap_notes:
         # Rollout plan step 5: "mit brauchbaren Teilantworten antwortet der
         # Hauptbot und benennt die Lücke" -- appended as fixed, deterministic
@@ -478,7 +539,9 @@ def _answer(
         # like every other fixed guard/gap copy elsewhere in this codebase
         # (app/services/chat.py's own `_V1_UNSUPPORTED_REPLY`/
         # `_FILTER_EXCLUDED_ALL_REPLY`) is a literal string, not a prompt.
-        answer = answer + '\n\n' + '\n'.join(gap_notes)
+        gap_text = '\n\n' + '\n'.join(gap_notes)
+        answer = answer + gap_text
+        _emit(progress_cb, 'delta', gap_text)
     return {'final_answer': answer, 'guard_triggered': False}
 
 
@@ -488,16 +551,22 @@ def _build_graph(
     subagent_llm_providers: dict[str, llm_service.LLMProvider],
     main_llm_provider: llm_service.LLMProvider,
     cancel: threading.Event | None,
+    progress_cb: ProgressCallback | None = None,
 ):
     graph = StateGraph(GraphState)
-    graph.add_node('plan', lambda state: _plan(state, bot=bot, main_llm_provider=main_llm_provider))
+    graph.add_node('plan', lambda state: _plan(
+        state, bot=bot, main_llm_provider=main_llm_provider, progress_cb=progress_cb,
+    ))
     graph.add_node('research', lambda payload: _research(
         payload, bot=bot, subagents_by_id=subagents_by_id,
-        subagent_llm_providers=subagent_llm_providers, cancel=cancel,
+        subagent_llm_providers=subagent_llm_providers, cancel=cancel, progress_cb=progress_cb,
     ))
-    graph.add_node('merge', lambda state: _merge(state, limits=bot.agent.limits, cancel=cancel))
+    graph.add_node('merge', lambda state: _merge(
+        state, limits=bot.agent.limits, cancel=cancel, progress_cb=progress_cb,
+    ))
     graph.add_node('answer', lambda state: _answer(
         state, bot=bot, subagents_by_id=subagents_by_id, main_llm_provider=main_llm_provider,
+        progress_cb=progress_cb,
     ))
 
     graph.add_edge(START, 'plan')
@@ -534,6 +603,7 @@ def run_graph(
     main_llm_provider: llm_service.LLMProvider,
     *,
     cancel: threading.Event | None = None,
+    progress_cb: ProgressCallback | None = None,
 ) -> GraphOutcome:
     """Build and run this turn's own graph, once, and reduce its final state
     to a `GraphOutcome`. `RunnableConfig(max_concurrency=bot.agent.limits.
@@ -548,10 +618,16 @@ def run_graph(
     which has no external disconnect signal to forward) means only this
     turn's own `bot.agent.limits.timeout_seconds` deadline can ever stop
     the graph early.
+
+    `progress_cb` (optional, rollout plan "Schritt 4 -- Administration und
+    Streaming"): forwarded to every node -- see `ProgressCallback`'s own
+    docstring above. `None` (the default, `handle_chat`'s own blocking
+    path) means every node's own `_emit(...)` call is a no-op, exactly
+    reproducing this function's pre-Schritt-4 behaviour.
     """
     limits = bot.agent.limits
     deadline = time.monotonic() + max(1, limits.timeout_seconds)
-    compiled = _build_graph(bot, subagents_by_id, subagent_llm_providers, main_llm_provider, cancel)
+    compiled = _build_graph(bot, subagents_by_id, subagent_llm_providers, main_llm_provider, cancel, progress_cb)
 
     initial_state: GraphState = {
         'question': message,

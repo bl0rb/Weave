@@ -15,7 +15,7 @@ Services, in the order they depend on each other (see "Startup order" below):
 - **weave-knowledge** / **weave-knowledge-worker**: consumes `document.released` events (a release is an immutable, manually approved snapshot -- see `docs/wissensportal.md`), chunks + embeds documents into its own `weave_knowledge` database (pgvector). `document.processed` is only acknowledged (`awaiting_release`) and indexes nothing.
 - **weave-retrieval**: hybrid search (pgvector KNN + tsvector ranking, RRF fusion). Owns no schema — reads Weave-Knowledge's `documents`/`chunks`/`collections` tables directly, read-only. This is the one named exception to "no shared tables" (`docs/adr/0004`), documented in full in `docs/adr/0005`.
 - **weave-runtime**: chat/agent execution — intent routing, LLM calls, retrieval-augmented answers, optional delegation of a turn to an n8n agent flow.
-- **weave-tools-backend**: MCP + REST tool surface (`list_collections`, `search`) for delegated or personal-token-scoped callers. `weave-tools-frontend` is its chat UI, talking only to Weave-API.
+- **weave-tools-backend**: REST tool surface (`list_collections`, `search`) for delegated-, personal- or (Schritt 5) technical-identity-scoped callers. `weave-tools-mcp` is the same image running the MCP transport (`app/mcp_server.py`, streamable HTTP at `/mcp`) as its own container/process — enabled by default so an external integration or AI agent can reach Weave-Tools over MCP, not only REST. `weave-tools-frontend` is its chat UI, talking only to Weave-API. Technical identities themselves (issue/rotate/revoke, granted collections, audit log) are administered in Weave-Ingest's admin UI, not here — see `contracts/technical-identities.md`.
 - **weave-api**: the unified public gateway — owns its own `users`/`api_tokens`/`conversations` schema, proxies into Weave-Runtime and Weave-Retrieval.
 - **weave-embeddings** / **weave-reranker**: optional, self-hosted CPU model services (`services/embeddings`, `services/reranker` in this monorepo) for `intfloat/multilingual-e5-small` embeddings and `BAAI/bge-reranker-v2-m3` reranking. Started like any other service here, but idle by default — nothing calls them until `EMBEDDING_BASE_URL`/`RERANK_BASE_URL` are pointed at them and `EMBEDDING_PROVIDER`/`RERANK_PROVIDER` are switched away from the `fake`/`none` default. See `docs/betrieb.md` section 7 for the full walkthrough.
 
@@ -62,8 +62,8 @@ Services, in the order they depend on each other (see "Startup order" below):
 4. `weave-knowledge-worker` (needs weave-knowledge + redis), `weave-retrieval` (needs weave-knowledge **and** postgres directly — it reads `weave_knowledge`'s tables straight from Postgres, not through Weave-Knowledge's API)
 5. `weave-runtime` (needs weave-retrieval)
 6. `weave-api` (needs postgres + weave-runtime + weave-retrieval)
-7. `weave-tools-backend` (needs weave-api + weave-retrieval)
-8. `weave-tools-frontend` (needs weave-api — it talks only to the gateway, never to weave-tools-backend or weave-retrieval directly)
+7. `weave-tools-backend`, `weave-tools-mcp` (each needs weave-api + weave-retrieval + weave-ingest-backend — the last one for Schritt 5's technical-identity introspection)
+8. `weave-tools-frontend` (needs weave-api — it talks only to the gateway, never to weave-tools-backend, weave-tools-mcp or weave-retrieval directly)
 
 Notes:
 - `postgres`'s own healthcheck (`pg_isready`) only proves the server accepts connections — the three databases and the `weave_retrieval_ro` role come from `postgres-init/01-create-databases.sh` (see "Database initialization"), which runs as part of postgres's *first-ever* startup, before `pg_isready` starts succeeding.
@@ -114,6 +114,7 @@ See the compose file's own "SHARED SECRETS" header comment for the full explanat
 |---|---|---|
 | `WEAVE_DELEGATION_SECRET` | `weave-runtime` (issuer), `weave-tools-backend` (verifier) | every n8n-delegated bot turn fails with one generic error |
 | `INTROSPECTION_SERVICE_TOKEN` | `weave-tools-backend` (caller), `weave-api` (verifier) | Personal-Token-scoped Weave-Tools calls fail (503-ish, looks like Weave-Tools misconfiguration) |
+| `TOOLS_INTROSPECTION_TOKEN` | `weave-tools-backend`/`weave-tools-mcp` (caller), `weave-ingest-backend` (verifier) | Schritt 5: technical-identity-scoped Weave-Tools calls (`wti_...` tokens) fail (503-ish) |
 | `RETRIEVAL_API_TOKEN` | `weave-retrieval` (verifier), `weave-runtime`, `weave-tools-backend`, `weave-api` (all callers) | 401/503 from whichever caller has the wrong value |
 | `RUNTIME_API_TOKEN` | `weave-runtime` (verifier), `weave-api` (caller) | weave-api's `/v1/bots` proxy fails with 401/503 |
 
@@ -128,7 +129,7 @@ Generate each with `openssl rand -hex 32`. Never reuse one shared secret's value
 - `WEAVE_KNOWLEDGE_SECRET_KEY` – Weave-Knowledge's own `SECRET_KEY`
 - `WEAVE_KNOWLEDGE_INGEST_API_TOKEN` – a deployment-generated service credential for the collection registry and approved snapshots. `render` mirrors it into Ingest's `KNOWLEDGE_INGEST_API_TOKEN`; Knowledge receives it as `WEAVE_INGEST_API_TOKEN`; Api receives it as `INGEST_SERVICE_TOKEN`, used to fetch released document images on a chat user's behalf (`GET /v1/portal/releases/{id}/artifacts/{filename}`, proxied to Weave-Chat — see `services/api/backend/app/api/portal_artifacts.py`). No administrator account or UI-issued token is required. With an external Helm Secret, provide all three declared secret keys with the same value.
 - `WEAVE_KNOWLEDGE_WEBHOOK_SECRET` – required: the internal event ingress fails closed (503) while it is unset, since that route writes into the index. `render` mirrors it into Ingest's `PORTAL_KNOWLEDGE_WEBHOOK_SECRET` for `document.released` and the ACL-free `collection.updated` registry hint. Both use the dedicated Ingest→Knowledge channel; no user-managed webhook or n8n configuration is involved
-- `RETRIEVAL_API_TOKEN`, `RUNTIME_API_TOKEN`, `WEAVE_DELEGATION_SECRET`, `INTROSPECTION_SERVICE_TOKEN` – see "Shared secrets" above
+- `RETRIEVAL_API_TOKEN`, `RUNTIME_API_TOKEN`, `WEAVE_DELEGATION_SECRET`, `INTROSPECTION_SERVICE_TOKEN`, `TOOLS_INTROSPECTION_TOKEN` – see "Shared secrets" above
 - `WEAVE_API_SECRET_KEY` – Weave-API's own `SECRET_KEY`
 - `TOOLS_API_TOKEN` – gates Weave-Tools' REST surface (not shared with any other service in this compose file — e.g. an n8n HTTP-node credential)
 
@@ -138,7 +139,9 @@ Generate each with `openssl rand -hex 32`. Never reuse one shared secret's value
 - Provision runtime secrets through the secret manager and `secrets.existingSecret`, never image builds or committed Helm values. Keep them stable across deployments and roll out all consumers on rotation. Replace and revoke any previously used Knowledge administrator PAT.
 
 - `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PORT` – default `weave_ingest` / `weave` / `5432`
-- `BACKEND_PORT` (8000), `FRONTEND_PORT` (3000), `KNOWLEDGE_PORT` (8001), `RETRIEVAL_PORT` (8002), `RUNTIME_PORT` (8003), `API_PORT` (8004), `TOOLS_PORT` (8005), `TOOLS_FRONTEND_PORT` (3001), `EMBEDDINGS_PORT` (8006), `RERANKER_PORT` (8007)
+- `BACKEND_PORT` (8000), `FRONTEND_PORT` (3000), `KNOWLEDGE_PORT` (8001), `RETRIEVAL_PORT` (8002), `RUNTIME_PORT` (8003), `API_PORT` (8004), `TOOLS_PORT` (8005), `TOOLS_FRONTEND_PORT` (3001), `EMBEDDINGS_PORT` (8006), `RERANKER_PORT` (8007), `TOOLS_MCP_PORT` (8008)
+- `INGEST_TIMEOUT_SECONDS` (10) – HTTP-Timeout für Weave-Tools' Aufrufe der technischen-Identitäten-Introspektion bei Weave-Ingest (Schritt 5)
+- `TECHNICAL_IDENTITY_CACHE_SECONDS` (45) – die eine bewusste Ausnahme von `app/services/scope.py`'s „nie cachen"-Regel, nur für den Technische-Identitäten-Pfad; siehe `services/tools/README.md`
 - `RETRIEVAL_DB_USER` – read-only role name, default `weave_retrieval_ro`
 - `WEAVE_INGEST_TAG`, `WEAVE_KNOWLEDGE_TAG`, `WEAVE_RETRIEVAL_TAG`, `WEAVE_RUNTIME_TAG`, `WEAVE_API_TAG`, `WEAVE_TOOLS_TAG`, `WEAVE_TOOLS_FRONTEND_TAG`, `WEAVE_EMBEDDINGS_TAG`, `WEAVE_RERANKER_TAG` – image tags, default `latest`. All images here are pulled prebuilt from GHCR, never built from this checkout; `latest` (or any tag) is only refreshed by `.github/workflows/release.yml`, which runs on a `vX.Y.Z` tag push or manual `workflow_dispatch` — not on every commit to `main`. A `docker compose pull` will not pick up unreleased source changes; for local development against this stack, build the relevant service from source instead (e.g. `services/ingest/docker-compose.dev.yml` for the Ingest frontend) and point this compose file at that image, or run the service directly.
 - `EMBEDDING_PROVIDER` / `EMBEDDING_BASE_URL` / `EMBEDDING_API_KEY` / `EMBEDDING_MODEL` / `EMBEDDING_DIMENSION` / `EMBEDDING_BATCH_SIZE` – defined ONCE as the `x-embedding-env` anchor at the top of `docker-compose.weave.yml` and merged into `weave-knowledge` (+worker) and `weave-retrieval` with `<<: *embedding-env`, so the three services cannot technically drift from each other; default `fake` / `fake-embed` / `1536`. **Not** in the shared-secrets table above (it's not a credential), but just as cross-service: change it and every service that merges the anchor changes with it, or vector search silently becomes meaningless (see the anchor's own comment).

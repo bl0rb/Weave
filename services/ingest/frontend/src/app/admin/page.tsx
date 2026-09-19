@@ -3,7 +3,7 @@
 import { useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import Link from 'next/link';
-import { Archive, Bot, FolderOpen, Wrench, ArrowRight, Cpu, KeyRound, MessageSquareText, ScanEye, ShieldAlert, Terminal, Users, UsersRound } from 'lucide-react';
+import { Archive, Bot, FolderOpen, Wrench, ArrowRight, Cpu, KeyRound, MessageSquareText, ScanEye, ShieldAlert, ShieldCheck, Terminal, Users, UsersRound } from 'lucide-react';
 
 import { useAuth } from '@/lib/auth-context';
 import { UsersTab } from '@/components/admin/users-tab';
@@ -16,16 +16,18 @@ import { CollectionsTab } from '@/components/admin/collections-tab';
 import { ChatProviderTab } from '@/components/admin/chat-provider-tab';
 import { RetrievalProviderTab } from '@/components/admin/retrieval-provider-tab';
 import { BotsTab } from '@/components/admin/bots-tab';
+import { TechnicalIdentitiesTab } from '@/components/admin/technical-identities-tab';
 import { ConfirmDialog } from '@/components/admin/admin-shared';
 import { apiFetch } from '@/lib/api';
 
-type TabId = 'collections' | 'tools' | 'users' | 'teams' | 'bots' | 'providers' | 'logs' | 'chat-provider' | 'retrieval-provider' | 'vl-connections' | 'paddle';
+type TabId = 'collections' | 'tools' | 'users' | 'teams' | 'bots' | 'technical-identities' | 'providers' | 'logs' | 'chat-provider' | 'retrieval-provider' | 'vl-connections' | 'paddle';
 
 const tabs: { id: TabId; label: string; icon: typeof Users }[] = [
   { id: 'collections', label: 'Wissensbereiche', icon: FolderOpen },
   { id: 'users', label: 'Nutzer', icon: Users },
   { id: 'teams', label: 'Teams', icon: UsersRound },
   { id: 'bots', label: 'Bots', icon: Bot },
+  { id: 'technical-identities', label: 'Technische Identitäten', icon: ShieldCheck },
   { id: 'providers', label: 'Anmeldung', icon: KeyRound },
   { id: 'chat-provider', label: 'Chat & LLM', icon: MessageSquareText },
   { id: 'retrieval-provider', label: 'Suche & Modelle', icon: ScanEye },
@@ -186,6 +188,11 @@ export default function AdminPage() {
         {tab === 'bots' && (
           <div role="tabpanel" id="admin-panel-bots" aria-labelledby="admin-tab-bots">
             <BotsTab />
+          </div>
+        )}
+        {tab === 'technical-identities' && (
+          <div role="tabpanel" id="admin-panel-technical-identities" aria-labelledby="admin-tab-technical-identities">
+            <TechnicalIdentitiesTab />
           </div>
         )}
         {tab === 'providers' && (

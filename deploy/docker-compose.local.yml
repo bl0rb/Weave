@@ -67,6 +67,12 @@ services:
       context: ../services/tools
       dockerfile: Dockerfile
 
+  weave-tools-mcp:
+    build:
+      # Same image as weave-tools-backend above, just a different command.
+      context: ../services/tools
+      dockerfile: Dockerfile
+
   weave-tools-frontend:
     build:
       # Chat UI now lives in services/chat, Dockerfile directly at its root.

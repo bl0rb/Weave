@@ -1,5 +1,16 @@
-import type { ChatRequestBody, ChatTrace, Source, StoredMessage } from '@/types/weave-api';
+import type { ChatRequestBody, ChatStreamStatusEvent, ChatTrace, Source, StoredMessage } from '@/types/weave-api';
 import type { MappedError } from '@/lib/errors';
+
+/** One subagent's own latest known state within a still-streaming
+ * agent-mode turn — the UI's own tiny per-chip reduction of every
+ * `status: 'researching'` event seen so far for this turn (see
+ * chat-app.tsx's `onStatus` handling). `state: null` means "started, not
+ * finished yet". */
+export interface UiAgentStatus {
+  agentId: string;
+  agentName: string;
+  state: 'complete' | 'partial' | 'failed' | null;
+}
 
 /** One transcript entry as the UI renders it — a superset of what any
  * single Weave-API response carries, since an assistant entry accumulates
@@ -27,6 +38,18 @@ export interface UiMessage {
    * gaps) doesn't look stuck. Reset to false whenever content starts
    * arriving; see chat-app.tsx's per-turn idle timer. */
   slowResponse: boolean;
+  /** The latest agent-mode progress line (Weave-Runtime's `status` event
+   * `message`) for this still-streaming turn, or `null` before the first
+   * one arrives / once real answer text starts (see chat-app.tsx's
+   * `onDelta`, which clears it exactly like `slowResponse`). Rendered in
+   * place of the ordinary "Antwort wird erzeugt…" placeholder while an
+   * agent-mode turn's research is still running. */
+  progressLine: string | null;
+  /** Every subagent this turn has reported a status for so far, in
+   * first-seen order — rendered as small chips (see message-bubble.tsx).
+   * Never cleared mid-turn: a finished agent's chip stays visible
+   * alongside a still-researching one. */
+  agentStatuses: UiAgentStatus[];
 }
 
 export function newId(): string {
@@ -35,11 +58,32 @@ export function newId(): string {
 }
 
 export function userMessage(content: string): UiMessage {
-  return { id: newId(), role: 'user', content, streaming: false, sources: null, trace: null, error: null, viaFallback: false, slowResponse: false };
+  return {
+    id: newId(), role: 'user', content, streaming: false, sources: null, trace: null, error: null,
+    viaFallback: false, slowResponse: false, progressLine: null, agentStatuses: [],
+  };
 }
 
 export function pendingAssistantMessage(): UiMessage {
-  return { id: newId(), role: 'assistant', content: '', streaming: true, sources: null, trace: null, error: null, viaFallback: false, slowResponse: false };
+  return {
+    id: newId(), role: 'assistant', content: '', streaming: true, sources: null, trace: null, error: null,
+    viaFallback: false, slowResponse: false, progressLine: null, agentStatuses: [],
+  };
+}
+
+/** Folds one `status: 'researching'` event into `agentStatuses` — updates
+ * that agent's own entry in place if it was already seen this turn
+ * (a finish event superseding its own start), else appends a new one.
+ * Pulled out of chat-app.tsx so this reduction is directly testable
+ * without a full component render. */
+export function applyAgentStatus(statuses: UiAgentStatus[], event: ChatStreamStatusEvent): UiAgentStatus[] {
+  if (event.stage !== 'researching' || !event.agent_id) return statuses;
+  const entry: UiAgentStatus = { agentId: event.agent_id, agentName: event.agent_name ?? event.agent_id, state: event.state };
+  const index = statuses.findIndex((status) => status.agentId === entry.agentId);
+  if (index === -1) return [...statuses, entry];
+  const next = [...statuses];
+  next[index] = entry;
+  return next;
 }
 
 /** Turns one already-persisted `StoredMessage` (GET
@@ -59,6 +103,8 @@ export function uiMessageFromStored(message: StoredMessage): UiMessage {
     error: null,
     viaFallback: false,
     slowResponse: false,
+    progressLine: null,
+    agentStatuses: [],
   };
 }
 

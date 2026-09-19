@@ -164,14 +164,16 @@ authentifiziert, den der MCP-Client mitbringt und der für genau diesen Aufruf
 aus `Context.headers` gelesen wird. Der Kommentar an der Einstellung selbst
 sagt das ausdrücklich (`app/core/config.py:9`), ebenso `.env.example`.
 
-Deshalb bündelt `deploy/docker-compose.weave.yml` den MCP-Server zwar im
-Image, startet ihn aber nicht. Der Service `weave-tools-backend` betreibt den
-REST-Spiegel; der Kommentarblock an diesem Service hält fest, dass die MCP-App
-bewusst ein eigener uvicorn-Prozess ist und dass die Frage, ob man sie
-überhaupt startet, davon abhängt, ob im jeweiligen Deployment tatsächlich
-irgendein MCP-Client einen braucht — eben weil die MCP-Surface jeden Aufruf
-allein über den `Authorization`-Header authentifiziert, den der Aufrufer
-ohnehin schon mitbringt (`deploy/docker-compose.weave.yml:884`).
+Der Service `weave-tools-backend` in `deploy/docker-compose.weave.yml`
+betreibt den REST-Spiegel; die MCP-App läuft seit Schritt 5 standardmäßig
+als eigener Dienst `weave-tools-mcp` (derselbe Kommentarblock hält fest,
+warum sie bewusst ein eigener uvicorn-Prozess ist). Schritt 5 verlangt
+ausdrücklich, dass der MCP-Dienst in der Bereitstellung erreichbar ist,
+gerade WEIL die MCP-Surface jeden Aufruf allein über den
+`Authorization`-Header authentifiziert, den der Aufrufer ohnehin schon
+mitbringt — ein Deployment, das keinen MCP-Client braucht, kann
+`weave-tools-mcp` weiterhin weglassen bzw. im Helm-Chart
+`toolsBackend.mcp.enabled=false` setzen.
 
 Die beiden Einstiegspunkte sind außerdem aus einem mechanischen Grund getrennte
 ASGI-Apps: `MCPServer.streamable_http_app()` liefert eine Starlette-App zurück,
@@ -183,13 +185,14 @@ Tool-Aufruf statt beim Start (`app/mcp_server.py:23`). Beide Apps sind
 gleichermaßen zustandslos, daher ist es gleich richtig, die eine, die andere
 oder beide nebeneinander auf verschiedenen Ports zu betreiben.
 
-## Zwei Token-Arten auf dem Authorization-Header
+## Drei Token-Arten auf dem Authorization-Header
 
 `resolve_scope()` entscheidet allein anhand der Form des rohen Bearer-Tokens —
 nie anhand eines vom Client deklarierten Typ-Feldes, das nur eine weitere
 unauthentifizierte Eingabe wäre, der man vertrauen müsste. Ein Token, das genau
-einen `.` enthält, gilt als Delegations-Token; alles andere geht durch die
-Introspection (`app/services/scope.py:451`).
+einen `.` enthält, gilt als Delegations-Token; ein Token mit dem Präfix
+`wti_` gilt als technische Identität (Schritt 5, siehe unten); alles andere
+geht durch die Personal-Token-Introspection (`app/services/scope.py`).
 
 **Delegations-Token.** Ein kurzlebiger, HMAC-signierter Ausweis, den
 Weave-Runtime ausstellt, um einem externen Agenten genau die Leserechte des
@@ -255,6 +258,32 @@ erreichbares Weave-API wird mit der tatsächlichen Exception geloggt, erreicht
 den Aufrufer aber trotzdem als dieselbe generische Meldung
 (`app/services/scope.py:410`).
 
+**Technische Identität (Schritt 5).** Ein `wti_...`-Token, das eine
+eigenständige Integration oder ein externer KI-Agent von Weave-Ingests
+Admin-Oberfläche erhalten hat (`services/ingest/backend/app/api/
+technical_identities.py`) — nie ein Nutzerkonto, sondern ein administrierter
+Berechtigungsnachweis mit explizit gewährten Collections (Default: keine).
+Aufgelöst über `POST {INGEST_BASE_URL}/api/v1/internal/technical-identities/
+introspect` (mit `TOOLS_INTROSPECTION_TOKEN`, ein von `INTROSPECTION_
+SERVICE_TOKEN` getrenntes Secret, da anderer Upstream und anderer
+Identitäts-Speicher) — Details, Wire-Format und Audit-Felder stehen in
+`contracts/technical-identities.md`.
+
+Dieser Pfad ist die EINE dokumentierte Ausnahme von "nichts wird
+zwischengespeichert" oben: ein In-Prozess-Cache mit
+`TECHNICAL_IDENTITY_CACHE_SECONDS` (Default 45s) hält sowohl positive als
+auch negative Ergebnisse, keyed auf `sha256(token)`, nie den Rohwert selbst.
+Begründung und Abgrenzung stehen ausführlich im Docstring von
+`_resolve_technical_scope` (`app/services/scope.py`) — Personal- und
+Delegations-Token bleiben von dieser Ausnahme unberührt.
+
+`scope.kind == 'technical'` ist wie `'delegated'`/`'personal'` reine
+Observability; die Durchsetzung läuft durch dieselbe generische
+`allowed_collections`-Schnittmenge wie jeder andere Aufrufer (Abschnitt "Der
+Scope kommt immer aus der Identität" oben) — MCP und REST gewinnen technische
+Identitäten dadurch automatisch, ohne eine Zeile in `app/mcp_server.py` oder
+`app/api/tools.py` zu ändern.
+
 ## Konfiguration
 
 `.env.example` ist für den Betrieb dieses Dienstes allein, außerhalb des
@@ -273,14 +302,18 @@ Repository-Root, und `python scripts/weave_config.py render` schreibt
 | `RETRIEVAL_TIMEOUT_SECONDS` | `10` | Timeout für diese Aufrufe |
 | `WEAVE_DELEGATION_SECRET` | leer | Symmetrisches HMAC-Secret, in Weave-Runtime und hier identisch. Nicht gesetzt heißt `503` bei jeder Delegations-Token-Prüfung. |
 | `DELEGATION_TOKEN_TTL_SECONDS` | `300` | Lebensdauer eines frisch ausgestellten Tokens |
+| `INGEST_BASE_URL` | `http://localhost:8000` | Weave-Ingest, für die Introspection technischer Identitäten (Schritt 5) |
+| `TOOLS_INTROSPECTION_TOKEN` | leer | Was dieser Dienst dem technical-identities-Introspection-Endpunkt von Weave-Ingest vorweist — ein von `INTROSPECTION_SERVICE_TOKEN` getrenntes Secret |
+| `INGEST_TIMEOUT_SECONDS` | `10` | Timeout für diesen Aufruf |
+| `TECHNICAL_IDENTITY_CACHE_SECONDS` | `45` | Die eine dokumentierte Cache-Ausnahme, nur für den Technische-Identitäten-Pfad (siehe oben) |
 
-Vier davon sind eigenständige Geheimnisse, und sie zu verwechseln ist der
+Fünf davon sind eigenständige Geheimnisse, und sie zu verwechseln ist der
 häufigste Weg, diesen Dienst falsch zu konfigurieren: `TOOLS_API_TOKEN`
-authentifiziert Aufrufer **dieses** Dienstes, `INTROSPECTION_SERVICE_TOKEN`
-und `RETRIEVAL_API_TOKEN` authentifizieren diesen Dienst **als Aufrufer von**
-Weave-API und Weave-Retrieval, und `WEAVE_DELEGATION_SECRET` geht überhaupt
-nie über die Leitung — es wird nur lokal, auf beiden Seiten, zum Berechnen
-und Prüfen eines HMAC benutzt.
+authentifiziert Aufrufer **dieses** Dienstes, `INTROSPECTION_SERVICE_TOKEN`,
+`RETRIEVAL_API_TOKEN` und `TOOLS_INTROSPECTION_TOKEN` authentifizieren diesen
+Dienst **als Aufrufer von** Weave-API, Weave-Retrieval bzw. Weave-Ingest, und
+`WEAVE_DELEGATION_SECRET` geht überhaupt nie über die Leitung — es wird nur
+lokal, auf beiden Seiten, zum Berechnen und Prüfen eines HMAC benutzt.
 
 ## Entwicklung
 
@@ -390,8 +423,16 @@ docker run ... weave-tools uvicorn app.mcp_server:mcp_app --host 0.0.0.0 --port 
 In `deploy/docker-compose.weave.yml` läuft der REST-Spiegel als
 `weave-tools-backend`, veröffentlicht auf `${TOOLS_PORT:-8005}`, mit einem
 Healthcheck gegen `/health` und `depends_on`-Bedingungen auf ein gesundes
-`weave-api` und `weave-retrieval`. Der MCP-Server wird dort nicht gestartet;
-siehe den Asymmetrie-Abschnitt oben.
+`weave-api`, `weave-retrieval` und (seit Schritt 5) `weave-ingest-backend`.
+Der MCP-Server läuft dort seit Schritt 5 als eigener Dienst
+`weave-tools-mcp` (dasselbe Image, überschriebenes Kommando,
+veröffentlicht auf `${TOOLS_MCP_PORT:-8008}`, TCP- statt HTTP-Healthcheck) —
+standardmäßig gestartet, denn Schritt 5 verlangt, dass externe
+Integrationen und externe KI-Agenten den Dienst tatsächlich per MCP
+erreichen können. Im Helm-Chart steuert `toolsBackend.mcp.enabled`
+(Default seit Schritt 5: `true`) dasselbe zweite Deployment; siehe den
+Asymmetrie-Abschnitt oben für die Begründung, warum es ein eigener Prozess
+bleibt.
 
 ## Status
 

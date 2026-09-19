@@ -8,7 +8,7 @@ on `search`, or anything else a request body/tool-call might carry) is ever
 treated as a grant -- see Scope's own docstring and the Grundregel Rechte
 this whole contract exists to enforce.
 
-Two ways to arrive at a Scope, chosen purely by shape of the raw bearer
+Three ways to arrive at a Scope, chosen purely by shape of the raw bearer
 token (never by a client-declared "type" field, which would just be another
 unauthenticated input to trust):
 
@@ -24,13 +24,22 @@ unauthenticated input to trust):
    who it belongs to, then asking Weave-Retrieval which collections that
    person's team may read. Two outbound HTTP calls, every time.
 
-Deliberately no caching of either path's result across requests: the whole
+3. A Technical-Identity-Token (Schritt 5: a standalone integration's or an
+   external MCP agent's own long-lived credential, prefixed `wti_...`,
+   administered by Weave-Ingest -- never minted here): resolved by asking
+   Weave-Ingest's own introspection endpoint which collections that
+   identity was explicitly granted. See `_resolve_technical_scope` below
+   for the one deliberate exception this path carves out of the "never
+   cache" rule in the very next paragraph.
+
+Deliberately no caching of path 1 or 2's result across requests: the whole
 point of a scope that can be resolved fresh on every call is that revoking
 a Personal-Token (Weave-API disables it) or a team's access to a collection
 (Weave-Retrieval's own registry changes) takes effect on this service's very
 next request, not whenever some TTL happens to expire. A Delegations-Token
 already carries its own short TTL (settings.delegation_token_ttl_seconds)
-for exactly the same reason -- see issue_delegation_token below.
+for exactly the same reason -- see issue_delegation_token below. Path 3 is
+the one narrow, documented exception -- see `_resolve_technical_scope`.
 
 --- Delegations-Token wire format -----------------------------------------
 
@@ -193,12 +202,16 @@ class Scope:
     trusted with. An empty list correctly means "reads nothing" and must
     still be passed through as such, never treated as "unset".
 
-    `kind` is 'personal' or 'delegated' -- carried for logging/observability
-    only (e.g. telling apart "a human is asking directly" from "an agent is
-    asking on a human's behalf" in an audit trail); no code path in this
-    service is allowed to branch access-control decisions on it, since the
-    whole point of a Delegations-Token is that it grants EXACTLY the
-    delegating human's own rights, never a different or wider set.
+    `kind` is 'personal', 'delegated', or 'technical' -- carried for
+    logging/observability only (e.g. telling apart "a human is asking
+    directly" from "an agent is asking on a human's behalf" from "a
+    standalone integration is asking under its own grant" in an audit
+    trail); no code path in this service is allowed to branch
+    access-control decisions on it, since the whole point of a
+    Delegations-Token is that it grants EXACTLY the delegating human's own
+    rights, never a different or wider set -- and a technical identity's
+    `allowed_collections` already IS the full and only grant, enforced the
+    same generic way as every other kind (see app/services/tools.py).
     """
 
     kind: str
@@ -466,21 +479,124 @@ def _resolve_personal_scope(token: str) -> Scope:
     )
 
 
+_TECHNICAL_IDENTITY_PREFIX = 'wti_'
+
+# The one deliberate, narrowly-scoped exception to this module's "never
+# cache" rule (see module docstring) -- keyed by sha256(token), never the
+# raw token itself, purely so a heap dump/debugger inspecting this dict
+# never shows a live bearer credential in the clear. Value is
+# (expires_at_monotonic, Scope | None); None caches a NEGATIVE result too
+# (an unknown/revoked/expired/disabled token) so a misbehaving or malicious
+# caller retrying a bad token in a hot loop doesn't turn into a hot loop of
+# outbound calls to Weave-Ingest either.
+_technical_scope_cache: dict[str, tuple[float, Scope | None]] = {}
+
+
+def _technical_cache_key(token: str) -> str:
+    return hashlib.sha256(token.encode('utf-8')).hexdigest()
+
+
+def _resolve_technical_scope(token: str) -> Scope:
+    """Introspect a `wti_...` Technical-Identity-Token against Weave-Ingest
+    (app/api/technical_identities.py there), with a short in-process TTL
+    cache (settings.technical_identity_cache_seconds, 30-60s) -- the ONE
+    deliberate exception to this module's otherwise absolute "resolve fresh
+    on every call, never cache" discipline (see module docstring).
+
+    Why an exception is acceptable HERE specifically, and nowhere else in
+    this module: a Personal-Token's revocation or a team's collection
+    access can change at any moment for reasons entirely outside this
+    integration's own control (an admin disables the human's account, a
+    collection's ACL changes) and callers rightly expect that to take
+    effect immediately. A technical identity is different in kind -- it is
+    itself an administered, deliberately-provisioned grant, reviewed and
+    revoked through the same admin surface that created it, not something
+    a caller can be surprised out from under. Tolerating up to
+    `technical_identity_cache_seconds` of revocation latency in exchange for
+    not hammering Weave-Ingest with an introspection call on every single
+    MCP/REST tool invocation is judged a reasonable, EXPLICIT trade-off --
+    never extended to either token kind above.
+
+    A cache hit still re-validates nothing; a cache miss (or an expired
+    entry) does exactly one outbound call, same failure handling as
+    `_resolve_personal_scope`: an unreachable/misbehaving Weave-Ingest is
+    logged and raises the one generic ScopeError, never a distinguishable
+    error for the caller.
+    """
+    cache_key = _technical_cache_key(token)
+    cached = _technical_scope_cache.get(cache_key)
+    if cached is not None:
+        expires_at, cached_scope = cached
+        if expires_at > time.monotonic():
+            if cached_scope is None:
+                raise ScopeError(_GENERIC_AUTH_ERROR)
+            return cached_scope
+        del _technical_scope_cache[cache_key]
+
+    def _cache_and_return(scope: Scope | None) -> Scope | None:
+        _technical_scope_cache[cache_key] = (
+            time.monotonic() + settings.technical_identity_cache_seconds,
+            scope,
+        )
+        return scope
+
+    try:
+        response = httpx.post(
+            f'{settings.ingest_base_url}/api/v1/internal/technical-identities/introspect',
+            json={'token': token},
+            headers={'Authorization': f'Bearer {settings.tools_introspection_token}'},
+            timeout=settings.ingest_timeout_seconds,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except httpx.HTTPError:
+        # Infrastructure failure, not "this token is invalid" -- same
+        # reasoning as _resolve_personal_scope's identical try/except.
+        # Deliberately NOT cached: a transient Weave-Ingest outage must not
+        # freeze a rejection in place for the cache's full TTL.
+        logger.exception('introspection call to Weave-Ingest failed')
+        raise ScopeError(_GENERIC_AUTH_ERROR) from None
+
+    if not data.get('active'):
+        _cache_and_return(None)
+        raise ScopeError(_GENERIC_AUTH_ERROR)
+
+    collections = data.get('allowed_collections')
+    if not isinstance(collections, list) or not all(isinstance(slug, str) for slug in collections):
+        raise ScopeError(_GENERIC_AUTH_ERROR)
+
+    scope = Scope(
+        kind='technical',
+        user_id=str(data['identity_id']),
+        username=data.get('name') or str(data['identity_id']),
+        team=None,
+        teams=None,
+        allowed_collections=list(collections),
+    )
+    _cache_and_return(scope)
+    return scope
+
+
 def resolve_scope(authorization: str | None) -> Scope:
     """Resolve one request's `Authorization` header to a Scope -- the ONLY
     entry point into this module every tool is expected to call, and it is
-    called fresh on every single request (see module docstring). Never
-    caches, never accepts a scope override from anywhere else.
+    called fresh on every single request for the Delegations- and
+    Personal-Token paths (see module docstring; the Technical-Identity path
+    is the one documented exception -- see `_resolve_technical_scope`).
+    Never accepts a scope override from anywhere else.
 
-    Dispatch between the two token kinds is purely structural: a raw bearer
-    token containing EXACTLY one '.' is handled as a Delegations-Token (see
-    this module's own docstring for the wire format -- `part1.part2`, and a
-    Personal-Token, an opaque string from Weave-API, is never expected to
-    contain a literal '.' at all); anything else goes through the
-    Personal-Token/introspection path. A malformed one-dot string that
-    isn't actually a valid Delegations-Token still ends up at the exact
-    same generic ScopeError as any other invalid token, never a different
-    one merely for guessing the wrong shape.
+    Dispatch between the three token kinds is purely structural, in this
+    order: a raw bearer token containing EXACTLY one '.' is handled as a
+    Delegations-Token (see this module's own docstring for the wire format
+    -- `part1.part2`); a token starting with `wti_` is handled as a
+    Technical-Identity-Token (Weave-Ingest's own minted shape -- see
+    app/api/technical_identities.py there); neither a Personal-Token (an
+    opaque string from Weave-API) nor a Delegations-Token is ever expected
+    to start with that literal prefix. Anything else goes through the
+    Personal-Token/introspection path. A malformed one-dot or `wti_`-shaped
+    string that isn't actually valid still ends up at the exact same
+    generic ScopeError as any other invalid token, never a different one
+    merely for guessing the wrong shape.
 
     One exception is not collapsed into that generic ScopeError: a one-dot
     token still raises ScopeConfigurationError, uncaught, when
@@ -495,4 +611,6 @@ def resolve_scope(authorization: str | None) -> Scope:
     token = authorization[len(_BEARER_PREFIX):]
     if token.count('.') == 1:
         return _resolve_delegated_scope(token)
+    if token.startswith(_TECHNICAL_IDENTITY_PREFIX):
+        return _resolve_technical_scope(token)
     return _resolve_personal_scope(token)

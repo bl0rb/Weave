@@ -17,15 +17,36 @@ replacement for it).
 
 from __future__ import annotations
 
+import logging
+
 import httpx
 
 from app.core.config import settings
 from app.schemas.tools import CollectionOut, SearchHitOut, SearchSourceOut, SearchToolResponse
 from app.services.scope import Scope
 
+logger = logging.getLogger(__name__)
+
 
 def _retrieval_headers() -> dict[str, str]:
     return {'Authorization': f'Bearer {settings.retrieval_api_token}'}
+
+
+def _audit(*, scope: Scope, tool: str, collection: str | None, result_count: int | None, denied: bool) -> None:
+    """One structured log line per tool call (Schritt 5's own audit
+    requirement for the technical-identity path, but written for every
+    `scope.kind` alike -- an external integration's calls are exactly as
+    auditable as a human's own). Deliberately never includes the caller's
+    bearer token, any hit's document text, or anything else beyond who
+    asked, what they asked for, and how many rows came back -- an operator
+    reading this log can answer "did identity X read collection Y" without
+    this line itself becoming something worth protecting as hard as the
+    documents it might otherwise have echoed.
+    """
+    logger.info(
+        'tools call: kind=%s caller=%s tool=%s collection=%s result_count=%s denied=%s',
+        scope.kind, scope.user_id, tool, collection or '*', result_count, denied,
+    )
 
 
 def list_collections_for_scope(scope: Scope) -> list[CollectionOut]:
@@ -57,11 +78,13 @@ def list_collections_for_scope(scope: Scope) -> list[CollectionOut]:
     response.raise_for_status()
 
     allowed = set(scope.allowed_collections)
-    return [
+    out = [
         CollectionOut(slug=row['slug'], name=row['name'], description=row.get('description'))
         for row in response.json()
         if row['slug'] in allowed
     ]
+    _audit(scope=scope, tool='list_collections', collection=None, result_count=len(out), denied=False)
+    return out
 
 
 def _format_page(page_start: int | None, page_end: int | None) -> str | None:
@@ -95,23 +118,45 @@ def search_for_scope(
     """
     if collection is not None:
         if collection not in scope.allowed_collections:
+            _audit(scope=scope, tool='search', collection=collection, result_count=None, denied=True)
             return SearchToolResponse(query=query, results=[])
         effective_collections = [collection]
     else:
         effective_collections = list(scope.allowed_collections)
 
+    # Weave-Retrieval's own SearchRequest.allowed_teams is `list[str] | None`
+    # (see that service's app/schemas/search.py), and that service's
+    # apply_filters() ANDs allowed_teams with allowed_collections -- an
+    # empty list there means "no team authorized", i.e. zero rows, no
+    # matter what allowed_collections says. For a caller who has a team at
+    # all (`scope.team` or `scope.teams` set), that is exactly the
+    # enforcement this service must forward: `scope.effective_teams` wraps
+    # a single `team` into `[team]`, never `None`, since `None` is Weave-
+    # Retrieval's own sentinel for "no team restriction at all" and no
+    # team-scoped caller is trusted with that meaning (Grundregel Rechte).
+    # A technical identity (`scope.kind == 'technical'`) has NO team
+    # dimension at all by design -- `team` and `teams` are always `None`
+    # for it (see contracts/technical-identities.md), and its sole access
+    # dimension is `allowed_collections`. Forwarding `[]` for it would
+    # silently AND every search to zero results regardless of which
+    # collections it was granted, which is not "no team authorized" but
+    # "team filtering does not apply to this caller at all" -- so `None`
+    # is forwarded instead, leaving `allowed_collections` (checked above,
+    # and enforced again by Weave-Retrieval itself) as the only boundary.
+    # A personal/delegated caller with a genuinely empty `team` keeps the
+    # existing `[]` behaviour -- unlike a technical identity, `team`/`teams`
+    # are real, populated access dimensions for those kinds, so an absent
+    # value there still means "no team authorized" and must still zero out.
+    allowed_teams: list[str] | None
+    if scope.kind == 'technical':
+        allowed_teams = None
+    else:
+        allowed_teams = scope.effective_teams
+
     body: dict[str, object] = {
         'query': query,
         'allowed_collections': effective_collections,
-        # Weave-Retrieval's own SearchRequest.allowed_teams is `list[str] |
-        # None` (see that service's app/schemas/search.py) with `None`
-        # meaning "no restriction at all" -- a meaning this service must
-        # never forward on a caller's behalf (Grundregel Rechte again).
-        # `scope.team` is `None` for a caller with no team at all, so this
-        # wraps it into `[]` ("no team authorized", i.e. zero results)
-        # rather than `[None]`, which is not even a valid `list[str]` value
-        # and would fail Weave-Retrieval's own request validation outright.
-        'allowed_teams': scope.effective_teams,
+        'allowed_teams': allowed_teams,
     }
     if top_k is not None:
         body['top_k'] = top_k
@@ -140,4 +185,5 @@ def search_for_scope(
         )
         for hit in payload.get('results', [])
     ]
+    _audit(scope=scope, tool='search', collection=collection, result_count=len(results), denied=False)
     return SearchToolResponse(query=query, results=results)

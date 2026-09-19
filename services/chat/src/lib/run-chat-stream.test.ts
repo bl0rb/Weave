@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { streamFromChunks } from '@/lib/sse';
 import { consumeChatStream } from '@/lib/run-chat-stream';
-import type { ChatTrace, Source } from '@/types/weave-api';
+import type { ChatStreamStatusEvent, ChatTrace, Source } from '@/types/weave-api';
 
 const SAMPLE_TRACE: ChatTrace = {
   intent: 'knowledge',
@@ -15,6 +15,8 @@ const SAMPLE_TRACE: ChatTrace = {
   guard: null,
   // Regel-Router, kein n8n-Turn -- genau der Fall, den `null` abdeckt.
   n8n: null,
+  // Kein Agent-Modus-Turn -- siehe AgentTrace's eigenen Docstring.
+  agent: null,
 };
 
 const SAMPLE_SOURCE: Source = {
@@ -82,6 +84,34 @@ describe('consumeChatStream', () => {
 
     const outcome = await consumeChatStream(streamFromChunks(chunks), {});
     expect(outcome).toEqual({ status: 'interrupted' });
+  });
+
+  it('forwards a status event to onStatus, in order with delta/trace', async () => {
+    const statusEvent: ChatStreamStatusEvent = {
+      type: 'status', stage: 'researching', agent_id: 'it-support', agent_name: 'IT Support',
+      state: null, message: 'IT Support wird durchsucht',
+    };
+    const chunks = [
+      `data: ${JSON.stringify({ type: 'trace', trace: SAMPLE_TRACE })}\n\n`,
+      `data: ${JSON.stringify(statusEvent)}\n\n`,
+      `data: ${JSON.stringify({ type: 'delta', text: 'Antwort' })}\n\n`,
+      `data: ${JSON.stringify({ type: 'done' })}\n\n`,
+    ];
+
+    const seen: string[] = [];
+    let status: ChatStreamStatusEvent | null = null;
+    const outcome = await consumeChatStream(streamFromChunks(chunks), {
+      onTrace: () => seen.push('trace'),
+      onStatus: (event) => {
+        seen.push('status');
+        status = event;
+      },
+      onDelta: () => seen.push('delta'),
+    });
+
+    expect(outcome).toEqual({ status: 'done' });
+    expect(seen).toEqual(['trace', 'status', 'delta']);
+    expect(status).toEqual(statusEvent);
   });
 
   it('never calls onSources/onDelta after a terminal event has already ended the turn', async () => {

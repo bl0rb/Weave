@@ -189,6 +189,42 @@ def test_chat_completions_stream_emits_openai_chunks_with_role_and_done(db_sessi
     assert chunks[-1]['choices'][0]['finish_reason'] == 'stop'
 
 
+def test_chat_completions_stream_silently_drops_status_events(db_session, runtime):
+    """Rollout plan "Schritt 4": `_stream_openai_chunks`'s if/elif chain has
+    no branch for `status` (deliberately, per its own docstring -- OpenAI's
+    Chat-Completions stream shape has no chunk for a transient progress
+    line) -- it must fall through with no `yield` at all, never surface as
+    a malformed chunk, and never disturb the surrounding delta/done
+    chunks."""
+    _, raw_token = make_user_with_token(db_session, username='shim-stream-status', team='legal')
+    db_session.commit()
+
+    status_event = {'type': 'status', 'stage': 'answering', 'message': 'Antwort wird formuliert'}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = _sse_body(
+            [TRACE_EVENT, status_event, {'type': 'delta', 'text': 'Hallo'}, SOURCES_EVENT, DONE_EVENT]
+        )
+        return httpx.Response(200, content=body, headers={'content-type': 'text/event-stream'})
+
+    runtime.handle(handler)
+
+    response = client.post(
+        '/v1/chat/completions',
+        json={'model': 'legal-support', 'messages': [{'role': 'user', 'content': 'Hi'}], 'stream': True},
+        headers=auth_headers(raw_token),
+    )
+    assert response.status_code == 200
+    events = _parse_sse_events(response.text)
+    assert events[-1] == '[DONE]'
+    chunks = events[:-1]
+    # No chunk carries anything derived from the status event -- exactly
+    # the same two content/finish_reason chunks as a status-free stream.
+    assert len(chunks) == 2
+    assert chunks[0]['choices'][0]['delta']['content'] == 'Hallo'
+    assert chunks[-1]['choices'][0]['finish_reason'] == 'stop'
+
+
 def test_chat_completions_stream_stops_without_done_on_an_upstream_error_event(db_session, runtime):
     _, raw_token = make_user_with_token(db_session, username='shim-stream-error')
     db_session.commit()
@@ -325,6 +361,50 @@ def test_chat_stream_forwards_events_and_persists_the_assistant_message_once_at_
 
     conversation = db_session.get(Conversation, conversation_id)
     assert conversation.user_id == user.id
+
+
+def test_chat_stream_forwards_an_unrecognized_status_event_verbatim(db_session, runtime):
+    """Rollout plan "Schritt 4 -- Administration und Streaming": a `status`
+    progress event is new to this gateway, but `_stream_and_persist`'s own
+    if/elif chain only special-cases the event types it needs for
+    persistence -- every other type, including `status`, falls straight
+    through to the unconditional `yield _sse_line(event)`, unchanged and
+    un-persisted, exactly like contracts/internal-chat.md's own additive-
+    event-type versioning rule promises."""
+    user, raw_token = make_user_with_token(db_session, username='own-stream-status', team='legal')
+    db_session.commit()
+
+    status_event = {
+        'type': 'status', 'stage': 'researching', 'agent_id': 'it-support',
+        'agent_name': 'IT Support', 'state': None, 'message': 'IT Support wird durchsucht',
+    }
+    sent_events = [TRACE_EVENT, status_event, {'type': 'delta', 'text': 'Hallo'}, SOURCES_EVENT, DONE_EVENT]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == '/internal/conversation-title':
+            return httpx.Response(200, json={'title': 'Titel'})
+        assert request.url.path == '/internal/chat/stream'
+        return httpx.Response(200, content=_sse_body(sent_events), headers={'content-type': 'text/event-stream'})
+
+    runtime.handle(handler)
+
+    response = client.post(
+        '/v1/chat/stream', json={'bot_id': 'legal-support', 'message': 'Hi'}, headers=auth_headers(raw_token)
+    )
+    assert response.status_code == 200
+    assert _parse_sse_events(response.text) == sent_events
+
+    conversation_id = uuid.UUID(response.headers['x-conversation-id'])
+    messages = (
+        db_session.query(Message)
+        .filter(Message.conversation_id == conversation_id)
+        .order_by(Message.id)
+        .all()
+    )
+    # The status event is forwarded but never persisted -- only the two
+    # ordinary turn messages exist.
+    assert len(messages) == 2
+    assert messages[1].content == 'Hallo'
 
 
 def test_chat_stream_forwards_a_collections_filter_in_the_real_request_body(db_session, runtime):

@@ -335,11 +335,15 @@ def test_n8n_bot_still_requires_a_webhook():
 
 
 def test_agent_config_round_trips_through_admin_and_internal_projections(monkeypatch):
-    """The `agent` block (Weave-Runtime's `BotConfig.agent`, rollout plan
-    "Schritt 2 -- Tool-Calls und ein Subagent") is a plain, unvalidated
-    passthrough dict here -- create it, see it echoed back on the admin
-    response, update it, and see the update echoed on both the admin AND
-    the internal (Runtime-facing) projection."""
+    """The `agent` block (Weave-Runtime's `BotConfig.agent`) is validated on
+    save via `AgentConfig` (rollout plan "Schritt 4 -- Administration und
+    Streaming", a field-for-field mirror of Runtime's own model, see
+    schemas/managed_bots.py) -- create it, see the CANONICAL (defaults
+    filled in) shape echoed back on the admin response, update it, and see
+    the update echoed on both the admin AND the internal (Runtime-facing)
+    projection."""
+    from app.schemas.managed_bots import AgentConfig
+
     admin = _identity('bot-agent-admin', role=UserRole.ADMIN)
     admin_client = login_as(admin.username)
     team_name = _team()
@@ -351,6 +355,12 @@ def test_agent_config_round_trips_through_admin_and_internal_projections(monkeyp
             {'id': 'it-support', 'name': 'IT Support', 'mission': 'Answer IT questions.', 'collections': ['it-docs']}
         ],
     }
+    # What the API actually stores/echoes -- the minimal input above, with
+    # every Runtime-mirrored default (limits, filters, tools, ...) filled
+    # in explicitly, exactly like Runtime's own `AgentConfig.model_dump()`
+    # would for the identical input.
+    canonical_agent_config = AgentConfig(**agent_config).model_dump()
+
     payload = _payload(
         team_name, collection_slug, kind='llm', webhook_url=None, auth_token=None,
         system_prompt='Du recherchierst zuerst.', agent=agent_config,
@@ -358,18 +368,19 @@ def test_agent_config_round_trips_through_admin_and_internal_projections(monkeyp
 
     created = admin_client.post('/api/v1/auth/admin/bots', json=payload)
     assert created.status_code == 201, created.text
-    assert created.json()['agent'] == agent_config
+    assert created.json()['agent'] == canonical_agent_config
 
     with TestingSessionLocal() as db:
         row = db.get(ManagedBot, payload['id'])
-        assert row.agent_config == agent_config
+        assert row.agent_config == canonical_agent_config
 
     updated_agent_config = {**agent_config, 'limits': {'budget_searches': 5}}
+    canonical_updated_agent_config = AgentConfig(**updated_agent_config).model_dump()
     update_body = {key: value for key, value in payload.items() if key != 'id'}
     update_body['agent'] = updated_agent_config
     updated = admin_client.put(f"/api/v1/auth/admin/bots/{payload['id']}", json=update_body)
     assert updated.status_code == 200, updated.text
-    assert updated.json()['agent'] == updated_agent_config
+    assert updated.json()['agent'] == canonical_updated_agent_config
 
     monkeypatch.setattr(settings, 'chat_config_service_token', 'runtime-control-token')
     internal = admin_client.get(
@@ -379,7 +390,53 @@ def test_agent_config_round_trips_through_admin_and_internal_projections(monkeyp
     assert internal.status_code == 200, internal.text
     projected = internal.json()['items'][0]
     assert projected['id'] == payload['id']
-    assert projected['agent'] == updated_agent_config
+    assert projected['agent'] == canonical_updated_agent_config
+
+
+def test_agent_config_rejects_invalid_shape_with_readable_422(monkeypatch):
+    """An admin-saved `agent` block that violates one of Runtime's own
+    `AgentConfig` rules (here: `enabled: true` with an empty `subagents`
+    list) must fail at SAVE time with a readable 422, not silently persist
+    and only fail the next time Weave-Runtime loads this bot."""
+    admin = _identity('bot-agent-invalid-admin', role=UserRole.ADMIN)
+    admin_client = login_as(admin.username)
+    team_name = _team()
+    collection_slug = _scope(admin_client, team_name)
+
+    payload = _payload(
+        team_name, collection_slug, kind='llm', webhook_url=None, auth_token=None,
+        system_prompt='Du recherchierst zuerst.', agent={'enabled': True, 'subagents': []},
+    )
+
+    response = admin_client.post('/api/v1/auth/admin/bots', json=payload)
+    assert response.status_code == 422
+    assert 'subagents' in response.text.lower()
+
+    with TestingSessionLocal() as db:
+        assert db.get(ManagedBot, payload['id']) is None
+
+
+def test_agent_config_rejects_duplicate_subagent_ids_with_readable_422():
+    admin = _identity('bot-agent-dupe-admin', role=UserRole.ADMIN)
+    admin_client = login_as(admin.username)
+    team_name = _team()
+    collection_slug = _scope(admin_client, team_name)
+
+    payload = _payload(
+        team_name, collection_slug, kind='llm', webhook_url=None, auth_token=None,
+        system_prompt='Du recherchierst zuerst.',
+        agent={
+            'enabled': True,
+            'subagents': [
+                {'id': 'it-support', 'name': 'IT Support', 'mission': 'IT.', 'collections': ['it-docs']},
+                {'id': 'it-support', 'name': 'IT Support 2', 'mission': 'IT.', 'collections': ['it-docs']},
+            ],
+        },
+    )
+
+    response = admin_client.post('/api/v1/auth/admin/bots', json=payload)
+    assert response.status_code == 422
+    assert 'unique' in response.text.lower()
 
 
 def test_bot_without_agent_config_projects_none():

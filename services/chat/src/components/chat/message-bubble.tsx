@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
 import { cn } from '@/lib/utils';
-import type { UiMessage } from '@/lib/chat-types';
+import type { UiAgentStatus, UiMessage } from '@/lib/chat-types';
 import { SourceCards } from '@/components/chat/source-cards';
 import { TracePanel } from '@/components/chat/trace-panel';
 import { GuardBanner } from '@/components/chat/guard-banner';
@@ -47,18 +47,27 @@ export function MessageBubble({ message }: { message: UiMessage }) {
         ) : message.streaming ? (
           <span className="inline-flex items-center gap-1 text-[var(--foreground-muted)]" aria-live="polite">
             {/* Default placeholder stays screen-reader-only (see sidebar.tsx's
-                comment referencing this same pattern) — only the slow-response
-                variant below is ever shown visibly. */}
+                comment referencing this same pattern) — only the
+                progress-line/slow-response variant below is ever shown
+                visibly. `progressLine` (an agent-mode turn's own live
+                status message, e.g. "IT Support wird durchsucht") takes
+                priority over the generic placeholder while it is set, and
+                is cleared by chat-app.tsx the moment real answer text
+                starts arriving (`onDelta`). */}
             <span className="sr-only">
-              {message.slowResponse ? 'Der Assistent arbeitet noch …' : 'Antwort wird erzeugt…'}
+              {message.progressLine ?? (message.slowResponse ? 'Der Assistent arbeitet noch …' : 'Antwort wird erzeugt…')}
             </span>
-            {message.slowResponse ? (
+            {message.progressLine || message.slowResponse ? (
               <span className="text-xs" aria-hidden="true">
-                Der Assistent arbeitet noch …
+                {message.progressLine ?? 'Der Assistent arbeitet noch …'}
               </span>
             ) : null}
             <ThinkingDots />
           </span>
+        ) : null}
+
+        {!isUser && message.streaming && message.agentStatuses.length > 0 ? (
+          <AgentStatusChips statuses={message.agentStatuses} />
         ) : null}
 
         {!isUser && message.streaming && message.content ? (
@@ -91,6 +100,38 @@ export function MessageBubble({ message }: { message: UiMessage }) {
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+/** Small per-subagent chips for a still-streaming agent-mode turn — a live,
+ * at-a-glance preview of what `TracePanel` will show read-only once the
+ * turn's own `trace` event arrives (rendered only while `message.streaming`
+ * — see message-bubble.tsx's own call site). Purely a rendering of already
+ * public `UiAgentStatus` entries, never a prompt/query. */
+function AgentStatusChips({ statuses }: { statuses: UiAgentStatus[] }) {
+  const label: Record<string, string> = {
+    complete: 'fertig', partial: 'teilweise', failed: 'fehlgeschlagen',
+  };
+  const tone: Record<string, string> = {
+    complete: 'border-[var(--success,#2f9e44)] text-[var(--success,#2f9e44)]',
+    partial: 'border-[var(--warning,#e8a33d)] text-[var(--warning,#e8a33d)]',
+    failed: 'border-[var(--danger,#e03131)] text-[var(--danger,#e03131)]',
+  };
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {statuses.map((status) => (
+        <span
+          key={status.agentId}
+          className={cn(
+            'rounded-full border px-2 py-0.5 text-[11px]',
+            status.state ? tone[status.state] : 'border-[var(--border)] text-[var(--foreground-muted)]'
+          )}
+        >
+          {status.agentName}
+          {status.state ? ` – ${label[status.state]}` : ' …'}
+        </span>
+      ))}
     </div>
   );
 }

@@ -98,15 +98,19 @@ def _sse_chunk(chunk: OpenAIChatCompletionChunk) -> str:
 def _stream_openai_chunks(*, chunk_id: str, created: int, model: str, events: Iterator[dict]) -> Iterator[str]:
     """The StreamingResponse body for `"stream": true` on
     POST /v1/chat/completions below -- translates runtime_client.
-    chat_stream()'s five Weave-Runtime event types into OpenAI's own
+    chat_stream()'s Weave-Runtime event types into OpenAI's own
     `chat.completion.chunk` shape, one `delta` event in, one chunk out:
 
-    - `trace`/`sources`: dropped. Neither has a field in OpenAI's
-      Chat-Completions stream shape to carry them (exactly like the
+    - `trace`/`sources`/`status`: dropped. None of the three has a field in
+      OpenAI's Chat-Completions stream shape to carry it (exactly like the
       non-streaming `chat_completions()` below already drops `trace`
       entirely and has no equivalent for `sources` either -- see
       OpenAIChatCompletionResponse's own docstring on `usage` for the same
-      "nothing authoritative to map this onto" reasoning).
+      "nothing authoritative to map this onto" reasoning). `status`
+      (rollout plan "Schritt 4 -- Administration und Streaming") is a
+      transient progress line meant for a live chat UI, not something an
+      OpenAI-compatible client has any chunk shape to receive at all --
+      this is a deliberate, permanent drop, not a gap to fill in later.
     - `delta`: becomes one chunk whose `delta.content` carries `text`.
       `delta.role='assistant'` is set on the FIRST such chunk of the
       stream ONLY (`sent_role` below) -- OpenAI clients key off exactly

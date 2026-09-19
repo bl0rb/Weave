@@ -246,3 +246,60 @@ def test_multi_agent_turn_streams_trace_then_deltas_then_sources_and_done(tmp_pa
     assert events[-2]['type'] == 'sources'
     assert {source['document_id'] for source in events[-2]['sources']} == {'doc-it', 'doc-hr'}
     assert events[-1]['type'] == 'done'
+
+
+def test_multi_agent_turn_stream_emits_status_events_and_streams_several_deltas(tmp_path, monkeypatch):
+    # Rollout plan "Schritt 4 -- Administration und Streaming": planning,
+    # each subagent's start+finish, merging, and answering must each
+    # surface a status event, in that relative order, all before the FIRST
+    # delta -- and the graph's own `answer` node must now stream several
+    # real deltas (app/services/agent_graph.py's `_answer`) rather than one
+    # blocking `chat()` call chunked after the fact.
+    _write_bot(tmp_path, monkeypatch)
+    _script_get_llm_calls(monkeypatch, [
+        [LLMToolResult(content=None, tool_calls=_RESEARCH_AREA_PLAN, model='fake-chat')],
+        [
+            LLMToolResult(content=None, tool_calls=[ToolCall(id='s1', name='search_knowledge', arguments={'query': 'q'})], model='fake-chat'),
+            LLMToolResult(content=_final_answer_json('IT Fakt.', 'doc-it', 1), tool_calls=None, model='fake-chat'),
+        ],
+        [
+            LLMToolResult(content=None, tool_calls=[ToolCall(id='s2', name='search_knowledge', arguments={'query': 'q'})], model='fake-chat'),
+            LLMToolResult(content=_final_answer_json('HR Fakt.', 'doc-hr', 2), tool_calls=None, model='fake-chat'),
+        ],
+    ])
+    monkeypatch.setattr(
+        'app.services.retrieval_client.httpx.get',
+        _readable_collections(_collection('it-docs', 'IT Docs'), _collection('hr-docs', 'HR Docs')),
+    )
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _search_by_collection({
+        'it-docs': _search_response(_chunk('doc-it', 1, 'it-docs', 'IT content')),
+        'hr-docs': _search_response(_chunk('doc-hr', 2, 'hr-docs', 'HR content')),
+    }))
+
+    response = client.post('/internal/chat/stream', json=_BODY, headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    events = _parse_sse_events(response.text)
+    first_delta_index = next(i for i, event in enumerate(events) if event['type'] == 'delta')
+    status_events = [event for event in events[:first_delta_index] if event['type'] == 'status']
+    stages_seen = [event['stage'] for event in status_events]
+    assert stages_seen[0] == 'planning'
+    assert stages_seen[-1] == 'answering'
+    assert 'merging' in stages_seen
+    researching_agent_ids = {event['agent_id'] for event in status_events if event['stage'] == 'researching'}
+    assert researching_agent_ids == {'it-support', 'hr-support'}
+    # Each researching agent reports both a start (state None) and a finish
+    # (state set) -- never only one of the two.
+    for agent_id in ('it-support', 'hr-support'):
+        states = [e['state'] for e in status_events if e['stage'] == 'researching' and e['agent_id'] == agent_id]
+        assert states.count(None) == 1
+        assert any(state is not None for state in states)
+
+    delta_events = [event for event in events if event['type'] == 'delta']
+    assert len(delta_events) > 1  # genuine incremental streaming, not one chunk
+
+    for event in events:
+        if event['type'] == 'status':
+            blob = json.dumps(event)
+            assert _QUESTION not in blob
+            assert 'system_prompt' not in blob.lower()

@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { deleteJson, getJson, postJson } from '@/lib/api-client';
 import { errorForInterruptedStream, errorForNetworkFailure, errorForStreamEvent, mappedError, type MappedError } from '@/lib/errors';
 import { consumeChatStream } from '@/lib/run-chat-stream';
-import { buildChatRequestBody, newId, pendingAssistantMessage, uiMessageFromStored, userMessage, type UiMessage } from '@/lib/chat-types';
+import { applyAgentStatus, buildChatRequestBody, newId, pendingAssistantMessage, uiMessageFromStored, userMessage, type UiMessage } from '@/lib/chat-types';
 import type { Bot, ChatRequestBody, ChatResponseBody, Collection, ConversationSummary, StoredConversation } from '@/types/weave-api';
 
 export function ChatApp() {
@@ -238,11 +238,25 @@ export function ChatApp() {
           onDelta: (text) => {
             armSlowTimer();
             if (activeTurnRef.current === turnId) {
-              updateMessage(assistantId, (m) => ({ ...m, content: m.content + text, slowResponse: false }));
+              updateMessage(assistantId, (m) => ({
+                ...m, content: m.content + text, slowResponse: false, progressLine: null,
+              }));
             }
           },
           onSources: (sources) => {
             if (activeTurnRef.current === turnId) updateMessage(assistantId, (m) => ({ ...m, sources }));
+          },
+          onStatus: (event) => {
+            // Agent-mode research (planning/researching/merging) can take a
+            // while with no `delta` yet -- re-arming here keeps the >30s
+            // "arbeitet noch" hint keyed off genuine silence, not off an
+            // agent turn that is actively reporting progress.
+            armSlowTimer();
+            if (activeTurnRef.current === turnId) {
+              updateMessage(assistantId, (m) => ({
+                ...m, progressLine: event.message, agentStatuses: applyAgentStatus(m.agentStatuses, event),
+              }));
+            }
           },
         });
       } finally {

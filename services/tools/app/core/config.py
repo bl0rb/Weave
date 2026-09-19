@@ -64,5 +64,26 @@ class Settings(BaseSettings):
     # needs to outlive the single chat turn/tool call it was minted for.
     delegation_token_ttl_seconds: int = 300
 
+    # --- Technical-identity path of scope resolution (Schritt 5 --
+    # app/services/scope.py's third branch). A standalone integration's own
+    # long-lived 'wti_...' token, minted and administered by Weave-Ingest
+    # (app/api/technical_identities.py there), never by this service.
+    # Weave-Tools is the CALLER here, exactly like the Personal-Token path's
+    # calls to Weave-API -- ingest_base_url/tools_introspection_token are
+    # this path's own, distinct pair of settings (not weave_api_base_url/
+    # introspection_service_token above, which is a different upstream and
+    # a different shared secret).
+    ingest_base_url: str = 'http://localhost:8000'
+    tools_introspection_token: str = ''
+    ingest_timeout_seconds: float = 10.0
+    # The ONE deliberate exception to this module's otherwise absolute
+    # "never cache a scope" rule (see module docstring) -- scoped only to
+    # this technical-identity path. A revoked/edited technical identity can
+    # therefore remain effective for up to this many seconds after Ingest's
+    # own state changes, where every OTHER path here still revokes
+    # instantly. Kept short (30-60s) so that latency stays a deliberate,
+    # bounded trade-off rather than a de facto "never revoked".
+    technical_identity_cache_seconds: int = 45
+
 
 settings = Settings()

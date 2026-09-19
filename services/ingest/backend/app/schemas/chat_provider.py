@@ -11,6 +11,7 @@ class ChatProviderAdminResponse(BaseModel):
     has_api_key: bool
     timeout_seconds: float
     temperature: float | None
+    supports_tools: bool
     updated_at: datetime | None
 
 
@@ -24,6 +25,7 @@ class ChatProviderUpdateRequest(BaseModel):
     clear_api_key: bool = False
     timeout_seconds: float = Field(default=60.0, ge=1.0, le=300.0)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    supports_tools: bool = False
 
     @model_validator(mode='after')
     def validate_enabled_config(self) -> 'ChatProviderUpdateRequest':
@@ -48,4 +50,5 @@ class ChatProviderInternalResponse(BaseModel):
     api_key: str = ''
     timeout_seconds: float = 60.0
     temperature: float | None = None
+    supports_tools: bool = False
     updated_at: datetime | None = None

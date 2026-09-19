@@ -187,7 +187,7 @@ def _apply(row: ManagedBot, payload: ManagedBotCreate | ManagedBotUpdate, admin:
     row.collections = list(payload.collections)
     row.require_sources = payload.require_sources
     row.no_context_reply = payload.no_context_reply
-    row.agent_config = dict(payload.agent) if payload.agent else None
+    row.agent_config = payload.agent.model_dump() if payload.agent else None
     row.updated_by_id = admin.id
     if payload.auth_token:
         row.auth_token_encrypted = encrypt_managed_bot_auth_token(payload.auth_token.strip())

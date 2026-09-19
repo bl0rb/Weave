@@ -160,6 +160,57 @@ describe('ChatApp turn lifecycle', () => {
     }
   });
 
+  it('shows the latest status message as a progress line, then clears it once real content arrives', async () => {
+    // Rollout plan "Schritt 4 -- Administration und Streaming": a
+    // transient progress line replaces the ordinary placeholder while an
+    // agent-mode turn's research runs, and disappears once the first
+    // `delta` of the actual answer arrives.
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>((input) => {
+      const url = String(input);
+      if (url.endsWith('/api/bots')) return Promise.resolve(jsonResponse([BOTS[0]]));
+      if (url.endsWith('/api/collections')) return Promise.resolve(jsonResponse([]));
+      if (url.endsWith('/api/chat/stream')) {
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream<Uint8Array>({
+          async start(controller) {
+            controller.enqueue(
+              encoder.encode(
+                'data: {"type":"status","stage":"researching","agent_id":"it-support","agent_name":"IT Support","state":null,"message":"IT Support wird durchsucht"}\n\n'
+              )
+            );
+            // A real, deliberately generous macrotask gap before the delta
+            // arrives -- long enough that `vi.waitFor`'s own polling below
+            // is guaranteed to observe the progress-line render before it
+            // is replaced, rather than racing a same-tick batch of both
+            // state updates.
+            await new Promise((resolve) => setTimeout(resolve, 200));
+            controller.enqueue(encoder.encode('data: {"type":"delta","text":"Antwort"}\n\n'));
+          },
+        });
+        return Promise.resolve(
+          new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } })
+        );
+      }
+      throw new Error(`unexpected fetch to ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<ChatApp />);
+
+    const textarea = (await screen.findByPlaceholderText('Nachricht schreiben…')) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: 'IT-Frage' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Nachricht senden' }));
+
+    // Both a screen-reader-only span and a visible one carry this exact
+    // text while it's showing (see message-bubble.tsx's own placeholder
+    // branch) -- assert presence via getAllByText rather than getByText,
+    // which would otherwise throw on more than one match.
+    await vi.waitFor(() => expect(screen.getAllByText('IT Support wird durchsucht').length).toBeGreaterThan(0));
+
+    await vi.waitFor(() => expect(screen.getByText('Antwort')).toBeTruthy());
+    expect(screen.queryByText('IT Support wird durchsucht')).toBeNull();
+  });
+
   it('re-enables the composer after starting a new conversation mid-turn', async () => {
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>((input) => {
       const url = String(input);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildChatRequestBody } from '@/lib/chat-types';
+import { applyAgentStatus, buildChatRequestBody, pendingAssistantMessage } from '@/lib/chat-types';
+import type { ChatStreamStatusEvent } from '@/types/weave-api';
 
 describe('buildChatRequestBody', () => {
   it('omits both conversation_id and collections when there is no conversation yet and no filter selected', () => {
@@ -52,5 +53,47 @@ describe('buildChatRequestBody', () => {
       conversation_id: 'conv-1',
       collections: ['legal-2026'],
     });
+  });
+});
+
+describe('pendingAssistantMessage', () => {
+  it('starts with no progress line and no agent statuses', () => {
+    const message = pendingAssistantMessage();
+    expect(message.progressLine).toBeNull();
+    expect(message.agentStatuses).toEqual([]);
+  });
+});
+
+describe('applyAgentStatus', () => {
+  const started: ChatStreamStatusEvent = {
+    type: 'status', stage: 'researching', agent_id: 'it-support', agent_name: 'IT Support',
+    state: null, message: 'IT Support wird durchsucht',
+  };
+  const finished: ChatStreamStatusEvent = { ...started, state: 'complete' };
+
+  it('ignores a non-researching status event (planning/merging/answering have no agent chip)', () => {
+    const planning: ChatStreamStatusEvent = {
+      type: 'status', stage: 'planning', agent_id: null, agent_name: null, state: null, message: 'Anfrage wird geplant',
+    };
+    expect(applyAgentStatus([], planning)).toEqual([]);
+  });
+
+  it('appends a new chip for a subagent seen for the first time this turn', () => {
+    const result = applyAgentStatus([], started);
+    expect(result).toEqual([{ agentId: 'it-support', agentName: 'IT Support', state: null }]);
+  });
+
+  it('updates that same agent in place once its finish event arrives, never duplicating the chip', () => {
+    const afterStart = applyAgentStatus([], started);
+    const afterFinish = applyAgentStatus(afterStart, finished);
+    expect(afterFinish).toEqual([{ agentId: 'it-support', agentName: 'IT Support', state: 'complete' }]);
+  });
+
+  it('keeps a second agent as its own entry alongside the first', () => {
+    const hrStarted: ChatStreamStatusEvent = {
+      ...started, agent_id: 'hr-support', agent_name: 'HR Support',
+    };
+    const result = applyAgentStatus(applyAgentStatus([], started), hrStarted);
+    expect(result.map((s) => s.agentId)).toEqual(['it-support', 'hr-support']);
   });
 });

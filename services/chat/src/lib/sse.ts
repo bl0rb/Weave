@@ -77,7 +77,14 @@ function parseEventJson(jsonText: string): ChatStreamEvent | null {
 function isChatStreamEvent(value: unknown): value is ChatStreamEvent {
   if (typeof value !== 'object' || value === null || !('type' in value)) return false;
   const type = (value as { type: unknown }).type;
-  return type === 'trace' || type === 'delta' || type === 'sources' || type === 'done' || type === 'error';
+  return (
+    type === 'trace' ||
+    type === 'delta' ||
+    type === 'sources' ||
+    type === 'done' ||
+    type === 'error' ||
+    type === 'status'
+  );
 }
 
 /** Builds a `ReadableStream<Uint8Array>` from plain text chunks — the test

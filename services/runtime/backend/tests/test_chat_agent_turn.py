@@ -15,6 +15,8 @@ from unittest.mock import Mock
 import yaml
 
 from app.core.config import settings
+from app.services import agents as agents_service
+from app.services import retrieval_client
 from app.services.botconfig import list_bots
 from app.services.llm import FakeLLM, LLMToolResult, ToolCall
 from tests.conftest import AUTH_HEADERS, client
@@ -297,6 +299,43 @@ def test_agent_turn_streams_trace_then_deltas_then_sources_and_done(tmp_path, mo
     assert events[-1]['type'] == 'done'
 
 
+def test_agent_turn_stream_emits_status_events_between_trace_and_first_delta(tmp_path, monkeypatch):
+    # Rollout plan "Schritt 4 -- Administration und Streaming": a short,
+    # transient progress line (e.g. 'IT Support wird durchsucht') must
+    # appear before the subagent's research finishes, and it must never
+    # leak a prompt, a query, or private reasoning -- only the fixed,
+    # pre-rendered German message plus a handful of structured fields.
+    _write_bot(tmp_path, monkeypatch)
+    _script_fake_llm(monkeypatch, [
+        LLMToolResult(content=None, tool_calls=[_TOOL_CALL], model='fake-chat'),
+        LLMToolResult(content=_FINAL_ANSWER_JSON, tool_calls=None, model='fake-chat'),
+    ])
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _readable_collections())
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _search_post(_search_response(_chunk())))
+
+    response = client.post('/internal/chat/stream', json=_BODY, headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    events = _parse_sse_events(response.text)
+    first_delta_index = next(i for i, event in enumerate(events) if event['type'] == 'delta')
+    status_events = [event for event in events[:first_delta_index] if event['type'] == 'status']
+    # researching (started) + researching (complete) + answering (started)
+    assert len(status_events) == 3
+    assert status_events[0]['stage'] == 'researching'
+    assert status_events[0]['agent_id'] == 'it-support'
+    assert status_events[0]['state'] is None
+    assert status_events[0]['message'] == 'IT Support wird durchsucht'
+    assert status_events[1]['stage'] == 'researching'
+    assert status_events[1]['state'] == 'complete'
+    assert status_events[2]['stage'] == 'answering'
+
+    for event in events:
+        if event['type'] == 'status':
+            blob = json.dumps(event)
+            assert _KNOWLEDGE_QUESTION not in blob
+            assert 'system_prompt' not in blob.lower()
+
+
 def test_agent_turn_stream_guard_fires_when_subagent_finds_nothing(tmp_path, monkeypatch):
     _write_bot(tmp_path, monkeypatch)
     _script_fake_llm(monkeypatch, [
@@ -371,9 +410,11 @@ def test_central_provider_override_with_same_label_model_swap_falls_back_to_dire
     # declares provider='openai' with supports_tools=True for its own
     # 'gpt-original' model -- a central-provider override that keeps the
     # 'openai' label but swaps `model.model` to a DIFFERENT central model
-    # inherits `supports_tools=True` unchanged via model_copy, even though
-    # that flag was only ever declared true for 'gpt-original', never for
-    # the swapped-in model name. Agent mode must not run against it either.
+    # must NOT let that inherited `supports_tools=True` (declared only for
+    # 'gpt-original', never for the swapped-in model name) leak through.
+    # The override always sets its own `supports_tools` from the central
+    # provider's own declaration (default False here, since the snapshot
+    # below doesn't pass one), so agent mode must not run against it.
     from app.services.chat_config_client import ChatProviderSnapshot
 
     bot_yaml = {
@@ -409,3 +450,49 @@ def test_central_provider_override_with_same_label_model_swap_falls_back_to_dire
     body = response.json()
     assert body['trace'].get('agent') is None
     assert body['answer'] == 'Zentrale Antwort'
+
+
+def test_central_provider_override_with_declared_tool_support_runs_agent_mode(tmp_path, monkeypatch):
+    # Mirror image of the two fallback tests above: when the central
+    # provider itself declares `supports_tools=True`, the override's
+    # effective model carries that flag through (see chat.py's
+    # `model_copy(update={..., 'supports_tools': central_provider.
+    # supports_tools})`) and agent mode runs normally instead of falling
+    # back to direct RAG -- a centrally managed LLM bot must be able to use
+    # agent mode once the admin has declared its provider tool-capable.
+    from app.services.chat_config_client import ChatProviderSnapshot
+
+    bot_yaml = {
+        **_AGENT_BOT_YAML,
+        'model': {'provider': 'openai', 'model': 'gpt-original', 'supports_tools': True},
+    }
+    _write_bot(tmp_path, monkeypatch, bot_yaml)
+    monkeypatch.setattr(
+        'app.services.chat.fetch_chat_provider',
+        lambda: ChatProviderSnapshot(
+            enabled=True, base_url='https://central.example/v1', model='central-model',
+            api_key='central-key', timeout_seconds=33, temperature=0.1, supports_tools=True,
+        ),
+    )
+    hit = retrieval_client.RetrievedChunk(
+        chunk_id=1, document_id='doc-1', text='VPN nutzt WireGuard.', source=None, original_filename=None,
+        page_start=1, page_end=1, document_version=1, heading_path=['IT', 'VPN'],
+        scores=retrieval_client.RetrievedChunkScores(), collection='it-docs',
+    )
+    canned_result = agents_service.SubagentResult(
+        agent_id='it-support', status='complete',
+        facts=[], open_points=[], hits=[hit], searches_used=1,
+    )
+    monkeypatch.setattr('app.services.agents.run_subagent', lambda *args, **kwargs: canned_result)
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _readable_collections())
+    chat_response = Mock(status_code=200, text='')
+    chat_response.json.return_value = {'choices': [{'message': {'content': 'Agenten-Antwort'}}], 'model': 'central-model'}
+    monkeypatch.setattr('app.services.llm.httpx.post', lambda *args, **kwargs: chat_response)
+
+    response = client.post('/internal/chat', json=_BODY, headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body['trace']['agent'] is not None
+    assert body['trace']['agent']['subagents'][0]['id'] == 'it-support'
+    assert body['answer'] == 'Agenten-Antwort'
