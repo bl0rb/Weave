@@ -600,6 +600,9 @@ def test_real_weave_yaml_required_secrets_match_betrieb_md_section_4():
         # ADR-0007: Ingest holds the chat-provider configuration, Runtime
         # reads it per turn through this shared bearer.
         "CHAT_CONFIG_SERVICE_TOKEN",
+        # Schritt 5: Tools resolves technical-identity tokens through
+        # Ingest's introspection route, gated by this shared bearer.
+        "TOOLS_INTROSPECTION_TOKEN",
     }
 
 

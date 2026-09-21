@@ -175,6 +175,7 @@ DEVIATIONS: dict[str, dict[str, Deviation]] = {
             "CELERY_PREFETCH_MULTIPLIER",
             "CELERY_WORKER_CONCURRENCY",
             "CHAT_CONFIG_SERVICE_TOKEN",
+            "TOOLS_INTROSPECTION_TOKEN",
             "CHAT_LLM_PRIVATE_HOST_ALLOWLIST",
             "EMBEDDING_API_KEY",
             "EMBEDDING_BASE_URL",
@@ -292,10 +293,12 @@ DEVIATIONS: dict[str, dict[str, Deviation]] = {
     "tools-backend": {
         "WEAVE_API_BASE_URL": Deviation("chart", "Compose fest verdrahtet, weave.yaml fuehrt sie nicht."),
         "RETRIEVAL_BASE_URL": Deviation("chart", "wie WEAVE_API_BASE_URL"),
+        "INGEST_BASE_URL": Deviation("chart", "wie WEAVE_API_BASE_URL (Introspektion technischer Identitaeten, Schritt 5)"),
     },
     "tools-mcp": {
         "WEAVE_API_BASE_URL": Deviation("chart", "wie tools-backend"),
         "RETRIEVAL_BASE_URL": Deviation("chart", "wie tools-backend"),
+        "INGEST_BASE_URL": Deviation("chart", "wie tools-backend"),
         "TOOLS_API_TOKEN": Deviation(
             "dropped",
             "Die Tuer VOR der REST-Spiegelung. Gelesen wird sie allein in "

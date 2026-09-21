@@ -77,6 +77,10 @@ jobs:
     name: ${{ matrix.image }}
     needs: [version, ci]
     runs-on: ubuntu-latest
+    # v0.4.1's weave-ingest-frontend build hung for the full 6 h job limit
+    # (v0.4.0 took 7 min), which cancelled the whole release. Fail fast
+    # instead so a hung QEMU/arm64 build can simply be re-run.
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write

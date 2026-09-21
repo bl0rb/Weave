@@ -186,6 +186,7 @@ Ohne diese startet der Dienst nicht oder verweigert fail-closed die Arbeit.
 | Tools | `TOOLS_API_TOKEN` | Service-Auth der REST-Oberfläche |
 | Tools | `WEAVE_DELEGATION_SECRET` | Prüft Delegations-Token. Ohne Wert: `503` |
 | Tools | `INTROSPECTION_SERVICE_TOKEN` | Fragt Weave-API, wem ein Token gehört |
+| Ingest + Tools | `TOOLS_INTROSPECTION_TOKEN` | Schützt Ingests Introspektion technischer Identitäten (`wti_…`-Token). Ein geteilter Wert: Ingest prüft, Tools weist vor |
 | Tools | `RETRIEVAL_API_TOKEN` | Sucht im Auftrag des Aufrufers |
 | Weave-Embeddings *(sobald genutzt)* | `EMBEDDINGS_API_TOKEN` | Ohne Wert: `503` auf jeden `/v1/embeddings`-Aufruf, der Dienst selbst startet trotzdem |
 | Weave-Reranker *(sobald genutzt)* | `RERANKER_API_TOKEN` | Ohne Wert: `503` auf jeden `/rerank`-Aufruf, der Dienst selbst startet trotzdem |
@@ -201,6 +202,7 @@ Fehlerquelle beim Aufsetzen, und die Symptome zeigen selten auf die Ursache.
 |---|---|---|
 | `WEAVE_DELEGATION_SECRET` | Runtime (stellt aus), Tools (prüft) | Jeder n8n- und MCP-Aufruf scheitert. Fehlt er ganz, verweigern beide Seiten hart statt unsigniert zu arbeiten |
 | `INTROSPECTION_SERVICE_TOKEN` | API (prüft), Tools (weist vor) | MCP kann niemanden identifizieren, jede Anfrage wird abgewiesen |
+| `TOOLS_INTROSPECTION_TOKEN` | Ingest (prüft), Tools (weist vor) | Technische Identitäten werden nicht aufgelöst — jede Integration mit `wti_…`-Token bekommt 401 |
 | `RETRIEVAL_API_TOKEN` | Retrieval (besitzt), Runtime, API, Tools | Retrieval antwortet 401, Aufrufer melden 502 — sieht aus wie ein Ausfall |
 | `RUNTIME_API_TOKEN` | Runtime (besitzt), API | Jeder Chat endet in 502 |
 | `WEAVE_INGEST_WEBHOOK_SECRET` | Ingest (Webhook-Verbindung), Knowledge | Events werden mit 401 abgewiesen — Dokumente erscheinen nie im Index |

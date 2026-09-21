@@ -427,6 +427,7 @@
         <tr><td class="k">Tools</td><td><code>TOOLS_API_TOKEN</code></td><td>Service-Auth der REST-Oberfläche</td></tr>
         <tr><td class="k">Tools</td><td><code>WEAVE_DELEGATION_SECRET</code></td><td>Prüft Delegations-Token. Ohne Wert: <code>503</code></td></tr>
         <tr><td class="k">Tools</td><td><code>INTROSPECTION_SERVICE_TOKEN</code></td><td>Fragt Weave-API, wem ein Token gehört</td></tr>
+        <tr><td class="k">Ingest + Tools</td><td><code>TOOLS_INTROSPECTION_TOKEN</code></td><td>Schützt Ingests Introspektion technischer Identitäten (<code>wti_…</code>-Token). Ein geteilter Wert: Ingest prüft, Tools weist vor</td></tr>
         <tr><td class="k">Tools</td><td><code>RETRIEVAL_API_TOKEN</code></td><td>Sucht im Auftrag des Aufrufers</td></tr>
       </tbody>
     </table>
@@ -450,6 +451,11 @@
           <td class="k"><code>INTROSPECTION_SERVICE_TOKEN</code></td>
           <td>API <span style="color:var(--faint)">prüft</span><br>Tools <span style="color:var(--faint)">weist vor</span></td>
           <td>MCP kann niemanden mehr identifizieren, jede Anfrage wird abgewiesen</td>
+        </tr>
+        <tr>
+          <td class="k"><code>TOOLS_INTROSPECTION_TOKEN</code></td>
+          <td>Ingest <span style="color:var(--faint)">prüft</span><br>Tools <span style="color:var(--faint)">weist vor</span></td>
+          <td>Technische Identitäten werden nicht aufgelöst — jede Integration mit <code>wti_…</code>-Token bekommt 401</td>
         </tr>
         <tr>
           <td class="k"><code>RETRIEVAL_API_TOKEN</code></td>
