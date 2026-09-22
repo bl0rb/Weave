@@ -56,6 +56,17 @@ class RetrievalProviderUpdateRequest(BaseModel):
         return self
 
 
+class ReindexStartResponse(BaseModel):
+    started: bool
+    task_id: str | None = None
+
+
+class ReindexStatusResponse(BaseModel):
+    total: int
+    by_status: dict[str, int]
+    newest_updated_at: datetime | None = None
+
+
 class RetrievalProviderInternalResponse(BaseModel):
     embedding_provider: str
     embedding_base_url: str

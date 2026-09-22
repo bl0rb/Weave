@@ -256,6 +256,12 @@ class Settings(BaseSettings):
     db_pool_recycle_seconds: int = 3600
     db_pool_timeout_seconds: int = 10
 
+    # --- Disaster recovery (app/services/backup.py, app/api/backup.py).
+    # A full-instance archive (every table + the on-disk upload/result
+    # trees) is routinely far larger than a single document upload, so it
+    # gets its own cap rather than reusing max_upload_bytes -- default 10GiB.
+    backup_max_upload_bytes: int = 10 * 1024 * 1024 * 1024
+
 
 def _build_database_url(settings: Settings) -> str:
     if settings.database_url:

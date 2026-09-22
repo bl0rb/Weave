@@ -9,6 +9,8 @@ from app.core.config import settings
 from app.database.session import get_db
 from app.models.models import RetrievalProviderConfig, User
 from app.schemas.retrieval_provider import (
+    ReindexStartResponse,
+    ReindexStatusResponse,
     RetrievalProviderAdminResponse,
     RetrievalProviderInternalResponse,
     RetrievalProviderUpdateRequest,
@@ -21,6 +23,11 @@ from app.services.security import (
 
 router_admin = APIRouter(prefix='/api/v1/auth/admin/retrieval-provider', dependencies=[Depends(require_admin), Depends(origin_guard)])
 router_internal = APIRouter(prefix='/api/v1/internal/retrieval-provider')
+# 'Index-Wartung' manual admin actions (see retrieval-provider-tab.tsx) --
+# a separate prefix from router_admin's '/auth/admin/...' because these are
+# actions, not the config resource itself, mirroring app/api/backup.py's
+# '/api/v1/admin/...' shape.
+router_maintenance = APIRouter(prefix='/api/v1/admin/retrieval-provider', dependencies=[Depends(require_admin), Depends(origin_guard)])
 
 
 def _row(db: Session) -> RetrievalProviderConfig:
@@ -66,6 +73,29 @@ def _admin(row: RetrievalProviderConfig) -> RetrievalProviderAdminResponse:
     )
 
 
+def _trigger_knowledge_reindex(error_detail: str) -> dict:
+    """POST Knowledge's internal full-reindex endpoint -- same header/token/
+    timeout `update_retrieval_provider` has always used, factored out so the
+    explicit 'Vektoren neu berechnen' admin action (reindex_vectors below)
+    calls it exactly the same way. Raises HTTPException(503, error_detail)
+    when Knowledge is unreachable or unconfigured; returns its JSON body
+    (e.g. {'task_id': ...}) on success."""
+    if not settings.portal_knowledge_base_url:
+        raise HTTPException(status_code=503, detail=error_detail)
+    try:
+        result = httpx.post(
+            f'{settings.portal_knowledge_base_url.rstrip("/")}/api/v1/internal/reindex',
+            headers={'X-Weave-Reindex-Token': settings.portal_knowledge_webhook_secret}, timeout=5,
+        )
+        result.raise_for_status()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=error_detail) from exc
+    try:
+        return result.json()
+    except ValueError:
+        return {}
+
+
 def _require_internal(request: Request) -> None:
     expected = settings.chat_config_service_token
     scheme, _, token = request.headers.get('authorization', '').partition(' ')
@@ -108,16 +138,39 @@ def update_retrieval_provider(payload: RetrievalProviderUpdateRequest, request: 
     db.refresh(row)
     response = _admin(row)
     if embedding_changed:
-        try:
-            result = httpx.post(
-                f'{settings.portal_knowledge_base_url.rstrip("/")}/api/v1/internal/reindex',
-                headers={'X-Weave-Reindex-Token': settings.portal_knowledge_webhook_secret}, timeout=5,
-            )
-            result.raise_for_status()
-        except (httpx.HTTPError, ValueError) as exc:
-            raise HTTPException(status_code=503, detail='Embedding gespeichert, Reindex konnte nicht gestartet werden.') from exc
+        _trigger_knowledge_reindex('Embedding gespeichert, Reindex konnte nicht gestartet werden.')
         response.reindex_started = True
     return response
+
+
+@router_maintenance.post('/reindex', response_model=ReindexStartResponse)
+def reindex_vectors(request: Request) -> ReindexStartResponse:
+    """'Vektoren neu berechnen' -- explicit admin action, see
+    retrieval-provider-tab.tsx's 'Index-Wartung' section. Same Knowledge
+    call `update_retrieval_provider` already makes on an embedding change,
+    just triggerable on demand without also editing the config."""
+    enforce_rate_limit(request)
+    data = _trigger_knowledge_reindex('Neuberechnung der Vektoren konnte nicht gestartet werden. Der Wissensdienst ist nicht erreichbar oder nicht konfiguriert.')
+    return ReindexStartResponse(started=True, task_id=data.get('task_id'))
+
+
+@router_maintenance.get('/reindex-status', response_model=ReindexStatusResponse)
+def reindex_vectors_status(request: Request) -> ReindexStatusResponse:
+    """Proxies Knowledge's GET /api/v1/internal/reindex/status so the admin
+    UI can poll progress of the 'Vektoren neu berechnen' action without a
+    direct network path from the browser to Knowledge."""
+    enforce_rate_limit(request)
+    if not settings.portal_knowledge_base_url:
+        raise HTTPException(status_code=503, detail='Der Status der Neuberechnung konnte nicht abgerufen werden. Der Wissensdienst ist nicht konfiguriert.')
+    try:
+        result = httpx.get(
+            f'{settings.portal_knowledge_base_url.rstrip("/")}/api/v1/internal/reindex/status',
+            headers={'X-Weave-Reindex-Token': settings.portal_knowledge_webhook_secret}, timeout=5,
+        )
+        result.raise_for_status()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail='Der Status der Neuberechnung konnte nicht abgerufen werden.') from exc
+    return ReindexStatusResponse(**result.json())
 
 
 @router_internal.get('', response_model=RetrievalProviderInternalResponse, dependencies=[Depends(_require_internal)])

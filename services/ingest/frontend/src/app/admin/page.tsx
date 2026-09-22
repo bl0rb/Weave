@@ -3,7 +3,7 @@
 import { useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import Link from 'next/link';
-import { Archive, Bot, FolderOpen, Wrench, ArrowRight, Cpu, KeyRound, MessageSquareText, ScanEye, ShieldAlert, ShieldCheck, Terminal, Users, UsersRound } from 'lucide-react';
+import { Archive, Bot, DatabaseBackup, FolderOpen, Wrench, ArrowRight, Cpu, KeyRound, MessageSquareText, ScanEye, ShieldAlert, ShieldCheck, Terminal, Users, UsersRound } from 'lucide-react';
 
 import { useAuth } from '@/lib/auth-context';
 import { UsersTab } from '@/components/admin/users-tab';
@@ -17,10 +17,11 @@ import { ChatProviderTab } from '@/components/admin/chat-provider-tab';
 import { RetrievalProviderTab } from '@/components/admin/retrieval-provider-tab';
 import { BotsTab } from '@/components/admin/bots-tab';
 import { TechnicalIdentitiesTab } from '@/components/admin/technical-identities-tab';
+import { BackupTab } from '@/components/admin/backup-tab';
 import { ConfirmDialog } from '@/components/admin/admin-shared';
 import { apiFetch } from '@/lib/api';
 
-type TabId = 'collections' | 'tools' | 'users' | 'teams' | 'bots' | 'technical-identities' | 'providers' | 'logs' | 'chat-provider' | 'retrieval-provider' | 'vl-connections' | 'paddle';
+type TabId = 'collections' | 'tools' | 'users' | 'teams' | 'bots' | 'technical-identities' | 'providers' | 'logs' | 'chat-provider' | 'retrieval-provider' | 'vl-connections' | 'paddle' | 'backup';
 
 const tabs: { id: TabId; label: string; icon: typeof Users }[] = [
   { id: 'collections', label: 'Wissensbereiche', icon: FolderOpen },
@@ -36,6 +37,7 @@ const tabs: { id: TabId; label: string; icon: typeof Users }[] = [
   // Placed after VL Connections: both are runtime/processing configuration
   // (as opposed to Users/Teams/Providers, which are account administration).
   { id: 'paddle', label: 'OCR', icon: Cpu },
+  { id: 'backup', label: 'Sicherung & Wiederherstellung', icon: DatabaseBackup },
   { id: 'tools', label: 'Werkzeuge', icon: Wrench },
 ];
 
@@ -227,6 +229,11 @@ export default function AdminPage() {
         {tab === 'paddle' && (
           <div role="tabpanel" id="admin-panel-paddle" aria-labelledby="admin-tab-paddle">
             <PaddleTab />
+          </div>
+        )}
+        {tab === 'backup' && (
+          <div role="tabpanel" id="admin-panel-backup" aria-labelledby="admin-tab-backup">
+            <BackupTab />
           </div>
         )}
       </div>

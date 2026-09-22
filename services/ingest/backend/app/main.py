@@ -12,13 +12,16 @@ from app.api.auth import router_admin as auth_admin_router
 from app.api.auth import bootstrap_admin
 from app.api.auth import router_authenticated as auth_authenticated_router
 from app.api.auth import router_public as auth_public_router
+from app.api.backup import router as backup_admin_router
 from app.api.benchmarks import router as benchmarks_router
 from app.api.chat_provider import router_admin as chat_provider_admin_router
 from app.api.chat_provider import router_internal as chat_provider_internal_router
 from app.api.managed_bots import router_admin as managed_bots_admin_router
 from app.api.managed_bots import router_internal as managed_bots_internal_router
+from app.api.knowledge_maintenance import router as knowledge_maintenance_router
 from app.api.retrieval_provider import router_admin as retrieval_provider_admin_router
 from app.api.retrieval_provider import router_internal as retrieval_provider_internal_router
+from app.api.retrieval_provider import router_maintenance as retrieval_provider_maintenance_router
 from app.api.technical_identities import router_admin as technical_identities_admin_router
 from app.api.technical_identities import router_internal as technical_identities_internal_router
 from app.api.deps import get_current_user, origin_guard
@@ -98,8 +101,11 @@ app.include_router(managed_bots_admin_router)
 app.include_router(managed_bots_internal_router)
 app.include_router(retrieval_provider_admin_router)
 app.include_router(retrieval_provider_internal_router)
+app.include_router(retrieval_provider_maintenance_router)
+app.include_router(knowledge_maintenance_router)
 app.include_router(technical_identities_admin_router)
 app.include_router(technical_identities_internal_router)
+app.include_router(backup_admin_router)
 app.include_router(knowledge_registry_router)
 app.include_router(knowledge_release_router)
 

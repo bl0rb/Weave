@@ -20,6 +20,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy import text as sql_text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -1236,3 +1237,71 @@ class TechnicalIdentityAudit(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now(), nullable=False, index=True
     )
+
+
+class BackupRunKind(str, enum.Enum):
+    EXPORT = 'export'
+    IMPORT = 'import'
+
+
+class BackupRunStatus(str, enum.Enum):
+    QUEUED = 'queued'
+    RUNNING = 'running'
+    FINISHED = 'finished'
+    FAILED = 'failed'
+
+
+class BackupRun(Base):
+    """One disaster-recovery export or import execution (see
+    app/services/backup.py).
+
+    Mirrors ImportRun's progress-tracking shape (id/status/started_at/
+    finished_at) for the same reason: a long-running operation with no
+    Celery worker guaranteed to run locally, driven instead by an in-process
+    background thread that opens its own SessionLocal() and writes progress
+    here as it goes. Only one run may be active (queued/running) at a time
+    -- enforced by the API layer, not a DB constraint.
+
+    This table is itself excluded from every export/import cycle (see
+    app/services/backup.EXCLUDED_TABLES): a backup must not contain a record
+    of the run that produced it, and importing one archive must not
+    resurrect another archive's run history.
+    """
+
+    __tablename__ = 'backup_runs'
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    kind: Mapped[BackupRunKind] = mapped_column(
+        Enum(BackupRunKind, name='backup_run_kind', native_enum=False, validate_strings=True), nullable=False
+    )
+    status: Mapped[BackupRunStatus] = mapped_column(
+        Enum(BackupRunStatus, name='backup_run_status', native_enum=False, validate_strings=True),
+        default=BackupRunStatus.QUEUED,
+        server_default='queued',
+        nullable=False,
+        index=True,
+    )
+    file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # {'table': str, 'rows_done': int, 'tables_done': int, 'tables_total': int}
+    # snapshot, overwritten as the run progresses -- polled by the admin UI.
+    progress: Mapped[dict] = mapped_column(JSON, default=dict, server_default=sql_text("'{}'"), nullable=False)
+    # Final report once the run finishes or fails -- shape documented on
+    # app/services/backup.py's export_backup/import_backup return values.
+    report: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)

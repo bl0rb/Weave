@@ -807,3 +807,76 @@ keine Abhängigkeit zu einem der neun Dienste):
 ```bash
 services/tools/.venv/bin/python -m pytest scripts/tests -q
 ```
+
+## 12. Desaster-Recovery
+
+Weave Ingest exportiert und importiert alle bestehenden Daten (Nutzer,
+Wissensbereiche, Aufträge, Verbindungen samt Zugangsdaten, Dateien) in ein
+einzelnes, passphrase-verschlüsseltes Archiv — über Admin →
+„Sicherung & Wiederherstellung" oder gleichwertig per CLI
+(`python -m app.cli backup export|import`, siehe `app/cli.py`).
+
+**Nicht enthalten:** Chat-Unterhaltungen (Weave-API), lokale, dateibasierte
+Bot-YAMLs, Modell-Caches, Redis-Inhalte (Ratenbegrenzung, Sitzungscache) und
+der Wissensindex selbst. Nach einer Wiederherstellung werden alle
+Veröffentlichungen ohne bestätigte Auslieferung automatisch erneut über die
+bestehende Publikations-Outbox eingereiht — die eigentliche Neuindizierung
+läuft danach von selbst, sobald ein Ingest-Worker läuft (ohne laufenden
+Worker bleibt sie ausstehend; der Wiederherstellungsbericht sagt das
+ausdrücklich).
+
+### Regelmäßige Sicherung
+
+In Admin → „Sicherung & Wiederherstellung" → Export eine Passphrase (zweimal,
+mindestens 12 Zeichen) vergeben und „Sicherung erstellen" klicken. Das
+Archiv landet unter `<uploads_dir>/../backups/` im Speicher-Volume des
+Ingest-Backends und lässt sich von dort herunterladen. **Die Passphrase wird
+nirgends auf dem Server gespeichert** — sie getrennt vom Archiv selbst
+aufbewahren (Passwort-Manager, Tresor), sonst ist das Archiv im Notfall
+wertlos. Die 12-Zeichen-Mindestlänge wird nur von der Web-Oberfläche
+durchgesetzt; über `python -m app.cli backup export` lässt sich auch eine
+kürzere Passphrase setzen — auch dort eine mindestens ebenso starke wählen.
+
+### Notfall: Neuinstallation und Wiederherstellung
+
+1. Weave Ingest frisch installieren (leere Datenbank, leerer Speicher-Ordner).
+2. Den ersten Administrator anlegen — über `POST /auth/setup` oder die
+   `BOOTSTRAP_ADMIN_*`-Variablen (Abschnitt 3). Das muss **nicht** dieselbe
+   Person sein, die die ursprüngliche Sicherung erstellt hat.
+3. Als dieser Administrator zu Admin → „Sicherung & Wiederherstellung" →
+   Wiederherstellung gehen. Eine frische Installation wird ohne weiteres
+   Zutun als solche erkannt; ist das Ziel nicht frisch (z. B. ein zweiter
+   Wiederherstellungsversuch), muss „Vorhandene Daten überschreiben"
+   explizit gesetzt werden.
+4. Archivdatei und Passphrase angeben, Wiederherstellung starten.
+5. Warten, bis der Bericht erscheint. Alle exportierten Nutzer (inklusive
+   ehemaliger Administratoren) werden mit ihren ursprünglichen Rollen und
+   Passwort-Hashes wiederhergestellt. Stimmt Benutzername oder E-Mail-Adresse
+   eines exportierten Kontos mit dem gerade anmeldenden Administrator
+   überein, wird genau dieses Konto zum Administrator mit dessen aktuellem
+   Passwort. Stimmte dabei der Benutzername überein, funktioniert die
+   Anmeldung mit den gerade benutzten Zugangsdaten also weiter; traf der
+   Treffer nur auf die E-Mail-Adresse zu, bleibt der archivierte
+   Benutzername bestehen und für die Anmeldung ist dieser (nicht der zuletzt
+   benutzte) erforderlich. Andernfalls bleibt das neu angelegte
+   Administratorkonto zusätzlich bestehen.
+6. **Danach erneut anmelden.** Die Wiederherstellung ersetzt die `users`-
+   Tabelle vollständig, wodurch bestehende Sitzungen ungültig werden — der
+   Wiederherstellungsbericht weist ausdrücklich darauf hin.
+7. Der Wissensindex baut sich anschließend automatisch neu auf, sobald ein
+   Ingest-Worker läuft (kein manueller Schritt nötig) — siehe oben. Bleiben
+   danach einzelne Veröffentlichungen unerwartet unausgeliefert, lässt sich
+   derselbe Neuaufbau manuell über Admin → „Suchkonfiguration" →
+   „Index-Wartung" → „Index aus Freigaben neu aufbauen" erneut anstoßen.
+
+### Was im Notfall sonst nötig ist
+
+Ist die Passphrase bekannt, sind keine weiteren Geheimnisse neu zu
+vergeben — alle `*_encrypted`-Spalten (OIDC-Client-Secrets,
+Import-Zugangsdaten, API-Schlüssel der Modell-Provider, Webhook-Secrets,
+Bot-Auth-Token) werden mit der Passphrase entschlüsselt und unter dem neuen
+`SECRET_KEY` der frischen Installation wieder verschlüsselt. Ist die
+Passphrase verloren, ist das Archiv nicht mehr entschlüsselbar — dann bleibt
+nur, alle darin enthaltenen Zugangsdaten (siehe obige Liste) auf den
+jeweiligen Gegenstellen neu auszustellen und in der frischen Installation
+erneut einzutragen.

@@ -22,6 +22,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the normal source upload, review and release workflow.
 
 ### Added
+- Suchkonfiguration admin tab, new "Index-Wartung" section: two explicit, confirmation-gated
+  admin actions independent of a config save. "Vektoren neu berechnen" triggers Knowledge's
+  existing full-reindex webhook on demand (same call `update_retrieval_provider` already makes
+  on an embedding change) and polls Knowledge's new `GET /api/v1/internal/reindex/status` for
+  document counts by status while it runs. "Index aus Freigaben neu aufbauen" re-queues every
+  non-withdrawn `DocumentRelease` through the existing publication outbox — the same engine the
+  disaster-recovery import uses automatically — and polls a small status projection
+  (open/ausgeliefert/fehlgeschlagen/zurückgezogen) while active; it refuses with 409 while a
+  backup import is running. Both require an admin session and are rate-limited like the rest of
+  the admin API.
+- Disaster-recovery mode: administrators export all existing Ingest data
+  (users, knowledge spaces, jobs, connections including credentials, files)
+  into a single passphrase-encrypted `.weave-backup.tar.gz` archive from the
+  new admin tab "Sicherung & Wiederherstellung" (or the `app/cli.py backup
+  export|import` fallback), and restore it onto a fresh installation as the
+  first new administrator — who need not be the same person who created the
+  export. Every `*_encrypted` column is decrypted with the source key and
+  re-encrypted under the export passphrase, then re-encrypted again under
+  the target's own key on import; password hashes are carried over as-is.
+  The knowledge index itself is not exported: after a successful import,
+  every affected document release is re-queued through the existing
+  publication outbox so Knowledge re-indexes automatically once an Ingest
+  worker is running. Chat conversations (Weave-API) and local runtime bot
+  YAMLs are out of scope. See `docs/betrieb.md` §12 for the runbook.
 - Agent mode, rollout steps 4-5. Administration: the bot editor configures agent mode,
   subagents (mission, collections, filters, optional model, limits) and budgets; the
   control plane validates the shape (422 with a readable message); the central chat
