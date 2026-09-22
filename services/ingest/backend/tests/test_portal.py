@@ -18,6 +18,7 @@ from app.models.models import (
     ImportSource,
     Job,
     JobStatus,
+    KnowledgeWithdrawal,
     MailMessage,
     Team,
     UserRole,
@@ -764,6 +765,149 @@ def test_portal_retry_handles_sqlite_naive_lease_timestamp(monkeypatch):
         db.close()
     retried = authed.post(f"/api/v1/portal/releases/{release['id']}/retry")
     assert retried.status_code == 200, retried.text
+
+
+def test_portal_reindex_document_sets_reindex_flag_and_requeues_sent_release(monkeypatch):
+    """'Neu indizieren' is a regular action, unlike retry: it must accept an
+    already-'sent' release (not just pending/failed) and force Knowledge's
+    reindex flag so an already-indexed document is replaced, not skipped."""
+    _configure(monkeypatch)
+    user = create_test_user(
+        username=f'portal-reindex-{uuid.uuid4().hex[:8]}', email=f'portal-reindex-{uuid.uuid4().hex[:8]}@example.com'
+    )
+    collection = _collection(user.id)
+    job = _job(user.id, collection)
+    authed = login_as(user.username)
+    preview = authed.get(f'/api/v1/portal/documents/{job.id}').json()
+    monkeypatch.setattr('app.api.portal.publication_tasks.deliver_release.delay', lambda release_id: None)
+    released = authed.post(
+        f'/api/v1/portal/documents/{job.id}/release', json={'markdown_sha256': preview['markdown_sha256']}
+    ).json()
+    with _db() as db:
+        row = db.get(DocumentRelease, released['id'])
+        row.status = 'sent'
+        row.attempts = 3
+        db.commit()
+
+    reindexed = authed.post(f'/api/v1/portal/documents/{job.id}/reindex')
+    assert reindexed.status_code == 200, reindexed.text
+    assert reindexed.json()['status'] == 'pending'
+    with _db() as db:
+        row = db.get(DocumentRelease, released['id'])
+        assert row.status == 'pending'
+        assert row.attempts == 0
+        assert row.payload['reindex'] is True
+
+
+def test_portal_reindex_document_refuses_withdrawn_document(monkeypatch):
+    _configure(monkeypatch)
+    user = create_test_user(
+        username=f'portal-reindex-wd-{uuid.uuid4().hex[:8]}', email=f'portal-reindex-wd-{uuid.uuid4().hex[:8]}@example.com'
+    )
+    collection = _collection(user.id)
+    job = _job(user.id, collection)
+    authed = login_as(user.username)
+    preview = authed.get(f'/api/v1/portal/documents/{job.id}').json()
+    monkeypatch.setattr('app.api.portal.publication_tasks.deliver_release.delay', lambda release_id: None)
+    authed.post(f'/api/v1/portal/documents/{job.id}/release', json={'markdown_sha256': preview['markdown_sha256']})
+    with _db() as db:
+        db.add(KnowledgeWithdrawal(job_id=job.id, status='sent'))
+        db.commit()
+
+    reindexed = authed.post(f'/api/v1/portal/documents/{job.id}/reindex')
+    assert reindexed.status_code == 409, reindexed.text
+
+
+def test_portal_reindex_document_requires_an_existing_release(monkeypatch):
+    _configure(monkeypatch)
+    user = create_test_user(
+        username=f'portal-reindex-none-{uuid.uuid4().hex[:8]}', email=f'portal-reindex-none-{uuid.uuid4().hex[:8]}@example.com'
+    )
+    collection = _collection(user.id)
+    job = _job(user.id, collection)
+    authed = login_as(user.username)
+
+    reindexed = authed.post(f'/api/v1/portal/documents/{job.id}/reindex')
+    assert reindexed.status_code == 409, reindexed.text
+
+
+def test_portal_reindex_document_requires_control(monkeypatch):
+    """Mirrors test_portal_release_requires_control_and_stale_preview_is_rejected:
+    a user who is neither the job owner, an admin, nor a collection manager
+    must be refused, exercising the endpoint's own _job_is_controlled gate."""
+    _configure(monkeypatch)
+    team = _team('Portal reindex shared')
+    owner = create_test_user(
+        username=f'portal-reindex-owner2-{uuid.uuid4().hex[:8]}',
+        email=f'portal-reindex-owner2-{uuid.uuid4().hex[:8]}@example.com',
+        team_id=team.id,
+    )
+    teammate = create_test_user(
+        username=f'portal-reindex-teammate-{uuid.uuid4().hex[:8]}',
+        email=f'portal-reindex-teammate-{uuid.uuid4().hex[:8]}@example.com',
+        team_id=team.id,
+    )
+    with _db() as db:
+        db.execute(user_teams.insert().values(user_id=teammate.id, team_id=team.id, role='reader'))
+        db.commit()
+    collection = _collection(owner.id)
+    job = _job(owner.id, collection)
+    owner_client = login_as(owner.username)
+    preview = owner_client.get(f'/api/v1/portal/documents/{job.id}').json()
+    monkeypatch.setattr('app.api.portal.publication_tasks.deliver_release.delay', lambda release_id: None)
+    owner_client.post(f'/api/v1/portal/documents/{job.id}/release', json={'markdown_sha256': preview['markdown_sha256']})
+
+    denied = login_as(teammate.username).post(f'/api/v1/portal/documents/{job.id}/reindex')
+    assert denied.status_code == 403, denied.text
+
+
+def test_portal_reindex_collection_requeues_every_non_withdrawn_release(monkeypatch):
+    _configure(monkeypatch)
+    monkeypatch.setattr('app.api.portal.publication_tasks.deliver_release.delay', lambda release_id: None)
+    user = create_test_user(
+        username=f'portal-reindex-col-{uuid.uuid4().hex[:8]}', email=f'portal-reindex-col-{uuid.uuid4().hex[:8]}@example.com'
+    )
+    collection = _collection(user.id)
+    authed = login_as(user.username)
+
+    kept_job = _job(user.id, collection)
+    withdrawn_job = _job(user.id, collection)
+    release_ids = {}
+    for job in (kept_job, withdrawn_job):
+        preview = authed.get(f'/api/v1/portal/documents/{job.id}').json()
+        released = authed.post(
+            f'/api/v1/portal/documents/{job.id}/release', json={'markdown_sha256': preview['markdown_sha256']}
+        ).json()
+        release_ids[job.id] = released['id']
+    with _db() as db:
+        db.add(KnowledgeWithdrawal(job_id=withdrawn_job.id, status='sent'))
+        for release_id in release_ids.values():
+            db.get(DocumentRelease, release_id).status = 'sent'
+        db.commit()
+
+    response = authed.post(f'/api/v1/portal/collections/{collection.id}/reindex')
+    assert response.status_code == 200, response.text
+    assert response.json() == {'requeued': 1}
+    with _db() as db:
+        kept = db.get(DocumentRelease, release_ids[kept_job.id])
+        assert kept.status == 'pending'
+        assert kept.payload['reindex'] is True
+        withdrawn = db.get(DocumentRelease, release_ids[withdrawn_job.id])
+        assert withdrawn.status == 'sent'
+        assert 'reindex' not in withdrawn.payload
+
+
+def test_portal_reindex_collection_requires_manage_permission(monkeypatch):
+    _configure(monkeypatch)
+    owner = create_test_user(
+        username=f'portal-reindex-owner-{uuid.uuid4().hex[:8]}', email=f'portal-reindex-owner-{uuid.uuid4().hex[:8]}@example.com'
+    )
+    outsider = create_test_user(
+        username=f'portal-reindex-outsider-{uuid.uuid4().hex[:8]}', email=f'portal-reindex-outsider-{uuid.uuid4().hex[:8]}@example.com'
+    )
+    collection = _collection(owner.id)
+    response = login_as(outsider.username).post(f'/api/v1/portal/collections/{collection.id}/reindex')
+    assert response.status_code == 403, response.text
 
 
 def test_issued_release_blocks_job_deletion_with_conflict(monkeypatch):

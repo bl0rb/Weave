@@ -25,6 +25,7 @@ ready yet, and 503 is the correct way to say so to a client rather than
 hanging the request until it is.
 """
 
+import asyncio
 import logging
 import threading
 from contextlib import asynccontextmanager
@@ -48,6 +49,22 @@ from app.services import encoder as encoder_module
 from app.services.state import encoder_state
 
 logger = logging.getLogger(__name__)
+
+# 2026-09-22 OOM incident: bounds how many encodes run at once (see
+# app/core/config.py's embeddings_max_concurrent_requests). Created lazily
+# -- not at import time -- because asyncio.Semaphore binds to whichever
+# event loop first touches it, and this module is imported before uvicorn's
+# loop exists; a semaphore created here would be bound to the wrong loop
+# (or none). tests/test_concurrency.py resets this to None between runs so
+# each TestClient's own loop gets its own semaphore.
+_encode_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_encode_semaphore() -> asyncio.Semaphore:
+    global _encode_semaphore
+    if _encode_semaphore is None:
+        _encode_semaphore = asyncio.Semaphore(settings.embeddings_max_concurrent_requests)
+    return _encode_semaphore
 
 
 def _load_model_in_background() -> None:
@@ -158,7 +175,27 @@ async def create_embeddings(payload: EmbeddingsRequest) -> EmbeddingsResponse:
     # its entire duration. run_in_threadpool hands it to a worker thread
     # instead, the same tool Starlette's own sync-route support uses
     # internally.
-    result = await run_in_threadpool(embedder.encode, texts, input_type=input_type)
+    #
+    # 2026-09-22 OOM incident: run_in_threadpool alone has no concurrency
+    # bound of its own (Starlette's default pool is 40 threads), so a burst
+    # of concurrent callers could all encode in parallel and OOM this pod.
+    # The semaphore below serializes (or otherwise caps) encodes; a caller
+    # that can't get a slot within embeddings_queue_timeout_seconds gets a
+    # 503 with Retry-After instead of piling up behind an already-saturated
+    # encoder.
+    semaphore = _get_encode_semaphore()
+    try:
+        await asyncio.wait_for(semaphore.acquire(), timeout=settings.embeddings_queue_timeout_seconds)
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail='embeddings busy',
+            headers={'Retry-After': '5'},
+        ) from exc
+    try:
+        result = await run_in_threadpool(embedder.encode, texts, input_type=input_type)
+    finally:
+        semaphore.release()
 
     data = [EmbeddingItem(index=index, embedding=vector) for index, vector in enumerate(result.vectors)]
     total_tokens = sum(result.token_counts)

@@ -87,6 +87,14 @@ export function unskipPortalDocument(jobId: string): Promise<PortalDocument> {
   return apiJson(`/api/v1/portal/documents/${encodeURIComponent(jobId)}/unskip`, { method: 'POST' });
 }
 
+export function reindexPortalDocument(jobId: string): Promise<Publication> {
+  return apiJson(`/api/v1/portal/documents/${encodeURIComponent(jobId)}/reindex`, { method: 'POST' });
+}
+
+export function reindexKnowledgeSpace(collectionId: string): Promise<{ requeued: number }> {
+  return apiJson(`/api/v1/portal/collections/${encodeURIComponent(collectionId)}/reindex`, { method: 'POST' });
+}
+
 export function markdownDownloadName(originalFilename: string): string {
   const basename = originalFilename.replaceAll('\\', '/').split('/').at(-1) || 'dokument';
   const dot = basename.lastIndexOf('.');

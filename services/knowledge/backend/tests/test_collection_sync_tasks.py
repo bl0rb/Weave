@@ -38,7 +38,9 @@ def _cleanup():
         db.close()
 
 
-def _make_document(*, status: DocumentStatus, index_attempts: int, updated_at: datetime) -> Document:
+def _make_document(
+    *, status: DocumentStatus, index_attempts: int, updated_at: datetime, embedding_attempts: int = 0,
+) -> Document:
     db = _db()
     try:
         document = Document(
@@ -48,6 +50,7 @@ def _make_document(*, status: DocumentStatus, index_attempts: int, updated_at: d
             processed_at=updated_at,
             status=status,
             index_attempts=index_attempts,
+            embedding_attempts=embedding_attempts,
             updated_at=updated_at,
         )
         db.add(document)
@@ -275,4 +278,120 @@ def test_redrive_skips_document_already_at_max_attempts(sent, monkeypatch):
         collection_sync_tick(None)
 
     index_sends = [args for name, args in sent if name == 'weave.knowledge.index_document']
+    assert index_sends == []
+
+
+# --- Incident 2026-09-22: restart recovery re-drives an embedding-stalled retry --
+
+
+def test_redrive_covers_a_stalled_embedding_retry_after_a_restart(sent, monkeypatch):
+    """A document stuck retrying the EMBED step (not just the markdown-fetch
+    step) must also be re-driven -- e.g. after the knowledge worker pod
+    itself was OOMKilled/restarted mid-backoff, this is what resumes it
+    without waiting for the original retry's own (possibly lost) send_task."""
+    monkeypatch.setattr(collection_sync_tasks, '_acquire_or_renew', lambda lock_token: 'token-xyz')
+    monkeypatch.setattr(settings, 'weave_ingest_base_url', 'https://weave.local')
+
+    old_enough = datetime.now(timezone.utc) - timedelta(seconds=10_000)
+    stalled = _make_document(
+        status=DocumentStatus.PENDING, index_attempts=0, embedding_attempts=1, updated_at=old_enough,
+    )
+    # Too recent -- its own scheduled retry may still be in flight.
+    _make_document(
+        status=DocumentStatus.PENDING, index_attempts=0, embedding_attempts=1, updated_at=datetime.now(timezone.utc),
+    )
+
+    with patch('app.services.collection_sync.httpx.get', return_value=_FakeResponse(200, [])):
+        collection_sync_tick(None)
+
+    index_sends = [args for name, args in sent if name == 'weave.knowledge.index_document']
+    assert index_sends == [[str(stalled.id)]]
+
+
+def test_redrive_covers_a_stalled_reindex_embedding_retry_with_reindex_flag(monkeypatch):
+    """A stalled REINDEX request (status stays INDEXED while
+    embedding_attempts>0 -- see app/workers/tasks.py's _run_pipeline reindex-
+    aware skip check) must be redriven WITH reindex=True, or the redriven
+    task would just no-op against the already-INDEXED document."""
+    monkeypatch.setattr(collection_sync_tasks, 'SessionLocal', TestingSessionLocal)
+    monkeypatch.setattr(collection_sync_tasks, '_acquire_or_renew', lambda lock_token: 'token-xyz')
+    monkeypatch.setattr(settings, 'weave_ingest_base_url', 'https://weave.local')
+
+    captured: list[tuple[str, list, dict]] = []
+    monkeypatch.setattr(
+        celery_app, 'send_task', lambda name, args=None, **kw: captured.append((name, list(args or []), kw)),
+    )
+
+    old_enough = datetime.now(timezone.utc) - timedelta(seconds=10_000)
+    stalled = _make_document(
+        status=DocumentStatus.INDEXED, index_attempts=0, embedding_attempts=1, updated_at=old_enough,
+    )
+
+    with patch('app.services.collection_sync.httpx.get', return_value=_FakeResponse(200, [])):
+        collection_sync_tick(None)
+
+    index_sends = [(args, kw) for name, args, kw in captured if name == 'weave.knowledge.index_document']
+    assert index_sends == [([str(stalled.id)], {'kwargs': {'reindex': True}})]
+
+
+def test_redrive_covers_a_stalled_reindex_fetch_retry_with_reindex_flag(monkeypatch):
+    """A stalled REINDEX request whose failure is at the markdown-FETCH step
+    (not the embed step) also stays at status=INDEXED with index_attempts>0
+    -- reindex=True skips _run_pipeline's early-return, so a
+    TransientFetchError there increments index_attempts, not
+    embedding_attempts, while status never leaves INDEXED. None of the
+    other three passes match this (status, counter) combination, so
+    without this pass such a stalled reindex is invisible to the redrive
+    and, if its own retry send_task is also lost (the pod-restart scenario
+    the whole redrive mechanism exists for), gets stuck forever -- never
+    retried, never marked FAILED."""
+    monkeypatch.setattr(collection_sync_tasks, 'SessionLocal', TestingSessionLocal)
+    monkeypatch.setattr(collection_sync_tasks, '_acquire_or_renew', lambda lock_token: 'token-xyz')
+    monkeypatch.setattr(settings, 'weave_ingest_base_url', 'https://weave.local')
+
+    captured: list[tuple[str, list, dict]] = []
+    monkeypatch.setattr(
+        celery_app, 'send_task', lambda name, args=None, **kw: captured.append((name, list(args or []), kw)),
+    )
+
+    old_enough = datetime.now(timezone.utc) - timedelta(seconds=10_000)
+    stalled = _make_document(
+        status=DocumentStatus.INDEXED, index_attempts=1, embedding_attempts=0, updated_at=old_enough,
+    )
+
+    with patch('app.services.collection_sync.httpx.get', return_value=_FakeResponse(200, [])):
+        collection_sync_tick(None)
+
+    index_sends = [(args, kw) for name, args, kw in captured if name == 'weave.knowledge.index_document']
+    assert index_sends == [([str(stalled.id)], {'kwargs': {'reindex': True}})]
+
+
+def test_redrive_ignores_a_document_that_indexed_successfully_after_a_transient_retry(monkeypatch):
+    """A document that survived a transient embedding retry and then
+    indexed successfully has embedding_attempts reset to 0 by
+    app/workers/tasks.py's _run_pipeline (see that reset's own comment).
+    Pass 3 of _redrive_stalled_index_retries (status=INDEXED,
+    counter=embedding_attempts) must NOT mistake this healthy, settled
+    document for a stalled reindex retry -- otherwise collection_sync_tick
+    would spuriously and repeatedly fire index_document.delay(reindex=True)
+    for it forever, reproducing the uncontrolled embedding load the
+    2026-09-22 incident fix exists to prevent."""
+    monkeypatch.setattr(collection_sync_tasks, 'SessionLocal', TestingSessionLocal)
+    monkeypatch.setattr(collection_sync_tasks, '_acquire_or_renew', lambda lock_token: 'token-xyz')
+    monkeypatch.setattr(settings, 'weave_ingest_base_url', 'https://weave.local')
+
+    captured: list[tuple[str, list, dict]] = []
+    monkeypatch.setattr(
+        celery_app, 'send_task', lambda name, args=None, **kw: captured.append((name, list(args or []), kw)),
+    )
+
+    old_enough = datetime.now(timezone.utc) - timedelta(seconds=10_000)
+    # embedding_attempts=0 is exactly the state a document is left in after
+    # a successful embed, even if it needed a transient retry along the way.
+    _make_document(status=DocumentStatus.INDEXED, index_attempts=0, embedding_attempts=0, updated_at=old_enough)
+
+    with patch('app.services.collection_sync.httpx.get', return_value=_FakeResponse(200, [])):
+        collection_sync_tick(None)
+
+    index_sends = [(args, kw) for name, args, kw in captured if name == 'weave.knowledge.index_document']
     assert index_sends == []

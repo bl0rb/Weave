@@ -9,7 +9,7 @@ import { useAuth } from '@/lib/auth-context';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { ConfirmDialog, apiSend } from '@/components/admin/admin-shared';
 import { MarkdownView } from '@/components/markdown/markdown-view';
-import { bulkPortalAction, dateLabel, documentState, downloadPortalFile, jsonBody, loadDocuments, markdownDownloadName, portalError, skipPortalDocument, unskipPortalDocument, type DocumentPage, type DocumentPreview, type PortalConfig, type QualityGradeFilter, type Publication, type ReviewStateFilter } from '@/lib/portal';
+import { bulkPortalAction, dateLabel, documentState, downloadPortalFile, jsonBody, loadDocuments, markdownDownloadName, portalError, reindexPortalDocument, skipPortalDocument, unskipPortalDocument, type DocumentPage, type DocumentPreview, type PortalConfig, type QualityGradeFilter, type Publication, type ReviewStateFilter } from '@/lib/portal';
 import { BulkActionBar, DocumentTable, EmptyState, Notice, Pagination, PortalPage, QualityGradeFilterRow, QualityGradeLegend } from './shared';
 import { ReprocessForm } from './reprocess-form';
 import { IndexingProgress } from './indexing-progress';
@@ -104,6 +104,7 @@ function ReviewDocumentContent({ id }: { id: string }) {
   const [deleting, setDeleting] = useState(false);
   const [downloadingDiagnostics, setDownloadingDiagnostics] = useState(false);
   const [skipping, setSkipping] = useState(false);
+  const [confirmReindex, setConfirmReindex] = useState(false);
   const startedHeading = useRef<HTMLHeadingElement>(null);
   const load = useCallback(() => Promise.all([apiJson<DocumentPreview>(`/api/v1/portal/documents/${encodeURIComponent(id)}`), apiJson<PortalConfig>('/api/v1/portal/config')])
     .then(([content, configuration]) => { setPreview(content); setConfig(configuration); setError(''); setConfirmed(false); setReprocessOpen(false); })
@@ -123,6 +124,15 @@ function ReviewDocumentContent({ id }: { id: string }) {
     setSaving(true); setError('');
     try { const publication = await apiJson<Publication>(`/api/v1/portal/releases/${preview.release.id}/retry`, { method: 'POST' }); setPreview({ ...preview, release: publication }); }
     catch (err) { setError(portalError(err)); } finally { setSaving(false); }
+  }
+  async function reindex() {
+    if (saving || !preview?.release) return;
+    setSaving(true); setError('');
+    try {
+      const publication = await reindexPortalDocument(id);
+      setPreview({ ...preview, release: publication });
+      setConfirmReindex(false);
+    } catch (err) { setError(portalError(err)); } finally { setSaving(false); }
   }
   async function skip() {
     if (skipping || !preview) return;
@@ -162,7 +172,9 @@ function ReviewDocumentContent({ id }: { id: string }) {
   const { items: indexingItems } = useIndexingStatus(preview?.release ? [id] : []);
   const live = indexingItems[id];
   const state = preview && documentState(preview, live);
-  const delivery = preview?.release ? currentReleaseStatus(preview.release, live).delivery : null;
+  const releaseStatus = preview?.release ? currentReleaseStatus(preview.release, live) : null;
+  const delivery = releaseStatus?.delivery ?? null;
+  const indexingFailed = releaseStatus?.indexing?.state === 'failed';
   return <PortalPage title={preview?.original_filename || 'Dokument prüfen'} description="Prüfe Inhalt, Verständlichkeit und Berechtigte vor der Freigabe." eyebrow="VERÖFFENTLICHUNG" actions={!reprocessStarted && <Button variant="outline" disabled={saving} onClick={load}>Stand neu laden</Button>}>
     <Link className="portal-back" href="/reviews">← Zurück zur Prüfung</Link>
     {error && <Notice error action={load}>{error}</Notice>}
@@ -193,7 +205,7 @@ function ReviewDocumentContent({ id }: { id: string }) {
         </details>
         {preview.quality_grade?.trim().toUpperCase() === 'C' ? <Notice>Stufe C: Die automatische Prüfung meldet Qualitätsmängel. Eine bewusste Freigabe nach inhaltlicher Prüfung ist möglich.</Notice> : preview.quality_recommendation?.trim().toLowerCase() === 'block' && <Notice error>Die Qualitätsprüfung blockiert diesen Stand. Bitte korrigiere oder verarbeite das Dokument erneut.</Notice>}
         {(!preview.quality_recommendation || preview.quality_recommendation.trim().toLowerCase() === 'warn') && <Notice>Bitte prüfe diesen Inhalt besonders sorgfältig. Die automatische Bewertung liefert keine uneingeschränkte Empfehlung.</Notice>}
-        {preview.release ? <><div className="portal-release-receipt"><CheckCheck size={23} /><strong>Freigabe gespeichert</strong><span>{dateLabel(preview.release.created_at)}</span>{preview.release.released_by && <span>Freigegeben von {preview.release.released_by}</span>}</div><p>Dieser Stand ist freigegeben und bleibt unverändert.</p>{delivery === 'failed' && <><Notice error>Die Übergabe ist fehlgeschlagen. Eine berechtigte Person kann sie erneut anstoßen.</Notice>{preview.can_release && <Button disabled={saving} onClick={retry}>Übergabe erneut versuchen</Button>}</>}<IndexingProgress release={preview.release} live={live} />{user?.role === 'admin' && <Button className="w-full whitespace-normal h-auto py-3" variant="outline" disabled={downloadingDiagnostics} onClick={() => void downloadDiagnostics()}><Download size={16} />{downloadingDiagnostics ? 'Diagnose wird heruntergeladen …' : 'Indizierungsdiagnose herunterladen'}</Button>}</> : preview.review_decision === 'skipped' ? <>
+        {preview.release ? <><div className="portal-release-receipt"><CheckCheck size={23} /><strong>Freigabe gespeichert</strong><span>{dateLabel(preview.release.created_at)}</span>{preview.release.released_by && <span>Freigegeben von {preview.release.released_by}</span>}</div><p>Dieser Stand ist freigegeben und bleibt unverändert.</p>{delivery === 'failed' && <><Notice error>Die Übergabe ist fehlgeschlagen. Eine berechtigte Person kann sie erneut anstoßen.</Notice>{preview.can_release && <Button disabled={saving} onClick={retry}>Übergabe erneut versuchen</Button>}</>}<IndexingProgress release={preview.release} live={live} />{preview.can_release && (confirmReindex ? <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={saving} onClick={() => setConfirmReindex(false)}>Abbrechen</Button><Button variant={indexingFailed ? 'default' : 'outline'} disabled={saving} onClick={() => void reindex()}><RefreshCw size={16} />{saving ? 'Wird angestoßen …' : 'Ja, neu indizieren'}</Button></div> : <Button className="w-full" variant={indexingFailed ? 'default' : 'outline'} disabled={saving} onClick={() => setConfirmReindex(true)}><RefreshCw size={16} />Neu indizieren</Button>)}{user?.role === 'admin' && <Button className="w-full whitespace-normal h-auto py-3" variant="outline" disabled={downloadingDiagnostics} onClick={() => void downloadDiagnostics()}><Download size={16} />{downloadingDiagnostics ? 'Diagnose wird heruntergeladen …' : 'Indizierungsdiagnose herunterladen'}</Button>}</> : preview.review_decision === 'skipped' ? <>
           <p className="portal-field-hint">Dieses Dokument wurde nicht freigegeben und übersprungen. Es erscheint nicht in der Liste „Zur Prüfung“.</p>
           <Button className="w-full" variant="outline" disabled={skipping} onClick={() => void unskip()}>{skipping ? 'Wird aktualisiert …' : 'Wieder zur Prüfung'}</Button>
         </> : reprocessOpen ? <ReprocessForm currentProfileId={preview.profile_id} busy={saving} onSubmit={reprocess} onCancel={() => { setReprocessOpen(false); setError(''); }} /> : <>

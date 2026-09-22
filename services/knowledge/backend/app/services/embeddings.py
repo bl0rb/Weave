@@ -90,7 +90,20 @@ class EmbeddingProviderError(Exception):
     """Raised for any embedding-provider failure: an unreachable endpoint, a
     non-2xx response that either exhausted its retries or wasn't retryable
     in the first place, or a response body that doesn't parse as expected.
+
+    `transient` (incident 2026-09-22): True for a failure worth a scheduled
+    retry at the Celery-task level -- a timeout, a connection error, a 5xx,
+    or a 503 "embeddings busy" from the service's own concurrency gate --
+    which app/workers/tasks.py retries on the embedding-failure backoff
+    table (30s/2m/10m/30m/60m). False (the default) is a non-retryable 4xx
+    or a malformed response body: retrying an unchanged request would fail
+    identically, so the document is marked FAILED immediately instead, same
+    as app.services.ingest_client.PermanentFetchError.
     """
+
+    def __init__(self, message: str, *, transient: bool = False) -> None:
+        super().__init__(message)
+        self.transient = transient
 
 
 class EmbeddingProvider(Protocol):
@@ -154,19 +167,44 @@ class FakeEmbeddingProvider:
 # --- OpenAICompatibleProvider -------------------------------------------------
 
 _DEFAULT_TIMEOUT_SECONDS = 30.0
-# "max 3" per the task spec: the request is attempted up to 3 times total
-# (the initial attempt plus up to 2 retries), not 3 retries on top of the
-# initial attempt.
-_DEFAULT_MAX_ATTEMPTS = 3
+# Incident 2026-09-22: this loop used to attempt up to 3 times (1-2-4s
+# backoff) before the caller ever saw an error, which -- stacked under
+# app/workers/tasks.py's own outer retry -- could hold a Celery worker
+# thread for many seconds on a single stuck request. The real retry budget
+# now lives one layer up (the embedding-failure backoff table in
+# app/workers/tasks.py, scheduled via Celery countdown, not an in-process
+# sleep), so this loop only needs to smooth over a truly momentary blip
+# before raising EmbeddingProviderError(transient=True) for that outer
+# layer to handle.
+_DEFAULT_MAX_ATTEMPTS = 2
 # Backoff before each retry, indexed by the attempt number that just failed
 # (attempt 1 failed -> wait _RETRY_BACKOFF_SECONDS[0] before attempt 2, ...).
 # Same shape as Weave-Ingest's app/workers/webhook_tasks.py:_BACKOFF_SECONDS.
-_RETRY_BACKOFF_SECONDS = (1.0, 2.0, 4.0)
+_RETRY_BACKOFF_SECONDS = (1.0, 2.0)
 
 
 def _backoff_seconds(attempt: int) -> float:
     index = min(attempt - 1, len(_RETRY_BACKOFF_SECONDS) - 1)
     return _RETRY_BACKOFF_SECONDS[max(index, 0)]
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    """Parse an HTTP Retry-After header as a number of seconds.
+
+    Incident 2026-09-22: the embeddings service answers a busy 503 (its own
+    EMBEDDINGS_MAX_CONCURRENT_REQUESTS gate full) with `Retry-After: 5` --
+    honouring it here beats blind exponential backoff for a condition whose
+    own duration the server already knows. Only the delta-seconds form is
+    expected from that service; an HTTP-date form or anything unparseable
+    returns None so the caller falls back to its own backoff table.
+    """
+    if not value:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        return None
+    return seconds if seconds >= 0 else None
 
 
 def _parse_embeddings_response(response: httpx.Response, *, expected_count: int) -> list[list[float]]:
@@ -297,8 +335,12 @@ class OpenAICompatibleProvider:
                 response = httpx.post(url, headers=headers, json=payload, timeout=self._timeout)
             except httpx.HTTPError as exc:
                 if attempt >= self._max_attempts:
+                    # Transient: a timeout/connection failure is exactly the
+                    # kind of blip app/workers/tasks.py's embedding-failure
+                    # backoff table exists to outlast (incident 2026-09-22).
                     raise EmbeddingProviderError(
-                        f'embedding request to {url!r} failed after {attempt} attempt(s): {exc}'
+                        f'embedding request to {url!r} failed after {attempt} attempt(s): {exc}',
+                        transient=True,
                     ) from exc
                 logger.warning('embedding request to %r failed (attempt %d/%d): %s', url, attempt, self._max_attempts, exc)
                 time.sleep(_backoff_seconds(attempt))
@@ -309,15 +351,21 @@ class OpenAICompatibleProvider:
 
             if response.status_code == 429 or response.status_code >= 500:
                 if attempt >= self._max_attempts:
+                    # Transient: a 429/5xx (including the embeddings
+                    # service's own busy 503) is worth the outer scheduled
+                    # retry, not a permanent failure.
                     raise EmbeddingProviderError(
                         f'embedding request to {url!r} returned HTTP {response.status_code} '
-                        f'after {attempt} attempt(s)'
+                        f'after {attempt} attempt(s)',
+                        transient=True,
                     )
+                retry_after = _parse_retry_after(getattr(response, 'headers', {}).get('retry-after'))
+                wait_seconds = retry_after if retry_after is not None else _backoff_seconds(attempt)
                 logger.warning(
-                    'embedding request to %r returned HTTP %d (attempt %d/%d); retrying',
-                    url, response.status_code, attempt, self._max_attempts,
+                    'embedding request to %r returned HTTP %d (attempt %d/%d); retrying in %.1fs',
+                    url, response.status_code, attempt, self._max_attempts, wait_seconds,
                 )
-                time.sleep(_backoff_seconds(attempt))
+                time.sleep(wait_seconds)
                 continue
 
             # Any other 4xx (400 bad request, 401/403 bad key, 404 unknown
@@ -345,7 +393,11 @@ def get_provider() -> EmbeddingProvider:
     if provider_name == 'fake':
         return FakeEmbeddingProvider()
     if provider_name == 'openai':
-        return OpenAICompatibleProvider()
+        # Incident 2026-09-22: must comfortably exceed the embeddings
+        # service's own EMBEDDINGS_QUEUE_TIMEOUT_SECONDS (default 90s) --
+        # otherwise this client gives up on a request the server is still
+        # legitimately queueing behind its concurrency gate.
+        return OpenAICompatibleProvider(timeout=settings.embedding_request_timeout_seconds)
     raise ValueError(
         f"unknown EMBEDDING_PROVIDER {settings.embedding_provider!r} (expected 'fake' or 'openai')"
     )

@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the normal source upload, review and release workflow.
 
 ### Added
+- "Neu indizieren" as a regular action: per document on the review page (highlighted when
+  the indexing failed) and per knowledge space ("Wissensbereich neu indizieren"); both
+  re-deliver the release with `reindex: true`, which makes Knowledge re-index even an
+  already indexed release (`contracts/events/document.released.md`).
 - Suchkonfiguration admin tab, new "Index-Wartung" section: two explicit, confirmation-gated
   admin actions independent of a config save. "Vektoren neu berechnen" triggers Knowledge's
   existing full-reindex webhook on demand (same call `update_retrieval_provider` already makes
@@ -262,6 +266,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *Upgrading an existing installation*.
 
 ### Fixed
+- Indexing under load (incident 2026-09-22): a burst of releases drove 14 parallel
+  embedding requests into the embeddings pod, which was OOM-killed; Knowledge retried
+  only three times within seconds and marked the documents "Indizierung fehlgeschlagen"
+  for good. Now the embeddings service processes at most `EMBEDDINGS_MAX_CONCURRENT_REQUESTS`
+  (default 1) encodes at a time and answers `503 Retry-After` instead of growing without
+  bound; Knowledge treats timeouts, disconnects, 5xx and busy answers as transient and
+  schedules retries at 30 s / 2 min / 10 min / 30 min / 60 min (up to
+  `EMBEDDING_MAX_ATTEMPTS`, default 6) that survive pod restarts (re-driven by the periodic
+  sync tick and once at worker start); the knowledge worker runs with concurrency 2 by
+  default instead of one process per CPU.
 - Self-healing (review 2026-09-18): a periodic tick (publications, Confluence refresh,
   session cleanup) whose Redis lock expired or vanished re-elects itself instead of ending
   its chain, and the next-tick enqueue is retried before giving up (SH-01). Worker startup

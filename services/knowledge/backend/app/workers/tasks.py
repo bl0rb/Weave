@@ -38,11 +38,12 @@ from celery.signals import worker_ready
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.db import SessionLocal
 from app.models.models import Chunk, Document, DocumentStatus
 from app.services import ingest_client
 from app.services.chunker import chunk_markdown
-from app.services.embeddings import embed_chunks, get_provider
+from app.services.embeddings import EmbeddingProviderError, embed_chunks, get_provider
 from app.services.enrichment import build_chunk_meta
 from app.workers.celery_app import celery_app
 
@@ -57,6 +58,24 @@ REINDEX_TASK_NAME = 'weave.knowledge.reindex_all'
 # comes from.
 _MAX_ATTEMPTS = 5
 _BACKOFF_SECONDS = (30, 60, 120, 240)
+
+# Incident 2026-09-22: a SEPARATE schedule for a transient
+# app.services.embeddings.EmbeddingProviderError (the embeddings service
+# OOMKilled/restarting under a burst) -- longer-tailed than the fetch retry
+# above because recovering an embeddings pod (redeploy, autoscale) can
+# legitimately take much longer than a Weave-Ingest hiccup. Attempts are
+# counted on Document.embedding_attempts, not index_attempts (see that
+# column's own docstring for why the two budgets must stay independent).
+# Max attempts is settings-driven (EMBEDDING_MAX_ATTEMPTS, default 6) per
+# the cross-area contract; the backoff table itself is not.
+_EMBEDDING_BACKOFF_SECONDS = (30, 120, 600, 1800, 3600)
+
+
+def _embedding_backoff_seconds(attempt: int) -> int:
+    index = min(attempt - 1, len(_EMBEDDING_BACKOFF_SECONDS) - 1)
+    return _EMBEDDING_BACKOFF_SECONDS[max(index, 0)]
+
+
 _RELEASE_ID_KEY = '_weave_release_id'
 _MARKDOWN_SHA256_KEY = '_weave_markdown_sha256'
 _SHA256_HEX_RE = re.compile(r'^[a-f0-9]{64}$')
@@ -169,7 +188,7 @@ def _supersede_previous_version(db: Session, document: Document) -> None:
     previous.chunk_count = 0
 
 
-def _run_pipeline(self, db: Session, document: Document) -> None:
+def _run_pipeline(self, db: Session, document: Document, *, reindex: bool = False) -> None:
     release_metadata = _release_metadata(document)
     if release_metadata is None:
         logger.warning(
@@ -177,10 +196,15 @@ def _run_pipeline(self, db: Session, document: Document) -> None:
             document.id,
         )
         return
-    if document.status in (DocumentStatus.INDEXED, DocumentStatus.SUPERSEDED):
-        # A duplicate delivery after a successful commit, or a late delivery
-        # for an explicitly retired lineage version, must not fetch, rewrite
-        # chunks, or change version retirement state.
+    if document.status == DocumentStatus.SUPERSEDED:
+        # A late delivery for an explicitly retired lineage version must
+        # never resurrect it -- true regardless of `reindex`, see
+        # _supersede_previous_version's docstring.
+        return
+    if document.status == DocumentStatus.INDEXED and not reindex:
+        # A duplicate delivery after a successful commit is a no-op, unless
+        # the caller explicitly asked for a fresh reindex (payload.reindex
+        # on document.released -- see app/api/events.py / "Neu indizieren").
         return
     release_id, markdown_sha256 = release_metadata
     try:
@@ -209,7 +233,13 @@ def _run_pipeline(self, db: Session, document: Document) -> None:
             document.id, attempts, _MAX_ATTEMPTS, countdown, exc,
         )
         try:
-            self.app.send_task(INDEX_TASK_NAME, args=[str(document.id)], countdown=countdown)
+            # reindex is threaded through so a reindex request whose fetch
+            # step itself hit a transient error doesn't lose that intent on
+            # retry -- without it, the retried run would see status=INDEXED
+            # and reindex defaulting to False and skip itself entirely.
+            self.app.send_task(
+                INDEX_TASK_NAME, args=[str(document.id)], kwargs={'reindex': reindex}, countdown=countdown,
+            )
         except Exception:
             # SH-03: a broker hiccup here must not fail the document -- it's
             # already retry-eligible (attempts incremented and committed
@@ -255,20 +285,75 @@ def _run_pipeline(self, db: Session, document: Document) -> None:
         for chunk in chunks
     ]
 
+    document_id = document.id
     provider = get_provider()
-    embed_chunks(db, document, chunk_rows, provider)
+    try:
+        embed_chunks(db, document, chunk_rows, provider)
+    except EmbeddingProviderError as exc:
+        # Incident 2026-09-22: chunks were deleted above (and embed_chunks
+        # itself already db.add_all'd the fresh, not-yet-embedded chunk_rows
+        # into the session) but nothing has been committed yet -- roll back
+        # first so a retry never persists a half-embedded chunk set or an
+        # orphaned delete. Rollback also releases the FOR UPDATE lock taken
+        # in _index_document_unlocked, so the row is re-read (and re-locked)
+        # fresh rather than trusting the now-stale in-memory `document`.
+        db.rollback()
+        document = db.execute(
+            select(Document).where(Document.id == document_id).with_for_update()
+        ).scalar_one_or_none()
+        if document is None:
+            return
+        if not exc.transient:
+            logger.error(
+                'index_document: non-transient embedding failure for document %s: %s', document_id, exc,
+            )
+            _mark_failed(db, document, str(exc))
+            return
+        document.embedding_attempts += 1
+        attempts = document.embedding_attempts
+        max_attempts = settings.embedding_max_attempts
+        if attempts >= max_attempts:
+            logger.error(
+                'index_document: exhausted %d embedding attempt(s) for document %s: %s',
+                attempts, document_id, exc,
+            )
+            _mark_failed(db, document, str(exc))
+            return
+        db.commit()
+        countdown = _embedding_backoff_seconds(attempts)
+        logger.warning(
+            'index_document: transient embedding error for document %s (attempt %d/%d); retrying in %ds: %s',
+            document_id, attempts, max_attempts, countdown, exc,
+        )
+        try:
+            self.app.send_task(
+                INDEX_TASK_NAME, args=[str(document_id)], kwargs={'reindex': reindex}, countdown=countdown,
+            )
+        except Exception:
+            # SH-03: same broker-hiccup fallback as the fetch-retry branch
+            # above -- the periodic stalled-retry sweep re-drives it.
+            logger.warning(
+                'index_document: failed to enqueue embedding retry for document %s (attempt %d/%d); '
+                'will be re-driven by the periodic stalled-retry sweep', document_id, attempts, max_attempts,
+            )
+        return
 
     document.chunk_count = len(chunk_rows)
     document.indexed_at = datetime.now(timezone.utc)
     document.status = DocumentStatus.INDEXED
     document.error = None
+    # A successful embed clears any transient-retry count from earlier
+    # attempts -- otherwise pass 3 of _redrive_stalled_index_retries (see
+    # collection_sync_tasks.py) mistakes this perfectly healthy document
+    # for a stalled reindex retry and keeps re-triggering full reindexes.
+    document.embedding_attempts = 0
 
     _supersede_previous_version(db, document)
 
     db.commit()
 
 
-def _index_document_unlocked(self, document_id: str) -> None:
+def _index_document_unlocked(self, document_id: str, *, reindex: bool = False) -> None:
     """Run fetch -> chunk -> embed -> persist for one Document row.
 
     Never raises on a fetch failure -- both the permanent and the
@@ -292,7 +377,7 @@ def _index_document_unlocked(self, document_id: str) -> None:
         if document is None:
             logger.warning('index_document: document %s not found; nothing to do', document_id)
             return
-        _run_pipeline(self, db, document)
+        _run_pipeline(self, db, document, reindex=reindex)
     except Exception as exc:  # noqa: BLE001 - defensive terminal transition, see docstring
         logger.exception('index_document: unexpected failure for document %s', document_id)
         _mark_unexpected_failure(db, document_id, str(exc))
@@ -301,12 +386,18 @@ def _index_document_unlocked(self, document_id: str) -> None:
 
 
 @celery_app.task(name=INDEX_TASK_NAME, bind=True, acks_late=True, reject_on_worker_lost=True)
-def index_document(self, document_id: str) -> None:
+def index_document(self, document_id: str, reindex: bool = False) -> None:
+    # reindex=True (set by app/api/events.py from payload.reindex, or by
+    # the SH-03 redrive sweep resuming a stalled reindex retry) forces a
+    # full re-index even of an already-INDEXED document -- see
+    # _run_pipeline's status check and "Neu indizieren" in contracts/events/
+    # document.released.md.
+    #
     # The database row lock below serializes this across PostgreSQL worker
     # processes. This small per-document lock also covers concurrent direct
     # calls and SQLite workers, where SQLite ignores FOR UPDATE.
     with _document_lock(document_id):
-        _index_document_unlocked(self, document_id)
+        _index_document_unlocked(self, document_id, reindex=reindex)
 
 
 @worker_ready.connect

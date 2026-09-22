@@ -608,12 +608,19 @@ services:
         type: float
         required: false
         comment: "Container cpus limit for the OCR Celery worker."
-      CELERY_WORKER_CONCURRENCY:
+      INGEST_WORKER_CONCURRENCY:
         secret: false
         value: 1
         type: int
         required: false
-        comment: "Celery worker process concurrency."
+        comment: >
+          OCR Celery worker process concurrency. Named INGEST_WORKER_CONCURRENCY
+          (not CELERY_WORKER_CONCURRENCY) so it cannot collide with
+          knowledge.CELERY_WORKER_CONCURRENCY below in the shared deploy/.env
+          variable pool docker-compose.weave.yml resolves ${VAR:-default}
+          from -- the container itself still receives an env var literally
+          named CELERY_WORKER_CONCURRENCY (worker.Dockerfile's CMD reads that
+          name), via the compose/Helm rename mapping next to each usage.
       CELERY_PREFETCH_MULTIPLIER:
         secret: false
         value: 1
@@ -667,6 +674,40 @@ services:
         value: latest
         type: string
         required: false
+      EMBEDDING_REQUEST_TIMEOUT_SECONDS:
+        secret: false
+        value: 180
+        type: float
+        required: false
+        comment: >
+          Client read timeout for calls to the embedding provider -- must
+          exceed embeddings.EMBEDDINGS_QUEUE_TIMEOUT_SECONDS (90) or this
+          service gives up before the provider's own 503 arrives.
+      EMBEDDING_MAX_ATTEMPTS:
+        secret: false
+        value: 6
+        type: int
+        required: false
+        comment: >
+          Retry ceiling for a failed embedding call during indexing
+          (incident 2026-09-22: 3 attempts at 1/2/4s could not outlast a
+          ~15s pod restart). Backoff beyond the first quick retries is
+          scheduled via Celery's countdown retry path (30s, 2m, 10m, 30m,
+          60m), not in-process sleeps.
+      CELERY_WORKER_CONCURRENCY:
+        secret: false
+        value: 2
+        type: int
+        required: false
+        comment: >
+          Celery worker process concurrency for weave-knowledge-worker
+          (incident 2026-09-22: an unbounded worker fired dozens of parallel
+          embedding requests and OOMKilled weave-embeddings). Documented in
+          services/knowledge/README.md as the name that controls this via
+          docker-compose.weave.yml/the Helm chart; ingest.INGEST_WORKER_CONCURRENCY
+          above is the unrelated OCR worker's own knob, kept under a
+          different name so the two cannot collide in the shared deploy/.env
+          variable pool.
 
   retrieval:
     settings:
@@ -1109,6 +1150,26 @@ services:
         value: 8006
         type: int
         required: false
+      EMBEDDINGS_MAX_CONCURRENT_REQUESTS:
+        secret: false
+        value: 1
+        type: int
+        required: false
+        comment: >
+          Bounds concurrent encoder.encode() calls (OOM incident
+          2026-09-22: an unbounded Starlette threadpool let 14 parallel
+          encodes exceed this container's 2560Mi memory limit). See
+          services/embeddings/README.md.
+      EMBEDDINGS_QUEUE_TIMEOUT_SECONDS:
+        secret: false
+        value: 90
+        type: float
+        required: false
+        comment: >
+          Max wait for a free encode slot before answering 503 with
+          Retry-After: 5 -- must stay below knowledge's
+          EMBEDDING_REQUEST_TIMEOUT_SECONDS or a caller times out before
+          this service even replies.
       WEAVE_EMBEDDINGS_TAG:
         secret: false
         value: latest

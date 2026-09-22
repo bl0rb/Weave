@@ -375,6 +375,15 @@ knowledgeWorker:
   # benannte Queue auf der gemeinsamen Redis-Instanz).
   queue: weave.knowledge.index
   logLevel: info
+  # Celery worker process concurrency. Empty by default so the chart
+  # template falls back to config.knowledge.CELERY_WORKER_CONCURRENCY
+  # (weave.yaml, default 2 -- the exact name services/knowledge/README.md
+  # documents; docs incident 2026-09-22). Set this only to override that
+  # contracted value for this chart specifically; the ingest OCR worker's
+  # own knob is the differently-named INGEST_WORKER_CONCURRENCY (weave.yaml,
+  # service 'ingest') so the two cannot collide once docker-compose.weave.yml
+  # resolves deploy/.env's shared variable pool.
+  concurrency: ""
   resources: {}
   podAnnotations: {}
   podLabels: {}

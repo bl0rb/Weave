@@ -82,3 +82,8 @@ class DocumentReleasedEvent(_DocumentEventBase):
     release_id: UUID
     markdown_sha256: str = Field(pattern=_SHA256_HEX_PATTERN)
     quality_override: bool = Field(default=False, strict=True)
+    # "Neu indizieren" (incident 2026-09-22): Ingest sets this on a release
+    # it re-queues via POST .../reindex, so app/api/events.py can force a
+    # full re-index even though release_id/markdown_sha256 already match an
+    # INDEXED document -- see app/workers/tasks.py's _run_pipeline.
+    reindex: bool = Field(default=False, strict=True)

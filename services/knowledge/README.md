@@ -94,6 +94,21 @@ cd backend
 
 `GET /health` prüft dabei per `SELECT 1` aktiv die Datenbankverbindung.
 
+Incident 2026-09-22: ohne explizites `--concurrency` startet Celery mit der
+Prozessanzahl des Hosts (in Kubernetes also der Node-CPU-Zahl) -- bei vielen
+gleichzeitig ausgelieferten Releases feuerte das dutzende parallele
+Embedding-Requests gegen den ressourcenlimitierten Embeddings-Pod und hat ihn
+OOMKilled. `CELERY_WORKER_CONCURRENCY` (Default 2, siehe
+`docker-compose.weave.yml`/Helm-Chart) begrenzt das analog zu Weave-Ingests
+`worker.Dockerfile`-Muster (`--concurrency=${CELERY_WORKER_CONCURRENCY:-1}`);
+lokal ohne Docker also z. B.
+`--concurrency=${CELERY_WORKER_CONCURRENCY:-2}` an den obigen Celery-Aufruf
+anhängen. `EMBEDDING_REQUEST_TIMEOUT_SECONDS` (Default 180) und
+`EMBEDDING_MAX_ATTEMPTS` (Default 6, Backoff 30s/2min/10min/30min/60min)
+steuern, wie geduldig der Worker einen vorübergehend überlasteten/
+neustartenden Embeddings-Pod übersteht, statt das Dokument sofort dauerhaft
+auf `failed` zu setzen.
+
 ### Docker
 
 ```bash

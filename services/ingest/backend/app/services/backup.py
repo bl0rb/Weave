@@ -77,7 +77,9 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from sqlalchemy import DateTime, LargeBinary, Table, delete, func, select, text
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
+from app.api.deps import aware_utc
 from app.core.config import settings
 from app.models.models import (
     Base,
@@ -85,6 +87,7 @@ from app.models.models import (
     DocumentRelease,
     ImportRun,
     ImportRunStatus,
+    Job,
     KnowledgeWithdrawal,
     User,
     UserRole,
@@ -750,6 +753,55 @@ def requeue_releases_for_index_rebuild(db: Session) -> int:
 # name stays as an alias for this module's own existing callers/tests
 # rather than being renamed everywhere for a purely cosmetic churn.
 _requeue_releases_for_index_rebuild = requeue_releases_for_index_rebuild
+
+
+def requeue_collection_releases_for_reindex(db: Session, collection_id: str) -> list[str]:
+    """Re-queue delivery for every non-withdrawn DocumentRelease of one
+    collection and mark each for a forced re-index (2026-09-22 incident
+    follow-up: 'Wissensbereich neu indizieren').
+
+    Kept as a separate function rather than an optional filter on
+    `requeue_releases_for_index_rebuild` above, so that function's tested,
+    single-statement bulk UPDATE (used by disaster-recovery import) stays
+    untouched. Unlike that function, this one also sets
+    `payload['reindex'] = True` on each matched release (see
+    contracts/events/document.released.md) so Knowledge replaces already-
+    indexed chunks instead of skipping them as a duplicate delivery -- a
+    JSON dict merge, which needs a per-row Python loop rather than a single
+    UPDATE, since this codebase's tests run against both SQLite and
+    Postgres (see `_load_visible_job`'s FOR UPDATE comment in
+    app/api/portal.py).
+
+    Returns the requeued release ids (not just a count) so the caller can
+    best-effort dispatch `deliver_release.delay` for each one without a
+    second query.
+    """
+    collection_id_expr = Job.processing_info['settings']['collection_id'].as_string()
+    withdrawn_job_ids = select(KnowledgeWithdrawal.job_id)
+    releases = db.scalars(
+        select(DocumentRelease)
+        .join(Job, Job.id == DocumentRelease.job_id)
+        .where(collection_id_expr == collection_id, DocumentRelease.job_id.not_in(withdrawn_job_ids))
+    ).all()
+    now = datetime.now(timezone.utc)
+    for release in releases:
+        # Only clear a lease that has already expired (or was never set) -- same
+        # guard as reindex_portal_document -- so we don't wipe an in-flight
+        # worker's active lease token out from under it mid-delivery.
+        if release.lease_until is None or aware_utc(release.lease_until) <= now:
+            release.lease_token = None
+            release.lease_until = None
+        release.status = 'pending'
+        release.attempts = 0
+        release.next_attempt_at = now
+        # Clear a stale error from a prior failure, matching reindex_portal_document
+        # and retry_release's outbox resets.
+        release.error_message = None
+        payload = release.payload if isinstance(release.payload, dict) else {}
+        payload['reindex'] = True
+        release.payload = payload
+        flag_modified(release, 'payload')
+    return [release.id for release in releases]
 
 
 # --- Import -------------------------------------------------------------

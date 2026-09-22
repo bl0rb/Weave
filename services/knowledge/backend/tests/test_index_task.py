@@ -22,6 +22,7 @@ import yaml
 
 from app.core.config import settings
 from app.models.models import Chunk, Document, DocumentStatus
+from app.services import embeddings as embeddings_module
 from app.services import ingest_client
 from app.services.embeddings import FakeEmbeddingProvider
 from app.workers import tasks as tasks_module
@@ -134,6 +135,7 @@ def test_index_document_end_to_end_success():
         assert refreshed.indexed_at is not None
         assert refreshed.error is None
         assert refreshed.index_attempts == 0
+        assert refreshed.embedding_attempts == 0
         assert refreshed.embedding_model == provider.model_name
 
         chunks = db.query(Chunk).filter_by(document_id=document.id).order_by(Chunk.chunk_index).all()
@@ -154,6 +156,37 @@ def test_index_document_end_to_end_success():
         assert chunks[-1].heading_path == ['Handbuch', 'Konfiguration']
         assert chunks[-1].page_start == 2
         assert chunks[-1].page_end == 2
+    finally:
+        db.close()
+
+
+def test_index_document_success_resets_embedding_attempts_from_a_prior_retry():
+    """A document that survived an earlier transient embedding retry
+    (embedding_attempts>0) must have that counter cleared back to 0 once
+    it finishes indexing successfully -- otherwise collection_sync_tasks'
+    stalled-reindex redrive pass (status=INDEXED, counter=embedding_attempts)
+    cannot tell this perfectly healthy document apart from a genuinely
+    stalled reindex retry and would keep re-triggering spurious full
+    reindexes for it forever (2026-09-22 incident)."""
+    db = TestingSessionLocal()
+    try:
+        document = _make_document(
+            db, source_job_id='job-v1', frontmatter=SAMPLE_FRONTMATTER,
+            team='Kundenservice', department='Support', tags=['important'],
+            embedding_attempts=1,
+        )
+    finally:
+        db.close()
+
+    markdown = _sample_markdown(SAMPLE_FRONTMATTER)
+    with patch('app.workers.tasks.ingest_client.fetch_released_markdown', return_value=markdown):
+        index_document(str(document.id))
+
+    db = TestingSessionLocal()
+    try:
+        refreshed = db.get(Document, document.id)
+        assert refreshed.status == DocumentStatus.INDEXED
+        assert refreshed.embedding_attempts == 0
     finally:
         db.close()
 
@@ -582,3 +615,161 @@ def test_unexpected_failure_does_not_overwrite_concurrent_indexed_status():
 
 def test_index_document_missing_document_is_a_noop():
     index_document(str(uuid.uuid4()))  # must not raise
+
+
+# --- Incident 2026-09-22: transient embedding error retries like a fetch error ---
+
+
+def test_transient_embedding_error_reenqueues_with_backoff_and_bumps_embedding_attempts():
+    db = TestingSessionLocal()
+    try:
+        document = _make_document(db, frontmatter=SAMPLE_FRONTMATTER)
+    finally:
+        db.close()
+
+    markdown = _sample_markdown(SAMPLE_FRONTMATTER)
+    with (
+        patch('app.workers.tasks.ingest_client.fetch_released_markdown', return_value=markdown),
+        patch(
+            'app.workers.tasks.embed_chunks',
+            side_effect=embeddings_module.EmbeddingProviderError('embedding request to x failed', transient=True),
+        ),
+        patch.object(tasks_module.celery_app, 'send_task') as mock_send_task,
+    ):
+        index_document(str(document.id))
+
+    mock_send_task.assert_called_once()
+    args, kwargs = mock_send_task.call_args
+    assert args[0] == tasks_module.INDEX_TASK_NAME
+    assert kwargs['args'] == [str(document.id)]
+    assert kwargs['kwargs'] == {'reindex': False}
+    assert kwargs['countdown'] == tasks_module._EMBEDDING_BACKOFF_SECONDS[0]
+
+    db = TestingSessionLocal()
+    try:
+        refreshed = db.get(Document, document.id)
+        assert refreshed.status == DocumentStatus.PENDING
+        assert refreshed.embedding_attempts == 1
+        assert refreshed.index_attempts == 0
+        # No half-embedded chunk set was left behind by the rollback.
+        assert db.query(Chunk).filter_by(document_id=document.id).count() == 0
+    finally:
+        db.close()
+
+
+def test_transient_embedding_error_exhausts_retries_and_marks_failed():
+    db = TestingSessionLocal()
+    try:
+        document = _make_document(
+            db, frontmatter=SAMPLE_FRONTMATTER, embedding_attempts=settings.embedding_max_attempts - 1,
+        )
+    finally:
+        db.close()
+
+    markdown = _sample_markdown(SAMPLE_FRONTMATTER)
+    with (
+        patch('app.workers.tasks.ingest_client.fetch_released_markdown', return_value=markdown),
+        patch(
+            'app.workers.tasks.embed_chunks',
+            side_effect=embeddings_module.EmbeddingProviderError('embedding request to x failed', transient=True),
+        ),
+        patch.object(tasks_module.celery_app, 'send_task') as mock_send_task,
+    ):
+        index_document(str(document.id))
+
+    mock_send_task.assert_not_called()
+
+    db = TestingSessionLocal()
+    try:
+        refreshed = db.get(Document, document.id)
+        assert refreshed.status == DocumentStatus.FAILED
+        assert refreshed.embedding_attempts == settings.embedding_max_attempts
+        assert 'embedding request' in refreshed.error
+    finally:
+        db.close()
+
+
+def test_non_transient_embedding_error_marks_failed_immediately_no_retry():
+    db = TestingSessionLocal()
+    try:
+        document = _make_document(db, frontmatter=SAMPLE_FRONTMATTER)
+    finally:
+        db.close()
+
+    markdown = _sample_markdown(SAMPLE_FRONTMATTER)
+    with (
+        patch('app.workers.tasks.ingest_client.fetch_released_markdown', return_value=markdown),
+        patch(
+            'app.workers.tasks.embed_chunks',
+            side_effect=embeddings_module.EmbeddingProviderError('embedding request to x: HTTP 400', transient=False),
+        ),
+        patch.object(tasks_module.celery_app, 'send_task') as mock_send_task,
+    ):
+        index_document(str(document.id))
+
+    mock_send_task.assert_not_called()
+
+    db = TestingSessionLocal()
+    try:
+        refreshed = db.get(Document, document.id)
+        assert refreshed.status == DocumentStatus.FAILED
+        assert refreshed.embedding_attempts == 0
+    finally:
+        db.close()
+
+
+# --- Incident 2026-09-22: "Neu indizieren" -- reindex=True re-indexes an --------
+# --- already-INDEXED document, replacing its chunks atomically -----------------
+
+
+def test_reindex_flag_reprocesses_an_already_indexed_document():
+    db = TestingSessionLocal()
+    try:
+        document = _make_document(
+            db, frontmatter=SAMPLE_FRONTMATTER, status=DocumentStatus.INDEXED,
+            chunk_count=1, indexed_at=datetime.now(timezone.utc),
+        )
+        db.add(Chunk(document_id=document.id, chunk_index=0, text='stale chunk', heading_path=[], char_count=11, meta={}))
+        db.commit()
+    finally:
+        db.close()
+
+    markdown = _sample_markdown(SAMPLE_FRONTMATTER)
+    with patch('app.workers.tasks.ingest_client.fetch_released_markdown', return_value=markdown) as mock_fetch:
+        index_document(str(document.id), reindex=True)
+
+    mock_fetch.assert_called_once()
+    db = TestingSessionLocal()
+    try:
+        refreshed = db.get(Document, document.id)
+        assert refreshed.status == DocumentStatus.INDEXED
+        chunks = db.query(Chunk).filter_by(document_id=document.id).all()
+        assert len(chunks) == 3
+        assert all(chunk.text != 'stale chunk' for chunk in chunks)
+    finally:
+        db.close()
+
+
+def test_without_reindex_flag_an_already_indexed_document_is_left_untouched():
+    db = TestingSessionLocal()
+    try:
+        document = _make_document(
+            db, frontmatter=SAMPLE_FRONTMATTER, status=DocumentStatus.INDEXED,
+            chunk_count=1, indexed_at=datetime.now(timezone.utc),
+        )
+        db.add(Chunk(document_id=document.id, chunk_index=0, text='stale chunk', heading_path=[], char_count=11, meta={}))
+        db.commit()
+    finally:
+        db.close()
+
+    with patch('app.workers.tasks.ingest_client.fetch_released_markdown') as mock_fetch:
+        index_document(str(document.id))  # reindex defaults to False
+
+    mock_fetch.assert_not_called()
+    db = TestingSessionLocal()
+    try:
+        chunks = db.query(Chunk).filter_by(document_id=document.id).all()
+        assert len(chunks) == 1
+        assert chunks[0].text == 'stale chunk'
+    finally:
+        db.close()

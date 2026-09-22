@@ -232,6 +232,36 @@ it('updates a released preview from indexing to ready without reloading its mark
   expect(api.mock.calls.filter(([path]) => path === '/api/v1/portal/documents/doc')).toHaveLength(1);
 });
 
+it('offers Neu indizieren for a released document and requeues it after confirmation', async () => {
+  mockDocument({ release: { id: 'released', created_at: content.created_at, status: 'sent', error_message: null, released_by: 'anna' } });
+  render(<ReviewDocument id="doc" />);
+  await screen.findByText('Freigabe gespeichert');
+  fireEvent.click(screen.getByRole('button', { name: 'Neu indizieren' }));
+  api.mockResolvedValueOnce({ id: 'released', created_at: content.created_at, status: 'pending', error_message: null, released_by: 'anna' });
+  fireEvent.click(await screen.findByRole('button', { name: 'Ja, neu indizieren' }));
+  await waitFor(() => expect(api.mock.calls.some(([path]) => path === '/api/v1/portal/documents/doc/reindex')).toBe(true));
+  expect(screen.queryByRole('button', { name: 'Ja, neu indizieren' })).toBeNull();
+});
+
+it('hides Neu indizieren for a released document the caller cannot act on', async () => {
+  mockDocument({ can_release: false, release: { id: 'released', created_at: content.created_at, status: 'sent', error_message: null, released_by: 'anna' } });
+  render(<ReviewDocument id="doc" />);
+  await screen.findByText('Freigabe gespeichert');
+  expect(screen.queryByRole('button', { name: 'Neu indizieren' })).toBeNull();
+});
+
+it('highlights Neu indizieren as the primary action once the live index failed', async () => {
+  const release = { id: 'release', created_at: content.created_at, status: 'sent', error_message: null };
+  api.mockImplementation(async path => path === '/api/v1/portal/config' ? config
+    : typeof path === 'string' && path.startsWith('/api/v1/portal/indexing-status')
+      ? { items: [{ job_id: 'doc', release, indexing: { state: 'failed', indexed_at: null, chunk_count: 0 } }] }
+      : { ...content, release });
+  render(<ReviewDocument id="doc" />);
+  await screen.findByText('Die Indizierung ist fehlgeschlagen — mit „Neu indizieren“ erneut anstoßen.');
+  const button = screen.getByRole('button', { name: 'Neu indizieren' });
+  expect(button.className).not.toContain('border-emerald-200');
+});
+
 it('filters the review inbox by quality grade and resets pagination', async () => {
   const item = { id: 'd1', original_filename: 'Doc.pdf', status: 'FINISHED', collection_id: 'c1', collection_name: 'Service', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, release: null, review_decision: null, source: { kind: 'upload', label: 'Hochgeladen', path: null, url: null } };
   api.mockImplementation(async path => typeof path === 'string' && path.startsWith('/api/v1/portal/documents')

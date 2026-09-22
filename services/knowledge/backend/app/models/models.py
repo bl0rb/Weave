@@ -200,6 +200,17 @@ class Document(Base):
     # redelivered task (acks_late) picks up exactly where the row says it
     # left off instead of restarting the backoff schedule from zero.
     index_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default='0', nullable=False)
+    # Same idea as index_attempts, but for a transient
+    # app.services.embeddings.EmbeddingProviderError from the embed step
+    # specifically (see incident 2026-09-22: the embeddings service can be
+    # OOMKilled/restarting under a burst). Kept as its OWN counter rather
+    # than reusing index_attempts -- the two steps have different backoff
+    # schedules/attempt budgets (app/workers/tasks.py's _BACKOFF_SECONDS vs.
+    # the embedding-specific one) and index_attempts is reset to 0 right
+    # after a successful fetch, before the embed step even runs, so sharing
+    # one counter would either lose the fetch-retry budget or reset the
+    # embed-retry budget on every fetch.
+    embedding_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default='0', nullable=False)
     status: Mapped[DocumentStatus] = mapped_column(
         Enum(DocumentStatus, name='document_status', native_enum=False, validate_strings=True),
         default=DocumentStatus.PENDING,

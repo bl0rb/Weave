@@ -24,7 +24,9 @@ export function publicationState(delivery: Publication['status'], indexing?: Ind
   };
   switch (indexing?.state) {
     case 'pending': return { label: 'Wird indiziert', tone: 'working', hint: 'Die freigegebenen Inhalte werden für die KI-Suche aufbereitet. Das kann etwas dauern.' };
-    case 'failed': return { label: 'Indexierung fehlgeschlagen', tone: 'error', hint: 'Die Inhalte konnten nicht für die KI-Suche aufbereitet werden. Bitte wende dich an die Administration.' };
+    // Self-service since the 2026-09-22 incident (permanent embedding_request_failed
+    // documents that used to need admin help): point at the new 'Neu indizieren' action.
+    case 'failed': return { label: 'Indexierung fehlgeschlagen', tone: 'error', hint: 'Die Indizierung ist fehlgeschlagen — mit „Neu indizieren“ erneut anstoßen.' };
     case 'blocked': return { label: 'Indexierung blockiert', tone: 'error', hint: 'Die Qualitätsprüfung hat die Indexierung gestoppt. Bitte kläre den Inhalt mit der Administration.' };
     case 'empty': return { label: 'Kein durchsuchbarer Inhalt', tone: 'warning', hint: 'Es wurden keine Textabschnitte für die KI-Suche gefunden. Bitte prüfe die Quelle mit der Administration.' };
     case 'indexed':

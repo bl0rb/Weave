@@ -120,6 +120,8 @@ Siehe `.env.example` fuer alle Variablen mit ausfuehrlicher Begruendung. Kurzfas
 | `EMBEDDINGS_CACHE_DIR` | *(leer -> HF-Default)* | Wohin Modelldateien gecacht werden (im Image: `/models`) |
 | `EMBEDDINGS_MAX_INPUTS` | `256` | Max. Eintraege in `input`, sonst `413` |
 | `EMBEDDINGS_NORMALIZE` | `true` | Ob Vektoren L2-normalisiert zurueckgegeben werden |
+| `EMBEDDINGS_MAX_CONCURRENT_REQUESTS` | `1` | Max. gleichzeitige `encoder.encode()`-Aufrufe (OOM-Vorfall 2026-09-22) |
+| `EMBEDDINGS_QUEUE_TIMEOUT_SECONDS` | `90` | Max. Wartezeit auf einen freien Slot, danach `503` mit `Retry-After: 5` |
 
 ## Entwicklung
 

@@ -2,11 +2,11 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import Link from 'next/link';
-import { ArrowRight, Archive, BookOpen, CheckCheck, Pencil, Plus, Trash2, Users } from 'lucide-react';
+import { ArrowRight, Archive, BookOpen, CheckCheck, Pencil, Plus, RefreshCw, Trash2, Users } from 'lucide-react';
 import { apiJson } from '@/lib/api';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { apiSend, ConfirmDialog, Modal, inputClass } from '@/components/admin/admin-shared';
-import { bulkPortalAction, collectionDownloadName, downloadPortalFile, jsonBody, loadDocuments, markdownDownloadName, portalDownloadError, portalError, type DocumentPage, type KnowledgeSpace, type PortalDocument, type QualityGradeFilter } from '@/lib/portal';
+import { bulkPortalAction, collectionDownloadName, downloadPortalFile, jsonBody, loadDocuments, markdownDownloadName, portalDownloadError, portalError, reindexKnowledgeSpace, type DocumentPage, type KnowledgeSpace, type PortalDocument, type QualityGradeFilter } from '@/lib/portal';
 import { BulkActionBar, DocumentTable, EmptyState, Notice, Pagination, PortalPage, QualityGradeFilterRow, QualityGradeLegend } from './shared';
 
 export function KnowledgeSpaces() {
@@ -72,6 +72,7 @@ export function KnowledgeDetail({ id }: { id: string }) {
   const [releaseConfirmed, setReleaseConfirmed] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [reindexing, setReindexing] = useState(false);
   const load = useCallback(() => Promise.all([apiJson<KnowledgeSpace>(`/api/v1/collections/${encodeURIComponent(id)}`), loadDocuments(id, offset, 'all', qualityGrade || undefined)])
     .then(([area, docs]) => { setSpace(area); setDocuments(docs); setError(''); })
     .catch(err => setError(portalError(err))), [id, offset, qualityGrade]);
@@ -134,7 +135,7 @@ export function KnowledgeDetail({ id }: { id: string }) {
     {notice && <Notice>{notice}</Notice>}
     {downloadError && <Notice error>{downloadError}</Notice>}
     {space && <div className="portal-context-bar"><span><Users size={17} />Berechtigte: {space.read_teams.length ? space.read_teams.join(', ') : 'Alle angemeldeten Teams'}</span><span>Veröffentlichung nach manueller Freigabe</span></div>}
-    <section className="portal-panel"><div className="portal-section-heading"><div><p className="portal-eyebrow">INHALTE</p><h2>Dokumente{documents ? ` · ${documents.total}` : ''}</h2><QualityGradeFilterRow value={qualityGrade} onChange={value => { setQualityGrade(value); setOffset(0); setDocuments(null); }} /><QualityGradeLegend /></div><div className="flex flex-wrap items-center gap-2">{(space?.can_upload ?? space?.can_manage) && Boolean(documents?.total) && (confirmReleaseAll ? <><Button variant="outline" size="sm" disabled={releasingAll} onClick={() => setConfirmReleaseAll(false)}>Abbrechen</Button><Button variant="danger" size="sm" disabled={releasingAll} onClick={() => void releaseAll()}><CheckCheck size={15} />{releasingAll ? 'Wird freigegeben …' : 'Ja, Sammlung freigeben'}</Button></> : <Button variant="outline" size="sm" onClick={() => setConfirmReleaseAll(true)}><CheckCheck size={15} />Sammlung freigeben</Button>)}{Boolean(documents?.total) && <Button variant="outline" size="sm" disabled={downloadingId !== null} onClick={() => void downloadAll()}><Archive size={15} />{downloadingId === 'collection' ? 'ZIP wird erstellt …' : 'Alle als ZIP'}</Button>}{(space?.can_upload ?? space?.can_manage) && Boolean(documents?.total) && <Link href={`/sources/new?collection=${encodeURIComponent(id)}`} className={buttonVariants({ variant: 'outline', size: 'sm' })}><Plus size={15} />Quelle hinzufügen</Link>}<Button variant="ghost" size="sm" onClick={load}>Aktualisieren</Button></div></div>
+    <section className="portal-panel"><div className="portal-section-heading"><div><p className="portal-eyebrow">INHALTE</p><h2>Dokumente{documents ? ` · ${documents.total}` : ''}</h2><QualityGradeFilterRow value={qualityGrade} onChange={value => { setQualityGrade(value); setOffset(0); setDocuments(null); }} /><QualityGradeLegend /></div><div className="flex flex-wrap items-center gap-2">{(space?.can_upload ?? space?.can_manage) && Boolean(documents?.total) && (confirmReleaseAll ? <><Button variant="outline" size="sm" disabled={releasingAll} onClick={() => setConfirmReleaseAll(false)}>Abbrechen</Button><Button variant="danger" size="sm" disabled={releasingAll} onClick={() => void releaseAll()}><CheckCheck size={15} />{releasingAll ? 'Wird freigegeben …' : 'Ja, Sammlung freigeben'}</Button></> : <Button variant="outline" size="sm" onClick={() => setConfirmReleaseAll(true)}><CheckCheck size={15} />Sammlung freigeben</Button>)}{Boolean(documents?.total) && <Button variant="outline" size="sm" disabled={downloadingId !== null} onClick={() => void downloadAll()}><Archive size={15} />{downloadingId === 'collection' ? 'ZIP wird erstellt …' : 'Alle als ZIP'}</Button>}{(space?.can_upload ?? space?.can_manage) && Boolean(documents?.total) && <Link href={`/sources/new?collection=${encodeURIComponent(id)}`} className={buttonVariants({ variant: 'outline', size: 'sm' })}><Plus size={15} />Quelle hinzufügen</Link>}{(space?.can_upload ?? space?.can_manage) && Boolean(documents?.total) && <Button variant="outline" size="sm" onClick={() => setReindexing(true)}><RefreshCw size={15} />Wissensbereich neu indizieren</Button>}<Button variant="ghost" size="sm" onClick={load}>Aktualisieren</Button></div></div>
       <BulkActionBar
         count={selectedIds.size}
         gradeCCount={gradeCCount}
@@ -151,5 +152,10 @@ export function KnowledgeDetail({ id }: { id: string }) {
       {!documents && !error ? <p className="portal-loading" role="status">Dokumente werden geladen …</p> : documents?.items.length ? <><DocumentTable documents={documents.items} onDownloadMarkdown={document => void downloadDocument(document)} downloadingId={downloadingId} selectedIds={selectedIds} onToggle={docId => setSelectedIds(previous => { const next = new Set(previous); if (next.has(docId)) next.delete(docId); else next.add(docId); return next; })} onToggleAll={checked => setSelectedIds(checked ? new Set(documents.items.map(document => document.id)) : new Set())} /><Pagination offset={offset} total={documents.total} onChange={value => { setDocuments(null); setOffset(value); }} /></> : !error && <EmptyState title="Hier ist Platz für dein Wissen" href={(space?.can_upload ?? space?.can_manage) ? `/sources/new?collection=${encodeURIComponent(id)}` : undefined} action={(space?.can_upload ?? space?.can_manage) ? "Quelle hinzufügen" : undefined}>Die Eigentümer des Wissensbereichs können eine Quelle hinzufügen. Verbinde eine Confluence-Seite oder lade Dokumente hoch. Nach der Verarbeitung prüfst du den Inhalt.</EmptyState>}
     </section>
     {bulkDeleting && <ConfirmDialog title="Dokumente löschen" body={<p>{selectedIds.size} Dokument{selectedIds.size === 1 ? '' : 'e'} unwiderruflich löschen?</p>} confirmLabel="Dokumente löschen" onClose={() => setBulkDeleting(false)} onConfirm={() => runBulk('delete')} />}
+    {reindexing && <ConfirmDialog title="Wissensbereich neu indizieren" body={<p>Alle freigegebenen Dokumente in <strong className="text-slate-950">{space?.name}</strong> erneut indizieren?</p>} confirmLabel="Neu indizieren" onClose={() => setReindexing(false)} onConfirm={async () => {
+      const result = await reindexKnowledgeSpace(id);
+      setReindexing(false);
+      setNotice(`${result.requeued} Dokument${result.requeued === 1 ? '' : 'e'} ${result.requeued === 1 ? 'wird' : 'werden'} neu indiziert.`);
+    }} />}
   </PortalPage>;
 }

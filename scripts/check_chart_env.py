@@ -105,8 +105,10 @@ RENAMES: dict[str, dict[str, str]] = {
     },
     "api": {"WEAVE_API_SECRET_KEY": "SECRET_KEY"},
     "chat": {"CHAT_APP_BASE_URL": "APP_BASE_URL"},
+    "ingest": {"INGEST_WORKER_CONCURRENCY": "CELERY_WORKER_CONCURRENCY"},
 }
 RENAMES["knowledge-worker"] = RENAMES["knowledge"]
+RENAMES["ingest-worker"] = RENAMES["ingest"]
 
 
 @dataclass(frozen=True)
@@ -173,7 +175,7 @@ DEVIATIONS: dict[str, dict[str, Deviation]] = {
             "KNOWLEDGE_INGEST_API_TOKEN",
             "CELERY_MAX_TASKS_PER_CHILD",
             "CELERY_PREFETCH_MULTIPLIER",
-            "CELERY_WORKER_CONCURRENCY",
+            "INGEST_WORKER_CONCURRENCY",
             "CHAT_CONFIG_SERVICE_TOKEN",
             "TOOLS_INTROSPECTION_TOKEN",
             "CHAT_LLM_PRIVATE_HOST_ALLOWLIST",

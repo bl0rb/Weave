@@ -100,6 +100,10 @@ class PortalCollectionReleaseResponse(BaseModel):
     skipped: int
 
 
+class PortalReindexCollectionResponse(BaseModel):
+    requeued: int
+
+
 class PortalReprocessRequest(BaseModel):
     profile_id: str = Field(min_length=1)
     markdown_sha256: str = Field(pattern=r'^[0-9a-fA-F]{64}$')

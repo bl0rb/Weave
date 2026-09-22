@@ -18,6 +18,12 @@ Das JSON entspricht `document.processed` einschließlich `event`, `job_id`,
   Qualitätsstufe C und ausdrücklich bestätigter Portal-Freigabe `true`.
   Knowledge darf dann trotz Empfehlung `block` indizieren. Die gespeicherte
   Qualitätsbewertung bleibt C/block; der Override gilt nicht für andere Sperren.
+- `reindex`: optionales Boolean, standardmäßig `false` (additiv seit v1,
+  Vorfall 2026-09-22 "Neu indizieren"). `true`, wenn das Portal die manuelle
+  Aktion "Neu indizieren" (pro Dokument oder Wissensbereich) ausgelöst hat.
+  Knowledge muss das Dokument dann vollständig neu indizieren -- bestehende
+  Chunks atomar ersetzen --, auch wenn `release_id`/`markdown_sha256`
+  bereits indiziert sind; siehe die Idempotenz-Ausnahme unten.
 
 Der Snapshot enthält das serverseitig canonicalisierte Frontmatter und bleibt
 nach der Freigabe byteweise unverändert. `frontmatter.collection` ist daher
@@ -43,9 +49,12 @@ Webhook-Secret geprüft. Fehlt das Secret, bleibt die Prüfung fail closed.
 
 Der Deduplication-Key ist `release:<release_id>`. Eine erneute Zustellung darf
 weder neu indexieren noch bestehende Daten überschreiben und wird mit
-`200 {"status":"duplicate"}` beantwortet. In v1 darf ein `job_id` nur eine
-Freigabe haben; eine andere Freigabe für denselben Job wird konservativ mit
-HTTP 409 abgewiesen, auch bei gleichzeitiger Zustellung.
+`200 {"status":"duplicate"}` beantwortet -- sofern `reindex` nicht `true` ist:
+in dem Fall überschreibt die Zustellung den bereits indizierten Stand
+(gleicher `release_id`/`markdown_sha256`) atomar, statt sie als Duplikat zu
+verwerfen. In v1 darf ein `job_id` nur eine Freigabe haben; eine andere
+Freigabe für denselben Job wird konservativ mit HTTP 409 abgewiesen, auch bei
+gleichzeitiger Zustellung.
 
 ## `document.processed`
 

@@ -77,6 +77,30 @@ it('requires a confirmation before deleting an empty knowledge space', async () 
   expect(await screen.findByText('Wissensbereich gelöscht.')).toBeTruthy();
 });
 
+it('reindexes a knowledge space after confirmation and shows the requeued count', async () => {
+  const document = { id: 'd1', original_filename: 'Doc.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, release: null, source: { kind: 'upload', label: 'Hochgeladen', path: null, url: null } };
+  json.mockImplementation(async (path, init) => {
+    if (typeof path === 'string' && path.startsWith('/api/v1/portal/documents')) return { items: [document], total: 1 };
+    if (path === '/api/v1/portal/collections/area-1/reindex' && init?.method === 'POST') return { requeued: 1 };
+    return area;
+  });
+  render(<KnowledgeDetail id="area-1" />);
+  await screen.findByText('Doc.pdf');
+  fireEvent.click(screen.getByRole('button', { name: 'Wissensbereich neu indizieren' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Neu indizieren' }));
+  await waitFor(() => expect(json.mock.calls.some(([path]) => path === '/api/v1/portal/collections/area-1/reindex')).toBe(true));
+  expect(await screen.findByText('1 Dokument wird neu indiziert.')).toBeTruthy();
+});
+
+it('hides Wissensbereich neu indizieren for non-managers', async () => {
+  const document = { id: 'd1', original_filename: 'Doc.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, release: null, source: { kind: 'upload', label: 'Hochgeladen', path: null, url: null } };
+  json.mockImplementation(async path => typeof path === 'string' && path.startsWith('/api/v1/portal/documents')
+    ? { items: [document], total: 1 } : { ...area, can_manage: false });
+  render(<KnowledgeDetail id="area-1" />);
+  await screen.findByText('Doc.pdf');
+  expect(screen.queryByRole('button', { name: 'Wissensbereich neu indizieren' })).toBeNull();
+});
+
 it('filters a knowledge space\'s documents by quality grade and resets pagination', async () => {
   const document = { id: 'd1', original_filename: 'Doc.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'B', quality_recommendation: 'warn', can_release: true, release: null, source: { kind: 'upload', label: 'Hochgeladen', path: null, url: null } };
   json.mockImplementation(async path => typeof path === 'string' && path.startsWith('/api/v1/portal/documents')

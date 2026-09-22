@@ -485,6 +485,54 @@ def test_duplicate_indexed_release_never_reenqueues(monkeypatch, _mock_index_doc
     _mock_index_document_delay.assert_called_once()
 
 
+def test_reindex_flag_forces_reindex_of_an_already_indexed_release(monkeypatch, _mock_index_document_delay):
+    """"Neu indizieren" (incident 2026-09-22): Ingest's reindex endpoint
+    re-queues the SAME release (same release_id -> same event_key here), so
+    the redelivery always lands in the duplicate-event branch -- it must
+    still enqueue index_document with reindex=True even though the document
+    is already INDEXED, unlike an ordinary (non-reindex) duplicate."""
+    monkeypatch.setattr(settings, 'weave_ingest_webhook_secret', 'top-secret')
+    payload = _event_payload()
+    assert _post(payload).status_code == 202
+
+    db = TestingSessionLocal()
+    try:
+        document = db.query(Document).filter_by(source_job_id=payload['job_id']).one()
+        document.status = DocumentStatus.INDEXED
+        db.commit()
+        document_id = str(document.id)
+    finally:
+        db.close()
+
+    retry = _post(dict(payload, reindex=True))
+    assert retry.status_code == 200
+    assert retry.json() == {'status': 'duplicate'}
+    assert _mock_index_document_delay.call_count == 2
+    _mock_index_document_delay.assert_called_with(document_id, reindex=True)
+
+
+def test_reindex_flag_does_not_bypass_blocked_document(monkeypatch, _mock_index_document_delay):
+    """A document previously held back by the quality gate (status=BLOCKED)
+    must stay un-indexed even when the same release is redelivered with
+    reindex=True -- "Neu indizieren" is not a way around the quality block
+    (see the BLOCKED exclusion comment in app/api/events.py)."""
+    monkeypatch.setattr(settings, 'weave_ingest_webhook_secret', 'top-secret')
+    payload = _event_payload(quality={'grade': 'C', 'recommendation': 'block', 'signals': {}})
+    resp = _post(payload)
+    assert resp.status_code == 200
+    assert resp.json()['status'] == 'blocked'
+    _mock_index_document_delay.assert_not_called()
+
+    retry = _post(dict(payload, reindex=True))
+    assert retry.status_code == 200
+    assert retry.json() == {'status': 'duplicate'}
+    _mock_index_document_delay.assert_not_called()
+
+    document = _get_document(payload['job_id'])
+    assert document is not None
+    assert document.status == DocumentStatus.BLOCKED
+
+
 def test_duplicate_detection_keys_on_job_id_and_content_sha256_not_timestamp(monkeypatch):
     """A redelivery of the same (job_id, content_sha256) with a freshly
     rebuilt `timestamp` (exactly what Weave-Ingest's own retry does -- see
@@ -644,7 +692,7 @@ def test_accepted_document_denormalizes_frontmatter_fields(monkeypatch, _mock_in
     }
     assert document.previous_job_id is None
 
-    _mock_index_document_delay.assert_called_once_with(document_id)
+    _mock_index_document_delay.assert_called_once_with(document_id, reindex=False)
 
 
 # --- FINDING 2: job_id/content_sha256 pattern validation -------------------------

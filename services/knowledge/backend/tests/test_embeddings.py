@@ -76,12 +76,16 @@ def test_fake_provider_empty_batch():
 
 class _FakeResponse:
     """Just enough of an httpx.Response to exercise the provider's own
-    parsing -- status_code, .json(), and .text."""
+    parsing -- status_code, .json(), .text, and (incident 2026-09-22) a
+    Retry-After header for the embeddings service's own busy-503 response."""
 
-    def __init__(self, status_code: int, json_data: dict | None = None, text: str = '') -> None:
+    def __init__(
+        self, status_code: int, json_data: dict | None = None, text: str = '', headers: dict | None = None,
+    ) -> None:
         self.status_code = status_code
         self._json_data = json_data
         self.text = text
+        self.headers = headers or {}
 
     def json(self) -> dict:
         if self._json_data is None:
@@ -204,6 +208,77 @@ def test_openai_provider_exhausts_retries_and_raises(monkeypatch):
         with pytest.raises(EmbeddingProviderError):
             provider.embed_batch(['only'])
     assert mock_post.call_count == 3
+
+
+# --- Incident 2026-09-22: transient flag + busy-503 Retry-After -----------------
+
+def test_openai_provider_exhausted_5xx_raises_transient_error(monkeypatch):
+    """A 5xx that outlasts the quick in-process retries is worth a scheduled
+    retry one layer up (app/workers/tasks.py's embedding-failure backoff
+    table), not an immediate permanent failure."""
+    monkeypatch.setattr('app.services.embeddings.time.sleep', lambda seconds: None)
+    provider = _provider(max_attempts=2)
+    with patch('app.services.embeddings.httpx.post', return_value=_FakeResponse(503, text='unavailable')):
+        with pytest.raises(EmbeddingProviderError) as exc_info:
+            provider.embed_batch(['only'])
+    assert exc_info.value.transient is True
+
+
+def test_openai_provider_exhausted_transport_error_raises_transient_error(monkeypatch):
+    monkeypatch.setattr('app.services.embeddings.time.sleep', lambda seconds: None)
+    provider = _provider(max_attempts=2)
+    with patch('app.services.embeddings.httpx.post', side_effect=httpx.ConnectError('refused')):
+        with pytest.raises(EmbeddingProviderError) as exc_info:
+            provider.embed_batch(['only'])
+    assert exc_info.value.transient is True
+
+
+def test_openai_provider_400_raises_non_transient_error():
+    """A non-retryable 4xx (bad request/config) is not worth a Celery-level
+    scheduled retry either -- it would fail identically every time."""
+    provider = _provider()
+    with patch('app.services.embeddings.httpx.post', return_value=_FakeResponse(400, text='bad request')):
+        with pytest.raises(EmbeddingProviderError) as exc_info:
+            provider.embed_batch(['only'])
+    assert exc_info.value.transient is False
+
+
+def test_openai_provider_honours_retry_after_header_on_busy_503(monkeypatch):
+    """The embeddings service answers its own concurrency-gate busy state
+    with `503` + `Retry-After: 5` -- honour it instead of the provider's own
+    exponential backoff."""
+    sleeps: list[float] = []
+    monkeypatch.setattr('app.services.embeddings.time.sleep', lambda seconds: sleeps.append(seconds))
+    provider = _provider()
+    responses = [
+        _FakeResponse(503, text='embeddings busy', headers={'retry-after': '5'}),
+        _FakeResponse(200, _embeddings_payload({0: [1.0]})),
+    ]
+    with patch('app.services.embeddings.httpx.post', side_effect=responses):
+        vectors = provider.embed_batch(['only'])
+    assert vectors == [[1.0]]
+    assert sleeps == [5.0]
+
+
+def test_openai_provider_falls_back_to_backoff_without_retry_after_header(monkeypatch):
+    sleeps: list[float] = []
+    monkeypatch.setattr('app.services.embeddings.time.sleep', lambda seconds: sleeps.append(seconds))
+    provider = _provider()
+    responses = [_FakeResponse(503, text='unavailable'), _FakeResponse(200, _embeddings_payload({0: [1.0]}))]
+    with patch('app.services.embeddings.httpx.post', side_effect=responses):
+        provider.embed_batch(['only'])
+    assert sleeps == [embeddings_module._backoff_seconds(1)]
+
+
+def test_get_provider_openai_threads_request_timeout_from_settings(monkeypatch):
+    """Incident 2026-09-22: the client read timeout must comfortably exceed
+    the embeddings service's own EMBEDDINGS_QUEUE_TIMEOUT_SECONDS (default
+    90s), so it's threaded from settings rather than the class's own
+    30s-tuned-for-tests default."""
+    monkeypatch.setattr(settings, 'embedding_provider', 'openai')
+    monkeypatch.setattr(settings, 'embedding_request_timeout_seconds', 180.0)
+    provider = get_provider()
+    assert provider._timeout == 180.0
 
 
 def test_openai_provider_dimension_reads_settings(monkeypatch):

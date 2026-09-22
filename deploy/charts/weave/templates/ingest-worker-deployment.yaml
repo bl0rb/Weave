@@ -102,7 +102,16 @@ spec:
             # Ein Zuviel schadet hier nicht, ein Zuwenig laesst den Prozess gar
             # nicht erst starten.
             {{- include "weave.secretEnv" (dict "ctx" $ "service" "ingest") | nindent 12 }}
-            {{- include "weave.env" (dict "ctx" $ "service" "ingest" "overrides" (dict
+            {{- /* weave.yaml names this INGEST_WORKER_CONCURRENCY (so it
+                 cannot collide with weave-knowledge-worker's own
+                 CELERY_WORKER_CONCURRENCY in docker-compose.weave.yml's
+                 shared variable pool), but worker.Dockerfile's CMD still
+                 reads the container env var literally named
+                 CELERY_WORKER_CONCURRENCY -- renamed back here, same
+                 pattern as the secretEnv rename table above. */}}
+            {{- include "weave.env" (dict "ctx" $ "service" "ingest" "rename" (dict
+                  "INGEST_WORKER_CONCURRENCY" "CELERY_WORKER_CONCURRENCY"
+                ) "overrides" (dict
                   "POSTGRES_HOST" (include "weave.postgresHost" $)
                   "POSTGRES_PORT" (include "weave.postgresPort" $)
                   "REDIS_URL" (include "weave.redisUrl" (dict "ctx" $ "db" 0))

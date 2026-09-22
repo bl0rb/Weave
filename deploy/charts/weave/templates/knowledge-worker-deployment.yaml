@@ -4,7 +4,11 @@ Weave-Knowledge -- der Celery-Worker.
 Gleiches Image wie der Dienst, gleiche Umgebung, anderes command. Er
 arbeitet die Queue weave.knowledge.index ab: chunken, embedden, in
 weave_knowledge schreiben. Genau so trennt der Compose-Stack die beiden
-(deploy/docker-compose.weave.yml, weave-knowledge-worker).
+(deploy/docker-compose.weave.yml, weave-knowledge-worker). Die
+Concurrency (Default 2) kommt aus config.knowledge.CELERY_WORKER_CONCURRENCY
+(weave.yaml, services/knowledge/README.md dokumentiert genau diesen Namen)
+und ist ueber knowledgeWorker.concurrency in values.yaml explizit
+ueberschreibbar -- siehe die Herleitung unten.
 
 WARUM DIESELBE UMGEBUNG WIE DER DIENST: beide laden dasselbe
 Settings-Modul, das seine Pflichtwerte beim Import prueft. Ein Zuviel
@@ -26,6 +30,12 @@ nichts zum Abfragen.
 {{- if .Values.knowledgeWorker.enabled }}
 {{- include "weave.validate" . }}
 {{- $w := .Values.knowledgeWorker }}
+{{- $knowledgeConfig := get (include "weave.mergedConfig" $ | fromYaml) "knowledge" }}
+{{/* knowledgeWorker.concurrency stays an explicit operator override; unset
+     (the values.yaml default), it falls back to the cross-area-contracted
+     config.knowledge.CELERY_WORKER_CONCURRENCY (weave.yaml) instead of a
+     second, disconnected default living only in this chart. */}}
+{{- $concurrency := $w.concurrency | default (get $knowledgeConfig "CELERY_WORKER_CONCURRENCY") }}
 {{- $name := include "weave.componentName" (dict "ctx" $ "component" "knowledge-worker") }}
 {{/* Dieselbe Umbenennungstabelle wie beim Dienst, siehe Kopf von _helpers.tpl. */}}
 {{- $rename := dict
@@ -107,6 +117,7 @@ spec:
             - "app.workers.tasks"
             - "worker"
             - "--loglevel={{ required "knowledgeWorker.logLevel darf nicht leer sein" $w.logLevel }}"
+            - "--concurrency={{ required "knowledgeWorker.concurrency/config.knowledge.CELERY_WORKER_CONCURRENCY darf nicht leer sein" $concurrency }}"
             - "-Q"
             - {{ required "knowledgeWorker.queue darf nicht leer sein" $w.queue | quote }}
           env:

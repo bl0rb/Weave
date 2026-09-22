@@ -383,7 +383,12 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required — it encrypts sessions and stored credentials}
       SERVICE_NAME: ${SERVICE_NAME:-ingest-worker}
-      CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-1}
+      # Container reads CELERY_WORKER_CONCURRENCY (worker.Dockerfile's CMD
+      # default); the deploy/.env override is named INGEST_WORKER_CONCURRENCY
+      # instead so it cannot collide with weave-knowledge-worker's own
+      # CELERY_WORKER_CONCURRENCY below in this shared variable pool (docs
+      # incident 2026-09-22).
+      CELERY_WORKER_CONCURRENCY: ${INGEST_WORKER_CONCURRENCY:-1}
       CELERY_PREFETCH_MULTIPLIER: ${CELERY_PREFETCH_MULTIPLIER:-1}
       CELERY_MAX_TASKS_PER_CHILD: ${CELERY_MAX_TASKS_PER_CHILD:-5}
       PORTAL_KNOWLEDGE_BASE_URL: ${PORTAL_KNOWLEDGE_BASE_URL:-http://weave-knowledge:8000}
@@ -483,6 +488,14 @@ services:
       # they answer 503, which is a closed deployment, not a broken one.
       # /health and the signed webhook ingress are unaffected.
       KNOWLEDGE_API_TOKEN: ${KNOWLEDGE_API_TOKEN:-}
+      # Client read timeout for a single embedding call and the retry
+      # ceiling around it -- incident 2026-09-22: only 3 attempts at
+      # 1/2/4s could not outlast a ~15s pod restart, so a transient OOM on
+      # weave-embeddings permanently failed the document instead. Must
+      # stay above weave-embeddings' own EMBEDDINGS_QUEUE_TIMEOUT_SECONDS
+      # (90) or this service gives up before that 503 arrives.
+      EMBEDDING_REQUEST_TIMEOUT_SECONDS: ${EMBEDDING_REQUEST_TIMEOUT_SECONDS:-180}
+      EMBEDDING_MAX_ATTEMPTS: ${EMBEDDING_MAX_ATTEMPTS:-6}
       # --- Embedding provider: pulled in from the `x-embedding-env` anchor
       # at the top of this file (see that block's own comment), NOT
       # repeated here as six separate lines -- this is what makes it
@@ -524,7 +537,17 @@ services:
     image: ghcr.io/bl0rb/weave-knowledge:${WEAVE_KNOWLEDGE_TAG:-latest}
     restart: always
     container_name: weave_knowledge_worker
-    command: ["celery", "-A", "app.workers.tasks", "worker", "--loglevel=info", "-Q", "weave.knowledge.index"]
+    # CELERY_WORKER_CONCURRENCY (weave.yaml, service 'knowledge', default 2) --
+    # the exact name services/knowledge/README.md documents as controlling
+    # this. It is safe to reuse that literal name here because the ingest
+    # OCR worker's own knob above is INGEST_WORKER_CONCURRENCY, not
+    # CELERY_WORKER_CONCURRENCY; docker compose resolves ${VAR:-default} from
+    # one shared variable pool (shell env + deploy/.env), so both workers
+    # would otherwise silently share one rendered value despite their
+    # different defaults (reproduced 2026-09-22 review: setting
+    # CELERY_WORKER_CONCURRENCY=5 left this command's --concurrency
+    # unchanged when it used the old KNOWLEDGE_WORKER_CONCURRENCY name).
+    command: ["celery", "-A", "app.workers.tasks", "worker", "--loglevel=info", "--concurrency=${CELERY_WORKER_CONCURRENCY:-2}", "-Q", "weave.knowledge.index"]
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-weave}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:${POSTGRES_PORT:-5432}/weave_knowledge
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/1
@@ -534,6 +557,11 @@ services:
       WEAVE_INGEST_WEBHOOK_SECRET: ${WEAVE_KNOWLEDGE_WEBHOOK_SECRET:?WEAVE_KNOWLEDGE_WEBHOOK_SECRET is required}
       CHAT_CONFIG_BASE_URL: http://weave-ingest-backend:8000
       CHAT_CONFIG_SERVICE_TOKEN: ${CHAT_CONFIG_SERVICE_TOKEN:?CHAT_CONFIG_SERVICE_TOKEN is required}
+      # Same client timeout/retry ceiling as weave-knowledge above -- this
+      # worker is what actually calls the embedding provider during
+      # indexing, so it needs the identical values.
+      EMBEDDING_REQUEST_TIMEOUT_SECONDS: ${EMBEDDING_REQUEST_TIMEOUT_SECONDS:-180}
+      EMBEDDING_MAX_ATTEMPTS: ${EMBEDDING_MAX_ATTEMPTS:-6}
       # Same shared `x-embedding-env` anchor as weave-knowledge above --
       # the worker is what actually calls the embedding provider during
       # indexing, so it needs the identical values, not just "similar" ones.
@@ -671,6 +699,16 @@ services:
       EMBEDDINGS_THREADS: ${EMBEDDINGS_THREADS:-0}
       EMBEDDINGS_MAX_INPUTS: ${EMBEDDINGS_MAX_INPUTS:-256}
       EMBEDDINGS_NORMALIZE: ${EMBEDDINGS_NORMALIZE:-true}
+      # Bounds concurrent encoder.encode() calls -- incident 2026-09-22: an
+      # unbounded Starlette threadpool (default 40) let 14 parallel Knowledge
+      # worker processes drive this container's memory past its 2560Mi limit
+      # (OOMKilled, exit 137). See services/embeddings/README.md.
+      EMBEDDINGS_MAX_CONCURRENT_REQUESTS: ${EMBEDDINGS_MAX_CONCURRENT_REQUESTS:-1}
+      # Max wait for a free encode slot before answering 503 (Retry-After:
+      # 5) -- must stay below weave-knowledge('-worker')'s own
+      # EMBEDDING_REQUEST_TIMEOUT_SECONDS below, or a caller times out
+      # before this service even replies.
+      EMBEDDINGS_QUEUE_TIMEOUT_SECONDS: ${EMBEDDINGS_QUEUE_TIMEOUT_SECONDS:-90}
     volumes:
       # Named volume, never baked into the image -- the ~448MiB ONNX
       # download (see that service's README "Erster Start") must survive a

@@ -14,6 +14,7 @@ from fastapi.responses import PlainTextResponse, Response, StreamingResponse
 from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import defer
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.deps import aware_utc, get_current_user, get_knowledge_reader
 from app.api.routes import (
@@ -60,11 +61,13 @@ from app.schemas.portal import (
     PortalDocumentListResponse,
     PortalDocumentSource,
     PortalQualityDetail,
+    PortalReindexCollectionResponse,
     PortalReleaseRequest,
     PortalReleaseSummary,
     PortalReprocessRequest,
     PortalReprocessResponse,
 )
+from app.services.backup import requeue_collection_releases_for_reindex
 from app.services.publications import (
     PublicationValidationError,
     _markdown_from_job,
@@ -1117,3 +1120,75 @@ def retry_release(release_id: str, db=Depends(get_db), user: User = Depends(get_
     except Exception:
         logger.exception('publication queue unavailable for retry %s', release.id)
     return _summary(release, released_by)  # type: ignore[return-value]
+
+
+@router.post('/documents/{job_id}/reindex', response_model=PortalReleaseSummary)
+def reindex_portal_document(job_id: str, db=Depends(get_db), user: User = Depends(get_current_user)) -> PortalReleaseSummary:
+    """'Neu indizieren' for a single already-released document (incident 2026-09-22
+    follow-up): unlike retry_release above, this is a regular action offered
+    for any released document, not only a delivery failure, so it accepts
+    any existing DocumentRelease status (pending/sent/failed) rather than
+    refusing 'sent' releases.
+    """
+    if not publication_configured():
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Portal publication is not configured')
+    job = _load_visible_job(db, job_id, user)
+    collection = _collection_for_job(db, job)
+    if collection is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Document collection not found')
+    # Withdrawal check comes before the permission check: _can_release_light
+    # itself returns False for a withdrawn document, which would otherwise mask
+    # the more specific 409 'withdrawn' response behind a generic 403.
+    if db.get(KnowledgeWithdrawal, job.id) is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Document was withdrawn from Knowledge')
+    # Contract: permission = can_release, matching the frontend's own can_release
+    # gate on the 'Neu indizieren' button (reviews.tsx).
+    if not _can_release_light(db, job, collection, user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='User cannot reindex this document')
+    release = db.scalar(select(DocumentRelease).where(DocumentRelease.job_id == job.id))
+    if release is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Document has not been released yet')
+    released_by = db.get(User, release.owner_id).username if release.owner_id else None
+    release.status = 'pending'
+    release.error_message = None
+    release.next_attempt_at = datetime.now(timezone.utc)
+    release.attempts = 0
+    if release.lease_until is None or aware_utc(release.lease_until) <= datetime.now(timezone.utc):
+        release.lease_token = None
+        release.lease_until = None
+    # Forces Knowledge to replace already-indexed chunks instead of skipping this
+    # delivery as a duplicate by release_id/markdown_sha256 (contracts/events/document.released.md).
+    payload = release.payload if isinstance(release.payload, dict) else {}
+    payload['reindex'] = True
+    release.payload = payload
+    flag_modified(release, 'payload')
+    db.commit()
+    try:
+        publication_tasks.deliver_release.delay(release.id)
+    except Exception:
+        logger.exception('publication queue unavailable for reindex %s', release.id)
+    return _summary(release, released_by)  # type: ignore[return-value]
+
+
+@router.post('/collections/{collection_id}/reindex', response_model=PortalReindexCollectionResponse)
+def reindex_collection_documents(collection_id: str, db=Depends(get_db), user: User = Depends(get_current_user)) -> PortalReindexCollectionResponse:
+    """'Wissensbereich neu indizieren' for every non-withdrawn release of one
+    collection (incident 2026-09-22 follow-up). Reuses the same outbox/backoff/
+    lease machinery as reindex_portal_document above, scoped by collection via
+    requeue_collection_releases_for_reindex.
+    """
+    if not publication_configured():
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Portal publication is not configured')
+    collection = db.get(Collection, collection_id)
+    if collection is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
+    if user.role != UserRole.ADMIN and not _can_manage_collection(db, collection, user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='User cannot reindex this collection')
+    release_ids = requeue_collection_releases_for_reindex(db, collection.id)
+    db.commit()
+    for release_id in release_ids:
+        try:
+            publication_tasks.deliver_release.delay(release_id)
+        except Exception:
+            logger.exception('publication queue unavailable for reindex %s', release_id)
+    return PortalReindexCollectionResponse(requeued=len(release_ids))

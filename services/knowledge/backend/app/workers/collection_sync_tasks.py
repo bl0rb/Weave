@@ -133,100 +133,106 @@ def _aware_utc(value: datetime) -> datetime:
     return value
 
 
-def _redrive_stalled_index_retries() -> int:
-    """SH-03: durable re-drive for a TransientFetchError retry whose own
-    self-re-enqueue send_task never reached the broker (see
-    app/workers/tasks.py's TransientFetchError branch) -- that branch
-    deliberately leaves the document retry-eligible (status stays PENDING,
-    index_attempts already incremented and committed) instead of marking it
-    FAILED, so this periodic sweep is what actually resends it.
+def _redrive_counter(
+    *, status: DocumentStatus, counter, max_attempts: int, backoff_fn, reindex: bool,
+) -> int:
+    """One redrive pass for a single (status, attempt-counter) combination --
+    see _redrive_stalled_index_retries below for why there are three of
+    these (incident 2026-09-22 added the embedding-failure counter/backoff
+    on top of the pre-existing fetch-failure one). `counter` is a mapped
+    Document column (Document.index_attempts or Document.embedding_attempts);
+    `reindex` is threaded into the redriven task so a stalled REINDEX
+    request (status stays INDEXED while embedding_attempts>0, see
+    app/workers/tasks.py's _run_pipeline) resumes as a reindex, not a no-op
+    against an already-INDEXED document.
 
-    A document is due when it's still PENDING, has failed at least once but
-    not exhausted its attempts, and has sat untouched longer than the
-    backoff its own attempt count implies *plus* a full extra tick of grace
-    -- i.e. its originally-scheduled retry should have clearly already fired
-    by now, not merely be about to. Local import of app.workers.tasks avoids
-    the circular import (that module imports this one at the bottom to
-    register collection_sync_tick).
+    A document is due when it's still in `status`, has failed at least once
+    but not exhausted `max_attempts`, and has sat untouched longer than
+    `backoff_fn`'s own schedule for its attempt count *plus* a full extra
+    tick of grace -- i.e. its originally-scheduled retry should have clearly
+    already fired by now, not merely be about to.
+
+    Local import of app.workers.tasks avoids the circular import (that
+    module imports this one at the bottom to register collection_sync_tick).
 
     SH-03: the extra tick of grace matters because the row lock taken in
     _index_document_unlocked is released by the interim commit in the
-    TransientFetchError branch *before* that branch's own retry send_task
-    runs, so a redrive racing a still-in-flight legitimate retry is not a
-    safe INDEXED/SUPERSEDED no-op -- it can acquire the row first and
-    trigger a second real fetch and attempt-count increment for one logical
-    failure. Checking staleness against exactly the retry's own backoff
-    (rather than backoff + a tick of margin) would make that race the
-    common case, not a rare one, under the default settings. A redriven
-    document's `updated_at` is also bumped immediately so a delayed
-    legitimate retry isn't redriven again on every subsequent tick.
+    retry branch *before* that branch's own retry send_task runs, so a
+    redrive racing a still-in-flight legitimate retry is not a safe no-op --
+    it can acquire the row first and trigger a second real attempt and
+    attempt-count increment for one logical failure. Checking staleness
+    against exactly the retry's own backoff (rather than backoff + a tick of
+    margin) would make that race the common case, not a rare one, under the
+    default settings. A redriven document's `updated_at` is also bumped
+    immediately so a delayed legitimate retry isn't redriven again on every
+    subsequent tick.
 
     SH-03 fix 2: the grace margin above narrows but doesn't close the race
     with a still-in-flight legitimate retry (broker/worker delay bigger
     than backoff + margin). So before dispatching, each document is claimed
     with a conditional UPDATE ... WHERE id=:id AND updated_at=:observed AND
-    index_attempts=:observed_attempts (same targeted-UPDATE idiom as the
+    counter=:observed_attempts (same targeted-UPDATE idiom as the
     post-redrive bump below) -- if a concurrent legitimate retry's own
     commit (which bumps updated_at via the model's onupdate, and always
-    bumps index_attempts too) or another redrive already touched the row,
-    the CAS affects zero rows and this dispatch is skipped instead of
-    causing a second fetch + attempt-count increment for one logical
-    failure. Requiring index_attempts to still match (not just updated_at)
-    catches a concurrent legitimate commit that raced in between our
-    candidate read and our claim -- updated_at alone would not, since both
-    columns are set in the same commit.
+    bumps its counter too) or another redrive already touched the row, the
+    CAS affects zero rows and this dispatch is skipped instead of causing a
+    second attempt + attempt-count increment for one logical failure.
+    Requiring the counter to still match (not just updated_at) catches a
+    concurrent legitimate commit that raced in between our candidate read
+    and our claim -- updated_at alone would not, since both columns are set
+    in the same commit.
 
     NOTE: this CAS only guards the instant of claiming/dispatch. It does
     not prevent an already in-flight legitimate retry (claimed before this
     redrive's UPDATE runs) from independently completing after the redrive
-    has also been sent -- if that retry too hits TransientFetchError, both
-    invocations will each increment index_attempts once the row lock in
+    has also been sent -- if that retry too fails transiently, both
+    invocations will each increment the counter once the row lock in
     _index_document_unlocked is released by the other's commit, burning two
     attempts for one real stall event. This is a real, currently open gap
     in the retry-budget guarantee (not a closed no-op) during a sustained
     outage; closing it fully would need a per-document in-process/cross-
     replica reservation beyond this CAS.
     """
-    from app.workers.tasks import INDEX_TASK_NAME, _MAX_ATTEMPTS, _backoff_seconds
+    from app.workers.tasks import INDEX_TASK_NAME
 
     now = datetime.now(timezone.utc)
     db = SessionLocal()
     try:
         candidates = db.execute(
-            select(Document.id, Document.index_attempts, Document.updated_at)
-            .where(Document.status == DocumentStatus.PENDING)
-            .where(Document.index_attempts > 0)
-            .where(Document.index_attempts < _MAX_ATTEMPTS)
+            select(Document.id, counter, Document.updated_at)
+            .where(Document.status == status)
+            .where(counter > 0)
+            .where(counter < max_attempts)
             .order_by(Document.updated_at)
             .limit(_REDRIVE_CANDIDATE_LIMIT)
         ).all()
     finally:
         db.close()
 
-    # SH-03: the original retry's own countdown already uses
-    # _backoff_seconds(attempts) -- checking staleness against that exact
-    # same threshold can't tell a genuinely stalled retry apart from one
-    # that is simply still queued/in-flight and due to fire imminently.
-    # Require a full extra tick of grace beyond the retry's own schedule so
-    # we only redrive once it has clearly had time to run and hasn't.
+    # SH-03: the original retry's own countdown already uses backoff_fn --
+    # checking staleness against that exact same threshold can't tell a
+    # genuinely stalled retry apart from one that is simply still
+    # queued/in-flight and due to fire imminently. Require a full extra
+    # tick of grace beyond the retry's own schedule so we only redrive once
+    # it has clearly had time to run and hasn't.
     due = [
         (document_id, updated_at, attempts) for document_id, attempts, updated_at in candidates
         if _aware_utc(updated_at) <= now - timedelta(
-            seconds=_backoff_seconds(attempts) + settings.collection_sync_tick_seconds,
+            seconds=backoff_fn(attempts) + settings.collection_sync_tick_seconds,
         )
     ][:_REDRIVE_MAX_PER_TICK]
 
     redriven = 0
     for document_id, observed_updated_at, observed_attempts in due:
         # SH-03 fix 2: claim the document before dispatching -- a
-        # conditional UPDATE that only proceeds if updated_at AND
-        # index_attempts still match what we just read. This is the same
+        # conditional UPDATE that only proceeds if updated_at AND the
+        # counter still match what we just read. This is the same
         # compare-and-swap the row's updated_at column already gets bumped
         # by (ORM onupdate) whenever a legitimate retry's own commit
-        # touches the row; also requiring index_attempts to match catches a
+        # touches the row; also requiring the counter to match catches a
         # concurrent legitimate commit that raced in between our candidate
         # read and this claim, so a concurrent legitimate retry or a second
-        # redrive makes this a safe no-op instead of a duplicate fetch +
+        # redrive makes this a safe no-op instead of a duplicate attempt +
         # attempt-count increment.
         db = SessionLocal()
         try:
@@ -234,7 +240,7 @@ def _redrive_stalled_index_retries() -> int:
                 Document.__table__.update()
                 .where(Document.id == document_id)
                 .where(Document.updated_at == observed_updated_at)
-                .where(Document.index_attempts == observed_attempts)
+                .where(counter == observed_attempts)
                 .values(updated_at=datetime.now(timezone.utc))
             )
             db.commit()
@@ -251,13 +257,64 @@ def _redrive_stalled_index_retries() -> int:
             )
             continue
         try:
-            celery_app.send_task(INDEX_TASK_NAME, args=[str(document_id)])
+            celery_app.send_task(INDEX_TASK_NAME, args=[str(document_id)], kwargs={'reindex': reindex})
         except Exception:
             logger.exception('SH-03: failed to re-drive stalled index retry for document %s', document_id)
             continue
         redriven += 1
     if redriven:
-        logger.info('SH-03: re-drove %d stalled index retry(ies)', redriven)
+        logger.info('SH-03: re-drove %d stalled index retry(ies) (status=%s)', redriven, status.value)
+    return redriven
+
+
+def _redrive_stalled_index_retries() -> int:
+    """SH-03: durable re-drive for a retry whose own self-re-enqueue
+    send_task never reached the broker (see app/workers/tasks.py's
+    TransientFetchError and EmbeddingProviderError retry branches) -- both
+    deliberately leave the document retry-eligible instead of marking it
+    FAILED, so this periodic sweep is what actually resends them. Runs
+    four passes, one per (status, attempt-counter) combination a stalled
+    retry can be sitting in (incident 2026-09-22 added the second, third
+    and fourth on top of the original fetch-retry pass):
+
+    1. PENDING + index_attempts: a stalled markdown-fetch retry (original
+       behaviour, unchanged).
+    2. PENDING + embedding_attempts: a stalled embedding retry for a
+       document's FIRST index (status never advances past PENDING until a
+       successful commit -- see _run_pipeline).
+    3. INDEXED + embedding_attempts: a stalled embedding retry for a
+       REINDEX of an already-INDEXED document (status stays INDEXED
+       throughout a reindex attempt -- see _run_pipeline's reindex-aware
+       skip check) -- redriven with reindex=True so it resumes as a
+       reindex rather than a no-op.
+    4. INDEXED + index_attempts: a stalled markdown-FETCH retry for a
+       REINDEX of an already-INDEXED document (reindex=True skips the
+       early-return in _run_pipeline, so a TransientFetchError there
+       increments index_attempts while status stays INDEXED -- none of
+       passes 1-3 match this combination, so without this pass such a
+       stalled reindex is invisible to the redrive and can get stuck
+       forever if its own retry send_task is also lost) -- redriven with
+       reindex=True for the same reason as pass 3.
+    """
+    from app.workers.tasks import _MAX_ATTEMPTS, _backoff_seconds, _embedding_backoff_seconds
+
+    embedding_max_attempts = settings.embedding_max_attempts
+    redriven = _redrive_counter(
+        status=DocumentStatus.PENDING, counter=Document.index_attempts,
+        max_attempts=_MAX_ATTEMPTS, backoff_fn=_backoff_seconds, reindex=False,
+    )
+    redriven += _redrive_counter(
+        status=DocumentStatus.PENDING, counter=Document.embedding_attempts,
+        max_attempts=embedding_max_attempts, backoff_fn=_embedding_backoff_seconds, reindex=False,
+    )
+    redriven += _redrive_counter(
+        status=DocumentStatus.INDEXED, counter=Document.embedding_attempts,
+        max_attempts=embedding_max_attempts, backoff_fn=_embedding_backoff_seconds, reindex=True,
+    )
+    redriven += _redrive_counter(
+        status=DocumentStatus.INDEXED, counter=Document.index_attempts,
+        max_attempts=_MAX_ATTEMPTS, backoff_fn=_backoff_seconds, reindex=True,
+    )
     return redriven
 
 

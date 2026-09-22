@@ -92,6 +92,17 @@ class Settings(BaseSettings):
     # env var flip (see that migration's comment on chunks.embedding).
     embedding_dimension: int = 1536
     embedding_batch_size: int = 64
+    # --- Incident 2026-09-22: the embeddings service now bounds its own
+    # concurrency (EMBEDDINGS_MAX_CONCURRENT_REQUESTS) and queues excess
+    # requests up to EMBEDDINGS_QUEUE_TIMEOUT_SECONDS (default 90s) before
+    # answering 503 -- this client's read timeout must comfortably exceed
+    # that queue timeout so a queued-but-eventually-served request isn't cut
+    # off client-side first. embedding_max_attempts governs the SEPARATE
+    # Celery-level retry (app/workers/tasks.py's embedding-failure backoff
+    # table), not this HTTP client's own small in-process retry loop (see
+    # app/services/embeddings.py's _DEFAULT_MAX_ATTEMPTS).
+    embedding_request_timeout_seconds: float = 180.0
+    embedding_max_attempts: int = 6
     chat_config_base_url: str = ''
     chat_config_service_token: str = ''
 

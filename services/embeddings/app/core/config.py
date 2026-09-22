@@ -77,5 +77,22 @@ class Settings(BaseSettings):
     # default for any consumer that doesn't specifically use `<=>`.
     embeddings_normalize: bool = True
 
+    # --- Concurrency bound (2026-09-22 OOM incident) ----------------------
+    # How many /v1/embeddings requests may run encoder.encode() at once.
+    # Before this, run_in_threadpool had no bound of its own (Starlette's
+    # default pool is 40 threads) -- a burst of concurrent callers (e.g. a
+    # Knowledge Celery worker fanning out many release batches at once)
+    # could all encode in parallel and OOM this pod (cpu limit 2, memory
+    # limit 2560Mi). Default 1 fully serializes encodes; see app/main.py's
+    # `_encode_semaphore`.
+    embeddings_max_concurrent_requests: int = 1
+
+    # How long a request waits for a free concurrency slot before this
+    # service gives up and answers 503 (with Retry-After) instead of
+    # piling requests up behind an already-saturated encoder -- see
+    # app/main.py's create_embeddings. Must stay below Knowledge's
+    # EMBEDDING_REQUEST_TIMEOUT_SECONDS client read timeout.
+    embeddings_queue_timeout_seconds: float = 90
+
 
 settings = Settings()

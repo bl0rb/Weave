@@ -328,6 +328,11 @@ def _upsert_document(db: Session, event: DocumentReleasedEvent, frontmatter: dic
     document.processed_at = _parse_processed_at(event.processed_at)
     document.error = None
     document.status = DocumentStatus.BLOCKED if recommendation == 'block' else DocumentStatus.PENDING
+    # A new release/version starts a fresh indexing run -- carrying over a
+    # stale embedding-retry count would both shrink its retry budget and
+    # (once indexed) risk pass 3 of _redrive_stalled_index_retries mistaking
+    # it for a stalled reindex retry (see collection_sync_tasks.py).
+    document.embedding_attempts = 0
 
     # The lazy registry reload (see _ensure_collection_known) deliberately
     # does NOT happen here, even though this is where collection_slug is
@@ -435,13 +440,28 @@ def ingest_event(
         document = db.execute(
             select(Document).where(Document.source_job_id == event.job_id)
         ).scalar_one_or_none()
-        if document is not None and document.status == DocumentStatus.PENDING:
+        # "Neu indizieren" (incident 2026-09-22): Ingest's reindex endpoint
+        # re-queues the SAME release (same release_id -> same event_key
+        # here), so a reindex delivery always lands in this duplicate-event
+        # branch, never the fresh-Document path below -- event.reindex must
+        # still enqueue a full re-index even though the document is already
+        # INDEXED, not only the original "PENDING but never actually
+        # enqueued" recovery case. BLOCKED is excluded even with
+        # event.reindex=True: a document held back by the quality gate
+        # (recommendation == 'block') must stay un-indexed until someone
+        # re-processes it upstream with a passing/absent quality gate --
+        # "Neu indizieren" is not a way to bypass that gate.
+        if (
+            document is not None
+            and document.status != DocumentStatus.BLOCKED
+            and (document.status == DocumentStatus.PENDING or event.reindex)
+        ):
             # The previous delivery may have committed the Document and then
             # failed while publishing to Redis. Do not acknowledge that
             # delivery as complete until a pending document has been offered
             # to the index queue again. An enqueue error deliberately escapes
             # as 500 so the outbox will redeliver once more.
-            index_document.delay(str(document.id))
+            index_document.delay(str(document.id), reindex=event.reindex)
         return JSONResponse(status_code=status.HTTP_200_OK, content={'status': 'duplicate'})
 
     frontmatter = _canonicalize_release_frontmatter(event.frontmatter, event)
@@ -488,7 +508,7 @@ def ingest_event(
             status_code=status.HTTP_200_OK, content={'status': 'blocked', 'document_id': str(document.id)}
         )
 
-    index_document.delay(str(document.id))
+    index_document.delay(str(document.id), reindex=event.reindex)
 
     return JSONResponse(
         status_code=status.HTTP_202_ACCEPTED, content={'status': 'accepted', 'document_id': str(document.id)}
