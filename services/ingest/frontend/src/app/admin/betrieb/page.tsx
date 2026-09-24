@@ -15,6 +15,7 @@ import { BackupTab } from '@/components/admin/backup-tab';
 import { TechnicalIdentitiesTab } from '@/components/admin/technical-identities-tab';
 import { IndexMaintenanceSection } from '@/components/admin/retrieval-provider-tab';
 import { ConfirmDialog, SectionCard } from '@/components/admin/admin-shared';
+import { Button } from '@/components/ui/button';
 import { apiFetch } from '@/lib/api';
 
 type Bereich = 'sicherung' | 'identitaeten' | 'werkzeuge';
@@ -74,14 +75,10 @@ function AdminBetriebPageInner() {
         title="Betrieb & Sicherheit"
         description="Sichern, integrieren und warten."
         actions={
-          <button
-            type="button"
-            onClick={() => setBackupOpen(true)}
-            className="inline-flex items-center gap-2 rounded-md border border-emerald-200 bg-white px-3 py-2 text-sm font-medium text-emerald-950 hover:bg-emerald-50"
-          >
+          <Button type="button" variant="outline" onClick={() => setBackupOpen(true)}>
             <Archive size={16} />
             Backup herunterladen
-          </button>
+          </Button>
         }
       />
       <SectionTabs idPrefix="betrieb" ariaLabel="Bereich" tabs={TABS} active={bereich} onChange={setBereich} />

@@ -273,7 +273,7 @@ export function LogsTab() {
         </div>
       ) : (
         <>
-          <div className="max-h-[32rem] overflow-y-auto overflow-x-hidden rounded-2xl border border-slate-800 bg-slate-950 p-4 font-mono text-xs">
+          <div className="max-h-[32rem] overflow-y-auto overflow-x-hidden rounded-xl border border-slate-800 bg-slate-950 p-4 font-mono text-xs">
             {entries.map((entry) => (
               <LogRow key={entry.id} entry={entry} />
             ))}

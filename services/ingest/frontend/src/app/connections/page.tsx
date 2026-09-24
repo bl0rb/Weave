@@ -74,7 +74,7 @@ function ConnectionsPageInner() {
       <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <header className="mb-6">
           <h1 className="text-3xl font-semibold text-slate-950">Connections</h1>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-1 text-[15px] text-slate-500">
             Configure the external systems and AI models this account talks to.
           </p>
         </header>
@@ -89,7 +89,7 @@ function ConnectionsPageInner() {
               {groupIndex > 0 && (
                 <div className="hidden h-8 w-px bg-slate-200 sm:block" aria-hidden="true" />
               )}
-              <div className="flex items-center gap-1.5 rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
+              <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white p-1 shadow-sm">
                 <span
                   className="pl-2 text-[11px] font-medium uppercase tracking-wide text-slate-400"
                   aria-hidden="true"
@@ -111,7 +111,7 @@ function ConnectionsPageInner() {
                       tabIndex={active ? 0 : -1}
                       onClick={() => setTab(id)}
                       onKeyDown={(event) => handleTabKeyDown(event, id)}
-                      className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition ${
+                      className={`flex h-10 items-center gap-2 rounded-lg px-4 text-sm font-semibold transition ${
                         active
                           ? 'bg-emerald-50 text-emerald-800'
                           : 'text-slate-600 hover:bg-slate-50 hover:text-slate-950'

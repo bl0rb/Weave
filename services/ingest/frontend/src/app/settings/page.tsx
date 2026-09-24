@@ -134,11 +134,11 @@ export default function SettingsPage() {
   };
 
   return (
-    <main className="min-h-screen">
-      <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+    <main id="main-content" className="portal-page">
+      <>
         <header className="mb-6">
           <h1 className="text-3xl font-semibold text-slate-950">API-Zugriff</h1>
-          <p className="mt-1 text-sm text-slate-500">Verwalte persönliche Zugriffstoken für die API.</p>
+          <p className="mt-1 text-[15px] text-slate-500">Verwalte persönliche Zugriffstoken für die API.</p>
         </header>
 
         <SectionCard
@@ -285,7 +285,7 @@ export default function SettingsPage() {
             }}
           />
         )}
-      </div>
+      </>
     </main>
   );
 }

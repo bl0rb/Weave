@@ -52,7 +52,7 @@ export function CollectionsTab() {
 
   return <div className="portal-page !max-w-none !p-0">
     <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-      <div><h2 className="text-xl font-semibold">Alle Wissensbereiche</h2>
+      <div><h2 className="text-[17px] font-semibold">Alle Wissensbereiche</h2>
         <p className="mt-2 max-w-2xl text-sm text-slate-600">Verwalte Wissensbereiche und Berechtigte über alle Eigentümer hinweg. Der Bearbeitungsstand zeigt, wo Arbeit wartet.</p>
       </div>
       <Link href="/knowledge/new" className={buttonVariants({ variant: 'outline' })}><Plus size={16} />Wissensbereich anlegen</Link>
@@ -141,7 +141,7 @@ function CollectionEditor({ collection, onCancel, onSaved }: {
   }
 
   return <section className="portal-panel portal-form-panel" aria-labelledby="edit-collection-title">
-    <h3 id="edit-collection-title" ref={heading} tabIndex={-1} className="text-lg font-semibold">{collection.name} bearbeiten</h3>
+    <h3 id="edit-collection-title" ref={heading} tabIndex={-1} className="text-[17px] font-semibold">{collection.name} bearbeiten</h3>
     <p className="portal-field-hint">Eigentümer: {collection.owner?.username || 'Kein Eigentümer'}</p>
     {error && <Notice error action={!original ? () => setRevision(value => value + 1) : undefined}>{error}</Notice>}
     {!original && !error && <Notice>Einstellungen werden geladen …</Notice>}

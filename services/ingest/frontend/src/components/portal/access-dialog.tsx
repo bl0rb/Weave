@@ -132,7 +132,7 @@ export function AccessDialog({ collection, onClose, onSaved }: {
     <p className="portal-eyebrow">Wissensbereich · Zugriff im Chat</p>
     <ErrorNotice message={error || null} />
     <form className="portal-access-form" onSubmit={save} noValidate>
-      <p className="text-sm text-slate-600">Wer darf dieses Wissen im Chat nutzen? Antworten greifen nur auf Dokumente zurück, die diese Personen bereits sehen dürfen.</p>
+      <p className="text-sm text-[var(--ink-2)]">Wer darf dieses Wissen im Chat nutzen? Antworten greifen nur auf Dokumente zurück, die diese Personen bereits sehen dürfen.</p>
       <fieldset className="portal-access-mode">
         <legend className="sr-only">Art des Zugriffs</legend>
         <label className="portal-access-mode-option">

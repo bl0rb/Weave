@@ -736,7 +736,7 @@ export function DocumentBrowser({
   return (
     <div className="w-full text-slate-900">
 
-      <section className="mb-6 rounded-3xl border border-slate-200 bg-white p-5">
+      <section className="mb-6 rounded-xl border border-slate-200 bg-white p-5">
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <label className="text-sm text-slate-700 xl:col-span-2">
             Search filename
@@ -746,7 +746,7 @@ export function DocumentBrowser({
                 setQuery(event.target.value);
                 setCurrentPage(1);
               }}
-              className="mt-1 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-emerald-300 focus:bg-white"
+              className={inputClass}
               placeholder="invoice, report, contract"
             />
           </label>
@@ -758,7 +758,7 @@ export function DocumentBrowser({
                 setTag(event.target.value);
                 setCurrentPage(1);
               }}
-              className="mt-1 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-emerald-300 focus:bg-white"
+              className={inputClass}
               placeholder="finance"
             />
           </label>
@@ -773,7 +773,7 @@ export function DocumentBrowser({
                     setFromDate(event.target.value);
                     setCurrentPage(1);
                   }}
-                  className="mt-1 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950 outline-none transition focus:border-emerald-300 focus:bg-white"
+                  className={inputClass}
                 />
               </label>
               <label className="text-sm text-slate-700">
@@ -785,7 +785,7 @@ export function DocumentBrowser({
                     setToDate(event.target.value);
                     setCurrentPage(1);
                   }}
-                  className="mt-1 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950 outline-none transition focus:border-emerald-300 focus:bg-white"
+                  className={inputClass}
                 />
               </label>
             </>
@@ -822,7 +822,7 @@ export function DocumentBrowser({
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[minmax(220px,280px)_minmax(0,1fr)]">
-        <aside className="overflow-hidden rounded-3xl border border-slate-200 bg-white p-4">
+        <aside className="overflow-hidden rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-700">Folders</h2>
           <div className="mt-3 space-y-1">
             <button
@@ -891,9 +891,9 @@ export function DocumentBrowser({
           </div>
         </aside>
 
-        <div className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
+        <div className="min-w-0 rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
           <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-            <h2 className="text-lg font-semibold">Results</h2>
+            <h2 className="text-[17px] font-semibold">Results</h2>
             <p className="text-sm text-slate-500">
               {sortedItems.length} document(s) · Page {displayPage} / {totalPages}
             </p>
@@ -1220,8 +1220,8 @@ export function DocumentBrowser({
 
       {protectedJobId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
-          <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
-            <h2 className="mb-3 text-lg font-semibold">Password Required</h2>
+          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-lg">
+            <h2 className="mb-3 text-[17px] font-semibold">Password Required</h2>
             <p className="mb-4 text-sm text-slate-600">This job is password protected.</p>
             <input
               type="password"
@@ -1229,7 +1229,7 @@ export function DocumentBrowser({
               onChange={(e) => setProtectedJobPassword(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && void handlePasswordSubmit()}
               placeholder="Enter password"
-              className="mb-4 w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950"
+              className={`mb-4 ${inputClass}`}
               autoFocus
             />
             <div className="flex gap-2">

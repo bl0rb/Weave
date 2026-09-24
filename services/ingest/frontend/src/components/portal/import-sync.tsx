@@ -45,7 +45,7 @@ export function MissingConfluencePages({ runId, pages, canRemove, onChanged }: {
   }
   if (!pages.length) return null;
   return <section className="mb-6 border-y border-amber-200 py-5" aria-labelledby="missing-confluence-title">
-    <h2 id="missing-confluence-title" className="text-lg font-semibold">Nicht mehr in Confluence gefunden</h2>
+    <h2 id="missing-confluence-title" className="text-[17px] font-semibold">Nicht mehr in Confluence gefunden</h2>
     <p className="mt-2 text-sm text-slate-700">Die Seiten wurden gelöscht, verschoben oder sind für die Verbindung nicht mehr zugänglich.</p>
     {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
     <ul className="mt-4 divide-y divide-slate-200">{pages.map(page => <li key={page.page_id} className="flex flex-wrap items-center justify-between gap-3 py-3">

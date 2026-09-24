@@ -216,7 +216,7 @@ function Overview() {
             <Link
               key={tile.key}
               href={tile.href}
-              className={`rounded-2xl border p-4 transition hover:border-emerald-400 ${
+              className={`rounded-xl border p-4 transition hover:border-emerald-400 ${
                 tile.warn ? 'border-amber-200 bg-amber-50' : 'border-slate-200 bg-white'
               }`}
             >
@@ -228,13 +228,13 @@ function Overview() {
         </div>
       </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5" aria-labelledby="attention-title">
+      <section className="rounded-xl border border-slate-200 bg-white p-5" aria-labelledby="attention-title">
         <div className="mb-4 flex flex-wrap items-center gap-3">
-          <h2 id="attention-title" className="text-lg font-semibold text-slate-950">
+          <h2 id="attention-title" className="text-[17px] font-semibold text-slate-950">
             Braucht Aufmerksamkeit
           </h2>
           {attention.length > 0 && (
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">{attention.length}</span>
+            <span className="inline-flex h-6 items-center rounded-full bg-amber-100 px-2.5 text-xs font-semibold text-amber-800">{attention.length}</span>
           )}
         </div>
         {attention.length === 0 ? (
@@ -252,7 +252,7 @@ function Overview() {
                 </div>
                 <Link
                   href={item.href}
-                  className="flex-shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-50"
+                  className="flex h-8 flex-shrink-0 items-center rounded-lg border border-slate-200 px-3 text-xs font-medium text-emerald-800 hover:bg-emerald-50"
                 >
                   {item.label}
                 </Link>

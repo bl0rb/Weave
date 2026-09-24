@@ -89,7 +89,7 @@ export function TeamsTab() {
             required
             className={`${inputClass} mt-0 w-full max-w-xs`}
           />
-          <Button type="submit" size="sm" className="h-[38px]" disabled={creating || !newName.trim()}>
+          <Button type="submit" disabled={creating || !newName.trim()}>
             {creating ? (
               <LoaderCircle className="h-4 w-4 animate-spin" />
             ) : (

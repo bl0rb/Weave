@@ -127,7 +127,7 @@ export default function ImportRunPage() {
     return (
       <main className="min-h-screen">
         <div className="mx-auto w-full max-w-4xl px-4 py-8 text-slate-950 sm:px-6 lg:px-8">
-          <h1 className="text-2xl font-semibold">Import run not found</h1>
+          <h1 className="text-3xl font-semibold">Import run not found</h1>
           <p className="mt-2 text-sm text-slate-600">The run does not exist or is not visible to you.</p>
           <Link href="/imports" className="mt-4 inline-block text-sm text-emerald-700 hover:text-emerald-800">
             Back to imports
@@ -163,7 +163,7 @@ export default function ImportRunPage() {
         <section className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Confluence import</p>
-            <h1 className="mt-1 truncate text-2xl font-semibold">{runTitle(run)}</h1>
+            <h1 className="mt-1 truncate text-3xl font-semibold">{runTitle(run)}</h1>
             <p className="mt-1 text-sm text-slate-600">
               {run.scope_type === 'space' ? `Space key: ${run.scope_value}` : `Page id: ${run.scope_value}`}
               {run.owner ? ` · Started by ${run.owner.username}` : ''}
@@ -197,7 +197,7 @@ export default function ImportRunPage() {
           </p>
         )}
 
-        <section className="mb-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.05)]">
+        <section className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.05)]">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <p className="text-sm font-semibold text-slate-950">
               {run.pages_imported} of {run.pages_discovered} discovered page(s) imported
@@ -251,7 +251,7 @@ export default function ImportRunPage() {
         </section>
 
         {run.errors.length > 0 && (
-          <section className="mb-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.05)]">
+          <section className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.05)]">
             <button
               type="button"
               onClick={() => setErrorsOpen((value) => !value)}
@@ -284,9 +284,9 @@ export default function ImportRunPage() {
           </section>
         )}
 
-        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.05)]">
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.05)]">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-4">
-            <h2 className="text-lg font-semibold">Imported jobs</h2>
+            <h2 className="text-[17px] font-semibold">Imported jobs</h2>
             <p className="text-sm text-slate-500">{run.jobs.length} job(s)</p>
           </div>
           {run.jobs.length === 0 ? (

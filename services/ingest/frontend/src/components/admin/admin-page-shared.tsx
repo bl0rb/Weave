@@ -23,8 +23,8 @@ export function PageHead({
     <header className="mb-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-semibold text-slate-950">{title}</h1>
-          <p className="mt-1 text-sm text-slate-500">{description}</p>
+          <h1 className="text-3xl font-semibold leading-tight text-[var(--ink)]">{title}</h1>
+          <p className="mt-1 text-[15px] text-[var(--muted)]">{description}</p>
         </div>
         {actions}
       </div>
@@ -40,10 +40,10 @@ export function AdminPageShell({ children }: { children: ReactNode }) {
     return (
       <main className="min-h-screen">
         <div className="mx-auto flex w-full max-w-7xl flex-col items-center px-4 py-24 sm:px-6 lg:px-8">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100">
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100">
             <ShieldAlert className="h-6 w-6 text-slate-400" />
           </div>
-          <h1 className="mt-4 text-lg font-semibold text-slate-950">Nur für Administratoren</h1>
+          <h1 className="mt-4 text-[17px] font-semibold text-slate-950">Nur für Administratoren</h1>
           <p className="mt-1 max-w-md text-center text-sm text-slate-500">
             Hier verwaltet die Administration Wissensbereiche, Nutzer und Einstellungen.
           </p>
@@ -52,9 +52,11 @@ export function AdminPageShell({ children }: { children: ReactNode }) {
     );
   }
 
+  // Same container (max-width + padding) as the portal side — see
+  // .portal-page in globals.css, shared by both areas of the app.
   return (
-    <main className="min-h-screen">
-      <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">{children}</div>
+    <main id="main-content" className="portal-page">
+      {children}
     </main>
   );
 }
@@ -108,7 +110,7 @@ export function SectionTabs<T extends string>({
     <div
       role="tablist"
       aria-label={ariaLabel}
-      className="mb-6 inline-flex flex-wrap gap-1 rounded-2xl border border-slate-200 bg-white p-1 shadow-sm"
+      className="mb-6 inline-flex flex-wrap gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1 shadow-sm"
     >
       {tabs.map(({ id, label, icon: Icon }) => {
         const isActive = active === id;
@@ -125,11 +127,11 @@ export function SectionTabs<T extends string>({
             tabIndex={isActive ? 0 : -1}
             onClick={() => onChange(id)}
             onKeyDown={(event) => onKeyDown(event, id)}
-            className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition ${
-              isActive ? 'bg-emerald-50 text-emerald-800' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-950'
+            className={`flex h-10 items-center gap-2 rounded-lg px-4 text-sm font-semibold transition ${
+              isActive ? 'bg-emerald-50 text-emerald-800' : 'text-[var(--ink-2)] hover:bg-[var(--hover)] hover:text-[var(--ink)]'
             }`}
           >
-            {Icon && <Icon className={`h-4 w-4 ${isActive ? 'text-emerald-700' : 'text-slate-400'}`} />}
+            {Icon && <Icon className={`h-4 w-4 ${isActive ? 'text-emerald-700' : 'text-[var(--muted)]'}`} />}
             {label}
           </button>
         );
@@ -210,12 +212,12 @@ export function ToolLinkCard({
   description: string;
 }) {
   return (
-    <Link href={href} className="rounded-xl border border-slate-200 bg-white p-5 transition hover:border-emerald-400">
+    <Link href={href} className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5 transition hover:border-emerald-400">
       <span className="flex items-center justify-between gap-3 font-semibold text-emerald-800">
         {title}
         <ArrowRight size={16} />
       </span>
-      <p className="mt-2 text-sm text-slate-600">{description}</p>
+      <p className="mt-2 text-sm text-[var(--muted)]">{description}</p>
     </Link>
   );
 }

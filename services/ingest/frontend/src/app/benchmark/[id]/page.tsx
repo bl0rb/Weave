@@ -258,9 +258,9 @@ export default function BenchmarkRunPage() {
           </p>
         )}
 
-        <section className="mb-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+        <section className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-1 flex flex-wrap items-center justify-between gap-4">
-            <h2 className="text-lg font-semibold">Compare variants</h2>
+            <h2 className="text-[17px] font-semibold">Compare variants</h2>
             <p className="text-xs text-slate-500">{report.variants.length} variant(s)</p>
           </div>
           <p className="mb-4 text-sm text-slate-500">Select a card to preview its markdown output below.</p>
@@ -368,9 +368,9 @@ export default function BenchmarkRunPage() {
           </div>
         </section>
 
-        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-4">
-            <h2 className="text-lg font-semibold">Markdown preview</h2>
+            <h2 className="text-[17px] font-semibold">Markdown preview</h2>
             {activeVariant && (
               <p className="text-xs text-slate-500">
                 Showing <span className="font-medium text-slate-700">{activeVariant.label}</span>
@@ -424,7 +424,7 @@ export default function BenchmarkRunPage() {
                         </Link>
                       </div>
                       {viewTab === 'rendered' ? (
-                        <div className="rounded-md border border-slate-200 bg-white p-4">
+                        <div className="rounded-xl border border-slate-200 bg-white p-4">
                           <MarkdownView
                             markdown={markdownByJob[activeVariant.job_id]}
                             jobId={activeVariant.job_id}
@@ -432,7 +432,7 @@ export default function BenchmarkRunPage() {
                           />
                         </div>
                       ) : (
-                        <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-md border border-slate-200 bg-white p-4 text-sm text-emerald-800">
+                        <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-xl border border-slate-200 bg-white p-4 text-sm text-emerald-800">
                           {markdownByJob[activeVariant.job_id]}
                         </pre>
                       )}

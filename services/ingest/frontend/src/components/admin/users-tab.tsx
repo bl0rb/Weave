@@ -71,14 +71,14 @@ export function UsersTab() {
             <table className="w-full table-auto text-left text-xs sm:text-sm">
               <thead className="text-slate-500">
                 <tr>
-                  <th className="pb-2 pr-3 font-medium">Username</th>
-                  <th className="hidden pb-2 pr-3 font-medium md:table-cell">Email</th>
-                  <th className="pb-2 pr-3 font-medium">Role</th>
-                  <th className="hidden pb-2 pr-3 font-medium lg:table-cell">Teams</th>
-                  <th className="pb-2 pr-3 font-medium">Active</th>
-                  <th className="hidden pb-2 pr-3 font-medium sm:table-cell">SSO</th>
-                  <th className="hidden pb-2 pr-3 font-medium xl:table-cell">Created</th>
-                  <th className="pb-2 font-medium" />
+                  <th className="pb-2 pr-3 font-semibold">Username</th>
+                  <th className="hidden pb-2 pr-3 font-semibold md:table-cell">Email</th>
+                  <th className="pb-2 pr-3 font-semibold">Role</th>
+                  <th className="hidden pb-2 pr-3 font-semibold lg:table-cell">Teams</th>
+                  <th className="pb-2 pr-3 font-semibold">Active</th>
+                  <th className="hidden pb-2 pr-3 font-semibold sm:table-cell">SSO</th>
+                  <th className="hidden pb-2 pr-3 font-semibold xl:table-cell">Created</th>
+                  <th className="pb-2 font-semibold" />
                 </tr>
               </thead>
               <tbody>
@@ -491,7 +491,7 @@ function ClaimOwnerlessCard({ users }: { users: AuthUser[] }) {
             </select>
           </Field>
         </div>
-        <Button variant="outline" size="sm" className="h-[38px]" onClick={claim} disabled={busy || ownerId === ''}>
+        <Button variant="outline" onClick={claim} disabled={busy || ownerId === ''}>
           {busy ? (
             <LoaderCircle className="h-4 w-4 animate-spin" />
           ) : (

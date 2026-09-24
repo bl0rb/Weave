@@ -13,7 +13,7 @@ export default async function JobsPage({
     <main className="min-h-screen">
       <div className="mx-auto w-full max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <h1 className="font-serif text-3xl font-semibold text-slate-950">Jobs</h1>
+          <h1 className="text-3xl font-semibold text-slate-950">Jobs</h1>
         </div>
         <DocumentBrowser
           // initialFolder/initialType only feed the state initializers; the

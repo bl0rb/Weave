@@ -7,9 +7,8 @@ import { Button } from '@/components/ui/button';
 import { ApiError, apiFetch, apiJson, type ApiFetchInit } from '@/lib/api';
 import type { ListResponse } from '@/lib/auth-types';
 
-/** Shared input styling (matches the app's form fields). */
-export const inputClass =
-  'mt-1 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-emerald-300 focus:bg-white';
+/** Shared input styling (matches the app's form fields) — see `.ui-control` in globals.css for the actual sizing/radius/focus tokens. */
+export const inputClass = 'ui-control mt-1.5';
 
 /** Normalize any thrown value into a user-facing message (backend detail verbatim). */
 export function errorMessage(err: unknown): string {
@@ -95,15 +94,15 @@ export function SectionCard({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+    <section className="rounded-xl border border-[var(--line)] bg-[var(--surface)] shadow-[0_1px_2px_rgb(0_0_0_/_5%)]">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--line)] px-5 py-4">
         <div>
-          <h2 className="text-lg font-semibold text-slate-950">{title}</h2>
-          {description && <p className="mt-0.5 text-sm text-slate-500">{description}</p>}
+          <h2 className="text-[17px] font-semibold text-[var(--ink)]">{title}</h2>
+          {description && <p className="mt-0.5 text-sm text-[var(--muted)]">{description}</p>}
         </div>
         {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
       </div>
-      {children}
+      <div className="p-5">{children}</div>
     </section>
   );
 }
@@ -111,7 +110,7 @@ export function SectionCard({
 export function ErrorNotice({ message }: { message: string | null }) {
   if (!message) return null;
   return (
-    <div role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+    <div role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
       {message}
     </div>
   );
@@ -119,7 +118,7 @@ export function ErrorNotice({ message }: { message: string | null }) {
 
 export function LoadingState({ label = 'Loading…' }: { label?: string }) {
   return (
-    <div className="flex items-center gap-2 py-8 text-sm text-slate-500">
+    <div className="flex items-center gap-2 py-8 text-sm text-[var(--muted)]">
       <LoaderCircle className="h-4 w-4 animate-spin text-emerald-600" />
       {label}
     </div>
@@ -141,7 +140,7 @@ export function Badge({
   };
   return (
     <span
-      className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${tones[tone]}`}
+      className={`inline-flex h-6 items-center rounded-full px-2.5 text-xs font-semibold uppercase tracking-wide ${tones[tone]}`}
     >
       {children}
     </span>
@@ -151,17 +150,24 @@ export function Badge({
 export function Field({
   label,
   hint,
+  error,
   children,
 }: {
   label: string;
   hint?: string;
+  /** Optional validation message, rendered in place of `hint` when present. */
+  error?: string | null;
   children: React.ReactNode;
 }) {
   return (
-    <label className="block text-sm font-medium text-slate-700">
+    <label className="block text-[13px] font-semibold text-[var(--ink-2)]">
       {label}
       {children}
-      {hint && <span className="mt-1 block text-xs font-normal text-slate-400">{hint}</span>}
+      {error ? (
+        <span className="mt-1.5 block text-xs font-normal text-red-600">{error}</span>
+      ) : (
+        hint && <span className="mt-1.5 block text-xs font-normal text-[var(--muted)]">{hint}</span>
+      )}
     </label>
   );
 }
@@ -208,10 +214,13 @@ export function Modal({
   title,
   onClose,
   children,
+  footer,
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
+  /** Optional right-aligned action row, rendered as a bordered footer strip below the body. */
+  footer?: React.ReactNode;
 }) {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -222,24 +231,25 @@ export function Modal({
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4">
       <div
         className="absolute inset-0 bg-slate-950/30 backdrop-blur-sm"
         onClick={onClose}
         aria-hidden="true"
       />
-      <div className="relative max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-100 bg-white p-4 shadow-2xl sm:p-6">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <h3 className="min-w-0 break-words text-base font-semibold text-slate-950">{title}</h3>
+      <div className="relative flex max-h-[90dvh] w-full max-w-lg flex-col overflow-y-auto rounded-xl border border-[var(--line)] bg-[var(--surface)] shadow-2xl">
+        <div className="flex items-center justify-between gap-3 border-b border-[var(--line)] px-5 py-4">
+          <h3 className="min-w-0 break-words text-[17px] font-semibold text-[var(--ink)]">{title}</h3>
           <button
             onClick={onClose}
             aria-label="Close dialog"
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-[var(--muted)] transition hover:bg-[var(--hover)] hover:text-[var(--ink)]"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
-        {children}
+        <div className="p-5">{children}</div>
+        {footer && <div className="flex flex-wrap justify-end gap-2 border-t border-[var(--line)] px-5 py-3">{footer}</div>}
       </div>
     </div>
   );
@@ -274,18 +284,23 @@ export function ConfirmDialog({
   }
 
   return (
-    <Modal title={title} onClose={onClose}>
-      <div className="text-sm text-slate-600">{body}</div>
+    <Modal
+      title={title}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="danger" size="sm" onClick={handleConfirm} disabled={busy}>
+            {busy && <LoaderCircle className="h-4 w-4 animate-spin" />}
+            {confirmLabel}
+          </Button>
+        </>
+      }
+    >
+      <div className="text-sm text-[var(--ink-2)]">{body}</div>
       <ErrorNoticeSpaced message={error} />
-      <div className="mt-5 flex flex-wrap justify-end gap-2">
-        <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>
-          Cancel
-        </Button>
-        <Button variant="danger" size="sm" onClick={handleConfirm} disabled={busy}>
-          {busy && <LoaderCircle className="h-4 w-4 animate-spin" />}
-          {confirmLabel}
-        </Button>
-      </div>
     </Modal>
   );
 }
@@ -293,7 +308,7 @@ export function ConfirmDialog({
 function ErrorNoticeSpaced({ message }: { message: string | null }) {
   if (!message) return null;
   return (
-    <div role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+    <div role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
       {message}
     </div>
   );

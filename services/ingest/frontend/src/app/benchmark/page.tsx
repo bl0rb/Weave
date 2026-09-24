@@ -212,7 +212,7 @@ export default function BenchmarkPage() {
         </section>
 
         <section id="start-benchmark" className="mb-8 rounded-xl border border-slate-200 bg-gradient-to-br from-emerald-50 to-white p-5">
-          <h2 className="mb-3 text-lg font-semibold">Start a benchmark</h2>
+          <h2 className="mb-3 text-[17px] font-semibold">Start a benchmark</h2>
 
           {connectionsError && (
             <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -383,9 +383,9 @@ export default function BenchmarkPage() {
           </div>
         </section>
 
-        <section className="rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
+        <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-4">
-            <h2 className="text-lg font-semibold">Runs</h2>
+            <h2 className="text-[17px] font-semibold">Runs</h2>
             <p className="text-sm text-slate-500">{runs.length} run(s)</p>
           </div>
           {runsError && (

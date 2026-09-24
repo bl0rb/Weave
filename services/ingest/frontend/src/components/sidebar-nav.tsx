@@ -125,7 +125,7 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
             href={chatUrl}
             target="_blank"
             rel="noreferrer"
-            className="flex min-h-[42px] items-center gap-2.5 rounded-[10px] bg-[var(--accent)] px-3 text-[13.5px] font-semibold text-[var(--on-accent)] no-underline transition hover:bg-[var(--accent-hover)]"
+            className="flex min-h-10 items-center gap-2.5 rounded-[var(--radius-control)] bg-[var(--accent)] px-3 text-[13.5px] font-semibold text-[var(--on-accent)] no-underline transition hover:bg-[var(--accent-hover)]"
           >
             <MessageSquare className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
             <span className="flex-1">Chat öffnen</span>

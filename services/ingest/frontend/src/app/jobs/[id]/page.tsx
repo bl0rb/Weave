@@ -308,18 +308,18 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
     return (
       <main className="min-h-screen bg-white px-4 py-6 text-slate-950 sm:px-6 lg:px-8">
         <div
-          className="mx-auto w-full max-w-6xl animate-pulse space-y-4 rounded-3xl border border-slate-200 bg-white p-4 sm:p-6 lg:p-8"
+          className="mx-auto w-full max-w-6xl animate-pulse space-y-4 rounded-xl border border-slate-200 bg-white p-4 sm:p-6 lg:p-8"
           role="status"
           aria-label="Loading job"
         >
-          <div className="h-9 w-32 rounded-md bg-slate-100" />
+          <div className="h-9 w-32 rounded-xl bg-slate-100" />
           <div className="h-7 w-48 rounded bg-slate-100" />
           <div className="space-y-2">
             <div className="h-4 w-2/3 rounded bg-slate-100" />
             <div className="h-4 w-1/3 rounded bg-slate-100" />
             <div className="h-4 w-1/4 rounded bg-slate-100" />
           </div>
-          <div className="h-64 rounded-md border border-slate-100 bg-slate-50" />
+          <div className="h-64 rounded-xl border border-slate-100 bg-slate-50" />
         </div>
       </main>
     );
@@ -328,8 +328,8 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
   if (requirePassword) {
     return (
       <main className="min-h-screen bg-white p-8 text-slate-950">
-        <div className="mx-auto max-w-md space-y-4 rounded-3xl border border-slate-200 bg-white p-6">
-          <h1 className="font-serif text-3xl font-semibold">Password Required</h1>
+        <div className="mx-auto max-w-md space-y-4 rounded-xl border border-slate-200 bg-white p-6">
+          <h1 className="text-3xl font-semibold">Password Required</h1>
           <p className="text-sm text-slate-600">This job is password protected.</p>
           {loadError && (
             <p className="text-sm text-red-600" role="alert">
@@ -342,7 +342,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
             onChange={(e) => setPassword(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && void loadMarkdownWithPassword()}
             placeholder="Enter password"
-            className="w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950"
+            className={inputClass}
           />
           <div className="flex gap-2">
             <Button onClick={loadMarkdownWithPassword}>Unlock</Button>
@@ -457,13 +457,13 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
 
   return (
     <main className="min-h-screen bg-white px-4 py-6 text-slate-950 sm:px-6 lg:px-8">
-      <div className="mx-auto w-full max-w-6xl space-y-4 rounded-3xl border border-slate-200 bg-white p-4 sm:p-6 lg:p-8">
+      <div className="mx-auto w-full max-w-6xl space-y-4 rounded-xl border border-slate-200 bg-white p-4 sm:p-6 lg:p-8">
         <div className="flex justify-start">
           <Link href="/jobs">
             <Button variant="outline">Back to jobs</Button>
           </Link>
         </div>
-        <h1 className="font-serif text-3xl font-semibold">Auftragsdetails</h1>
+        <h1 className="text-3xl font-semibold">Auftragsdetails</h1>
         <p>Filename: {job.original_filename}</p>
         {job.tags && job.tags.length > 0 && <p>Tags: {job.tags.join(', ')}</p>}
         <p className="flex items-center gap-2">
@@ -487,7 +487,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
         {converter && <p>Converter: {converter}</p>}
         {pageCount !== null && blockCount !== null && <p>Structure: {pageCount} pages, {blockCount} blocks</p>}
         {usedFallback && (
-          <div className="rounded-md border border-red-300 bg-red-50 p-3 text-red-900">
+          <div className="rounded-xl border border-red-300 bg-red-50 p-3 text-red-900">
             <p className="text-sm font-semibold">
               OCR did not run — this result came from the {engine ?? 'plain-text'} extraction fallback.
             </p>
@@ -499,7 +499,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
           </div>
         )}
         {!usedFallback && profileMismatch && (
-          <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900">
+          <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-amber-900">
             <p className="text-sm">
               Requested profile {selectedProfileId} is unknown to the worker; the job ran with {resolvedProfileId}{' '}
               instead.
@@ -507,7 +507,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
           </div>
         )}
         {job.status === 'FAILED' && (
-          <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900">
+          <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-amber-900">
             <p className="text-sm">
               {warning || 'Processing stopped for this document. Retry manually with a lower profile.'}
             </p>
@@ -540,8 +540,8 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
         )}
         {versions && versions.length > 1 && (
           <section>
-            <h2 className="mb-2 text-lg font-semibold">Versions</h2>
-            <div className="overflow-x-auto rounded-md border border-slate-200">
+            <h2 className="mb-2 text-[17px] font-semibold">Versions</h2>
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full table-auto text-left text-sm">
                 <thead className="bg-slate-50 text-slate-500">
                   <tr>
@@ -583,7 +583,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
           </section>
         )}
         {!collectionId && (
-          <section className="rounded-md border border-amber-300 bg-amber-50 p-4 text-amber-950">
+          <section className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-950">
             <h2 className="font-semibold">Keinem Wissensbereich zugeordnet</h2>
             <p className="mt-1 text-sm">Dieser Auftrag kann nicht freigegeben werden. Starte den Import erneut und wähle dabei einen Wissensbereich aus.</p>
             <Link href="/sources/new" className={`${buttonVariants({ variant: 'outline' })} mt-3`}>Quelle erneut importieren</Link>
@@ -591,7 +591,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
         )}
         <details>
           <summary className="cursor-pointer font-semibold">Technische Verarbeitungsdetails</summary>
-          <pre className="overflow-x-auto rounded-md border border-slate-200 bg-white p-4 text-sm text-emerald-800">
+          <pre className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-4 text-sm text-emerald-800">
             {JSON.stringify(job.processing_info ?? {}, null, 2)}
           </pre>
         </details>
@@ -626,7 +626,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
           </div>
         )}
         <section ref={markdownSectionRef}>
-          <h2 className="mb-2 text-lg font-semibold">Markdown Preview</h2>
+          <h2 className="mb-2 text-[17px] font-semibold">Markdown Preview</h2>
           <div className="mb-2 flex items-center gap-2">
             <Button size="sm" variant={isEditing ? 'outline' : 'default'} onClick={() => setIsEditing(false)}>
               Preview
@@ -661,7 +661,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
           {isEditing ? (
             <div className="space-y-2">
               <textarea
-                className="min-h-[380px] w-full rounded-md border border-slate-200 bg-white p-4 text-sm text-emerald-800"
+                className="min-h-[380px] w-full rounded-lg border border-slate-200 bg-white p-4 text-sm text-emerald-800"
                 value={draftMarkdown}
                 onChange={(event) => setDraftMarkdown(event.target.value)}
               />
@@ -683,11 +683,11 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
               <div aria-live="polite">{saveMessage && <p className="text-sm text-slate-600">{saveMessage}</p>}</div>
             </div>
           ) : viewTab === 'rendered' ? (
-            <div className="rounded-md border border-slate-200 bg-white p-4">
+            <div className="rounded-xl border border-slate-200 bg-white p-4">
               <MarkdownView markdown={markdown} jobId={job.id} password={password || undefined} artifacts={artifacts} />
             </div>
           ) : (
-            <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-md border border-slate-200 bg-white p-4 text-sm text-emerald-800">{markdown}</pre>
+            <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-xl border border-slate-200 bg-white p-4 text-sm text-emerald-800">{markdown}</pre>
           )}
         </section>
       </div>

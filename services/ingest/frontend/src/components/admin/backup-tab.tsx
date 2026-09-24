@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { ApiError, apiFetch, apiJson, loginUrl } from '@/lib/api';
 import { useVisiblePolling } from '@/lib/data-cache';
 import {
+  Badge,
   ConfirmDialog,
   ErrorNotice,
   Field,
@@ -405,17 +406,13 @@ function RunStatusBadge({ status }: { status: BackupRunStatus }) {
     finished: 'Fertig',
     failed: 'Fehlgeschlagen',
   };
-  const tones: Record<BackupRunStatus, string> = {
-    queued: 'bg-slate-100 text-slate-600',
-    running: 'bg-amber-50 text-amber-700',
-    finished: 'bg-emerald-50 text-emerald-700',
-    failed: 'bg-red-50 text-red-700',
+  const tones: Record<BackupRunStatus, 'slate' | 'amber' | 'emerald' | 'red'> = {
+    queued: 'slate',
+    running: 'amber',
+    finished: 'emerald',
+    failed: 'red',
   };
-  return (
-    <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${tones[status]}`}>
-      {labels[status]}
-    </span>
-  );
+  return <Badge tone={tones[status]}>{labels[status]}</Badge>;
 }
 
 function ImportForm({
