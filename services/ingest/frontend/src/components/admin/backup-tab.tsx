@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { AlertTriangle, Archive, Download, HardDriveDownload, RotateCcw, Trash2, Upload } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -95,7 +95,7 @@ export function BackupTab() {
   // the completion report can be seen.
   const [sessionExpired, setSessionExpired] = useState(false);
 
-  async function reloadRuns() {
+  const reloadRuns = useCallback(async () => {
     try {
       const data = await apiJson<{ runs: BackupRun[] }>(`${BASE_PATH}/runs`, { skipAuthRedirect: true });
       setRuns(data.runs);
@@ -109,9 +109,9 @@ export function BackupTab() {
     } finally {
       setRunsLoading(false);
     }
-  }
+  }, []);
 
-  async function reloadTargetState() {
+  const reloadTargetState = useCallback(async () => {
     try {
       const data = await apiJson<TargetState>(`${BASE_PATH}/target-state`, { skipAuthRedirect: true });
       setTargetState(data);
@@ -123,16 +123,15 @@ export function BackupTab() {
       }
       setTargetStateError(errorMessage(err));
     }
-  }
+  }, []);
 
   useEffect(() => {
+    // Both loaders only set state after their first await, so nothing
+    // cascades synchronously; the rule can't see through the async call.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void reloadRuns();
     void reloadTargetState();
-    // Runs only once on mount — reloadRuns/reloadTargetState are re-created
-    // every render but read no props, so omitting them from the deps here
-    // avoids reinstalling this effect on every state update.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [reloadRuns, reloadTargetState]);
 
   const activeRun = runs.find(isRunActive) ?? null;
 
@@ -142,16 +141,15 @@ export function BackupTab() {
 
   // A finished/failed import changes what target-state reports (freshness),
   // so refresh it whenever the active run disappears.
-  const [hadActiveRun, setHadActiveRun] = useState(false);
+  const hadActiveRun = useRef(false);
   useEffect(() => {
     if (activeRun) {
-      setHadActiveRun(true);
-    } else if (hadActiveRun) {
-      setHadActiveRun(false);
+      hadActiveRun.current = true;
+    } else if (hadActiveRun.current) {
+      hadActiveRun.current = false;
       void reloadTargetState();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRun]);
+  }, [activeRun, reloadTargetState]);
 
   const exportRuns = runs.filter((run) => run.kind === 'export');
   const latestImportRun = runs.find((run) => run.kind === 'import') ?? null;

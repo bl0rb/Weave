@@ -1,0 +1,65 @@
+WEAVE – KONZEPT FÜR EINE GEFÜHRTE BENUTZEROBERFLÄCHE
+Stand: 23. September 2026
+
+Zugehöriger klickbarer Entwurf: ui-konzept-2026-09-23.html
+Status: Gestaltungsvorschlag mit Beispieldaten, nicht in der Anwendung umgesetzt.
+
+Mein Vorschlag: ein klarer Arbeitsplatz für die tägliche Nutzung und ein eigener,
+gegliederter Admin-Modus. Der klickbare Entwurf zeigt beide Bereiche sowie einen
+geführten Quellen-Dialog.
+
+P1 – ADMIN ORDNEN
+
+Die aktuell 13 gleichrangigen Tabs in fünf Gruppen bündeln:
+Zugriff & Anmeldung · Wissen & Bots · KI & Verarbeitung · Betrieb & Sicherung ·
+Werkzeuge. Jede Unterseite bekommt eine feste Adresse; Zurück, Neuladen und
+Lesezeichen behalten den Kontext.
+
+Code-Beleg: services/ingest/frontend/src/app/admin/page.tsx, ab Zeile 26.
+
+P1 – ALLTAG PRIORISIEREN
+
+Portalnavigation auf Übersicht · Chat · Wissensbereiche · Prüfen & freigeben ·
+Aktivität konzentrieren. „Quelle hinzufügen“ wird eine kontextbezogene Aktion;
+Verarbeitung und Confluence-Importe stehen unter Aktivität. Auf der Startseite
+zuerst anstehende Prüfungen und Fehler zeigen; die vorhandene Einstiegshilfe
+vor allem beim ersten Gebrauch.
+
+P1 – WIRKLICH FÜHREN
+
+Quelle hinzufügen als Wissensbereich → Quelle → Prüfen & starten. Bereich
+übernehmen, Standardprofil vorbelegen, Spezialoptionen aufklappbar machen.
+Eingaben beim Zurückgehen erhalten und erklären, warum „Weiter“ gesperrt ist.
+Sichtbare Schrittanzeigen unterstützen die Orientierung.
+
+Referenz: W3C, Multi-page Forms
+https://www.w3.org/WAI/tutorials/forms/multi-page/
+
+BEIBEHALTEN UND PRÄZISIEREN
+
+Qualitätsstufen, Sammelaktionen, Berechtigungen und ausdrückliche Freigabe sind
+gute Grundlagen. Verarbeitet → freigegeben → indexiert/verfügbar bleiben
+unterscheidbar. Die beiden Sicherungsfunktionen zusammenführen und eindeutig
+als Datei-Export beziehungsweise verschlüsseltes Ingest-Archiv benennen.
+
+GESTALTUNG UNABHÄNGIG VON FARBE
+
+Kleinere, klare Überschriften; weniger großflächige Erklärungskarten; eine
+dominante Hauptaktion; konkrete Zeilenaktionen statt bloßer Pfeile.
+Im überarbeiteten Portal verständliche, einheitliche Begriffe verwenden.
+Tastaturbedienung, sichtbarer Fokus und verständliche Status auch mobil
+gehören dazu.
+
+FESTGELEGTER UMFANG – BESTEHENDEN CHAT BEIBEHALTEN
+
+Der aktuelle Chat gefällt dem Eigentümer besser und bleibt unverändert.
+Der vorgeschlagene Chat-Umbau entfällt. Die Verbesserungen konzentrieren sich
+auf das Wissensportal, die Quellen- und Freigabeabläufe sowie die Administration.
+Die bestehende Chat-Oberfläche und ihre Bedienung werden beibehalten.
+
+PRÜFUNG UND GRENZEN
+
+Geprüft anhand des Frontend-Codes und vorhandener Screenshots. Der Entwurf
+wurde samt Quellenablauf, Freigabe und schmaler Darstellung im Browser geprüft.
+Alle Daten im Entwurf sind Beispieldaten. Detailformulare der Administration
+sind nicht vollständig ausgearbeitet. Der Produktcode wurde nicht verändert.

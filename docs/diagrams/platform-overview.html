@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nine services, one flat network</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #f8fafc;
+      --color-ink:     #0f172a;
+      --color-muted:   #475569;
+      --color-accent:  #4f46e5;
+      --font-sans:     'Inter', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 940px; width: 100%; }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 0.5rem;
+    }
+    .sub {
+      font-size: 0.95rem;
+      line-height: 1.5;
+      color: var(--color-muted);
+      max-width: 64ch;
+      margin-bottom: 1.5rem;
+    }
+    svg { width: 100%; min-width: 920px; display: block; }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Architecture · Platform overview</p>
+    <h1>Nine services, one flat network</h1>
+    <p class="sub">Offline, Weave-Ingest and Weave-Knowledge turn a release into a searchable chunk store. Online, every chat and every scoped search ends up at Weave-Retrieval, the one service that reads that store.</p>
+
+    <svg viewBox="0 0 920 604" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="platform-overview-title platform-overview-desc">
+<title id="platform-overview-title">Nine services, one flat network</title>
+<desc id="platform-overview-desc">Weave-Ingest releases documents to Weave-Knowledge, which embeds them into a Postgres chunk store; Chat UI and Weave-Tools both reach that store only through Weave-API/Weave-Runtime and Weave-Retrieval, which alone owns read access, while Weave-Embeddings and Weave-Reranker serve both the offline indexing path and the online search path as stateless model services.</desc>
+
+<defs>
+  <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="#475569"/>
+  </marker>
+</defs>
+
+<rect width="100%" height="100%" fill="#f8fafc"/>
+
+<!-- ============ ZONES ============ -->
+<rect x="32" y="32" width="856" height="144" rx="8" fill="rgba(15,23,42,0.02)" stroke="rgba(15,23,42,0.10)" stroke-width="0.8"/>
+<rect x="40" y="36" width="168" height="12" rx="2" fill="#f8fafc"/>
+<text x="48" y="45" fill="rgba(15,23,42,0.40)" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">OFFLINE · INGESTION</text>
+
+<rect x="32" y="200" width="856" height="144" rx="8" fill="rgba(15,23,42,0.02)" stroke="rgba(15,23,42,0.10)" stroke-width="0.8"/>
+<rect x="40" y="204" width="140" height="12" rx="2" fill="#f8fafc"/>
+<text x="48" y="213" fill="rgba(15,23,42,0.40)" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">ONLINE · CHAT</text>
+
+<rect x="32" y="368" width="856" height="144" rx="8" fill="rgba(15,23,42,0.02)" stroke="rgba(15,23,42,0.10)" stroke-width="0.8"/>
+<rect x="40" y="372" width="192" height="12" rx="2" fill="#f8fafc"/>
+<text x="48" y="381" fill="rgba(15,23,42,0.40)" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">SEARCH · RANKING</text>
+
+<!-- ============ ARROWS (before boxes) ============ -->
+
+<!-- a1 Ingest -> Knowledge (R1 center y=120) -->
+<path d="M 264,120 H 360" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="282" y="100" width="60" height="12" rx="2" fill="#f8fafc"/>
+<text x="312" y="109" fill="#64748b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">RELEASED</text>
+
+<!-- a2 Knowledge -> Model Services (R1 center y=120) -->
+<path d="M 560,120 H 656" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="580" y="100" width="56" height="12" rx="2" fill="#f8fafc"/>
+<text x="608" y="109" fill="#64748b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">EMBED</text>
+
+<!-- a3 Chat UI -> Weave-API (R2 center y=288) -->
+<path d="M 264,288 H 360" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+<!-- a4 Weave-API -> Weave-Runtime (R2 center y=288) -->
+<path d="M 560,288 H 656" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+<!-- a5 Weave-Runtime -> Weave-Retrieval (elbow through the R2/R3 gap) -->
+<path d="M 756,328 V 364 Q 756,372 748,372 H 468 Q 460,372 460,380 V 416" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="580" y="354" width="56" height="12" rx="2" fill="#f8fafc"/>
+<text x="608" y="363" fill="#64748b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SEARCH</text>
+
+<!-- a6 Weave-Tools -> Weave-Retrieval (R3 center y=456) -->
+<path d="M 264,456 H 360" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="270" y="436" width="84" height="12" rx="2" fill="#f8fafc"/>
+<text x="312" y="445" fill="#64748b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SCOPED SEARCH</text>
+
+<!-- a7 Weave-Retrieval -> Model Services (right-margin route, label over the empty R3/C3 slot) -->
+<path d="M 560,456 H 864 Q 872,456 872,448 V 128 Q 872,120 864,120 H 856" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="716" y="436" width="80" height="12" rx="2" fill="#f8fafc"/>
+<text x="756" y="445" fill="#64748b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.04em">EMBED · RERANK</text>
+
+<!-- ============ NODES ============ -->
+
+<!-- Weave-Ingest -->
+<rect x="64" y="80" width="200" height="80" rx="6" fill="#f8fafc"/>
+<rect x="64" y="80" width="200" height="80" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="72" y="88" width="52" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="98" y="97" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">INGEST</text>
+<text x="164" y="124" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Ingest</text>
+<text x="164" y="140" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8000 · DB weave_ingest</text>
+<text x="164" y="152" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">OCR · quality gate</text>
+
+<!-- Weave-Knowledge -->
+<rect x="360" y="80" width="200" height="80" rx="6" fill="#f8fafc"/>
+<rect x="360" y="80" width="200" height="80" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="368" y="88" width="76" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="406" y="97" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">KNOWLEDGE</text>
+<text x="460" y="124" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Knowledge</text>
+<text x="460" y="140" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8001 · DB weave_knowledge</text>
+<text x="460" y="152" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">chunk + embed</text>
+
+<!-- Model Services -->
+<rect x="656" y="80" width="200" height="80" rx="6" fill="#f8fafc"/>
+<rect x="656" y="80" width="200" height="80" rx="6" fill="rgba(15,23,42,0.05)" stroke="#475569" stroke-width="1"/>
+<rect x="664" y="88" width="52" height="12" rx="2" fill="transparent" stroke="rgba(71,85,105,0.50)" stroke-width="0.8"/>
+<text x="690" y="97" fill="#475569" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">MODEL</text>
+<text x="756" y="124" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Model Services</text>
+<text x="756" y="140" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Embeddings · Reranker</text>
+<text x="756" y="152" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">stateless · no DB</text>
+
+<!-- Chat UI -->
+<rect x="64" y="248" width="200" height="80" rx="6" fill="#f8fafc"/>
+<rect x="64" y="248" width="200" height="80" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="72" y="256" width="24" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="84" y="265" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">UI</text>
+<text x="164" y="292" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Chat UI</text>
+<text x="164" y="308" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:3001 · services/chat</text>
+<text x="164" y="320" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">no DB · talks only to API</text>
+
+<!-- Weave-API -->
+<rect x="360" y="248" width="200" height="80" rx="6" fill="#f8fafc"/>
+<rect x="360" y="248" width="200" height="80" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="368" y="256" width="52" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="394" y="265" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">GATEWAY</text>
+<text x="460" y="292" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-API</text>
+<text x="460" y="308" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8004 · DB weave_api</text>
+<text x="460" y="320" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">tokens · sessions</text>
+
+<!-- Weave-Runtime -->
+<rect x="656" y="248" width="200" height="80" rx="6" fill="#f8fafc"/>
+<rect x="656" y="248" width="200" height="80" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="664" y="256" width="52" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="690" y="265" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">RUNTIME</text>
+<text x="756" y="292" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Runtime</text>
+<text x="756" y="308" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8003 · no DB</text>
+<text x="756" y="320" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">router · bots · agents</text>
+
+<!-- Weave-Tools -->
+<rect x="64" y="416" width="200" height="80" rx="6" fill="#f8fafc"/>
+<rect x="64" y="416" width="200" height="80" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="72" y="424" width="40" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="92" y="433" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">TOOLS</text>
+<text x="164" y="460" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Tools</text>
+<text x="164" y="476" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8005 · no DB</text>
+<text x="164" y="488" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">MCP · REST · scoped</text>
+
+<!-- Weave-Retrieval (FOCAL) -->
+<rect x="360" y="416" width="200" height="80" rx="6" fill="#f8fafc"/>
+<rect x="360" y="416" width="200" height="80" rx="6" fill="rgba(79,70,229,0.08)" stroke="#4f46e5" stroke-width="1"/>
+<rect x="368" y="424" width="56" height="12" rx="2" fill="transparent" stroke="rgba(79,70,229,0.40)" stroke-width="0.8"/>
+<text x="396" y="433" fill="#4f46e5" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">SEARCH</text>
+<text x="460" y="460" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Retrieval</text>
+<text x="460" y="476" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8002 · reads weave_knowledge</text>
+<text x="460" y="488" fill="#4f46e5" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">the one reader (ADR-0005)</text>
+
+<!-- ============ LEGEND ============ -->
+<line x1="32" y1="556" x2="888" y2="556" stroke="rgba(15,23,42,0.10)" stroke-width="0.8"/>
+<text x="32" y="572" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+
+<rect x="112" y="564" width="14" height="10" rx="2" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<text x="132" y="572" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Core service</text>
+
+<rect x="256" y="564" width="14" height="10" rx="2" fill="rgba(15,23,42,0.05)" stroke="#475569" stroke-width="1"/>
+<text x="276" y="572" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Stateless model service</text>
+
+<rect x="452" y="564" width="14" height="10" rx="2" fill="rgba(79,70,229,0.08)" stroke="#4f46e5" stroke-width="1"/>
+<text x="472" y="572" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Sole reader of the chunk store</text>
+
+<line x1="700" y1="569" x2="714" y2="569" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<text x="720" y="572" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Calls</text>
+</svg>
+  </div>
+</body>
+</html>

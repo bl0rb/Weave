@@ -32,7 +32,7 @@ evaluated before any data or budget leaves the building.
 does not decide anything. It answers questions from documents that someone
 deliberately published, and it shows its work.
 
-The current release is **v0.2.8** — nine services, running and tested end to
+The current release is **v0.5.6** — nine services, running and tested end to
 end. The [wiki](https://github.com/bl0rb/Weave/wiki) is the place to
 start reading; this README covers the repository itself.
 
@@ -54,7 +54,7 @@ another.
 | `services/chat` | Next.js chat interface. It talks only to `services/api` and signs users in through **Sign in with Weave**. |
 | `services/embeddings` | Optional OpenAI-compatible CPU embedding service using `intfloat/multilingual-e5-small` and ONNX Runtime at `/v1/embeddings`. |
 | `services/reranker` | Optional Cohere/Jina-compatible CPU reranking service using `BAAI/bge-reranker-v2-m3` at `/rerank`. |
-| `contracts/` | Cross-service contracts: `frontmatter.schema.json`, `openapi.json`, `chunk-store.md`, `internal-chat.md`, `n8n-flow.md`, `indexing-status.md`, and event contracts. |
+| `contracts/` | Cross-service contracts: `frontmatter.schema.json`, `openapi.json`, `chunk-store.md`, `internal-chat.md`, `n8n-flow.md`, `indexing-status.md`, `technical-identities.md`, and event contracts. |
 | `deploy/` | Docker Compose stack, local build override, and PostgreSQL initialization. `deploy/.env` is generated and ignored by Git. |
 | `docs/` | Operations guide, knowledge-portal guide, ADRs, browser-readable architecture artifacts, and the screenshot-based user wiki. |
 | `weave.yaml`, `scripts/` | The single configuration source and its `render` and `check` commands. |
@@ -62,6 +62,33 @@ another.
 The [knowledge portal guide](docs/wissensportal.md) explains the separation
 between processing and publication. Under the normal workflow, only content
 that a user explicitly releases is indexed.
+
+### What has shipped since v0.2
+
+Runtime can route a chat turn to an agent-mode bot with one or more configured
+subagents: each has its own research scope (collections, filters, model,
+search and time budget), and a bot with more than one subagent runs a
+LangGraph orchestrator-worker pipeline that fans research out, merges the
+results, and re-researches gaps within budget — with progress events streamed
+to the chat while it runs (`services/runtime/README.md`). n8n-backed bots
+stream incrementally instead of blocking for the whole turn, with a keepalive
+so an hour-long turn stays connected. Weave-Tools now accepts a third kind of
+caller besides a signed-in user and an n8n delegation: a **technical
+identity** — a standalone, administered credential for an external MCP client
+or REST integration, with explicitly granted collections, a one-time
+`wti_...` token, rotation, revocation and an audit log
+([contracts/technical-identities.md](contracts/technical-identities.md)).
+Weave-Ingest exports and imports every user, knowledge space, connection and
+file into one passphrase-encrypted archive for disaster recovery
+([docs/betrieb.md](docs/betrieb.md) section 12), and its admin console gained
+on-demand index maintenance — re-embed everything, or rebuild the index from
+stored releases — alongside a **Neu indizieren** action that re-delivers a
+single already-released document, or a whole knowledge space, without
+reprocessing it. The review portal filters documents by quality grade,
+explains the grade it assigned, and can release, skip, or delete several
+documents at once; each document shows where it came from and, once released,
+who released it. A release can carry image artifacts — for example from a
+Confluence page — which the chat then renders inline next to the answer.
 
 ### Administration and retrieval controls
 
@@ -259,18 +286,21 @@ service credentials remain server-side and are checked fail-closed. Run
 
 ## Roadmap
 
-- **Agent bots with tool calling** — add an optional `agent` bot kind backed by
-  LangChain/LangGraph. Agents will be able to use Weave Retrieval, approved
-  MCP servers, and other explicit tools; complex workflows may delegate to
-  scoped subagents.
-- **Guarded agent execution** — define per-bot tool allowlists, preserve the
-  requesting user's team and collection scope for every call, and enforce
-  step, timeout, token-budget, and audit-trace limits. Agents will never get
-  direct database or filesystem access, and subagents cannot gain broader
-  permissions than their parent turn.
-- **Administration** — configure agent tools, MCP connections, subagents, and
-  execution limits through the existing admin UI without exposing credentials
-  to the browser.
+Agent-mode bots, their LangGraph multi-subagent orchestration, and their
+administration are implemented (`services/runtime/README.md`, "Agentenmodus
+(LangGraph)"). What is still open:
+
+- **Broader agent tool access** — a subagent calls exactly one tool today,
+  `search_knowledge`. Letting a bot allowlist approved MCP servers or other
+  explicit tools per subagent is not yet built; scope and permissions would
+  still never exceed the requesting user's own team and collection access.
+- **A real LLM provider in production for agent mode** — tested against
+  `fake` and, where a bot declares `model.supports_tools`, `openai`; Ingest's
+  central chat-provider configuration does not yet expose `supports_tools`
+  itself, so Runtime falls back to the safe RAG path until that field exists.
+- **`document`, `action`, and `complex` intents outside agent mode** — a bot
+  that is neither n8n-backed nor agent-mode still answers these intents with
+  a placeholder pointing to a later version.
 
 ## Testing
 
@@ -317,6 +347,7 @@ several gigabytes per commit.
 | [docs/bauplan.html](docs/bauplan.html) | Transformation plan and implementation status |
 | [docs/glossar.html](docs/glossar.html) | Technical terms and their role in Weave |
 | [docs/wissensportal.md](docs/wissensportal.md) | Knowledge spaces, release workflow, and indexing status |
+| [docs/diagrams/](docs/diagrams/) | Standalone platform, document-journey, agent-mode, and external-access diagrams |
 | [docs/screenshots/user-wiki/](docs/screenshots/user-wiki/) | Sanitized screenshots covering the user and administrator interfaces |
 | [docs/adr/](docs/adr/) | Architecture decision records |
 | [contracts/](contracts/) | Data and API contracts between services |

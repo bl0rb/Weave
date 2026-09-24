@@ -181,8 +181,13 @@ Since chart 1.1.0 a `SECRET_KEY` is required — the chart refuses to render wit
 - Password-gated view/download/edit/delete per job
 - OpenAI-compatible page-by-page vision profile
 - User accounts with per-user/team data visibility, local login and OIDC SSO
-- Admin console for knowledge areas, n8n-backed bots, users, teams, identity providers, worker logs, sign-in logs, Paddle runtime settings, VL connections, retrieval providers, and confirmed storage backups
+- Admin console for knowledge areas, n8n-backed bots, agent-mode subagents, users, teams, identity providers, worker logs, sign-in logs, Paddle runtime settings, VL connections, retrieval providers, technical identities, and disaster-recovery backup/restore
 - Retrieval provider keys use a clear precedence: an encrypted Admin-UI override wins; otherwise the key and provider settings come from the deployment environment or Vault-injected environment variables. The UI shows only the source (`admin`, `env/vault`, or `none`) and never exposes the secret.
+- **Passphrase-encrypted disaster recovery**: export/import every user, knowledge space, connection and file into one `.weave-backup.tar.gz` archive, from the admin console or `python -m app.cli backup export|import` — see `docs/betrieb.md` section 12.
+- **Index maintenance**: re-embed the whole corpus or rebuild the index from stored releases on demand, and re-index a single document or an entire knowledge space from the review page without reprocessing it.
+- **Technical identities**: standalone credentials for an MCP client or REST integration outside Weave — explicitly granted collections, a one-time `wti_...` token, rotation, revocation and an audit log. See `contracts/technical-identities.md`.
+- **Quality-grade filtering, explanations and bulk actions** in the review portal: filter any document list by grade (A/B/C/none), see the signals and thresholds behind a grade, and release, skip or delete several documents at once.
+- **Document provenance**: every portal document shows its source (upload, Confluence, mail) and, once released, who released it.
 
 ## Product Walkthrough
 
@@ -244,7 +249,7 @@ Create personal API tokens for programmatic access. Tokens are shown exactly onc
 
 ### Admin Console (`/admin`)
 
-Tabs: **Users** (roles, teams, activation, password resets, assigning legacy ownerless jobs), **Teams**, **Identity Providers**, **Logs**, **VL Connections**, and **Paddle** (default OCR profile and timeout).
+Tabs: **Knowledge Areas** (all collections including other owners' and empty ones), **Users** (roles, teams, activation, password resets, assigning legacy ownerless jobs), **Teams**, **Bots** (n8n-backed bots and agent-mode subagents), **Technical Identities** (standalone MCP/REST credentials — granted collections, one-time token, rotation, revocation, audit log), **Identity Providers**, **Chat & LLM** (the central chat-provider configuration Weave Runtime reads, ADR-0007), **Search & Models** (embedding/reranker provider, the lexical/semantic slider, and **Index Maintenance** — re-embed everything or rebuild the index from stored releases), **Logs**, **VL Connections**, **Paddle** (default OCR profile and timeout), **Backup & Restore** (disaster-recovery export/import, see `docs/betrieb.md` section 12), and **Tools**.
 
 **Registering an OIDC provider (Keycloak, Microsoft Entra ID, ...):** add it under **Admin → Identity Providers** with the issuer URL, client ID/secret and scopes from your IdP. In the IdP's app registration, set the redirect URI / callback URL to:
 
@@ -309,7 +314,13 @@ Common endpoints:
 - `GET /api/v1/internal/bots` — enabled bot projection for Weave Runtime (service token; `Cache-Control: no-store`)
 - `GET /api/v1/auth/admin/worker-logs` — worker logs (admin)
 - `GET` / `PUT /api/v1/auth/admin/retrieval-provider` — embedding, hybrid-search, and reranker configuration (admin; API keys are write-only)
+- `POST /api/v1/admin/retrieval-provider/reindex`, `GET .../reindex-status` — admin index maintenance: recompute vectors for every chunk, and poll progress
+- `POST /api/v1/admin/knowledge/rebuild`, `GET .../rebuild-status` — admin index maintenance: rebuild the whole index from stored releases, and poll progress
+- `POST /api/v1/portal/documents/bulk` — release, skip/unskip or delete several review-portal documents in one call
+- `POST /api/v1/portal/documents/{job_id}/reindex`, `POST /api/v1/portal/collections/{collection_id}/reindex` — re-deliver an already-released document, or every release in a knowledge space, for re-indexing without reprocessing
+- `GET` / `POST /api/v1/auth/admin/technical-identities`, `PUT` / `POST .../rotate` / `POST .../revoke`, `GET .../audit` — manage technical identities for MCP/REST integrations (admin; the raw `wti_...` token is shown once, on create or rotate)
 - `GET /api/v1/admin/backup.zip` — confirmed admin-only ZIP of local `uploads/` and `results/` storage; no file listing is exposed
+- `python -m app.cli backup export|import` — passphrase-encrypted disaster-recovery export/import of users, knowledge spaces, connections and files (see `docs/betrieb.md` section 12; also reachable from **Backup & Restore** in the admin console)
 - `GET /api/v1/stats`, `GET /api/v1/health`, `GET /api/v1/paddle/status`, `GET /api/v1/paddle/capabilities`
 
 ## Collections
@@ -497,7 +508,7 @@ Weave Ingest is built to run inside your own network. What is wired in by defaul
 | Containers | All three images run as UID/GID 1000, `no-new-privileges` and `cap_drop: ALL` in compose, matching `securityContext` in the Helm chart |
 | Supply chain | Actions pinned to commit SHAs, backend and worker dependencies hash-locked, `pip-audit` and `npm audit` run on every PR |
 
-**Reviewed by:** the codebase was put through a security audit by **Claude Opus 5** (authentication and authorization, injection, SSRF, secret handling, containers, CI and supply chain). All findings are fixed; the fixes are covered by the test suite.
+**Reviewed by:** the codebase was put through a security audit by **Claude Opus 5** on 2026-09-10 (authentication and authorization, injection, SSRF, secret handling, containers, CI and supply chain). Some findings from that audit are fixed and covered by the test suite; the rest are tracked internally.
 
 **Two things worth knowing when you deploy:**
 

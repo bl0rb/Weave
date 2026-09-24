@@ -30,12 +30,12 @@ Jira-Zugang eingeplant.
 | Baustein | Aktueller Stand | Bedeutung für Jira |
 |---|---|---|
 | Eigener MCP-Server | `services/tools/app/mcp_server.py` stellt `search` und `list_collections` bereit. | Externe Agenten können Weave-Wissen abrufen. Das bindet noch keinen Jira-Server an. |
-| Direkte LLM-Bots | `services/runtime/backend/app/services/llm.py` enthält keine allgemeine MCP-Client-/Tool-Calling-Schleife. | Eine MCP-URL oder ein Prompt allein aktiviert keine Jira-Werkzeuge. |
+| Direkte LLM-Bots | `services/runtime/backend/app/services/llm.py` enthält seit `chat_with_tools` eine allgemeine Tool-Calling-Schleife (genutzt vom Subagent-Suchwerkzeug in `agents.py`), aber weiterhin keinen allgemeinen externen MCP-Client. | Eine MCP-URL oder ein Prompt allein aktiviert keine Jira-Werkzeuge. |
 | Bot-Verwaltung | `ManagedBotWrite` kennt `kind: n8n` und `kind: llm`, aber keine MCP-Verbindungen/Tool-Zuordnungen. | Externe Tools sind noch kein natives Verwaltungsobjekt. |
 | n8n-Provider | Runtime delegiert Arbeitsaufträge an einen konfigurierten Webhook. | Geeigneter vorhandener Einstieg für den Helpdesk-Bot. |
 | Übergabe an n8n | Nachricht, Verlauf, Benutzer, Bot-ID, Collection-Scope und Delegationstoken. | Identität ist vorhanden; Jira-Anmeldedaten und Jira-Berechtigungsmodell fehlen. |
-| Webhook-Authentifizierung | Der aktuelle lokale `n8n_client.py` sendet zusätzlich zur HMAC-Signatur das konfigurierte Bearer-Token. | Der frühere Auditbefund zum fehlenden Header ist für diesen lokalen Stand überholt; Deploymentstand separat prüfen. |
-| n8n-Antwort | Ein JSON-Ergebnis wird erwartet; `streaming` wird weiterhin nicht ausgewertet. | Für den ersten Flow JSON verwenden. MCP-Transport und Chat-Streaming sind verschiedene Dinge. |
+| Webhook-Authentifizierung | Der aktuelle lokale `n8n_client.py` sendet zusätzlich zur HMAC-Signatur das konfigurierte Bearer-Token. | Deploymentstand separat prüfen. |
+| n8n-Antwort | Ein JSON-Ergebnis wird erwartet; seit dem n8n-Vertrag v2 (`run_flow_stream` in `n8n_client.py`) wird `streaming` bei `bot.n8n.streaming=True` ausgewertet (siehe `_stream_deferred_n8n` in `chat.py`). | Für den ersten Flow reicht JSON. Streaming ist bereits verfügbar, muss aber für den Helpdesk-Bot separat aktiviert und geprüft werden. |
 
 Quellen im Repository:
 [MCP-Server](../../services/tools/app/mcp_server.py),

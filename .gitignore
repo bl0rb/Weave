@@ -37,3 +37,12 @@ node_modules/
 *.log
 *-build.txt
 *-result.txt
+
+# Internal audits stay out of the public repository -- Interne Audits bleiben
+# außerhalb des öffentlichen Repositories.
+docs/reviews/
+
+# Internal integration-boundary planning notes stay out of the public
+# repository -- interne Planungsnotizen zu Integrationsgrenzen bleiben
+# außerhalb des öffentlichen Repositories.
+docs/bereinigung.md

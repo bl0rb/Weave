@@ -81,6 +81,21 @@ Im geöffneten Wissensbereich lädt **Alle als ZIP** sämtliche für den angemel
 
 Direktes Löschen freigegebener Aufträge bleibt gesperrt (HTTP 409). Fehlende Confluence-Seiten können über die oben beschriebene Rücknahme aus dem Wissen entfernt werden. Die vorhandenen OIDC-/Benutzer- und Verbindungseinstellungen bleiben unter **Administration** bzw. **Administration → Werkzeuge → Verbindungen** erreichbar. Eigene Confluence-Verbindungen sind außerdem direkt aus der Quellenauswahl erreichbar.
 
+## Mehrfachauswahl, Überspringen und Sammelaktionen
+
+In den Dokumentlisten (Prüfen und freigeben, geöffneter Wissensbereich) lässt sich jedes Dokument einzeln oder per Kopfzeilen-Checkbox die gesamte Seite auf einmal auswählen; die Werkzeugleiste zeigt „*n* ausgewählt" und bietet **Freigeben**, **Überspringen** und **Löschen** für die ganze Auswahl. Sammelfreigabe respektiert dieselben Regeln wie eine einzelne Freigabe — Qualitätsstufe C verlangt dieselbe ausdrückliche Bestätigung, und ein Dokument ohne Wissensbereich, ohne Freigabeberechtigung oder bereits freigegeben wird nicht abgelehnt, sondern übersprungen und in der Rückmeldung einzeln als Fehlergrund aufgeführt; der Rest der Auswahl läuft weiter. Sammel-Löschen lässt passwortgeschützte und bereits freigegebene Dokumente aus — die müssen einzeln behandelt werden — und ist wie jedes Löschen unwiderruflich.
+
+**Überspringen** markiert ein Dokument, ohne es freizugeben oder zu löschen — für Duplikate, irrelevante Uploads oder Inhalte, die (noch) nicht in den Index sollen. Ein übersprungenes Dokument bleibt außerhalb der normalen Prüfliste, lässt sich aber jederzeit über **Nicht mehr überspringen** wieder aufnehmen und ist bis dahin weiterhin unter **Verarbeitung** sichtbar.
+
+## Herkunft und Freigabe nachvollziehen
+
+Die Dokumentprüfung zeigt unter **Herkunft**, woher ein Dokument stammt — Upload, Confluence-Seite (mit Link) oder Mail-Anhang — und nach einer Freigabe zusätzlich **Freigegeben von** mit dem Namen der freigebenden Person. Beides ist reine Anzeige aus bereits vorhandenen Daten (Jobquelle bzw. `DocumentRelease.owner`) und verändert keine Berechtigung.
+
+## Ein Dokument oder einen Wissensbereich neu indizieren
+
+**Neu indizieren** unterscheidet sich von **Erneut prüfen** (siehe unten): Es verarbeitet das Dokument nicht neu, sondern liefert denselben bereits freigegebenen Stand erneut an Knowledge aus und erzwingt dort einen Ersatz der bereits gespeicherten Textabschnitte statt eines Duplikat-Überspringens. Das ist sinnvoll nach einem Embedding-Wechsel oder wenn die letzte Zustellung zwar als „gesendet" gilt, aber der Index sichtbar veraltet oder unvollständig ist. Dokument- oder Wissensbereichseigentümer und Administratoren finden den Knopf in der Dokumentprüfung eines freigegebenen Dokuments; er fragt einmal nach Bestätigung und ist hervorgehoben, sobald die letzte Indizierung fehlgeschlagen ist. Für den ganzen Bereich auf einmal steht im geöffneten Wissensbereich **Wissensbereich neu indizieren**, das alle nicht zurückgezogenen Freigaben dieses Bereichs erneut einreiht.
+
+Beide Aktionen laufen über dieselbe Zustell-Infrastruktur wie eine normale Freigabe (Outbox, Wiederholungen bei Fehlschlag); der Fortschritt ist an derselben Indizierungsanzeige ablesbar wie nach einer Freigabe. Für einen vollständigen Neuaufbau des gesamten Index — etwa nach einem Provider-Wechsel oder im Rahmen einer Notfallwiederherstellung — steht Administratoren unter **Administration → Suche & Modelle → Index-Wartung** „Vektoren neu berechnen" und „Index aus Freigaben neu aufbauen" zur Verfügung; beides bestätigungspflichtig und ratenbegrenzt. Details zur Notfallwiederherstellung samt der zugehörigen **Sicherung & Wiederherstellung**-Verwaltung (passphrase-verschlüsseltes Exportarchiv über Admin oder `app/cli.py backup export|import`) stehen in [betrieb.md](betrieb.md) Abschnitt 12.
 
 ## Verarbeitung und Profilauswahl
 

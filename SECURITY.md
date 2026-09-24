@@ -34,7 +34,7 @@ worth reporting. Name the configuration.
 
 ## Supported versions
 
-The repository carries a single tag, `v0.1.0`, and a single branch, `main`.
+The repository carries a single branch, `main`, with tags up to `v0.5.6`.
 There are no release branches and no backports. Fixes land on `main`; report
 against `main` or against the commit you tested.
 

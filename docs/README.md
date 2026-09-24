@@ -36,8 +36,7 @@ claude.ai werden aus genau diesen Dateien neu veröffentlicht.
   ab). M3 nur teilweise — hash-gelockt sind bislang allein
   `services/ingest/backend/requirements.txt` und `requirements-worker.txt`;
   die übrigen sieben sind auf exakte Versionen gepinnt, aber ohne Prüfsummen.
-- **[bereinigung.md](bereinigung.md)** — verbindliche Integrationsgrenzen,
-  entfernte Altpfade und Kandidaten für spätere, kontrollierte Rückbauten.
+- Die Integrationsgrenzen und Rückbauentscheidungen zu Altpfaden werden intern geführt.
 - **[screenshots/user-wiki/](screenshots/user-wiki/)** — 31 aktuelle Browseraufnahmen
   in doppelter Pixeldichte mit Beispieldaten für das User-Wiki. Die
   [Galerie](screenshots/user-wiki/index.html) enthält alle Original-PNGs und den
@@ -45,7 +44,12 @@ claude.ai werden aus genau diesen Dateien neu veröffentlicht.
   Anmelden → Hochladen → Verarbeiten → Freigeben → Chat-Mockup.
 - **[diagrams/](diagrams/)** — gezeichnete Schaubilder als HTML-Quelle plus
   exportiertes SVG. `network-topology` gehört zum Netzabschnitt der
-  [Wurzel-README](../README.md#network-design).
+  [Wurzel-README](../README.md#network-design); `platform-overview` zeigt die
+  neun Dienste und wer wen aufruft; `document-journey` zeigt den Weg vom
+  Upload über Freigabe und Indizierung bis zur zitierten Antwort samt
+  Widerruf; `agent-mode` zeigt einen Chat-Turn durch den LangGraph-Orchestrator
+  mit parallelen Recherche-Subagenten; `external-access` zeigt die vier
+  Zugriffswege auf die Wissenssuche und ihre gemeinsame Rechteschnittmenge.
 - **[integrations/mail-ingestion.md](integrations/mail-ingestion.md)** — wie
   Dokumente per Mail hereinkommen und warum die frühere separate Mail-API
   entfernt wurde.

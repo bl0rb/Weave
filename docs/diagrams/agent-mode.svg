@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 968 740" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="agent-mode-title agent-mode-desc">
+<title id="agent-mode-title">One turn, several research agents</title>
+<desc id="agent-mode-desc">A chat question first has its effective scope resolved as user rights intersected with the bot's and each subagent's own collections; a planner then delegates subquestions to research subagents that each search only inside that intersection, a merge step deduplicates their findings and can send one follow-up round back to the planner, and only then does the turn produce an answer with combined sources.</desc>
+
+<defs>
+  <style>@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Inter:wght@400;500;600&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap');</style>
+  <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="#475569"/>
+  </marker>
+  <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="#4f46e5"/>
+  </marker>
+</defs>
+
+<rect width="100%" height="100%" fill="#f8fafc"/>
+
+<!-- ============ ARROWS (before boxes) ============ -->
+
+<!-- a1 Question -> Rights Resolution -->
+<path d="M 244,140 H 284" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+<!-- a2 Rights Resolution -> Plan -->
+<path d="M 464,140 H 504" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+
+<!-- a3 Plan -> Research: Agent A (straight, same column) -->
+<path d="M 594,184 V 248" fill="none" stroke="#4f46e5" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+
+<!-- a4 Plan -> Research: Agent B (fan-out via Send) -->
+<path d="M 614,184 V 208 Q 614,216 622,216 H 806 Q 814,216 814,224 V 248" fill="none" stroke="#4f46e5" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+<rect x="694" y="196" width="40" height="12" rx="2" fill="#f8fafc"/>
+<text x="714" y="205" fill="#4f46e5" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">SEND</text>
+
+<!-- a5 Research: Agent A -> Merge -->
+<path d="M 594,336 V 360 Q 594,368 602,368 H 686 Q 694,368 694,376 V 400" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+<!-- a6 Research: Agent B -> Merge -->
+<path d="M 814,336 V 360 Q 814,368 806,368 H 722 Q 714,368 714,376 V 400" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+<!-- a7 Merge -> Answer -->
+<path d="M 704,488 V 568" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+<!-- a8 Merge -> Plan, follow-up round (dashed, right-margin route) -->
+<path d="M 794,444 H 920 Q 928,444 928,436 V 148 Q 928,140 920,140 H 684" fill="none" stroke="#4f46e5" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow-accent)"/>
+<rect x="774" y="122" width="72" height="12" rx="2" fill="#f8fafc"/>
+<text x="810" y="131" fill="#4f46e5" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.04em">FOLLOW-UP</text>
+
+<!-- ============ NODES ============ -->
+
+<!-- N1 Chat Question -->
+<rect x="64" y="96" width="180" height="88" rx="6" fill="#f8fafc"/>
+<rect x="64" y="96" width="180" height="88" rx="6" fill="rgba(71,85,105,0.10)" stroke="#64748b" stroke-width="1"/>
+<rect x="72" y="104" width="36" height="12" rx="2" fill="transparent" stroke="rgba(100,116,139,0.40)" stroke-width="0.8"/>
+<text x="90" y="113" fill="#64748b" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">USER</text>
+<text x="154" y="140" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Chat Question</text>
+<text x="154" y="156" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">agent-mode bot</text>
+<text x="154" y="168" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">&gt;1 configured subagent</text>
+
+<!-- N2 Rights Resolution (Security/Boundary) -->
+<rect x="284" y="96" width="180" height="88" rx="6" fill="#f8fafc"/>
+<rect x="284" y="96" width="180" height="88" rx="6" fill="rgba(79,70,229,0.05)" stroke="#4f46e5" stroke-width="1" stroke-dasharray="4,4"/>
+<rect x="292" y="104" width="40" height="12" rx="2" fill="transparent" stroke="rgba(79,70,229,0.50)" stroke-width="0.8"/>
+<text x="312" y="113" fill="#4f46e5" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">SCOPE</text>
+<text x="374" y="140" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Rights Resolution</text>
+<text x="374" y="156" fill="#4f46e5" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">user ∩ bot ∩ subagent</text>
+<text x="374" y="168" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">∩ request filter</text>
+
+<!-- N3 Plan (FOCAL) -->
+<rect x="504" y="96" width="180" height="88" rx="6" fill="#f8fafc"/>
+<rect x="504" y="96" width="180" height="88" rx="6" fill="rgba(79,70,229,0.08)" stroke="#4f46e5" stroke-width="1"/>
+<rect x="512" y="104" width="32" height="12" rx="2" fill="transparent" stroke="rgba(79,70,229,0.40)" stroke-width="0.8"/>
+<text x="528" y="113" fill="#4f46e5" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">PLAN</text>
+<text x="594" y="140" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Plan</text>
+<text x="594" y="156" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">main LLM · research_area</text>
+<text x="594" y="168" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">one call per subquestion</text>
+
+<!-- N4 Research: Agent A -->
+<rect x="504" y="248" width="180" height="88" rx="6" fill="#f8fafc"/>
+<rect x="504" y="248" width="180" height="88" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="512" y="256" width="64" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="544" y="265" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">AGENT A</text>
+<text x="594" y="292" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Research: Agent A</text>
+<text x="594" y="308" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">scope ∩ own collections</text>
+<text x="594" y="320" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">bounded search budget</text>
+
+<!-- N5 Research: Agent B -->
+<rect x="724" y="248" width="180" height="88" rx="6" fill="#f8fafc"/>
+<rect x="724" y="248" width="180" height="88" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="732" y="256" width="64" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="764" y="265" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">AGENT B</text>
+<text x="814" y="292" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Research: Agent B</text>
+<text x="814" y="308" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">scope ∩ own collections</text>
+<text x="814" y="320" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">bounded search budget</text>
+
+<!-- N6 Merge -->
+<rect x="614" y="400" width="180" height="88" rx="6" fill="#f8fafc"/>
+<rect x="614" y="400" width="180" height="88" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="622" y="408" width="44" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="644" y="417" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">MERGE</text>
+<text x="704" y="444" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Merge</text>
+<text x="704" y="460" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">dedupe · tag conflicts</text>
+<text x="704" y="472" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">decide a follow-up round</text>
+
+<!-- N7 Answer -->
+<rect x="614" y="568" width="180" height="88" rx="6" fill="#f8fafc"/>
+<rect x="614" y="568" width="180" height="88" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="622" y="576" width="44" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="644" y="585" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">CHAT</text>
+<text x="704" y="612" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Answer</text>
+<text x="704" y="628" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">combined sources</text>
+<text x="704" y="640" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">or the no-context guard</text>
+
+<!-- ============ LEGEND ============ -->
+<line x1="64" y1="700" x2="904" y2="700" stroke="rgba(15,23,42,0.10)" stroke-width="0.8"/>
+<text x="64" y="716" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+
+<rect x="144" y="708" width="14" height="10" rx="2" fill="rgba(79,70,229,0.05)" stroke="#4f46e5" stroke-width="1" stroke-dasharray="3,3"/>
+<text x="164" y="716" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Rights gate, narrows only</text>
+
+<rect x="360" y="708" width="14" height="10" rx="2" fill="rgba(79,70,229,0.08)" stroke="#4f46e5" stroke-width="1"/>
+<text x="380" y="716" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Orchestrator decision</text>
+
+<rect x="556" y="708" width="14" height="10" rx="2" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<text x="576" y="716" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Graph step</text>
+
+<line x1="700" y1="713" x2="714" y2="713" stroke="#4f46e5" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow-accent)"/>
+<text x="720" y="716" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Optional follow-up round</text>
+</svg>

@@ -18,7 +18,7 @@ gegengeprüft. Diese Datei ist die maßgebliche Fassung.
 | Weave-Retrieval | 8002 | liest `weave_knowledge` | Hybride Suche, Lese-Autorität für Collections. Einziger Dienst ohne eigene DB (ADR-0005) |
 | Weave-Runtime | 8003 | keine | Intent-Router, Bots aus YAML und aus Ingests Bot-Verwaltung, LLM, n8n, stellt Delegations-Token aus |
 | Weave-API | 8004 | `weave_api` | Gateway: Tokens, Sitzungen, Gespräche. Identitäten kommen aus Ingest (ADR-0006), hier liegt nur ihr Spiegel |
-| Weave-Tools | 8005 / 3001 | keine | MCP-Dienst mit rechte-gebundener Suche; Chat-Oberfläche |
+| Weave-Tools | 8005 (REST) / 8008 (MCP) / 3001 (Chat) | keine | MCP-Dienst mit rechte-gebundener Suche; Chat-Oberfläche |
 
 Dieselben sechs Dienste noch einmal, aus Betreibersicht: wo etwas eingestellt
 wird, worauf es gebaut ist, und womit man sich bei ihm ausweist.
@@ -31,6 +31,16 @@ wird, worauf es gebaut ist, und womit man sich bei ihm ausweist.
 | Weave-Runtime | **Zwei Quellen, eine Liste:** YAML-Dateien im Volume `runtime_bots`, bei jedem Aufruf frisch von der Platte gelesen, plus die in Ingest gepflegten n8n-Bots, bei jedem Aufruf frisch über `/api/v1/internal/bots` geholt. Gleiche `id` heißt: der zentrale Eintrag gewinnt. Eine Änderung wirkt auf beiden Wegen ohne Neustart. Eigene Oberfläche hat der Dienst keine; alles Übrige `deploy/.env` | FastAPI · httpx · SSE · PyYAML. Ohne Datenbank | `RUNTIME_API_TOKEN` als Bearer. Stellt seinerseits Delegations-Token aus: HMAC-SHA256, fünf Minuten, mit dem erlaubten Collection-Umfang darin |
 | Weave-API | `python -m app.cli create-user` / `create-token` im Container; keine Oberfläche. Identitäten kommen seit ADR-0006 ohnehin aus Ingest | FastAPI · SQLAlchemy + Alembic · authlib + joserfc | Personal-Token (in der DB nur als sha256) oder Sitzungs-Cookie. Angemeldet wird föderiert über Ingest — ersatzweise ein eigener OIDC-Anbieter. `INTROSPECTION_SERVICE_TOKEN` ist der Hauptschlüssel zur Token-Auflösung |
 | Weave-Tools | Keine Oberfläche für Einstellungen, beide Teile nur `deploy/.env` | MCP-Dienst: FastAPI + `mcp`. Chat: Next.js 16 + React 19, spricht ausschließlich mit 8004 | **Zwei getrennte Ausweise pro Aufruf:** `X-Tools-Service-Token` beantwortet „darf dieses Deployment hier überhaupt anfragen", `Authorization` „wessen Rechte gelten für genau diesen Aufruf". Nie im selben Header, sonst ginge beides zusammen nicht |
+
+Der MCP-Transport läuft als **eigener Container** (`weave-tools-mcp`, Port
+`TOOLS_MCP_PORT`, Vorgabe `8008`) aus demselben Image wie `weave-tools-backend`,
+nur mit anderem Startkommando (`app.mcp_server:mcp_app`) — er ist in Compose und
+im Helm-Chart standardmäßig aktiv. Er verlangt bewusst **kein**
+`TOOLS_API_TOKEN`: das gilt nur für den REST-Spiegel; der MCP-Endpunkt prüft
+stattdessen dieselben Delegations- und Introspektions-Token wie die REST-Seite
+(`WEAVE_DELEGATION_SECRET`, `INTROSPECTION_SERVICE_TOKEN`,
+`TOOLS_INTROSPECTION_TOKEN`). Details und die Helm-Abschaltung
+(`toolsBackend.mcp.enabled`) in `services/tools/README.md`.
 
 Für die beiden optionalen Modelldienste gilt dasselbe Muster: Einstellungen nur
 über `deploy/.env`, Ausweis über `Authorization: Bearer` gegen
@@ -336,7 +346,7 @@ bewusste, hier dokumentierte Handlung.
 ### 7.1 Die vorgegebenen Modelle — was fastembed NICHT kann
 
 Beide Modelldienste (`weave-embeddings`, `weave-reranker`, im Weave-Tools-Repo)
-laden ein von Matze fest vorgegebenes Modell. Bevor dort Code entstand, wurde
+laden ein fest vorgegebenes Modell. Bevor dort Code entstand, wurde
 experimentell geprüft, ob `fastembed` — die Bibliothek, mit der man CPU-Modelle
 in diesem Stack normalerweise am schnellsten einbindet — sie unterstützt:
 
@@ -574,6 +584,31 @@ Kandidaten liefert, nicht nur der Volltextpfad durchträgt (siehe Abschnitt 6,
 mit `RERANK_PROVIDER=api` sollte `scores.rerank` gesetzt sein und
 `trace.rerank_error` `false`; steht es auf `true`, siehe Abschnitt 4/5 für die
 `RERANK_API_KEY`/`RERANKER_API_TOKEN`-Prüfung.
+
+### 7.7 Nebenläufigkeit und Wiederholungen (Vorfall 2026-09-22)
+
+Ein Burst gleichzeitiger Freigaben ließ Weave-Knowledges Celery-Worker ohne
+Obergrenze parallel gegen den ressourcenlimitierten Embeddings-Pod feuern und
+hat ihn OOMKilled. Zwei voneinander unabhängige Begrenzungen fangen das jetzt
+ab:
+
+- **`weave-embeddings`** begrenzt selbst, wie viele `/v1/embeddings`-Aufrufe
+  gleichzeitig kodieren: `EMBEDDINGS_MAX_CONCURRENT_REQUESTS` (Vorgabe `1`)
+  serialisiert Anfragen, `EMBEDDINGS_QUEUE_TIMEOUT_SECONDS` (Vorgabe `90`)
+  begrenzt die Wartezeit auf einen freien Platz, danach `503` mit
+  `Retry-After`. Details: `services/embeddings/README.md`.
+- **`weave-knowledge`** begrenzt die Anzahl paralleler Celery-Worker-Prozesse
+  über `CELERY_WORKER_CONCURRENCY` (Vorgabe `2`, siehe
+  `docker-compose.weave.yml`/Helm-Chart) — bewusst ein anderer Variablenname
+  als Weave-Ingests eigener OCR-Worker (`INGEST_WORKER_CONCURRENCY`), da beide
+  sonst denselben Wert aus demselben `.env`-Pool lesen würden.
+  `EMBEDDING_REQUEST_TIMEOUT_SECONDS` (Vorgabe `180`) muss dafür spürbar über
+  `EMBEDDINGS_QUEUE_TIMEOUT_SECONDS` liegen, sonst schneidet der Client eine
+  bereits wartende, aber noch bedienbare Anfrage vorzeitig ab.
+  `EMBEDDING_MAX_ATTEMPTS` (Vorgabe `6`, Backoff 30s/2min/10min/30min/60min)
+  steuert, wie geduldig ein Dokument einen vorübergehend überlasteten oder
+  neustartenden Embeddings-Pod übersteht, bevor es endgültig auf `failed`
+  gesetzt wird. Details: `services/knowledge/README.md`.
 
 ---
 
@@ -866,8 +901,12 @@ kürzere Passphrase setzen — auch dort eine mindestens ebenso starke wählen.
 7. Der Wissensindex baut sich anschließend automatisch neu auf, sobald ein
    Ingest-Worker läuft (kein manueller Schritt nötig) — siehe oben. Bleiben
    danach einzelne Veröffentlichungen unerwartet unausgeliefert, lässt sich
-   derselbe Neuaufbau manuell über Admin → „Suchkonfiguration" →
-   „Index-Wartung" → „Index aus Freigaben neu aufbauen" erneut anstoßen.
+   derselbe Neuaufbau manuell über Admin → „Suche & Modelle" →
+   „Index-Wartung" → „Index aus Freigaben neu aufbauen" erneut anstoßen. Steht
+   stattdessen der bestehende Bestand in Zweifel (z. B. nach einem
+   Embedding-Wechsel während der Wiederherstellung), berechnet „Vektoren neu
+   berechnen" im selben Abschnitt alle Chunks neu, statt nur ausstehende
+   Freigaben erneut einzureihen.
 
 ### Was im Notfall sonst nötig ist
 
