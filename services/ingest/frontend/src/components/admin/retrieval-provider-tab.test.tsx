@@ -82,5 +82,5 @@ it('starts a rebuild only after the confirm dialog is accepted and shows the req
   fireEvent.click(screen.getByRole('button', { name: 'Neu aufbauen' }));
 
   await waitFor(() => expect(json).toHaveBeenCalledWith('/api/v1/admin/knowledge/rebuild', { method: 'POST' }));
-  expect(await screen.findByText(/7 Veröffentlichung\(en\) zur Neuauslieferung eingereiht\./)).toBeTruthy();
+  expect(await screen.findByText(/7 Veröffentlichungen zur Neuauslieferung eingereiht\./)).toBeTruthy();
 });

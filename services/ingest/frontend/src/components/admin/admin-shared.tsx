@@ -6,15 +6,23 @@ import { LoaderCircle, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ApiError, apiFetch, apiJson, type ApiFetchInit } from '@/lib/api';
 import type { ListResponse } from '@/lib/auth-types';
+import { translate } from '@/i18n/messages';
+import { DEFAULT_LOCALE } from '@/i18n/config';
+import { useI18n } from '@/i18n/provider';
 
 /** Shared input styling (matches the app's form fields) — see `.ui-control` in globals.css for the actual sizing/radius/focus tokens. */
 export const inputClass = 'ui-control mt-1.5';
 
-/** Normalize any thrown value into a user-facing message (backend detail verbatim). */
+/**
+ * Normalize any thrown value into a user-facing message (backend detail
+ * verbatim). Used outside React render (event handlers, hooks) where the
+ * `useI18n()` hook isn't available, so the fallback text is translated
+ * directly against the default locale rather than the active one.
+ */
 export function errorMessage(err: unknown): string {
   if (err instanceof ApiError) return err.detail;
   if (err instanceof Error) return err.message;
-  return 'Unexpected error';
+  return translate(DEFAULT_LOCALE, 'admin.shared.unexpectedError');
 }
 
 /**
@@ -24,7 +32,7 @@ export function errorMessage(err: unknown): string {
 export async function apiSend(path: string, init?: ApiFetchInit): Promise<void> {
   const res = await apiFetch(path, init);
   if (!res.ok) {
-    let detail = `Request failed with status ${res.status}`;
+    let detail = translate(DEFAULT_LOCALE, 'admin.shared.requestFailed', { status: res.status });
     try {
       const body = await res.json();
       if (typeof body?.detail === 'string') detail = body.detail;
@@ -116,11 +124,12 @@ export function ErrorNotice({ message }: { message: string | null }) {
   );
 }
 
-export function LoadingState({ label = 'Loading…' }: { label?: string }) {
+export function LoadingState({ label }: { label?: string }) {
+  const { t } = useI18n();
   return (
     <div className="flex items-center gap-2 py-8 text-sm text-[var(--muted)]">
       <LoaderCircle className="h-4 w-4 animate-spin text-emerald-600" />
-      {label}
+      {label ?? t('common.loading')}
     </div>
   );
 }
@@ -222,6 +231,7 @@ export function Modal({
   /** Optional right-aligned action row, rendered as a bordered footer strip below the body. */
   footer?: React.ReactNode;
 }) {
+  const { t } = useI18n();
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
@@ -242,7 +252,7 @@ export function Modal({
           <h3 className="min-w-0 break-words text-[17px] font-semibold text-[var(--ink)]">{title}</h3>
           <button
             onClick={onClose}
-            aria-label="Close dialog"
+            aria-label={t('admin.shared.closeDialog')}
             className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-[var(--muted)] transition hover:bg-[var(--hover)] hover:text-[var(--ink)]"
           >
             <X className="h-4 w-4" />
@@ -269,6 +279,7 @@ export function ConfirmDialog({
   onConfirm: () => Promise<void>;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -290,7 +301,7 @@ export function ConfirmDialog({
       footer={
         <>
           <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button variant="danger" size="sm" onClick={handleConfirm} disabled={busy}>
             {busy && <LoaderCircle className="h-4 w-4 animate-spin" />}

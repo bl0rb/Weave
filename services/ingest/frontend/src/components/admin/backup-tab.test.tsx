@@ -151,5 +151,5 @@ it('shows the import report after a finished restore, including the reindex hint
   render(<BackupTab />);
   expect(await screen.findByText('Der Wissensindex wird jetzt automatisch neu aufgebaut.')).toBeTruthy();
   expect(screen.getByText(/Bitte neu anmelden/)).toBeTruthy();
-  expect(screen.getByText(/3 Veröffentlichung\(en\) zur Neuindizierung eingereiht/)).toBeTruthy();
+  expect(screen.getByText(/3 Veröffentlichungen zur Neuindizierung eingereiht/)).toBeTruthy();
 });

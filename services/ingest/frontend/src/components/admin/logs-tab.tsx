@@ -6,6 +6,7 @@ import { LoaderCircle, RefreshCcw, ScrollText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ApiError, apiJson, type LogLevel, type WorkerLogEntry, type WorkerLogsResponse } from '@/lib/api';
 import { useVisiblePolling } from '@/lib/data-cache';
+import { useI18n } from '@/i18n/provider';
 import {
   ErrorNotice,
   errorMessage,
@@ -42,7 +43,16 @@ function workerColor(name: string): string {
   return WORKER_COLORS[sum % WORKER_COLORS.length];
 }
 
+const LEVEL_LABEL_KEYS: Record<string, 'admin.logs.levelCritical' | 'admin.logs.levelError' | 'admin.logs.levelWarning' | 'admin.logs.levelInfo' | 'admin.logs.levelDebug'> = {
+  CRITICAL: 'admin.logs.levelCritical',
+  ERROR: 'admin.logs.levelError',
+  WARNING: 'admin.logs.levelWarning',
+  INFO: 'admin.logs.levelInfo',
+  DEBUG: 'admin.logs.levelDebug',
+};
+
 export function LogsTab() {
+  const { t, formatDate } = useI18n();
   const [entries, setEntries] = useState<WorkerLogEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -167,88 +177,89 @@ export function LogsTab() {
 
   return (
     <SectionCard
-      title="Worker logs"
-      description="Recent output from the processing worker containers."
+      title={t('admin.logs.title')}
+      description={t('admin.logs.description')}
       actions={
         <>
-          <Toggle checked={autoRefresh} onChange={setAutoRefresh} label="Auto-refresh" />
+          <Toggle checked={autoRefresh} onChange={setAutoRefresh} label={t('admin.logs.autoRefresh')} />
           <Button variant="outline" size="sm" onClick={refresh} disabled={refreshing}>
             {refreshing ? (
               <LoaderCircle className="h-4 w-4 animate-spin" />
             ) : (
               <RefreshCcw className="h-4 w-4" />
             )}
-            Refresh
+            {t('common.refresh')}
           </Button>
         </>
       }
     >
       <div className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-100 bg-slate-50/60 p-3">
         <div className="w-36">
-          <Field label="Level">
+          <Field label={t('admin.logs.levelLabel')}>
             <select
               value={level}
               onChange={(e) => setLevel(e.target.value as LogLevel | '')}
               className={inputClass}
             >
-              <option value="">All levels</option>
-              <option value="CRITICAL">Critical</option>
-              <option value="ERROR">Error</option>
-              <option value="WARNING">Warning</option>
-              <option value="INFO">Info</option>
-              <option value="DEBUG">Debug</option>
+              <option value="">{t('admin.logs.allLevels')}</option>
+              <option value="CRITICAL">{t('admin.logs.levelCritical')}</option>
+              <option value="ERROR">{t('admin.logs.levelError')}</option>
+              <option value="WARNING">{t('admin.logs.levelWarning')}</option>
+              <option value="INFO">{t('admin.logs.levelInfo')}</option>
+              <option value="DEBUG">{t('admin.logs.levelDebug')}</option>
             </select>
           </Field>
         </div>
         <div className="w-48">
-          <Field label="Service">
+          <Field label={t('admin.logs.serviceLabel')}>
             <select value={service} onChange={(e) => setService(e.target.value)} className={inputClass}>
-              <option value="">All services</option>
+              <option value="">{t('admin.logs.allServices')}</option>
               {serviceOptions.map((name) => <option key={name} value={name}>{name}</option>)}
             </select>
           </Field>
         </div>
         <div className="w-48">
-          <Field label="Worker">
+          <Field label={t('admin.logs.workerLabel')}>
             <input
               value={worker}
               onChange={(e) => setWorker(e.target.value)}
               onKeyDown={onEnterApply}
-              placeholder="Pod / container name"
+              placeholder={t('admin.logs.workerPlaceholder')}
               className={inputClass}
             />
           </Field>
         </div>
         <div className="min-w-[12rem] flex-1">
-          <Field label="Search">
+          <Field label={t('common.search')}>
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={onEnterApply}
-              placeholder="Filter message text…"
+              placeholder={t('admin.logs.searchPlaceholder')}
               className={inputClass}
             />
           </Field>
         </div>
         <div className="flex gap-2">
           <Button size="sm" onClick={refresh}>
-            Apply filters
+            {t('admin.logs.applyFilters')}
           </Button>
           <Button variant="outline" size="sm" onClick={resetFilters} disabled={!hasFilters}>
-            Reset
+            {t('admin.logs.reset')}
           </Button>
         </div>
       </div>
 
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
-        <span>{total > 0 ? `Showing ${entries.length} of ${total} entries` : ''}</span>
-        <span>{lastFetchedAt ? `Updated ${lastFetchedAt.toLocaleTimeString()}` : ''}</span>
+        <span>{total > 0 ? t('admin.logs.showingCount', { shown: entries.length, total }) : ''}</span>
+        <span>{lastFetchedAt ? t('admin.logs.updatedAt', { time: formatDate(lastFetchedAt, { timeStyle: 'medium' }) }) : ''}</span>
       </div>
       {Object.keys(serviceSummary).length > 0 && (
-        <div className="mb-3 flex flex-wrap gap-2" aria-label="Log summary by service">
+        <div className="mb-3 flex flex-wrap gap-2" aria-label={t('admin.logs.summaryAriaLabel')}>
           {Object.entries(serviceSummary).sort(([a], [b]) => a.localeCompare(b)).map(([name, summary]) => (
             <button key={name} type="button" onClick={() => { setService(name); setRefreshing(true); void load(0, { level, worker, service: name, query }); }} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-left text-xs text-slate-600 hover:border-emerald-300 hover:bg-emerald-50">
-              <strong className="text-slate-800">{name}</strong> · {summary.count} entries{summary.errors ? ` · ${summary.errors} errors` : ''}
+              <strong className="text-slate-800">{name}</strong> · {t('admin.logs.entriesCount', { count: summary.count })}
+              {summary.errors ? ` · ${t('admin.logs.errorsCount', { count: summary.errors })}` : ''}
             </button>
           ))}
         </div>
@@ -257,18 +268,17 @@ export function LogsTab() {
       <ErrorNotice message={error} />
       {unavailable && (
         <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          Worker logs are not available on this backend yet. This tab starts showing data
-          automatically once the endpoint is deployed.
+          {t('admin.logs.unavailable')}
         </div>
       )}
 
       {loading ? (
-        <LoadingState label="Loading logs…" />
+        <LoadingState label={t('admin.logs.loading')} />
       ) : unavailable ? null : entries.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-10 text-center">
           <ScrollText className="h-8 w-8 text-slate-300" />
           <p className="text-sm text-slate-500">
-            {hasFilters ? 'No log entries match the current filters.' : 'No log entries yet.'}
+            {hasFilters ? t('admin.logs.emptyFiltered') : t('admin.logs.emptyNone')}
           </p>
         </div>
       ) : (
@@ -282,7 +292,7 @@ export function LogsTab() {
             <div className="mt-3 flex justify-center">
               <Button variant="outline" size="sm" onClick={loadMore} disabled={loadingMore}>
                 {loadingMore && <LoaderCircle className="h-4 w-4 animate-spin" />}
-                Load older
+                {t('admin.logs.loadOlder')}
               </Button>
             </div>
           )}
@@ -293,20 +303,21 @@ export function LogsTab() {
 }
 
 function LogRow({ entry }: { entry: WorkerLogEntry }) {
+  const { t, formatDate } = useI18n();
   const [expanded, setExpanded] = useState(false);
   return (
     <div className="border-b border-slate-900/60 py-1.5 last:border-0">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
         <span className="shrink-0 text-slate-500">
-          {new Date(entry.created_at).toLocaleTimeString()}
+          {formatDate(entry.created_at, { timeStyle: 'medium' })}
         </span>
-        <span className="shrink-0 rounded bg-slate-800 px-1.5 text-emerald-300" title="Service">
+        <span className="shrink-0 rounded bg-slate-800 px-1.5 text-emerald-300" title={t('admin.logs.serviceLabel')}>
           {entry.service}
         </span>
         <span
           className={`shrink-0 w-20 font-semibold ${LEVEL_COLORS[entry.level] ?? 'text-slate-300'}`}
         >
-          {entry.level}
+          {LEVEL_LABEL_KEYS[entry.level] ? t(LEVEL_LABEL_KEYS[entry.level]) : entry.level}
         </span>
         <span
           className={`shrink-0 rounded px-1.5 ${workerColor(entry.worker_name)}`}
@@ -322,7 +333,7 @@ function LogRow({ entry }: { entry: WorkerLogEntry }) {
             onClick={() => setExpanded((v) => !v)}
             className="shrink-0 rounded px-1.5 text-[11px] font-semibold text-red-400 underline decoration-dotted hover:text-red-300"
           >
-            {expanded ? 'Hide traceback' : 'Show traceback'}
+            {expanded ? t('admin.logs.hideTraceback') : t('admin.logs.showTraceback')}
           </button>
         )}
       </div>

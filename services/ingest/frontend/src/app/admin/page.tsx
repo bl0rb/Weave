@@ -9,6 +9,7 @@ import type { AdminProvider } from '@/lib/auth-types';
 import type { WorkerLogsResponse } from '@/lib/api';
 import { AdminPageShell, PageHead, oldTabRedirectUrl, useAdminJson } from '@/components/admin/admin-page-shared';
 import { LoadingState } from '@/components/admin/admin-shared';
+import { useI18n } from '@/i18n/provider';
 
 // Narrow local shapes of the data each admin tab already fetches — only the
 // fields the Übersicht's tiles/attention card actually use. Kept local
@@ -32,10 +33,6 @@ function daysUntil(iso: string): number {
   return Math.floor((new Date(iso).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
 }
 
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' });
-}
-
 export default function AdminPage() {
   // useSearchParams (to read a legacy ?tab=) requires a Suspense boundary,
   // same as app/connections/page.tsx.
@@ -49,6 +46,7 @@ export default function AdminPage() {
 function AdminPageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { t } = useI18n();
   const oldTab = searchParams.get('tab');
   const redirectTarget = oldTab ? oldTabRedirectUrl(oldTab) : null;
 
@@ -59,7 +57,7 @@ function AdminPageInner() {
   if (redirectTarget) {
     return (
       <AdminPageShell>
-        <LoadingState label="Weiterleitung…" />
+        <LoadingState label={t('admin.overview.redirecting')} />
       </AdminPageShell>
     );
   }
@@ -75,6 +73,8 @@ type Tile = { key: string; label: string; href: string; value: string; detail: s
 type Attention = { id: string; title: string; detail: string; href: string; label: string };
 
 function Overview() {
+  const { t, formatDate } = useI18n();
+  const formatTime = (iso: string) => formatDate(iso, { dateStyle: 'short', timeStyle: 'short' });
   const backup = useAdminJson<{ runs: BackupRun[] }>('/api/v1/admin/backup/runs');
   const identities = useAdminJson<{ items: TechnicalIdentity[] }>('/api/v1/auth/admin/technical-identities');
   const providers = useAdminJson<{ items: AdminProvider[] }>('/api/v1/auth/admin/providers');
@@ -106,48 +106,80 @@ function Overview() {
   const tiles: Tile[] = [
     {
       key: 'verarbeitung',
-      label: 'Verarbeitung',
+      label: t('admin.overview.tile.processing.label'),
       href: '/admin/verarbeitung?bereich=worker-logs',
-      value: !workerLogs.data ? (workerLogs.loading ? '…' : '–') : recentErrorLog ? 'Fehler' : recentWarningLog ? 'Warnung' : 'Betriebsbereit',
+      value: !workerLogs.data
+        ? workerLogs.loading
+          ? '…'
+          : '–'
+        : recentErrorLog
+          ? t('admin.overview.tile.processing.error')
+          : recentWarningLog
+            ? t('admin.overview.tile.processing.warning')
+            : t('admin.overview.tile.processing.ok'),
       detail: recentErrorLog
-        ? `Fehler ${formatTime(recentErrorLog.created_at)}`
+        ? t('admin.overview.tile.processing.detailError', { time: formatTime(recentErrorLog.created_at) })
         : recentWarningLog
-          ? `Warnung ${formatTime(recentWarningLog.created_at)}`
+          ? t('admin.overview.tile.processing.detailWarning', { time: formatTime(recentWarningLog.created_at) })
           : latestLog
-            ? `Letzter Eintrag ${formatTime(latestLog.created_at)}`
-            : 'Noch keine Protokolleinträge',
+            ? t('admin.overview.tile.processing.detailLatest', { time: formatTime(latestLog.created_at) })
+            : t('admin.overview.tile.processing.detailNone'),
       warn: Boolean(recentErrorLog || recentWarningLog),
     },
     {
       key: 'suchindex',
-      label: 'Suchindex',
+      label: t('admin.overview.tile.searchIndex.label'),
       href: '/admin/betrieb?bereich=werkzeuge',
-      value: reindex.data ? `${reindex.data.total} Dokumente` : reindex.loading ? '…' : '–',
-      detail: reindex.data ? (failedEmbeddings > 0 ? `${failedEmbeddings} fehlgeschlagen` : 'Ohne Fehler') : '',
+      value: reindex.data ? t('common.documents.count', { count: reindex.data.total }) : reindex.loading ? '…' : '–',
+      detail: reindex.data
+        ? failedEmbeddings > 0
+          ? t('admin.overview.tile.searchIndex.detailFailed', { count: failedEmbeddings })
+          : t('admin.overview.tile.searchIndex.detailOk')
+        : '',
       warn: failedEmbeddings > 0,
     },
     {
       key: 'anmeldung',
-      label: 'Anmeldung',
+      label: t('admin.overview.tile.signIn.label'),
       href: '/admin/menschen?bereich=anmeldung',
-      value: !providers.data ? (providers.loading ? '…' : '–') : enabledProviders.length > 0 ? `${enabledProviders.length} Provider aktiv` : 'Keine Anmeldung aktiv',
-      detail: providers.data ? `${providers.data.items.length} insgesamt konfiguriert` : '',
+      value: !providers.data
+        ? providers.loading
+          ? '…'
+          : '–'
+        : enabledProviders.length > 0
+          ? t('admin.overview.tile.signIn.active', { count: enabledProviders.length })
+          : t('admin.overview.tile.signIn.none'),
+      detail: providers.data ? t('admin.overview.tile.signIn.detailTotal', { count: providers.data.items.length }) : '',
       warn: providers.data != null && enabledProviders.length === 0,
     },
     {
       key: 'modelle',
-      label: 'Modelle / Provider',
+      label: t('admin.overview.tile.models.label'),
       href: '/admin/wissen?bereich=chat-llm',
-      value: !chatProvider.data ? (chatProvider.loading ? '…' : '–') : chatProvider.data.configured ? 'Bereit' : 'Nicht konfiguriert',
-      detail: retrieval.data ? `${retrieval.data.embedding_model}${retrieval.data.rerank_provider !== 'none' ? ' · Reranking aktiv' : ''}` : '',
+      value: !chatProvider.data
+        ? chatProvider.loading
+          ? '…'
+          : '–'
+        : chatProvider.data.configured
+          ? t('admin.overview.tile.models.ready')
+          : t('admin.overview.tile.models.notConfigured'),
+      detail: retrieval.data
+        ? `${retrieval.data.embedding_model}${retrieval.data.rerank_provider !== 'none' ? t('admin.overview.tile.models.rerankSuffix') : ''}`
+        : '',
       warn: chatProvider.data != null && chatProvider.data.enabled && !chatProvider.data.configured,
     },
     {
       key: 'sicherung',
-      label: 'Sicherung',
+      label: t('admin.overview.tile.backup.label'),
       href: '/admin/betrieb?bereich=sicherung',
-      value: !backup.data ? (backup.loading ? '…' : '–') : latestExport ? `Vor ${backupAgeDays} Tag(en)` : 'Noch keine Sicherung',
-      detail: 'Empfohlen: mindestens wöchentlich',
+      value: !backup.data
+        ? backup.loading
+          ? '…'
+          : '–'
+        : latestExport
+          ? t('admin.overview.tile.backup.age', { count: backupAgeDays ?? 0 })
+          : t('admin.overview.tile.backup.none'),
+      detail: t('admin.overview.tile.backup.detail'),
       warn: backupStale,
     },
   ];
@@ -156,60 +188,72 @@ function Overview() {
   if (backupStale) {
     attention.push({
       id: 'backup-stale',
-      title: latestExport ? `Letzte Sicherung ist ${backupAgeDays} Tag(e) alt` : 'Noch keine Sicherung erstellt',
-      detail: 'Erstelle ein verschlüsseltes Archiv, bevor ihr Modelle oder Rechte ändert.',
+      title: latestExport
+        ? t('admin.overview.attention.backupStale.title', { count: backupAgeDays ?? 0 })
+        : t('admin.overview.attention.backupNone.title'),
+      detail: t('admin.overview.attention.backup.detail'),
       href: '/admin/betrieb?bereich=sicherung',
-      label: 'Sicherung erstellen',
+      label: t('admin.overview.attention.backup.cta'),
     });
   }
   for (const item of expiringIdentities) {
     const days = daysUntil(item.expires_at as string);
     attention.push({
       id: `identity-${item.id}`,
-      title: days < 0 ? `Technische Identität „${item.name}“ ist abgelaufen` : `Technische Identität „${item.name}“ läuft bald ab`,
-      detail: days < 0 ? 'Token erneuern, um die Integration wieder freizuschalten.' : `Noch ${days} Tag(e) gültig.`,
+      title:
+        days < 0
+          ? t('admin.overview.attention.identityExpired.title', { name: item.name })
+          : t('admin.overview.attention.identityExpiring.title', { name: item.name }),
+      detail:
+        days < 0
+          ? t('admin.overview.attention.identityExpired.detail')
+          : t('admin.overview.attention.identityExpiring.detail', { count: days }),
       href: '/admin/betrieb?bereich=identitaeten',
-      label: 'Ansehen',
+      label: t('admin.overview.attention.view'),
     });
   }
   if (chatProvider.data?.enabled && !chatProvider.data.configured) {
     attention.push({
       id: 'chat-provider',
-      title: 'Chat-Provider ist aktiviert, aber unvollständig konfiguriert',
-      detail: 'Endpoint und Modell prüfen, damit Bots zentral antworten können.',
+      title: t('admin.overview.attention.chatProvider.title'),
+      detail: t('admin.overview.attention.chatProvider.detail'),
       href: '/admin/wissen?bereich=chat-llm',
-      label: 'Konfigurieren',
+      label: t('admin.overview.attention.chatProvider.cta'),
     });
   }
   if (failedEmbeddings > 0) {
     attention.push({
       id: 'embeddings-failed',
-      title: `${failedEmbeddings} Dokument(e) beim Einbetten fehlgeschlagen`,
-      detail: 'Erneut versuchen oder die Embedding-Konfiguration prüfen.',
+      title: t('admin.overview.attention.embeddingsFailed.title', { count: failedEmbeddings }),
+      detail: t('admin.overview.attention.embeddingsFailed.detail'),
       href: '/admin/betrieb?bereich=werkzeuge',
-      label: 'Ansehen',
+      label: t('admin.overview.attention.view'),
     });
   }
   if (failedDeliveries > 0) {
     attention.push({
       id: 'delivery-failed',
-      title: `${failedDeliveries} Freigabe(n) bei der Auslieferung fehlgeschlagen`,
-      detail: 'Den Wissensindex aus den Freigaben neu aufbauen.',
+      title: t('admin.overview.attention.deliveryFailed.title', { count: failedDeliveries }),
+      detail: t('admin.overview.attention.deliveryFailed.detail'),
       href: '/admin/betrieb?bereich=werkzeuge',
-      label: 'Ansehen',
+      label: t('admin.overview.attention.view'),
     });
   }
 
   return (
     <>
       <PageHead
-        title="Administration"
-        description={attention.length > 0 ? `${attention.length} Punkt(e) brauchen in den nächsten Tagen deine Aufmerksamkeit.` : 'Alles läuft.'}
+        title={t('admin.title')}
+        description={
+          attention.length > 0
+            ? t('admin.overview.attentionCount', { count: attention.length })
+            : t('admin.overview.allGood')
+        }
       />
 
       <section aria-labelledby="status-title" className="mb-6">
         <h2 className="sr-only" id="status-title">
-          Systemstatus
+          {t('admin.overview.statusHeading')}
         </h2>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           {tiles.map((tile) => (
@@ -231,14 +275,14 @@ function Overview() {
       <section className="rounded-xl border border-slate-200 bg-white p-5" aria-labelledby="attention-title">
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <h2 id="attention-title" className="text-[17px] font-semibold text-slate-950">
-            Braucht Aufmerksamkeit
+            {t('admin.overview.attentionHeading')}
           </h2>
           {attention.length > 0 && (
             <span className="inline-flex h-6 items-center rounded-full bg-amber-100 px-2.5 text-xs font-semibold text-amber-800">{attention.length}</span>
           )}
         </div>
         {attention.length === 0 ? (
-          <p className="text-sm text-slate-500">Keine offenen Punkte.</p>
+          <p className="text-sm text-slate-500">{t('admin.overview.attentionEmpty')}</p>
         ) : (
           <ul className="divide-y divide-slate-100">
             {attention.map((item) => (

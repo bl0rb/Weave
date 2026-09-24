@@ -17,24 +17,9 @@ import { IndexMaintenanceSection } from '@/components/admin/retrieval-provider-t
 import { ConfirmDialog, SectionCard } from '@/components/admin/admin-shared';
 import { Button } from '@/components/ui/button';
 import { apiFetch } from '@/lib/api';
+import { useI18n } from '@/i18n/provider';
 
 type Bereich = 'sicherung' | 'identitaeten' | 'werkzeuge';
-
-const TABS: { id: Bereich; label: string; icon: typeof DatabaseBackup }[] = [
-  { id: 'sicherung', label: 'Sicherung & Wiederherstellung', icon: DatabaseBackup },
-  { id: 'identitaeten', label: 'Technische Identitäten', icon: ShieldCheck },
-  { id: 'werkzeuge', label: 'Werkzeuge', icon: Wrench },
-];
-const IDS = TABS.map((t) => t.id);
-
-/** Link grid carried over unchanged from the old "Werkzeuge" tab. */
-const WERKZEUGE_LINKS: { href: string; title: string; description: string }[] = [
-  { href: '/connections', title: 'Verbindungen', description: 'Confluence und Webhooks einrichten und prüfen.' },
-  { href: '/benchmark', title: 'Qualität vergleichen', description: 'OCR- und Vision-Profile mit denselben Dokumenten vergleichen.' },
-  { href: '/jobs', title: 'Auftragsverwaltung', description: 'Alle sichtbaren Aufträge, technische Details und Wiederholungen.' },
-  { href: '/imports', title: 'Confluence-Importe', description: 'Importfortschritt, Quellen und Fehler im Detail.' },
-  { href: '/processing/new', title: 'Verarbeitung testen', description: 'Dateien mit erweiterten OCR-Einstellungen verarbeiten.' },
-];
 
 export default function AdminBetriebPage() {
   return (
@@ -45,6 +30,21 @@ export default function AdminBetriebPage() {
 }
 
 function AdminBetriebPageInner() {
+  const { t } = useI18n();
+  const TABS: { id: Bereich; label: string; icon: typeof DatabaseBackup }[] = [
+    { id: 'sicherung', label: t('admin.operations.tab.backup'), icon: DatabaseBackup },
+    { id: 'identitaeten', label: t('admin.operations.tab.identities'), icon: ShieldCheck },
+    { id: 'werkzeuge', label: t('admin.operations.tab.tools'), icon: Wrench },
+  ];
+  const IDS = TABS.map((tab) => tab.id);
+  // Link grid carried over unchanged from the old "Werkzeuge" tab.
+  const WERKZEUGE_LINKS: { href: string; title: string; description: string }[] = [
+    { href: '/connections', title: t('admin.operations.tools.connections.title'), description: t('admin.operations.tools.connections.description') },
+    { href: '/benchmark', title: t('admin.operations.tools.benchmark.title'), description: t('admin.operations.tools.benchmark.description') },
+    { href: '/jobs', title: t('admin.operations.tools.jobs.title'), description: t('admin.operations.tools.jobs.description') },
+    { href: '/imports', title: t('admin.operations.tools.imports.title'), description: t('admin.operations.tools.imports.description') },
+    { href: '/processing/new', title: t('admin.operations.tools.processNew.title'), description: t('admin.operations.tools.processNew.description') },
+  ];
   const [bereich, setBereich] = useBereich<Bereich>(IDS, 'sicherung');
   const [backupOpen, setBackupOpen] = useState(false);
   const [backupBusy, setBackupBusy] = useState(false);
@@ -53,7 +53,7 @@ function AdminBetriebPageInner() {
     setBackupBusy(true);
     try {
       const response = await apiFetch('/api/v1/admin/backup.zip');
-      if (!response.ok) throw new Error('Backup konnte nicht erstellt werden.');
+      if (!response.ok) throw new Error(t('admin.operations.backupDialog.error'));
       const blob = await response.blob();
       const href = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -72,16 +72,16 @@ function AdminBetriebPageInner() {
   return (
     <AdminPageShell>
       <PageHead
-        title="Betrieb & Sicherheit"
-        description="Sichern, integrieren und warten."
+        title={t('admin.operations.pageTitle')}
+        description={t('admin.operations.pageDescription')}
         actions={
           <Button type="button" variant="outline" onClick={() => setBackupOpen(true)}>
             <Archive size={16} />
-            Backup herunterladen
+            {t('admin.operations.downloadBackup')}
           </Button>
         }
       />
-      <SectionTabs idPrefix="betrieb" ariaLabel="Bereich" tabs={TABS} active={bereich} onChange={setBereich} />
+      <SectionTabs idPrefix="betrieb" ariaLabel={t('admin.nav.section')} tabs={TABS} active={bereich} onChange={setBereich} />
       {bereich === 'sicherung' && (
         <SectionPanel idPrefix="betrieb" id="sicherung">
           <BackupTab />
@@ -96,8 +96,8 @@ function AdminBetriebPageInner() {
         <SectionPanel idPrefix="betrieb" id="werkzeuge">
           <div className="space-y-6">
             <SectionCard
-              title="Werkzeuge für die Administration"
-              description="Verbindungen prüfen, Verarbeitungsprofile vergleichen und einzelne Aufträge untersuchen."
+              title={t('admin.operations.tools.sectionTitle')}
+              description={t('admin.operations.tools.sectionDescription')}
             >
               <div className="grid gap-4 sm:grid-cols-2">
                 {WERKZEUGE_LINKS.map(({ href, title, description }) => (
@@ -112,9 +112,9 @@ function AdminBetriebPageInner() {
 
       {backupOpen && (
         <ConfirmDialog
-          title="Storage-Backup herunterladen"
-          body={<p>Das ZIP enthält alle lokalen Upload- und Ergebnisdateien. Der Download kann vertrauliche Inhalte enthalten. Fortfahren?</p>}
-          confirmLabel={backupBusy ? 'Wird erstellt…' : 'Backup herunterladen'}
+          title={t('admin.operations.backupDialog.title')}
+          body={<p>{t('admin.operations.backupDialog.body')}</p>}
+          confirmLabel={backupBusy ? t('admin.operations.backupDialog.busy') : t('admin.operations.backupDialog.confirm')}
           onClose={() => {
             if (!backupBusy) setBackupOpen(false);
           }}

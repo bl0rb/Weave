@@ -6,6 +6,7 @@ import { Bot, CircleCheck, CircleX, LoaderCircle, Pencil, PlugZap, Plus, Trash2 
 import { Button } from '@/components/ui/button';
 import { ApiError, apiJson } from '@/lib/api';
 import type { ListResponse } from '@/lib/auth-types';
+import { useI18n } from '@/i18n/provider';
 import {
   apiSend,
   Badge,
@@ -71,6 +72,7 @@ interface VlConnectionTestResponse {
 const BASE = '/api/v1/auth/admin/vl-connections';
 
 export function VlConnectionsTab() {
+  const { t, formatDate } = useI18n();
   const [connections, setConnections] = useState<AdminVlConnection[]>([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
@@ -127,31 +129,30 @@ export function VlConnectionsTab() {
   return (
     <div className="space-y-6">
       <SectionCard
-        title="VL connections"
-        description="Vision-language connections for document processing; stored API keys are never shown."
+        title={t('admin.vlConnections.title')}
+        description={t('admin.vlConnections.description')}
         actions={
           <Button size="sm" onClick={() => setCreating(true)}>
             <Plus className="h-4 w-4" />
-            Add connection
+            {t('admin.vlConnections.addConnection')}
           </Button>
         }
       >
         <ErrorNotice message={listError} />
         {unavailable && (
           <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            VL connections are not available on this backend yet. This tab starts showing data
-            automatically once the endpoint is deployed.
+            {t('admin.vlConnections.unavailable')}
           </div>
         )}
         {loading ? (
-          <LoadingState label="Loading VL connections…" />
+          <LoadingState label={t('admin.vlConnections.loading')} />
         ) : unavailable ? null : connections.length === 0 ? (
           <div className="flex flex-col items-center gap-3 py-10 text-center">
             <Bot className="h-8 w-8 text-slate-300" />
-            <p className="text-sm text-slate-500">No VL connections yet. Add one to enable vision-language processing.</p>
+            <p className="text-sm text-slate-500">{t('admin.vlConnections.empty')}</p>
             <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
               <Plus className="h-4 w-4" />
-              Add connection
+              {t('admin.vlConnections.addConnection')}
             </Button>
           </div>
         ) : (
@@ -163,24 +164,24 @@ export function VlConnectionsTab() {
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-semibold text-slate-950">{c.name}</span>
                       <Badge tone={c.enabled ? 'emerald' : 'slate'}>
-                        {c.enabled ? 'Enabled' : 'Disabled'}
+                        {c.enabled ? t('admin.vlConnections.enabled') : t('admin.vlConnections.disabled')}
                       </Badge>
                       <Badge tone={c.has_api_key ? 'emerald' : 'amber'}>
-                        {c.has_api_key ? 'API key set' : 'No API key'}
+                        {c.has_api_key ? t('admin.vlConnections.tokenSet') : t('admin.vlConnections.noToken')}
                       </Badge>
                     </div>
                     <dl className="mt-2 space-y-1 text-xs text-slate-500">
                       <div className="flex gap-2">
-                        <dt className="w-16 flex-shrink-0 font-medium">Base URL</dt>
+                        <dt className="w-16 flex-shrink-0 font-medium">{t('admin.vlConnections.baseUrlLabel')}</dt>
                         <dd className="break-all">{c.base_url}</dd>
                       </div>
                       <div className="flex gap-2">
-                        <dt className="w-16 flex-shrink-0 font-medium">Model</dt>
+                        <dt className="w-16 flex-shrink-0 font-medium">{t('admin.vlConnections.modelLabel')}</dt>
                         <dd className="break-all font-mono">{c.model}</dd>
                       </div>
                       <div className="flex gap-2">
-                        <dt className="w-16 flex-shrink-0 font-medium">Created</dt>
-                        <dd>{new Date(c.created_at).toLocaleDateString()}</dd>
+                        <dt className="w-16 flex-shrink-0 font-medium">{t('admin.vlConnections.createdLabel')}</dt>
+                        <dd>{formatDate(c.created_at)}</dd>
                       </div>
                     </dl>
                   </div>
@@ -196,20 +197,20 @@ export function VlConnectionsTab() {
                       ) : (
                         <PlugZap className="h-4 w-4" />
                       )}
-                      Test
+                      {t('admin.vlConnections.test')}
                     </Button>
                     <button
                       onClick={() => setEditing(c)}
-                      aria-label={`Edit ${c.name}`}
-                      title="Edit"
+                      aria-label={t('admin.vlConnections.editAria', { name: c.name })}
+                      title={t('common.edit')}
                       className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
                     >
                       <Pencil className="h-4 w-4" />
                     </button>
                     <button
                       onClick={() => setDeleting(c)}
-                      aria-label={`Delete ${c.name}`}
-                      title="Delete"
+                      aria-label={t('admin.vlConnections.deleteAria', { name: c.name })}
+                      title={t('common.delete')}
                       className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-red-50 hover:text-red-600"
                     >
                       <Trash2 className="h-4 w-4" />
@@ -246,14 +247,9 @@ export function VlConnectionsTab() {
 
       {deleting && (
         <ConfirmDialog
-          title="Delete VL connection"
-          body={
-            <p>
-              Delete <span className="font-semibold text-slate-950">{deleting.name}</span>? Jobs
-              configured to use it for processing may fail until reconfigured.
-            </p>
-          }
-          confirmLabel="Delete connection"
+          title={t('admin.vlConnections.deleteDialogTitle')}
+          body={<p>{t('admin.vlConnections.deleteDialogBody', { name: deleting.name })}</p>}
+          confirmLabel={t('admin.vlConnections.deleteConfirm')}
           onClose={() => setDeleting(null)}
           onConfirm={async () => {
             await apiSend(`${BASE}/${deleting.id}`, { method: 'DELETE' });
@@ -267,6 +263,7 @@ export function VlConnectionsTab() {
 }
 
 function VlTestResult({ result }: { result: VlConnectionTestResponse }) {
+  const { t } = useI18n();
   return (
     <div
       className={`mt-3 rounded-xl border px-4 py-3 text-sm ${
@@ -281,7 +278,7 @@ function VlTestResult({ result }: { result: VlConnectionTestResponse }) {
         ) : (
           <CircleX className="h-4 w-4 flex-shrink-0" />
         )}
-        {result.ok ? 'Connection successful' : 'Connection failed'}
+        {result.ok ? t('admin.vlConnections.testSuccess') : t('admin.vlConnections.testFailed')}
       </div>
       {result.detail && <p className="mt-1 text-xs">{result.detail}</p>}
       {result.ok && result.latency_ms != null && (
@@ -301,6 +298,7 @@ function VlConnectionModal({
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
+  const { t } = useI18n();
   const isEdit = connection !== undefined;
 
   const [name, setName] = useState(connection?.name ?? '');
@@ -354,9 +352,12 @@ function VlConnectionModal({
   }
 
   return (
-    <Modal title={isEdit ? `Edit ${connection.name}` : 'Add VL connection'} onClose={onClose}>
+    <Modal
+      title={isEdit ? t('admin.vlConnections.editModalTitle', { name: connection.name }) : t('admin.vlConnections.addModalTitle')}
+      onClose={onClose}
+    >
       <form onSubmit={submit} className="space-y-4">
-        <Field label="Name">
+        <Field label={t('admin.vlConnections.fieldName')}>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -365,37 +366,37 @@ function VlConnectionModal({
             autoFocus
           />
         </Field>
-        <Field label="Base URL" hint="The connection appends /v1/chat/completions — do not include it here.">
+        <Field label={t('admin.vlConnections.baseUrlLabel')} hint={t('admin.vlConnections.baseUrlHint')}>
           <input
             type="url"
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
             className={inputClass}
             required
-            placeholder="e.g. https://api.example.com"
+            placeholder={t('admin.vlConnections.baseUrlPlaceholder')}
           />
         </Field>
-        <Field label="Model">
+        <Field label={t('admin.vlConnections.modelLabel')}>
           <input
             value={model}
             onChange={(e) => setModel(e.target.value)}
             className={inputClass}
             required
-            placeholder="e.g. qwen2-vl-7b-instruct"
+            placeholder={t('admin.vlConnections.modelPlaceholder')}
           />
         </Field>
-        <Field label="API key" hint={isEdit ? 'Leave blank to keep the stored key.' : undefined}>
+        <Field label={t('admin.vlConnections.tokenLabel')} hint={isEdit ? t('admin.vlConnections.tokenHintEdit') : undefined}>
           <input
             type="password"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             className={inputClass}
             required={!isEdit}
-            placeholder={isEdit ? 'unchanged unless filled' : undefined}
+            placeholder={isEdit ? t('admin.vlConnections.tokenPlaceholderEdit') : undefined}
             autoComplete="new-password"
           />
         </Field>
-        <Field label="System prompt" hint="Optional. Sent as the system message for every page.">
+        <Field label={t('admin.vlConnections.systemPromptLabel')} hint={t('admin.vlConnections.systemPromptHint')}>
           <textarea
             rows={4}
             value={systemPrompt}
@@ -403,15 +404,15 @@ function VlConnectionModal({
             className={inputClass}
           />
         </Field>
-        <Toggle checked={enabled} onChange={setEnabled} label="Enabled" />
+        <Toggle checked={enabled} onChange={setEnabled} label={t('admin.vlConnections.enabled')} />
         <ErrorNotice message={error} />
         <div className="flex flex-wrap justify-end gap-2 pt-1">
           <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={busy}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button type="submit" size="sm" disabled={busy}>
             {busy && <LoaderCircle className="h-4 w-4 animate-spin" />}
-            {isEdit ? 'Save changes' : 'Add connection'}
+            {isEdit ? t('admin.vlConnections.saveChanges') : t('admin.vlConnections.addConnection')}
           </Button>
         </div>
       </form>

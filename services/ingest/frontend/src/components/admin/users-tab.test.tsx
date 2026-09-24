@@ -20,10 +20,10 @@ afterEach(cleanup);
 
 it('saves multiple memberships without changing the primary team', async () => {
   render(<UsersTab />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Edit alice' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'alice bearbeiten' }));
   fireEvent.click(await screen.findByRole('checkbox', { name: 'Finance' }));
   expect((screen.getByRole('checkbox', { name: /^Legal/ }) as HTMLInputElement).disabled).toBe(true);
-  fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Änderungen speichern' }));
   await waitFor(() => expect(api.mock.calls.some(([, options]) => options?.method === 'PATCH')).toBe(true));
   const mutation = api.mock.calls.find(([, options]) => options?.method === 'PATCH');
   expect(JSON.parse(mutation?.[1]?.body as string)).toMatchObject({ team_id: 'a', team_ids: ['a', 'b'], team_roles: { a: 'member', b: 'member' } });
@@ -31,9 +31,9 @@ it('saves multiple memberships without changing the primary team', async () => {
 
 it('clears all memberships when selecting no team', async () => {
   render(<UsersTab />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Edit alice' }));
-  fireEvent.change(screen.getByRole('combobox', { name: 'Primary team' }), { target: { value: '' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'alice bearbeiten' }));
+  fireEvent.change(screen.getByRole('combobox', { name: 'Hauptteam' }), { target: { value: '' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Änderungen speichern' }));
   await waitFor(() => expect(api.mock.calls.some(([, options]) => options?.method === 'PATCH')).toBe(true));
   const mutation = api.mock.calls.find(([, options]) => options?.method === 'PATCH');
   expect(JSON.parse(mutation?.[1]?.body as string)).toMatchObject({ clear_team: true, team_ids: [] });

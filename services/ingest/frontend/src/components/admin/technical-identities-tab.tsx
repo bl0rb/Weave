@@ -19,6 +19,8 @@ import {
   inputClass,
   useAdminList,
 } from './admin-shared';
+import { useI18n } from '@/i18n/provider';
+import type { MessageKey, MessageVars } from '@/i18n/messages';
 
 type TechnicalIdentity = {
   id: string;
@@ -41,19 +43,21 @@ type AuditEntry = { id: string; event: string; actor: string | null; details: Re
 
 const BASE_PATH = '/api/v1/auth/admin/technical-identities';
 
-function statusOf(item: TechnicalIdentity): { label: string; tone: 'emerald' | 'slate' | 'amber' } {
-  if (item.revoked_at) return { label: 'Widerrufen', tone: 'slate' };
-  if (item.expires_at && new Date(item.expires_at).getTime() <= Date.now()) return { label: 'Abgelaufen', tone: 'amber' };
-  if (!item.enabled) return { label: 'Deaktiviert', tone: 'slate' };
-  return { label: 'Aktiv', tone: 'emerald' };
-}
-
-function formatDate(value: string | null): string {
-  if (!value) return '–';
-  return new Date(value).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' });
+/**
+ * Kept as a module-level function (not nested in the component) so its
+ * `Date.now()` read isn't flagged as an impure call during render by
+ * react-hooks/purity -- `t` is threaded in explicitly instead of closing
+ * over it.
+ */
+function statusOf(item: TechnicalIdentity, t: (key: MessageKey, vars?: MessageVars) => string): { label: string; tone: 'emerald' | 'slate' | 'amber' } {
+  if (item.revoked_at) return { label: t('admin.identities.status.revoked'), tone: 'slate' };
+  if (item.expires_at && new Date(item.expires_at).getTime() <= Date.now()) return { label: t('admin.identities.status.expired'), tone: 'amber' };
+  if (!item.enabled) return { label: t('admin.identities.status.disabled'), tone: 'slate' };
+  return { label: t('admin.identities.status.active'), tone: 'emerald' };
 }
 
 export function TechnicalIdentitiesTab() {
+  const { t, formatDate } = useI18n();
   const identities = useAdminList<TechnicalIdentity>(BASE_PATH);
   const spaces = useAdminList<KnowledgeSpace>('/api/v1/collections');
   const [creating, setCreating] = useState(false);
@@ -66,6 +70,10 @@ export function TechnicalIdentitiesTab() {
 
   const loading = identities.loading || spaces.loading;
   const error = identities.error || spaces.error;
+
+  function fmtDate(value: string | null): string {
+    return value ? formatDate(value, { dateStyle: 'medium', timeStyle: 'short' }) : '–';
+  }
 
   async function rotate(item: TechnicalIdentity) {
     setActionError(null);
@@ -83,22 +91,22 @@ export function TechnicalIdentitiesTab() {
 
   return <div className="space-y-6">
     <SectionCard
-      title="Technische Identitäten"
-      description="Eigenständige Integrationen und externe KI-Agenten (MCP) erhalten hier ein eigenes Token mit explizit gewährten Wissensbereichen — nie den Zugriff eines Nutzers oder Teams."
-      actions={<Button variant="outline" size="sm" onClick={() => { setCreating(true); setNotice(''); }}><Plus size={15} />Identität anlegen</Button>}
+      title={t('admin.identities.title')}
+      description={t('admin.identities.description')}
+      actions={<Button variant="outline" size="sm" onClick={() => { setCreating(true); setNotice(''); }}><Plus size={15} />{t('admin.identities.create')}</Button>}
     >
       <ErrorNotice message={error} />
       <ErrorNotice message={actionError} />
       {notice && <p role="status" className="mb-4 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</p>}
-      {loading ? <LoadingState label="Technische Identitäten werden geladen…" /> : identities.items.length === 0 ? (
+      {loading ? <LoadingState label={t('admin.identities.loading')} /> : identities.items.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-10 text-center">
           <KeyRound className="h-9 w-9 text-slate-300" />
-          <div><p className="font-medium text-slate-800">Noch keine technischen Identitäten</p><p className="mt-1 text-sm text-slate-500">Ohne eine angelegte Identität hat keine externe Integration Zugriff auf Weave-Tools.</p></div>
-          <Button variant="outline" size="sm" onClick={() => setCreating(true)}><Plus size={15} />Erste Identität anlegen</Button>
+          <div><p className="font-medium text-slate-800">{t('admin.identities.emptyTitle')}</p><p className="mt-1 text-sm text-slate-500">{t('admin.identities.emptyBody')}</p></div>
+          <Button variant="outline" size="sm" onClick={() => setCreating(true)}><Plus size={15} />{t('admin.identities.createFirst')}</Button>
         </div>
       ) : <ul className="divide-y divide-slate-100">
         {identities.items.map(item => {
-          const status = statusOf(item);
+          const status = statusOf(item, t);
           const isExpanded = expanded === item.id;
           return <li key={item.id} className="py-4">
             <div className="flex flex-wrap items-start justify-between gap-4">
@@ -111,16 +119,16 @@ export function TechnicalIdentitiesTab() {
                 </div>
                 {item.description && <p className="mt-1 text-sm text-slate-600">{item.description}</p>}
                 <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-500">
-                  <span>Wissensbereiche: {item.allowed_collections.length ? item.allowed_collections.join(', ') : 'keine'}</span>
-                  <span>Letzte Nutzung: {formatDate(item.last_used_at)}</span>
-                  {item.expires_at && <span>Läuft ab: {formatDate(item.expires_at)}</span>}
+                  <span>{t('admin.identities.knowledgeSpaces', { list: item.allowed_collections.length ? item.allowed_collections.join(', ') : t('admin.identities.none') })}</span>
+                  <span>{t('admin.identities.lastUsed', { date: fmtDate(item.last_used_at) })}</span>
+                  {item.expires_at && <span>{t('admin.identities.expiresAt', { date: fmtDate(item.expires_at) })}</span>}
                 </div>
               </div>
               <div className="flex flex-wrap gap-1">
-                <Button variant="ghost" size="sm" onClick={() => setRotating(item)} aria-label={`${item.name} rotieren`}><RefreshCw size={15} />Token erneuern</Button>
-                {!item.revoked_at && <Button variant="ghost" size="sm" onClick={() => setRevoking(item)} aria-label={`${item.name} widerrufen`}><ShieldOff size={15} />Widerrufen</Button>}
-                <Button variant="ghost" size="sm" onClick={() => setExpanded(isExpanded ? null : item.id)} aria-label={`Audit-Verlauf von ${item.name} ${isExpanded ? 'einklappen' : 'anzeigen'}`}>
-                  {isExpanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}Audit
+                <Button variant="ghost" size="sm" onClick={() => setRotating(item)} aria-label={t('admin.identities.rotateAria', { name: item.name })}><RefreshCw size={15} />{t('admin.identities.rotate')}</Button>
+                {!item.revoked_at && <Button variant="ghost" size="sm" onClick={() => setRevoking(item)} aria-label={t('admin.identities.revokeAria', { name: item.name })}><ShieldOff size={15} />{t('admin.identities.revoke')}</Button>}
+                <Button variant="ghost" size="sm" onClick={() => setExpanded(isExpanded ? null : item.id)} aria-label={isExpanded ? t('admin.identities.auditCollapseAria', { name: item.name }) : t('admin.identities.auditExpandAria', { name: item.name })}>
+                  {isExpanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}{t('admin.identities.audit')}
                 </Button>
               </div>
             </div>
@@ -140,25 +148,25 @@ export function TechnicalIdentitiesTab() {
       }}
     />}
 
-    {issuedToken && <TokenDisplay identity={issuedToken} onClose={() => { setIssuedToken(null); setNotice('Token gespeichert und angezeigt.'); }} />}
+    {issuedToken && <TokenDisplay identity={issuedToken} onClose={() => { setIssuedToken(null); setNotice(t('admin.identities.tokenSavedNotice')); }} />}
 
     {revoking && <ConfirmDialog
-      title="Identität widerrufen"
-      body={<p>Die technische Identität <strong className="text-slate-950">{revoking.name}</strong> widerrufen? Ihr Token funktioniert danach unwiderruflich nicht mehr.</p>}
-      confirmLabel="Identität widerrufen"
+      title={t('admin.identities.revokeTitle')}
+      body={<p>{t('admin.identities.revokeBodyPrefix')} <strong className="text-slate-950">{revoking.name}</strong>{t('admin.identities.revokeBodySuffix')}</p>}
+      confirmLabel={t('admin.identities.revokeTitle')}
       onClose={() => setRevoking(null)}
       onConfirm={async () => {
         await apiSend(`${BASE_PATH}/${encodeURIComponent(revoking.id)}/revoke`, { method: 'POST' });
         setRevoking(null);
-        setNotice('Identität widerrufen.');
+        setNotice(t('admin.identities.revokedNotice'));
         await identities.reload();
       }}
     />}
 
     {rotating && <ConfirmDialog
-      title="Token erneuern"
-      body={<p>Token der technischen Identität <strong className="text-slate-950">{rotating.name}</strong> erneuern? Das aktuelle Token wird sofort unwiderruflich ungültig — jede Integration, die es noch verwendet, verliert damit den Zugriff.</p>}
-      confirmLabel="Token erneuern"
+      title={t('admin.identities.rotate')}
+      body={<p>{t('admin.identities.rotateBodyPrefix')} <strong className="text-slate-950">{rotating.name}</strong>{t('admin.identities.rotateBodySuffix')}</p>}
+      confirmLabel={t('admin.identities.rotate')}
       onClose={() => setRotating(null)}
       onConfirm={async () => {
         await rotate(rotating);
@@ -173,6 +181,7 @@ function CreateDialog({ spaces, onClose, onCreated }: {
   onClose: () => void;
   onCreated: (created: TechnicalIdentityCreateResponse) => Promise<void>;
 }) {
+  const { t } = useI18n();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [collections, setCollections] = useState<string[]>([]);
@@ -202,30 +211,31 @@ function CreateDialog({ spaces, onClose, onCreated }: {
     } catch (err) { setError(errorMessage(err)); setSaving(false); }
   }
 
-  return <Modal title="Technische Identität anlegen" onClose={onClose}>
+  return <Modal title={t('admin.identities.createModalTitle')} onClose={onClose}>
     <ErrorNotice message={error} />
     <form className="space-y-5" onSubmit={save}>
-      <Field label="Name" hint="Erkennbarer Name der Integration, z. B. der n8n-Flow oder der MCP-Client."><input className={inputClass} required value={name} onChange={event => setName(event.target.value)} placeholder="n8n-Integration" /></Field>
-      <Field label="Beschreibung"><textarea className={inputClass} rows={2} value={description} onChange={event => setDescription(event.target.value)} /></Field>
-      <Field label="Ablauf (Tage)" hint="Leer lassen für ein Token ohne Ablaufdatum."><input className={inputClass} type="number" min={1} max={3650} value={expiresInDays} onChange={event => setExpiresInDays(event.target.value)} placeholder="z. B. 365" /></Field>
+      <Field label={t('admin.identities.nameLabel')} hint={t('admin.identities.nameHint')}><input className={inputClass} required value={name} onChange={event => setName(event.target.value)} placeholder={t('admin.identities.namePlaceholder')} /></Field>
+      <Field label={t('admin.identities.descriptionLabel')}><textarea className={inputClass} rows={2} value={description} onChange={event => setDescription(event.target.value)} /></Field>
+      <Field label={t('admin.identities.expiryLabel')} hint={t('admin.identities.expiryHint')}><input className={inputClass} type="number" min={1} max={3650} value={expiresInDays} onChange={event => setExpiresInDays(event.target.value)} placeholder={t('admin.identities.expiryPlaceholder')} /></Field>
       <fieldset>
-        <legend className="text-sm font-medium text-slate-700">Wissensbereiche</legend>
-        <p className="mt-1 text-xs text-slate-400">Keine Auswahl: die Identität erhält KEINEN Wissenszugriff, bis hier Wissensbereiche gewährt werden.</p>
+        <legend className="text-sm font-medium text-slate-700">{t('admin.identities.knowledgeSpacesLegend')}</legend>
+        <p className="mt-1 text-xs text-slate-400">{t('admin.identities.knowledgeSpacesHint')}</p>
         {spaces.length ? <div className="mt-2 grid max-h-36 gap-2 overflow-y-auto rounded-xl border border-slate-200 p-3 sm:grid-cols-2">
           {spaces.map(space => <label key={space.slug} className="flex items-center gap-2 text-sm text-slate-700">
             <input type="checkbox" checked={collections.includes(space.slug)} onChange={() => toggle(space.slug)} />{space.slug}
           </label>)}
-        </div> : <p className="mt-2 text-sm text-amber-700">Noch keine Wissensbereiche verfügbar.</p>}
+        </div> : <p className="mt-2 text-sm text-amber-700">{t('admin.identities.noSpacesAvailable')}</p>}
       </fieldset>
       <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-4">
-        <Button type="button" variant="outline" onClick={onClose} disabled={saving}>Abbrechen</Button>
-        <Button type="submit" disabled={!canSave}>{saving ? 'Wird angelegt…' : 'Identität speichern'}</Button>
+        <Button type="button" variant="outline" onClick={onClose} disabled={saving}>{t('common.cancel')}</Button>
+        <Button type="submit" disabled={!canSave}>{saving ? t('admin.identities.creating') : t('admin.identities.save')}</Button>
       </div>
     </form>
   </Modal>;
 }
 
 function TokenDisplay({ identity, onClose }: { identity: TechnicalIdentityCreateResponse; onClose: () => void }) {
+  const { t } = useI18n();
   const [copied, setCopied] = useState(false);
 
   async function copy() {
@@ -237,31 +247,32 @@ function TokenDisplay({ identity, onClose }: { identity: TechnicalIdentityCreate
     }
   }
 
-  return <Modal title={`Token für „${identity.name}"`} onClose={onClose}>
+  return <Modal title={t('admin.identities.tokenModalTitle', { name: identity.name })} onClose={onClose}>
     <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-4">
-      <p className="text-sm font-semibold text-emerald-900">Dieses Token wird nur jetzt angezeigt — jetzt sichern.</p>
+      <p className="text-sm font-semibold text-emerald-900">{t('admin.identities.tokenWarning')}</p>
       <div className="mt-2 flex items-center gap-2">
         <code className="flex-1 overflow-x-auto rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs text-slate-950">{identity.token}</code>
         <Button type="button" size="sm" variant="outline" onClick={copy}>
           {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-          {copied ? 'Kopiert' : 'Kopieren'}
+          {copied ? t('admin.identities.copied') : t('admin.identities.copy')}
         </Button>
       </div>
-      <p className="mt-2 text-xs font-medium text-emerald-800">Nach dem Schließen dieses Dialogs ist der volle Wert nicht mehr abrufbar — nur noch der Präfix {identity.token_prefix}… in der Liste.</p>
+      <p className="mt-2 text-xs font-medium text-emerald-800">{t('admin.identities.afterCloseWarning', { prefix: identity.token_prefix })}</p>
     </div>
-    <div className="mt-4 flex justify-end"><Button type="button" onClick={onClose}>Verstanden</Button></div>
+    <div className="mt-4 flex justify-end"><Button type="button" onClick={onClose}>{t('admin.identities.understood')}</Button></div>
   </Modal>;
 }
 
 function AuditList({ identityId }: { identityId: string }) {
+  const { t, formatDate } = useI18n();
   const audit = useAdminList<AuditEntry>(`${BASE_PATH}/${encodeURIComponent(identityId)}/audit`);
-  if (audit.loading) return <p className="mt-2 pl-6 text-xs text-slate-400">Audit-Verlauf wird geladen…</p>;
-  if (!audit.items.length) return <p className="mt-2 pl-6 text-xs text-slate-400">Noch keine Audit-Einträge.</p>;
+  if (audit.loading) return <p className="mt-2 pl-6 text-xs text-slate-400">{t('admin.identities.auditLoading')}</p>;
+  if (!audit.items.length) return <p className="mt-2 pl-6 text-xs text-slate-400">{t('admin.identities.auditEmpty')}</p>;
   return <ul className="mt-3 space-y-1 border-t border-slate-100 pl-6 pt-3 text-xs text-slate-500">
     {audit.items.map(entry => <li key={entry.id}>
       <span className="font-medium text-slate-700">{entry.event}</span>
       {entry.actor && <span> · {entry.actor}</span>}
-      <span> · {formatDate(entry.created_at)}</span>
+      <span> · {formatDate(entry.created_at, { dateStyle: 'medium', timeStyle: 'short' })}</span>
     </li>)}
   </ul>;
 }

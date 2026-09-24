@@ -8,6 +8,7 @@ import { ArrowRight, ShieldAlert } from 'lucide-react';
 
 import { apiJson } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import { useI18n } from '@/i18n/provider';
 
 /** Page head used by every /admin/* route: h1 + one-line description, optional actions. */
 export function PageHead({
@@ -35,6 +36,7 @@ export function PageHead({
 /** Shared container + admin-only gate for every /admin/* route (identical to the previous single-page gate). */
 export function AdminPageShell({ children }: { children: ReactNode }) {
   const { user } = useAuth();
+  const { t } = useI18n();
 
   if (!user || user.role !== 'admin') {
     return (
@@ -43,10 +45,8 @@ export function AdminPageShell({ children }: { children: ReactNode }) {
           <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100">
             <ShieldAlert className="h-6 w-6 text-slate-400" />
           </div>
-          <h1 className="mt-4 text-[17px] font-semibold text-slate-950">Nur für Administratoren</h1>
-          <p className="mt-1 max-w-md text-center text-sm text-slate-500">
-            Hier verwaltet die Administration Wissensbereiche, Nutzer und Einstellungen.
-          </p>
+          <h1 className="mt-4 text-[17px] font-semibold text-slate-950">{t('admin.shared.adminsOnlyTitle')}</h1>
+          <p className="mt-1 max-w-md text-center text-sm text-slate-500">{t('admin.shared.adminsOnlyBody')}</p>
         </div>
       </main>
     );

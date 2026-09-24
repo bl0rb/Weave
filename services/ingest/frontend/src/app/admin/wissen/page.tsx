@@ -13,15 +13,9 @@ import {
 import { BotsTab } from '@/components/admin/bots-tab';
 import { ChatProviderTab } from '@/components/admin/chat-provider-tab';
 import { RetrievalProviderTab } from '@/components/admin/retrieval-provider-tab';
+import { useI18n } from '@/i18n/provider';
 
 type Bereich = 'bots' | 'chat-llm' | 'suche-modelle';
-
-const TABS: { id: Bereich; label: string; icon: typeof Bot }[] = [
-  { id: 'bots', label: 'Bots', icon: Bot },
-  { id: 'chat-llm', label: 'Chat & LLM', icon: MessageSquareText },
-  { id: 'suche-modelle', label: 'Suche & Modelle', icon: ScanEye },
-];
-const IDS = TABS.map((t) => t.id);
 
 export default function AdminWissenPage() {
   return (
@@ -32,15 +26,19 @@ export default function AdminWissenPage() {
 }
 
 function AdminWissenPageInner() {
+  const { t } = useI18n();
+  const TABS: { id: Bereich; label: string; icon: typeof Bot }[] = [
+    { id: 'bots', label: t('admin.knowledge.tab.bots'), icon: Bot },
+    { id: 'chat-llm', label: t('admin.knowledge.tab.chatLlm'), icon: MessageSquareText },
+    { id: 'suche-modelle', label: t('admin.knowledge.tab.searchModels'), icon: ScanEye },
+  ];
+  const IDS = TABS.map((tab) => tab.id);
   const [bereich, setBereich] = useBereich<Bereich>(IDS, 'bots');
 
   return (
     <AdminPageShell>
-      <PageHead
-        title="Wissen & Assistenten"
-        description="Wie Weave passende Textstellen findet und daraus Antworten formuliert."
-      />
-      <SectionTabs idPrefix="wissen" ariaLabel="Bereich" tabs={TABS} active={bereich} onChange={setBereich} />
+      <PageHead title={t('admin.knowledge.pageTitle')} description={t('admin.knowledge.pageDescription')} />
+      <SectionTabs idPrefix="wissen" ariaLabel={t('admin.nav.section')} tabs={TABS} active={bereich} onChange={setBereich} />
       {bereich === 'bots' && (
         <SectionPanel idPrefix="wissen" id="bots">
           <BotsTab />

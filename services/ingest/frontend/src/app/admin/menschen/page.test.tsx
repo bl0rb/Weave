@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { apiJson } from '@/lib/api';
+import { I18nProvider } from '@/i18n/provider';
 import AdminMenschenPage from './page';
 
 vi.mock('@/lib/api', async importOriginal => ({
@@ -23,7 +24,7 @@ beforeEach(() => {
   api.mockReset();
   api.mockImplementation(async (path: string) => {
     if (path === '/api/v1/auth/admin/users') return { items: [user] };
-    if (path === '/api/v1/auth/admin/teams') return { items: [{ id: 'a', name: 'Legal' }, { id: 'b', name: 'Finance' }] };
+    if (path === '/api/v1/auth/admin/teams') return { items: [{ id: 'a', name: 'Legal', created_at: '2026-09-08T00:00:00Z' }, { id: 'b', name: 'Finance', created_at: '2026-09-08T00:00:00Z' }] };
     return { items: [] };
   });
 });
@@ -43,4 +44,15 @@ it('switches to the Teams section via the segmented control', async () => {
   fireEvent.click(screen.getByRole('tab', { name: 'Teams' }));
   expect(await screen.findByText('Legal')).toBeTruthy();
   expect(screen.getByRole('tab', { name: 'Teams' }).getAttribute('aria-selected')).toBe('true');
+});
+
+it('renders in English inside an I18nProvider set to "en"', async () => {
+  render(
+    <I18nProvider initialLocale="en">
+      <AdminMenschenPage />
+    </I18nProvider>,
+  );
+  expect(await screen.findByRole('heading', { name: 'People & Access' })).toBeTruthy();
+  expect(screen.getByRole('tab', { name: 'People' })).toBeTruthy();
+  expect(screen.getByRole('tab', { name: 'Sign-in' })).toBeTruthy();
 });
