@@ -1,5 +1,7 @@
 import type { ChatRequestBody, ChatStreamStatusEvent, ChatTrace, Collection, Source, StoredMessage } from '@/types/weave-api';
 import type { MappedError } from '@/lib/errors';
+import { translateDefault } from '@/i18n/messages';
+import type { MessageKey, MessageVars } from '@/i18n/messages';
 
 /** One subagent's own latest known state within a still-streaming
  * agent-mode turn — the UI's own tiny per-chip reduction of every
@@ -136,18 +138,28 @@ export function buildChatRequestBody(params: {
 /**
  * The composer's knowledge-space pill label for the current selection —
  * the one place this "empty means all my scopes" rule (see
- * `buildChatRequestBody` above) gets a human-readable German label instead
- * of just deciding what goes over the wire: none selected → "Alle
- * Bereiche", exactly one → that collection's own name, several → "N
- * Bereiche". Falls back to the raw slug for a selected slug that no longer
- * matches any loaded collection (e.g. renamed/removed server-side mid
- * session) rather than silently dropping it from the label.
+ * `buildChatRequestBody` above) gets a human-readable label instead of
+ * just deciding what goes over the wire: none selected → "Alle Bereiche",
+ * exactly one → that collection's own name, several → "N Bereiche". Falls
+ * back to the raw slug for a selected slug that no longer matches any
+ * loaded collection (e.g. renamed/removed server-side mid session) rather
+ * than silently dropping it from the label.
+ *
+ * `t` is optional: this is a plain function, not a component, so it has no
+ * React context of its own to read the current locale from. Callers with
+ * one (scope-picker.tsx, chat-app.tsx) pass their own `useI18n().t`
+ * through; callers with none (this module's own chat-types.test.ts) get
+ * the German default, which is what those existing tests assert.
  */
-export function scopeLabel(selectedCollections: string[], collections: Collection[] | null): string {
-  if (selectedCollections.length === 0) return 'Alle Bereiche';
+export function scopeLabel(
+  selectedCollections: string[],
+  collections: Collection[] | null,
+  t: (key: MessageKey, vars?: MessageVars) => string = translateDefault
+): string {
+  if (selectedCollections.length === 0) return t('chat.scope.all');
   if (selectedCollections.length === 1) {
     const [slug] = selectedCollections;
     return collections?.find((collection) => collection.slug === slug)?.name ?? slug;
   }
-  return `${selectedCollections.length} Bereiche`;
+  return t('chat.scope.count', { count: selectedCollections.length });
 }

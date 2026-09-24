@@ -9,6 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { Rail, groupConversations } from '@/components/chat/rail';
+import { I18nProvider } from '@/i18n/provider';
 import type { ConversationSummary } from '@/types/weave-api';
 
 vi.mock('next/navigation', () => ({
@@ -161,5 +162,23 @@ describe('Rail', () => {
       fireEvent.click(container.querySelector('.chat-rail-backdrop')!);
       expect(onClose).toHaveBeenCalledOnce();
     });
+  });
+});
+
+// Covers Part 1's i18n requirement: an I18nProvider with initialLocale="en"
+// must flip the rail's own rendered strings to English, not just the
+// message catalog in isolation (see i18n.test.ts for that).
+describe('Rail (English locale)', () => {
+  it('renders English labels when wrapped in an English I18nProvider', () => {
+    render(
+      <I18nProvider initialLocale="en">
+        <Rail {...baseProps()} />
+      </I18nProvider>
+    );
+
+    expect(screen.getByRole('button', { name: 'New conversation' })).toBeTruthy();
+    expect(screen.getByRole('navigation', { name: 'History' })).toBeTruthy();
+    expect(screen.getByText('Untitled')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Clear history' })).toBeTruthy();
   });
 });

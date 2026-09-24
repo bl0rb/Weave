@@ -1,77 +1,94 @@
 @import 'tailwindcss';
 
 /*
- * Light palette (default). Dark overrides below, twice on purpose:
- * once for the OS-level `prefers-color-scheme` (used when the visitor has
- * made no explicit in-app choice) and once for the manual `.dark` class
- * toggle (src/components/chat/theme-toggle.tsx), so an explicit choice
- * always wins over the OS setting either way.
- */
-/*
- * Palette aligned with the Loom RC design prototype
- * (docs/design-proposals/06-loom-rc/style.css's own :root) — bg #f4f5f2,
- * surface #fff, ink #14221d, muted #5a6863, line #e1e6e2, accent #1d6a53,
- * soft #e5f0ea, and that same prototype's warn/ok/err hues below. The
- * prototype itself ships no dark variant; the dark block keeps this app's
- * existing AA-checked dark approach, recoloured to the same green-accent
- * family instead of the previous blue-grey one.
+ * Design tokens shared with the portal app (services/ingest/frontend/src/
+ * app/globals.css's own :root / :root.dark blocks) — same variable names,
+ * same values, so the two apps render one visual system. Dark overrides
+ * below, twice on purpose: once for the OS-level `prefers-color-scheme`
+ * (used when the visitor has made no explicit in-app choice — this app's
+ * own addition, the portal relies on its theme-init script always setting
+ * an explicit class instead) and once for the manual `.dark` class toggle
+ * (src/components/theme-toggle.tsx), so an explicit choice always wins
+ * over the OS setting either way.
  */
 :root {
-  --background: #f4f5f2;
+  --bg: #f4f5f2;
   --surface: #ffffff;
-  --surface-muted: #f8f9f7;
-  --foreground: #14221d;
-  --foreground-muted: #5a6863;
-  --border: #e1e6e2;
+  --surface-2: #f8f9f7;
+  --hover: #f0f3f0;
+  --ink: #14221d;
+  --ink-2: #33433c;
+  --muted: #5a6863;
+  --line: #e1e6e2;
+  --line-2: #cfd7d2;
   --accent: #1d6a53;
-  --accent-foreground: #ffffff;
+  --accent-hover: #165744;
+  --accent-ink: #124536;
   --accent-soft: #e5f0ea;
-  --danger: #a2372f;
-  --danger-soft: #fcebe9;
-  --warning: #87580b;
-  --warning-soft: #fcf0d9;
-  --success: #1d6842;
-  --success-soft: #e1f2e8;
+  --on-accent: #ffffff;
+
+  /* Shared radius scale — cards/panels vs. controls/buttons vs. pills,
+     same as the portal's. */
+  --radius-card: 12px;
+  --radius-control: 8px;
+  --radius-pill: 999px;
+
+  --warn: #87580b;
+  --warn-bg: #fcf0d9;
+  --ok: #1d6842;
+  --ok-bg: #e1f2e8;
+  --err: #a2372f;
+  --err-bg: #fcebe9;
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
-    --background: #101815;
-    --surface: #182420;
-    --surface-muted: #1f2c27;
-    --foreground: #e7ece9;
-    --foreground-muted: #9bb0a7;
-    --border: #2c3a34;
-    --accent: #6fc9a3;
-    --accent-foreground: #0b1a15;
-    --accent-soft: #1e3a30;
-    --danger: #ff9a8f;
-    --danger-soft: #3a201d;
-    --warning: #f0c26a;
-    --warning-soft: #3a2c14;
-    --success: #7fdaa9;
-    --success-soft: #163527;
+    --bg: #172d27;
+    --surface: #203b33;
+    --surface-2: #1b332c;
+    --hover: #234339;
+    --ink: #eef2ec;
+    --ink-2: #c9d4c8;
+    --muted: #a9c9a3;
+    --line: #3e5248;
+    --line-2: #4c6358;
+    --accent: #4caf82;
+    --accent-hover: #5fbd91;
+    --accent-ink: #bfe6d2;
+    --accent-soft: #1f3f34;
+    --on-accent: #0b241c;
+    --warn: #f0c869;
+    --warn-bg: #4a3a12;
+    --ok: #8fe0b3;
+    --ok-bg: #1c3c2c;
+    --err: #f3a79e;
+    --err-bg: #4a2420;
     color-scheme: dark;
   }
 }
 
 :root.dark {
-  --background: #101815;
-  --surface: #182420;
-  --surface-muted: #1f2c27;
-  --foreground: #e7ece9;
-  --foreground-muted: #9bb0a7;
-  --border: #2c3a34;
-  --accent: #6fc9a3;
-  --accent-foreground: #0b1a15;
-  --accent-soft: #1e3a30;
-  --danger: #ff9a8f;
-  --danger-soft: #3a201d;
-  --warning: #f0c26a;
-  --warning-soft: #3a2c14;
-  --success: #7fdaa9;
-  --success-soft: #163527;
+  --bg: #172d27;
+  --surface: #203b33;
+  --surface-2: #1b332c;
+  --hover: #234339;
+  --ink: #eef2ec;
+  --ink-2: #c9d4c8;
+  --muted: #a9c9a3;
+  --line: #3e5248;
+  --line-2: #4c6358;
+  --accent: #4caf82;
+  --accent-hover: #5fbd91;
+  --accent-ink: #bfe6d2;
+  --accent-soft: #1f3f34;
+  --on-accent: #0b241c;
+  --warn: #f0c869;
+  --warn-bg: #4a3a12;
+  --ok: #8fe0b3;
+  --ok-bg: #1c3c2c;
+  --err: #f3a79e;
+  --err-bg: #4a2420;
   color-scheme: dark;
 }
 
@@ -85,9 +102,10 @@ body {
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--bg);
+  color: var(--ink);
   font-family:
+    var(--font-sans),
     ui-sans-serif,
     system-ui,
     -apple-system,
@@ -114,7 +132,7 @@ body {
 /* Minimal scrollbar theming so the transcript pane doesn't look foreign
    against the dark palette. */
 * {
-  scrollbar-color: var(--border) transparent;
+  scrollbar-color: var(--line) transparent;
 }
 
 /* Hand-rolled markdown styling for rendered assistant answers (see
@@ -147,14 +165,14 @@ body {
   text-underline-offset: 2px;
 }
 .prose-chat :where(code) {
-  background: var(--surface-muted);
-  border-radius: 0.25rem;
+  background: var(--surface-2);
+  border-radius: var(--radius-control);
   padding: 0.1em 0.35em;
   font-size: 0.85em;
 }
 .prose-chat :where(pre) {
-  background: var(--surface-muted);
-  border-radius: 0.5rem;
+  background: var(--surface-2);
+  border-radius: var(--radius-control);
   padding: 0.75em;
   overflow-x: auto;
   margin: 0 0 0.6em;
@@ -171,17 +189,17 @@ body {
   margin-top: 0;
 }
 .prose-chat :where(blockquote) {
-  border-left: 2px solid var(--border);
+  border-left: 2px solid var(--line);
   padding-left: 0.75em;
   margin: 0 0 0.6em;
-  color: var(--foreground-muted);
+  color: var(--muted);
 }
 .prose-chat :where(table) {
   border-collapse: collapse;
   margin: 0 0 0.6em;
 }
 .prose-chat :where(th, td) {
-  border: 1px solid var(--border);
+  border: 1px solid var(--line);
   padding: 0.3em 0.5em;
 }
 
@@ -271,12 +289,43 @@ body {
   }
 }
 
-/* A comfortable ≥40px hit area for the compact ("sm") button size once a
-   coarse (touch) pointer is the input in use — a mouse/trackpad keeps the
-   tighter 32px size. Mirrors the same rule in the design prototype
-   (style.css's own `@media (pointer: coarse)` block). */
+/* A comfortable ≥40px hit area for the compact ("sm") button/pill size
+   once a coarse (touch) pointer is the input in use — a mouse/trackpad
+   keeps the tighter 32px size. Same rule (and the same `.btn-sm` marker
+   class) as the portal's own globals.css. */
 @media (pointer: coarse) {
-  button.h-8 {
+  .btn-sm {
+    min-height: 40px;
+  }
+}
+
+/* ---------- Sprachumschalter (src/i18n/language-switch.tsx) ----------
+   Same shape as the portal's own `.portal-lang-switch`. */
+.chat-lang-switch {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+}
+.chat-lang-switch button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: calc(var(--radius-control) - 2px);
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.chat-lang-switch button[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent-ink, var(--accent));
+}
+@media (pointer: coarse) {
+  .chat-lang-switch button {
     min-height: 40px;
   }
 }

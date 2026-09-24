@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { MessageBubble } from '@/components/chat/message-bubble';
+import { useI18n } from '@/i18n/provider';
 import type { UiMessage } from '@/lib/chat-types';
 
 interface MessageListProps {
@@ -19,6 +20,7 @@ export function MessageList({
   selectedSourceMessageId,
   onSelectForSourcesPanel,
 }: MessageListProps) {
+  const { t } = useI18n();
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -27,8 +29,8 @@ export function MessageList({
 
   if (messages.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center text-sm text-[var(--foreground-muted)]">
-        Noch keine Nachrichten — stelle unten deine erste Frage.
+      <div className="flex flex-1 items-center justify-center text-sm text-[var(--muted)]">
+        {t('chat.messageList.empty')}
       </div>
     );
   }
@@ -38,7 +40,7 @@ export function MessageList({
     // sequentially-appended transcript, implicitly `aria-live="polite"` —
     // announces a finished turn without re-reading the whole history on
     // every render (design target 5, "aria-live for new answers").
-    <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-4 py-4" role="log" aria-label="Gespräch">
+    <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-4 py-4" role="log" aria-label={t('chat.messageList.landmarkLabel')}>
       {messages.map((message) => (
         <MessageBubble
           key={message.id}

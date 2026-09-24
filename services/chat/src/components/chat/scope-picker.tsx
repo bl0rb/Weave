@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { scopeLabel } from '@/lib/chat-types';
 import type { MappedError } from '@/lib/errors';
 import { ErrorBanner } from '@/components/chat/error-banner';
+import { useI18n } from '@/i18n/provider';
 import type { Collection } from '@/types/weave-api';
 
 interface ScopePickerProps {
@@ -35,6 +36,7 @@ export function ScopePicker({
   onToggleCollection,
   onClearCollections,
 }: ScopePickerProps) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -65,7 +67,7 @@ export function ScopePicker({
     };
   }, [open]);
 
-  const label = scopeLabel(selectedCollections, collections);
+  const label = scopeLabel(selectedCollections, collections, t);
   const allSelected = selectedCollections.length === 0;
 
   return (
@@ -77,14 +79,14 @@ export function ScopePicker({
         aria-expanded={open}
         aria-controls={menuId}
         className={cn(
-          'inline-flex h-9 min-h-[40px] items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors sm:min-h-0',
+          'inline-flex h-9 min-h-[40px] items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:border-[var(--accent)] focus-visible:ring-[3px] focus-visible:ring-[var(--accent-soft)] sm:min-h-0',
           open
             ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-ink,var(--accent))]'
-            : 'border-[var(--border)] bg-[var(--surface-muted)] text-[var(--foreground-muted)] hover:bg-[var(--surface)]'
+            : 'border-[var(--line-2)] bg-[var(--surface-2)] text-[var(--muted)] hover:bg-[var(--surface)]'
         )}
       >
         <Layers className="h-3.5 w-3.5 text-[var(--accent)]" aria-hidden="true" />
-        <span className="sr-only">Wissensbereiche: </span>
+        <span className="sr-only">{t('chat.scope.srLabel')}</span>
         <span className="max-w-[10rem] truncate">{label}</span>
         <ChevronDown className="h-3 w-3" aria-hidden="true" />
       </button>
@@ -93,21 +95,19 @@ export function ScopePicker({
         <div
           id={menuId}
           role="group"
-          aria-label="In welchen Wissensbereichen suchen?"
-          className="absolute bottom-full left-0 z-30 mb-2 w-[min(20rem,calc(100vw-2rem))] rounded-xl border border-[var(--border)] bg-[var(--surface)] p-1.5 shadow-lg"
+          aria-label={t('chat.scope.popoverLabel')}
+          className="absolute bottom-full left-0 z-30 mb-2 w-[min(20rem,calc(100vw-2rem))] rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--surface)] p-1.5 shadow-lg"
         >
-          <p className="px-2 py-1.5 text-[11px] font-semibold text-[var(--foreground-muted)]">
-            In welchen Wissensbereichen suchen?
-          </p>
+          <p className="px-2 py-1.5 text-[11px] font-semibold text-[var(--muted)]">{t('chat.scope.popoverLabel')}</p>
 
-          <label className="flex min-h-[40px] cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm font-medium hover:bg-[var(--surface-muted)]">
+          <label className="flex min-h-[40px] cursor-pointer items-center gap-2.5 rounded-[var(--radius-control)] px-2 py-1.5 text-sm font-medium hover:bg-[var(--surface-2)]">
             <input
               type="checkbox"
               checked={allSelected}
               onChange={() => onClearCollections()}
               className="h-4 w-4 flex-shrink-0 accent-[var(--accent)]"
             />
-            Alle meine Bereiche
+            {t('chat.scope.allMine')}
           </label>
 
           {collectionsError ? (
@@ -115,14 +115,14 @@ export function ScopePicker({
               <ErrorBanner error={collectionsError} />
             </div>
           ) : collections === null ? (
-            <p className="px-2 py-1.5 text-xs text-[var(--foreground-muted)]">Wissensbereiche werden geladen…</p>
+            <p className="px-2 py-1.5 text-xs text-[var(--muted)]">{t('chat.scope.loading')}</p>
           ) : collections.length === 0 ? (
-            <p className="px-2 py-1.5 text-xs text-[var(--foreground-muted)]">Für dich sind keine Wissensbereiche lesbar.</p>
+            <p className="px-2 py-1.5 text-xs text-[var(--muted)]">{t('chat.scope.emptyReadable')}</p>
           ) : (
             collections.map((collection) => (
               <label
                 key={collection.slug}
-                className="flex min-h-[40px] cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm font-medium hover:bg-[var(--surface-muted)]"
+                className="flex min-h-[40px] cursor-pointer items-center gap-2.5 rounded-[var(--radius-control)] px-2 py-1.5 text-sm font-medium hover:bg-[var(--surface-2)]"
               >
                 <input
                   type="checkbox"
@@ -132,14 +132,14 @@ export function ScopePicker({
                 />
                 <span className="min-w-0 flex-1 truncate">
                   {collection.name}
-                  {collection.public ? <span className="ml-1 font-normal text-[var(--foreground-muted)]">(öffentlich)</span> : null}
+                  {collection.public ? <span className="ml-1 font-normal text-[var(--muted)]">{t('chat.scope.public')}</span> : null}
                 </span>
               </label>
             ))
           )}
 
-          <div className="mt-1 border-t border-[var(--border)] px-2 pt-1.5 text-[11px] text-[var(--foreground-muted)]">
-            Nur Bereiche, die du nutzen darfst.
+          <div className="mt-1 border-t border-[var(--line)] px-2 pt-1.5 text-[11px] text-[var(--muted)]">
+            {t('chat.scope.footerHint')}
           </div>
         </div>
       ) : null}

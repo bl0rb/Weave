@@ -9,6 +9,7 @@ import { Composer } from '@/components/chat/composer';
 import { SourcesPanel } from '@/components/chat/sources-panel';
 import { ErrorBanner } from '@/components/chat/error-banner';
 import { Button } from '@/components/ui/button';
+import { useI18n } from '@/i18n/provider';
 import { deleteJson, getJson, postJson } from '@/lib/api-client';
 import { errorForInterruptedStream, errorForNetworkFailure, errorForStreamEvent, mappedError, type MappedError } from '@/lib/errors';
 import { consumeChatStream } from '@/lib/run-chat-stream';
@@ -26,6 +27,7 @@ import type { Bot, ChatRequestBody, ChatResponseBody, Collection, ConversationSu
 
 export function ChatApp() {
   const router = useRouter();
+  const { t } = useI18n();
 
   const [bots, setBots] = useState<Bot[] | null>(null);
   const [botsError, setBotsError] = useState<MappedError | null>(null);
@@ -410,7 +412,7 @@ export function ChatApp() {
   // window.confirm discipline as this codebase's other delete actions
   // (e.g. Weave-Ingest's import-sync.tsx / imports/[id]/page.tsx).
   async function handleDeleteConversation(id: string) {
-    if (!window.confirm('Diese Konversation und alle ihre Nachrichten unwiderruflich löschen?')) return;
+    if (!window.confirm(t('chat.confirm.deleteConversation'))) return;
 
     const result = await deleteJson(`/api/conversations/${id}`);
     if (!result.ok) {
@@ -433,7 +435,7 @@ export function ChatApp() {
   }
 
   async function handleDeleteAllConversations() {
-    if (!window.confirm('Den gesamten Chat-Verlauf mit allen Nachrichten unwiderruflich löschen?')) return;
+    if (!window.confirm(t('chat.confirm.deleteAllConversations'))) return;
 
     const result = await deleteJson('/api/conversations');
     if (!result.ok) {
@@ -454,8 +456,8 @@ export function ChatApp() {
   }
 
   const selectedBot = bots?.find((bot) => bot.id === selectedBotId) ?? null;
-  const currentScopeLabel = scopeLabel(selectedCollections, collections);
-  const conversationTitle = conversations?.find((c) => c.id === conversationId)?.title ?? 'Neues Gespräch';
+  const currentScopeLabel = scopeLabel(selectedCollections, collections, t);
+  const conversationTitle = conversations?.find((c) => c.id === conversationId)?.title ?? t('chat.newConversation');
 
   // The right-hand sources panel always follows the latest assistant
   // answer that actually has sources unless the caller explicitly pinned
@@ -486,13 +488,13 @@ export function ChatApp() {
       />
 
       <main className="flex min-w-0 min-h-0 flex-col">
-        <header className="flex flex-none items-center gap-3 border-b border-[var(--border)] px-4 py-3 sm:px-6">
+        <header className="flex min-h-[62px] flex-none items-center gap-3 border-b border-[var(--line)] px-4 sm:px-6">
           <Button
             ref={railToggleRef}
             variant="outline"
             size="sm"
             onClick={() => setRailOpen(true)}
-            aria-label="Gespräche anzeigen"
+            aria-label={t('chat.header.openRail')}
             aria-expanded={railOpen}
             className="chat-mobile-menu hidden h-10 w-10 flex-none p-0"
           >
@@ -500,18 +502,18 @@ export function ChatApp() {
           </Button>
 
           <div className="min-w-0 flex-1">
-            <h1 className="truncate text-sm font-semibold">{conversationTitle}</h1>
-            <p className="truncate text-[11px] text-[var(--foreground-muted)]">
-              {selectedBot?.name ?? 'Kein Bot ausgewählt'} · {currentScopeLabel}
+            <h1 className="truncate text-[17px] font-semibold">{conversationTitle}</h1>
+            <p className="truncate text-[11px] text-[var(--muted)]">
+              {selectedBot?.name ?? t('chat.header.noBotSelected')} · {currentScopeLabel}
             </p>
           </div>
 
           <span
-            className="hidden flex-none items-center gap-1.5 rounded-full bg-[var(--accent-soft)] px-3 py-1.5 text-xs font-medium text-[var(--accent)] sm:inline-flex"
-            title="Nur freigegebene, indexierte Dokumente, die du lesen darfst"
+            className="hidden flex-none items-center gap-1.5 rounded-[var(--radius-pill)] bg-[var(--accent-soft)] px-3 py-1.5 text-xs font-medium text-[var(--accent)] sm:inline-flex"
+            title={t('chat.header.releasedSourcesOnlyTitle')}
           >
             <Lock className="h-3.5 w-3.5" aria-hidden="true" />
-            Nur freigegebene Quellen
+            {t('chat.header.releasedSourcesOnly')}
           </span>
         </header>
 

@@ -10,6 +10,8 @@ import { TracePanel } from '@/components/chat/trace-panel';
 import { GuardBanner } from '@/components/chat/guard-banner';
 import { ErrorBanner } from '@/components/chat/error-banner';
 import { toProxiedImageUrl } from '@/lib/portal-artifact-url';
+import { useI18n } from '@/i18n/provider';
+import type { MessageKey } from '@/i18n/messages';
 
 // Rewrites an inline `![alt](url)` image's src to this app's own proxy
 // route (see lib/portal-artifact-url.ts) before it ever reaches the DOM —
@@ -45,11 +47,12 @@ interface MessageBubbleProps {
 
 export function MessageBubble({
   message,
-  assistantName = 'Assistent',
+  assistantName,
   onResetScopeAndRetry,
   isSelectedForSourcesPanel,
   onSelectForSourcesPanel,
 }: MessageBubbleProps) {
+  const { t } = useI18n();
   const isUser = message.role === 'user';
   const sourceCount = message.sources?.length ?? 0;
 
@@ -57,15 +60,15 @@ export function MessageBubble({
     <div className={cn('flex', isUser ? 'justify-end' : 'justify-start')}>
       <div
         className={cn(
-          'max-w-[80ch] rounded-2xl px-4 py-3 text-sm leading-relaxed',
+          'max-w-[80ch] rounded-[var(--radius-card)] px-4 py-3 text-sm leading-relaxed',
           isUser
-            ? 'bg-[var(--accent)] text-[var(--accent-foreground)]'
-            : 'border border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)]'
+            ? 'bg-[var(--accent)] text-[var(--on-accent)]'
+            : 'border border-[var(--line)] bg-[var(--surface)] text-[var(--ink)]'
         )}
       >
         {!isUser ? (
           <AnswerHead
-            assistantName={assistantName}
+            assistantName={assistantName ?? t('chat.messageBubble.defaultAssistantName')}
             sourceCount={sourceCount}
             guardTriggered={message.trace?.guard?.triggered ?? false}
             onSelectForSourcesPanel={sourceCount > 0 ? onSelectForSourcesPanel : undefined}
@@ -86,7 +89,7 @@ export function MessageBubble({
             </ReactMarkdown>
           </div>
         ) : message.streaming ? (
-          <span className="inline-flex items-center gap-1 text-[var(--foreground-muted)]" aria-live="polite">
+          <span className="inline-flex items-center gap-1 text-[var(--muted)]" aria-live="polite">
             {/* Default placeholder stays screen-reader-only — only the
                 progress-line/slow-response variant below is ever shown
                 visibly. `progressLine` (an agent-mode turn's own live
@@ -95,11 +98,11 @@ export function MessageBubble({
                 is cleared by chat-app.tsx the moment real answer text
                 starts arriving (`onDelta`). */}
             <span className="sr-only">
-              {message.progressLine ?? (message.slowResponse ? 'Der Assistent arbeitet noch …' : 'Antwort wird erzeugt…')}
+              {message.progressLine ?? (message.slowResponse ? t('chat.messageBubble.stillWorking') : t('chat.messageBubble.generating'))}
             </span>
             {message.progressLine || message.slowResponse ? (
               <span className="text-xs" aria-hidden="true">
-                {message.progressLine ?? 'Der Assistent arbeitet noch …'}
+                {message.progressLine ?? t('chat.messageBubble.stillWorking')}
               </span>
             ) : null}
             <ThinkingDots />
@@ -111,7 +114,7 @@ export function MessageBubble({
         ) : null}
 
         {!isUser && message.streaming && message.content ? (
-          <span className="ml-0.5 inline-block h-4 w-[2px] animate-pulse bg-[var(--foreground-muted)] align-text-bottom motion-reduce:animate-none" aria-hidden="true" />
+          <span className="ml-0.5 inline-block h-4 w-[2px] animate-pulse bg-[var(--muted)] align-text-bottom motion-reduce:animate-none" aria-hidden="true" />
         ) : null}
 
         {/* The 30s-idle "still working" indicator must also fire mid-stream,
@@ -122,8 +125,8 @@ export function MessageBubble({
             non-empty content from the first delta onward, so it needs its
             own visible cue here instead of relying on that branch. */}
         {!isUser && message.streaming && message.content && message.slowResponse ? (
-          <p className="mt-1 text-xs text-[var(--foreground-muted)]" aria-live="polite">
-            Der Assistent arbeitet noch …
+          <p className="mt-1 text-xs text-[var(--muted)]" aria-live="polite">
+            {t('chat.messageBubble.stillWorking')}
           </p>
         ) : null}
 
@@ -134,9 +137,7 @@ export function MessageBubble({
         ) : null}
         {!isUser && message.trace ? <TracePanel trace={message.trace} /> : null}
         {!isUser && message.viaFallback ? (
-          <p className="mt-2 text-[11px] italic text-[var(--foreground-muted)]">
-            Nicht gestreamt — als Fallback über die nicht-streamende Schnittstelle beantwortet.
-          </p>
+          <p className="mt-2 text-[11px] italic text-[var(--muted)]">{t('chat.messageBubble.viaFallback')}</p>
         ) : null}
         {!isUser && message.error ? (
           <div className="mt-2">
@@ -172,19 +173,20 @@ function AnswerHead({
   onSelectForSourcesPanel?: () => void;
   isSelectedForSourcesPanel?: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <div className="mb-2 flex flex-wrap items-center gap-2">
-      <span className="inline-grid h-6 w-6 flex-none place-items-center rounded-lg bg-[var(--accent)] text-[var(--accent-foreground)]">
+      <span className="inline-grid h-6 w-6 flex-none place-items-center rounded-[var(--radius-control)] bg-[var(--accent)] text-[var(--on-accent)]">
         <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
       </span>
       <span className="text-[13px] font-semibold">{assistantName}</span>
       {sourceCount > 0 ? (
-        <span className="rounded-full bg-[var(--success-soft)] px-2 py-0.5 text-[11px] font-semibold text-[var(--success)]">
-          Belegt durch {sourceCount} {sourceCount === 1 ? 'Quelle' : 'Quellen'}
+        <span className="rounded-full bg-[var(--ok-bg)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ok)]">
+          {t('chat.messageBubble.sourcedBy', { count: sourceCount })}
         </span>
       ) : guardTriggered ? (
-        <span className="rounded-full bg-[var(--warning-soft)] px-2 py-0.5 text-[11px] font-semibold text-[var(--warning)]">
-          Keine passende Quelle
+        <span className="rounded-full bg-[var(--warn-bg)] px-2 py-0.5 text-[11px] font-semibold text-[var(--warn)]">
+          {t('chat.messageBubble.noMatchingSource')}
         </span>
       ) : null}
       {onSelectForSourcesPanel ? (
@@ -193,14 +195,14 @@ function AnswerHead({
           onClick={onSelectForSourcesPanel}
           aria-pressed={!!isSelectedForSourcesPanel}
           className={cn(
-            'chat-sources-panel-control ml-auto min-h-[40px] items-center gap-1 rounded-md px-2 text-[11px] font-medium sm:min-h-0',
+            'chat-sources-panel-control ml-auto min-h-[40px] items-center gap-1 rounded-[var(--radius-control)] px-2 text-[11px] font-medium sm:min-h-0',
             isSelectedForSourcesPanel
               ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
-              : 'text-[var(--foreground-muted)] hover:bg-[var(--surface-muted)]'
+              : 'text-[var(--muted)] hover:bg-[var(--surface-2)]'
           )}
         >
           <PanelRight className="h-3.5 w-3.5" aria-hidden="true" />
-          In Quellenleiste anzeigen
+          {t('chat.messageBubble.showInSourcesPanel')}
         </button>
       ) : null}
     </div>
@@ -213,13 +215,16 @@ function AnswerHead({
  * — see message-bubble.tsx's own call site). Purely a rendering of already
  * public `UiAgentStatus` entries, never a prompt/query. */
 function AgentStatusChips({ statuses }: { statuses: UiAgentStatus[] }) {
-  const label: Record<string, string> = {
-    complete: 'fertig', partial: 'teilweise', failed: 'fehlgeschlagen',
+  const { t } = useI18n();
+  const label: Record<string, MessageKey> = {
+    complete: 'chat.messageBubble.status.complete',
+    partial: 'chat.messageBubble.status.partial',
+    failed: 'chat.messageBubble.status.failed',
   };
   const tone: Record<string, string> = {
-    complete: 'border-[var(--success,#2f9e44)] text-[var(--success,#2f9e44)]',
-    partial: 'border-[var(--warning,#e8a33d)] text-[var(--warning,#e8a33d)]',
-    failed: 'border-[var(--danger,#e03131)] text-[var(--danger,#e03131)]',
+    complete: 'border-[var(--ok,#2f9e44)] text-[var(--ok,#2f9e44)]',
+    partial: 'border-[var(--warn,#e8a33d)] text-[var(--warn,#e8a33d)]',
+    failed: 'border-[var(--err,#e03131)] text-[var(--err,#e03131)]',
   };
   return (
     <div className="mt-1 flex flex-wrap gap-1">
@@ -228,11 +233,11 @@ function AgentStatusChips({ statuses }: { statuses: UiAgentStatus[] }) {
           key={status.agentId}
           className={cn(
             'rounded-full border px-2 py-0.5 text-[11px]',
-            status.state ? tone[status.state] : 'border-[var(--border)] text-[var(--foreground-muted)]'
+            status.state ? tone[status.state] : 'border-[var(--line)] text-[var(--muted)]'
           )}
         >
           {status.agentName}
-          {status.state ? ` – ${label[status.state]}` : ' …'}
+          {status.state ? ` – ${t(label[status.state])}` : ' …'}
         </span>
       ))}
     </div>

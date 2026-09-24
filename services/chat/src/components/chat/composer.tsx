@@ -4,6 +4,7 @@ import { useRef } from 'react';
 import { Bot as BotIcon, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScopePicker } from '@/components/chat/scope-picker';
+import { useI18n } from '@/i18n/provider';
 import type { MappedError } from '@/lib/errors';
 import type { Bot, Collection } from '@/types/weave-api';
 
@@ -39,6 +40,7 @@ export function Composer({
   onToggleCollection,
   onClearCollections,
 }: ComposerProps) {
+  const { t } = useI18n();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const botSelected = !!selectedBotId;
 
@@ -49,13 +51,13 @@ export function Composer({
     }
   }
 
-  const placeholder = botSelected ? 'Nachricht schreiben…' : 'Bitte zuerst einen Bot auswählen';
+  const placeholder = botSelected ? t('chat.composer.placeholder') : t('chat.composer.placeholderNoBot');
 
   return (
-    <div className="flex-none bg-gradient-to-t from-[var(--background)] to-transparent px-3 pb-3 pt-2 sm:px-6">
-      <div className="mx-auto max-w-[48rem] rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-sm focus-within:border-[var(--accent)]">
+    <div className="flex-none bg-gradient-to-t from-[var(--bg)] to-transparent px-3 pb-3 pt-2 sm:px-6">
+      <div className="mx-auto max-w-[48rem] rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--surface)] shadow-sm focus-within:border-[var(--accent)] focus-within:ring-[3px] focus-within:ring-[var(--accent-soft)]">
         <label htmlFor="chat-composer-input" className="sr-only">
-          Deine Frage
+          {t('chat.composer.questionLabel')}
         </label>
         <textarea
           id="chat-composer-input"
@@ -66,20 +68,20 @@ export function Composer({
           disabled={disabled || !botSelected}
           placeholder={placeholder}
           rows={1}
-          className="block max-h-40 min-h-[2.75rem] w-full resize-y rounded-2xl border-0 bg-transparent px-4 pb-1 pt-3 text-sm outline-none placeholder:text-[var(--foreground-muted)] disabled:opacity-60"
+          className="block max-h-40 min-h-[2.75rem] w-full resize-y rounded-[var(--radius-card)] border-0 bg-transparent px-4 pb-1 pt-3 text-sm outline-none placeholder:text-[var(--muted)] disabled:opacity-60"
         />
 
         <div className="flex flex-wrap items-center gap-2 px-2.5 pb-2.5 pt-1.5">
-          <div className="relative inline-flex h-9 min-h-[40px] items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--surface-muted)] pl-2.5 pr-1.5 text-xs font-medium text-[var(--foreground-muted)] sm:min-h-0">
+          <div className="relative inline-flex h-9 min-h-[40px] items-center gap-1.5 rounded-[var(--radius-pill)] border border-[var(--line-2)] bg-[var(--surface-2)] pl-2.5 pr-1.5 text-xs font-medium text-[var(--muted)] focus-within:border-[var(--accent)] focus-within:ring-[3px] focus-within:ring-[var(--accent-soft)] sm:min-h-0">
             <BotIcon className="h-3.5 w-3.5 text-[var(--accent)]" aria-hidden="true" />
             <select
-              aria-label="Assistent"
+              aria-label={t('chat.composer.assistantLabel')}
               value={selectedBotId ?? ''}
               onChange={(e) => onSelectBot(e.target.value)}
               disabled={!bots || bots.length === 0}
-              className="max-w-[9rem] appearance-none truncate bg-transparent pr-3 font-semibold text-[var(--foreground)] outline-none disabled:opacity-60"
+              className="max-w-[9rem] appearance-none truncate bg-transparent pr-3 font-semibold text-[var(--ink)] outline-none disabled:opacity-60"
             >
-              {!bots || bots.length === 0 ? <option value="">Kein Bot verfügbar</option> : null}
+              {!bots || bots.length === 0 ? <option value="">{t('chat.composer.noBotAvailable')}</option> : null}
               {bots?.map((bot) => (
                 <option key={bot.id} value={bot.id}>
                   {bot.name}
@@ -96,23 +98,21 @@ export function Composer({
             onClearCollections={onClearCollections}
           />
 
-          <span className="hidden text-[11px] text-[var(--foreground-muted)] sm:ml-auto sm:inline">
-            Enter zum Senden · Shift+Enter für einen Zeilenumbruch
-          </span>
+          <span className="hidden text-[11px] text-[var(--muted)] sm:ml-auto sm:inline">{t('chat.composer.sendHint')}</span>
 
           <Button
             type="button"
             onClick={onSend}
             disabled={disabled || !botSelected || !value.trim()}
-            aria-label="Nachricht senden"
-            className="ml-auto h-10 w-10 flex-none rounded-full p-0 sm:ml-0"
+            aria-label={t('chat.composer.send')}
+            className="ml-auto h-10 w-10 flex-none rounded-[var(--radius-pill)] p-0 sm:ml-0"
           >
             <Send className="h-4 w-4" aria-hidden="true" />
           </Button>
         </div>
       </div>
-      <p className="mx-auto mt-1.5 max-w-[48rem] text-center text-[11px] text-[var(--foreground-muted)] sm:hidden">
-        Enter zum Senden · Shift+Enter für einen Zeilenumbruch
+      <p className="mx-auto mt-1.5 max-w-[48rem] text-center text-[11px] text-[var(--muted)] sm:hidden">
+        {t('chat.composer.sendHint')}
       </p>
     </div>
   );

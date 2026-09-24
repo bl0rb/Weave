@@ -9,6 +9,9 @@ import { cn } from '@/lib/utils';
 import type { ConversationSummary } from '@/types/weave-api';
 import type { MappedError } from '@/lib/errors';
 import { ErrorBanner } from '@/components/chat/error-banner';
+import { LanguageSwitch } from '@/i18n/language-switch';
+import { useI18n } from '@/i18n/provider';
+import type { MessageKey } from '@/i18n/messages';
 
 interface RailProps {
   conversations: ConversationSummary[] | null;
@@ -28,6 +31,15 @@ interface RailProps {
 
 const GROUP_LABELS = ['Heute', 'Diese Woche', 'Älter'] as const;
 type GroupLabel = (typeof GROUP_LABELS)[number];
+
+// `groupConversations` below stays a pure function that returns these
+// literal German bucket keys (rail.test.tsx asserts them directly) —
+// translation only happens where they're actually rendered, via this map.
+const GROUP_LABEL_KEY: Record<GroupLabel, MessageKey> = {
+  Heute: 'chat.rail.group.today',
+  'Diese Woche': 'chat.rail.group.week',
+  Älter: 'chat.rail.group.older',
+};
 
 /** Buckets the history list by recency for the grouped headings the design
  * calls for — "Heute" for anything updated since local midnight, "Diese
@@ -75,6 +87,7 @@ export function Rail({
   onClose,
 }: RailProps) {
   const router = useRouter();
+  const { t } = useI18n();
 
   // Escape closes the drawer on the narrow (<900px) layout only — `open`
   // is always true at the wider layout (see chat-app.tsx), where the rail
@@ -105,18 +118,18 @@ export function Rail({
       />
       <aside
         className={cn(
-          'chat-rail flex h-full min-h-0 w-full flex-col border-r border-[var(--border)] bg-[var(--surface)]',
+          'chat-rail flex h-full min-h-0 w-full flex-col border-r border-[var(--line)] bg-[var(--surface)]',
           open && 'is-open'
         )}
-        aria-label="Gespräche"
+        aria-label={t('chat.rail.landmarkLabel')}
       >
-        <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-4 py-3">
-          <span className="text-sm font-semibold">Weave Chat</span>
+        <div className="flex min-h-[62px] items-center justify-between gap-2 border-b border-[var(--line)] px-4">
+          <span className="text-[17px] font-semibold">{t('common.appTitle')}</span>
           <Button
             variant="ghost"
             size="sm"
             onClick={onClose}
-            aria-label="Gespräche schließen"
+            aria-label={t('chat.rail.close')}
             className="chat-mobile-menu hidden"
           >
             <X className="h-4 w-4" aria-hidden="true" />
@@ -132,18 +145,18 @@ export function Rail({
             className="w-full justify-start gap-2"
           >
             <Plus className="h-4 w-4" aria-hidden="true" />
-            Neues Gespräch
+            {t('chat.newConversation')}
           </Button>
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-3 py-3" aria-label="Verlauf">
+        <nav className="flex-1 overflow-y-auto px-3 py-3" aria-label={t('chat.rail.historyLabel')}>
           {conversations && conversations.length > 0 ? (
             <button
               type="button"
               onClick={onDeleteAllConversations}
-              className="mb-2 text-[11px] font-medium text-[var(--danger)] hover:underline"
+              className="mb-2 text-[11px] font-medium text-[var(--err)] hover:underline"
             >
-              Verlauf löschen
+              {t('chat.rail.clearHistory')}
             </button>
           ) : null}
 
@@ -151,17 +164,17 @@ export function Rail({
             {conversationsError ? (
               <ErrorBanner error={conversationsError} />
             ) : conversations === null ? (
-              <p className="flex items-center gap-1.5 px-1 text-xs text-[var(--foreground-muted)]">
+              <p className="flex items-center gap-1.5 px-1 text-xs text-[var(--muted)]">
                 <History className="h-3.5 w-3.5" aria-hidden="true" />
-                Verlauf wird geladen…
+                {t('chat.rail.loading')}
               </p>
             ) : conversations.length === 0 ? (
-              <p className="px-1 text-xs text-[var(--foreground-muted)]">Noch keine gespeicherten Konversationen.</p>
+              <p className="px-1 text-xs text-[var(--muted)]">{t('chat.rail.empty')}</p>
             ) : (
               groups.map(([label, items]) => (
                 <div key={label} className="mb-1">
-                  <p className="px-2 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide text-[var(--foreground-muted)] first:pt-0">
-                    {label}
+                  <p className="px-2 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)] first:pt-0">
+                    {t(GROUP_LABEL_KEY[label])}
                   </p>
                   <ul className="flex flex-col gap-1">
                     {items.map((conversation) => {
@@ -174,20 +187,20 @@ export function Rail({
                             aria-pressed={active}
                             aria-current={active ? 'page' : undefined}
                             className={cn(
-                              'min-w-0 flex-1 truncate rounded-lg border px-3 py-2 text-left text-sm transition-colors',
+                              'min-h-10 min-w-0 flex-1 truncate rounded-[var(--radius-control)] border px-3 py-2 text-left text-sm transition-colors',
                               active
                                 ? 'border-[var(--accent)] bg-[var(--accent-soft)]'
-                                : 'border-transparent hover:bg-[var(--surface-muted)]'
+                                : 'border-transparent hover:bg-[var(--surface-2)]'
                             )}
                           >
-                            {conversation.title ?? 'Ohne Titel'}
+                            {conversation.title ?? t('chat.rail.untitled')}
                           </button>
                           <Button
                             variant="ghost"
                             size="sm"
                             onClick={() => onDeleteConversation(conversation.id)}
-                            aria-label="Konversation löschen"
-                            title="Konversation löschen"
+                            aria-label={t('chat.rail.deleteConversation')}
+                            title={t('chat.rail.deleteConversation')}
                             className="flex-shrink-0"
                           >
                             <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
@@ -202,14 +215,17 @@ export function Rail({
           </div>
         </nav>
 
-        <div className="mt-auto flex items-center justify-between gap-2 border-t border-[var(--border)] px-3 py-3">
-          <span className="text-xs text-[var(--foreground-muted)]">Angemeldet</span>
-          <div className="flex items-center gap-1">
-            <ThemeToggle />
-            <Button variant="ghost" size="sm" onClick={logout} aria-label="Abmelden" title="Abmelden">
-              <LogOut className="h-4 w-4" aria-hidden="true" />
-            </Button>
+        <div className="mt-auto flex flex-col gap-2 border-t border-[var(--line)] px-3 py-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-[var(--muted)]">{t('chat.rail.signedIn')}</span>
+            <div className="flex items-center gap-1">
+              <ThemeToggle />
+              <Button variant="ghost" size="sm" onClick={logout} aria-label={t('chat.rail.logout')} title={t('chat.rail.logout')}>
+                <LogOut className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            </div>
           </div>
+          <LanguageSwitch className="self-start" />
         </div>
       </aside>
     </>

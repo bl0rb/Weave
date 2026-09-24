@@ -1,9 +1,11 @@
 import { RotateCcw, ShieldAlert } from 'lucide-react';
+import { useI18n } from '@/i18n/provider';
+import type { MessageKey } from '@/i18n/messages';
 import type { GuardTrace } from '@/types/weave-api';
 
-const REASON_TEXT: Record<string, string> = {
-  no_context: 'Es wurden keine passenden Belege in den durchsuchbaren Collections gefunden.',
-  no_collections: 'Für diese Anfrage steht keine Collection zur Verfügung, die dieser Bot durchsuchen darf.',
+const REASON_KEY: Record<string, MessageKey> = {
+  no_context: 'chat.guard.reason.noContext',
+  no_collections: 'chat.guard.reason.noCollections',
   // Deliberately distinct from "no_collections" above (see
   // contracts/internal-chat.md): here the bot/team combination DID have a
   // non-empty readable scope — it was this caller's own knowledge-space
@@ -11,8 +13,7 @@ const REASON_TEXT: Record<string, string> = {
   // scope-picker.tsx) that narrowed it to nothing. Unlike "no_collections",
   // that is fixable by the caller alone, so the message names the fix
   // directly, and `onResetScopeAndRetry` below offers to do it in one step.
-  filter_excluded_all:
-    'Deine Auswahl der Wissensbereiche schließt alle Collections aus, die dieser Bot für dich durchsuchen dürfte. Auswahl aufheben, um wieder alles zu durchsuchen, was dir erlaubt ist.',
+  filter_excluded_all: 'chat.guard.reason.filterExcludedAll',
 };
 
 interface GuardBannerProps {
@@ -34,25 +35,26 @@ interface GuardBannerProps {
  * folded into it.
  */
 export function GuardBanner({ guard, onResetScopeAndRetry }: GuardBannerProps) {
+  const { t } = useI18n();
   if (!guard.triggered) return null;
 
   return (
-    <div className="mb-2 flex flex-col gap-2 rounded-lg border border-[var(--warning)]/30 bg-[var(--warning-soft)] px-3 py-2 text-xs text-[var(--warning)]">
+    <div className="mb-2 flex flex-col gap-2 rounded-[var(--radius-control)] border border-[var(--warn)]/30 bg-[var(--warn-bg)] px-3 py-2 text-xs text-[var(--warn)]">
       <span className="flex items-start gap-2">
         <ShieldAlert className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />
         <span>
-          <span className="font-medium">Keine Belege gefunden.</span>{' '}
-          {guard.reason ? REASON_TEXT[guard.reason] ?? 'Die Antwort unten ist keine wissensbasierte Antwort.' : null}
+          <span className="font-medium">{t('chat.guard.headline')}</span>{' '}
+          {guard.reason ? t(REASON_KEY[guard.reason] ?? 'chat.guard.reason.unknown') : null}
         </span>
       </span>
       {guard.reason === 'filter_excluded_all' && onResetScopeAndRetry ? (
         <button
           type="button"
           onClick={onResetScopeAndRetry}
-          className="inline-flex min-h-[40px] w-fit items-center gap-1.5 self-start rounded-md border border-[var(--warning)]/40 px-2.5 py-1 text-xs font-medium text-[var(--warning)] hover:bg-[var(--warning)]/10 sm:min-h-0"
+          className="inline-flex min-h-[40px] w-fit items-center gap-1.5 self-start rounded-[var(--radius-control)] border border-[var(--warn)]/40 px-2.5 py-1 text-xs font-medium text-[var(--warn)] hover:bg-[var(--warn)]/10 sm:min-h-0"
         >
           <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-          Auswahl zurücksetzen &amp; neu fragen
+          {t('chat.guard.resetAndRetry')}
         </button>
       ) : null}
     </div>

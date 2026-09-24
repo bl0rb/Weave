@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Moon, Sun } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useI18n } from '@/i18n/provider';
 
 const STORAGE_KEY = 'weave-chat-theme';
 
@@ -27,6 +28,7 @@ function systemPrefersDark(): boolean {
  * Persisted per-browser in localStorage — a per-viewer convenience, not
  * app state, so it is fine that it never reaches the server. */
 export function ThemeToggle() {
+  const { t } = useI18n();
   const [theme, setTheme] = useState<Theme | null>(null);
 
   useEffect(() => {
@@ -58,8 +60,8 @@ export function ThemeToggle() {
       type="button"
       variant="ghost"
       size="sm"
-      aria-label={theme === 'dark' ? 'Helles Farbschema aktivieren' : 'Dunkles Farbschema aktivieren'}
-      title={theme === 'dark' ? 'Helles Farbschema' : 'Dunkles Farbschema'}
+      aria-label={theme === 'dark' ? t('chat.theme.enableLight') : t('chat.theme.enableDark')}
+      title={theme === 'dark' ? t('chat.theme.light') : t('chat.theme.dark')}
       onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
     >
       {theme === 'dark' ? <Sun className="h-4 w-4" aria-hidden="true" /> : <Moon className="h-4 w-4" aria-hidden="true" />}
