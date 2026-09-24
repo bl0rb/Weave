@@ -11,14 +11,20 @@
 // in <head>, which sets `window.__WEAVE_INGEST_ENV__` before any client bundle
 // runs. `src/lib/api-base.ts` then prefers that value over the build-time env.
 
+import { resolveChatUrl } from '@/lib/chat-url';
+
 // Force dynamic (per-request) execution so this route is never statically
 // optimized/prerendered at build time with a baked-in value.
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   const apiUrl = process.env.WEAVE_INGEST_PUBLIC_API_URL?.trim() || null;
+  // Same validation app/chat/page.tsx applies server-side — exposed here too
+  // so the client-rendered sidebar's "Chat öffnen" link (which cannot read
+  // process.env directly) can link straight to the chat app in a new tab.
+  const chatUrl = resolveChatUrl(process.env.WEAVE_CHAT_PUBLIC_URL);
 
-  const body = `window.__WEAVE_INGEST_ENV__ = ${JSON.stringify({ apiUrl })};`;
+  const body = `window.__WEAVE_INGEST_ENV__ = ${JSON.stringify({ apiUrl, chatUrl })};`;
 
   return new Response(body, {
     status: 200,

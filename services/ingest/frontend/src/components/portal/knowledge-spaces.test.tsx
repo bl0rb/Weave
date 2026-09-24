@@ -33,6 +33,14 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
+it('offers two "Wissensbereich anlegen" entry points, both pointing to /knowledge/new', async () => {
+  render(<KnowledgeSpaces />);
+  await screen.findByRole('heading', { name: 'Servicewissen' });
+  const startLinks = screen.getAllByRole('link', { name: /Wissensbereich anlegen/ });
+  expect(startLinks.length).toBe(2);
+  startLinks.forEach(link => expect(link.getAttribute('href')).toBe('/knowledge/new'));
+});
+
 it('removes the eyebrow and offers rename and delete only to managers', async () => {
   const { rerender } = render(<KnowledgeSpaces />);
   await screen.findByRole('heading', { name: 'Servicewissen' });

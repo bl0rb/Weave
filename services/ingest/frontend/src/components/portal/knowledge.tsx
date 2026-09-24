@@ -1,16 +1,27 @@
 'use client';
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from 'react';
 import Link from 'next/link';
-import { ArrowRight, Archive, BookOpen, CheckCheck, Pencil, Plus, RefreshCw, Trash2, Users } from 'lucide-react';
+import { AlertTriangle, Archive, CheckCheck, Pencil, Plus, RefreshCw, Trash2, Users } from 'lucide-react';
 import { apiJson } from '@/lib/api';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { apiSend, ConfirmDialog, Modal, inputClass } from '@/components/admin/admin-shared';
-import { bulkPortalAction, collectionDownloadName, downloadPortalFile, jsonBody, loadDocuments, markdownDownloadName, portalDownloadError, portalError, reindexKnowledgeSpace, type DocumentPage, type KnowledgeSpace, type PortalDocument, type QualityGradeFilter } from '@/lib/portal';
+import { AccessLine } from './access-line';
+import { spaceColorVar, spaceMark } from '@/lib/space-color';
+import { useIndexingStatus } from '@/lib/use-indexing-status';
+import { bulkPortalAction, collectionDownloadName, downloadPortalFile, jsonBody, loadDocuments, markdownDownloadName, pipelineStage, portalDownloadError, portalError, reindexKnowledgeSpace, type DocumentPage, type KnowledgeSpace, type PortalDocument, type QualityGradeFilter } from '@/lib/portal';
 import { BulkActionBar, DocumentTable, EmptyState, Notice, Pagination, PortalPage, QualityGradeFilterRow, QualityGradeLegend } from './shared';
+
+/** Bounds the "Im Chat verfügbar" counts and state chips below to the most recent N documents visible to the user. */
+const SPACE_STATS_SCAN_LIMIT = 200;
+
+function cssVar(color: string): CSSProperties {
+  return { '--c': color } as CSSProperties;
+}
 
 export function KnowledgeSpaces() {
   const [spaces, setSpaces] = useState<KnowledgeSpace[] | null>(null);
+  const [documents, setDocuments] = useState<PortalDocument[]>([]);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<KnowledgeSpace | null>(null);
@@ -20,11 +31,59 @@ export function KnowledgeSpaces() {
     .then(areas => { setSpaces(areas.items); setError(''); })
     .catch(err => setError(portalError(err))), []);
   useEffect(() => { void load(); }, [load]);
+  // Best-effort per-space stats (ready count + state chips) — a separate,
+  // bounded fetch so a failure here never blocks the space list itself.
+  useEffect(() => {
+    loadDocuments(undefined, 0, 'all', undefined, SPACE_STATS_SCAN_LIMIT)
+      .then(page => setDocuments(page.items))
+      .catch(() => setDocuments([]));
+  }, []);
+  const releasedIds = useMemo(() => documents.filter(document => document.release).map(document => document.id), [documents]);
+  const { items: live } = useIndexingStatus(releasedIds);
+  const statsFor = useCallback((collectionId: string) => {
+    const own = documents.filter(document => document.collection_id === collectionId);
+    const counts = { review: 0, error: 0, working: 0, ready: 0 };
+    for (const document of own) {
+      switch (pipelineStage(document, live[document.id])) {
+        case 'review': counts.review += 1; break;
+        case 'error': counts.error += 1; break;
+        case 'processing': case 'indexing': counts.working += 1; break;
+        case 'ready': counts.ready += 1; break;
+      }
+    }
+    return counts;
+  }, [documents, live]);
   const visible = spaces?.filter(space => `${space.name} ${space.description || ''}`.toLocaleLowerCase('de').includes(search.toLocaleLowerCase('de')));
-  return <PortalPage eyebrow={null} title="Wissensbereiche" description="Ordne Wissen nach Themen und lege fest, welche Teams es über Bots und Chat nutzen dürfen." actions={Boolean(spaces?.length) && <Link href="/knowledge/new" className={buttonVariants()}><Plus size={17} />Wissensbereich anlegen</Link>}>
+  return <PortalPage eyebrow={null} title="Wissensbereiche" description="Du legst fest, wer welches Wissen im Chat nutzen darf, und behältst Inhalt und Zugriff an einem Ort." actions={Boolean(spaces?.length) && <Link href="/knowledge/new" className={buttonVariants()}><Plus size={17} />Wissensbereich anlegen</Link>}>
     {notice && <Notice>{notice}</Notice>}
     {error && <Notice error action={load}>{error}</Notice>}
-    {spaces === null && !error ? <Notice>Wissensbereiche werden geladen …</Notice> : spaces?.length ? <><label className="portal-search">Wissensbereiche finden<input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Nach Name oder Beschreibung suchen" /></label><div className="portal-space-grid">{visible?.map(space => <article className="portal-panel portal-space-card" key={space.collection_id}><BookOpen size={25} aria-hidden="true" /><h2><Link href={`/knowledge/${space.collection_id}`}>{space.name}</Link></h2><p>{space.description || 'Dokumente und Quellen zu einem gemeinsamen Thema.'}</p><div className="portal-audience"><Users size={16} />{space.read_teams.length ? space.read_teams.join(', ') : 'Alle angemeldeten Teams'}</div><div className="portal-space-actions"><Link className="portal-space-open" href={`/knowledge/${space.collection_id}`}>Wissensbereich öffnen <ArrowRight size={16} aria-hidden="true" /></Link>{space.can_manage && <div className="portal-space-management"><Button variant="ghost" size="sm" onClick={() => { setEditing(space); setNotice(''); }} aria-label={`${space.name} umbenennen`}><Pencil size={14} aria-hidden="true" />Bearbeiten</Button><Button variant="ghost" size="sm" onClick={() => { setDeleting(space); setNotice(''); }} aria-label={`${space.name} löschen`}><Trash2 size={14} aria-hidden="true" />Löschen</Button></div>}</div></article>)}</div>{visible?.length === 0 && <EmptyState title="Kein passender Wissensbereich">Versuche einen anderen Suchbegriff.</EmptyState>}</> : !error && <EmptyState title="Womit möchtest du beginnen?" href="/knowledge/new" action="Wissensbereich anlegen">Lege deinen ersten Wissensbereich an. Danach kannst du Dateien und Confluence-Seiten hinzufügen.</EmptyState>}
+    {spaces === null && !error ? <Notice>Wissensbereiche werden geladen …</Notice> : spaces?.length ? <><label className="portal-search">Wissensbereiche finden<input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Nach Name oder Beschreibung suchen" /></label><div className="portal-space-grid">
+      {visible?.map(space => {
+        const stats = statsFor(space.collection_id);
+        const chips = [
+          stats.review > 0 && <span className="portal-chip portal-chip-warn" key="review">{stats.review} zu prüfen</span>,
+          stats.error > 0 && <span className="portal-chip portal-chip-err" key="error"><AlertTriangle aria-hidden="true" />{stats.error} Fehler</span>,
+          stats.working > 0 && <span className="portal-chip portal-chip-proc" key="working">{stats.working} in Arbeit</span>,
+        ].filter(Boolean);
+        return <article className="portal-panel portal-space-card" key={space.collection_id} style={cssVar(spaceColorVar(space.collection_id))}>
+          <div className="portal-space-top">
+            <span className="portal-space-mark" aria-hidden="true">{spaceMark(space.name)}</span>
+            <div><h2><Link href={`/knowledge/${space.collection_id}`}>{space.name}</Link></h2><p>{space.description || 'Dokumente und Quellen zu einem gemeinsamen Thema.'}</p></div>
+          </div>
+          <p className="text-sm font-semibold text-[var(--ink-2)]">Im Chat verfügbar: {stats.ready} {stats.ready === 1 ? 'Dokument' : 'Dokumente'}</p>
+          <AccessLine collection={space} href={`/knowledge/${space.collection_id}`} name={space.name} />
+          <p className="portal-space-state">{chips.length ? chips : <span className="portal-chip portal-chip-ok"><CheckCheck aria-hidden="true" />Alles aktuell</span>}</p>
+          <div className="portal-space-actions">
+            <div className="flex flex-wrap gap-2">
+              <Link className={buttonVariants({ variant: 'outline', size: 'sm' })} href={`/documents?bereich=${encodeURIComponent(space.slug)}`}>Dokumente ansehen</Link>
+              <Link className={buttonVariants({ variant: 'outline', size: 'sm' })} href={`/sources/new?collection=${encodeURIComponent(space.collection_id)}`}><Plus size={15} aria-hidden="true" />Quelle</Link>
+            </div>
+            {space.can_manage && <div className="portal-space-management"><Button variant="ghost" size="sm" onClick={() => { setEditing(space); setNotice(''); }} aria-label={`${space.name} umbenennen`}><Pencil size={14} aria-hidden="true" />Bearbeiten</Button><Button variant="ghost" size="sm" onClick={() => { setDeleting(space); setNotice(''); }} aria-label={`${space.name} löschen`}><Trash2 size={14} aria-hidden="true" />Löschen</Button></div>}
+          </div>
+        </article>;
+      })}
+      <Link href="/knowledge/new" className="portal-panel portal-space-card portal-space-new"><Plus aria-hidden="true" /><strong>Wissensbereich anlegen</strong><small>Für ein Team oder ein Thema – mit eigenem Zugriff.</small></Link>
+    </div>{visible?.length === 0 && <EmptyState title="Kein passender Wissensbereich">Versuche einen anderen Suchbegriff.</EmptyState>}</> : !error && <EmptyState title="Womit möchtest du beginnen?" href="/knowledge/new" action="Wissensbereich anlegen">Lege deinen ersten Wissensbereich an. Danach kannst du Dateien und Confluence-Seiten hinzufügen.</EmptyState>}
     {editing && <KnowledgeSpaceEditor space={editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); setNotice('Wissensbereich gespeichert.'); await load(); }} />}
     {deleting && <ConfirmDialog title="Wissensbereich löschen" body={<p>Den leeren Wissensbereich <strong className="text-slate-950">{deleting.name}</strong> löschen? Enthält er Dokumente, einen laufenden Import oder eine Bot-Zuordnung, wird die Aktion zum Schutz der Inhalte und Rechte abgelehnt.</p>} confirmLabel="Wissensbereich löschen" onClose={() => setDeleting(null)} onConfirm={async () => { await apiSend(`/api/v1/collections/${encodeURIComponent(deleting.collection_id)}`, { method: 'DELETE' }); setDeleting(null); setNotice('Wissensbereich gelöscht.'); await load(); }} />}
   </PortalPage>;

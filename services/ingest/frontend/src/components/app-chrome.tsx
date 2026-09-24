@@ -1,8 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { AuthProvider, useAuth } from '@/lib/auth-context';
 import { SidebarNav } from '@/components/sidebar-nav';
+import { Topbar } from '@/components/topbar';
 
 const AUTH_PAGES = ['/login', '/setup'];
 
@@ -10,9 +12,11 @@ function isAuthPage(pathname: string): boolean {
   return AUTH_PAGES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
-/** Sidebar + auth-gated content for protected routes. */
+/** Sidebar + topbar + auth-gated content for protected routes. */
 function ProtectedShell({ children }: { children: React.ReactNode }) {
   const { loading } = useAuth();
+  // Shared with <Topbar>'s burger button, which lives outside the drawer.
+  const [navOpen, setNavOpen] = useState(false);
 
   if (loading) {
     return (
@@ -28,8 +32,11 @@ function ProtectedShell({ children }: { children: React.ReactNode }) {
 
   return (
     <>
-      <SidebarNav />
-      <div className="lg:pl-64">{children}</div>
+      <SidebarNav open={navOpen} onOpenChange={setNavOpen} />
+      <div className="lg:pl-64">
+        <Topbar onMenuClick={() => setNavOpen(true)} />
+        {children}
+      </div>
     </>
   );
 }

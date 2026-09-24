@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { resolveChatUrl } from '@/lib/chat-url';
 
 export const dynamic = 'force-dynamic';
 
@@ -6,23 +7,8 @@ export const metadata: Metadata = {
   title: 'Chat · Weave',
 };
 
-function getChatUrl(): string | null {
-  const value = process.env.WEAVE_CHAT_PUBLIC_URL?.trim();
-  if (!value) return null;
-
-  try {
-    const url = new URL(value);
-    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password) {
-      return null;
-    }
-    return url.toString();
-  } catch {
-    return null;
-  }
-}
-
 export default function ChatPage() {
-  const chatUrl = getChatUrl();
+  const chatUrl = resolveChatUrl(process.env.WEAVE_CHAT_PUBLIC_URL);
 
   return (
     <main id="main-content" className="min-h-screen bg-slate-50 px-6 py-16 lg:px-12">

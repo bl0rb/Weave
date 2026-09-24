@@ -1,7 +1,14 @@
 import { ApiError, apiFetch, apiJson } from '@/lib/api';
-import { currentReleaseStatus, publicationState, type IndexingItem } from './indexing-status';
+import type { AccessUserDetail } from '@/lib/access-summary';
+import { currentReleaseStatus, isIndexReady, publicationState, type IndexingItem } from './indexing-status';
 
-export type KnowledgeSpace = { collection_id: string; slug: string; name: string; description: string | null; read_teams: string[]; can_manage: boolean; can_upload: boolean };
+export type KnowledgeSpace = {
+  collection_id: string; slug: string; name: string; description: string | null; read_teams: string[]; can_manage: boolean; can_upload: boolean;
+  // Landing concurrently on the backend (see services/ingest/backend's
+  // CollectionResponse) — optional here until every deployment is on the
+  // new schema. accessSummary()/<AccessLine> already understand them.
+  visibility?: 'public' | 'restricted'; read_users?: string[]; read_user_details?: AccessUserDetail[];
+};
 export type Publication = { id: string; created_at: string; status: 'pending' | 'sent' | 'failed'; error_message: string | null; released_by: string | null };
 export type PortalSource = { kind: 'upload' | 'confluence' | 'mail' | 'unknown'; label: string; path: string | null; url: string | null };
 export type PortalDocument = {
@@ -68,11 +75,52 @@ export function documentState(document: PortalDocument, live?: IndexingItem): { 
 }
 export const documentUrl = (document: PortalDocument) => document.status === 'FINISHED' ? `/reviews/${document.id}` : `/jobs/${document.id}`;
 export const dateLabel = (value: string) => new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value));
-export function loadDocuments(collectionId?: string, offset = 0, reviewState: ReviewStateFilter = 'all', qualityGrade?: QualityGradeFilter): Promise<DocumentPage> {
-  const params = new URLSearchParams({ offset: String(offset), limit: '20', review_state: reviewState });
+export function loadDocuments(collectionId?: string, offset = 0, reviewState: ReviewStateFilter = 'all', qualityGrade?: QualityGradeFilter, limit = 20): Promise<DocumentPage> {
+  const params = new URLSearchParams({ offset: String(offset), limit: String(limit), review_state: reviewState });
   if (collectionId) params.set('collection_id', collectionId);
   if (qualityGrade) params.set('quality_grade', qualityGrade);
   return apiJson(`/api/v1/portal/documents?${params}`);
+}
+
+/**
+ * The four automatic/manual stops a document's journey to the chat can be
+ * in, plus a cross-cutting 'error' bucket — mirrors the "Dokumentweg" the
+ * 06-loom-rc design prototype (docs/design-proposals/06-loom-rc) shows as a
+ * numbered pipeline: 1 Verarbeitung -> 2 Prüfung -> 3 Indexierung -> 4 Im
+ * Chat, with Fehler called out separately rather than as a fifth step.
+ */
+export type PipelineStage = 'processing' | 'review' | 'indexing' | 'ready' | 'error';
+
+/** Numbered steps only — 'error' is shown as a separate, unnumbered chip (see the design reference above). */
+export const PIPELINE_STEPS: { value: Exclude<PipelineStage, 'error'>; step: number; label: string; hint: string }[] = [
+  { value: 'processing', step: 1, label: 'Verarbeitung', hint: 'automatisch' },
+  { value: 'review', step: 2, label: 'Prüfung', hint: 'durch dich' },
+  { value: 'indexing', step: 3, label: 'Indexierung', hint: 'automatisch' },
+  { value: 'ready', step: 4, label: 'Im Chat', hint: 'für Berechtigte' },
+];
+
+/**
+ * Buckets one document into the pipeline stage a person actually cares
+ * about, independent of the more granular {@link documentState} label.
+ * Without a `live` indexing snapshot a released document can only be
+ * placed in 'indexing' (not 'ready') — the caller can pass one from
+ * {@link useIndexingStatus} for an accurate 'ready' vs 'indexing' split.
+ */
+export function pipelineStage(document: PortalDocument, live?: IndexingItem): PipelineStage {
+  if (document.status === 'PENDING' || document.status === 'RUNNING') return 'processing';
+  if (document.status === 'FAILED') return 'error';
+  if (!document.release) return 'review';
+  const { delivery, indexing } = currentReleaseStatus(document.release, live);
+  if (isIndexReady(indexing)) return 'ready';
+  if (delivery === 'failed' || indexing?.state === 'failed' || indexing?.state === 'blocked' || indexing?.state === 'incomplete' || indexing?.state === 'mismatch') return 'error';
+  return 'indexing';
+}
+
+/** Tallies documents per {@link PipelineStage} — shared by the Übersicht stat tiles, the Wissensbereiche cards and the Dokumente filter bar. */
+export function summarizePipeline(documents: PortalDocument[], live: Record<string, IndexingItem> = {}): Record<PipelineStage, number> {
+  const counts: Record<PipelineStage, number> = { processing: 0, review: 0, indexing: 0, ready: 0, error: 0 };
+  for (const document of documents) counts[pipelineStage(document, live[document.id])] += 1;
+  return counts;
 }
 
 export function bulkPortalAction(jobIds: string[], action: BulkAction, acceptQualityWarnings = false): Promise<BulkActionResult> {
