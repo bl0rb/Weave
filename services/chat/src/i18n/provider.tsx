@@ -34,8 +34,12 @@ export function useI18n() {
   const { locale, setLocale } = useContext(I18nContext);
   const t = useCallback((key: MessageKey, vars?: MessageVars) => translate(locale, key, vars), [locale]);
   const formatDate = useCallback(
-    (value: string | number | Date, options: Intl.DateTimeFormatOptions = { dateStyle: 'medium' }) =>
-      new Intl.DateTimeFormat(INTL_LOCALE[locale], options).format(new Date(value)),
+    (value: string | number | Date | null | undefined, options: Intl.DateTimeFormatOptions = { dateStyle: 'medium' }) => {
+      // Missing or unparsable timestamps (e.g. a token never used yet) render as a dash
+      // instead of throwing: Intl.DateTimeFormat.format() raises on an invalid Date.
+      const date = value === null || value === undefined || value === '' ? null : new Date(value);
+      return date && !Number.isNaN(date.getTime()) ? new Intl.DateTimeFormat(INTL_LOCALE[locale], options).format(date) : '–';
+    },
     [locale],
   );
   const formatNumber = useCallback(
