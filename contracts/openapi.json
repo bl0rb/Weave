@@ -41,6 +41,34 @@
             ],
             "title": "Team Id"
           },
+          "team_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Ids"
+          },
+          "team_roles": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Roles"
+          },
           "username": {
             "maxLength": 255,
             "minLength": 1,
@@ -134,9 +162,325 @@
               }
             ],
             "title": "Team Id"
+          },
+          "team_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Ids"
+          },
+          "team_roles": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Roles"
           }
         },
         "title": "AdminUserUpdateRequest",
+        "type": "object"
+      },
+      "AgentConfig": {
+        "additionalProperties": false,
+        "description": "Mirrors Weave-Runtime's `AgentConfig` (app/schemas/bot.py) --\n`BotConfig.agent`'s exact shape, so an admin-saved agent-mode\nconfiguration is validated here, with a readable 422 detail on a\nmalformed shape, instead of only failing silently as an opaque dict\nthat Runtime rejects at its own next bot-load. Field names/defaults\nare kept identical to Runtime's own model on purpose (see that\nmodule's own docstring for the reasoning behind each one).",
+        "properties": {
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/AgentLimits"
+          },
+          "subagents": {
+            "items": {
+              "$ref": "#/components/schemas/AgentSubagent"
+            },
+            "maxItems": 20,
+            "title": "Subagents",
+            "type": "array"
+          }
+        },
+        "title": "AgentConfig",
+        "type": "object"
+      },
+      "AgentLimits": {
+        "additionalProperties": false,
+        "description": "Mirrors Weave-Runtime's `AgentLimits` (app/schemas/bot.py),\nincluding its defaults -- rollout plan \"Schritt 4\" start values\n(3/1/9/120).",
+        "properties": {
+          "budget_searches": {
+            "default": 9,
+            "maximum": 500.0,
+            "minimum": 0.0,
+            "title": "Budget Searches",
+            "type": "integer"
+          },
+          "max_followups": {
+            "default": 1,
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "title": "Max Followups",
+            "type": "integer"
+          },
+          "max_parallel": {
+            "default": 3,
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Max Parallel",
+            "type": "integer"
+          },
+          "timeout_seconds": {
+            "default": 120,
+            "maximum": 3600.0,
+            "minimum": 1.0,
+            "title": "Timeout Seconds",
+            "type": "integer"
+          }
+        },
+        "title": "AgentLimits",
+        "type": "object"
+      },
+      "AgentSubagent": {
+        "additionalProperties": false,
+        "description": "Mirrors Weave-Runtime's `SubagentConfig` (app/schemas/bot.py) --\nfield names, defaults and the two cross-field rules below (unique id\nshape, collections-or-uncollected) are kept identical to that model on\npurpose, so a shape this validator accepts is guaranteed to be one\nRuntime's own loader will accept too, and a shape it rejects gives a\nreadable 422 here instead of only surfacing as a Runtime-side bot-load\nfailure the next time this bot's turn runs.",
+        "properties": {
+          "collections": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500,
+            "title": "Collections",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/AgentSubagentFilters"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "include_uncollected": {
+            "default": false,
+            "title": "Include Uncollected",
+            "type": "boolean"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/AgentSubagentLimits"
+          },
+          "mission": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Mission",
+            "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentSubagentModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "tools": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tools",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "mission"
+        ],
+        "title": "AgentSubagent",
+        "type": "object"
+      },
+      "AgentSubagentFilters": {
+        "additionalProperties": false,
+        "description": "Mirrors Weave-Runtime's `RetrievalFilters` (app/schemas/bot.py) --\nfield names and defaults kept identical on purpose so a saved payload\nhere is byte-for-byte what Runtime's own `AgentConfig` will accept when\nit next loads this bot.",
+        "properties": {
+          "department": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Department"
+          },
+          "document_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Type"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          },
+          "team": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team"
+          }
+        },
+        "title": "AgentSubagentFilters",
+        "type": "object"
+      },
+      "AgentSubagentLimits": {
+        "additionalProperties": false,
+        "description": "Mirrors Weave-Runtime's `SubagentLimits` (app/schemas/bot.py),\nincluding its defaults -- rollout plan \"Schritt 4\" start values.",
+        "properties": {
+          "max_results": {
+            "default": 5,
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Max Results",
+            "type": "integer"
+          },
+          "max_searches": {
+            "default": 3,
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Max Searches",
+            "type": "integer"
+          },
+          "timeout_seconds": {
+            "default": 60,
+            "maximum": 3600.0,
+            "minimum": 1.0,
+            "title": "Timeout Seconds",
+            "type": "integer"
+          }
+        },
+        "title": "AgentSubagentLimits",
+        "type": "object"
+      },
+      "AgentSubagentModel": {
+        "additionalProperties": false,
+        "description": "Mirrors Weave-Runtime's `ModelConfig` (app/schemas/bot.py) -- a\nsubagent's own model override. `supports_tools` only matters for a\nnon-'fake' provider (see Runtime's own `_agent_requires_tool_support`\nvalidator); left unvalidated here beyond the type itself, exactly like\nRuntime leaves 'unknown' (`None`) to mean 'assume no tool support'.",
+        "properties": {
+          "model": {
+            "minLength": 1,
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "default": "fake",
+            "title": "Provider",
+            "type": "string"
+          },
+          "supports_tools": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supports Tools"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "maximum": 2.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          }
+        },
+        "required": [
+          "model"
+        ],
+        "title": "AgentSubagentModel",
         "type": "object"
       },
       "ApiTokenCreateRequest": {
@@ -281,6 +625,165 @@
           "created_at"
         ],
         "title": "ApiTokenResponse",
+        "type": "object"
+      },
+      "BackupExportRequest": {
+        "properties": {
+          "passphrase": {
+            "maxLength": 256,
+            "minLength": 12,
+            "title": "Passphrase",
+            "type": "string"
+          }
+        },
+        "required": [
+          "passphrase"
+        ],
+        "title": "BackupExportRequest",
+        "type": "object"
+      },
+      "BackupRunListResponse": {
+        "properties": {
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/BackupRunResponse"
+            },
+            "title": "Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "runs"
+        ],
+        "title": "BackupRunListResponse",
+        "type": "object"
+      },
+      "BackupRunResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "file_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Name"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "progress": {
+            "additionalProperties": true,
+            "title": "Progress",
+            "type": "object"
+          },
+          "report": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Report"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Bytes"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "file_name",
+          "size_bytes",
+          "progress",
+          "report",
+          "error_message",
+          "created_by",
+          "created_at",
+          "updated_at",
+          "started_at",
+          "finished_at"
+        ],
+        "title": "BackupRunResponse",
         "type": "object"
       },
       "BenchmarkDeleteResponse": {
@@ -690,6 +1193,30 @@
         "title": "Body_create_benchmark_api_v1_benchmarks_post",
         "type": "object"
       },
+      "Body_create_import_api_v1_admin_backup_imports_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          },
+          "passphrase": {
+            "title": "Passphrase",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file",
+          "passphrase"
+        ],
+        "title": "Body_create_import_api_v1_admin_backup_imports_post",
+        "type": "object"
+      },
       "Body_upload_document_api_v1_upload_post": {
         "properties": {
           "email": {
@@ -795,6 +1322,10 @@
             "title": "Model",
             "type": "string"
           },
+          "supports_tools": {
+            "title": "Supports Tools",
+            "type": "boolean"
+          },
           "temperature": {
             "anyOf": [
               {
@@ -831,6 +1362,7 @@
           "has_api_key",
           "timeout_seconds",
           "temperature",
+          "supports_tools",
           "updated_at"
         ],
         "title": "ChatProviderAdminResponse",
@@ -860,6 +1392,11 @@
             "default": "",
             "title": "Model",
             "type": "string"
+          },
+          "supports_tools": {
+            "default": false,
+            "title": "Supports Tools",
+            "type": "boolean"
           },
           "temperature": {
             "anyOf": [
@@ -963,6 +1500,11 @@
             "title": "Model",
             "type": "string"
           },
+          "supports_tools": {
+            "default": false,
+            "title": "Supports Tools",
+            "type": "boolean"
+          },
           "temperature": {
             "anyOf": [
               {
@@ -1059,6 +1601,13 @@
             "title": "Read Teams",
             "type": "array"
           },
+          "read_users": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Read Users",
+            "type": "array"
+          },
           "slug": {
             "anyOf": [
               {
@@ -1074,6 +1623,16 @@
             "default": "",
             "title": "Subfolder",
             "type": "string"
+          },
+          "visibility": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CollectionVisibility"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "title": "CollectionCreateRequest",
@@ -1117,14 +1676,25 @@
             "title": "Read Teams",
             "type": "array"
           },
+          "read_users": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Read Users",
+            "type": "array"
+          },
           "slug": {
             "title": "Slug",
             "type": "string"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/CollectionVisibility"
           }
         },
         "required": [
           "slug",
-          "name"
+          "name",
+          "visibility"
         ],
         "title": "CollectionRegistryEntry",
         "type": "object"
@@ -1200,6 +1770,20 @@
             "title": "Read Teams",
             "type": "array"
           },
+          "read_user_details": {
+            "items": {
+              "$ref": "#/components/schemas/ReadUserDetail"
+            },
+            "title": "Read User Details",
+            "type": "array"
+          },
+          "read_users": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Read Users",
+            "type": "array"
+          },
           "slug": {
             "title": "Slug",
             "type": "string"
@@ -1208,12 +1792,16 @@
             "default": "",
             "title": "Subfolder",
             "type": "string"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/CollectionVisibility"
           }
         },
         "required": [
           "collection_id",
           "slug",
           "name",
+          "visibility",
           "email",
           "department"
         ],
@@ -1270,7 +1858,7 @@
         "type": "object"
       },
       "CollectionUpdateRequest": {
-        "description": "PATCH payload: every field optional and only applied when present\n(None = leave unchanged). `slug` is deliberately not patchable here --\nit is the collection's stable cross-service identity (see Collection's\ndocstring) and already-processed documents carry it in their frontmatter.",
+        "description": "PATCH payload: every field optional and only applied when present\n(None = leave unchanged). `slug` is deliberately not patchable here --\nit is the collection's stable cross-service identity (see Collection's\ndocstring) and already-processed documents carry it in their frontmatter.\n\nUnlike create, `read_teams`/`read_users` here are validated against real\nteam names / user ids (422 on any unknown entry) and de-duplicated --\nsee routes.update_collection.",
         "properties": {
           "description": {
             "anyOf": [
@@ -1307,10 +1895,43 @@
               }
             ],
             "title": "Read Teams"
+          },
+          "read_users": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read Users"
+          },
+          "visibility": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CollectionVisibility"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "title": "CollectionUpdateRequest",
         "type": "object"
+      },
+      "CollectionVisibility": {
+        "description": "The single authoritative public/restricted flag for a Collection --\nsee `Collection.visibility`'s own docstring for why this replaced the\nold \"empty `read_teams` means public\" inference.",
+        "enum": [
+          "public",
+          "restricted"
+        ],
+        "title": "CollectionVisibility",
+        "type": "string"
       },
       "ContainerState": {
         "properties": {
@@ -1379,6 +2000,91 @@
           "errors"
         ],
         "title": "DashboardStatsResponse",
+        "type": "object"
+      },
+      "DirectoryTeamEntry": {
+        "properties": {
+          "member_count": {
+            "title": "Member Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "member_count"
+        ],
+        "title": "DirectoryTeamEntry",
+        "type": "object"
+      },
+      "DirectoryTeamsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DirectoryTeamEntry"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "title": "DirectoryTeamsResponse",
+        "type": "object"
+      },
+      "DirectoryUserEntry": {
+        "description": "One row of GET /directory/users -- the person-picker's search result\nshape. Deliberately never email or any other personal field beyond\nusername/team -- see routes.list_directory_users's own docstring.",
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "team": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username"
+        ],
+        "title": "DirectoryUserEntry",
+        "type": "object"
+      },
+      "DirectoryUsersResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DirectoryUserEntry"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "title": "DirectoryUsersResponse",
         "type": "object"
       },
       "FolderActionRequest": {
@@ -1468,6 +2174,13 @@
               }
             ],
             "title": "Team"
+          },
+          "teams": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Teams",
+            "type": "array"
           },
           "username": {
             "title": "Username",
@@ -1577,6 +2290,21 @@
             "title": "Attachments Saved",
             "type": "integer"
           },
+          "can_edit": {
+            "default": false,
+            "title": "Can Edit",
+            "type": "boolean"
+          },
+          "can_remove_missing": {
+            "default": false,
+            "title": "Can Remove Missing",
+            "type": "boolean"
+          },
+          "can_sync": {
+            "default": false,
+            "title": "Can Sync",
+            "type": "boolean"
+          },
           "cancel_requested": {
             "default": false,
             "title": "Cancel Requested",
@@ -1642,6 +2370,19 @@
             "title": "Kind",
             "type": "string"
           },
+          "missing_page_count": {
+            "default": 0,
+            "title": "Missing Page Count",
+            "type": "integer"
+          },
+          "missing_pages": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Missing Pages",
+            "type": "array"
+          },
           "options": {
             "$ref": "#/components/schemas/ImportRunOptions"
           },
@@ -1668,6 +2409,11 @@
           "pages_imported": {
             "default": 0,
             "title": "Pages Imported",
+            "type": "integer"
+          },
+          "pending_attachment_jobs": {
+            "default": 0,
+            "title": "Pending Attachment Jobs",
             "type": "integer"
           },
           "root_page_title": {
@@ -1919,6 +2665,16 @@
             "title": "Attachments Saved",
             "type": "integer"
           },
+          "can_edit": {
+            "default": false,
+            "title": "Can Edit",
+            "type": "boolean"
+          },
+          "can_sync": {
+            "default": false,
+            "title": "Can Sync",
+            "type": "boolean"
+          },
           "content_bytes": {
             "default": 0,
             "title": "Content Bytes",
@@ -1948,6 +2704,11 @@
           "kind": {
             "title": "Kind",
             "type": "string"
+          },
+          "missing_page_count": {
+            "default": 0,
+            "title": "Missing Page Count",
+            "type": "integer"
           },
           "owner": {
             "anyOf": [
@@ -2333,6 +3094,17 @@
         "title": "ImportSourceUpdateRequest",
         "type": "object"
       },
+      "ImportWithdrawalRequest": {
+        "properties": {
+          "confirm": {
+            "default": false,
+            "title": "Confirm",
+            "type": "boolean"
+          }
+        },
+        "title": "ImportWithdrawalRequest",
+        "type": "object"
+      },
       "JobArtifactListResponse": {
         "properties": {
           "items": {
@@ -2696,6 +3468,69 @@
         "title": "JobVersionsResponse",
         "type": "object"
       },
+      "KnowledgeRebuildResponse": {
+        "properties": {
+          "requeued": {
+            "title": "Requeued",
+            "type": "integer"
+          },
+          "worker_required": {
+            "default": true,
+            "title": "Worker Required",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "requeued"
+        ],
+        "title": "KnowledgeRebuildResponse",
+        "type": "object"
+      },
+      "KnowledgeRebuildStatusResponse": {
+        "properties": {
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "last_sent_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Sent At"
+          },
+          "pending": {
+            "title": "Pending",
+            "type": "integer"
+          },
+          "sent": {
+            "title": "Sent",
+            "type": "integer"
+          },
+          "total_releases": {
+            "title": "Total Releases",
+            "type": "integer"
+          },
+          "withdrawn": {
+            "title": "Withdrawn",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_releases",
+          "withdrawn",
+          "pending",
+          "sent",
+          "failed"
+        ],
+        "title": "KnowledgeRebuildStatusResponse",
+        "type": "object"
+      },
       "LoginRequest": {
         "properties": {
           "identifier": {
@@ -2714,6 +3549,736 @@
           "password"
         ],
         "title": "LoginRequest",
+        "type": "object"
+      },
+      "ManagedBotAdminResponse": {
+        "properties": {
+          "agent": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent"
+          },
+          "collections": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Collections",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "editable": {
+            "default": true,
+            "title": "Editable",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "final_k": {
+            "default": 5,
+            "title": "Final K",
+            "type": "integer"
+          },
+          "has_auth_token": {
+            "title": "Has Auth Token",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "include_uncollected": {
+            "default": true,
+            "title": "Include Uncollected",
+            "type": "boolean"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "no_context_reply": {
+            "title": "No Context Reply",
+            "type": "string"
+          },
+          "require_sources": {
+            "title": "Require Sources",
+            "type": "boolean"
+          },
+          "rerank": {
+            "default": true,
+            "title": "Rerank",
+            "type": "boolean"
+          },
+          "retrieval_enabled": {
+            "default": false,
+            "title": "Retrieval Enabled",
+            "type": "boolean"
+          },
+          "retrieval_filters": {
+            "additionalProperties": true,
+            "title": "Retrieval Filters",
+            "type": "object"
+          },
+          "source": {
+            "default": "managed",
+            "title": "Source",
+            "type": "string"
+          },
+          "streaming": {
+            "title": "Streaming",
+            "type": "boolean"
+          },
+          "system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Prompt"
+          },
+          "teams": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Teams",
+            "type": "array"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          },
+          "timeout_seconds": {
+            "title": "Timeout Seconds",
+            "type": "integer"
+          },
+          "top_k": {
+            "default": 20,
+            "title": "Top K",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "webhook_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webhook Url"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "description",
+          "enabled",
+          "webhook_url",
+          "streaming",
+          "has_auth_token",
+          "timeout_seconds",
+          "teams",
+          "collections",
+          "require_sources",
+          "no_context_reply",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ManagedBotAdminResponse",
+        "type": "object"
+      },
+      "ManagedBotCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "agent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "auth_token": {
+            "anyOf": [
+              {
+                "maxLength": 8192,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auth Token"
+          },
+          "clear_auth_token": {
+            "default": false,
+            "title": "Clear Auth Token",
+            "type": "boolean"
+          },
+          "collections": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500,
+            "title": "Collections",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "final_k": {
+            "default": 5,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Final K",
+            "type": "integer"
+          },
+          "id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "include_uncollected": {
+            "default": true,
+            "title": "Include Uncollected",
+            "type": "boolean"
+          },
+          "kind": {
+            "default": "n8n",
+            "enum": [
+              "n8n",
+              "llm"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "no_context_reply": {
+            "default": "Ich habe dazu keine belegten Informationen gefunden.",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "No Context Reply",
+            "type": "string"
+          },
+          "require_sources": {
+            "default": true,
+            "title": "Require Sources",
+            "type": "boolean"
+          },
+          "rerank": {
+            "default": true,
+            "title": "Rerank",
+            "type": "boolean"
+          },
+          "retrieval_enabled": {
+            "default": false,
+            "title": "Retrieval Enabled",
+            "type": "boolean"
+          },
+          "retrieval_filters": {
+            "additionalProperties": true,
+            "title": "Retrieval Filters",
+            "type": "object"
+          },
+          "streaming": {
+            "default": false,
+            "title": "Streaming",
+            "type": "boolean"
+          },
+          "system_prompt": {
+            "anyOf": [
+              {
+                "maxLength": 12000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Prompt"
+          },
+          "teams": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Teams",
+            "type": "array"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "maximum": 2.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          },
+          "timeout_seconds": {
+            "default": 120,
+            "maximum": 14400.0,
+            "minimum": 1.0,
+            "title": "Timeout Seconds",
+            "type": "integer"
+          },
+          "top_k": {
+            "default": 20,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Top K",
+            "type": "integer"
+          },
+          "webhook_url": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webhook Url"
+          }
+        },
+        "required": [
+          "name",
+          "id"
+        ],
+        "title": "ManagedBotCreate",
+        "type": "object"
+      },
+      "ManagedBotInternalListResponse": {
+        "properties": {
+          "disabled_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Disabled Ids",
+            "type": "array"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ManagedBotInternalResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "title": "ManagedBotInternalListResponse",
+        "type": "object"
+      },
+      "ManagedBotInternalResponse": {
+        "properties": {
+          "agent": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent"
+          },
+          "auth_token": {
+            "default": "",
+            "title": "Auth Token",
+            "type": "string"
+          },
+          "collections": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Collections",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "final_k": {
+            "default": 5,
+            "title": "Final K",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "include_uncollected": {
+            "default": true,
+            "title": "Include Uncollected",
+            "type": "boolean"
+          },
+          "kind": {
+            "default": "n8n",
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "no_context_reply": {
+            "title": "No Context Reply",
+            "type": "string"
+          },
+          "require_sources": {
+            "title": "Require Sources",
+            "type": "boolean"
+          },
+          "rerank": {
+            "default": true,
+            "title": "Rerank",
+            "type": "boolean"
+          },
+          "retrieval_enabled": {
+            "default": false,
+            "title": "Retrieval Enabled",
+            "type": "boolean"
+          },
+          "retrieval_filters": {
+            "additionalProperties": true,
+            "title": "Retrieval Filters",
+            "type": "object"
+          },
+          "streaming": {
+            "title": "Streaming",
+            "type": "boolean"
+          },
+          "system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Prompt"
+          },
+          "teams": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Teams",
+            "type": "array"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          },
+          "timeout_seconds": {
+            "title": "Timeout Seconds",
+            "type": "integer"
+          },
+          "top_k": {
+            "default": 20,
+            "title": "Top K",
+            "type": "integer"
+          },
+          "webhook_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webhook Url"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "streaming",
+          "timeout_seconds",
+          "teams",
+          "collections",
+          "require_sources",
+          "no_context_reply"
+        ],
+        "title": "ManagedBotInternalResponse",
+        "type": "object"
+      },
+      "ManagedBotListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ManagedBotAdminResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "title": "ManagedBotListResponse",
+        "type": "object"
+      },
+      "ManagedBotUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "agent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "auth_token": {
+            "anyOf": [
+              {
+                "maxLength": 8192,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auth Token"
+          },
+          "clear_auth_token": {
+            "default": false,
+            "title": "Clear Auth Token",
+            "type": "boolean"
+          },
+          "collections": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500,
+            "title": "Collections",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "final_k": {
+            "default": 5,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Final K",
+            "type": "integer"
+          },
+          "include_uncollected": {
+            "default": true,
+            "title": "Include Uncollected",
+            "type": "boolean"
+          },
+          "kind": {
+            "default": "n8n",
+            "enum": [
+              "n8n",
+              "llm"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "no_context_reply": {
+            "default": "Ich habe dazu keine belegten Informationen gefunden.",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "No Context Reply",
+            "type": "string"
+          },
+          "require_sources": {
+            "default": true,
+            "title": "Require Sources",
+            "type": "boolean"
+          },
+          "rerank": {
+            "default": true,
+            "title": "Rerank",
+            "type": "boolean"
+          },
+          "retrieval_enabled": {
+            "default": false,
+            "title": "Retrieval Enabled",
+            "type": "boolean"
+          },
+          "retrieval_filters": {
+            "additionalProperties": true,
+            "title": "Retrieval Filters",
+            "type": "object"
+          },
+          "streaming": {
+            "default": false,
+            "title": "Streaming",
+            "type": "boolean"
+          },
+          "system_prompt": {
+            "anyOf": [
+              {
+                "maxLength": 12000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Prompt"
+          },
+          "teams": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Teams",
+            "type": "array"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "maximum": 2.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          },
+          "timeout_seconds": {
+            "default": 120,
+            "maximum": 14400.0,
+            "minimum": 1.0,
+            "title": "Timeout Seconds",
+            "type": "integer"
+          },
+          "top_k": {
+            "default": 20,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Top K",
+            "type": "integer"
+          },
+          "webhook_url": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webhook Url"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ManagedBotUpdate",
         "type": "object"
       },
       "MarkdownBrowserResponse": {
@@ -3182,6 +4747,79 @@
         "title": "PortalActivityListResponse",
         "type": "object"
       },
+      "PortalBulkActionRequest": {
+        "properties": {
+          "accept_quality_warnings": {
+            "default": false,
+            "title": "Accept Quality Warnings",
+            "type": "boolean"
+          },
+          "action": {
+            "enum": [
+              "release",
+              "skip",
+              "unskip",
+              "delete"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "job_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Job Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "job_ids",
+          "action"
+        ],
+        "title": "PortalBulkActionRequest",
+        "type": "object"
+      },
+      "PortalBulkActionResponse": {
+        "description": "Result of a bulk portal action. Rejected items (already released,\nquality-C without acceptance, no permission, not found, ...) are all\nreported via `errors`, never counted separately -- there is no partial\n'skipped but not an error' outcome for a bulk action.",
+        "properties": {
+          "done": {
+            "title": "Done",
+            "type": "integer"
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/PortalBulkErrorItem"
+            },
+            "title": "Errors",
+            "type": "array"
+          }
+        },
+        "required": [
+          "done"
+        ],
+        "title": "PortalBulkActionResponse",
+        "type": "object"
+      },
+      "PortalBulkErrorItem": {
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "reason"
+        ],
+        "title": "PortalBulkErrorItem",
+        "type": "object"
+      },
       "PortalCollectionItem": {
         "description": "`review_count` counts finished, non-empty, unprotected jobs without\na release, with no import or a FINISHED import, and with quality\nrecommendation other than `block` and grade other than `c` (case-insensitive).",
         "properties": {
@@ -3298,6 +4936,35 @@
         "title": "PortalCollectionListResponse",
         "type": "object"
       },
+      "PortalCollectionReleaseRequest": {
+        "properties": {
+          "accept_quality_warnings": {
+            "default": false,
+            "title": "Accept Quality Warnings",
+            "type": "boolean"
+          }
+        },
+        "title": "PortalCollectionReleaseRequest",
+        "type": "object"
+      },
+      "PortalCollectionReleaseResponse": {
+        "properties": {
+          "released": {
+            "title": "Released",
+            "type": "integer"
+          },
+          "skipped": {
+            "title": "Skipped",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "released",
+          "skipped"
+        ],
+        "title": "PortalCollectionReleaseResponse",
+        "type": "object"
+      },
       "PortalConfigResponse": {
         "properties": {
           "publication_configured": {
@@ -3314,6 +4981,13 @@
               }
             ],
             "title": "Team Name"
+          },
+          "team_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Team Names",
+            "type": "array"
           }
         },
         "required": [
@@ -3374,6 +5048,16 @@
             ],
             "title": "Profile Id"
           },
+          "quality": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortalQualityDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "quality_grade": {
             "anyOf": [
               {
@@ -3384,6 +5068,24 @@
               }
             ],
             "title": "Quality Grade"
+          },
+          "quality_missing_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "not_finished",
+                  "failed",
+                  "legacy",
+                  "import_without_gate",
+                  "unknown"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Missing Reason"
           },
           "quality_recommendation": {
             "anyOf": [
@@ -3406,6 +5108,20 @@
               }
             ]
           },
+          "review_decision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Decision"
+          },
+          "source": {
+            "$ref": "#/components/schemas/PortalDocumentSource"
+          },
           "status": {
             "title": "Status",
             "type": "string"
@@ -3419,6 +5135,7 @@
           "collection_name",
           "created_at",
           "can_release",
+          "source",
           "markdown",
           "markdown_sha256"
         ],
@@ -3484,6 +5201,20 @@
               }
             ]
           },
+          "review_decision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Decision"
+          },
+          "source": {
+            "$ref": "#/components/schemas/PortalDocumentSource"
+          },
           "status": {
             "title": "Status",
             "type": "string"
@@ -3496,7 +5227,8 @@
           "collection_id",
           "collection_name",
           "created_at",
-          "can_release"
+          "can_release",
+          "source"
         ],
         "title": "PortalDocumentItem",
         "type": "object"
@@ -3520,6 +5252,52 @@
           "total"
         ],
         "title": "PortalDocumentListResponse",
+        "type": "object"
+      },
+      "PortalDocumentSource": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "upload",
+              "confluence",
+              "mail",
+              "unknown"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "kind",
+          "label"
+        ],
+        "title": "PortalDocumentSource",
         "type": "object"
       },
       "PortalIndexingItem": {
@@ -3632,8 +5410,140 @@
         "title": "PortalManagementOwner",
         "type": "object"
       },
+      "PortalQualityDetail": {
+        "properties": {
+          "grade": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grade"
+          },
+          "issues": {
+            "items": {},
+            "title": "Issues",
+            "type": "array"
+          },
+          "recommendation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommendation"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "signals": {
+            "$ref": "#/components/schemas/PortalQualitySignals"
+          },
+          "thresholds": {
+            "$ref": "#/components/schemas/PortalQualityThresholds"
+          }
+        },
+        "required": [
+          "thresholds",
+          "signals"
+        ],
+        "title": "PortalQualityDetail",
+        "type": "object"
+      },
+      "PortalQualitySignals": {
+        "properties": {
+          "confidence_sample_size": {
+            "default": 0,
+            "title": "Confidence Sample Size",
+            "type": "integer"
+          },
+          "field_validation": {
+            "additionalProperties": true,
+            "title": "Field Validation",
+            "type": "object"
+          },
+          "noise_penalty": {
+            "default": 0.0,
+            "title": "Noise Penalty",
+            "type": "number"
+          },
+          "ocr_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ocr Confidence"
+          },
+          "structure_quality": {
+            "default": 0.0,
+            "title": "Structure Quality",
+            "type": "number"
+          },
+          "text_quality": {
+            "default": 0.0,
+            "title": "Text Quality",
+            "type": "number"
+          }
+        },
+        "title": "PortalQualitySignals",
+        "type": "object"
+      },
+      "PortalQualityThresholds": {
+        "properties": {
+          "A": {
+            "title": "A",
+            "type": "number"
+          },
+          "B": {
+            "title": "B",
+            "type": "number"
+          }
+        },
+        "required": [
+          "A",
+          "B"
+        ],
+        "title": "PortalQualityThresholds",
+        "type": "object"
+      },
+      "PortalReindexCollectionResponse": {
+        "properties": {
+          "requeued": {
+            "title": "Requeued",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "requeued"
+        ],
+        "title": "PortalReindexCollectionResponse",
+        "type": "object"
+      },
       "PortalReleaseRequest": {
         "properties": {
+          "accept_quality_warning": {
+            "default": false,
+            "title": "Accept Quality Warning",
+            "type": "boolean"
+          },
           "markdown_sha256": {
             "pattern": "^[0-9a-fA-F]{64}$",
             "title": "Markdown Sha256",
@@ -3667,6 +5577,17 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "released_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Released By"
           },
           "status": {
             "enum": [
@@ -4042,6 +5963,442 @@
         "title": "ProvidersPublicResponse",
         "type": "object"
       },
+      "ReadUserDetail": {
+        "description": "One resolved entry of a CollectionResponse's `read_user_details` --\nthe person-picker's own display shape for an id already present in\n`read_users`. Never carries email or any other personal field, same\ndiscipline as the directory endpoints (routes.list_directory_users).",
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "team": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username"
+        ],
+        "title": "ReadUserDetail",
+        "type": "object"
+      },
+      "ReindexStartResponse": {
+        "properties": {
+          "started": {
+            "title": "Started",
+            "type": "boolean"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          }
+        },
+        "required": [
+          "started"
+        ],
+        "title": "ReindexStartResponse",
+        "type": "object"
+      },
+      "ReindexStatusResponse": {
+        "properties": {
+          "by_status": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Status",
+            "type": "object"
+          },
+          "newest_updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Newest Updated At"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "by_status"
+        ],
+        "title": "ReindexStatusResponse",
+        "type": "object"
+      },
+      "RetrievalProviderAdminResponse": {
+        "properties": {
+          "embedding_base_url": {
+            "title": "Embedding Base Url",
+            "type": "string"
+          },
+          "embedding_batch_size": {
+            "title": "Embedding Batch Size",
+            "type": "integer"
+          },
+          "embedding_dimension": {
+            "title": "Embedding Dimension",
+            "type": "integer"
+          },
+          "embedding_has_api_key": {
+            "title": "Embedding Has Api Key",
+            "type": "boolean"
+          },
+          "embedding_key_source": {
+            "title": "Embedding Key Source",
+            "type": "string"
+          },
+          "embedding_model": {
+            "title": "Embedding Model",
+            "type": "string"
+          },
+          "embedding_provider": {
+            "title": "Embedding Provider",
+            "type": "string"
+          },
+          "lexical_weight": {
+            "title": "Lexical Weight",
+            "type": "number"
+          },
+          "reindex_started": {
+            "default": false,
+            "title": "Reindex Started",
+            "type": "boolean"
+          },
+          "rerank_base_url": {
+            "title": "Rerank Base Url",
+            "type": "string"
+          },
+          "rerank_batch_size": {
+            "title": "Rerank Batch Size",
+            "type": "integer"
+          },
+          "rerank_has_api_key": {
+            "title": "Rerank Has Api Key",
+            "type": "boolean"
+          },
+          "rerank_key_source": {
+            "title": "Rerank Key Source",
+            "type": "string"
+          },
+          "rerank_max_documents": {
+            "title": "Rerank Max Documents",
+            "type": "integer"
+          },
+          "rerank_model": {
+            "title": "Rerank Model",
+            "type": "string"
+          },
+          "rerank_provider": {
+            "title": "Rerank Provider",
+            "type": "string"
+          },
+          "rerank_threads": {
+            "title": "Rerank Threads",
+            "type": "integer"
+          },
+          "semantic_weight": {
+            "title": "Semantic Weight",
+            "type": "number"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "embedding_provider",
+          "embedding_base_url",
+          "embedding_model",
+          "embedding_dimension",
+          "embedding_batch_size",
+          "embedding_has_api_key",
+          "embedding_key_source",
+          "rerank_provider",
+          "rerank_base_url",
+          "rerank_model",
+          "rerank_max_documents",
+          "rerank_batch_size",
+          "rerank_threads",
+          "rerank_has_api_key",
+          "rerank_key_source",
+          "semantic_weight",
+          "lexical_weight",
+          "updated_at"
+        ],
+        "title": "RetrievalProviderAdminResponse",
+        "type": "object"
+      },
+      "RetrievalProviderInternalResponse": {
+        "properties": {
+          "embedding_api_key": {
+            "default": "",
+            "title": "Embedding Api Key",
+            "type": "string"
+          },
+          "embedding_base_url": {
+            "title": "Embedding Base Url",
+            "type": "string"
+          },
+          "embedding_batch_size": {
+            "title": "Embedding Batch Size",
+            "type": "integer"
+          },
+          "embedding_dimension": {
+            "title": "Embedding Dimension",
+            "type": "integer"
+          },
+          "embedding_model": {
+            "title": "Embedding Model",
+            "type": "string"
+          },
+          "embedding_provider": {
+            "title": "Embedding Provider",
+            "type": "string"
+          },
+          "lexical_weight": {
+            "title": "Lexical Weight",
+            "type": "number"
+          },
+          "rerank_api_key": {
+            "default": "",
+            "title": "Rerank Api Key",
+            "type": "string"
+          },
+          "rerank_base_url": {
+            "title": "Rerank Base Url",
+            "type": "string"
+          },
+          "rerank_batch_size": {
+            "title": "Rerank Batch Size",
+            "type": "integer"
+          },
+          "rerank_max_documents": {
+            "title": "Rerank Max Documents",
+            "type": "integer"
+          },
+          "rerank_model": {
+            "title": "Rerank Model",
+            "type": "string"
+          },
+          "rerank_provider": {
+            "title": "Rerank Provider",
+            "type": "string"
+          },
+          "rerank_threads": {
+            "title": "Rerank Threads",
+            "type": "integer"
+          },
+          "semantic_weight": {
+            "title": "Semantic Weight",
+            "type": "number"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "embedding_provider",
+          "embedding_base_url",
+          "embedding_model",
+          "embedding_dimension",
+          "embedding_batch_size",
+          "rerank_provider",
+          "rerank_base_url",
+          "rerank_model",
+          "rerank_max_documents",
+          "rerank_batch_size",
+          "rerank_threads",
+          "semantic_weight",
+          "lexical_weight",
+          "updated_at"
+        ],
+        "title": "RetrievalProviderInternalResponse",
+        "type": "object"
+      },
+      "RetrievalProviderUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "clear_embedding_api_key": {
+            "default": false,
+            "title": "Clear Embedding Api Key",
+            "type": "boolean"
+          },
+          "clear_rerank_api_key": {
+            "default": false,
+            "title": "Clear Rerank Api Key",
+            "type": "boolean"
+          },
+          "confirm_reindex": {
+            "default": false,
+            "title": "Confirm Reindex",
+            "type": "boolean"
+          },
+          "embedding_api_key": {
+            "anyOf": [
+              {
+                "maxLength": 8192,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding Api Key"
+          },
+          "embedding_base_url": {
+            "default": "",
+            "maxLength": 1024,
+            "title": "Embedding Base Url",
+            "type": "string"
+          },
+          "embedding_batch_size": {
+            "default": 64,
+            "maximum": 512.0,
+            "minimum": 1.0,
+            "title": "Embedding Batch Size",
+            "type": "integer"
+          },
+          "embedding_dimension": {
+            "default": 1536,
+            "maximum": 8192.0,
+            "minimum": 1.0,
+            "title": "Embedding Dimension",
+            "type": "integer"
+          },
+          "embedding_model": {
+            "default": "fake-embed",
+            "maxLength": 255,
+            "title": "Embedding Model",
+            "type": "string"
+          },
+          "embedding_provider": {
+            "default": "fake",
+            "maxLength": 32,
+            "title": "Embedding Provider",
+            "type": "string"
+          },
+          "lexical_weight": {
+            "default": 0.5,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Lexical Weight",
+            "type": "number"
+          },
+          "rerank_api_key": {
+            "anyOf": [
+              {
+                "maxLength": 8192,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rerank Api Key"
+          },
+          "rerank_base_url": {
+            "default": "",
+            "maxLength": 1024,
+            "title": "Rerank Base Url",
+            "type": "string"
+          },
+          "rerank_batch_size": {
+            "default": 16,
+            "maximum": 256.0,
+            "minimum": 1.0,
+            "title": "Rerank Batch Size",
+            "type": "integer"
+          },
+          "rerank_max_documents": {
+            "default": 50,
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Rerank Max Documents",
+            "type": "integer"
+          },
+          "rerank_model": {
+            "default": "",
+            "maxLength": 255,
+            "title": "Rerank Model",
+            "type": "string"
+          },
+          "rerank_provider": {
+            "default": "none",
+            "maxLength": 32,
+            "title": "Rerank Provider",
+            "type": "string"
+          },
+          "rerank_threads": {
+            "default": 4,
+            "maximum": 64.0,
+            "minimum": 1.0,
+            "title": "Rerank Threads",
+            "type": "integer"
+          },
+          "semantic_weight": {
+            "default": 0.5,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Semantic Weight",
+            "type": "number"
+          }
+        },
+        "title": "RetrievalProviderUpdateRequest",
+        "type": "object"
+      },
       "RuntimeCapabilityInfo": {
         "properties": {
           "cuda_available": {
@@ -4127,6 +6484,27 @@
         "title": "SetupStatusResponse",
         "type": "object"
       },
+      "TargetStateResponse": {
+        "properties": {
+          "fresh": {
+            "title": "Fresh",
+            "type": "boolean"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          }
+        },
+        "required": [
+          "fresh",
+          "reasons"
+        ],
+        "title": "TargetStateResponse",
+        "type": "object"
+      },
       "TeamCreateRequest": {
         "properties": {
           "name": {
@@ -4197,6 +6575,505 @@
         "title": "TeamUpdateRequest",
         "type": "object"
       },
+      "TechnicalIdentityAuditEntry": {
+        "properties": {
+          "actor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "details": {
+            "additionalProperties": true,
+            "title": "Details",
+            "type": "object"
+          },
+          "event": {
+            "title": "Event",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "event",
+          "actor",
+          "details",
+          "created_at"
+        ],
+        "title": "TechnicalIdentityAuditEntry",
+        "type": "object"
+      },
+      "TechnicalIdentityAuditListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TechnicalIdentityAuditEntry"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "TechnicalIdentityAuditListResponse",
+        "type": "object"
+      },
+      "TechnicalIdentityCreateRequest": {
+        "properties": {
+          "allowed_collections": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Collections",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "expires_in_days": {
+            "anyOf": [
+              {
+                "maximum": 3650.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires In Days"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "TechnicalIdentityCreateRequest",
+        "type": "object"
+      },
+      "TechnicalIdentityCreateResponse": {
+        "description": "The only response that ever carries the raw token -- issued once, at\ncreation or rotation time (see create_technical_identity /\nrotate_technical_identity).",
+        "properties": {
+          "allowed_collections": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Collections",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "token_prefix": {
+            "title": "Token Prefix",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "allowed_collections",
+          "enabled",
+          "token_prefix",
+          "created_at",
+          "updated_at",
+          "last_used_at",
+          "expires_at",
+          "revoked_at",
+          "created_by",
+          "token"
+        ],
+        "title": "TechnicalIdentityCreateResponse",
+        "type": "object"
+      },
+      "TechnicalIdentityIntrospectionRequest": {
+        "properties": {
+          "token": {
+            "minLength": 1,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "TechnicalIdentityIntrospectionRequest",
+        "type": "object"
+      },
+      "TechnicalIdentityIntrospectionResponse": {
+        "description": "Non-enumerating, mirrors Weave-API's own POST /internal/tokens/\nintrospect contract exactly: unknown/disabled/revoked/expired all\ncollapse into `{\"active\": false}` -- never a distinguishable error, so\na caller of THIS endpoint gets no oracle over whether a given token\nstring ever existed.",
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "allowed_collections": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Collections"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "identity_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Identity Id"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "active"
+        ],
+        "title": "TechnicalIdentityIntrospectionResponse",
+        "type": "object"
+      },
+      "TechnicalIdentityListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TechnicalIdentityResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "TechnicalIdentityListResponse",
+        "type": "object"
+      },
+      "TechnicalIdentityResponse": {
+        "description": "Admin-facing view -- token_prefix only, never the raw token.",
+        "properties": {
+          "allowed_collections": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Collections",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "token_prefix": {
+            "title": "Token Prefix",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "allowed_collections",
+          "enabled",
+          "token_prefix",
+          "created_at",
+          "updated_at",
+          "last_used_at",
+          "expires_at",
+          "revoked_at",
+          "created_by"
+        ],
+        "title": "TechnicalIdentityResponse",
+        "type": "object"
+      },
+      "TechnicalIdentityUpdateRequest": {
+        "properties": {
+          "allowed_collections": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Collections"
+          },
+          "clear_expiry": {
+            "default": false,
+            "title": "Clear Expiry",
+            "type": "boolean"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "expires_in_days": {
+            "anyOf": [
+              {
+                "maximum": 3650.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires In Days"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "TechnicalIdentityUpdateRequest",
+        "type": "object"
+      },
       "UploadResponse": {
         "properties": {
           "job_id": {
@@ -4257,6 +7134,20 @@
               }
             ],
             "title": "Team Id"
+          },
+          "team_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Team Ids",
+            "type": "array"
+          },
+          "team_roles": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Team Roles",
+            "type": "object"
           },
           "username": {
             "title": "Username",
@@ -5017,6 +7908,10 @@
             "title": "Message",
             "type": "string"
           },
+          "service": {
+            "title": "Service",
+            "type": "string"
+          },
           "task_id": {
             "anyOf": [
               {
@@ -5048,6 +7943,7 @@
           "id",
           "created_at",
           "level",
+          "service",
           "logger_name",
           "worker_name",
           "message"
@@ -5096,6 +7992,501 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/admin/backup.zip": {
+      "get": {
+        "description": "Download the raw local storage as one deliberate admin backup.\n\nThere is intentionally no listing or per-file read endpoint here. Symlinks\nare skipped so the archive cannot escape the two configured storage roots.",
+        "operationId": "download_admin_backup_api_v1_admin_backup_zip_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Download Admin Backup"
+      }
+    },
+    "/api/v1/admin/backup/exports": {
+      "post": {
+        "operationId": "create_export_api_v1_admin_backup_exports_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackupExportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Export",
+        "tags": [
+          "backup-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/backup/exports/{run_id}": {
+      "delete": {
+        "operationId": "delete_export_api_v1_admin_backup_exports__run_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Export",
+        "tags": [
+          "backup-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/backup/exports/{run_id}/download": {
+      "get": {
+        "operationId": "download_export_api_v1_admin_backup_exports__run_id__download_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Download Export",
+        "tags": [
+          "backup-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/backup/imports": {
+      "post": {
+        "operationId": "create_import_api_v1_admin_backup_imports_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_create_import_api_v1_admin_backup_imports_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Import",
+        "tags": [
+          "backup-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/backup/runs": {
+      "get": {
+        "operationId": "list_runs_api_v1_admin_backup_runs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupRunListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Runs",
+        "tags": [
+          "backup-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/backup/runs/{run_id}": {
+      "get": {
+        "operationId": "get_run_api_v1_admin_backup_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run",
+        "tags": [
+          "backup-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/backup/target-state": {
+      "get": {
+        "operationId": "get_target_state_api_v1_admin_backup_target_state_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Target State",
+        "tags": [
+          "backup-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/knowledge/rebuild": {
+      "post": {
+        "operationId": "rebuild_knowledge_index_api_v1_admin_knowledge_rebuild_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeRebuildResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Rebuild Knowledge Index"
+      }
+    },
+    "/api/v1/admin/knowledge/rebuild-status": {
+      "get": {
+        "operationId": "rebuild_knowledge_index_status_api_v1_admin_knowledge_rebuild_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeRebuildStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Rebuild Knowledge Index Status"
+      }
+    },
+    "/api/v1/admin/retrieval-provider/reindex": {
+      "post": {
+        "description": "'Vektoren neu berechnen' -- explicit admin action, see\nretrieval-provider-tab.tsx's 'Index-Wartung' section. Same Knowledge\ncall `update_retrieval_provider` already makes on an embedding change,\njust triggerable on demand without also editing the config.",
+        "operationId": "reindex_vectors_api_v1_admin_retrieval_provider_reindex_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReindexStartResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Reindex Vectors"
+      }
+    },
+    "/api/v1/admin/retrieval-provider/reindex-status": {
+      "get": {
+        "description": "Proxies Knowledge's GET /api/v1/internal/reindex/status so the admin\nUI can poll progress of the 'Vektoren neu berechnen' action without a\ndirect network path from the browser to Knowledge.",
+        "operationId": "reindex_vectors_status_api_v1_admin_retrieval_provider_reindex_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReindexStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Reindex Vectors Status"
+      }
+    },
+    "/api/v1/auth/admin/bots": {
+      "get": {
+        "operationId": "list_managed_bots_api_v1_auth_admin_bots_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedBotListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Managed Bots",
+        "tags": [
+          "managed-bots-admin"
+        ]
+      },
+      "post": {
+        "operationId": "create_managed_bot_api_v1_auth_admin_bots_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManagedBotCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedBotAdminResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Managed Bot",
+        "tags": [
+          "managed-bots-admin"
+        ]
+      }
+    },
+    "/api/v1/auth/admin/bots/{bot_id}": {
+      "delete": {
+        "operationId": "delete_managed_bot_api_v1_auth_admin_bots__bot_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bot_id",
+            "required": true,
+            "schema": {
+              "title": "Bot Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Delete Managed Bot Api V1 Auth Admin Bots  Bot Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Managed Bot",
+        "tags": [
+          "managed-bots-admin"
+        ]
+      },
+      "put": {
+        "operationId": "update_managed_bot_api_v1_auth_admin_bots__bot_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bot_id",
+            "required": true,
+            "schema": {
+              "title": "Bot Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManagedBotUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedBotAdminResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Managed Bot",
+        "tags": [
+          "managed-bots-admin"
+        ]
+      }
+    },
     "/api/v1/auth/admin/chat-provider": {
       "get": {
         "operationId": "get_chat_provider_api_v1_auth_admin_chat_provider_get",
@@ -5416,6 +8807,60 @@
         ]
       }
     },
+    "/api/v1/auth/admin/retrieval-provider": {
+      "get": {
+        "operationId": "get_retrieval_provider_api_v1_auth_admin_retrieval_provider_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetrievalProviderAdminResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Retrieval Provider"
+      },
+      "put": {
+        "operationId": "update_retrieval_provider_api_v1_auth_admin_retrieval_provider_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetrievalProviderUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetrievalProviderAdminResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Retrieval Provider"
+      }
+    },
     "/api/v1/auth/admin/storage/orphaned-files": {
       "get": {
         "operationId": "admin_list_orphaned_files_api_v1_auth_admin_storage_orphaned_files_get",
@@ -5625,6 +9070,239 @@
         "summary": "Admin Update Team",
         "tags": [
           "auth-admin"
+        ]
+      }
+    },
+    "/api/v1/auth/admin/technical-identities": {
+      "get": {
+        "operationId": "list_technical_identities_api_v1_auth_admin_technical_identities_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TechnicalIdentityListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Technical Identities",
+        "tags": [
+          "technical-identities-admin"
+        ]
+      },
+      "post": {
+        "operationId": "create_technical_identity_api_v1_auth_admin_technical_identities_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TechnicalIdentityCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TechnicalIdentityCreateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Technical Identity",
+        "tags": [
+          "technical-identities-admin"
+        ]
+      }
+    },
+    "/api/v1/auth/admin/technical-identities/{identity_id}": {
+      "put": {
+        "operationId": "update_technical_identity_api_v1_auth_admin_technical_identities__identity_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identity_id",
+            "required": true,
+            "schema": {
+              "title": "Identity Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TechnicalIdentityUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TechnicalIdentityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Technical Identity",
+        "tags": [
+          "technical-identities-admin"
+        ]
+      }
+    },
+    "/api/v1/auth/admin/technical-identities/{identity_id}/audit": {
+      "get": {
+        "operationId": "list_technical_identity_audit_api_v1_auth_admin_technical_identities__identity_id__audit_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identity_id",
+            "required": true,
+            "schema": {
+              "title": "Identity Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TechnicalIdentityAuditListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Technical Identity Audit",
+        "tags": [
+          "technical-identities-admin"
+        ]
+      }
+    },
+    "/api/v1/auth/admin/technical-identities/{identity_id}/revoke": {
+      "post": {
+        "description": "Sets revoked_at (irreversible -- see the model's own docstring).\nIdempotent: revoking an already-revoked identity is a no-op, not an\nerror, since the caller's desired end state (\"this identity must not\nwork\") is already true.",
+        "operationId": "revoke_technical_identity_api_v1_auth_admin_technical_identities__identity_id__revoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identity_id",
+            "required": true,
+            "schema": {
+              "title": "Identity Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Technical Identity",
+        "tags": [
+          "technical-identities-admin"
+        ]
+      }
+    },
+    "/api/v1/auth/admin/technical-identities/{identity_id}/rotate": {
+      "post": {
+        "description": "Mint a new raw token for an existing identity, in place: same id and\ngrants, new token_hash/token_prefix, last_used_at reset (the old token\nis gone, so its usage history no longer describes what's live).",
+        "operationId": "rotate_technical_identity_api_v1_auth_admin_technical_identities__identity_id__rotate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identity_id",
+            "required": true,
+            "schema": {
+              "title": "Identity Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TechnicalIdentityCreateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rotate Technical Identity",
+        "tags": [
+          "technical-identities-admin"
         ]
       }
     },
@@ -6020,6 +9698,22 @@
           },
           {
             "in": "query",
+            "name": "service",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Service"
+            }
+          },
+          {
+            "in": "query",
             "name": "q",
             "required": false,
             "schema": {
@@ -6157,6 +9851,48 @@
           }
         },
         "summary": "Handoff Exchange",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/handoff/identity/{user_id}": {
+      "get": {
+        "operationId": "current_handoff_identity_api_v1_auth_handoff_identity__user_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandoffExchangeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Current Handoff Identity",
         "tags": [
           "auth"
         ]
@@ -6913,7 +10649,7 @@
     },
     "/api/v1/collections/registry": {
       "get": {
-        "description": "Sync source for Weave-Knowledge's `collections` registry table (see\nthe Collections contract in README.md) and, transitively, for\nWeave-Retrieval's per-team read authorization -- NOT scoped by the\ncaller's own visibility (unlike GET /collections above): a sync\nconsumer needs the full registry to answer \"which collections can team\nX read\" for every team, not just the collections the syncing token's\nown user happens to own or share a team with.\n\nAdmin-only (`require_admin`, not just `get_current_user`): unlike GET\n/collections/{id} or a single job, this single call hands back every\ncollection's slug + full `read_teams` ACL in one response -- the\ncomplete cross-team access map of the system. Any authenticated user\nbeing able to enumerate that would itself be an information leak (which\nteams can read which collections, system-wide), even though no document\ncontent or job data is ever included. Weave-Knowledge's own sync token\nmust therefore belong to an admin account (see README's Collections\nsection).\n\nDeliberately never returns anything document-shaped: no job_ids, no\nfolder/subfolder/email/department, no document content of any kind --\nonly the four ACL/identity fields the contract defines\n(CollectionRegistryEntry).",
+        "description": "Sync source for Weave-Knowledge's `collections` registry table (see\nthe Collections contract in README.md) and, transitively, for\nWeave-Retrieval's per-team read authorization -- NOT scoped by the\ncaller's own visibility (unlike GET /collections above): a sync\nconsumer needs the full registry to answer \"which collections can team\nX read\" for every team, not just the collections the syncing token's\nown user happens to own or share a team with.\n\nAdmin-only (`require_admin`, not just `get_current_user`): unlike GET\n/collections/{id} or a single job, this single call hands back every\ncollection's slug + full `read_teams` ACL in one response -- the\ncomplete cross-team access map of the system. Any authenticated user\nbeing able to enumerate that would itself be an information leak (which\nteams can read which collections, system-wide), even though no document\ncontent or job data is ever included. Weave-Knowledge's own sync token\nmust therefore belong to an admin account (see README's Collections\nsection).\n\nDeliberately never returns anything document-shaped: no job_ids, no\nfolder/subfolder/email/department, no document content of any kind --\nonly the ACL/identity fields the contract defines\n(CollectionRegistryEntry): slug/name/description plus `visibility` (the\nsingle authoritative public/restricted flag) and the two additive ACLs,\n`read_teams`/`read_users`.",
         "operationId": "get_collections_registry_api_v1_collections_registry_get",
         "responses": {
           "200": {
@@ -6931,6 +10667,48 @@
       }
     },
     "/api/v1/collections/{collection_id}": {
+      "delete": {
+        "description": "Delete an empty collection controlled by the caller.\n\nDocuments are deliberately never cascaded from a collection delete: a\nrelease may already have reached the shared RAG store.  The owner must\nremove documents explicitly first, while pending/running Confluence\nimports also block deletion so they cannot create orphaned jobs after\nthis transaction commits.",
+        "operationId": "delete_collection_api_v1_collections__collection_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Delete Collection Api V1 Collections  Collection Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Collection"
+      },
       "get": {
         "operationId": "get_collection_api_v1_collections__collection_id__get",
         "parameters": [
@@ -7112,6 +10890,78 @@
           }
         },
         "summary": "Upload Document To Collection"
+      }
+    },
+    "/api/v1/directory/teams": {
+      "get": {
+        "description": "Team-picker listing for a collection's `read_teams` grant -- same\nauthorization gate as GET /directory/users.",
+        "operationId": "list_directory_teams_api_v1_directory_teams_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectoryTeamsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Directory Teams"
+      }
+    },
+    "/api/v1/directory/users": {
+      "get": {
+        "description": "Person-picker search for a collection's `read_users` grant (see\nCollectionUpdateRequest's docstring). Case-insensitive substring match\non username or (primary) team name -- there is no per-user display name\nfield on this service's `User` model, so `display_name` is always null\nhere (see DirectoryUserEntry's own docstring). Active users only; never\nreturns email or any other personal field.",
+        "operationId": "list_directory_users_api_v1_directory_users_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectoryUsersResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Directory Users"
       }
     },
     "/api/v1/folders": {
@@ -7475,6 +11325,105 @@
         "summary": "Cancel Import Run"
       }
     },
+    "/api/v1/import/runs/{run_id}/missing/{page_id}/withdraw": {
+      "post": {
+        "operationId": "withdraw_missing_page_api_v1_import_runs__run_id__missing__page_id__withdraw_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "page_id",
+            "required": true,
+            "schema": {
+              "title": "Page Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportWithdrawalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Withdraw Missing Page Api V1 Import Runs  Run Id  Missing  Page Id  Withdraw Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Withdraw Missing Page"
+      }
+    },
+    "/api/v1/import/runs/{run_id}/sync": {
+      "post": {
+        "operationId": "sync_import_run_api_v1_import_runs__run_id__sync_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sync Import Run"
+      }
+    },
     "/api/v1/import/sources": {
       "get": {
         "operationId": "list_import_sources_api_v1_import_sources_get",
@@ -7658,6 +11607,27 @@
         "summary": "Test Import Source"
       }
     },
+    "/api/v1/internal/bots": {
+      "get": {
+        "operationId": "internal_managed_bots_api_v1_internal_bots_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedBotInternalListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Internal Managed Bots",
+        "tags": [
+          "managed-bots-internal"
+        ]
+      }
+    },
     "/api/v1/internal/chat-provider": {
       "get": {
         "operationId": "internal_chat_provider_api_v1_internal_chat_provider_get",
@@ -7676,6 +11646,66 @@
         "summary": "Internal Chat Provider",
         "tags": [
           "chat-provider-internal"
+        ]
+      }
+    },
+    "/api/v1/internal/retrieval-provider": {
+      "get": {
+        "operationId": "internal_retrieval_provider_api_v1_internal_retrieval_provider_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetrievalProviderInternalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Internal Retrieval Provider"
+      }
+    },
+    "/api/v1/internal/technical-identities/introspect": {
+      "post": {
+        "description": "Non-enumerating, mirrors Weave-API's own POST /internal/tokens/\nintrospect: unknown/disabled/revoked/expired token all collapse into\nthe exact same `{\"active\": false}`, HTTP 200 -- see the response\nschema's own docstring. A denied lookup (found but inactive) is\naudited; an unknown token is not (there is no identity_id to attach\nthe audit row to, and auditing \"someone probed a token that never\nexisted\" would need its own, un-keyed audit shape this table doesn't\nhave).",
+        "operationId": "introspect_technical_identity_api_v1_internal_technical_identities_introspect_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TechnicalIdentityIntrospectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TechnicalIdentityIntrospectionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Introspect Technical Identity",
+        "tags": [
+          "technical-identities-internal"
         ]
       }
     },
@@ -8664,6 +12694,22 @@
           },
           {
             "in": "query",
+            "name": "quality_grade",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Quality Grade"
+            }
+          },
+          {
+            "in": "query",
             "name": "offset",
             "required": false,
             "schema": {
@@ -8819,6 +12865,95 @@
         "summary": "Download Collection Markdown"
       }
     },
+    "/api/v1/portal/collections/{collection_id}/reindex": {
+      "post": {
+        "description": "'Wissensbereich neu indizieren' for every non-withdrawn release of one\ncollection (incident 2026-09-22 follow-up). Reuses the same outbox/backoff/\nlease machinery as reindex_portal_document above, scoped by collection via\nrequeue_collection_releases_for_reindex.",
+        "operationId": "reindex_collection_documents_api_v1_portal_collections__collection_id__reindex_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalReindexCollectionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reindex Collection Documents"
+      }
+    },
+    "/api/v1/portal/collections/{collection_id}/release-all": {
+      "post": {
+        "operationId": "release_collection_documents_api_v1_portal_collections__collection_id__release_all_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PortalCollectionReleaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalCollectionReleaseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Release Collection Documents"
+      }
+    },
     "/api/v1/portal/config": {
       "get": {
         "operationId": "portal_config_api_v1_portal_config_get",
@@ -8865,6 +13000,38 @@
               "default": false,
               "title": "Review Only",
               "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "review_state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Review State"
+            }
+          },
+          {
+            "in": "query",
+            "name": "quality_grade",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Quality Grade"
             }
           },
           {
@@ -8916,6 +13083,44 @@
         "summary": "List Portal Documents"
       }
     },
+    "/api/v1/portal/documents/bulk": {
+      "post": {
+        "operationId": "bulk_portal_documents_api_v1_portal_documents_bulk_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PortalBulkActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalBulkActionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bulk Portal Documents"
+      }
+    },
     "/api/v1/portal/documents/{job_id}": {
       "get": {
         "operationId": "get_portal_document_api_v1_portal_documents__job_id__get",
@@ -8955,6 +13160,48 @@
         "summary": "Get Portal Document"
       }
     },
+    "/api/v1/portal/documents/{job_id}/indexing-diagnostics": {
+      "get": {
+        "operationId": "indexing_diagnostics_api_v1_portal_documents__job_id__indexing_diagnostics_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Indexing Diagnostics Api V1 Portal Documents  Job Id  Indexing Diagnostics Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Indexing Diagnostics"
+      }
+    },
     "/api/v1/portal/documents/{job_id}/markdown": {
       "get": {
         "description": "Download the exact Markdown represented by the portal review.",
@@ -8991,6 +13238,46 @@
           }
         },
         "summary": "Download Portal Document Markdown"
+      }
+    },
+    "/api/v1/portal/documents/{job_id}/reindex": {
+      "post": {
+        "description": "'Neu indizieren' for a single already-released document (incident 2026-09-22\nfollow-up): unlike retry_release above, this is a regular action offered\nfor any released document, not only a delivery failure, so it accepts\nany existing DocumentRelease status (pending/sent/failed) rather than\nrefusing 'sent' releases.",
+        "operationId": "reindex_portal_document_api_v1_portal_documents__job_id__reindex_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalReleaseSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reindex Portal Document"
       }
     },
     "/api/v1/portal/documents/{job_id}/release": {
@@ -9091,6 +13378,84 @@
         "summary": "Reprocess Portal Document"
       }
     },
+    "/api/v1/portal/documents/{job_id}/skip": {
+      "post": {
+        "operationId": "skip_portal_document_api_v1_portal_documents__job_id__skip_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalDocumentItem"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Skip Portal Document"
+      }
+    },
+    "/api/v1/portal/documents/{job_id}/unskip": {
+      "post": {
+        "operationId": "unskip_portal_document_api_v1_portal_documents__job_id__unskip_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalDocumentItem"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unskip Portal Document"
+      }
+    },
     "/api/v1/portal/indexing-status": {
       "get": {
         "operationId": "indexing_status_api_v1_portal_indexing_status_get",
@@ -9134,6 +13499,53 @@
           }
         },
         "summary": "Indexing Status"
+      }
+    },
+    "/api/v1/portal/releases/{release_id}/artifacts/{filename}": {
+      "get": {
+        "description": "Serve an image/attachment referenced by a released markdown snapshot.\n\nSame auth and withdrawal checks as download_release; the artifact is\nlooked up by (release.job_id, filename) so a foreign filename 404s\ninstead of ever returning another job's bytes (mirrors the IDOR-safe\npattern in routes.get_job_artifact_content).",
+        "operationId": "download_release_artifact_api_v1_portal_releases__release_id__artifacts__filename__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "release_id",
+            "required": true,
+            "schema": {
+              "title": "Release Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "filename",
+            "required": true,
+            "schema": {
+              "title": "Filename",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Download Release Artifact"
       }
     },
     "/api/v1/portal/releases/{release_id}/download": {
@@ -9212,6 +13624,22 @@
           }
         },
         "summary": "Retry Release"
+      }
+    },
+    "/api/v1/ready": {
+      "get": {
+        "operationId": "readiness_api_v1_ready_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Readiness"
       }
     },
     "/api/v1/search": {
