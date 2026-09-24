@@ -7,62 +7,71 @@
  * toggle (src/components/chat/theme-toggle.tsx), so an explicit choice
  * always wins over the OS setting either way.
  */
+/*
+ * Palette aligned with the Loom RC design prototype
+ * (docs/design-proposals/06-loom-rc/style.css's own :root) — bg #f4f5f2,
+ * surface #fff, ink #14221d, muted #5a6863, line #e1e6e2, accent #1d6a53,
+ * soft #e5f0ea, and that same prototype's warn/ok/err hues below. The
+ * prototype itself ships no dark variant; the dark block keeps this app's
+ * existing AA-checked dark approach, recoloured to the same green-accent
+ * family instead of the previous blue-grey one.
+ */
 :root {
-  --background: #f4f5f7;
+  --background: #f4f5f2;
   --surface: #ffffff;
-  --surface-muted: #eceef2;
-  --foreground: #1c2230;
-  --foreground-muted: #5b6472;
-  --border: #d9dce2;
-  --accent: #176647;
+  --surface-muted: #f8f9f7;
+  --foreground: #14221d;
+  --foreground-muted: #5a6863;
+  --border: #e1e6e2;
+  --accent: #1d6a53;
   --accent-foreground: #ffffff;
-  --accent-soft: #e8f2e4;
-  --danger: #b3261e;
-  --danger-soft: #fbeae9;
-  --warning: #8a5a00;
-  --warning-soft: #fdf1dc;
-  --success: #1a7f4c;
-  --success-soft: #e4f6ec;
+  --accent-soft: #e5f0ea;
+  --danger: #a2372f;
+  --danger-soft: #fcebe9;
+  --warning: #87580b;
+  --warning-soft: #fcf0d9;
+  --success: #1d6842;
+  --success-soft: #e1f2e8;
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
-    --background: #14161c;
-    --surface: #1c1f27;
-    --surface-muted: #23262f;
-    --foreground: #eaecf1;
-    --foreground-muted: #a2a8b6;
-    --border: #333744;
-    --accent: #77aa79;
-    --accent-foreground: #10131c;
-    --accent-soft: #1d382c;
-    --danger: #ff8a80;
-    --danger-soft: #3a2325;
-    --warning: #f2c46d;
-    --warning-soft: #382c17;
-    --success: #7cd9a8;
-    --success-soft: #17301f;
+    --background: #101815;
+    --surface: #182420;
+    --surface-muted: #1f2c27;
+    --foreground: #e7ece9;
+    --foreground-muted: #9bb0a7;
+    --border: #2c3a34;
+    --accent: #6fc9a3;
+    --accent-foreground: #0b1a15;
+    --accent-soft: #1e3a30;
+    --danger: #ff9a8f;
+    --danger-soft: #3a201d;
+    --warning: #f0c26a;
+    --warning-soft: #3a2c14;
+    --success: #7fdaa9;
+    --success-soft: #163527;
     color-scheme: dark;
   }
 }
 
 :root.dark {
-  --background: #14161c;
-  --surface: #1c1f27;
-  --surface-muted: #23262f;
-  --foreground: #eaecf1;
-  --foreground-muted: #a2a8b6;
-  --border: #333744;
-  --accent: #77aa79;
-  --accent-foreground: #10131c;
-  --accent-soft: #1d382c;
-  --danger: #ff8a80;
-  --danger-soft: #3a2325;
-  --warning: #f2c46d;
-  --warning-soft: #382c17;
-  --success: #7cd9a8;
-  --success-soft: #17301f;
+  --background: #101815;
+  --surface: #182420;
+  --surface-muted: #1f2c27;
+  --foreground: #e7ece9;
+  --foreground-muted: #9bb0a7;
+  --border: #2c3a34;
+  --accent: #6fc9a3;
+  --accent-foreground: #0b1a15;
+  --accent-soft: #1e3a30;
+  --danger: #ff9a8f;
+  --danger-soft: #3a201d;
+  --warning: #f0c26a;
+  --warning-soft: #3a2c14;
+  --success: #7fdaa9;
+  --success-soft: #163527;
   color-scheme: dark;
 }
 
@@ -174,4 +183,100 @@ body {
 .prose-chat :where(th, td) {
   border: 1px solid var(--border);
   padding: 0.3em 0.5em;
+}
+
+/*
+ * Three-column chat shell (rail | main | sources panel) — breakpoints match
+ * the design prototype's own (docs/design-proposals/06-loom-rc/style.css):
+ * the sources panel gives way to the inline per-answer sources below
+ * 1180px, and the rail becomes an off-canvas drawer below 900px. Plain CSS
+ * rather than Tailwind's default breakpoints (640/768/1024/1280) since
+ * neither 900 nor 1180 lines up with those.
+ */
+.chat-shell {
+  display: grid;
+  grid-template-columns: 272px minmax(0, 1fr) 336px;
+  height: 100dvh;
+}
+
+.chat-sources-panel {
+  display: flex;
+}
+
+.chat-inline-sources {
+  display: none;
+}
+
+/* The per-answer "In Quellenleiste anzeigen" control only makes sense
+   while the sources panel it targets actually exists — see message-bubble
+   .tsx. Same breakpoint as `.chat-sources-panel` above by design. */
+.chat-sources-panel-control {
+  display: inline-flex;
+}
+
+@media (max-width: 1180px) {
+  .chat-shell {
+    grid-template-columns: 272px minmax(0, 1fr);
+  }
+  .chat-sources-panel {
+    display: none;
+  }
+  .chat-inline-sources {
+    display: block;
+  }
+  .chat-sources-panel-control {
+    display: none;
+  }
+}
+
+.chat-rail {
+  transition: transform 0.2s ease;
+}
+
+.chat-rail-backdrop {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .chat-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .chat-rail {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 60;
+    width: min(300px, 86vw);
+    height: 100dvh;
+    transform: translateX(-105%);
+    box-shadow: 0 20px 60px rgb(0 0 0 / 25%);
+  }
+  .chat-rail.is-open {
+    transform: none;
+  }
+  .chat-rail-backdrop.is-open {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    background: rgb(12 23 20 / 45%);
+  }
+  .chat-mobile-menu {
+    display: inline-grid !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-rail {
+    transition: none;
+  }
+}
+
+/* A comfortable ≥40px hit area for the compact ("sm") button size once a
+   coarse (touch) pointer is the input in use — a mouse/trackpad keeps the
+   tighter 32px size. Mirrors the same rule in the design prototype
+   (style.css's own `@media (pointer: coarse)` block). */
+@media (pointer: coarse) {
+  button.h-8 {
+    min-height: 40px;
+  }
 }

@@ -1,4 +1,4 @@
-import type { ChatRequestBody, ChatStreamStatusEvent, ChatTrace, Source, StoredMessage } from '@/types/weave-api';
+import type { ChatRequestBody, ChatStreamStatusEvent, ChatTrace, Collection, Source, StoredMessage } from '@/types/weave-api';
 import type { MappedError } from '@/lib/errors';
 
 /** One subagent's own latest known state within a still-streaming
@@ -131,4 +131,23 @@ export function buildChatRequestBody(params: {
     ...(conversationId ? { conversation_id: conversationId } : {}),
     ...(selectedCollections.length > 0 ? { collections: selectedCollections } : {}),
   };
+}
+
+/**
+ * The composer's knowledge-space pill label for the current selection —
+ * the one place this "empty means all my scopes" rule (see
+ * `buildChatRequestBody` above) gets a human-readable German label instead
+ * of just deciding what goes over the wire: none selected → "Alle
+ * Bereiche", exactly one → that collection's own name, several → "N
+ * Bereiche". Falls back to the raw slug for a selected slug that no longer
+ * matches any loaded collection (e.g. renamed/removed server-side mid
+ * session) rather than silently dropping it from the label.
+ */
+export function scopeLabel(selectedCollections: string[], collections: Collection[] | null): string {
+  if (selectedCollections.length === 0) return 'Alle Bereiche';
+  if (selectedCollections.length === 1) {
+    const [slug] = selectedCollections;
+    return collections?.find((collection) => collection.slug === slug)?.name ?? slug;
+  }
+  return `${selectedCollections.length} Bereiche`;
 }

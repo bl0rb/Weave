@@ -2,16 +2,26 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { RotateCcw } from 'lucide-react';
-import { Sidebar } from '@/components/chat/sidebar';
-import { HistoryPanel } from '@/components/chat/history-panel';
+import { Lock, Menu } from 'lucide-react';
+import { Rail } from '@/components/chat/rail';
 import { MessageList } from '@/components/chat/message-list';
 import { Composer } from '@/components/chat/composer';
+import { SourcesPanel } from '@/components/chat/sources-panel';
+import { ErrorBanner } from '@/components/chat/error-banner';
 import { Button } from '@/components/ui/button';
 import { deleteJson, getJson, postJson } from '@/lib/api-client';
 import { errorForInterruptedStream, errorForNetworkFailure, errorForStreamEvent, mappedError, type MappedError } from '@/lib/errors';
 import { consumeChatStream } from '@/lib/run-chat-stream';
-import { applyAgentStatus, buildChatRequestBody, newId, pendingAssistantMessage, uiMessageFromStored, userMessage, type UiMessage } from '@/lib/chat-types';
+import {
+  applyAgentStatus,
+  buildChatRequestBody,
+  newId,
+  pendingAssistantMessage,
+  scopeLabel,
+  uiMessageFromStored,
+  userMessage,
+  type UiMessage,
+} from '@/lib/chat-types';
 import type { Bot, ChatRequestBody, ChatResponseBody, Collection, ConversationSummary, StoredConversation } from '@/types/weave-api';
 
 export function ChatApp() {
@@ -21,8 +31,8 @@ export function ChatApp() {
   const [botsError, setBotsError] = useState<MappedError | null>(null);
   const [collections, setCollections] = useState<Collection[] | null>(null);
   const [collectionsError, setCollectionsError] = useState<MappedError | null>(null);
-  // The sidebar's Collections selection, now a real per-request FILTER
-  // (see ChatRequestBody.collections's own docstring in
+  // The composer's knowledge-space (scope-picker) selection — a real
+  // per-request FILTER (see ChatRequestBody.collections's own docstring in
   // types/weave-api.ts) — empty means "no filter", not "filter to
   // nothing". Deliberately NOT reset on bot switch / new conversation: it
   // represents what the user wants to search, independent of which bot or
@@ -40,13 +50,39 @@ export function ChatApp() {
   const [conversations, setConversations] = useState<ConversationSummary[] | null>(null);
   const [conversationsError, setConversationsError] = useState<MappedError | null>(null);
 
+  // The last question actually sent, kept for the guard banner's own
+  // "Auswahl zurücksetzen & neu fragen" action (filter_excluded_all) — see
+  // handleResetScopeAndRetry below. Distinct from `draft`, which by then
+  // has already been cleared back to "".
+  const [lastSentMessage, setLastSentMessage] = useState<string | null>(null);
+
+  // Which assistant message's sources the right-hand SourcesPanel shows —
+  // `null` means "the latest one" (see `activeSourceMessage` below), the
+  // default per design target 2. Reset to `null` on every new turn/
+  // conversation switch so the panel keeps following the newest answer
+  // unless the caller explicitly pins an older one.
+  const [selectedSourceMessageId, setSelectedSourceMessageId] = useState<string | null>(null);
+
+  // The rail's own off-canvas drawer state below the 900px breakpoint (see
+  // globals.css's `.chat-rail`) — irrelevant, and always effectively
+  // "open", above it. `railToggleRef` gets focus back once the drawer
+  // closes, so keyboard/screen-reader users land back on the control that
+  // opened it instead of losing their place.
+  const [railOpen, setRailOpen] = useState(false);
+  const railToggleRef = useRef<HTMLButtonElement>(null);
+
+  function closeRail() {
+    setRailOpen(false);
+    railToggleRef.current?.focus();
+  }
+
   // Guards against setting state from a turn the user has since abandoned
   // (switched bot / started a new one) while its request was in flight.
   const activeTurnRef = useRef<string | null>(null);
 
-  // Re-fetches the history sidebar's list — called on mount and again
-  // after anything that can change it (a turn creating/renaming a
-  // conversation, or a delete) so the sidebar never goes stale.
+  // Re-fetches the rail's history list — called on mount and again after
+  // anything that can change it (a turn creating/renaming a conversation,
+  // or a delete) so the rail never goes stale.
   const refreshConversations = useCallback(async () => {
     const result = await getJson<ConversationSummary[]>('/api/conversations');
     if (result.ok) {
@@ -119,6 +155,7 @@ export function ChatApp() {
     setSelectedBotId(botId);
     setConversationId(null);
     setMessages([]);
+    setSelectedSourceMessageId(null);
   }
 
   function handleNewConversation() {
@@ -126,6 +163,8 @@ export function ChatApp() {
     setSending(false);
     setConversationId(null);
     setMessages([]);
+    setSelectedSourceMessageId(null);
+    closeRail();
   }
 
   function handleToggleCollection(slug: string) {
@@ -276,40 +315,68 @@ export function ChatApp() {
     [router, runFallback]
   );
 
+  // Pulled out of handleSend so handleResetScopeAndRetry (the guard
+  // banner's "Auswahl zurücksetzen & neu fragen" action) can resend the
+  // last question against an EXPLICIT empty collections filter without
+  // racing `setSelectedCollections`'s own async state update — React
+  // batches that setState, so reading `selectedCollections` again in the
+  // same tick would still see the OLD selection, not the just-cleared one.
+  const sendTurn = useCallback(
+    async (text: string, collectionsForRequest: string[]) => {
+      const trimmed = text.trim();
+      if (!trimmed || !selectedBotId || sending) return;
+
+      const turnId = newId();
+      activeTurnRef.current = turnId;
+
+      const userMsg = userMessage(trimmed);
+      const assistantMsg = pendingAssistantMessage();
+      setMessages((prev) => [...prev, userMsg, assistantMsg]);
+      setLastSentMessage(trimmed);
+      setSelectedSourceMessageId(null);
+      setSending(true);
+
+      const body = buildChatRequestBody({
+        botId: selectedBotId,
+        message: trimmed,
+        conversationId,
+        selectedCollections: collectionsForRequest,
+      });
+
+      try {
+        await runTurn(turnId, assistantMsg.id, body);
+      } catch (cause) {
+        if (activeTurnRef.current === turnId) {
+          updateMessage(assistantMsg.id, (m) => ({ ...m, streaming: false, error: errorForNetworkFailure(cause) }));
+        }
+      } finally {
+        if (activeTurnRef.current === turnId) setSending(false);
+        // The turn above may have created a brand-new conversation or
+        // changed an existing one's title/updated_at — refresh regardless
+        // of whether this turn was since abandoned, so the rail's history
+        // never shows a stale list.
+        void refreshConversations();
+      }
+    },
+    [selectedBotId, conversationId, sending, runTurn, refreshConversations]
+  );
+
   async function handleSend() {
     const trimmed = draft.trim();
-    if (!trimmed || !selectedBotId || sending) return;
-
-    const turnId = newId();
-    activeTurnRef.current = turnId;
-
-    const userMsg = userMessage(trimmed);
-    const assistantMsg = pendingAssistantMessage();
-    setMessages((prev) => [...prev, userMsg, assistantMsg]);
+    if (!trimmed) return;
     setDraft('');
-    setSending(true);
+    await sendTurn(trimmed, selectedCollections);
+  }
 
-    const body = buildChatRequestBody({
-      botId: selectedBotId,
-      message: trimmed,
-      conversationId,
-      selectedCollections,
-    });
-
-    try {
-      await runTurn(turnId, assistantMsg.id, body);
-    } catch (cause) {
-      if (activeTurnRef.current === turnId) {
-        updateMessage(assistantMsg.id, (m) => ({ ...m, streaming: false, error: errorForNetworkFailure(cause) }));
-      }
-    } finally {
-      if (activeTurnRef.current === turnId) setSending(false);
-      // The turn above may have created a brand-new conversation or
-      // changed an existing one's title/updated_at — refresh regardless of
-      // whether this turn was since abandoned, so the sidebar never shows
-      // a stale list.
-      void refreshConversations();
-    }
+  // The guard banner's own one-click fix for `reason: 'filter_excluded_all'`
+  // (see guard-banner.tsx): the caller's own knowledge-space selection is
+  // what excluded every collection this bot could otherwise search, so
+  // clearing it and resending the same question is guaranteed to be a
+  // meaningfully different retry, not just a repeat of the same failure.
+  function handleResetScopeAndRetry() {
+    if (!lastSentMessage) return;
+    setSelectedCollections([]);
+    void sendTurn(lastSentMessage, []);
   }
 
   // Loads one past conversation's full transcript (GET
@@ -317,6 +384,7 @@ export function ChatApp() {
   // as handleSelectBot/handleNewConversation above: any turn still in
   // flight for whatever was open before is abandoned first.
   async function handleSelectConversation(id: string) {
+    closeRail();
     if (id === conversationId) return;
     activeTurnRef.current = null;
     setSending(false);
@@ -334,6 +402,7 @@ export function ChatApp() {
     setSelectedBotId(result.data.bot_id);
     setConversationId(result.data.id);
     setMessages(result.data.messages.map(uiMessageFromStored));
+    setSelectedSourceMessageId(null);
   }
 
   // Permanently removes one past conversation (DELETE
@@ -359,6 +428,7 @@ export function ChatApp() {
       setSending(false);
       setConversationId(null);
       setMessages([]);
+      setSelectedSourceMessageId(null);
     }
   }
 
@@ -380,51 +450,107 @@ export function ChatApp() {
     setConversationId(null);
     setMessages([]);
     setConversations([]);
+    setSelectedSourceMessageId(null);
   }
 
   const selectedBot = bots?.find((bot) => bot.id === selectedBotId) ?? null;
+  const currentScopeLabel = scopeLabel(selectedCollections, collections);
+  const conversationTitle = conversations?.find((c) => c.id === conversationId)?.title ?? 'Neues Gespräch';
+
+  // The right-hand sources panel always follows the latest assistant
+  // answer that actually has sources unless the caller explicitly pinned
+  // an older one (`selectedSourceMessageId`) — see message-list.tsx's own
+  // "In Quellenleiste anzeigen" control and its reset points above.
+  const assistantMessages = messages.filter((message) => message.role === 'assistant');
+  const latestAnsweredMessage =
+    [...assistantMessages].reverse().find((message) => (message.sources?.length ?? 0) > 0) ??
+    assistantMessages[assistantMessages.length - 1] ??
+    null;
+  const activeSourceMessage =
+    (selectedSourceMessageId ? assistantMessages.find((message) => message.id === selectedSourceMessageId) : null) ??
+    latestAnsweredMessage;
 
   return (
-    <div className="flex h-screen w-full">
-      <Sidebar
-        bots={bots}
-        botsError={botsError}
-        selectedBotId={selectedBotId}
-        onSelectBot={handleSelectBot}
-        collections={collections}
-        collectionsError={collectionsError}
-        selectedCollections={selectedCollections}
-        onToggleCollection={handleToggleCollection}
-        onClearCollections={handleClearCollections}
-      />
-
-      <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-          <div>
-            <h1 className="text-sm font-semibold">{selectedBot?.name ?? 'Kein Bot ausgewählt'}</h1>
-            {conversationId ? (
-              <p className="text-[11px] text-[var(--foreground-muted)]">Konversation: {conversationId}</p>
-            ) : null}
-          </div>
-          <Button variant="outline" size="sm" onClick={handleNewConversation} disabled={messages.length === 0}>
-            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-            Neue Konversation
-          </Button>
-        </header>
-
-        <MessageList messages={messages} />
-
-        <Composer value={draft} onChange={setDraft} onSend={handleSend} disabled={sending} botSelected={!!selectedBotId} />
-      </main>
-
-      <HistoryPanel
+    <div className="chat-shell">
+      <Rail
         conversations={conversations}
         conversationsError={conversationsError}
         selectedConversationId={conversationId}
         onSelectConversation={handleSelectConversation}
         onDeleteConversation={handleDeleteConversation}
         onDeleteAllConversations={handleDeleteAllConversations}
+        onNewConversation={handleNewConversation}
+        newConversationDisabled={messages.length === 0}
+        open={railOpen}
+        onClose={closeRail}
       />
+
+      <main className="flex min-w-0 min-h-0 flex-col">
+        <header className="flex flex-none items-center gap-3 border-b border-[var(--border)] px-4 py-3 sm:px-6">
+          <Button
+            ref={railToggleRef}
+            variant="outline"
+            size="sm"
+            onClick={() => setRailOpen(true)}
+            aria-label="Gespräche anzeigen"
+            aria-expanded={railOpen}
+            className="chat-mobile-menu hidden h-10 w-10 flex-none p-0"
+          >
+            <Menu className="h-4 w-4" aria-hidden="true" />
+          </Button>
+
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-sm font-semibold">{conversationTitle}</h1>
+            <p className="truncate text-[11px] text-[var(--foreground-muted)]">
+              {selectedBot?.name ?? 'Kein Bot ausgewählt'} · {currentScopeLabel}
+            </p>
+          </div>
+
+          <span
+            className="hidden flex-none items-center gap-1.5 rounded-full bg-[var(--accent-soft)] px-3 py-1.5 text-xs font-medium text-[var(--accent)] sm:inline-flex"
+            title="Nur freigegebene, indexierte Dokumente, die du lesen darfst"
+          >
+            <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+            Nur freigegebene Quellen
+          </span>
+        </header>
+
+        {/* Bots failing to load is a hard blocker (the composer has
+            nothing to send with) — surfaced here, prominently, same as the
+            old sidebar did; a collections load failure is far less
+            disruptive (retrieval still runs unfiltered) and stays scoped
+            to the scope-picker popover that actually needs it instead. */}
+        {botsError ? (
+          <div className="flex-none px-4 pt-2 sm:px-6">
+            <ErrorBanner error={botsError} />
+          </div>
+        ) : null}
+
+        <MessageList
+          messages={messages}
+          assistantName={selectedBot?.name}
+          onResetScopeAndRetry={handleResetScopeAndRetry}
+          selectedSourceMessageId={activeSourceMessage?.id ?? null}
+          onSelectForSourcesPanel={setSelectedSourceMessageId}
+        />
+
+        <Composer
+          value={draft}
+          onChange={setDraft}
+          onSend={handleSend}
+          disabled={sending}
+          bots={bots}
+          selectedBotId={selectedBotId}
+          onSelectBot={handleSelectBot}
+          collections={collections}
+          collectionsError={collectionsError}
+          selectedCollections={selectedCollections}
+          onToggleCollection={handleToggleCollection}
+          onClearCollections={handleClearCollections}
+        />
+      </main>
+
+      <SourcesPanel sources={activeSourceMessage?.sources ?? null} scopeLabel={currentScopeLabel} />
     </div>
   );
 }

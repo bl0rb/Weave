@@ -32,8 +32,8 @@ function jsonResponse(body: unknown): Response {
 
 describe('ChatApp turn lifecycle', () => {
   beforeEach(() => {
-    // jsdom does not implement matchMedia; ThemeToggle (rendered inside
-    // Sidebar) reads it on mount to pick a default theme.
+    // jsdom does not implement matchMedia; ThemeToggle (rendered inside the
+    // Rail) reads it on mount to pick a default theme.
     window.matchMedia =
       window.matchMedia ??
       ((() => ({
@@ -76,7 +76,7 @@ describe('ChatApp turn lifecycle', () => {
 
     render(<ChatApp />);
 
-    await screen.findByRole('button', { name: /Bot A/ });
+    await screen.findByRole('option', { name: 'Bot A' });
 
     const textarea = (await screen.findByPlaceholderText('Nachricht schreiben…')) as HTMLTextAreaElement;
     fireEvent.change(textarea, { target: { value: 'Erste Frage' } });
@@ -88,7 +88,7 @@ describe('ChatApp turn lifecycle', () => {
 
     // Abandon it: switch to the other bot while the first turn is still
     // pending, exactly the sequence FINDING 1 describes.
-    fireEvent.click(screen.getByRole('button', { name: /Bot B/ }));
+    fireEvent.change(screen.getByLabelText('Assistent'), { target: { value: 'bot-b' } });
 
     await waitFor(() => expect(textarea.disabled).toBe(false));
 
@@ -228,10 +228,10 @@ describe('ChatApp turn lifecycle', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Nachricht senden' }));
     await waitFor(() => expect(textarea.disabled).toBe(true));
 
-    // "Neue Konversation" only becomes clickable once there is at least
-    // one message -- handleSend already added the user + pending
-    // assistant message by this point.
-    fireEvent.click(screen.getByRole('button', { name: /Neue Konversation/ }));
+    // "Neues Gespräch" only becomes clickable once there is at least one
+    // message -- handleSend already added the user + pending assistant
+    // message by this point.
+    fireEvent.click(screen.getByRole('button', { name: /Neues Gespräch/ }));
 
     await waitFor(() => expect(textarea.disabled).toBe(false));
   });
@@ -288,13 +288,14 @@ describe('ChatApp collection filter', () => {
     return JSON.parse(init!.body as string);
   }
 
-  it('sends the sidebar collection selection as the request filter', async () => {
+  it('sends the composer scope-picker selection as the request filter', async () => {
     const fetchMock = mockFetch();
     vi.stubGlobal('fetch', fetchMock);
 
     render(<ChatApp />);
-    await screen.findByRole('button', { name: /Bot A/ });
-    fireEvent.click(screen.getByRole('button', { name: /Legal 2026/ }));
+    await screen.findByRole('option', { name: 'Bot A' });
+    fireEvent.click(screen.getByRole('button', { name: /Alle Bereiche/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /Legal 2026/ }));
 
     const body = await sendMessage(fetchMock, 'Was gilt hier?');
     expect(body.collections).toEqual(['legal-2026']);
@@ -305,9 +306,68 @@ describe('ChatApp collection filter', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     render(<ChatApp />);
-    await screen.findByRole('button', { name: /Bot A/ });
+    await screen.findByRole('option', { name: 'Bot A' });
 
     const body = await sendMessage(fetchMock, 'Was gilt hier?');
     expect(body).not.toHaveProperty('collections');
+  });
+
+  it('offers "Auswahl zurücksetzen & neu fragen" on a filter_excluded_all guard, which clears the selection and resends the same question', async () => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>((input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/bots')) return Promise.resolve(jsonResponse(BOTS));
+      if (url.endsWith('/api/collections')) return Promise.resolve(jsonResponse(COLLECTIONS));
+      if (url.endsWith('/api/chat/stream')) {
+        const body = JSON.parse((init!.body as string) ?? '{}');
+        const encoder = new TextEncoder();
+        // The first call (filtered to a scope that excludes everything)
+        // comes back guard-triggered; the retry (no `collections` field at
+        // all) comes back with a real answer -- exactly the fix this
+        // action is supposed to offer.
+        const guardTriggered = !!body.collections;
+        const trace = {
+          type: 'trace',
+          trace: {
+            intent: 'faq', confidence: 1, needs_retrieval: true, needs_tool: false,
+            retrieval: null, model: null, router_mode: 'llm', timings_ms: {},
+            guard: { triggered: guardTriggered, reason: guardTriggered ? 'filter_excluded_all' : null },
+            n8n: null, agent: null,
+          },
+        };
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(trace)}\n\n`));
+            if (!guardTriggered) controller.enqueue(encoder.encode('data: {"type":"delta","text":"Antwort"}\n\n'));
+            controller.enqueue(encoder.encode('data: {"type":"sources","sources":[]}\n\n'));
+            controller.enqueue(encoder.encode('data: {"type":"done"}\n\n'));
+            controller.close();
+          },
+        });
+        return Promise.resolve(new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+      }
+      throw new Error(`unexpected fetch to ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<ChatApp />);
+    await screen.findByRole('option', { name: 'Bot A' });
+    fireEvent.click(screen.getByRole('button', { name: /Alle Bereiche/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /Legal 2026/ }));
+
+    await sendMessage(fetchMock, 'Was gilt hier?');
+
+    const resetButton = await screen.findByRole('button', { name: /Auswahl zurücksetzen & neu fragen/ });
+    fireEvent.click(resetButton);
+
+    await waitFor(() => expect(screen.getByText('Antwort')).toBeTruthy());
+
+    const streamCalls = fetchMock.mock.calls.filter(([req]) => String(req).endsWith('/api/chat/stream'));
+    expect(streamCalls).toHaveLength(2);
+    const secondBody = JSON.parse(streamCalls[1][1]!.body as string);
+    expect(secondBody).not.toHaveProperty('collections');
+    expect(secondBody.message).toBe('Was gilt hier?');
+
+    // The scope picker itself must reflect the cleared selection too.
+    expect(screen.getByRole('button', { name: /Alle Bereiche/ })).toBeTruthy();
   });
 });

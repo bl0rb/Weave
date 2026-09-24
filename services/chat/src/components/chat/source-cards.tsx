@@ -5,20 +5,24 @@ import { ChevronDown, FileText } from 'lucide-react';
 import type { Source } from '@/types/weave-api';
 import { toProxiedImageUrl } from '@/lib/portal-artifact-url';
 
-function formatPages(source: Source): string {
+// Exported so sources-panel.tsx's own richer per-source layout can reuse
+// the exact same formatting rather than re-deriving it — the right-hand
+// sources panel and this component's inline collapsible list render the
+// same underlying `Source` fields, just laid out differently.
+export function formatPages(source: Source): string {
   if (source.page_start == null) return '–';
   if (source.page_end == null || source.page_end === source.page_start) return `S. ${source.page_start}`;
   return `S. ${source.page_start}–${source.page_end}`;
 }
 
-function formatVersion(source: Source): string {
+export function formatVersion(source: Source): string {
   return source.document_version != null ? `v${source.document_version}` : '–';
 }
 
 /** Never omitted, even for `null` — see this component's own docstring for
  * why `null` (a pre-Collections legacy document) must read as an honest,
  * explicit "ohne Collection" rather than silently dropping the field. */
-function formatCollection(source: Source): string {
+export function formatCollection(source: Source): string {
   return source.collection ?? 'ohne Collection';
 }
 

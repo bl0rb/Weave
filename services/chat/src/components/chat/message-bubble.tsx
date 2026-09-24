@@ -2,6 +2,7 @@ import type { ImgHTMLAttributes } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
+import { PanelRight, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { UiAgentStatus, UiMessage } from '@/lib/chat-types';
 import { SourceCards } from '@/components/chat/source-cards';
@@ -21,8 +22,36 @@ function AnswerImage({ src, alt }: ImgHTMLAttributes<HTMLImageElement>) {
   return <img src={toProxiedImageUrl(src)} alt={alt ?? ''} className="max-w-full rounded-lg" />;
 }
 
-export function MessageBubble({ message }: { message: UiMessage }) {
+interface MessageBubbleProps {
+  message: UiMessage;
+  /** The assistant currently selected for this conversation — used for the
+   * answer header's own name (see this component's `AnswerHead` below).
+   * Not per-message: one conversation always belongs to one bot. Optional,
+   * defaulting to a generic label, so call sites that only care about
+   * other message content (this component's own existing tests) don't
+   * need to thread a bot name through just to render at all. */
+  assistantName?: string;
+  /** Clears the composer's knowledge-space selection and resends the last
+   * question — forwarded to `GuardBanner`, which only renders it as a
+   * button for `reason: 'filter_excluded_all'`. */
+  onResetScopeAndRetry?: () => void;
+  /** Whether this message is the one currently shown in the right-hand
+   * sources panel (see chat-app.tsx's `selectedSourceMessageId`) — drives
+   * the pressed state of this bubble's own "In Quellenleiste anzeigen"
+   * control. */
+  isSelectedForSourcesPanel?: boolean;
+  onSelectForSourcesPanel?: () => void;
+}
+
+export function MessageBubble({
+  message,
+  assistantName = 'Assistent',
+  onResetScopeAndRetry,
+  isSelectedForSourcesPanel,
+  onSelectForSourcesPanel,
+}: MessageBubbleProps) {
   const isUser = message.role === 'user';
+  const sourceCount = message.sources?.length ?? 0;
 
   return (
     <div className={cn('flex', isUser ? 'justify-end' : 'justify-start')}>
@@ -34,7 +63,19 @@ export function MessageBubble({ message }: { message: UiMessage }) {
             : 'border border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)]'
         )}
       >
-        {!isUser && message.trace?.guard ? <GuardBanner guard={message.trace.guard} /> : null}
+        {!isUser ? (
+          <AnswerHead
+            assistantName={assistantName}
+            sourceCount={sourceCount}
+            guardTriggered={message.trace?.guard?.triggered ?? false}
+            onSelectForSourcesPanel={sourceCount > 0 ? onSelectForSourcesPanel : undefined}
+            isSelectedForSourcesPanel={isSelectedForSourcesPanel}
+          />
+        ) : null}
+
+        {!isUser && message.trace?.guard ? (
+          <GuardBanner guard={message.trace.guard} onResetScopeAndRetry={onResetScopeAndRetry} />
+        ) : null}
 
         {isUser ? (
           <p className="whitespace-pre-wrap">{message.content}</p>
@@ -46,8 +87,7 @@ export function MessageBubble({ message }: { message: UiMessage }) {
           </div>
         ) : message.streaming ? (
           <span className="inline-flex items-center gap-1 text-[var(--foreground-muted)]" aria-live="polite">
-            {/* Default placeholder stays screen-reader-only (see sidebar.tsx's
-                comment referencing this same pattern) — only the
+            {/* Default placeholder stays screen-reader-only — only the
                 progress-line/slow-response variant below is ever shown
                 visibly. `progressLine` (an agent-mode turn's own live
                 status message, e.g. "IT Support wird durchsucht") takes
@@ -71,7 +111,7 @@ export function MessageBubble({ message }: { message: UiMessage }) {
         ) : null}
 
         {!isUser && message.streaming && message.content ? (
-          <span className="ml-0.5 inline-block h-4 w-[2px] animate-pulse bg-[var(--foreground-muted)] align-text-bottom" aria-hidden="true" />
+          <span className="ml-0.5 inline-block h-4 w-[2px] animate-pulse bg-[var(--foreground-muted)] align-text-bottom motion-reduce:animate-none" aria-hidden="true" />
         ) : null}
 
         {/* The 30s-idle "still working" indicator must also fire mid-stream,
@@ -87,7 +127,11 @@ export function MessageBubble({ message }: { message: UiMessage }) {
           </p>
         ) : null}
 
-        {!isUser && message.sources ? <SourceCards sources={message.sources} /> : null}
+        {!isUser && message.sources ? (
+          <div className="chat-inline-sources">
+            <SourceCards sources={message.sources} />
+          </div>
+        ) : null}
         {!isUser && message.trace ? <TracePanel trace={message.trace} /> : null}
         {!isUser && message.viaFallback ? (
           <p className="mt-2 text-[11px] italic text-[var(--foreground-muted)]">
@@ -100,6 +144,65 @@ export function MessageBubble({ message }: { message: UiMessage }) {
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The assistant name + evidence badge above every answer (design target
+ * "answer rendering" item 4): "Belegt durch N Quellen" once this turn's
+ * sources are known, "Keine passende Quelle" once its guard has triggered
+ * instead, or neither while both are still unknown (still streaming, or a
+ * non-retrieval bot's plain reply). The optional "In Quellenleiste
+ * anzeigen" control only appears once there is at least one source to
+ * show, and only takes effect on the ≥1180px layout that has a sources
+ * panel at all (see globals.css's `.chat-sources-panel-control`) — it is
+ * harmless, if inert, to still render it below that width.
+ */
+function AnswerHead({
+  assistantName,
+  sourceCount,
+  guardTriggered,
+  onSelectForSourcesPanel,
+  isSelectedForSourcesPanel,
+}: {
+  assistantName: string;
+  sourceCount: number;
+  guardTriggered: boolean;
+  onSelectForSourcesPanel?: () => void;
+  isSelectedForSourcesPanel?: boolean;
+}) {
+  return (
+    <div className="mb-2 flex flex-wrap items-center gap-2">
+      <span className="inline-grid h-6 w-6 flex-none place-items-center rounded-lg bg-[var(--accent)] text-[var(--accent-foreground)]">
+        <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+      </span>
+      <span className="text-[13px] font-semibold">{assistantName}</span>
+      {sourceCount > 0 ? (
+        <span className="rounded-full bg-[var(--success-soft)] px-2 py-0.5 text-[11px] font-semibold text-[var(--success)]">
+          Belegt durch {sourceCount} {sourceCount === 1 ? 'Quelle' : 'Quellen'}
+        </span>
+      ) : guardTriggered ? (
+        <span className="rounded-full bg-[var(--warning-soft)] px-2 py-0.5 text-[11px] font-semibold text-[var(--warning)]">
+          Keine passende Quelle
+        </span>
+      ) : null}
+      {onSelectForSourcesPanel ? (
+        <button
+          type="button"
+          onClick={onSelectForSourcesPanel}
+          aria-pressed={!!isSelectedForSourcesPanel}
+          className={cn(
+            'chat-sources-panel-control ml-auto min-h-[40px] items-center gap-1 rounded-md px-2 text-[11px] font-medium sm:min-h-0',
+            isSelectedForSourcesPanel
+              ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+              : 'text-[var(--foreground-muted)] hover:bg-[var(--surface-muted)]'
+          )}
+        >
+          <PanelRight className="h-3.5 w-3.5" aria-hidden="true" />
+          In Quellenleiste anzeigen
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -139,9 +242,9 @@ function AgentStatusChips({ statuses }: { statuses: UiAgentStatus[] }) {
 function ThinkingDots() {
   return (
     <span className="flex gap-1" aria-hidden="true">
-      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.3s]" />
-      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.15s]" />
-      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.3s] motion-reduce:animate-none" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.15s] motion-reduce:animate-none" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current motion-reduce:animate-none" />
     </span>
   );
 }
