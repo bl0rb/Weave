@@ -1193,3 +1193,44 @@ def test_migration_revision_ids_fit_alembic_version_column():
         if len(rev.revision) > 32
     ]
     assert not too_long, f'revision ids exceed alembic_version VARCHAR(32): {too_long}'
+
+
+def test_0032_backfilled_visibility_reads_back_through_the_orm(tmp_path, monkeypatch) -> None:
+    """The strings 0032 writes ('public'/'restricted') must be exactly what the
+    ORM column reads and writes -- a names-vs-values mismatch here only shows
+    up against a migrated database, never against metadata.create_all()."""
+    from sqlalchemy.orm import Session as OrmSession
+
+    from app.models.models import Collection, CollectionVisibility
+
+    db_path = tmp_path / 'migration_scratch_0032_orm.db'
+    db_url = f'sqlite:///{db_path}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+    cfg = _alembic_config()
+
+    engine = create_engine(db_url, future=True)
+    _build_legacy_metadata().create_all(bind=engine)
+    command.stamp(cfg, '0003_job_markdown_versions')
+    command.upgrade(cfg, '0031_backup_runs')
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO collections (id, owner_id, slug, name, read_teams, email, department, folder, subfolder, created_at, updated_at) "
+            "VALUES ('c-public', NULL, 'public', 'Public', '[]', '', '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        ))
+        conn.execute(text(
+            "INSERT INTO collections (id, owner_id, slug, name, read_teams, email, department, folder, subfolder, created_at, updated_at) "
+            "VALUES ('c-team', NULL, 'team', 'Team', '[\"ops\"]', '', '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        ))
+    engine.dispose()
+
+    command.upgrade(cfg, 'head')
+    engine = create_engine(db_url, future=True)
+    with OrmSession(engine) as db:
+        assert db.get(Collection, 'c-public').visibility == CollectionVisibility.PUBLIC
+        assert db.get(Collection, 'c-team').visibility == CollectionVisibility.RESTRICTED
+        db.add(Collection(id='c-new', slug='new', name='New', description='', read_teams=[], visibility=CollectionVisibility.PUBLIC))
+        db.commit()
+    with engine.connect() as conn:
+        raw = conn.execute(text("SELECT visibility FROM collections WHERE id = 'c-new'")).scalar_one()
+    assert raw == 'public'
+    engine.dispose()

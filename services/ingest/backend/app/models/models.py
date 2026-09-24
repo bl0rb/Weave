@@ -604,7 +604,13 @@ class Collection(Base):
     # invalidate a grant.
     read_users: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     visibility: Mapped[CollectionVisibility] = mapped_column(
-        Enum(CollectionVisibility, name='collection_visibility', native_enum=False, validate_strings=True),
+        # Stored by VALUE ('public'/'restricted'), unlike this module's other
+        # enums: 0032's backfill writes these strings and the registry
+        # contract carries them verbatim to Knowledge/Retrieval.
+        Enum(
+            CollectionVisibility, name='collection_visibility', native_enum=False, validate_strings=True,
+            values_callable=lambda members: [member.value for member in members],
+        ),
         # Fail closed: every code path that makes a collection public must
         # say so explicitly (create_collection derives it, backup restore
         # derives it for pre-0032 archives).
