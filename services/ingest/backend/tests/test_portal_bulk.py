@@ -1,9 +1,21 @@
 import uuid
 
+import pytest
+
 from app.models.models import DocumentRelease, Job
+from app.services.security import rate_limiter
 from app.workers import publication_tasks
 from tests.conftest import TestingSessionLocal, create_test_user, login_as
 from tests.test_portal import _collection, _configure, _db, _job
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    # /auth/login is rate-limited per client host, and TestClient always
+    # presents as "testclient" -- shared bucket across every test unless
+    # reset per test (see test_collections_api.py's identical fixture).
+    rate_limiter.reset()
+    yield
 
 
 def test_skip_then_unskip_round_trip(monkeypatch):

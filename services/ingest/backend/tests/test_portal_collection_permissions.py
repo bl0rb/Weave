@@ -8,8 +8,18 @@ from sqlalchemy.dialects import postgresql
 
 from app.api.routes import _collection_control_job_filter
 from app.models.models import Job, User, user_teams
+from app.services.security import rate_limiter
 from tests.conftest import create_test_user, login_as
 from tests.test_portal import _collection, _configure, _db, _job, _team
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    # /auth/login is rate-limited per client host, and TestClient always
+    # presents as "testclient" -- shared bucket across every test unless
+    # reset per test (see test_collections_api.py's identical fixture).
+    rate_limiter.reset()
+    yield
 
 
 @pytest.mark.parametrize('role', ['member', 'reader'])

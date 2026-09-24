@@ -113,9 +113,13 @@ def test_rebuild_denies_non_admin():
 def test_rebuild_status_reports_counts(monkeypatch):
     admin, user = _admin('rebuild-status-admin')
 
-    with TestingSessionLocal() as db:
-        before = db.query(DocumentRelease).count()
-        before_withdrawn = db.query(KnowledgeWithdrawal).count()
+    # Baseline from the endpoint itself: counting KnowledgeWithdrawal rows
+    # directly also picks up withdrawals other tests left without a release,
+    # which the endpoint (releases whose job was withdrawn) doesn't count.
+    baseline = admin.get(f'{BASE}/rebuild-status')
+    assert baseline.status_code == 200, baseline.text
+    before = baseline.json()['total_releases']
+    before_withdrawn = baseline.json()['withdrawn']
 
     with TestingSessionLocal() as db:
         _make_job_and_release(db, owner_id=user.id, status='sent', withdrawn=False)
