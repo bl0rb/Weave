@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.ratelimit import enforce_rate_limit
 from app.models.models import User
+from app.services.ingest_identity import ingest_subject
 from app.services.retrieval_client import RetrievalClientError, list_collections
 
 router = APIRouter(prefix='/v1', tags=['collections'])
@@ -23,6 +24,6 @@ router = APIRouter(prefix='/v1', tags=['collections'])
 @router.get('/collections')
 def get_collections(user: User = Depends(enforce_rate_limit)) -> list:
     try:
-        return list_collections(team=user.effective_teams)
+        return list_collections(team=user.effective_teams, user=ingest_subject(user.oidc_subject))
     except RetrievalClientError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc

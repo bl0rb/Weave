@@ -547,6 +547,15 @@ class ApiToken(Base):
     user: Mapped[User] = relationship(back_populates='api_tokens')
 
 
+class CollectionVisibility(str, enum.Enum):
+    """The single authoritative public/restricted flag for a Collection --
+    see `Collection.visibility`'s own docstring for why this replaced the
+    old "empty `read_teams` means public" inference."""
+
+    PUBLIC = 'public'
+    RESTRICTED = 'restricted'
+
+
 class Collection(Base):
     """Persistent replacement for the in-memory `_COLLECTIONS` dict in
     app/api/routes.py (survives restart + works across multiple replicas).
@@ -557,12 +566,26 @@ class Collection(Base):
     `collection` frontmatter field, and what Weave-Knowledge's `collections`
     registry table (synced from GET /collections/registry below) and
     Weave-Retrieval's per-team read authorization key on -- never `id`,
-    which stays this table's plain internal primary key. `read_teams` is
-    that same contract's read ACL (team slugs allowed to read this
-    collection's documents; empty list = readable by everyone) -- it
-    deliberately never appears in the frontmatter (see `slug`'s docstring
-    note above): a rights change here must not require re-indexing every
-    document already tagged with this collection's slug.
+    which stays this table's plain internal primary key.
+
+    `visibility` is the single authoritative public/restricted flag,
+    everywhere in the system (Weave-Knowledge, Weave-Retrieval, Weave-
+    Runtime, Weave-API all read it the same way) -- `PUBLIC` means every
+    user may read this collection's documents regardless of `read_teams`/
+    `read_users`; `RESTRICTED` means only `read_teams`/`read_users` (plus
+    this collection's own owner/managers/admins) may. This replaced the
+    previous implicit contract (see 0014_collection_registry) that an EMPTY
+    `read_teams` meant public -- a `RESTRICTED` collection with neither
+    teams nor users configured is readable only by its owner/managers/
+    admins (fail closed), not by everyone, unlike the old sentinel.
+    `read_teams` is that same contract's team-level read ACL (team slugs
+    allowed to read this collection's documents), and `read_users` its
+    person-level counterpart (Weave-Ingest user ids, as strings, allowed to
+    read it individually) -- both are additive grants evaluated only when
+    `visibility` is `RESTRICTED`. Neither ACL list, nor `visibility`,
+    appears in the frontmatter (see `slug`'s docstring note above): a
+    rights change here must not require re-indexing every document already
+    tagged with this collection's slug.
     """
 
     __tablename__ = 'collections'
@@ -575,6 +598,19 @@ class Collection(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     read_teams: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    # Person-level counterpart to `read_teams` above (see this class's own
+    # docstring) -- Weave-Ingest user ids as strings, never usernames/emails,
+    # so a later username change or an admin's own display preferences never
+    # invalidate a grant.
+    read_users: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    visibility: Mapped[CollectionVisibility] = mapped_column(
+        Enum(CollectionVisibility, name='collection_visibility', native_enum=False, validate_strings=True),
+        # Fail closed: every code path that makes a collection public must
+        # say so explicitly (create_collection derives it, backup restore
+        # derives it for pre-0032 archives).
+        default=CollectionVisibility.RESTRICTED,
+        nullable=False,
+    )
     owner_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True
     )

@@ -30,16 +30,19 @@ router = APIRouter(prefix='/api/v1', dependencies=[Depends(require_service_token
 def list_collections(
     team: str | None = Query(default=None),
     teams: list[str] | None = Query(default=None),
+    user: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> list[CollectionOut]:
     # No `team` query param at all -- not merely an empty string -- means
-    # "no team context", i.e. only PUBLIC collections come back (see
-    # readable_collections()'s own `team=None` semantics). A caller that
-    # actually knows the requesting team's slug is expected to always pass
-    # it; this is not a way to escalate to "every collection", only ever a
-    # narrower view than passing a real team would give.
-    collections = readable_collections(db, team, teams=teams)
+    # "no team context", i.e. only PUBLIC collections (plus any matched via
+    # `user`) come back (see readable_collections()'s own `team=None`
+    # semantics). A caller that actually knows the requesting team's slug
+    # is expected to always pass it; this is not a way to escalate to
+    # "every collection", only ever a narrower view than passing a real
+    # team would give. `user`, when given, is the caller's Weave-Ingest
+    # user id, checked against a restricted collection's `read_users`.
+    collections = readable_collections(db, team, teams=teams, user=user)
     return [
-        CollectionOut(slug=c.slug, name=c.name, description=c.description, public=not c.read_teams)
+        CollectionOut(slug=c.slug, name=c.name, description=c.description, public=c.visibility == 'public')
         for c in collections
     ]

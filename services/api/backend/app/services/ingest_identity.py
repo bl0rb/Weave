@@ -27,6 +27,14 @@ from app.core.config import settings
 _HTTP_TIMEOUT_SECONDS = 10.0
 _HANDOFF_SECRET_HEADER = 'X-Weave-Handoff-Secret'
 
+# Namespace for `User.oidc_subject` (app/models/models.py) when the identity
+# came from Weave-Ingest rather than from a directly-configured OIDC
+# provider -- keeps the two kinds of subject from ever colliding in that
+# unique column, and makes the origin of an account readable straight out
+# of the database. The only writer of this namespaced form is
+# `_provision_ingest_user` in app/api/auth.py.
+INGEST_SUBJECT_PREFIX = 'weave-ingest:'
+
 
 class IngestIdentityError(Exception):
     """Raised when a handoff code cannot be redeemed: Weave-Ingest
@@ -53,6 +61,23 @@ class IngestIdentity:
     @property
     def effective_teams(self) -> list[str]:
         return list(self.teams) if self.teams is not None else ([self.team] if self.team else [])
+
+
+def ingest_subject(oidc_subject: str | None) -> str | None:
+    """The real Weave-Ingest user id backing a `User.oidc_subject` value,
+    or `None` when this account wasn't provisioned via the Weave-Ingest
+    handoff (see `_provision_ingest_user` in app/api/auth.py, which is
+    the only writer of the `INGEST_SUBJECT_PREFIX`-namespaced form) --
+    e.g. an account created via a directly-configured OIDC provider, or
+    one with no `oidc_subject` at all. Never guesses: a `None` here must
+    propagate as "omit `subject`", not as some other sentinel, so a
+    caller (Weave-Runtime, ultimately Weave-Retrieval's `read_users`
+    check) fails closed to team/public Collections access rather than
+    silently matching the wrong grant.
+    """
+    if oidc_subject is None or not oidc_subject.startswith(INGEST_SUBJECT_PREFIX):
+        return None
+    return oidc_subject[len(INGEST_SUBJECT_PREFIX):]
 
 
 def _client() -> httpx.Client:

@@ -98,8 +98,8 @@ class Collection(Base):
     value actually gets here.
 
     This is a mirror of a mirror: Weave-Ingest owns every field below
-    (`slug`, `name`, `description`, `read_teams` -- the Collections
-    contract's canonical registry), Weave-Knowledge's own
+    (`slug`, `name`, `description`, `visibility`, `read_teams`, `read_users`
+    -- the Collections contract's canonical registry), Weave-Knowledge's own
     app/services/collection_sync.py periodically pulls a full copy into its
     `collections` table, and THIS class is Weave-Retrieval's own read-only
     SQLAlchemy view of that same table -- same column-for-column mirroring
@@ -119,12 +119,20 @@ class Collection(Base):
     slug: Mapped[str] = mapped_column(String(255), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Team slugs allowed to READ this collection; an empty list is the
-    # contract's own "readable by everyone" sentinel, not "readable by
-    # nobody" -- see app/services/collections.py's readable_collections(),
-    # the one place this service actually evaluates the field rather than
-    # just mirroring it.
+    # 'public' or 'restricted' -- the contract's own authoritative
+    # public/restricted flag. 'public' means readable by everyone,
+    # regardless of `read_teams`/`read_users`; 'restricted' means readable
+    # only via the two ACLs below -- see app/services/collections.py's
+    # readable_collections(), the one place this service actually evaluates
+    # these fields rather than just mirroring them.
+    visibility: Mapped[str] = mapped_column(String(20), default='restricted', nullable=False)
+    # Team slugs allowed to READ this collection when `visibility ==
+    # 'restricted'`; ignored entirely when the collection is public.
     read_teams: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    # Weave-Ingest user ids allowed to READ this collection when
+    # `visibility == 'restricted'`, a person-level ACL alongside
+    # `read_teams`; also ignored when the collection is public.
+    read_users: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     synced_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
     )

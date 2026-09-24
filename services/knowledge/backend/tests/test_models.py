@@ -199,6 +199,33 @@ def test_collection_read_teams_empty_list_means_readable_by_everyone():
         db.close()
 
 
+def test_collection_visibility_and_read_users_persist_and_default():
+    """visibility defaults to 'restricted' (fail closed) and read_users to [] when unset, and
+    both round-trip verbatim when set explicitly."""
+    db = TestingSessionLocal()
+    try:
+        collection = Collection(slug='defaulted', name='Defaulted')
+        db.add(collection)
+        db.commit()
+        db.refresh(collection)
+        assert collection.visibility == 'restricted'
+        assert collection.read_users == []
+
+        restricted = Collection(
+            slug='restricted-collection', name='Restricted',
+            visibility='restricted', read_users=['user-1'],
+        )
+        db.add(restricted)
+        db.commit()
+        db.refresh(restricted)
+        assert restricted.visibility == 'restricted'
+        assert restricted.read_users == ['user-1']
+    finally:
+        db.query(Collection).delete()
+        db.commit()
+        db.close()
+
+
 def test_chunk_unique_document_id_chunk_index():
     db = TestingSessionLocal()
     try:

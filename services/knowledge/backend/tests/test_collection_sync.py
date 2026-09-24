@@ -336,6 +336,80 @@ def test_sync_raises_collection_sync_error_on_non_list_payload(monkeypatch):
             db.close()
 
 
+# --- visibility / read_users -----------------------------------------------------
+
+
+def test_sync_persists_visibility_and_read_users_verbatim(monkeypatch):
+    monkeypatch.setattr(settings, 'weave_ingest_base_url', 'https://weave.local')
+    payload = [
+        {
+            'slug': 'handbuch', 'name': 'Handbuch', 'description': 'Interne Doku',
+            'visibility': 'restricted', 'read_teams': ['support'], 'read_users': ['user-1'],
+        },
+    ]
+
+    with patch('app.services.collection_sync.httpx.get', return_value=_FakeResponse(200, payload)):
+        db = _db()
+        try:
+            sync_collections(db)
+        finally:
+            db.close()
+
+    db = _db()
+    try:
+        handbuch = db.get(Collection, 'handbuch')
+        assert handbuch.visibility == 'restricted'
+        assert handbuch.read_users == ['user-1']
+    finally:
+        db.close()
+
+
+def test_sync_falls_back_to_public_when_visibility_missing_and_read_teams_empty(monkeypatch):
+    """An older Weave-Ingest's registry response omits `visibility`/
+    `read_users` entirely -- falls back to the pre-`visibility` contract:
+    empty `read_teams` means public."""
+    monkeypatch.setattr(settings, 'weave_ingest_base_url', 'https://weave.local')
+    payload = [{'slug': 'public', 'name': 'Public', 'description': None, 'read_teams': []}]
+
+    with patch('app.services.collection_sync.httpx.get', return_value=_FakeResponse(200, payload)):
+        db = _db()
+        try:
+            sync_collections(db)
+        finally:
+            db.close()
+
+    db = _db()
+    try:
+        public = db.get(Collection, 'public')
+        assert public.visibility == 'public'
+        assert public.read_users == []
+    finally:
+        db.close()
+
+
+def test_sync_falls_back_to_restricted_when_visibility_missing_and_read_teams_non_empty(monkeypatch):
+    """Same older-Weave-Ingest case, but a non-empty `read_teams` falls back
+    to 'restricted' -- using the JUST-ASSIGNED read_teams for this entry,
+    not any stale previous value."""
+    monkeypatch.setattr(settings, 'weave_ingest_base_url', 'https://weave.local')
+    payload = [{'slug': 'handbuch', 'name': 'Handbuch', 'description': None, 'read_teams': ['support']}]
+
+    with patch('app.services.collection_sync.httpx.get', return_value=_FakeResponse(200, payload)):
+        db = _db()
+        try:
+            sync_collections(db)
+        finally:
+            db.close()
+
+    db = _db()
+    try:
+        handbuch = db.get(Collection, 'handbuch')
+        assert handbuch.visibility == 'restricted'
+        assert handbuch.read_users == []
+    finally:
+        db.close()
+
+
 def test_sync_raises_collection_sync_error_on_entry_missing_slug(monkeypatch):
     monkeypatch.setattr(settings, 'weave_ingest_base_url', 'https://weave.local')
     payload = [{'name': 'No Slug Here'}]

@@ -46,16 +46,24 @@ def _client() -> httpx.Client:
     return httpx.Client(base_url=settings.retrieval_base_url, headers=headers, timeout=timeout)
 
 
-def list_collections(*, team: str | list[str] | None) -> list:
-    """GET /api/v1/collections?team=<team> -- the collections `team` may
-    read, verbatim from Weave-Retrieval (that service's own `CollectionOut`:
+def list_collections(*, team: str | list[str] | None, user: str | None = None) -> list:
+    """GET /api/v1/collections?team=<team>&user=<user> -- the collections
+    `team` (and, when given, the individually-shared-with `user`) may read,
+    verbatim from Weave-Retrieval (that service's own `CollectionOut`:
     `slug`/`name`/`description`/`public`). `team=None` (a user with no team
     assigned yet) is a legitimate call, not an error -- omitting the query
     param entirely reproduces Weave-Retrieval's own `readable_collections
     (team=None)` semantics on that side ("no team context" -> public
     collections only), the same way a caller there is expected to behave
-    (see that service's app/api/collections.py)."""
+    (see that service's app/api/collections.py). `user` is the caller's own
+    Weave-Ingest user id (app/services/ingest_identity.py's
+    `ingest_subject`) and is omitted the same way when unknown -- there is
+    no per-person grant to resolve without it, so the call falls back to
+    team/public collections only."""
     params = {'teams': team} if isinstance(team, list) else ({'team': team} if team is not None else None)
+    if user is not None:
+        params = dict(params) if params is not None else {}
+        params['user'] = user
 
     try:
         with _client() as client:

@@ -208,6 +208,67 @@ def test_0003_collections_migration_preserves_existing_document_rows(tmp_path, m
     engine.dispose()
 
 
+def test_0005_collection_visibility_migration_upgrade_downgrade_round_trip(tmp_path, monkeypatch):
+    """Roundtrip for 0005_collection_visibility, same shape as the 0003 test
+    above: upgrade to just before 0005 -> insert a raw collections row (the
+    pre-0005 schema, no visibility/read_users) -> upgrade to head -> the new
+    columns exist with their server defaults applied to that pre-existing
+    row -> downgrade removes exactly those two columns -> a clean
+    re-upgrade still works.
+    """
+    db_path = tmp_path / 'migration_scratch_0005.db'
+    db_url = f'sqlite:///{db_path}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+
+    cfg = _alembic_config()
+
+    command.upgrade(cfg, '0004_embedding_attempts')
+    engine = create_engine(db_url, future=True)
+    collections = Table('collections', MetaData(), autoload_with=engine)
+    now = datetime.now(timezone.utc)
+    with engine.begin() as conn:
+        conn.execute(insert(collections).values(
+            slug='pre-existing', name='Pre Existing', read_teams=[], synced_at=now,
+        ))
+        conn.execute(insert(collections).values(
+            slug='team-only', name='Team Only', read_teams=['Kundenservice'], synced_at=now,
+        ))
+    engine.dispose()
+
+    command.upgrade(cfg, 'head')
+    engine = create_engine(db_url, future=True)
+    insp = inspect(engine)
+    collection_columns = {c['name'] for c in insp.get_columns('collections')}
+    assert {'visibility', 'read_users'} <= collection_columns
+
+    collections = Table('collections', MetaData(), autoload_with=engine)
+    with engine.begin() as conn:
+        row = conn.execute(select(collections).where(collections.c.slug == 'pre-existing')).mappings().one()
+    assert row['visibility'] == 'public'
+    assert row['read_users'] == []
+    # Fail closed: a team-restricted row must never become public just because
+    # the mirror has not been re-synced from Weave-Ingest yet.
+    with engine.begin() as conn:
+        team_row = conn.execute(select(collections).where(collections.c.slug == 'team-only')).mappings().one()
+    assert team_row['visibility'] == 'restricted'
+    engine.dispose()
+
+    # --- downgrade to just before 0005: the two new columns are gone,
+    # but the 0003/0004 schema is still intact.
+    command.downgrade(cfg, '0004_embedding_attempts')
+    insp = inspect(engine)
+    collection_columns = {c['name'] for c in insp.get_columns('collections')}
+    assert 'visibility' not in collection_columns
+    assert 'read_users' not in collection_columns
+    assert {'slug', 'name', 'read_teams', 'synced_at'} <= collection_columns
+
+    # --- re-upgrade: should cleanly re-apply from the 0004 state.
+    command.upgrade(cfg, 'head')
+    insp = inspect(engine)
+    collection_columns = {c['name'] for c in insp.get_columns('collections')}
+    assert {'visibility', 'read_users'} <= collection_columns
+
+
 def test_migration_history_has_a_single_head():
     """Guards the shape of the migration chain: two heads makes every
     `upgrade head` fail. Only one migration exists today, but this keeps

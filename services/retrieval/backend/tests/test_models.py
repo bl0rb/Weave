@@ -174,9 +174,10 @@ def test_collection_crud_and_defaults():
 
 
 def test_collection_read_teams_defaults_to_empty_list():
-    """An empty `read_teams` is the contract's own "readable by everyone"
-    sentinel (see app/services/collections.py:readable_collections()), and
-    the column's own Python-side default when a caller doesn't set it."""
+    """An empty `read_teams` is the column's own Python-side default when a
+    caller doesn't set it (no longer a "readable by everyone" sentinel on
+    its own -- see `Collection.visibility`'s docstring and
+    app/services/collections.py:readable_collections())."""
     db = TestingSessionLocal()
     try:
         db.add(make_collection(slug='public-docs'))
@@ -185,6 +186,34 @@ def test_collection_read_teams_defaults_to_empty_list():
         db.expire_all()
         fetched = db.get(Collection, 'public-docs')
         assert fetched.read_teams == []
+    finally:
+        db.query(Collection).delete()
+        db.commit()
+        db.close()
+
+
+def test_collection_visibility_and_read_users_default_and_round_trip():
+    """`visibility` defaults to `'public'` and `read_users` to `[]` when
+    unset, the contract's own authoritative public/restricted flag and its
+    person-level ACL (see `Collection.visibility`'s docstring) -- and both
+    persist/round-trip correctly when set explicitly."""
+    db = TestingSessionLocal()
+    try:
+        db.add(make_collection(slug='public-docs'))
+        db.commit()
+
+        db.expire_all()
+        fetched = db.get(Collection, 'public-docs')
+        assert fetched.visibility == 'public'
+        assert fetched.read_users == []
+
+        db.add(make_collection(slug='restricted-docs', visibility='restricted', read_users=['user-123']))
+        db.commit()
+
+        db.expire_all()
+        fetched = db.get(Collection, 'restricted-docs')
+        assert fetched.visibility == 'restricted'
+        assert fetched.read_users == ['user-123']
     finally:
         db.query(Collection).delete()
         db.commit()

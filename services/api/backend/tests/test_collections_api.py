@@ -8,7 +8,19 @@ mocking dependency).
 import httpx
 import pytest
 
+from app.services.ingest_identity import IngestIdentity
 from tests.conftest import auth_headers, client, make_user_with_token
+
+
+def _stub_ingest_identity_refresh(monkeypatch, *, team: str | None) -> None:
+    """An Ingest-provisioned User (namespaced `oidc_subject`) has its team/
+    admin bit re-fetched from Weave-Ingest on every authenticated request
+    (app/core/auth.py's `_refresh_ingest_identity`) -- stub the fetch so a
+    test User can authenticate without a real Weave-Ingest to call."""
+    monkeypatch.setattr(
+        'app.core.auth.fetch_identity',
+        lambda subject: IngestIdentity(subject=subject, username='ignored', email='', team=team, is_admin=False),
+    )
 
 
 class _FakeResponse:
@@ -88,6 +100,24 @@ def test_get_collections_omits_team_param_for_a_user_with_no_team(fake_retrieval
 
     assert response.status_code == 200
     assert fake.calls == [('/api/v1/collections', {'teams': []})]
+
+
+def test_get_collections_forwards_the_callers_ingest_subject(fake_retrieval, db_session, monkeypatch):
+    """A caller provisioned via the Weave-Ingest handoff (namespaced
+    `oidc_subject`, see app/api/auth.py's `_provision_ingest_user`) must
+    have their real Weave-Ingest user id forwarded as `user=`, so Weave-
+    Retrieval can resolve per-person Collections grants (`read_users`)
+    alongside team/public ones."""
+    _, raw_token = make_user_with_token(
+        db_session, username='collections-ingest-caller', team='Legal', oidc_subject='weave-ingest:ingest-user-id-1'
+    )
+    _stub_ingest_identity_refresh(monkeypatch, team='Legal')
+    fake = fake_retrieval(lambda path, params: _FakeResponse(200, []))
+
+    response = client.get('/v1/collections', headers=auth_headers(raw_token))
+
+    assert response.status_code == 200
+    assert fake.calls == [('/api/v1/collections', {'teams': ['Legal'], 'user': 'ingest-user-id-1'})]
 
 
 def test_a_foreign_team_query_param_cannot_override_the_callers_own_team(fake_retrieval, caller):

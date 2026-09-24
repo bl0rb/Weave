@@ -1,8 +1,9 @@
 """HTTP-level tests for GET /api/v1/collections: auth gating (same
 require_service_token dependency as POST /api/v1/search, see
-tests/test_search_api.py's own auth-gating section) and the `team` query
-param's effect on which rows come back (app/services/collections.py's own
-readable_collections() unit tests cover the underlying logic in isolation).
+tests/test_search_api.py's own auth-gating section) and the `team`/`user`
+query params' effect on which rows come back (app/services/collections.py's
+own readable_collections() unit tests cover the underlying logic in
+isolation).
 """
 
 from app.models.models import Collection
@@ -46,7 +47,7 @@ def test_collections_with_wrong_token_is_401():
 def test_collections_without_team_returns_only_public():
     _seed(
         make_collection(slug='public-docs', name='Public Docs', read_teams=[]),
-        make_collection(slug='eng-docs', name='Engineering Docs', read_teams=['Engineering']),
+        make_collection(slug='eng-docs', name='Engineering Docs', visibility='restricted', read_teams=['Engineering']),
     )
     try:
         resp = client.get('/api/v1/collections', headers=AUTH_HEADERS)
@@ -60,8 +61,8 @@ def test_collections_without_team_returns_only_public():
 def test_collections_with_team_returns_public_plus_team_restricted():
     _seed(
         make_collection(slug='public-docs', name='Public Docs', read_teams=[]),
-        make_collection(slug='eng-docs', name='Engineering Docs', read_teams=['Engineering']),
-        make_collection(slug='support-docs', name='Support Docs', read_teams=['Kundenservice']),
+        make_collection(slug='eng-docs', name='Engineering Docs', visibility='restricted', read_teams=['Engineering']),
+        make_collection(slug='support-docs', name='Support Docs', visibility='restricted', read_teams=['Kundenservice']),
     )
     try:
         resp = client.get('/api/v1/collections', params={'team': 'Engineering'}, headers=AUTH_HEADERS)
@@ -81,7 +82,7 @@ def test_collections_with_team_returns_public_plus_team_restricted():
 def test_collections_with_unknown_team_returns_only_public():
     _seed(
         make_collection(slug='public-docs', name='Public Docs', read_teams=[]),
-        make_collection(slug='eng-docs', name='Engineering Docs', read_teams=['Engineering']),
+        make_collection(slug='eng-docs', name='Engineering Docs', visibility='restricted', read_teams=['Engineering']),
     )
     try:
         resp = client.get('/api/v1/collections', params={'team': 'NoSuchTeam'}, headers=AUTH_HEADERS)
@@ -97,5 +98,45 @@ def test_collections_includes_description_when_set():
         resp = client.get('/api/v1/collections', headers=AUTH_HEADERS)
         assert resp.status_code == 200
         assert resp.json()[0]['description'] == 'Alles fuer alle.'
+    finally:
+        _cleanup()
+
+
+# --- user parameter --------------------------------------------------------------
+
+
+def test_collections_with_user_returns_public_plus_person_shared():
+    _seed(
+        make_collection(slug='public-docs', name='Public Docs', read_teams=[]),
+        make_collection(
+            slug='shared-with-me', name='Shared With Me', visibility='restricted', read_teams=[], read_users=['user-123']
+        ),
+    )
+    try:
+        resp = client.get('/api/v1/collections', params={'user': 'user-123'}, headers=AUTH_HEADERS)
+        assert resp.status_code == 200
+        assert {c['slug'] for c in resp.json()} == {'public-docs', 'shared-with-me'}
+    finally:
+        _cleanup()
+
+
+def test_collections_public_field_reflects_visibility_not_empty_read_teams():
+    """Key regression test: a `restricted` collection with empty
+    `read_teams` used to be indistinguishable from a public one (the old
+    "empty read_teams = public" sentinel). Now `public` in the response
+    reflects `visibility` directly, so this one must report `public: False`
+    even though `read_teams` is empty -- it's only visible here because
+    `read_users` grants it.
+    """
+    _seed(
+        make_collection(
+            slug='shared-with-me', name='Shared With Me', visibility='restricted', read_teams=[], read_users=['user-123']
+        )
+    )
+    try:
+        resp = client.get('/api/v1/collections', params={'user': 'user-123'}, headers=AUTH_HEADERS)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body == [{'slug': 'shared-with-me', 'name': 'Shared With Me', 'description': None, 'public': False}]
     finally:
         _cleanup()

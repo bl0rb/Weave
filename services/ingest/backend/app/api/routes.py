@@ -20,6 +20,7 @@ from app.core.config import settings
 from app.database.session import get_db
 from app.models.models import (
     Collection,
+    CollectionVisibility,
     DocumentRelease,
     ImportRun,
     ImportRunStatus,
@@ -47,6 +48,10 @@ from app.schemas.jobs import (
     CollectionStartResponse,
     CollectionUpdateRequest,
     DashboardStatsResponse,
+    DirectoryTeamEntry,
+    DirectoryTeamsResponse,
+    DirectoryUserEntry,
+    DirectoryUsersResponse,
     FolderActionRequest,
     FolderActionResponse,
     JobVersionEntry,
@@ -65,6 +70,7 @@ from app.schemas.jobs import (
     PaddleSettingsUpdate,
     PaddleStatusResponse,
     PasswordVerificationRequest,
+    ReadUserDetail,
     RuntimeCapabilityInfo,
     UploadResponse,
 )
@@ -325,6 +331,8 @@ def _member_team_ids(db: Session, user: User) -> set[str]:
 def _can_read_collection(db: Session, collection: Collection, user: User) -> bool:
     if _owner_visible(db, collection.owner_id, user):
         return True
+    if user.id in (collection.read_users or []):
+        return True
     return bool(set(collection.read_teams or []).intersection(_user_team_names(db, user)))
 
 
@@ -360,11 +368,29 @@ def _can_manage_collection(db: Session, collection: Collection, user: User) -> b
         return True
     if _can_manage_owner_team(db, collection.owner_id, user):
         return True
+    if user.id in (collection.read_users or []):
+        return True
     member_team_ids = _member_team_ids(db, user)
     if not member_team_ids:
         return False
     member_team_names = set(db.scalars(select(Team.name).where(Team.id.in_(member_team_ids))).all())
     return bool(member_team_names.intersection(collection.read_teams or []))
+
+
+def _can_manage_any_collection(db: Session, user: User) -> bool:
+    """Gate for the directory endpoints (list_directory_users/
+    list_directory_teams): an admin or anyone who can manage at least one
+    collection may look somebody up to add them to a collection's
+    `read_users`/`read_teams` grant; nobody else gets a system-wide listing
+    of accounts/teams merely for having an ordinary login. Mirrors
+    `_can_manage_collection`'s own rule, evaluated across every collection
+    instead of one specific row."""
+    if user.role == UserRole.ADMIN:
+        return True
+    if db.scalar(select(Collection.id).where(Collection.owner_id == user.id).limit(1)) is not None:
+        return True
+    collections = db.scalars(select(Collection)).all()
+    return any(_can_manage_collection(db, collection, user) for collection in collections)
 
 
 def _require_collection_owner_control(collection: Collection, user: User) -> None:
@@ -431,6 +457,55 @@ def _unique_collection_slug(db: Session, base: str) -> str:
     return candidate
 
 
+def _validate_known_teams(db: Session, names: list[str]) -> None:
+    """PATCH-only guard (see CollectionUpdateRequest's docstring): create
+    keeps `read_teams`'s long-standing laissez-faire acceptance of any
+    string, but a PATCH that names a team which doesn't exist is almost
+    always a typo the person picker should have caught -- 422 with the
+    offending name(s) rather than silently persisting a grant nobody can
+    ever satisfy."""
+    if not names:
+        return
+    known = set(db.scalars(select(Team.name).where(Team.name.in_(names))).all())
+    unknown = [name for name in names if name not in known]
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown team(s): {', '.join(unknown)}",
+        )
+
+
+def _validate_known_users(db: Session, user_ids: list[str]) -> None:
+    """PATCH-only counterpart to `_validate_known_teams` for `read_users`."""
+    if not user_ids:
+        return
+    known = set(db.scalars(select(User.id).where(User.id.in_(user_ids))).all())
+    unknown = [user_id for user_id in user_ids if user_id not in known]
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown user id(s): {', '.join(unknown)}",
+        )
+
+
+def _read_user_details(db: Session, read_users: list[str]) -> list[ReadUserDetail]:
+    """Resolve `read_users` (Weave-Ingest user ids) into the person-picker's
+    display shape, in the same order -- a stale id (its User row deleted
+    since the grant was made) is silently dropped, never surfaced as a
+    phantom entry with no username to show. No email or other personal
+    field, same discipline as the directory endpoints."""
+    if not read_users:
+        return []
+    users_by_id = {user.id: user for user in db.scalars(select(User).where(User.id.in_(read_users))).all()}
+    details = []
+    for user_id in read_users:
+        user = users_by_id.get(user_id)
+        if user is None:
+            continue
+        details.append(ReadUserDetail(id=user.id, username=user.username, display_name=None, team=user.team.name if user.team else None))
+    return details
+
+
 def _collection_to_response(db: Session, collection: Collection, user: User, *, job_ids: list[str] | None = None) -> CollectionResponse:
     return CollectionResponse(
         collection_id=collection.id,
@@ -439,7 +514,10 @@ def _collection_to_response(db: Session, collection: Collection, user: User, *, 
         slug=collection.slug,
         name=collection.name,
         description=collection.description,
+        visibility=collection.visibility,
         read_teams=list(collection.read_teams or []),
+        read_users=list(collection.read_users or []),
+        read_user_details=_read_user_details(db, list(collection.read_users or [])),
         email=collection.email,
         department=collection.department,
         folder=collection.folder,
@@ -1044,13 +1122,24 @@ def create_collection(
         name = slug
 
     description = payload.description.strip() if payload.description else None
+    read_teams = list(payload.read_teams or [])
+    read_users = list(payload.read_users or [])
+    if payload.visibility is not None:
+        visibility = payload.visibility
+    else:
+        # Backward-compatible default: a caller that never heard of
+        # `visibility` gets exactly the old behavior -- public unless it
+        # named a team or a person to restrict to.
+        visibility = CollectionVisibility.RESTRICTED if (read_teams or read_users) else CollectionVisibility.PUBLIC
 
     collection = Collection(
         owner_id=user.id,
         slug=slug,
         name=name,
         description=description,
-        read_teams=list(payload.read_teams or []),
+        visibility=visibility,
+        read_teams=read_teams,
+        read_users=read_users,
         email=email,
         department=department,
         folder=folder_clean,
@@ -1106,8 +1195,10 @@ def get_collections_registry(
 
     Deliberately never returns anything document-shaped: no job_ids, no
     folder/subfolder/email/department, no document content of any kind --
-    only the four ACL/identity fields the contract defines
-    (CollectionRegistryEntry).
+    only the ACL/identity fields the contract defines
+    (CollectionRegistryEntry): slug/name/description plus `visibility` (the
+    single authoritative public/restricted flag) and the two additive ACLs,
+    `read_teams`/`read_users`.
     """
     collections = db.scalars(select(Collection).order_by(Collection.slug)).all()
     return CollectionRegistryResponse(
@@ -1116,7 +1207,9 @@ def get_collections_registry(
                 slug=collection.slug,
                 name=collection.name,
                 description=collection.description,
+                visibility=collection.visibility,
                 read_teams=list(collection.read_teams or []),
+                read_users=list(collection.read_users or []),
             )
             for collection in collections
         ]
@@ -1155,7 +1248,15 @@ def update_collection(
     if payload.description is not None:
         collection.description = payload.description.strip() or None
     if payload.read_teams is not None:
-        collection.read_teams = list(payload.read_teams)
+        read_teams = list(dict.fromkeys(payload.read_teams))
+        _validate_known_teams(db, read_teams)
+        collection.read_teams = read_teams
+    if payload.read_users is not None:
+        read_users = list(dict.fromkeys(payload.read_users))
+        _validate_known_users(db, read_users)
+        collection.read_users = read_users
+    if payload.visibility is not None:
+        collection.visibility = payload.visibility
 
     db.commit()
     try:
@@ -1232,6 +1333,72 @@ def delete_collection(
     except Exception:  # pragma: no cover - notification must never break deletion
         logger.exception('Knowledge registry notification failed for deleted collection %s', collection_id)
     return {'status': 'deleted'}
+
+
+def _require_directory_access(db: Session, user: User) -> None:
+    """Shared 403 gate for both directory endpoints below: an admin or
+    anyone who can manage at least one collection may search the
+    user/team directory to populate a collection's `read_users`/
+    `read_teams` grant; nobody else gets a system-wide listing of accounts
+    or teams just for having an ordinary login."""
+    if user.role != UserRole.ADMIN and not _can_manage_any_collection(db, user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Only an admin or a collection manager may use the directory',
+        )
+
+
+@router.get('/directory/users', response_model=DirectoryUsersResponse)
+def list_directory_users(
+    q: str = Query(default=''),
+    limit: int = Query(default=20, ge=1, le=50),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> DirectoryUsersResponse:
+    """Person-picker search for a collection's `read_users` grant (see
+    CollectionUpdateRequest's docstring). Case-insensitive substring match
+    on username or (primary) team name -- there is no per-user display name
+    field on this service's `User` model, so `display_name` is always null
+    here (see DirectoryUserEntry's own docstring). Active users only; never
+    returns email or any other personal field."""
+    _require_directory_access(db, user)
+    query = select(User).where(User.is_active.is_(True)).outerjoin(Team, Team.id == User.team_id)
+    cleaned = q.strip().lower()
+    if cleaned:
+        pattern = f'%{cleaned}%'
+        query = query.where(or_(func.lower(User.username).like(pattern), func.lower(Team.name).like(pattern)))
+    users = db.scalars(query.order_by(User.username).limit(limit)).all()
+    return DirectoryUsersResponse(
+        items=[
+            DirectoryUserEntry(id=u.id, username=u.username, display_name=None, team=u.team.name if u.team else None)
+            for u in users
+        ]
+    )
+
+
+def _team_member_counts(db: Session) -> dict[str, int]:
+    """Every team's member count for GET /directory/teams -- the union of
+    explicit `user_teams` membership rows and each user's own legacy
+    `users.team_id` primary team, same "both count" treatment `User.
+    team_ids` already gives a single user (see that property's own
+    docstring) generalized across every team in one query instead of one
+    per team."""
+    pairs = select(user_teams.c.team_id, user_teams.c.user_id).union(
+        select(User.team_id, User.id).where(User.team_id.is_not(None))
+    ).subquery()
+    return dict(db.execute(select(pairs.c.team_id, func.count(func.distinct(pairs.c.user_id))).group_by(pairs.c.team_id)).all())
+
+
+@router.get('/directory/teams', response_model=DirectoryTeamsResponse)
+def list_directory_teams(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> DirectoryTeamsResponse:
+    """Team-picker listing for a collection's `read_teams` grant -- same
+    authorization gate as GET /directory/users."""
+    _require_directory_access(db, user)
+    counts = _team_member_counts(db)
+    teams = db.scalars(select(Team).order_by(Team.name)).all()
+    return DirectoryTeamsResponse(
+        items=[DirectoryTeamEntry(name=team.name, member_count=counts.get(team.id, 0)) for team in teams]
+    )
 
 
 @router.post('/collections/{collection_id}/upload', response_model=UploadResponse)

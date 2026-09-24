@@ -53,7 +53,7 @@ Weave-Ingest baut die URL ausschließlich aus `PORTAL_KNOWLEDGE_BASE_URL` und de
 | `timestamp` | ISO-8601 string | Zeitpunkt, an dem Weave-Ingest den Hinweis erzeugt hat. |
 | `slug` | string | Stabile Collection-ID für Diagnose und Korrelation. Weave-Knowledge verwendet sie nicht als Teilaktualisierung, sondern lädt immer die vollständige Registry. |
 
-Absichtlich nicht enthalten sind `name`, `description`, `read_teams`, Dokumentdaten oder Zugangsdaten. Die fachliche Wahrheit stammt ausschließlich aus dem anschließenden Registry-Abruf.
+Absichtlich nicht enthalten sind `name`, `description`, `visibility`, `read_teams`, `read_users`, Dokumentdaten oder Zugangsdaten. Die fachliche Wahrheit stammt ausschließlich aus dem anschließenden Registry-Abruf.
 
 ## Verarbeitung in Weave-Knowledge
 
@@ -79,3 +79,4 @@ Neue optionale Diagnosefelder wären additiv. Änderungen am Signaturverfahren, 
 ## Änderungsprotokoll
 
 - **v1, Sicherheitskorrektur (2026-09-03):** Die frühere Verteilung über alle benutzerverwalteten Webhooks wurde entfernt. Der Payload enthält keine ACL mehr; nur Weave-Knowledge erhält den signierten Hinweis und liest anschließend die admin-geschützte Registry neu ein.
+- **v1, additiv (2026-09-24):** Die Registry hinter diesem Hinweis führt jetzt zusätzlich `visibility` und `read_users` (personenbezogene Freigabe, siehe `contracts/chunk-store.md`, Tabelle `collections`). Der Hinweis-Payload selbst ändert sich nicht (weiterhin nur `event`/`timestamp`/`slug`, keine ACL jeglicher Art) — additiv, keine Vertrag-Versionserhöhung nötig.

@@ -62,6 +62,7 @@ from app.schemas.openai import (
     OpenAIModelList,
 )
 from app.services import runtime_client
+from app.services.ingest_identity import ingest_subject
 from app.services.runtime_client import RuntimeClientError, list_bots
 
 router = APIRouter(prefix='/v1', tags=['openai-compat'])
@@ -192,6 +193,9 @@ def chat_completions(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     runtime_user = {'id': str(user.id), 'team': user.team, 'teams': user.effective_teams}
+    subject = ingest_subject(user.oidc_subject)
+    if subject is not None:
+        runtime_user['subject'] = subject
 
     # Deliberately NEVER threads a Collections filter through to
     # runtime_client.chat()/chat_stream() here, unlike POST /v1/chat

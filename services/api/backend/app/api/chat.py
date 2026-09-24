@@ -41,6 +41,7 @@ from app.models.models import Conversation, MessageRole, User
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.services import conversations as conversations_service
 from app.services import runtime_client
+from app.services.ingest_identity import ingest_subject
 
 router = APIRouter(prefix='/v1', tags=['chat'])
 
@@ -66,12 +67,17 @@ def chat(
 
     history = conversations_service.build_history(conversation, exclude_message_id=user_message.id)
 
+    runtime_user = {'id': str(user.id), 'team': user.team, 'teams': user.effective_teams}
+    subject = ingest_subject(user.oidc_subject)
+    if subject is not None:
+        runtime_user['subject'] = subject
+
     try:
         result = runtime_client.chat(
             bot_id=body.bot_id,
             message=body.message,
             history=history,
-            user={'id': str(user.id), 'team': user.team, 'teams': user.effective_teams},
+            user=runtime_user,
             collections=body.collections,
         )
     except runtime_client.RuntimeUnavailable as exc:
@@ -265,12 +271,17 @@ def chat_stream(
     )
     history = conversations_service.build_history(conversation, exclude_message_id=user_message.id)
 
+    runtime_user = {'id': str(user.id), 'team': user.team, 'teams': user.effective_teams}
+    subject = ingest_subject(user.oidc_subject)
+    if subject is not None:
+        runtime_user['subject'] = subject
+
     try:
         events = runtime_client.chat_stream(
             bot_id=body.bot_id,
             message=body.message,
             history=history,
-            user={'id': str(user.id), 'team': user.team, 'teams': user.effective_teams},
+            user=runtime_user,
             collections=body.collections,
         )
     except runtime_client.RuntimeUnavailable as exc:

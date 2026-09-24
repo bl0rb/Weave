@@ -129,8 +129,13 @@ als `user.team` in `POST /v1/chat`s Aufruf an Weave-Runtimes eigene
 `allowed_teams`-Prüfung, und als `team`-Query-Parameter, den
 `GET /v1/collections` an Weave-Retrievals Collections-Lese-Autorität
 weiterreicht, um zu bestimmen, welche Collections dieser Nutzer lesen darf.
-Ein Nutzer ohne `--team` sieht dort nur öffentliche Collections (leere
-`read_teams`-Liste). Es gibt noch kein `--admin`-Flag -- ein `is_admin`
+Ein Nutzer ohne `--team` sieht dort nur öffentliche Collections
+(`visibility == "public"`, siehe `contracts/chunk-store.md`) -- ein
+über die CLI angelegter lokaler Nutzer hat zudem kein bekanntes
+Weave-Ingest-`subject`, sieht also auch keine ihm persönlich per
+`read_users` freigegebenen Collections (nur der öffentliche und der
+Team-Anteil der Regel gilt, siehe `contracts/internal-chat.md`). Es
+gibt noch kein `--admin`-Flag -- ein `is_admin`
 gesetzter Nutzer (siehe `POST /internal/tokens/introspect` unten) muss
 aktuell direkt in der Datenbank markiert werden.
 
@@ -346,12 +351,16 @@ data: {"type":"done"}
 Liefert die Collections, die der aufrufende Nutzer lesen darf -- authentifiziert
 und rate-limited wie jede andere `/v1/*`-Route. Weave-API beantwortet das
 nicht selbst, sondern fragt Weave-Retrievals eigene Collections-Lese-
-Autorität (`GET /api/v1/collections`, dort `app/api/collections.py`) nach dem
-**Team des aufrufenden Nutzers** -- niemals nach einem anderen Team, dafür
+Autorität (`GET /api/v1/collections`, dort `app/api/collections.py`) nach den
+**Teams des aufrufenden Nutzers UND, falls bekannt, seinem
+Weave-Ingest-`subject`** (das per `oidc_subject`-Präfix erkannte
+Weave-Ingest-Nutzer-Id eines über die Ingest-Anmeldung eingeloggten Nutzers,
+siehe `app/services/ingest_identity.py` -- ein rein lokal angelegter Nutzer
+hat keins) -- niemals nach einem anderen Nutzer/Team, dafür
 gibt es keinen Parameter (`app/services/retrieval_client.py`,
-`app/api/collections.py`). Ein Nutzer ohne `team` (siehe CLI oben) bekommt
-nur öffentliche Collections zurück, exakt Weave-Retrievals eigene
-`team=None`-Semantik.
+`app/api/collections.py`). Ein Nutzer ohne `team` und ohne bekanntes
+`subject` bekommt nur öffentliche Collections zurück, exakt Weave-Retrievals
+eigene `team=None`/`user=None`-Semantik.
 
 ```bash
 curl -s http://localhost:8004/v1/collections \

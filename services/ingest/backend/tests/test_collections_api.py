@@ -105,9 +105,15 @@ def test_collections_visibility_and_patch_control_matrix():
     assert admin_patch.status_code == 200
     assert admin_patch.json()['name'] == 'Renamed by Admin'
 
-    owner_patch = owner_client.patch(f'/api/v1/collections/{collection_id}', json={'read_teams': ['ops']})
+    ops_team_id = _make_team('ops')
+    db = TestingSessionLocal()
+    try:
+        ops_team_name = db.get(Team, ops_team_id).name
+    finally:
+        db.close()
+    owner_patch = owner_client.patch(f'/api/v1/collections/{collection_id}', json={'read_teams': [ops_team_name]})
     assert owner_patch.status_code == 200
-    assert owner_patch.json()['read_teams'] == ['ops']
+    assert owner_patch.json()['read_teams'] == [ops_team_name]
     # CollectionUpdateRequest carries no `slug` field -- it never changes.
     assert owner_patch.json()['slug'] == admin_patch.json()['slug']
 
@@ -336,8 +342,15 @@ def test_collections_registry_lists_every_collection_unfiltered_by_visibility():
     assert registry_resp.status_code == 200
     items = registry_resp.json()['items']
     entry = next(item for item in items if item['slug'] == slug)
-    assert entry == {'slug': slug, 'name': 'Registry Sample', 'description': None, 'read_teams': ['ops']}
-    assert set(entry.keys()) == {'slug', 'name', 'description', 'read_teams'}
+    assert entry == {
+        'slug': slug,
+        'name': 'Registry Sample',
+        'description': None,
+        'visibility': 'restricted',
+        'read_teams': ['ops'],
+        'read_users': [],
+    }
+    assert set(entry.keys()) == {'slug', 'name', 'description', 'visibility', 'read_teams', 'read_users'}
 
 
 def test_collections_registry_rejects_non_admin():
@@ -385,6 +398,12 @@ def test_patch_collection_notifies_knowledge_with_stable_slug(monkeypatch):
     from app.api import routes
 
     monkeypatch.setattr(routes.publication_tasks, 'publication_configured', lambda: True)
+    legal_team_id = _make_team('legal')
+    db = TestingSessionLocal()
+    try:
+        legal_team_name = db.get(Team, legal_team_id).name
+    finally:
+        db.close()
     owner = _user('coll-notify-patch')
     owner_client = login_as(owner.username)
     created = owner_client.post('/api/v1/collections', json={'name': 'Before'})
@@ -396,7 +415,7 @@ def test_patch_collection_notifies_knowledge_with_stable_slug(monkeypatch):
     ) as notify:
         response = owner_client.patch(
             f"/api/v1/collections/{created.json()['collection_id']}",
-            json={'name': 'After', 'read_teams': ['legal']},
+            json={'name': 'After', 'read_teams': [legal_team_name]},
         )
 
     assert response.status_code == 200, response.text

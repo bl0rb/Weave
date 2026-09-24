@@ -16,7 +16,9 @@ class CollectionSummary(BaseModel):
     slug: str
     name: str
     description: str | None = None
+    visibility: str = 'public'
     read_teams: list[str] = []
+    read_users: list[str] = []
     synced_at: datetime
     document_count: int
 

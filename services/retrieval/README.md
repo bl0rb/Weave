@@ -117,10 +117,10 @@ Fehlerfälle: `401` (fehlendes/falsches Bearer-Token), `503` (kein `RETRIEVAL_AP
 
 Weave-Retrieval ist die **Lese-Autorität** des "Collections"-Vertrags (siehe die Vertrag-Definition; Owner der Registry-Werte ist Weave-Ingest, gespiegelt über Weave-Knowledge in derselben `collections`-Tabelle wie `documents`/`chunks`, siehe oben): es beantwortet, welche Collections ein Team lesen darf, und setzt die Zugriffsgrenze bei der Suche durch — schreibt selbst aber keine Zeile dieser Tabelle.
 
-- **`GET /api/v1/collections?team=<slug>`** (`Authorization: Bearer <RETRIEVAL_API_TOKEN>`, wie `/search`) liefert alle Collections, die `team` lesen darf: jede **öffentliche** Collection (`read_teams == []`, der Vertrag-Sentinel für "für alle lesbar") plus jede, deren `read_teams` das Team explizit nennt. Ohne `team`-Parameter kommen nur die öffentlichen zurück.
+- **`GET /api/v1/collections?team=<slug>&user=<weave-ingest-user-id>`** (`Authorization: Bearer <RETRIEVAL_API_TOKEN>`, wie `/search`) liefert alle Collections, die dieser `team`/`user`-Kontext lesen darf: jede **öffentliche** Collection (`visibility == "public"`, das massgebliche Sichtbarkeits-Flag — siehe `contracts/chunk-store.md`) plus jede `"restricted"` Collection, deren `read_teams` das Team explizit nennt ODER deren `read_users` `user` explizit nennt. Ohne `team`/`teams`-Parameter kommen nur die öffentlichen (plus ggf. per-`user` freigegebenen) zurück; ohne `user`-Parameter gilt nur der öffentliche und der Team-Anteil dieser Regel (kein Platzhalter für "jede Person").
 
   ```json
-  GET /api/v1/collections?team=Kundenservice
+  GET /api/v1/collections?team=Kundenservice&user=3f7c1e2a-...
 
   [
     { "slug": "support-docs", "name": "Support-Dokumentation", "description": null, "public": false },

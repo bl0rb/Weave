@@ -72,12 +72,15 @@ def make_user_with_token(
     disabled: bool = False,
     is_admin: bool = False,
     expires_at: datetime | None = None,
+    oidc_subject: str | None = None,
 ) -> tuple[User, str]:
     """Seed a User plus one ApiToken for it directly against the test
     database, returning `(user, raw_token)`. The raw token is never stored
     anywhere -- callers wrap it in an `Authorization: Bearer <token>`
     header via `auth_headers()` below, exactly like a real caller would."""
-    user = User(id=uuid.uuid4(), username=username, team=team, disabled=disabled, is_admin=is_admin)
+    user = User(
+        id=uuid.uuid4(), username=username, team=team, disabled=disabled, is_admin=is_admin, oidc_subject=oidc_subject
+    )
     db.add(user)
     db.flush()
 

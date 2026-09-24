@@ -278,7 +278,7 @@ def search(
         raise RetrievalUnavailable(f'Weave-Retrieval returned a malformed result for POST {url}: {exc}') from exc
 
 
-def list_collections(team: str | list[str] | None = None) -> list[Collection]:
+def list_collections(team: str | list[str] | None = None, *, user: str | None = None) -> list[Collection]:
     """GET `{settings.retrieval_base_url}/api/v1/collections` with
     `Authorization: Bearer {settings.retrieval_api_token}` and, when `team`
     is given, `?team=<team>` -- Weave-Retrieval's own Collections
@@ -293,6 +293,13 @@ def list_collections(team: str | list[str] | None = None) -> list[Collection]:
     `ChatUser.team` straight through for an anonymous/system-initiated chat
     (`user.team is None`).
 
+    `user`, when given, is forwarded as `?user=<user>` alongside `team`/
+    `teams` -- the caller's Weave-Ingest user id (`ChatUser.subject`), which
+    Weave-Retrieval folds into the same readability decision for a
+    per-person Collections grant (`read_users`). `user=None` (the default)
+    is forwarded as "no `user` query param at all", matching `team=None`
+    above -- only the public + team parts of readability apply.
+
     Never retries -- same reasoning as `search()` above: this is on the hot
     path of an interactive chat turn just as much as the search call it
     precedes. Raises RetrievalUnavailable for a network-level
@@ -304,6 +311,8 @@ def list_collections(team: str | list[str] | None = None) -> list[Collection]:
     url = f'{base_url}/api/v1/collections'
     headers = {'Authorization': f'Bearer {settings.retrieval_api_token}'}
     params = {'teams': team} if isinstance(team, list) else ({'team': team} if team is not None else None)
+    if user is not None:
+        params = {**params, 'user': user} if params is not None else {'user': user}
 
     try:
         response = httpx.get(url, headers=headers, params=params, timeout=settings.retrieval_timeout_seconds)

@@ -79,7 +79,9 @@ Extrahiert aus Weave-Knowledges `backend/app/models/models.py` (`class Collectio
 | `slug` | `varchar(255)` (PK) | nein | — | Eindeutiger, lowercase-slug Identifikator der Collection — dasselbe Feld wie `documents.collection_slug` und `chunks.meta.collection`. Kein separater surrogate `id`. |
 | `name` | `varchar(255)` | nein | — | Anzeigename. |
 | `description` | `text` | ja | `NULL` | |
-| `read_teams` | `json` (`list[str]`) | nein | `[]` | Team-Slugs, die diese Collection lesen duerfen. **Leere Liste = fuer alle lesbar** (Sentinel, nicht "fuer niemanden lesbar"). Durchgesetzt wird das ausschliesslich von Weave-Retrieval — Weave-Knowledge spiegelt den Wert nur, wertet ihn nirgends selbst aus. |
+| `visibility` | `varchar(20)` | nein | `'public'` | **Das massgebliche Sichtbarkeits-Flag** — `'public'`: jeder darf lesen, unabhaengig von `read_teams`/`read_users`. `'restricted'`: nur `read_teams`/`read_users` (plus, ausschliesslich bei Weave-Ingest selbst, Owner/Manager/Admin) duerfen lesen; ein `'restricted'` Eintrag ohne jede `read_teams`/`read_users`-Eintragung ist fuer niemanden lesbar (fail closed). Ersetzt die fruehere implizite Regel "leeres `read_teams` = oeffentlich". Durchgesetzt wird das ausschliesslich von Weave-Retrieval — Weave-Knowledge spiegelt den Wert nur, wertet ihn nirgends selbst aus. |
+| `read_teams` | `json` (`list[str]`) | nein | `[]` | Team-Slugs, die diese Collection lesen duerfen, wenn `visibility == 'restricted'` ist. Wird bei `visibility == 'public'` nicht ausgewertet. Durchgesetzt ausschliesslich von Weave-Retrieval. |
+| `read_users` | `json` (`list[str]`) | nein | `[]` | Personenbezogenes Gegenstueck zu `read_teams`: Weave-Ingest-Nutzer-IDs (als Strings), die diese Collection einzeln lesen duerfen, wenn `visibility == 'restricted'` ist. Additiv zu `read_teams`, nicht exklusiv. Durchgesetzt ausschliesslich von Weave-Retrieval. |
 | `synced_at` | `timestamptz` | nein | — | Zeitpunkt des letzten erfolgreichen Upserts dieser Zeile durch `app/services/collection_sync.py`. |
 
 Kein FK von `documents.collection_slug` auf `collections.slug` (siehe oben) — ein frisch erzeugtes Dokument mit brandneuer Collection kann kurzzeitig existieren, bevor der naechste Sync-Tick (oder ein einmaliger Lazy-Reload, siehe `app/api/events.py`) die Registry nachzieht. Ein fehlender Registry-Eintrag darf laut Vertrag niemals die Indizierung eines Dokuments verhindern — nur die Sichtbarkeit in der Suche ist betroffen, und die liegt bei Weave-Retrieval.
@@ -87,7 +89,7 @@ Kein FK von `documents.collection_slug` auf `collections.slug` (siehe oben) — 
 ### Sync-Richtung
 
 ```
-Weave-Ingest (Owner: slug, name, description, read_teams)
+Weave-Ingest (Owner: slug, name, description, visibility, read_teams, read_users)
       |  GET /api/v1/collections/registry  (Bearer WEAVE_INGEST_API_TOKEN)
       v
 Weave-Knowledge  --  app/services/collection_sync.py::sync_collections()
@@ -179,3 +181,4 @@ Lokale Entwicklung und die Pytest-Suite beider Services laufen gegen eine lokale
 
 - **v1 (2026-08-31):** Initialer Vertrag, extrahiert aus Weave-Knowledges `backend/app/models/models.py` (`Document`, `Chunk`, `VectorType`) und `backend/alembic/versions/0001_init.py`. Erstellt im Rahmen des Weave-Retrieval-Service-Skeletons (Phase 3).
 - **Additiv, weiterhin v1 (2026-08-31):** `collections`-Tabelle (Registry-Spiegel), `documents.collection_slug` (nullable, kein FK) und `chunks.meta.collection` hinzugefuegt — siehe "Tabelle `collections`" und "Sync-Richtung" oben. Rein additiv im Sinn der Versionierungsregel oben (neue nullable Spalte + neue Tabelle), daher kein Versionssprung: ein bereits laufendes Weave-Retrieval, das diese Felder noch nicht kennt, funktioniert unveraendert weiter, es sieht nur noch keine Collection-Filterung.
+- **Additiv, weiterhin v1 (2026-09-24):** `collections.visibility` (NOT NULL, Default `'public'`) und `collections.read_users` (NOT NULL, Default `[]`) hinzugefuegt — Wissensbereiche sind jetzt zusaetzlich zu oeffentlich/Team auch an einzelne Personen teilbar. `visibility` ersetzt die fruehere implizite "leeres `read_teams` = oeffentlich"-Regel als massgebliches Sichtbarkeits-Flag (siehe "Tabelle `collections`" oben); `read_users` ist das personenbezogene Gegenstueck zu `read_teams`. Ein Sync-Payload eines aelteren Weave-Ingest ohne diese beiden Felder wird von Weave-Knowledge so interpretiert, als kaeme er von einer Version mit der alten Regel (`visibility = 'public' if not read_teams else 'restricted'`, `read_users = []`) — additiv, kein Versionssprung: ein bereits laufendes Weave-Retrieval, das `visibility`/`read_users` noch nicht auswertet, funktioniert unveraendert weiter (es wertet dann weiterhin nur `read_teams` aus, mit dem alten leer-heisst-oeffentlich-Verhalten fuer JEDE Collection, nicht mehr nur fuer eine `'public'`-markierte).

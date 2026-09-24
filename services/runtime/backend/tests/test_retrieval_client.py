@@ -276,6 +276,27 @@ def test_list_collections_omits_the_team_param_entirely_when_team_is_none():
     assert mock_get.call_args.kwargs['params'] is None
 
 
+def test_list_collections_sends_the_user_query_param_alongside_team():
+    with patch('app.services.retrieval_client.httpx.get', return_value=_FakeResponse(200, [])) as mock_get:
+        list_collections('legal', user='ingest-user-123')
+
+    assert mock_get.call_args.kwargs['params'] == {'team': 'legal', 'user': 'ingest-user-123'}
+
+
+def test_list_collections_sends_the_user_query_param_alone_when_team_is_none():
+    with patch('app.services.retrieval_client.httpx.get', return_value=_FakeResponse(200, [])) as mock_get:
+        list_collections(None, user='ingest-user-123')
+
+    assert mock_get.call_args.kwargs['params'] == {'user': 'ingest-user-123'}
+
+
+def test_list_collections_omits_the_user_param_entirely_when_user_is_none():
+    with patch('app.services.retrieval_client.httpx.get', return_value=_FakeResponse(200, [])) as mock_get:
+        list_collections('legal')
+
+    assert 'user' not in mock_get.call_args.kwargs['params']
+
+
 def test_list_collections_strips_trailing_slash_from_base_url(monkeypatch):
     monkeypatch.setattr(settings, 'retrieval_base_url', 'https://retrieval.example.com/')
     with patch('app.services.retrieval_client.httpx.get', return_value=_FakeResponse(200, [])) as mock_get:

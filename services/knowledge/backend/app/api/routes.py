@@ -80,7 +80,9 @@ def list_collections(db: Session = Depends(get_db)) -> CollectionListResponse:
             slug=row.slug,
             name=row.name,
             description=row.description,
+            visibility=row.visibility,
             read_teams=row.read_teams,
+            read_users=row.read_users,
             synced_at=row.synced_at,
             document_count=counts.get(row.slug, 0),
         )

@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from app.models.models import JobStatus
+from app.models.models import CollectionVisibility, JobStatus
 
 
 class UploadResponse(BaseModel):
@@ -18,10 +18,21 @@ class CollectionCreateRequest(BaseModel):
     # the server derives one from `name` (see routes._unique_collection_slug).
     slug: str | None = None
     description: str | None = None
-    # Team slugs allowed to READ this collection's documents (empty = every
-    # team); enforced by Weave-Retrieval against the registry this service
-    # publishes at GET /collections/registry -- never by Weave-Ingest itself.
+    # Left unset, create_collection derives it: PUBLIC when both `read_teams`
+    # and `read_users` are empty (byte-for-byte the old pre-visibility
+    # default), RESTRICTED otherwise -- see that route's own docstring.
+    visibility: CollectionVisibility | None = None
+    # Team slugs allowed to READ this collection's documents when
+    # `visibility` is RESTRICTED; enforced by Weave-Retrieval against the
+    # registry this service publishes at GET /collections/registry -- never
+    # by Weave-Ingest itself.
     read_teams: list[str] = Field(default_factory=list)
+    # Person-level counterpart to `read_teams` above: Weave-Ingest user ids
+    # (as strings) individually granted read access when `visibility` is
+    # RESTRICTED. Unlike PATCH (CollectionUpdateRequest), create does not
+    # validate these against real user ids -- same laissez-faire treatment
+    # `read_teams` has always had here.
+    read_users: list[str] = Field(default_factory=list)
     email: str = ''
     department: str = ''
     folder: str = ''
@@ -34,11 +45,29 @@ class CollectionUpdateRequest(BaseModel):
     (None = leave unchanged). `slug` is deliberately not patchable here --
     it is the collection's stable cross-service identity (see Collection's
     docstring) and already-processed documents carry it in their frontmatter.
+
+    Unlike create, `read_teams`/`read_users` here are validated against real
+    team names / user ids (422 on any unknown entry) and de-duplicated --
+    see routes.update_collection.
     """
 
     name: str | None = None
     description: str | None = None
+    visibility: CollectionVisibility | None = None
     read_teams: list[str] | None = None
+    read_users: list[str] | None = None
+
+
+class ReadUserDetail(BaseModel):
+    """One resolved entry of a CollectionResponse's `read_user_details` --
+    the person-picker's own display shape for an id already present in
+    `read_users`. Never carries email or any other personal field, same
+    discipline as the directory endpoints (routes.list_directory_users)."""
+
+    id: str
+    username: str
+    display_name: str | None = None
+    team: str | None = None
 
 
 class CollectionResponse(BaseModel):
@@ -48,7 +77,14 @@ class CollectionResponse(BaseModel):
     slug: str
     name: str
     description: str | None = None
+    visibility: CollectionVisibility
     read_teams: list[str] = Field(default_factory=list)
+    read_users: list[str] = Field(default_factory=list)
+    # Resolved display shape of `read_users` above, in the same order --
+    # see ReadUserDetail's own docstring. A stale id (its User row deleted
+    # since the grant was made) is silently dropped here, never surfaced as
+    # a phantom entry with no username to show.
+    read_user_details: list[ReadUserDetail] = Field(default_factory=list)
     email: str
     department: str
     folder: str = ''
@@ -72,11 +108,37 @@ class CollectionRegistryEntry(BaseModel):
     slug: str
     name: str
     description: str | None = None
+    visibility: CollectionVisibility
     read_teams: list[str] = Field(default_factory=list)
+    read_users: list[str] = Field(default_factory=list)
 
 
 class CollectionRegistryResponse(BaseModel):
     items: list[CollectionRegistryEntry] = Field(default_factory=list)
+
+
+class DirectoryUserEntry(BaseModel):
+    """One row of GET /directory/users -- the person-picker's search result
+    shape. Deliberately never email or any other personal field beyond
+    username/team -- see routes.list_directory_users's own docstring."""
+
+    id: str
+    username: str
+    display_name: str | None = None
+    team: str | None = None
+
+
+class DirectoryUsersResponse(BaseModel):
+    items: list[DirectoryUserEntry] = Field(default_factory=list)
+
+
+class DirectoryTeamEntry(BaseModel):
+    name: str
+    member_count: int
+
+
+class DirectoryTeamsResponse(BaseModel):
+    items: list[DirectoryTeamEntry] = Field(default_factory=list)
 
 
 class CollectionStartRequest(BaseModel):
