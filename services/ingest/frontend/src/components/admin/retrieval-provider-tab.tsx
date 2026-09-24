@@ -25,7 +25,7 @@ export function RetrievalProviderTab() {
   const [message, setMessage] = useState('');
   const [saving, setSaving] = useState(false);
   useEffect(() => { apiJson<Config>(PATH).then(value => { setConfig(value); setInitialEmbedding(value); }).catch(err => setError(errorMessage(err))); }, []);
-  if (!config) return <div className="space-y-6"><SectionCard title="Suche und Modelle" description="Embedding, hybride Suche und optionales Reranking zentral verwalten."><ErrorNotice message={error} /><LoadingState label="Suchkonfiguration wird geladen…" /></SectionCard></div>;
+  if (!config) return <SectionCard title="Suche und Modelle" description="Embedding, hybride Suche und optionales Reranking zentral verwalten."><ErrorNotice message={error} /><LoadingState label="Suchkonfiguration wird geladen…" /></SectionCard>;
   const set = (patch: Partial<Config>) => setConfig({ ...config, ...patch });
   const save = async () => {
     setSaving(true); setError(null); setMessage('');
@@ -61,8 +61,11 @@ export function RetrievalProviderTab() {
     } catch (err) { setError(errorMessage(err)); } finally { setSaving(false); }
   };
   const semanticPercent = Math.round(config.semantic_weight * 100);
-  return <div className="space-y-6">
-  <SectionCard title="Suche und Modelle" description="Embedding, hybride Suche und optionales Reranking zentral verwalten.">
+  // Index maintenance (reindex / rebuild) lives on its own under
+  // /admin/betrieb (Werkzeuge) — see IndexMaintenanceSection below, which
+  // stays in this file (shares the reindex/rebuild status types) but is no
+  // longer rendered as part of this component.
+  return <SectionCard title="Suche und Modelle" description="Embedding, hybride Suche und optionales Reranking zentral verwalten.">
     <ErrorNotice message={error} />
     <div className="space-y-6">
       <div><h3 className="font-semibold text-slate-950">Hybride Suche</h3><p className="mt-1 text-sm text-slate-500">Steuert die Gewichtung der semantischen Vektorsuche gegenüber der lexikalischen Volltextsuche.</p><label className="mt-4 block text-sm font-medium text-slate-700">Semantisch {semanticPercent}% <input className="mt-2 w-full accent-emerald-700" type="range" min="0" max="100" value={semanticPercent} onChange={e => { const value = Number(e.target.value) / 100; set({ semantic_weight: value, lexical_weight: 1 - value }); }} /></label><div className="mt-1 flex justify-between text-xs text-slate-500"><span>Lexikalisch {Math.round(config.lexical_weight * 100)}%</span><span>Semantisch {semanticPercent}%</span></div></div>
@@ -71,9 +74,7 @@ export function RetrievalProviderTab() {
       <div className="flex items-center gap-3 border-t border-slate-100 pt-4"><Button onClick={save} disabled={saving}>{saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}Speichern</Button><span role="status" className="text-sm text-slate-600">{message}</span></div>
       <p className="text-xs text-slate-500">API-Keys werden verschlüsselt gespeichert. Eine Änderung von Provider oder Modell mit gleicher Dimension startet nach Bestätigung eine vollständige Reindizierung. Eine Dimensionsänderung benötigt zusätzlich eine Datenbankmigration; der Reranker kann jederzeit auf „Aus“ gestellt werden.</p>
     </div>
-  </SectionCard>
-  <IndexMaintenanceSection />
-  </div>;
+  </SectionCard>;
 }
 
 // --- Index-Wartung --------------------------------------------------------
