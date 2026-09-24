@@ -1,4 +1,6 @@
 import { API_BASE_URL } from '@/lib/api-base';
+import { DEFAULT_LOCALE, type Locale } from '@/i18n/config';
+import { translate } from '@/i18n/messages';
 
 export type JobStatus = 'PENDING' | 'RUNNING' | 'FINISHED' | 'FAILED';
 export type UIState = 'Idle' | 'Processing' | 'Finished';
@@ -182,6 +184,7 @@ export function sendFormDataWithProgress(
   url: string,
   formData: FormData,
   onProgress?: (loaded: number, total: number) => void,
+  locale: Locale = DEFAULT_LOCALE,
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -209,10 +212,10 @@ export function sendFormDataWithProgress(
       const detail =
         body && typeof body === 'object' && typeof (body as Record<string, unknown>).detail === 'string'
           ? ((body as Record<string, unknown>).detail as string)
-          : `Upload failed with status ${xhr.status}`;
+          : translate(locale, 'portal.dashboardShared.uploadFailedStatus', { status: xhr.status });
       reject(new UploadError(xhr.status, detail, body));
     };
-    xhr.onerror = () => reject(new Error('Network error while uploading'));
+    xhr.onerror = () => reject(new Error(translate(locale, 'portal.dashboardShared.networkError')));
     xhr.send(formData);
   });
 }

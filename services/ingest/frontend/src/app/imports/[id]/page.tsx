@@ -17,6 +17,7 @@ import {
   runStatusChip,
   runTitle,
 } from '@/lib/imports';
+import { useI18n } from '@/i18n/provider';
 
 const POLL_INTERVAL_MS = 2500;
 
@@ -30,6 +31,7 @@ type JobDetailForFolder = {
 };
 
 export default function ImportRunPage() {
+  const { t, locale } = useI18n();
   const params = useParams<{ id: string }>();
   const runId = params.id;
 
@@ -64,7 +66,7 @@ export default function ImportRunPage() {
           setNotFound(true);
           return;
         }
-        setLoadError(error instanceof ApiError ? error.detail : 'Failed to load the import run.');
+        setLoadError(error instanceof ApiError ? error.detail : t('portal.importDetail.loadFailed'));
         // Transient failure: keep polling so a recovering backend resumes updates.
         timer = setTimeout(() => void tick(), POLL_INTERVAL_MS);
       }
@@ -75,7 +77,7 @@ export default function ImportRunPage() {
       cancelled = true;
       if (timer !== null) clearTimeout(timer);
     };
-  }, [runId, withdrawalPending]);
+  }, [runId, withdrawalPending, t]);
 
   // "View in Jobs" filtered to the run's folder: the run payload does not
   // carry its options, so read folder/subfolder off the first created job.
@@ -103,7 +105,7 @@ export default function ImportRunPage() {
 
   const cancelRun = async () => {
     if (!run) return;
-    if (!window.confirm('Cancel this import run? Pages imported so far are kept.')) return;
+    if (!window.confirm(t('portal.importDetail.cancelConfirm'))) return;
     setCancelBusy(true);
     setCancelMessage(null);
     try {
@@ -114,10 +116,10 @@ export default function ImportRunPage() {
         current ? { ...current, status: result.status, cancel_requested: result.cancel_requested } : current,
       );
       if (result.status === 'running' && result.cancel_requested) {
-        setCancelMessage('Cancellation requested — the worker stops after the current page.');
+        setCancelMessage(t('portal.importDetail.cancelRequested'));
       }
     } catch (error) {
-      setCancelMessage(error instanceof ApiError ? error.detail : 'Failed to cancel the run.');
+      setCancelMessage(error instanceof ApiError ? error.detail : t('portal.importDetail.cancelFailed'));
     } finally {
       setCancelBusy(false);
     }
@@ -127,10 +129,10 @@ export default function ImportRunPage() {
     return (
       <main className="min-h-screen">
         <div className="mx-auto w-full max-w-4xl px-4 py-8 text-slate-950 sm:px-6 lg:px-8">
-          <h1 className="text-3xl font-semibold">Import run not found</h1>
-          <p className="mt-2 text-sm text-slate-600">The run does not exist or is not visible to you.</p>
+          <h1 className="text-3xl font-semibold">{t('portal.importDetail.notFoundTitle')}</h1>
+          <p className="mt-2 text-sm text-slate-600">{t('portal.importDetail.notFoundBody')}</p>
           <Link href="/imports" className="mt-4 inline-block text-sm text-emerald-700 hover:text-emerald-800">
-            Back to imports
+            {t('portal.importDetail.backToImports')}
           </Link>
         </div>
       </main>
@@ -142,7 +144,7 @@ export default function ImportRunPage() {
       <main className="min-h-screen">
         <div className="mx-auto w-full max-w-4xl px-4 py-8 text-slate-950 sm:px-6 lg:px-8">
           <div className="flex items-center gap-2 py-6 text-sm text-slate-600">
-            <LoaderCircle className="h-4 w-4 animate-spin" /> Loading import run...
+            <LoaderCircle className="h-4 w-4 animate-spin" /> {t('portal.importDetail.loading')}
           </div>
           {loadError && <p className="text-sm text-red-600">{loadError}</p>}
         </div>
@@ -162,11 +164,11 @@ export default function ImportRunPage() {
       <div className="mx-auto w-full max-w-4xl px-4 py-8 text-slate-950 sm:px-6 lg:px-8">
         <section className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
-            <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Confluence import</p>
-            <h1 className="mt-1 truncate text-3xl font-semibold">{runTitle(run)}</h1>
+            <p className="text-xs uppercase tracking-[0.16em] text-slate-500">{t('portal.importDetail.eyebrow')}</p>
+            <h1 className="mt-1 truncate text-3xl font-semibold">{runTitle(run, locale)}</h1>
             <p className="mt-1 text-sm text-slate-600">
-              {run.scope_type === 'space' ? `Space key: ${run.scope_value}` : `Page id: ${run.scope_value}`}
-              {run.owner ? ` · Started by ${run.owner.username}` : ''}
+              {run.scope_type === 'space' ? t('portal.importDetail.scopeSpaceLabel', { value: run.scope_value }) : t('portal.importDetail.scopePageLabel', { value: run.scope_value })}
+              {run.owner ? ` · ${t('portal.importDetail.startedBy', { name: run.owner.username })}` : ''}
               {` · ${new Date(run.created_at).toLocaleString()}`}
             </p>
           </div>
@@ -176,19 +178,19 @@ export default function ImportRunPage() {
             {!active && run.can_edit !== false && (
               <Link href={`/imports/new?from=${run.id}`}>
                 <Button variant="outline" size="sm">
-                  <RotateCcw className="mr-2 h-4 w-4" /> Edit & run again
+                  <RotateCcw className="mr-2 h-4 w-4" /> {t('portal.importDetail.editRerun')}
                 </Button>
               </Link>
             )}
             {active && (
               <Button variant="outline" size="sm" onClick={() => void cancelRun()} disabled={cancelBusy || run.cancel_requested}>
-                {cancelBusy ? 'Cancelling...' : run.cancel_requested ? 'Cancelling' : 'Cancel'}
+                {cancelBusy ? t('portal.importDetail.cancelling') : run.cancel_requested ? t('portal.importDetail.cancellingLabel') : t('portal.importDetail.cancel')}
               </Button>
             )}
           </div>
         </section>
 
-        {loadError && <p className="mb-4 text-sm text-amber-700">{loadError} Retrying...</p>}
+        {loadError && <p className="mb-4 text-sm text-amber-700">{loadError} {t('portal.importDetail.retrying')}</p>}
         {cancelMessage && <p className="mb-4 text-sm text-slate-600">{cancelMessage}</p>}
         <MissingConfluencePages runId={run.id} pages={run.missing_pages ?? []} canRemove={run.can_remove_missing ?? false} onChanged={async () => setRun(await apiJson<ImportRunDetail>(`/api/v1/import/runs/${run.id}`, { cache: 'no-store' }))} />
         {run.error_message && (
@@ -200,14 +202,14 @@ export default function ImportRunPage() {
         <section className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.05)]">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <p className="text-sm font-semibold text-slate-950">
-              {run.pages_imported} of {run.pages_discovered} discovered page(s) imported
+              {t('portal.importDetail.pagesImportedSummary', { imported: run.pages_imported, discovered: run.pages_discovered })}
             </p>
             <p className="text-xs font-semibold text-slate-600">{progressPct}%</p>
           </div>
           <div
             className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100"
             role="progressbar"
-            aria-label="Pages imported"
+            aria-label={t('portal.importDetail.progressAria')}
             aria-valuemin={0}
             aria-valuemax={run.pages_discovered}
             aria-valuenow={run.pages_imported}
@@ -216,35 +218,35 @@ export default function ImportRunPage() {
           </div>
           {active && run.current_page_title && (
             <p className="mt-2 flex items-center gap-2 text-xs text-slate-500">
-              <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> Current page: {run.current_page_title}
+              <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> {t('portal.importDetail.currentPageLabel', { title: run.current_page_title })}
             </p>
           )}
           <div className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-              <p className="text-xs text-slate-500">Pages</p>
+              <p className="text-xs text-slate-500">{t('portal.importDetail.statPages')}</p>
               <p className="font-semibold text-slate-950">
                 {run.pages_imported} / {run.pages_discovered}
               </p>
             </div>
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-              <p className="text-xs text-slate-500">Failed pages</p>
+              <p className="text-xs text-slate-500">{t('portal.importDetail.statFailedPages')}</p>
               <p className={`font-semibold ${run.pages_failed > 0 ? 'text-red-600' : 'text-slate-950'}`}>
                 {run.pages_failed}
               </p>
             </div>
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-              <p className="text-xs text-slate-500">Attachments</p>
+              <p className="text-xs text-slate-500">{t('portal.importDetail.statAttachments')}</p>
               <p className="font-semibold text-slate-950">{run.attachments_saved}</p>
             </div>
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-              <p className="text-xs text-slate-500">Stored bytes</p>
+              <p className="text-xs text-slate-500">{t('portal.importDetail.statStoredBytes')}</p>
               <p className="font-semibold text-slate-950">{formatBytes(totalBytes)}</p>
             </div>
           </div>
           {run.status === 'finished' && (
             <div className="mt-4">
               <Link href={jobsHref}>
-                <Button>View in Jobs</Button>
+                <Button>{t('portal.importDetail.viewInJobs')}</Button>
               </Link>
             </div>
           )}
@@ -264,9 +266,9 @@ export default function ImportRunPage() {
                 ) : (
                   <ChevronRight className="h-4 w-4 text-slate-500" />
                 )}
-                Page errors and skips
+                {t('portal.importDetail.pageErrorsHeading')}
               </span>
-              <span className="text-xs text-slate-500">{run.errors.length} entr{run.errors.length === 1 ? 'y' : 'ies'}</span>
+              <span className="text-xs text-slate-500">{t('portal.importDetail.entryCount', { count: run.errors.length })}</span>
             </button>
             {errorsOpen && (
               <ul className="mt-3 space-y-2">
@@ -275,7 +277,7 @@ export default function ImportRunPage() {
                     key={`${entry.page_id}-${index}`}
                     className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"
                   >
-                    <p className="font-semibold">{entry.title || (entry.page_id ? `Page ${entry.page_id}` : 'Run note')}</p>
+                    <p className="font-semibold">{entry.title || (entry.page_id ? t('portal.importDetail.pageNumberFallback', { id: entry.page_id }) : t('portal.importDetail.runNoteFallback'))}</p>
                     <p className="mt-0.5">{entry.error}</p>
                   </li>
                 ))}
@@ -286,12 +288,12 @@ export default function ImportRunPage() {
 
         <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.05)]">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-4">
-            <h2 className="text-[17px] font-semibold">Imported jobs</h2>
-            <p className="text-sm text-slate-500">{run.jobs.length} job(s)</p>
+            <h2 className="text-[17px] font-semibold">{t('portal.importDetail.importedJobsHeading')}</h2>
+            <p className="text-sm text-slate-500">{t('portal.importDetail.jobsCount', { count: run.jobs.length })}</p>
           </div>
           {run.jobs.length === 0 ? (
             <p className="py-4 text-sm text-slate-600">
-              {active ? 'Jobs appear here as pages are imported.' : 'This run created no jobs.'}
+              {active ? t('portal.importDetail.jobsWillAppear') : t('portal.importDetail.noJobsCreated')}
             </p>
           ) : (
             <ul className="divide-y divide-slate-100">
@@ -314,7 +316,7 @@ export default function ImportRunPage() {
 
         <p className="mt-6">
           <Link href="/imports" className="text-sm text-emerald-700 hover:text-emerald-800">
-            Back to imports
+            {t('portal.importDetail.backToImports')}
           </Link>
         </p>
       </div>

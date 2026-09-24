@@ -24,26 +24,34 @@ import {
 import { useAuth } from '@/lib/auth-context';
 import { WeaveIngestLogo } from '@/components/weave-ingest-logo';
 import { ThemeToggle } from '@/components/theme-toggle';
+import { LanguageSwitch } from '@/i18n/language-switch';
+import { useI18n } from '@/i18n/provider';
+import type { MessageKey } from '@/i18n/messages';
 import { resolveChatPublicUrl } from '@/lib/api-base';
 import { loadDocuments } from '@/lib/portal';
 import { loadFailedJobs } from '@/lib/jobs-search';
 
 type NavItem = { href: string; label: string; icon: typeof Home; badge?: number };
+type T = (key: MessageKey, vars?: Record<string, string | number>) => string;
 
-const PORTAL_NAV: Omit<NavItem, 'badge'>[] = [
-  { href: '/', label: 'Übersicht', icon: Home },
-  { href: '/aufgaben', label: 'Aufgaben', icon: ListChecks },
-  { href: '/knowledge', label: 'Wissensbereiche', icon: FolderOpen },
-  { href: '/documents', label: 'Dokumente', icon: FileText },
-];
+function portalNav(t: T): Omit<NavItem, 'badge'>[] {
+  return [
+    { href: '/', label: t('portal.nav.overview'), icon: Home },
+    { href: '/aufgaben', label: t('portal.nav.tasks'), icon: ListChecks },
+    { href: '/knowledge', label: t('portal.nav.knowledgeSpaces'), icon: FolderOpen },
+    { href: '/documents', label: t('portal.nav.documents'), icon: FileText },
+  ];
+}
 
-const ADMIN_NAV: NavItem[] = [
-  { href: '/admin', label: 'Übersicht', icon: Home },
-  { href: '/admin/menschen', label: 'Menschen & Zugriffe', icon: UsersRound },
-  { href: '/admin/wissen', label: 'Wissen & Assistenten', icon: FolderOpen },
-  { href: '/admin/verarbeitung', label: 'Verarbeitung & Quellen', icon: Inbox },
-  { href: '/admin/betrieb', label: 'Betrieb & Sicherheit', icon: Server },
-];
+function adminNav(t: T): NavItem[] {
+  return [
+    { href: '/admin', label: t('portal.nav.overview'), icon: Home },
+    { href: '/admin/menschen', label: t('portal.nav.admin.people'), icon: UsersRound },
+    { href: '/admin/wissen', label: t('portal.nav.admin.knowledge'), icon: FolderOpen },
+    { href: '/admin/verarbeitung', label: t('portal.nav.admin.processing'), icon: Inbox },
+    { href: '/admin/betrieb', label: t('portal.nav.admin.operations'), icon: Server },
+  ];
+}
 
 function isActive(href: string, pathname: string): boolean {
   return href === '/' || href === '/admin' ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
@@ -54,6 +62,7 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
   const drawerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const { user, logout } = useAuth();
+  const { t } = useI18n();
   const [helpOpen, setHelpOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [tasksBadge, setTasksBadge] = useState<number | null>(null);
@@ -62,7 +71,7 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
   // changes during the page's lifetime.
   const [chatUrl] = useState<string | null>(() => resolveChatPublicUrl());
   const isAdminArea = pathname.startsWith('/admin');
-  const navItems: NavItem[] = isAdminArea ? ADMIN_NAV : PORTAL_NAV.map((item) => (item.href === '/aufgaben' ? { ...item, badge: tasksBadge ?? undefined } : item));
+  const navItems: NavItem[] = isAdminArea ? adminNav(t) : portalNav(t).map((item) => (item.href === '/aufgaben' ? { ...item, badge: tasksBadge ?? undefined } : item));
 
   // Aufgaben badge = open reviews + failed jobs. Both requests are as cheap
   // as the APIs allow (limit 0/1, only `total` is read) and are refreshed on
@@ -108,15 +117,15 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
           <WeaveIngestLogo className="h-8 w-8 flex-shrink-0" />
           <span>
             <span className="block text-[19px] font-bold leading-tight tracking-tight">Weave</span>
-            <span className="block text-[11.5px] font-medium text-[var(--muted)]">{isAdminArea ? 'Administration' : 'Wissensportal'}</span>
+            <span className="block text-[11.5px] font-medium text-[var(--muted)]">{isAdminArea ? t('portal.chrome.adminSubtitle') : t('portal.chrome.portalSubtitle')}</span>
           </span>
         </Link>
 
         <div className="flex items-center gap-2.5 rounded-[10px] border border-[var(--line)] bg-[var(--surface-2)] px-2.5 py-2 text-[var(--muted)]">
           <span className="grid h-8 w-8 flex-shrink-0 place-items-center rounded-lg bg-[var(--ink)] text-[11.5px] font-bold text-white">WV</span>
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-[13.5px] font-semibold text-[var(--ink)]">Weave Wissensportal</span>
-            <span className="block truncate text-xs">{isAdminArea ? 'Administration' : user ? `Angemeldet als ${user.username}` : 'Interner Wissensraum'}</span>
+            <span className="block truncate text-[13.5px] font-semibold text-[var(--ink)]">{t('portal.chrome.brandLine')}</span>
+            <span className="block truncate text-xs">{isAdminArea ? t('portal.chrome.adminSubtitle') : user ? t('portal.chrome.loggedInAs', { username: user.username }) : t('portal.chrome.internalKnowledgeSpace')}</span>
           </span>
         </div>
 
@@ -128,12 +137,12 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
             className="flex min-h-10 items-center gap-2.5 rounded-[var(--radius-control)] bg-[var(--accent)] px-3 text-[13.5px] font-semibold text-[var(--on-accent)] no-underline transition hover:bg-[var(--accent-hover)]"
           >
             <MessageSquare className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
-            <span className="flex-1">Chat öffnen</span>
+            <span className="flex-1">{t('portal.chrome.openChat')}</span>
             <ArrowUpRight className="h-[15px] w-[15px] flex-shrink-0 opacity-80" aria-hidden="true" />
           </a>
         )}
 
-        <nav aria-label={isAdminArea ? 'Administration' : 'Hauptnavigation'} className="flex flex-1 flex-col gap-0.5">
+        <nav aria-label={isAdminArea ? t('portal.chrome.adminSubtitle') : t('portal.chrome.mainNav')} className="flex flex-1 flex-col gap-0.5">
           {navItems.map(({ href, label, icon: Icon, badge }) => {
             const active = isActive(href, pathname);
             return (
@@ -160,7 +169,7 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
           {isAdminArea ? (
             <Link href="/" onClick={() => onOpenChange(false)} className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] font-medium text-[var(--ink-2)] no-underline hover:bg-[var(--hover)]">
               <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-              Zum Arbeitsplatz
+              {t('portal.chrome.backToWorkspace')}
             </Link>
           ) : (
             <>
@@ -171,16 +180,16 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
                 className="flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13.5px] font-medium text-[var(--ink-2)] transition hover:bg-[var(--hover)] hover:text-[var(--ink)]"
               >
                 <HelpCircle className="h-[18px] w-[18px] flex-shrink-0 text-[var(--muted)]" aria-hidden="true" />
-                Hilfe & Orientierung
+                {t('portal.chrome.help')}
               </button>
               {helpOpen && (
                 <p className="-mt-1.5 px-2.5 pb-0.5 text-xs leading-relaxed text-[var(--muted)]">
-                  So funktioniert Weave: Quelle hinzufügen → automatisch verarbeiten → du prüfst und gibst frei → Indexierung → im Chat verfügbar für alle mit Zugriff.
+                  {t('portal.chrome.helpText')}
                 </p>
               )}
               <p className="flex gap-2 rounded-[10px] bg-[var(--surface-2)] p-2.5 text-xs leading-relaxed text-[var(--muted)]">
                 <Lock className="mt-0.5 h-4 w-4 flex-shrink-0 text-[var(--accent)]" aria-hidden="true" />
-                Läuft in eurer Infrastruktur. Inhalte verlassen dein Unternehmen nicht.
+                {t('portal.chrome.onPremNotice')}
               </p>
             </>
           )}
@@ -191,21 +200,24 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
                 <div role="menu" className="shell-profile-menu">
                   <Link role="menuitem" href="/settings" onClick={() => { setMenuOpen(false); onOpenChange(false); }} className="flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)] no-underline hover:bg-[var(--hover)] hover:text-[var(--ink)]">
                     <KeyRound className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
-                    API-Zugänge
+                    {t('portal.chrome.apiTokens')}
                   </Link>
                   <div role="menuitem" className="flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)]">
                     <ThemeToggle />
-                    Farbschema
+                    {t('portal.chrome.colorScheme')}
+                  </div>
+                  <div role="menuitem" className="flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)]">
+                    <LanguageSwitch />
                   </div>
                   {user.role === 'admin' && (
                     <Link role="menuitem" href="/admin" onClick={() => { setMenuOpen(false); onOpenChange(false); }} className="flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)] no-underline hover:bg-[var(--hover)] hover:text-[var(--ink)]">
                       <ShieldCheck className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
-                      Administration
+                      {t('portal.chrome.adminSubtitle')}
                     </Link>
                   )}
                   <button type="button" role="menuitem" onClick={() => void logout()} className="flex min-h-10 w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13.5px] font-medium text-[var(--ink-2)] hover:bg-[var(--hover)] hover:text-[var(--ink)]">
                     <LogOut className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
-                    Abmelden
+                    {t('portal.chrome.logout')}
                   </button>
                 </div>
               )}
@@ -221,7 +233,7 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13px] font-semibold text-[var(--ink)]">{user.username}</span>
-                  <span className="block text-[11.5px] uppercase tracking-wide text-[var(--muted)]">{user.role === 'admin' ? 'Administrator' : 'Mitglied'}</span>
+                  <span className="block text-[11.5px] uppercase tracking-wide text-[var(--muted)]">{user.role === 'admin' ? t('portal.chrome.admin') : t('portal.chrome.member')}</span>
                 </span>
                 <ChevronDown className={`h-4 w-4 flex-shrink-0 text-[var(--muted)] transition-transform ${menuOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
               </button>

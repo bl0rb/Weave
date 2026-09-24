@@ -3,6 +3,9 @@
  * Field names mirror backend/app/schemas/import_.py exactly.
  */
 
+import { DEFAULT_LOCALE, type Locale } from '@/i18n/config';
+import { translate } from '@/i18n/messages';
+
 export type ImportAuthType = 'cloud_basic' | 'pat_bearer';
 
 export type ImportRunStatus = 'pending' | 'running' | 'finished' | 'failed' | 'cancelled';
@@ -45,12 +48,14 @@ export type ImportSourceUpdateRequest = {
  * (confluence_refresh_min_interval_seconds, default 900s) rather than
  * rejecting the request.
  */
-export const REFRESH_INTERVAL_OPTIONS: { value: number; label: string }[] = [
-  { value: 3600, label: 'Hourly' },
-  { value: 21600, label: 'Every 6 hours' },
-  { value: 86400, label: 'Daily' },
-  { value: 604800, label: 'Weekly' },
-];
+export function refreshIntervalOptions(locale: Locale = DEFAULT_LOCALE): { value: number; label: string }[] {
+  return [
+    { value: 3600, label: translate(locale, 'portal.imports.refreshHourly') },
+    { value: 21600, label: translate(locale, 'portal.imports.refreshEvery6Hours') },
+    { value: 86400, label: translate(locale, 'portal.imports.refreshDaily') },
+    { value: 604800, label: translate(locale, 'portal.imports.refreshWeekly') },
+  ];
+}
 
 /**
  * Label for a refresh_interval_seconds value not covered by
@@ -60,10 +65,10 @@ export const REFRESH_INTERVAL_OPTIONS: { value: number; label: string }[] = [
  * ever picking one of the options above. Without this, the Sources select
  * would carry a `value` matching none of its `<option>`s and render blank.
  */
-export function formatRefreshInterval(seconds: number): string {
-  if (seconds % 3600 === 0) return `Every ${seconds / 3600}h`;
-  if (seconds % 60 === 0) return `Every ${seconds / 60} min`;
-  return `Every ${seconds}s`;
+export function formatRefreshInterval(seconds: number, locale: Locale = DEFAULT_LOCALE): string {
+  if (seconds % 3600 === 0) return translate(locale, 'portal.imports.everyHours', { count: seconds / 3600 });
+  if (seconds % 60 === 0) return translate(locale, 'portal.imports.everyMinutes', { count: seconds / 60 });
+  return translate(locale, 'portal.imports.everySeconds', { count: seconds });
 }
 
 export type ImportSourceListResponse = {
@@ -164,12 +169,14 @@ export const importJobStatusChip: Record<ImportJobStatus, string> = {
   FAILED: 'bg-red-100 text-red-700',
 };
 
-export function runScopeLabel(run: Pick<ImportRun, 'scope_type' | 'scope_value'>): string {
-  return run.scope_type === 'space' ? `Space ${run.scope_value}` : `Page ${run.scope_value}`;
+export function runScopeLabel(run: Pick<ImportRun, 'scope_type' | 'scope_value'>, locale: Locale = DEFAULT_LOCALE): string {
+  return run.scope_type === 'space'
+    ? translate(locale, 'portal.imports.scopeSpace', { value: run.scope_value })
+    : translate(locale, 'portal.imports.scopePage', { value: run.scope_value });
 }
 
-export function runTitle(run: Pick<ImportRun, 'root_page_title' | 'scope_type' | 'scope_value'>): string {
-  return run.root_page_title.trim() || runScopeLabel(run);
+export function runTitle(run: Pick<ImportRun, 'root_page_title' | 'scope_type' | 'scope_value'>, locale: Locale = DEFAULT_LOCALE): string {
+  return run.root_page_title.trim() || runScopeLabel(run, locale);
 }
 
 /**

@@ -8,26 +8,30 @@ import { Cloud, ScanEye, Webhook } from 'lucide-react';
 import { ConfluenceConnectionsTab } from '@/components/connections/confluence-connections-tab';
 import { VlConnectionsPanel } from '@/components/connections/vl-connections-panel';
 import { WebhookConnectionsTab } from '@/components/connections/webhook-connections-tab';
+import { useI18n } from '@/i18n/provider';
+import type { MessageKey } from '@/i18n/messages';
 
 type TabId = 'confluence' | 'webhooks' | 'vl';
 
 type TabDef = { id: TabId; label: string; icon: typeof Cloud };
 
-const TAB_GROUPS: { label: string; tabs: TabDef[] }[] = [
-  {
-    label: 'External services',
-    tabs: [
-      { id: 'confluence', label: 'Confluence', icon: Cloud },
-      { id: 'webhooks', label: 'Webhooks', icon: Webhook },
-    ],
-  },
-  {
-    label: 'AI models',
-    tabs: [{ id: 'vl', label: 'VL Models', icon: ScanEye }],
-  },
-];
+function tabGroups(t: (key: MessageKey) => string): { label: string; tabs: TabDef[] }[] {
+  return [
+    {
+      label: t('portal.connectionsPage.groupExternal'),
+      tabs: [
+        { id: 'confluence', label: t('portal.connectionsPage.tabConfluence'), icon: Cloud },
+        { id: 'webhooks', label: t('portal.connectionsPage.tabWebhooks'), icon: Webhook },
+      ],
+    },
+    {
+      label: t('portal.connectionsPage.groupAi'),
+      tabs: [{ id: 'vl', label: t('portal.connectionsPage.tabVl'), icon: ScanEye }],
+    },
+  ];
+}
 
-const TAB_IDS: TabId[] = TAB_GROUPS.flatMap((group) => group.tabs.map((t) => t.id));
+const TAB_IDS: TabId[] = ['confluence', 'webhooks', 'vl'];
 
 function isTabId(value: string | null): value is TabId {
   return value !== null && TAB_IDS.includes(value as TabId);
@@ -42,6 +46,8 @@ export default function ConnectionsPage() {
 }
 
 function ConnectionsPageInner() {
+  const { t } = useI18n();
+  const TAB_GROUPS = tabGroups(t);
   const searchParams = useSearchParams();
   const initialTab = isTabId(searchParams.get('tab')) ? (searchParams.get('tab') as TabId) : 'confluence';
   const [tab, setTab] = useState<TabId>(initialTab);
@@ -73,15 +79,15 @@ function ConnectionsPageInner() {
     <main className="min-h-screen">
       <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <header className="mb-6">
-          <h1 className="text-3xl font-semibold text-slate-950">Connections</h1>
+          <h1 className="text-3xl font-semibold text-slate-950">{t('portal.connectionsPage.title')}</h1>
           <p className="mt-1 text-[15px] text-slate-500">
-            Configure the external systems and AI models this account talks to.
+            {t('portal.connectionsPage.subtitle')}
           </p>
         </header>
 
         <div
           role="tablist"
-          aria-label="Connection sections"
+          aria-label={t('portal.connectionsPage.sectionsAria')}
           className="mb-6 flex flex-wrap items-center gap-3"
         >
           {TAB_GROUPS.map((group, groupIndex) => (

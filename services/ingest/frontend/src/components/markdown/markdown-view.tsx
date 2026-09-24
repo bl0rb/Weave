@@ -8,6 +8,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
 
 import { apiFetch } from '@/lib/api';
+import { useI18n } from '@/i18n/provider';
 
 /** Artifact metadata as returned by GET /api/v1/jobs/{id}/artifacts. */
 export type JobArtifact = {
@@ -81,11 +82,12 @@ function BrokenImagePlaceholder({ label }: { label: string }) {
 }
 
 function ImageSkeleton({ filename }: { filename: string }) {
+  const { t } = useI18n();
   return (
     <span
       className="my-2 block h-40 w-full max-w-md animate-pulse rounded-md bg-slate-100"
       role="status"
-      aria-label={`Loading image ${filename}`}
+      aria-label={t('portal.markdownView.loadingImage', { filename })}
     />
   );
 }
@@ -185,6 +187,7 @@ function ArtifactImage({
  * requests from a viewer's browser) — click-to-load placeholder instead.
  */
 function ExternalImage({ src, alt }: { src: string; alt?: string }) {
+  const { t } = useI18n();
   const [load, setLoad] = useState(false);
 
   let host = '';
@@ -213,7 +216,7 @@ function ExternalImage({ src, alt }: { src: string; alt?: string }) {
       className="my-2 inline-flex max-w-full items-center gap-2 rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-600 hover:border-emerald-300 hover:bg-emerald-50"
     >
       <ImageOff className="h-4 w-4 shrink-0" aria-hidden="true" />
-      <span className="truncate">Load external image from {host}</span>
+      <span className="truncate">{t('portal.markdownView.loadExternalImage', { host })}</span>
     </button>
   );
 }
@@ -237,6 +240,7 @@ function ArtifactLink({
   href: string;
   children?: ReactNode;
 }) {
+  const { t } = useI18n();
   const artifact = useMemo(() => resolveArtifact(artifacts, href), [artifacts, href]);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -285,7 +289,7 @@ function ArtifactLink({
       </button>
       {failed && (
         <span className="ml-1.5 text-xs text-red-600" role="alert">
-          (download failed — click to retry)
+          {t('portal.markdownView.downloadFailed')}
         </span>
       )}
     </>
@@ -327,6 +331,7 @@ export type MarkdownViewProps = {
  * belt-and-braces on top, and urlTransform restricts URL schemes (§5.3).
  */
 export function MarkdownView({ markdown, jobId, password, artifacts = [], className }: MarkdownViewProps) {
+  const { t } = useI18n();
   const body = useMemo(() => markdown.replace(FRONTMATTER_RE, ''), [markdown]);
 
   const components = useMemo<Components>(
@@ -334,7 +339,7 @@ export function MarkdownView({ markdown, jobId, password, artifacts = [], classN
       img: ({ src, alt }) => {
         const url = typeof src === 'string' ? src : '';
         if (!url) {
-          return <BrokenImagePlaceholder label={alt || 'image unavailable'} />;
+          return <BrokenImagePlaceholder label={alt || t('portal.markdownView.imageUnavailable')} />;
         }
         if (url.startsWith(ARTIFACT_PREFIX)) {
           return <ArtifactImage jobId={jobId} password={password} artifacts={artifacts} src={url} alt={alt} />;
@@ -403,7 +408,7 @@ export function MarkdownView({ markdown, jobId, password, artifacts = [], classN
         </div>
       ),
     }),
-    [jobId, password, artifacts]
+    [jobId, password, artifacts, t]
   );
 
   return (

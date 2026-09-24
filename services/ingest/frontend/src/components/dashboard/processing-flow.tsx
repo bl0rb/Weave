@@ -11,6 +11,9 @@ import { Button } from '@/components/ui/button';
 import { apiFetch } from '@/lib/api';
 import { peekCached, useCachedResource } from '@/lib/data-cache';
 import { listWebhookConnections, type WebhookConnection } from '@/lib/webhooks';
+import { useI18n } from '@/i18n/provider';
+import { translate } from '@/i18n/messages';
+import { DEFAULT_LOCALE, type Locale } from '@/i18n/config';
 import {
   API,
   type DuplicateUploadBody,
@@ -33,12 +36,12 @@ function duplicateUploadVersion(error: UploadError): number | null {
 }
 
 /** Friendly message for a 409 duplicate-upload response (falls back to the raw detail). */
-function duplicateUploadMessage(fileName: string, error: UploadError): string {
+function duplicateUploadMessage(fileName: string, error: UploadError, locale: Locale = DEFAULT_LOCALE): string {
   const version = duplicateUploadVersion(error);
   if (version === null) {
     return error.message;
   }
-  return `Unchanged file: "${fileName}" is identical to version ${version} of this document — no new job created.`;
+  return translate(locale, 'portal.processingFlow.duplicateFile', { fileName, version });
 }
 
 const JOBS_KEY = '/api/v1/jobs';
@@ -54,6 +57,7 @@ type FlowMessageTone = 'error' | 'warning' | 'info';
 type FlowMessage = { text: string; step?: WizardStepId; tone: FlowMessageTone };
 
 export function ProcessingFlow() {
+  const { t, locale } = useI18n();
   const router = useRouter();
 
   const [busy, setBusy] = useState(false);
@@ -168,7 +172,7 @@ export function ProcessingFlow() {
 
   const uploadSingle = async (file: File) => {
     if (!selectedProfile) {
-      setFlowMessage({ text: 'No profile available yet. Try again after capabilities load.', step: 4, tone: 'error' });
+      setFlowMessage({ text: t('portal.processingFlow.noProfileYet'), step: 4, tone: 'error' });
       return;
     }
     setBusy(true);
@@ -200,15 +204,15 @@ export function ProcessingFlow() {
           bytesLoaded: loaded,
           bytesTotal: total || file.size || 1,
         });
-      });
-      setFlowMessage({ text: 'Single file uploaded and processing started.', step: 4, tone: 'info' });
+      }, locale);
+      setFlowMessage({ text: t('portal.processingFlow.singleUploaded'), step: 4, tone: 'info' });
       await refreshFolderOptions();
       router.push('/jobs');
     } catch (error) {
       if (error instanceof UploadError && error.status === 409) {
-        setFlowMessage({ text: duplicateUploadMessage(file.name, error), step: 4, tone: 'warning' });
+        setFlowMessage({ text: duplicateUploadMessage(file.name, error, locale), step: 4, tone: 'warning' });
       } else {
-        const detail = error instanceof Error ? error.message : 'Single upload failed. Please verify the file type.';
+        const detail = error instanceof Error ? error.message : t('portal.processingFlow.singleUploadFailed');
         setFlowMessage({ text: detail, step: 4, tone: 'error' });
       }
     } finally {
@@ -231,7 +235,7 @@ export function ProcessingFlow() {
       }),
     });
     if (!response.ok) {
-      throw new Error('Collection could not be created');
+      throw new Error(t('portal.processingFlow.collectionCreateFailed'));
     }
     const payload = await response.json();
     setCollectionId(payload.collection_id);
@@ -274,13 +278,13 @@ export function ProcessingFlow() {
               bytesLoaded: completedBytes + loaded,
               bytesTotal: totalBytes || total || 1,
             });
-          });
+          }, locale);
         } catch (error) {
           if (error instanceof UploadError && error.status === 409) {
             skippedDuplicates.push({ name: file.name, version: duplicateUploadVersion(error) });
           } else {
-            const detail = error instanceof Error ? error.message : 'upload failed';
-            setFlowMessage({ text: `Failed to upload ${file.name}: ${detail}`, step: 3, tone: 'error' });
+            const detail = error instanceof Error ? error.message : t('portal.processingFlow.uploadFailedGeneric');
+            setFlowMessage({ text: t('portal.processingFlow.fileUploadFailed', { name: file.name, detail }), step: 3, tone: 'error' });
           }
           continue;
         }
@@ -293,14 +297,14 @@ export function ProcessingFlow() {
       if (uploadedNames.length > 0 || skippedDuplicates.length > 0) {
         const parts: string[] = [];
         if (uploadedNames.length > 0) {
-          parts.push(`${uploadedNames.length} file(s) uploaded to collection.`);
+          parts.push(t('portal.processingFlow.filesUploaded', { count: uploadedNames.length }));
         }
         if (skippedDuplicates.length > 0) {
           const details = skippedDuplicates
             .map(({ name, version }) => (version === null ? name : `${name} (v${version})`))
             .join(', ');
           parts.push(
-            `${skippedDuplicates.length} unchanged file(s) skipped (identical to existing versions): ${details}.`,
+            t('portal.processingFlow.duplicatesSkipped', { count: skippedDuplicates.length, details }),
           );
         }
         setFlowMessage({
@@ -318,7 +322,7 @@ export function ProcessingFlow() {
 
   const startCollection = async () => {
     if (!collectionId || !selectedProfile) {
-      setFlowMessage({ text: 'Upload collection files first.', step: 4, tone: 'error' });
+      setFlowMessage({ text: t('portal.processingFlow.uploadCollectionFirst'), step: 4, tone: 'error' });
       return;
     }
     setBusy(true);
@@ -332,12 +336,12 @@ export function ProcessingFlow() {
       }),
     });
     if (!response.ok) {
-      setFlowMessage({ text: 'Failed to start collection processing.', step: 4, tone: 'error' });
+      setFlowMessage({ text: t('portal.processingFlow.collectionStartFailed'), step: 4, tone: 'error' });
       setBusy(false);
       return;
     }
     const payload = await response.json();
-    setFlowMessage({ text: `Collection started (${payload.started_jobs} jobs).`, step: 4, tone: 'info' });
+    setFlowMessage({ text: t('portal.processingFlow.collectionStarted', { count: payload.started_jobs }), step: 4, tone: 'info' });
     await refreshFolderOptions();
     router.push('/jobs');
     setBusy(false);
@@ -365,7 +369,7 @@ export function ProcessingFlow() {
     const folderValue = newFolderName.trim();
     const subfolderValue = newSubfolderName.trim();
     if (!folderValue && !subfolderValue) {
-      setFolderModalError('Please enter a folder or subfolder name first.');
+      setFolderModalError(t('portal.processingFlow.enterFolderName'));
       return;
     }
     setFolderBusy(true);
@@ -376,7 +380,7 @@ export function ProcessingFlow() {
       body: JSON.stringify({ folder: folderValue, subfolder: subfolderValue }),
     });
     if (!response.ok) {
-      setFolderModalError('Failed to create folder. Check folder names.');
+      setFolderModalError(t('portal.processingFlow.createFolderFailed'));
       setFolderBusy(false);
       return;
     }
@@ -397,7 +401,7 @@ export function ProcessingFlow() {
     }
     setFolderBusy(false);
     closeFolderModal();
-    setFlowMessage({ text: `Folder created: ${payload.path}`, step: 1, tone: 'info' });
+    setFlowMessage({ text: t('portal.processingFlow.folderCreated', { path: payload.path }), step: 1, tone: 'info' });
   };
 
   const closeFolderModal = () => {
@@ -422,19 +426,19 @@ export function ProcessingFlow() {
   const stepReachable = (step: WizardStepId) => step <= furthestStep && (step !== 4 || isStep3Valid);
 
   const wizardSteps: { id: WizardStepId; label: string; description: string }[] = [
-    { id: 1, label: 'Metadata', description: 'Choose mode, target folder, and department.' },
-    { id: 2, label: 'Profile', description: 'Pick the OCR or vision-language profile for this job.' },
+    { id: 1, label: t('portal.processingFlow.step1.label'), description: t('portal.processingFlow.step1.description') },
+    { id: 2, label: t('portal.processingFlow.step2.label'), description: t('portal.processingFlow.step2.description') },
     {
       id: 3,
-      label: 'Upload',
-      description: mode === 'single' ? 'Select the file to upload.' : 'Upload all files into the folder.',
+      label: t('portal.processingFlow.step3.label'),
+      description: mode === 'single' ? t('portal.processingFlow.step3.descriptionSingle') : t('portal.processingFlow.step3.descriptionCollection'),
     },
-    { id: 4, label: 'Review & Start', description: 'Review your choices and start processing.' },
+    { id: 4, label: t('portal.processingFlow.step4.label'), description: t('portal.processingFlow.step4.description') },
   ];
 
   const targetFolderLabel = folder.trim()
     ? `${folder.trim()}${subfolder.trim() ? ` / ${subfolder.trim()}` : ''}`
-    : 'No folder (inbox)';
+    : t('portal.processingFlow.noFolderInbox');
 
   /** Inline, step-scoped rendering of `flowMessage` — used at the step it belongs to so
    * the message sits right next to what caused it, instead of only in the global
@@ -473,23 +477,23 @@ export function ProcessingFlow() {
     </p>
   ) : !isStep3Valid ? (
     <p className="text-xs text-slate-500">
-      {mode === 'single' ? 'Select a file to continue.' : 'Upload at least one file to continue.'}
+      {mode === 'single' ? t('portal.processingFlow.selectFileToContinue') : t('portal.processingFlow.uploadFileToContinue')}
     </p>
   ) : null;
 
   const step2Hint = !isStep2Valid ? (
-    <p className="text-xs text-slate-500">Waiting for profiles to load — this unlocks once they arrive.</p>
+    <p className="text-xs text-slate-500">{t('portal.processingFlow.waitingForProfiles')}</p>
   ) : null;
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-10 text-slate-950 sm:px-6 lg:px-8">
       <section className="mb-8">
-        <h1 className="text-3xl font-semibold">File Task</h1>
-        <p className="mt-2 text-sm text-slate-600">Transform documents into structured markdown.</p>
+        <h1 className="text-3xl font-semibold">{t('portal.processingFlow.title')}</h1>
+        <p className="mt-2 text-sm text-slate-600">{t('portal.processingFlow.subtitle')}</p>
       </section>
 
       <section id="upload-flow" className="mb-8 rounded-xl border border-slate-200 bg-white p-5">
-        <nav aria-label="Upload wizard steps" className="mb-6">
+        <nav aria-label={t('portal.processingFlow.stepsAria')} className="mb-6">
           <ol className="flex items-center">
             {wizardSteps.map((step, index) => {
               const active = wizardStep === step.id;
@@ -550,22 +554,22 @@ export function ProcessingFlow() {
                   onClick={() => setMode('single')}
                   className={`flex h-full flex-col rounded-xl border p-4 text-left transition ${mode === 'single' ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white hover:border-emerald-300 hover:bg-emerald-50'}`}
                 >
-                  <p className="text-sm font-semibold text-slate-950">Single file</p>
-                  <p className="mt-1 text-xs text-slate-600">Upload one document and start processing immediately.</p>
+                  <p className="text-sm font-semibold text-slate-950">{t('portal.processingFlow.singleFile')}</p>
+                  <p className="mt-1 text-xs text-slate-600">{t('portal.processingFlow.singleFileHint')}</p>
                 </button>
                 <button
                   type="button"
                   onClick={() => setMode('collection')}
                   className={`flex h-full flex-col rounded-xl border p-4 text-left transition ${mode === 'collection' ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white hover:border-emerald-300 hover:bg-emerald-50'}`}
                 >
-                  <p className="text-sm font-semibold text-slate-950">Multiple files</p>
-                  <p className="mt-1 text-xs text-slate-600">Upload multiple files into one folder, then start together.</p>
+                  <p className="text-sm font-semibold text-slate-950">{t('portal.processingFlow.multipleFiles')}</p>
+                  <p className="mt-1 text-xs text-slate-600">{t('portal.processingFlow.multipleFilesHint')}</p>
                 </button>
               </div>
               <div className="grid gap-3 md:grid-cols-2">
                 {mode === 'collection' && (
                   <label className="text-sm text-slate-600">
-                    Department (optional)
+                    {t('portal.processingFlow.departmentLabel')}
                     <input
                       value={department}
                       onChange={(event) => setDepartment(event.target.value)}
@@ -575,7 +579,7 @@ export function ProcessingFlow() {
                   </label>
                 )}
                 <label className="text-sm text-slate-600">
-                  Target folder (optional)
+                  {t('portal.processingFlow.targetFolderLabel')}
                   <select
                     value={folder}
                     onChange={(event) => {
@@ -587,21 +591,21 @@ export function ProcessingFlow() {
                     }}
                     className="mt-1 w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950"
                   >
-                    <option value="">No folder (inbox)</option>
+                    <option value="">{t('portal.processingFlow.noFolderInbox')}</option>
                     {Object.keys(folderOptions).sort((left, right) => left.localeCompare(right)).map((option) => (
                       <option key={option} value={option}>{option}</option>
                     ))}
                   </select>
                 </label>
                 <label className="text-sm text-slate-600">
-                  Target subfolder (optional)
+                  {t('portal.processingFlow.targetSubfolderLabel')}
                   <select
                     value={subfolder}
                     onChange={(event) => setSubfolder(event.target.value)}
                     disabled={!folder}
                     className="mt-1 w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950"
                   >
-                    <option value="">No subfolder</option>
+                    <option value="">{t('portal.processingFlow.noSubfolder')}</option>
                     {selectedSubfolderOptions.map((option) => (
                       <option key={option} value={option}>{option}</option>
                     ))}
@@ -610,14 +614,14 @@ export function ProcessingFlow() {
                 <div className="flex items-end md:col-span-2">
                   <Button type="button" variant="outline" onClick={() => setFolderModalOpen(true)}>
                     <Plus className="h-4 w-4" />
-                    Add folder
+                    {t('portal.processingFlow.addFolder')}
                   </Button>
                 </div>
               </div>
               {renderStepMessage(1)}
               <div className="flex justify-end">
                 <Button onClick={() => goToStep(2)} disabled={!isStep1Valid}>
-                  Continue
+                  {t('portal.processingFlow.continue')}
                 </Button>
               </div>
             </motion.div>
@@ -634,8 +638,8 @@ export function ProcessingFlow() {
               <div className="flex items-start gap-3 rounded-lg border border-slate-200 bg-emerald-50 p-4">
                 <Sparkles className="mt-1 h-5 w-5 text-slate-600" />
                 <div>
-                  <p className="font-medium text-slate-950">Selected profile</p>
-                  <p className="text-sm text-slate-600">{selectedProfile?.label ?? 'Loading profiles...'}</p>
+                  <p className="font-medium text-slate-950">{t('portal.processingFlow.selectedProfile')}</p>
+                  <p className="text-sm text-slate-600">{selectedProfile?.label ?? t('portal.processingFlow.loadingProfiles')}</p>
                 </div>
               </div>
               <div className="grid gap-3 md:grid-cols-2">
@@ -657,9 +661,9 @@ export function ProcessingFlow() {
                 })}
               </div>
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                <p className="text-sm font-semibold text-slate-950">Send result to webhook</p>
+                <p className="text-sm font-semibold text-slate-950">{t('portal.processingFlow.sendToWebhook')}</p>
                 <p className="mt-1 text-xs text-slate-600">
-                  Optional — deliver the finished result to a configured external archive or workflow endpoint.
+                  {t('portal.processingFlow.sendToWebhookHint')}
                 </p>
                 {enabledWebhookConnections.length > 0 ? (
                   <select
@@ -667,7 +671,7 @@ export function ProcessingFlow() {
                     onChange={(event) => setWebhookConnectionId(event.target.value)}
                     className="mt-3 w-full rounded border border-slate-200 bg-white px-3 py-2 text-slate-950 md:w-1/2"
                   >
-                    <option value="">Don&apos;t send</option>
+                    <option value="">{t('portal.processingFlow.webhookNone')}</option>
                     {enabledWebhookConnections.map((connection) => (
                       <option key={connection.id} value={connection.id}>
                         {connection.name}
@@ -676,25 +680,24 @@ export function ProcessingFlow() {
                   </select>
                 ) : (
                   <p className="mt-3 text-xs text-slate-500">
-                    No webhook connections yet — create one under{' '}
+                    {t('portal.processingFlow.noWebhooksPrefix')}{' '}
                     <Link href="/connections?tab=webhooks" className="text-emerald-700 hover:text-emerald-800">
-                      Connections › Webhooks
+                      {t('portal.processingFlow.noWebhooksLink')}
                     </Link>
-                    .
                   </p>
                 )}
               </div>
               {step2Hint}
               <div className="flex justify-between gap-3">
                 <Button variant="outline" onClick={() => goToStep(1)}>
-                  Back
+                  {t('portal.processingFlow.back')}
                 </Button>
                 <Button
                   onClick={() => goToStep(3)}
                   disabled={!isStep2Valid}
-                  title={isStep2Valid ? undefined : 'Waiting for profiles to load.'}
+                  title={isStep2Valid ? undefined : t('portal.processingFlow.waitingForProfilesTitle')}
                 >
-                  Continue
+                  {t('portal.processingFlow.continue')}
                 </Button>
               </div>
             </motion.div>
@@ -720,12 +723,12 @@ export function ProcessingFlow() {
                     </div>
                     <div className="flex items-center gap-2">
                       <Button type="button" variant="outline" size="sm" onClick={() => singleFileInputRef.current?.click()}>
-                        Replace
+                        {t('portal.processingFlow.replace')}
                       </Button>
                       <button
                         type="button"
                         onClick={() => setSelectedFile(null)}
-                        aria-label="Remove selected file"
+                        aria-label={t('portal.processingFlow.removeFileAria')}
                         className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
                       >
                         <X className="h-4 w-4" />
@@ -742,11 +745,11 @@ export function ProcessingFlow() {
                     animate={{ borderColor: dragActive ? '#6ee7b7' : '#10b981' }}
                   >
                     <UploadCloud className="mx-auto mb-4 h-10 w-10 text-slate-600" />
-                    <p className="mb-2 text-lg font-medium">Drag and drop file here</p>
-                    <p className="mb-4 text-sm text-slate-600">PDF, DOCX, PPTX, XLSX, XLS, PNG, JPG, JPEG, EML (max. 100 MB)</p>
-                    <p className="mb-4 text-xs text-slate-500">Target folder: {targetFolderLabel}</p>
+                    <p className="mb-2 text-lg font-medium">{t('portal.processingFlow.dragDropFile')}</p>
+                    <p className="mb-4 text-sm text-slate-600">{t('portal.processingFlow.fileTypesMax')}</p>
+                    <p className="mb-4 text-xs text-slate-500">{t('portal.processingFlow.targetFolderInline', { label: targetFolderLabel })}</p>
                     <Button variant="outline" onClick={() => singleFileInputRef.current?.click()}>
-                      Select file
+                      {t('portal.processingFlow.selectFile')}
                     </Button>
                   </motion.div>
                 )
@@ -761,14 +764,14 @@ export function ProcessingFlow() {
                     animate={{ borderColor: dragActive ? '#6ee7b7' : '#10b981' }}
                   >
                     <UploadCloud className="mx-auto mb-4 h-10 w-10 text-slate-600" />
-                    <p className="mb-2 text-lg font-medium">Upload all collection files</p>
-                    <p className="mb-4 text-xs text-slate-500">Target folder: {targetFolderLabel}</p>
+                    <p className="mb-2 text-lg font-medium">{t('portal.processingFlow.uploadAllCollectionFiles')}</p>
+                    <p className="mb-4 text-xs text-slate-500">{t('portal.processingFlow.targetFolderInline', { label: targetFolderLabel })}</p>
                     <Button variant="outline" onClick={() => collectionFileInputRef.current?.click()}>
-                      Select files
+                      {t('portal.processingFlow.selectFiles')}
                     </Button>
                   </motion.div>
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                    <p className="font-semibold text-slate-950">Uploaded files: {collectionFiles.length}</p>
+                    <p className="font-semibold text-slate-950">{t('portal.processingFlow.uploadedFilesCount', { count: collectionFiles.length })}</p>
                     {collectionFiles.length > 0 && (
                       <ul className="mt-2 max-h-28 space-y-1 overflow-y-auto text-xs text-slate-500">
                         {collectionFiles.map((name, index) => (
@@ -809,7 +812,7 @@ export function ProcessingFlow() {
               {step3Hint}
               <div className="flex justify-between gap-3">
                 <Button variant="outline" onClick={() => goToStep(2)}>
-                  Back
+                  {t('portal.processingFlow.back')}
                 </Button>
                 <Button
                   onClick={() => goToStep(4)}
@@ -818,11 +821,11 @@ export function ProcessingFlow() {
                     isStep3Valid
                       ? undefined
                       : mode === 'single'
-                        ? 'Select a file to continue.'
-                        : 'Upload at least one file to continue.'
+                        ? t('portal.processingFlow.selectFileTitle')
+                        : t('portal.processingFlow.uploadFileTitle')
                   }
                 >
-                  Continue
+                  {t('portal.processingFlow.continue')}
                 </Button>
               </div>
             </motion.div>
@@ -837,40 +840,40 @@ export function ProcessingFlow() {
               className="space-y-4"
             >
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
-                <p className="mb-3 text-sm font-semibold text-slate-950">Review</p>
+                <p className="mb-3 text-sm font-semibold text-slate-950">{t('portal.processingFlow.reviewHeading')}</p>
                 <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
                   <div>
-                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-400">Mode</dt>
-                    <dd className="mt-0.5 text-slate-950">{mode === 'single' ? 'Single file' : 'Multiple files'}</dd>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-400">{t('portal.processingFlow.modeLabel')}</dt>
+                    <dd className="mt-0.5 text-slate-950">{mode === 'single' ? t('portal.processingFlow.singleFile') : t('portal.processingFlow.multipleFiles')}</dd>
                   </div>
                   <div>
-                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-400">Target folder</dt>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-400">{t('portal.processingFlow.targetFolderDt')}</dt>
                     <dd className="mt-0.5 text-slate-950">{targetFolderLabel}</dd>
                   </div>
                   {mode === 'collection' && department.trim() && (
                     <div>
-                      <dt className="text-xs font-medium uppercase tracking-wide text-slate-400">Department</dt>
+                      <dt className="text-xs font-medium uppercase tracking-wide text-slate-400">{t('portal.processingFlow.departmentDt')}</dt>
                       <dd className="mt-0.5 text-slate-950">{department.trim()}</dd>
                     </div>
                   )}
                   <div>
-                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-400">Profile</dt>
-                    <dd className="mt-0.5 text-slate-950">{selectedProfile?.label ?? 'No profile selected'}</dd>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-400">{t('portal.processingFlow.profileDt')}</dt>
+                    <dd className="mt-0.5 text-slate-950">{selectedProfile?.label ?? t('portal.processingFlow.noProfileSelected')}</dd>
                   </div>
                   <div>
-                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-400">Webhook</dt>
-                    <dd className="mt-0.5 text-slate-950">{selectedWebhookConnection?.name ?? 'Not configured'}</dd>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-400">{t('portal.processingFlow.webhookDt')}</dt>
+                    <dd className="mt-0.5 text-slate-950">{selectedWebhookConnection?.name ?? t('portal.processingFlow.notConfigured')}</dd>
                   </div>
                   <div>
                     <dt className="text-xs font-medium uppercase tracking-wide text-slate-400">
-                      {mode === 'single' ? 'File' : 'Files'}
+                      {mode === 'single' ? t('portal.processingFlow.fileDt') : t('portal.processingFlow.filesDt')}
                     </dt>
                     <dd className="mt-0.5 text-slate-950">
                       {mode === 'single'
                         ? selectedFile
                           ? `${selectedFile.name} (${formatBytes(selectedFile.size)})`
-                          : 'No file selected'
-                        : `${collectionFiles.length} file(s)`}
+                          : t('portal.processingFlow.noFileSelected')
+                        : t('portal.processingFlow.filesCount', { count: collectionFiles.length })}
                     </dd>
                   </div>
                 </dl>
@@ -878,23 +881,23 @@ export function ProcessingFlow() {
               {renderStepMessage(4)}
               <div className="flex justify-between gap-3">
                 <Button variant="outline" onClick={() => goToStep(3)}>
-                  Back
+                  {t('portal.processingFlow.back')}
                 </Button>
                 {mode === 'single' ? (
                   <Button
                     onClick={() => selectedFile && uploadSingle(selectedFile)}
                     disabled={!selectedFile || !selectedProfile || busy}
-                    title={!selectedFile ? 'Select a file in step 3 first.' : !selectedProfile ? 'No profile selected.' : undefined}
+                    title={!selectedFile ? t('portal.processingFlow.selectFileFirstTitle') : !selectedProfile ? t('portal.processingFlow.noProfileSelectedTitle') : undefined}
                   >
-                    Start processing
+                    {t('portal.processingFlow.startProcessing')}
                   </Button>
                 ) : (
                   <Button
                     onClick={startCollection}
                     disabled={!collectionId || collectionFiles.length === 0 || busy}
-                    title={!collectionId || collectionFiles.length === 0 ? 'Upload collection files first.' : undefined}
+                    title={!collectionId || collectionFiles.length === 0 ? t('portal.processingFlow.uploadCollectionFirst') : undefined}
                   >
-                    Start Collection Processing
+                    {t('portal.processingFlow.startCollectionProcessing')}
                   </Button>
                 )}
               </div>
@@ -927,12 +930,12 @@ export function ProcessingFlow() {
             <div className="flex items-center justify-between gap-4">
               <div>
                 <p className="font-medium text-slate-950">
-                  {uploadProgress.phase === 'single' ? 'Uploading file' : 'Uploading collection files'}
+                  {uploadProgress.phase === 'single' ? t('portal.processingFlow.uploadingFile') : t('portal.processingFlow.uploadingCollectionFiles')}
                 </p>
                 <p className="text-xs text-slate-500">{uploadProgress.currentFile}</p>
               </div>
               <p className="text-xs font-semibold text-slate-600">
-                {uploadProgress.filesCompleted}/{uploadProgress.filesTotal} files
+                {t('portal.processingFlow.filesProgress', { completed: uploadProgress.filesCompleted, total: uploadProgress.filesTotal })}
               </p>
             </div>
             <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
@@ -954,9 +957,9 @@ export function ProcessingFlow() {
       </section>
 
       {folderModalOpen && (
-        <Modal title="Add folder" onClose={closeFolderModal}>
+        <Modal title={t('portal.processingFlow.addFolderModalTitle')} onClose={closeFolderModal}>
           <div className="space-y-4">
-            <Field label="New folder">
+            <Field label={t('portal.processingFlow.newFolderLabel')}>
               <input
                 value={newFolderName}
                 onChange={(event) => setNewFolderName(event.target.value)}
@@ -965,7 +968,7 @@ export function ProcessingFlow() {
                 autoFocus
               />
             </Field>
-            <Field label="New subfolder">
+            <Field label={t('portal.processingFlow.newSubfolderLabel')}>
               <input
                 value={newSubfolderName}
                 onChange={(event) => setNewSubfolderName(event.target.value)}
@@ -976,10 +979,10 @@ export function ProcessingFlow() {
             <ErrorNotice message={folderModalError} />
             <div className="flex justify-end gap-2 pt-1">
               <Button type="button" variant="outline" size="sm" onClick={closeFolderModal} disabled={folderBusy}>
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button type="button" size="sm" onClick={createFolder} disabled={folderBusy}>
-                {folderBusy ? 'Adding...' : 'Create folder'}
+                {folderBusy ? t('portal.processingFlow.adding') : t('portal.processingFlow.createFolder')}
               </Button>
             </div>
           </div>

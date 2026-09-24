@@ -11,6 +11,9 @@
  * here so this keeps working unchanged once the API starts sending them.
  */
 
+import { DEFAULT_LOCALE, type Locale } from '@/i18n/config';
+import { translate } from '@/i18n/messages';
+
 export type AccessUserDetail = {
   id: string;
   username: string;
@@ -30,17 +33,18 @@ function personLabel(user: AccessUserDetail): string {
   return user.display_name?.trim() || user.username;
 }
 
-export function accessSummary(collection: AccessSummaryInput): string {
-  if (collection.visibility === 'public') return 'Öffentlich';
+export function accessSummary(collection: AccessSummaryInput, locale: Locale = DEFAULT_LOCALE): string {
+  const teamLabel = (team: string) => translate(locale, 'portal.access.team', { team });
+  if (collection.visibility === 'public') return translate(locale, 'portal.access.public');
   if (collection.visibility === 'restricted') {
     const parts = [
-      ...collection.read_teams.map(team => `Team ${team}`),
+      ...collection.read_teams.map(teamLabel),
       ...(collection.read_user_details ?? []).map(personLabel),
     ];
-    return parts.length ? parts.join(', ') : 'Nur Editoren';
+    return parts.length ? parts.join(', ') : translate(locale, 'portal.access.editorsOnly');
   }
   // No visibility field yet (today's API): read_teams alone decides it —
   // empty means every team can read the collection.
-  if (collection.read_teams.length === 0) return 'Öffentlich';
-  return collection.read_teams.map(team => `Team ${team}`).join(', ');
+  if (collection.read_teams.length === 0) return translate(locale, 'portal.access.public');
+  return collection.read_teams.map(teamLabel).join(', ');
 }

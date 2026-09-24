@@ -6,9 +6,11 @@ import { ApiError, apiJson } from '@/lib/api';
 import type { SetupStatusResponse } from '@/lib/auth-types';
 import { Button } from '@/components/ui/button';
 import { AuthField, AuthPageSpinner, AuthShell, FormError } from '@/components/auth/auth-card';
+import { useI18n } from '@/i18n/provider';
 
 export default function SetupPage() {
   const router = useRouter();
+  const { t } = useI18n();
   const [checking, setChecking] = useState(true);
 
   const [username, setUsername] = useState('');
@@ -49,11 +51,11 @@ export default function SetupPage() {
     setError(null);
 
     if (password.length < 8) {
-      setError('Password must be at least 8 characters.');
+      setError(t('portal.setup.passwordTooShort'));
       return;
     }
     if (password !== confirm) {
-      setError('Passwords do not match.');
+      setError(t('portal.setup.passwordMismatch'));
       return;
     }
 
@@ -68,7 +70,7 @@ export default function SetupPage() {
       // Session cookie is set by the response — enter the app.
       window.location.assign('/');
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : 'Could not reach the server. Please try again.');
+      setError(err instanceof ApiError ? err.detail : t('portal.setup.serviceUnreachable'));
       setPending(false);
     }
   }
@@ -77,13 +79,13 @@ export default function SetupPage() {
 
   return (
     <AuthShell
-      title="Create the first admin account"
-      subtitle="Set up the administrator that will manage users, teams, and sign-in providers."
+      title={t('portal.setup.title')}
+      subtitle={t('portal.setup.subtitle')}
     >
       <form onSubmit={onSubmit} className="flex flex-col gap-4">
         <AuthField
           id="username"
-          label="Username"
+          label={t('common.username')}
           name="username"
           autoComplete="username"
           required
@@ -93,7 +95,7 @@ export default function SetupPage() {
         />
         <AuthField
           id="email"
-          label="Email"
+          label={t('common.email')}
           name="email"
           type="email"
           autoComplete="email"
@@ -103,19 +105,19 @@ export default function SetupPage() {
         />
         <AuthField
           id="password"
-          label="Password"
+          label={t('common.password')}
           name="password"
           type="password"
           autoComplete="new-password"
           required
           minLength={8}
-          placeholder="At least 8 characters"
+          placeholder={t('portal.setup.passwordPlaceholder')}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
         <AuthField
           id="confirm-password"
-          label="Confirm password"
+          label={t('portal.setup.confirmPasswordLabel')}
           name="confirm-password"
           type="password"
           autoComplete="new-password"
@@ -127,7 +129,7 @@ export default function SetupPage() {
         <FormError message={error} />
 
         <Button type="submit" disabled={pending} className="mt-1 w-full rounded-xl">
-          {pending ? 'Creating account…' : 'Create admin account'}
+          {pending ? t('portal.setup.submitting') : t('portal.setup.submit')}
         </Button>
       </form>
     </AuthShell>

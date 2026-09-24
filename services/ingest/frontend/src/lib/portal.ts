@@ -1,5 +1,7 @@
 import { ApiError, apiFetch, apiJson } from '@/lib/api';
 import type { AccessUserDetail } from '@/lib/access-summary';
+import { DEFAULT_LOCALE, INTL_LOCALE, type Locale } from '@/i18n/config';
+import { translate } from '@/i18n/messages';
 import { currentReleaseStatus, isIndexReady, publicationState, type IndexingItem } from './indexing-status';
 
 export type KnowledgeSpace = {
@@ -39,25 +41,25 @@ export type DocumentPreview = PortalDocument & {
 export type PortalConfig = { publication_configured: boolean; team_name: string | null; team_names: string[] };
 export const jsonBody = (body: unknown): RequestInit => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
-export function portalError(error: unknown): string {
+export function portalError(error: unknown, locale: Locale = DEFAULT_LOCALE): string {
   if (error instanceof ApiError) {
-    if (error.status === 401) return 'Bitte melde dich erneut an.';
-    if (error.status === 403) return 'Für diese Aktion fehlen dir die Berechtigungen.';
-    if (error.status === 404) return 'Dieser Inhalt ist nicht verfügbar oder wurde noch nicht für dich freigegeben.';
-    if (error.status === 409) return 'Der Stand hat sich geändert oder kann noch nicht freigegeben werden. Bitte lade ihn erneut und prüfe die Hinweise.';
-    if (error.status === 413) return 'Die Datei ist zu groß. Bitte wähle eine kleinere Datei.';
-    if (error.status === 422) return error.detail || 'Bitte prüfe deine Eingaben. Ein Wert ist ungültig oder fehlt.';
-    if (error.status === 429) return 'Zu viele Anfragen. Bitte versuche es gleich noch einmal.';
-    if (error.status === 503) return 'Der Dienst ist noch nicht bereit. Bitte versuche es später erneut oder wende dich an die Administration.';
+    if (error.status === 401) return translate(locale, 'portal.error.unauthorized');
+    if (error.status === 403) return translate(locale, 'portal.error.forbidden');
+    if (error.status === 404) return translate(locale, 'portal.error.notFound');
+    if (error.status === 409) return translate(locale, 'portal.error.conflict');
+    if (error.status === 413) return translate(locale, 'portal.error.payloadTooLarge');
+    if (error.status === 422) return error.detail || translate(locale, 'portal.error.validation');
+    if (error.status === 429) return translate(locale, 'portal.error.rateLimited');
+    if (error.status === 503) return translate(locale, 'portal.error.serviceUnavailable');
   }
-  return 'Die Anfrage konnte nicht abgeschlossen werden. Bitte prüfe die Verbindung und versuche es erneut.';
+  return translate(locale, 'portal.error.generic');
 }
 
-export function portalDownloadError(error: unknown): string {
+export function portalDownloadError(error: unknown, locale: Locale = DEFAULT_LOCALE): string {
   if (error instanceof ApiError && error.status === 404) {
-    return 'In diesem Wissensbereich ist noch keine fertige Markdown-Datei verfügbar.';
+    return translate(locale, 'portal.error.downloadMissing');
   }
-  return portalError(error);
+  return portalError(error, locale);
 }
 
 /* -------------------------------------------------------------------------
@@ -85,21 +87,21 @@ export function updateCollectionAccess(collectionId: string, access: { visibilit
   return apiJson(`/api/v1/collections/${encodeURIComponent(collectionId)}`, { ...jsonBody(access), method: 'PATCH' });
 }
 
-export function documentState(document: PortalDocument, live?: IndexingItem): { label: string; tone: 'neutral' | 'working' | 'warning' | 'success' | 'error'; hint?: string } {
+export function documentState(document: PortalDocument, live?: IndexingItem, locale: Locale = DEFAULT_LOCALE): { label: string; tone: 'neutral' | 'working' | 'warning' | 'success' | 'error'; hint?: string } {
   if (document.release) {
     const { delivery, indexing } = currentReleaseStatus(document.release, live);
-    return publicationState(delivery, indexing);
+    return publicationState(delivery, indexing, locale);
   }
-  if (document.review_decision === 'skipped') return { label: 'Übersprungen', tone: 'neutral' };
-  if (document.status === 'FAILED') return { label: 'Verarbeitung fehlgeschlagen', tone: 'error' };
-  if (document.status === 'RUNNING') return { label: 'Wird verarbeitet', tone: 'working' };
-  if (document.status === 'PENDING') return { label: 'In der Warteschlange', tone: 'neutral' };
-  if (document.quality_grade?.toUpperCase() === 'C') return { label: 'Stufe C – Prüfung erforderlich', tone: 'warning' };
-  if (document.quality_recommendation?.trim().toLowerCase() === 'block') return { label: 'Qualitätsprüfung blockiert', tone: 'error' };
-  return { label: 'Bereit zur Prüfung', tone: 'warning' };
+  if (document.review_decision === 'skipped') return { label: translate(locale, 'portal.documents.state.skipped'), tone: 'neutral' };
+  if (document.status === 'FAILED') return { label: translate(locale, 'portal.documents.state.failed'), tone: 'error' };
+  if (document.status === 'RUNNING') return { label: translate(locale, 'portal.documents.state.running'), tone: 'working' };
+  if (document.status === 'PENDING') return { label: translate(locale, 'portal.documents.state.pending'), tone: 'neutral' };
+  if (document.quality_grade?.toUpperCase() === 'C') return { label: translate(locale, 'portal.documents.state.qualityC'), tone: 'warning' };
+  if (document.quality_recommendation?.trim().toLowerCase() === 'block') return { label: translate(locale, 'portal.documents.state.qualityBlocked'), tone: 'error' };
+  return { label: translate(locale, 'portal.documents.state.readyForReview'), tone: 'warning' };
 }
 export const documentUrl = (document: PortalDocument) => document.status === 'FINISHED' ? `/reviews/${document.id}` : `/jobs/${document.id}`;
-export const dateLabel = (value: string) => new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value));
+export const dateLabel = (value: string, locale: Locale = DEFAULT_LOCALE) => new Intl.DateTimeFormat(INTL_LOCALE[locale], { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value));
 export function loadDocuments(collectionId?: string, offset = 0, reviewState: ReviewStateFilter = 'all', qualityGrade?: QualityGradeFilter, limit = 20): Promise<DocumentPage> {
   const params = new URLSearchParams({ offset: String(offset), limit: String(limit), review_state: reviewState });
   if (collectionId) params.set('collection_id', collectionId);
@@ -117,12 +119,15 @@ export function loadDocuments(collectionId?: string, offset = 0, reviewState: Re
 export type PipelineStage = 'processing' | 'review' | 'indexing' | 'ready' | 'error';
 
 /** Numbered steps only — 'error' is shown as a separate, unnumbered chip (see the design reference above). */
-export const PIPELINE_STEPS: { value: Exclude<PipelineStage, 'error'>; step: number; label: string; hint: string }[] = [
-  { value: 'processing', step: 1, label: 'Verarbeitung', hint: 'automatisch' },
-  { value: 'review', step: 2, label: 'Prüfung', hint: 'durch dich' },
-  { value: 'indexing', step: 3, label: 'Indexierung', hint: 'automatisch' },
-  { value: 'ready', step: 4, label: 'Im Chat', hint: 'für Berechtigte' },
-];
+export function pipelineSteps(locale: Locale = DEFAULT_LOCALE): { value: Exclude<PipelineStage, 'error'>; step: number; label: string; hint: string }[] {
+  const automatic = translate(locale, 'portal.pipeline.hint.automatic');
+  return [
+    { value: 'processing', step: 1, label: translate(locale, 'portal.pipeline.processing.label'), hint: automatic },
+    { value: 'review', step: 2, label: translate(locale, 'portal.pipeline.review.label'), hint: translate(locale, 'portal.pipeline.review.hint') },
+    { value: 'indexing', step: 3, label: translate(locale, 'portal.pipeline.indexing.label'), hint: automatic },
+    { value: 'ready', step: 4, label: translate(locale, 'portal.pipeline.ready.label'), hint: translate(locale, 'portal.pipeline.ready.hint') },
+  ];
+}
 
 /**
  * Buckets one document into the pipeline stage a person actually cares
@@ -181,10 +186,10 @@ export function collectionDownloadName(space: Pick<KnowledgeSpace, 'name' | 'slu
   return `${markdownDownloadName(`${space.name || space.slug}.md`).slice(0, -3)}-markdown.zip`;
 }
 
-export async function downloadPortalFile(path: string, filename: string): Promise<void> {
+export async function downloadPortalFile(path: string, filename: string, locale: Locale = DEFAULT_LOCALE): Promise<void> {
   const response = await apiFetch(path);
   if (!response.ok) {
-    let detail = `Download fehlgeschlagen (${response.status})`;
+    let detail = translate(locale, 'portal.error.downloadFailed', { status: response.status });
     try {
       const body = await response.json();
       if (typeof body?.detail === 'string') detail = body.detail;

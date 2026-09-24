@@ -459,3 +459,9 @@ textarea.ui-control { min-height: 96px; padding: 10px 12px; }
 .shell-nav-link[aria-current="page"] { background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; }
 .shell-nav-link[aria-current="page"] svg { color: var(--accent); }
 .shell-profile-menu { position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); z-index: 30; padding: 6px; background: var(--surface); border: 1px solid var(--line-2); border-radius: 12px; box-shadow: 0 16px 40px rgb(20 34 29 / 16%); display: grid; gap: 2px; }
+
+/* ---------- Sprachumschalter (src/i18n/language-switch.tsx) ---------- */
+.portal-lang-switch { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--line-2); border-radius: var(--radius-control); background: var(--surface); }
+.portal-lang-switch button { min-height: 28px; padding: 0 10px; border: 0; border-radius: calc(var(--radius-control) - 2px); background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; cursor: pointer; }
+.portal-lang-switch button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-ink, var(--accent)); }
+@media (pointer: coarse) { .portal-lang-switch button { min-height: 40px; } }

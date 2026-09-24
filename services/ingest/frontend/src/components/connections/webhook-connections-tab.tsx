@@ -33,8 +33,11 @@ import {
   webhookDeliveryStatusChip,
   webhookEventLabel,
 } from '@/lib/webhooks';
+import { useI18n } from '@/i18n/provider';
 
 export function WebhookConnectionsTab() {
+  const { t, locale } = useI18n();
+  const eventLabel = webhookEventLabel(locale);
   const [connections, setConnections] = useState<WebhookConnection[]>([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
@@ -198,31 +201,30 @@ export function WebhookConnectionsTab() {
   return (
     <div className="space-y-6">
       <SectionCard
-        title="Connections"
-        description="Outbound webhook targets; stored secrets are never displayed."
+        title={t('portal.connections.webhooks.title')}
+        description={t('portal.connections.webhooks.description')}
         actions={
           <Button size="sm" onClick={() => setCreating(true)}>
             <Plus className="h-4 w-4" />
-            Add connection
+            {t('portal.connections.webhooks.add')}
           </Button>
         }
       >
         <ErrorNotice message={listError} />
         {unavailable && (
           <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            Not available on this backend yet. This page starts showing data automatically once the endpoint is
-            deployed.
+            {t('portal.connections.webhooks.unavailable')}
           </div>
         )}
         {loading ? (
-          <LoadingState label="Loading connections..." />
+          <LoadingState label={t('portal.connections.webhooks.loading')} />
         ) : unavailable ? null : connections.length === 0 ? (
           <div className="flex flex-col items-center gap-3 py-10 text-center">
             <Webhook className="h-8 w-8 text-slate-300" />
-            <p className="text-sm text-slate-500">No webhook connections yet. Add one to start sending events.</p>
+            <p className="text-sm text-slate-500">{t('portal.connections.webhooks.empty')}</p>
             <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
               <Plus className="h-4 w-4" />
-              Add connection
+              {t('portal.connections.webhooks.add')}
             </Button>
           </div>
         ) : (
@@ -235,32 +237,32 @@ export function WebhookConnectionsTab() {
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-sm font-semibold text-slate-950">{connection.name}</span>
                         <Badge tone={connection.enabled ? 'emerald' : 'slate'}>
-                          {connection.enabled ? 'Enabled' : 'Disabled'}
+                          {connection.enabled ? t('portal.connections.webhooks.enabled') : t('portal.connections.webhooks.disabled')}
                         </Badge>
                         <Badge tone={connection.has_secret ? 'emerald' : 'slate'}>
-                          {connection.has_secret ? 'Secret set' : 'No secret'}
+                          {connection.has_secret ? t('portal.connections.webhooks.secretSet') : t('portal.connections.webhooks.noSecret')}
                         </Badge>
                       </div>
                       <dl className="mt-2 space-y-1 text-xs text-slate-500">
                         <div className="flex gap-2">
-                          <dt className="w-16 flex-shrink-0 font-medium">URL</dt>
+                          <dt className="w-16 flex-shrink-0 font-medium">{t('portal.connections.webhooks.urlLabel')}</dt>
                           <dd className="break-all">{connection.url}</dd>
                         </div>
                         <div className="flex gap-2">
-                          <dt className="w-16 flex-shrink-0 font-medium">Created</dt>
+                          <dt className="w-16 flex-shrink-0 font-medium">{t('portal.connections.webhooks.createdLabel')}</dt>
                           <dd>{new Date(connection.created_at).toLocaleDateString()}</dd>
                         </div>
                       </dl>
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         {connection.events.length === 0 ? (
-                          <span className="text-xs text-slate-400">No events selected</span>
+                          <span className="text-xs text-slate-400">{t('portal.connections.webhooks.noEventsSelected')}</span>
                         ) : (
                           connection.events.map((event) => (
                             <span
                               key={event}
                               className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600"
                             >
-                              {webhookEventLabel[event]}
+                              {eventLabel[event]}
                             </span>
                           ))
                         )}
@@ -279,21 +281,21 @@ export function WebhookConnectionsTab() {
                           <PlugZap className="h-4 w-4" />
                         )}
                         {cooldownSecondsFor(connection.id) > 0
-                          ? `Test (${cooldownSecondsFor(connection.id)}s)`
-                          : 'Test'}
+                          ? t('portal.connections.webhooks.testWithCooldown', { seconds: cooldownSecondsFor(connection.id) })
+                          : t('portal.connections.webhooks.test')}
                       </Button>
                       <button
                         onClick={() => setEditing(connection)}
-                        aria-label={`Edit ${connection.name}`}
-                        title="Edit"
+                        aria-label={t('portal.connections.webhooks.editAria', { name: connection.name })}
+                        title={t('portal.connections.webhooks.edit')}
                         className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
                       >
                         <Pencil className="h-4 w-4" />
                       </button>
                       <button
                         onClick={() => setDeleting(connection)}
-                        aria-label={`Delete ${connection.name}`}
-                        title="Delete"
+                        aria-label={t('portal.connections.webhooks.deleteAria', { name: connection.name })}
+                        title={t('portal.connections.webhooks.delete')}
                         className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-red-50 hover:text-red-600"
                       >
                         <Trash2 className="h-4 w-4" />
@@ -305,21 +307,20 @@ export function WebhookConnectionsTab() {
               ))}
             </ul>
             <p className="mt-4 text-xs text-slate-500">
-              If a secret is set, deliveries carry an X-Weave-Ingest-Signature header (HMAC-SHA256) that the receiver
-              can verify. Chat-agent access through n8n is configured on the bot and uses a separate delegated scope.
+              {t('portal.connections.webhooks.signatureHint')}
             </p>
           </>
         )}
       </SectionCard>
 
-      <SectionCard title="Recent deliveries" description="Your most recent webhook delivery attempts, newest first.">
+      <SectionCard title={t('portal.connections.webhooks.recentTitle')} description={t('portal.connections.webhooks.recentDescription')}>
         <ErrorNotice message={deliveriesError} />
         {deliveriesLoading ? (
-          <LoadingState label="Loading deliveries..." />
+          <LoadingState label={t('portal.connections.webhooks.loadingDeliveries')} />
         ) : deliveries.length === 0 ? (
           <div className="flex flex-col items-center gap-3 py-10 text-center">
             <Webhook className="h-8 w-8 text-slate-300" />
-            <p className="text-sm text-slate-500">No deliveries yet. They will show up here once an event fires.</p>
+            <p className="text-sm text-slate-500">{t('portal.connections.webhooks.noDeliveries')}</p>
           </div>
         ) : (
           <ul className="divide-y divide-slate-100">
@@ -327,10 +328,10 @@ export function WebhookConnectionsTab() {
               <li key={delivery.id} className="py-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-slate-950">{webhookEventLabel[delivery.event]}</p>
+                    <p className="truncate text-sm font-medium text-slate-950">{eventLabel[delivery.event]}</p>
                     <p className="mt-0.5 text-xs text-slate-500">
-                      via {delivery.connection_name} · {new Date(delivery.created_at).toLocaleString()}
-                      {delivery.http_status !== null && <span className="ml-2">HTTP {delivery.http_status}</span>}
+                      {t('portal.connections.webhooks.viaLabel', { name: delivery.connection_name, date: new Date(delivery.created_at).toLocaleString() })}
+                      {delivery.http_status !== null && <span className="ml-2">{t('portal.connections.webhooks.httpStatus', { status: delivery.http_status })}</span>}
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
@@ -345,7 +346,7 @@ export function WebhookConnectionsTab() {
                         }
                         className="text-xs text-emerald-700 hover:text-emerald-800"
                       >
-                        {expandedDeliveryId === delivery.id ? 'Hide error' : 'Show error'}
+                        {expandedDeliveryId === delivery.id ? t('portal.connections.webhooks.hideError') : t('portal.connections.webhooks.showError')}
                       </button>
                     )}
                   </div>
@@ -384,14 +385,13 @@ export function WebhookConnectionsTab() {
 
       {deleting && (
         <ConfirmDialog
-          title="Delete webhook connection"
+          title={t('portal.connections.webhooks.deleteDialogTitle')}
           body={
             <p>
-              Delete <span className="font-semibold text-slate-950">{deleting.name}</span>? Past deliveries keep
-              their history.
+              {t('portal.connections.webhooks.deleteDialogPrefix')} <span className="font-semibold text-slate-950">{deleting.name}</span>{t('portal.connections.webhooks.deleteDialogSuffix')}
             </p>
           }
-          confirmLabel="Delete connection"
+          confirmLabel={t('portal.connections.webhooks.deleteConfirm')}
           onClose={() => setDeleting(null)}
           onConfirm={async () => {
             await deleteWebhookConnection(deleting.id);
@@ -415,6 +415,7 @@ async function testWebhookConnectionSafe(id: string): Promise<WebhookConnectionT
 }
 
 function TestResult({ result }: { result: WebhookConnectionTestResponse }) {
+  const { t } = useI18n();
   return (
     <div
       className={`mt-3 rounded-xl border px-4 py-3 text-sm ${
@@ -423,7 +424,7 @@ function TestResult({ result }: { result: WebhookConnectionTestResponse }) {
     >
       <div className="flex items-center gap-2 font-medium">
         {result.ok ? <CircleCheck className="h-4 w-4 flex-shrink-0" /> : <CircleX className="h-4 w-4 flex-shrink-0" />}
-        {result.ok ? 'Connection successful' : 'Connection failed'}
+        {result.ok ? t('portal.connections.webhooks.testSuccess') : t('portal.connections.webhooks.testFailed')}
       </div>
       {result.detail && <p className="mt-1 text-xs">{result.detail}</p>}
     </div>
@@ -440,6 +441,8 @@ function ConnectionModal({
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
+  const { t, locale } = useI18n();
+  const eventLabel = webhookEventLabel(locale);
   const isEdit = connection !== undefined;
 
   const [name, setName] = useState(connection?.name ?? '');
@@ -461,7 +464,7 @@ function ConnectionModal({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (events.length === 0) {
-      setError('Select at least one event.');
+      setError(t('portal.connections.webhooks.selectEventError'));
       return;
     }
     setBusy(true);
@@ -492,9 +495,9 @@ function ConnectionModal({
   }
 
   return (
-    <Modal title={isEdit ? `Edit ${connection.name}` : 'Add webhook connection'} onClose={onClose}>
+    <Modal title={isEdit ? t('portal.connections.webhooks.editModalTitle', { name: connection.name }) : t('portal.connections.webhooks.addModalTitle')} onClose={onClose}>
       <form onSubmit={submit} className="space-y-4">
-        <Field label="Name">
+        <Field label={t('portal.connections.webhooks.nameLabel')}>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -503,7 +506,7 @@ function ConnectionModal({
             autoFocus
           />
         </Field>
-        <Field label="URL" hint="Where export events are POSTed.">
+        <Field label={t('portal.connections.webhooks.urlLabel')} hint={t('portal.connections.webhooks.urlHint')}>
           <input
             type="url"
             value={url}
@@ -513,13 +516,13 @@ function ConnectionModal({
             placeholder="https://export.example.com/weave-events"
           />
         </Field>
-        <Field label="Secret" hint={isEdit ? 'Leave blank to keep the stored secret.' : 'Optional -- enables the X-Weave-Ingest-Signature header.'}>
+        <Field label={t('portal.connections.webhooks.secretLabel')} hint={isEdit ? t('portal.connections.webhooks.secretHintEdit') : t('portal.connections.webhooks.secretHintCreate')}>
           <input
             type="password"
             value={secret}
             onChange={(e) => setSecret(e.target.value)}
             className={inputClass}
-            placeholder={isEdit ? 'unchanged unless filled' : undefined}
+            placeholder={isEdit ? t('portal.connections.webhooks.secretPlaceholder') : undefined}
             autoComplete="new-password"
             disabled={clearSecret}
             data-1p-ignore
@@ -537,11 +540,11 @@ function ConnectionModal({
               }}
               className="h-4 w-4 rounded border-slate-300 text-emerald-600"
             />
-            Remove the stored secret (deliveries will no longer be signed)
+            {t('portal.connections.webhooks.removeSecretLabel')}
           </label>
         )}
         <fieldset>
-          <legend className="text-sm font-medium text-slate-700">Events</legend>
+          <legend className="text-sm font-medium text-slate-700">{t('portal.connections.webhooks.eventsLegend')}</legend>
           <div className="mt-2 space-y-2">
             {WEBHOOK_EVENTS.map((event) => (
               <label key={event} className="flex items-center gap-2 text-sm text-slate-700">
@@ -551,20 +554,20 @@ function ConnectionModal({
                   onChange={() => toggleEvent(event)}
                   className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
                 />
-                {webhookEventLabel[event]}
+                {eventLabel[event]}
               </label>
             ))}
           </div>
         </fieldset>
-        <Toggle checked={enabled} onChange={setEnabled} label="Enabled" />
+        <Toggle checked={enabled} onChange={setEnabled} label={t('portal.connections.webhooks.enabledLabel')} />
         <ErrorNotice message={error} />
         <div className="flex justify-end gap-2 pt-1">
           <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={busy}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button type="submit" size="sm" disabled={busy}>
             {busy && <LoaderCircle className="h-4 w-4 animate-spin" />}
-            {isEdit ? 'Save changes' : 'Add connection'}
+            {isEdit ? t('portal.connections.webhooks.saveChanges') : t('portal.connections.webhooks.add')}
           </Button>
         </div>
       </form>

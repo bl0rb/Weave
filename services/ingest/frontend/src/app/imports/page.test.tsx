@@ -26,7 +26,7 @@ afterEach(cleanup);
 it('lists completed imports and links their editable configuration', async () => {
   api.mockResolvedValue({ items: [run] });
   render(<ImportsPage />);
-  const link = await screen.findByRole('link', { name: 'Edit & run again' });
+  const link = await screen.findByRole('link', { name: 'Bearbeiten & erneut ausführen' });
   expect(link.getAttribute('href')).toBe('/imports/new?from=run-1');
   expect(screen.getByRole('link', { name: 'Servicehandbuch' })).toBeTruthy();
 });
@@ -35,5 +35,5 @@ it('honors an explicit server denial for editing a completed import', async () =
   api.mockResolvedValue({ items: [{ ...run, can_edit: false }] });
   render(<ImportsPage />);
   await screen.findByRole('link', { name: 'Servicehandbuch' });
-  expect(screen.queryByRole('link', { name: 'Edit & run again' })).toBeNull();
+  expect(screen.queryByRole('link', { name: 'Bearbeiten & erneut ausführen' })).toBeNull();
 });

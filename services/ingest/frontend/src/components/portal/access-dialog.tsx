@@ -5,6 +5,7 @@ import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ErrorNotice, Modal } from '@/components/admin/admin-shared';
 import { loadDirectoryTeams, portalError, searchDirectoryUsers, updateCollectionAccess, type DirectoryTeam, type DirectoryUser, type KnowledgeSpace } from '@/lib/portal';
+import { useI18n } from '@/i18n/provider';
 
 /** Minimal shape the dialog needs from a collection -- both the portal cards'
  * KnowledgeSpace and the admin tab's ManagedCollection satisfy this. */
@@ -40,6 +41,7 @@ export function AccessDialog({ collection, onClose, onSaved }: {
   /** Called once PATCH succeeds, with the backend's fresh collection -- the caller merges it into its own state instead of reloading. */
   onSaved: (updated: KnowledgeSpace) => void;
 }) {
+  const { t, locale } = useI18n();
   const [mode, setMode] = useState<'public' | 'restricted'>(() => initialMode(collection));
   const [selectedTeams, setSelectedTeams] = useState<string[]>(collection.read_teams);
   const [persons, setPersons] = useState<Person[]>(collection.read_user_details ?? []);
@@ -59,9 +61,9 @@ export function AccessDialog({ collection, onClose, onSaved }: {
 
   useEffect(() => {
     const controller = new AbortController();
-    loadDirectoryTeams(controller.signal).then(data => setTeams(data.items)).catch(err => setTeamsError(portalError(err)));
+    loadDirectoryTeams(controller.signal).then(data => setTeams(data.items)).catch(err => setTeamsError(portalError(err, locale)));
     return () => controller.abort();
-  }, []);
+  }, [locale]);
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -102,14 +104,14 @@ export function AccessDialog({ collection, onClose, onSaved }: {
     : teams.filter(team => selectedTeams.includes(team.name)).reduce((sum, team) => sum + team.member_count, 0)
       + persons.filter(person => !(person.team && selectedTeams.includes(person.team))).length;
   const detail = [
-    selectedTeams.map(team => `Team ${team}`).join(', '),
-    persons.length === 1 ? personLabel(persons[0]) : persons.length ? `${persons.length} Personen` : '',
+    selectedTeams.map(team => t('portal.access.team', { team })).join(', '),
+    persons.length === 1 ? personLabel(persons[0]) : persons.length ? t('portal.access.dialog.personsCount', { count: persons.length }) : '',
   ].filter(Boolean).join(' + ');
   const summary = mode === 'public'
-    ? 'Öffentlich: alle Mitarbeitenden können dieses Wissen im Chat nutzen.'
+    ? t('portal.access.dialog.summaryPublic')
     : reach
-      ? `${reach} ${reach === 1 ? 'Person kann' : 'Personen können'} dieses Wissen im Chat nutzen · ${detail}`
-      : 'Nur Editoren können dieses Wissen im Chat nutzen.';
+      ? `${t('portal.access.dialog.summaryReach', { count: reach })} · ${detail}`
+      : t('portal.access.dialog.summaryNoAccess');
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -123,29 +125,29 @@ export function AccessDialog({ collection, onClose, onSaved }: {
       });
       onSaved(updated);
     } catch (err) {
-      setError(portalError(err));
+      setError(portalError(err, locale));
       setSaving(false);
     }
   }
 
   return <Modal title={collection.name} onClose={onClose}>
-    <p className="portal-eyebrow">Wissensbereich · Zugriff im Chat</p>
+    <p className="portal-eyebrow">{t('portal.access.dialog.eyebrow')}</p>
     <ErrorNotice message={error || null} />
     <form className="portal-access-form" onSubmit={save} noValidate>
-      <p className="text-sm text-[var(--ink-2)]">Wer darf dieses Wissen im Chat nutzen? Antworten greifen nur auf Dokumente zurück, die diese Personen bereits sehen dürfen.</p>
+      <p className="text-sm text-[var(--ink-2)]">{t('portal.access.dialog.intro')}</p>
       <fieldset className="portal-access-mode">
-        <legend className="sr-only">Art des Zugriffs</legend>
+        <legend className="sr-only">{t('portal.access.dialog.modeLegend')}</legend>
         <label className="portal-access-mode-option">
           <input type="radio" name="access-mode" value="restricted" checked={mode === 'restricted'} onChange={() => setMode('restricted')} disabled={saving} autoFocus />
-          <span><strong>Ausgewählte Teams und Personen</strong><small>Nur wer hier eingetragen ist</small></span>
+          <span><strong>{t('portal.access.dialog.modeRestricted.title')}</strong><small>{t('portal.access.dialog.modeRestricted.hint')}</small></span>
         </label>
         <label className="portal-access-mode-option">
           <input type="radio" name="access-mode" value="public" checked={mode === 'public'} onChange={() => setMode('public')} disabled={saving} />
-          <span><strong>Öffentlich</strong><small>Alle Mitarbeitenden</small></span>
+          <span><strong>{t('portal.access.dialog.modePublic.title')}</strong><small>{t('portal.access.dialog.modePublic.hint')}</small></span>
         </label>
       </fieldset>
       {mode === 'restricted' && <>
-        <p className="portal-access-label" id="access-teams-label">Teams</p>
+        <p className="portal-access-label" id="access-teams-label">{t('portal.access.dialog.teamsLabel')}</p>
         {teamsError && <p className="portal-field-hint">{teamsError}</p>}
         <div className="portal-access-team-chips" role="group" aria-labelledby="access-teams-label">
           {teams.map(team => <label className="portal-access-team-chip" key={team.name}>
@@ -153,36 +155,36 @@ export function AccessDialog({ collection, onClose, onSaved }: {
             <span>{team.name}<small>{team.member_count}</small></span>
           </label>)}
         </div>
-        <label className="portal-access-label" htmlFor="access-search">Einzelne Personen</label>
+        <label className="portal-access-label" htmlFor="access-search">{t('portal.access.dialog.personsLabel')}</label>
         <div className="portal-access-picker">
           <div className="portal-access-person-chips">
             {persons.map(person => <span className="portal-access-person-chip" key={person.id}>
               {personLabel(person)}{person.team && <small>{person.team}</small>}
-              <button type="button" disabled={saving} onClick={() => removePerson(person.id)} aria-label={`${personLabel(person)} entfernen`}><X size={14} aria-hidden="true" /></button>
+              <button type="button" disabled={saving} onClick={() => removePerson(person.id)} aria-label={t('portal.access.dialog.removePerson', { name: personLabel(person) })}><X size={14} aria-hidden="true" /></button>
             </span>)}
           </div>
           <div className="portal-access-search">
-            <input id="access-search" type="search" autoComplete="off" placeholder="Name oder Team suchen …" value={query} disabled={saving}
+            <input id="access-search" type="search" autoComplete="off" placeholder={t('portal.access.dialog.searchPlaceholder')} value={query} disabled={saving}
               onChange={event => setQuery(event.target.value)} onKeyDown={onSearchKeyDown}
               aria-describedby="access-hint" aria-controls="access-results" />
           </div>
-          <ul className="portal-access-results" id="access-results" aria-live="polite" aria-label="Suchergebnisse">
+          <ul className="portal-access-results" id="access-results" aria-live="polite" aria-label={t('portal.access.dialog.resultsAriaLabel')}>
             {visibleResults.map(user => <li key={user.id}>
               <button type="button" onClick={() => addPerson(user)}>
-                <span>{personLabel(user)}<small>{user.team ? `Team ${user.team}${selectedTeams.includes(user.team) ? ' · hat schon Zugriff über das Team' : ''}` : ''}</small></span>
+                <span>{personLabel(user)}<small>{user.team ? `${t('portal.access.team', { team: user.team })}${selectedTeams.includes(user.team) ? ` · ${t('portal.access.dialog.hasTeamAccessSuffix')}` : ''}` : ''}</small></span>
               </button>
             </li>)}
-            {query.trim() && !visibleResults.length && <li className="portal-access-no-hit">Keine Person gefunden.</li>}
+            {query.trim() && !visibleResults.length && <li className="portal-access-no-hit">{t('portal.access.dialog.noResults')}</li>}
           </ul>
         </div>
-        <p className="portal-field-hint" id="access-hint">Mehrere Personen möglich. Enter übernimmt den ersten Treffer.</p>
+        <p className="portal-field-hint" id="access-hint">{t('portal.access.dialog.searchHint')}</p>
       </>}
       <p className="portal-access-summary" aria-live="polite"><strong>{summary}</strong></p>
       <div className="portal-form-actions">
-        <Button type="submit" disabled={saving}>{saving ? 'Wird gespeichert …' : 'Zugriff speichern'}</Button>
-        <Button type="button" variant="ghost" disabled={saving} onClick={onClose}>Abbrechen</Button>
+        <Button type="submit" disabled={saving}>{saving ? t('portal.access.dialog.saving') : t('portal.access.dialog.save')}</Button>
+        <Button type="button" variant="ghost" disabled={saving} onClick={onClose}>{t('common.cancel')}</Button>
       </div>
-      <p className="portal-field-hint">Editoren und Eigentümer haben immer Zugriff.</p>
+      <p className="portal-field-hint">{t('portal.access.dialog.footer')}</p>
     </form>
   </Modal>;
 }

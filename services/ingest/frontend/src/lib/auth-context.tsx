@@ -11,6 +11,7 @@ import {
 import { useRouter } from 'next/navigation';
 import { apiFetch, loginUrl } from '@/lib/api';
 import type { AuthUser, SetupStatusResponse } from '@/lib/auth-types';
+import { useI18n } from '@/i18n/provider';
 
 interface AuthContextValue {
   user: AuthUser | null;
@@ -35,6 +36,7 @@ async function fetchMe(): Promise<AuthUser | null> {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const { t } = useI18n();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
@@ -62,9 +64,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (ok) {
       window.location.assign('/login');
     } else {
-      window.alert('Logout failed — the server could not be reached. You are still signed in.');
+      window.alert(t('portal.auth.logoutFailed'));
     }
-  }, []);
+  }, [t]);
 
   // Initial session check: /me, then setup-status routing on 401.
   useEffect(() => {

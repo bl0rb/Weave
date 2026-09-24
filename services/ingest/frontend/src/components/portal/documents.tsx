@@ -9,7 +9,7 @@ import { buttonVariants } from '@/components/ui/button';
 import { spaceColorVar } from '@/lib/space-color';
 import { useIndexingStatus } from '@/lib/use-indexing-status';
 import {
-  PIPELINE_STEPS,
+  pipelineSteps,
   dateLabel,
   documentState,
   documentUrl,
@@ -21,6 +21,8 @@ import {
   type PipelineStage,
   type PortalDocument,
 } from '@/lib/portal';
+import { useI18n } from '@/i18n/provider';
+import type { MessageKey } from '@/i18n/messages';
 import { EmptyState, Notice, Pagination, PortalPage } from './shared';
 
 /** Bounds the whole filterable/searchable list to the most recent N documents visible to the user — the backend has no full-text search for portal documents yet, so filtering happens client-side over this batch. */
@@ -45,12 +47,12 @@ function fileTypeLabel(document: PortalDocument): string {
   return dot > 0 ? name.slice(dot + 1).toUpperCase().slice(0, 4) : 'DOC';
 }
 
-function actionFor(document: PortalDocument, stage: PipelineStage) {
+function actionFor(document: PortalDocument, stage: PipelineStage, t: (key: MessageKey) => string) {
   switch (stage) {
-    case 'review': return <Link className={buttonVariants({ size: 'sm' })} href={`/reviews/${document.id}`}>Prüfen</Link>;
-    case 'ready': return <Link className={buttonVariants({ size: 'sm', variant: 'outline' })} href={documentUrl(document)}>Öffnen</Link>;
-    case 'error': return <Link className={buttonVariants({ size: 'sm', variant: 'outline' })} href={`/jobs/${document.id}`}>Erneut versuchen</Link>;
-    default: return <Link className={buttonVariants({ size: 'sm', variant: 'ghost' })} href={`/jobs/${document.id}`}>Status</Link>;
+    case 'review': return <Link className={buttonVariants({ size: 'sm' })} href={`/reviews/${document.id}`}>{t('portal.tasks.reviewAction')}</Link>;
+    case 'ready': return <Link className={buttonVariants({ size: 'sm', variant: 'outline' })} href={documentUrl(document)}>{t('common.open')}</Link>;
+    case 'error': return <Link className={buttonVariants({ size: 'sm', variant: 'outline' })} href={`/jobs/${document.id}`}>{t('common.retry')}</Link>;
+    default: return <Link className={buttonVariants({ size: 'sm', variant: 'ghost' })} href={`/jobs/${document.id}`}>{t('portal.documents.statusAction')}</Link>;
   }
 }
 
@@ -59,6 +61,7 @@ const isPipelineStage = (value: string): value is PipelineStage => ['processing'
 export function PortalDocuments({ initialQuery, initialStand, initialBereich }: { initialQuery?: string; initialStand?: string; initialBereich?: string }) {
   const router = useRouter();
   const pathname = usePathname();
+  const { t, locale } = useI18n();
   const [spaces, setSpaces] = useState<KnowledgeSpace[] | null>(null);
   const [documents, setDocuments] = useState<PortalDocument[] | null>(null);
   const [error, setError] = useState('');
@@ -74,8 +77,8 @@ export function PortalDocuments({ initialQuery, initialStand, initialBereich }: 
   const load = useCallback(() => {
     loadDocuments(collectionId, 0, 'all', undefined, DOCUMENTS_FETCH_LIMIT)
       .then((page) => { setDocuments(page.items); setError(''); })
-      .catch((err) => setError(portalError(err)));
-  }, [collectionId]);
+      .catch((err) => setError(portalError(err, locale)));
+  }, [collectionId, locale]);
   useEffect(() => { void load(); }, [load]);
 
   // Reflect the current filters in the URL (shareable / back-button friendly) without remounting this component — the fetch above only depends on collectionId.
@@ -98,6 +101,7 @@ export function PortalDocuments({ initialQuery, initialStand, initialBereich }: 
   const { items: live } = useIndexingStatus(releasedIds);
   const stageOf = useCallback((document: PortalDocument) => pipelineStage(document, live[document.id]), [live]);
   const counts = useMemo(() => summarizePipeline(documents ?? [], live), [documents, live]);
+  const steps = useMemo(() => pipelineSteps(locale), [locale]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase('de');
@@ -111,35 +115,35 @@ export function PortalDocuments({ initialQuery, initialStand, initialBereich }: 
 
   return (
     <PortalPage
-      title="Dokumente"
-      description="Der Weg jedes Dokuments – von der Quelle bis zur Antwort im Chat."
+      title={t('portal.nav.documents')}
+      description={t('portal.documents.pageDescription')}
       actions={<div className="flex flex-wrap items-center gap-4">
-        <Link className="portal-inline-link" href="/processing">Verarbeitung <ArrowRight size={14} aria-hidden="true" /></Link>
-        <Link className="portal-inline-link" href="/imports">Importe <ArrowRight size={14} aria-hidden="true" /></Link>
+        <Link className="portal-inline-link" href="/processing">{t('portal.chrome.breadcrumb.processing')} <ArrowRight size={14} aria-hidden="true" /></Link>
+        <Link className="portal-inline-link" href="/imports">{t('portal.documents.importsLink')} <ArrowRight size={14} aria-hidden="true" /></Link>
       </div>}
     >
       {error && <Notice error action={load}>{error}</Notice>}
 
       <div className="flex flex-wrap items-end gap-3">
         <label className="min-w-[200px] flex-1 text-sm font-semibold text-[var(--ink-2)]">
-          Wissensbereich
+          {t('portal.documents.columnSpace')}
           <select value={bereichSlug} onChange={(event) => updateBereich(event.target.value)}>
-            <option value="">Alle Wissensbereiche</option>
+            <option value="">{t('portal.documents.allSpaces')}</option>
             {spaces?.map((space) => <option key={space.collection_id} value={space.slug}>{space.name}</option>)}
           </select>
         </label>
         <label className="min-w-[220px] flex-1 text-sm font-semibold text-[var(--ink-2)]">
-          Suche
-          <input type="search" value={query} onChange={(event) => updateQuery(event.target.value)} placeholder="Dateiname durchsuchen" aria-label="Dokumente durchsuchen" />
+          {t('portal.documents.searchLabel')}
+          <input type="search" value={query} onChange={(event) => updateQuery(event.target.value)} placeholder={t('portal.documents.filenamePlaceholder')} aria-label={t('portal.chrome.searchDocuments')} />
         </label>
       </div>
 
       <section className="portal-panel" aria-labelledby="docs-title">
-        <h2 className="sr-only" id="docs-title">Dokumentliste</h2>
-        <div className="portal-pipeline" role="group" aria-label="Dokumente nach Stand filtern">
-          <button type="button" className="portal-pipe-all" aria-pressed={stand === ''} onClick={() => updateStand('')}>Alle</button>
+        <h2 className="sr-only" id="docs-title">{t('portal.documents.listHeading')}</h2>
+        <div className="portal-pipeline" role="group" aria-label={t('portal.documents.filterByStageAria')}>
+          <button type="button" className="portal-pipe-all" aria-pressed={stand === ''} onClick={() => updateStand('')}>{t('common.all')}</button>
           <ol className="portal-pipe-steps">
-            {PIPELINE_STEPS.map((step) => (
+            {steps.map((step) => (
               <li key={step.value}>
                 <button
                   type="button"
@@ -156,28 +160,28 @@ export function PortalDocuments({ initialQuery, initialStand, initialBereich }: 
             ))}
           </ol>
           <button type="button" className="portal-pipe-error" aria-pressed={stand === 'error'} onClick={() => updateStand('error')}>
-            <AlertTriangle size={16} aria-hidden="true" />Fehler<b>{documents === null ? '–' : counts.error}</b>
+            <AlertTriangle size={16} aria-hidden="true" />{t('common.error')}<b>{documents === null ? '–' : counts.error}</b>
           </button>
         </div>
-        <p className="portal-pipe-note"><Info size={16} aria-hidden="true" /><span>Ein Dokument ist erst im Chat verfügbar, wenn du es freigegeben hast <em>und</em> die Indexierung abgeschlossen ist.</span></p>
+        <p className="portal-pipe-note"><Info size={16} aria-hidden="true" /><span>{t('portal.documents.pipelineNote.part1')} <em>{t('common.and')}</em> {t('portal.documents.pipelineNote.part2')}</span></p>
 
-        {documents === null && !error ? <p role="status" className="portal-loading">Dokumente werden geladen …</p> : pageItems.length ? (
+        {documents === null && !error ? <p role="status" className="portal-loading">{t('portal.tasks.documentsLoading')}</p> : pageItems.length ? (
           <>
             <div className="portal-table-scroll">
               <table className="portal-table portal-doc-table">
-                <caption className="sr-only">Dokumente mit Dateityp, Wissensbereich, Stand und letzter Änderung</caption>
-                <thead><tr><th scope="col">Dokument</th><th scope="col">Wissensbereich</th><th scope="col">Stand</th><th scope="col">Zuletzt</th><th scope="col"><span className="sr-only">Aktion</span></th></tr></thead>
+                <caption className="sr-only">{t('portal.documents.tableCaption')}</caption>
+                <thead><tr><th scope="col">{t('portal.documents.columnDocument')}</th><th scope="col">{t('portal.documents.columnSpace')}</th><th scope="col">{t('portal.documents.columnStatus')}</th><th scope="col">{t('portal.documents.columnLast')}</th><th scope="col"><span className="sr-only">{t('portal.documents.columnAction')}</span></th></tr></thead>
                 <tbody>
                   {pageItems.map((document) => {
                     const stage = stageOf(document);
-                    const state = documentState(document, live[document.id]);
+                    const state = documentState(document, live[document.id], locale);
                     return (
                       <tr key={document.id}>
                         <td><div className="portal-document-link"><span className="portal-filetype">{fileTypeLabel(document)}</span><span><strong>{document.original_filename}</strong></span></div></td>
                         <td><span className="portal-space-tag" style={cssVar(spaceColorVar(document.collection_id))}>{document.collection_name}</span></td>
                         <td><span aria-live="polite" className={`portal-badge portal-badge-${state.tone}`}>{state.label}</span>{state.hint && <span className="mt-1 block max-w-[280px] text-xs leading-5 text-[var(--muted)]">{state.hint}</span>}</td>
-                        <td className="portal-date">{dateLabel(document.release?.created_at ?? document.created_at)}</td>
-                        <td>{actionFor(document, stage)}</td>
+                        <td className="portal-date">{dateLabel(document.release?.created_at ?? document.created_at, locale)}</td>
+                        <td>{actionFor(document, stage, t)}</td>
                       </tr>
                     );
                   })}
@@ -187,8 +191,8 @@ export function PortalDocuments({ initialQuery, initialStand, initialBereich }: 
             <Pagination offset={offset} total={filtered.length} onChange={setOffset} />
           </>
         ) : (
-          <EmptyState title={query || stand ? 'Keine passenden Dokumente' : 'Noch keine Dokumente'}>
-            {query || stand ? 'Ändere die Suche, den Wissensbereich oder den Stand-Filter.' : 'Sobald du eine Quelle hinzufügst, erscheint sie hier.'}
+          <EmptyState title={query || stand ? t('portal.documents.noMatchTitle') : t('portal.documents.emptyTitle')}>
+            {query || stand ? t('portal.documents.noMatchBody') : t('portal.documents.emptyBody')}
           </EmptyState>
         )}
       </section>

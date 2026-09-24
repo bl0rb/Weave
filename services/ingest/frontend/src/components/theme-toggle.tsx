@@ -2,11 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import { Moon, Sun } from 'lucide-react';
+import { useI18n } from '@/i18n/provider';
 
 type Theme = 'light' | 'dark';
 const STORAGE_KEY = 'weave-ingest-theme';
 
 export function ThemeToggle() {
+  const { t } = useI18n();
   const [theme, setTheme] = useState<Theme | null>(null);
 
   useEffect(() => {
@@ -27,8 +29,8 @@ export function ThemeToggle() {
   return (
     <button
       type="button"
-      aria-label={dark ? 'Helles Farbschema aktivieren' : 'Dunkles Farbschema aktivieren'}
-      title={dark ? 'Helles Farbschema' : 'Dunkles Farbschema'}
+      aria-label={dark ? t('portal.themeToggle.enableLight') : t('portal.themeToggle.enableDark')}
+      title={dark ? t('portal.themeToggle.light') : t('portal.themeToggle.dark')}
       onClick={() => setTheme(dark ? 'light' : 'dark')}
       className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
     >

@@ -20,7 +20,7 @@ import {
   apiSend,
 } from '@/components/admin/admin-shared';
 import {
-  REFRESH_INTERVAL_OPTIONS,
+  refreshIntervalOptions,
   TEST_COOLDOWN_FALLBACK_MS,
   formatRefreshInterval,
   type ImportAuthType,
@@ -28,8 +28,11 @@ import {
   type ImportSourceListResponse,
   type ImportSourceTestResponse,
 } from '@/lib/imports';
+import { useI18n } from '@/i18n/provider';
 
 export function ConfluenceConnectionsTab() {
+  const { t, locale } = useI18n();
+  const intervalOptions = refreshIntervalOptions(locale);
   const [sources, setSources] = useState<ImportSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
@@ -175,7 +178,7 @@ export function ConfluenceConnectionsTab() {
   const saveRename = async (source: ImportSource) => {
     const name = renameValue.trim();
     if (!name) {
-      setActionError('Name cannot be empty.');
+      setActionError(t('portal.connections.confluence.nameEmpty'));
       return;
     }
     setBusyId(source.id);
@@ -218,31 +221,31 @@ export function ConfluenceConnectionsTab() {
   return (
     <div className="space-y-6">
       <SectionCard
-        title="Confluence-Verbindungen"
-        description="Private Verbindungen zum Import von Confluence-Seiten. Gespeicherte Zugangsdaten werden nie angezeigt."
+        title={t('portal.connections.confluence.title')}
+        description={t('portal.connections.confluence.description')}
         actions={
           <Button size="sm" onClick={() => setCreating(true)}>
             <Plus className="h-4 w-4" />
-            Verbindung hinzufügen
+            {t('portal.connections.confluence.add')}
           </Button>
         }
       >
         <ErrorNotice message={listError} />
         {unavailable && (
           <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            Der Confluence-Import ist auf diesem Backend noch nicht verfügbar. Diese Seite zeigt Verbindungen automatisch an, sobald der Endpunkt bereitsteht.
+            {t('portal.connections.confluence.unavailable')}
           </div>
         )}
         {!unavailable && actionError && <ErrorNotice message={actionError} />}
         {loading ? (
-          <LoadingState label="Verbindungen werden geladen ..." />
+          <LoadingState label={t('portal.connections.confluence.loading')} />
         ) : unavailable ? null : sources.length === 0 ? (
           <div className="flex flex-col items-center gap-3 py-10 text-center">
             <Cable className="h-8 w-8 text-slate-300" />
-            <p className="text-sm text-slate-500">Noch keine Confluence-Verbindung vorhanden. Füge eine Verbindung hinzu, um Seiten zu importieren.</p>
+            <p className="text-sm text-slate-500">{t('portal.connections.confluence.empty')}</p>
             <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
               <Plus className="h-4 w-4" />
-              Verbindung hinzufügen
+              {t('portal.connections.confluence.add')}
             </Button>
           </div>
         ) : (
@@ -256,7 +259,7 @@ export function ConfluenceConnectionsTab() {
                         <input
                           value={renameValue}
                           onChange={(event) => setRenameValue(event.target.value)}
-                          aria-label="Name der Verbindung"
+                          aria-label={t('portal.connections.confluence.nameAria')}
                           onKeyDown={(event) => {
                             if (event.key === 'Enter') void saveRename(source);
                             if (event.key === 'Escape') setRenamingId(null);
@@ -265,10 +268,10 @@ export function ConfluenceConnectionsTab() {
                           autoFocus
                         />
                         <Button size="sm" onClick={() => void saveRename(source)} disabled={busyId === source.id}>
-                          Speichern
+                          {t('portal.connections.confluence.save')}
                         </Button>
                         <Button size="sm" variant="outline" onClick={() => setRenamingId(null)}>
-                          Abbrechen
+                          {t('portal.connections.confluence.cancel')}
                         </Button>
                       </div>
                     ) : (
@@ -280,23 +283,23 @@ export function ConfluenceConnectionsTab() {
                           }`}
                         >
                           {source.server_kind === 'cloud'
-                            ? 'Cloud'
+                            ? t('portal.connections.confluence.badgeCloud')
                             : source.server_kind === 'datacenter'
-                              ? 'Server/DC'
-                              : 'nicht geprüft'}
+                              ? t('portal.connections.confluence.badgeServerDc')
+                              : t('portal.connections.confluence.badgeUntested')}
                         </span>
                         <Badge tone="slate">
-                          {source.auth_type === 'cloud_basic' ? 'E-Mail + API-Token' : 'Persönlicher Zugriffstoken'}
+                          {source.auth_type === 'cloud_basic' ? t('portal.connections.confluence.authCloud') : t('portal.connections.confluence.authPat')}
                         </Badge>
                       </div>
                     )}
                     <dl className="mt-2 space-y-1 text-xs text-slate-500">
                       <div className="flex gap-2">
-                        <dt className="w-16 flex-shrink-0 font-medium">Basis-URL</dt>
+                        <dt className="w-16 flex-shrink-0 font-medium">{t('portal.connections.confluence.baseUrlLabel')}</dt>
                         <dd className="break-all">{source.base_url}</dd>
                       </div>
                       <div className="flex gap-2">
-                        <dt className="w-16 flex-shrink-0 font-medium">Angelegt</dt>
+                        <dt className="w-16 flex-shrink-0 font-medium">{t('portal.connections.confluence.createdLabel')}</dt>
                         <dd>{new Date(source.created_at).toLocaleDateString()}</dd>
                       </div>
                     </dl>
@@ -304,11 +307,11 @@ export function ConfluenceConnectionsTab() {
                       <Toggle
                         checked={source.refresh_enabled ?? false}
                         onChange={(next) => void updateRefresh(source, { refresh_enabled: next })}
-                        label="Automatisch aktualisieren"
+                        label={t('portal.connections.confluence.autoRefresh')}
                         disabled={busyId === source.id}
                       />
                       <select
-                        value={source.refresh_interval_seconds ?? REFRESH_INTERVAL_OPTIONS[2].value}
+                        value={source.refresh_interval_seconds ?? intervalOptions[2].value}
                         onChange={(event) =>
                           void updateRefresh(source, { refresh_interval_seconds: Number(event.target.value) })
                         }
@@ -320,12 +323,12 @@ export function ConfluenceConnectionsTab() {
                             without it, `value` above would match none of the options below
                             and the control would render blank. */}
                         {source.refresh_interval_seconds != null &&
-                          !REFRESH_INTERVAL_OPTIONS.some((option) => option.value === source.refresh_interval_seconds) && (
+                          !intervalOptions.some((option) => option.value === source.refresh_interval_seconds) && (
                             <option value={source.refresh_interval_seconds}>
-                              {formatRefreshInterval(source.refresh_interval_seconds)}
+                              {formatRefreshInterval(source.refresh_interval_seconds, locale)}
                             </option>
                           )}
-                        {REFRESH_INTERVAL_OPTIONS.map((option) => (
+                        {intervalOptions.map((option) => (
                           <option key={option.value} value={option.value}>
                             {option.label}
                           </option>
@@ -335,8 +338,8 @@ export function ConfluenceConnectionsTab() {
                     {(source.refresh_enabled ?? false) && (
                       <p className="mt-1 text-xs text-slate-500">
                         {source.last_refresh_at
-                          ? `Zuletzt aktualisiert: ${new Date(source.last_refresh_at).toLocaleString()}`
-                          : 'Noch nicht aktualisiert.'}
+                          ? t('portal.connections.confluence.lastRefresh', { date: new Date(source.last_refresh_at).toLocaleString() })
+                          : t('portal.connections.confluence.neverRefreshed')}
                       </p>
                     )}
                     {source.last_refresh_error && (
@@ -355,12 +358,12 @@ export function ConfluenceConnectionsTab() {
                       ) : (
                         <PlugZap className="h-4 w-4" />
                       )}
-                      {cooldownSecondsFor(source.id) > 0 ? `Prüfen (${cooldownSecondsFor(source.id)} s)` : 'Verbindung prüfen'}
+                      {cooldownSecondsFor(source.id) > 0 ? t('portal.connections.confluence.testWithCooldown', { seconds: cooldownSecondsFor(source.id) }) : t('portal.connections.confluence.test')}
                     </Button>
                     <button
                       onClick={() => startRename(source)}
-                      aria-label={`${source.name} umbenennen`}
-                      title="Umbenennen"
+                      aria-label={t('portal.connections.confluence.renameAria', { name: source.name })}
+                      title={t('portal.connections.confluence.rename')}
                       disabled={busyId === source.id}
                       className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-700 disabled:pointer-events-none disabled:opacity-50"
                     >
@@ -368,8 +371,8 @@ export function ConfluenceConnectionsTab() {
                     </button>
                     <button
                       onClick={() => setDeleting(source)}
-                      aria-label={`${source.name} löschen`}
-                      title="Löschen"
+                      aria-label={t('portal.connections.confluence.deleteAria', { name: source.name })}
+                      title={t('portal.connections.confluence.delete')}
                       disabled={busyId === source.id}
                       className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-red-50 hover:text-red-600 disabled:pointer-events-none disabled:opacity-50"
                     >
@@ -385,11 +388,10 @@ export function ConfluenceConnectionsTab() {
       </SectionCard>
 
       <p className="text-sm text-slate-500">
-        Import runs live under{' '}
+        {t('portal.connections.confluence.importsLivePrefix')}{' '}
         <Link href="/imports" className="text-emerald-700 hover:text-emerald-800">
-          Verarbeitung &gt; Confluence-Import
+          {t('portal.connections.confluence.importsLiveLink')}
         </Link>
-        .
       </p>
 
       {creating && (
@@ -404,13 +406,13 @@ export function ConfluenceConnectionsTab() {
 
       {deleting && (
         <ConfirmDialog
-          title="Confluence-Verbindung löschen"
+          title={t('portal.connections.confluence.deleteDialogTitle')}
           body={
             <p>
-              <span className="font-semibold text-slate-950">{deleting.name}</span> löschen? Frühere Importe behalten ihre Historie.
+              <span className="font-semibold text-slate-950">{deleting.name}</span>{t('portal.connections.confluence.deleteDialogSuffix')}
             </p>
           }
-          confirmLabel="Verbindung löschen"
+          confirmLabel={t('portal.connections.confluence.deleteConfirm')}
           onClose={() => setDeleting(null)}
           onConfirm={async () => {
             await apiSend(`/api/v1/import/sources/${deleting.id}`, { method: 'DELETE' });
@@ -424,6 +426,7 @@ export function ConfluenceConnectionsTab() {
 }
 
 function TestResult({ result }: { result: ImportSourceTestResponse }) {
+  const { t } = useI18n();
   return (
     <div
       className={`mt-3 rounded-xl border px-4 py-3 text-sm ${
@@ -432,7 +435,7 @@ function TestResult({ result }: { result: ImportSourceTestResponse }) {
     >
       <div className="flex items-center gap-2 font-medium">
         {result.ok ? <CircleCheck className="h-4 w-4 flex-shrink-0" /> : <CircleX className="h-4 w-4 flex-shrink-0" />}
-        {result.ok ? 'Verbindung erfolgreich' : 'Verbindung fehlgeschlagen'}
+        {result.ok ? t('portal.connections.confluence.testSuccess') : t('portal.connections.confluence.testFailed')}
       </div>
       {result.detail && <p className="mt-1 text-xs">{result.detail}</p>}
     </div>
@@ -441,6 +444,7 @@ function TestResult({ result }: { result: ImportSourceTestResponse }) {
 
 /** Create-only modal -- credentials are write-only, so there is nothing to prefill for an edit variant. */
 function CreateSourceModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => Promise<void> }) {
+  const { t } = useI18n();
   const [name, setName] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
   const [authType, setAuthType] = useState<ImportAuthType>('cloud_basic');
@@ -462,7 +466,7 @@ function CreateSourceModal({ onClose, onCreated }: { onClose: () => void; onCrea
     e.preventDefault();
     const trimmedEmail = email.trim();
     if (authType === 'cloud_basic' && !trimmedEmail) {
-      setError('Für Cloud-Verbindungen ist die E-Mail-Adresse des Atlassian-Kontos erforderlich.');
+      setError(t('portal.connections.confluence.cloudEmailRequired'));
       return;
     }
     setBusy(true);
@@ -487,9 +491,9 @@ function CreateSourceModal({ onClose, onCreated }: { onClose: () => void; onCrea
   }
 
   return (
-    <Modal title="Confluence-Verbindung hinzufügen" onClose={onClose}>
+    <Modal title={t('portal.connections.confluence.modalTitle')} onClose={onClose}>
       <form onSubmit={submit} className="space-y-4">
-        <Field label="Name">
+        <Field label={t('portal.connections.confluence.nameLabel')}>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -499,7 +503,7 @@ function CreateSourceModal({ onClose, onCreated }: { onClose: () => void; onCrea
             placeholder="ACME Confluence"
           />
         </Field>
-        <Field label="Basis-URL">
+        <Field label={t('portal.connections.confluence.baseUrlLabel')}>
           <input
             type="url"
             value={baseUrl}
@@ -510,7 +514,7 @@ function CreateSourceModal({ onClose, onCreated }: { onClose: () => void; onCrea
           />
         </Field>
         <div>
-          <p className="text-sm font-medium text-slate-700">Authentifizierung</p>
+          <p className="text-sm font-medium text-slate-700">{t('portal.connections.confluence.authenticationLabel')}</p>
           <div className="mt-1 grid gap-3 sm:grid-cols-2">
             <button
               type="button"
@@ -519,8 +523,8 @@ function CreateSourceModal({ onClose, onCreated }: { onClose: () => void; onCrea
                 authType === 'cloud_basic' ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white'
               }`}
             >
-              <p className="text-sm font-semibold text-slate-950">Confluence Cloud</p>
-              <p className="mt-1 text-xs text-slate-600">E-Mail-Adresse des Atlassian-Kontos + API-Token.</p>
+              <p className="text-sm font-semibold text-slate-950">{t('portal.connections.confluence.authCloudTitle')}</p>
+              <p className="mt-1 text-xs text-slate-600">{t('portal.connections.confluence.authCloudHint')}</p>
             </button>
             <button
               type="button"
@@ -529,13 +533,13 @@ function CreateSourceModal({ onClose, onCreated }: { onClose: () => void; onCrea
                 authType === 'pat_bearer' ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white'
               }`}
             >
-              <p className="text-sm font-semibold text-slate-950">Server / Data Center</p>
-              <p className="mt-1 text-xs text-slate-600">Persönlicher Zugriffstoken (PAT).</p>
+              <p className="text-sm font-semibold text-slate-950">{t('portal.connections.confluence.authServerTitle')}</p>
+              <p className="mt-1 text-xs text-slate-600">{t('portal.connections.confluence.authServerHint')}</p>
             </button>
           </div>
         </div>
         {authType === 'cloud_basic' && (
-          <Field label="E-Mail-Adresse des Atlassian-Kontos">
+          <Field label={t('portal.connections.confluence.emailLabel')}>
             <input
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -546,7 +550,7 @@ function CreateSourceModal({ onClose, onCreated }: { onClose: () => void; onCrea
             />
           </Field>
         )}
-        <Field label={authType === 'cloud_basic' ? 'API-Token' : 'Persönlicher Zugriffstoken'} hint="Verschlüsselt und nur zur Eingabe gespeichert: Der Token wird später nicht erneut angezeigt.">
+        <Field label={authType === 'cloud_basic' ? t('portal.connections.confluence.apiTokenLabel') : t('portal.connections.confluence.patLabel')} hint={t('portal.connections.confluence.credentialHint')}>
           <input
             value={credential}
             onChange={(e) => setCredential(e.target.value)}
@@ -562,11 +566,11 @@ function CreateSourceModal({ onClose, onCreated }: { onClose: () => void; onCrea
         <ErrorNotice message={error} />
         <div className="flex justify-end gap-2 pt-1">
           <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={busy}>
-            Abbrechen
+            {t('portal.connections.confluence.cancel')}
           </Button>
           <Button type="submit" size="sm" disabled={busy}>
             {busy && <LoaderCircle className="h-4 w-4 animate-spin" />}
-            Verbindung hinzufügen
+            {t('portal.connections.confluence.add')}
           </Button>
         </div>
       </form>

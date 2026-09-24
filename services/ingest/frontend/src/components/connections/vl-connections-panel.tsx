@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/auth-context';
 import { VlConnectionsTab } from '@/components/admin/vl-connections-tab';
 import { apiJson, type VLConnection, type VLConnectionListResponse } from '@/lib/api';
 import { ErrorNotice, errorMessage, LoadingState, SectionCard } from '@/components/admin/admin-shared';
+import { useI18n } from '@/i18n/provider';
 
 /**
  * VL connections are admin-managed, but every user needs visibility into
@@ -24,6 +25,7 @@ export function VlConnectionsPanel() {
 }
 
 function ReadOnlyVlConnections() {
+  const { t } = useI18n();
   const [connections, setConnections] = useState<VLConnection[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -49,19 +51,19 @@ function ReadOnlyVlConnections() {
 
   return (
     <SectionCard
-      title="VL connections"
-      description="Vision-language model connections available for document processing."
+      title={t('portal.connections.vl.title')}
+      description={t('portal.connections.vl.description')}
     >
       <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-        VL connections are managed by an administrator — ask them to add or change one.
+        {t('portal.connections.vl.adminManaged')}
       </div>
       <ErrorNotice message={error} />
       {loading ? (
-        <LoadingState label="Loading VL connections..." />
+        <LoadingState label={t('portal.connections.vl.loading')} />
       ) : connections.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-10 text-center">
           <Bot className="h-8 w-8 text-slate-300" />
-          <p className="text-sm text-slate-500">No VL connections available yet.</p>
+          <p className="text-sm text-slate-500">{t('portal.connections.vl.empty')}</p>
         </div>
       ) : (
         <ul className="space-y-4">
@@ -70,7 +72,7 @@ function ReadOnlyVlConnections() {
               <span className="text-sm font-semibold text-slate-950">{connection.name}</span>
               <dl className="mt-2 space-y-1 text-xs text-slate-500">
                 <div className="flex gap-2">
-                  <dt className="w-16 flex-shrink-0 font-medium">Model</dt>
+                  <dt className="w-16 flex-shrink-0 font-medium">{t('portal.connections.vl.modelLabel')}</dt>
                   <dd className="break-all font-mono">{connection.model}</dd>
                 </div>
               </dl>

@@ -1,5 +1,8 @@
+'use client';
+
 import { Globe, Users } from 'lucide-react';
 import { accessSummary, type AccessSummaryInput } from '@/lib/access-summary';
+import { useI18n } from '@/i18n/provider';
 
 /**
  * "Who can use this in chat" row on a Wissensbereiche card. Kept isolated
@@ -14,17 +17,18 @@ export function AccessLine({ collection, name, canManage, onChangeAccess }: {
   canManage: boolean;
   onChangeAccess: () => void;
 }) {
-  const summary = accessSummary(collection);
+  const { t, locale } = useI18n();
+  const summary = accessSummary(collection, locale);
   const isPublic = collection.visibility === 'public' || (!collection.visibility && collection.read_teams.length === 0);
   return (
     <div className="portal-access-line">
       {isPublic ? <Globe aria-hidden="true" /> : <Users aria-hidden="true" />}
       <span>
-        <small>Im Chat nutzbar für</small>
+        <small>{t('portal.access.usableInChat')}</small>
         <strong>{summary}</strong>
       </span>
-      {canManage && <button type="button" className="portal-text-btn" onClick={onChangeAccess} aria-label={`Zugriff für ${name} ändern`}>
-        Ändern
+      {canManage && <button type="button" className="portal-text-btn" onClick={onChangeAccess} aria-label={t('portal.access.changeAria', { name })}>
+        {t('portal.access.change')}
       </button>}
     </div>
   );

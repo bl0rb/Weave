@@ -1,6 +1,10 @@
+'use client';
+
 import { AlertCircle } from 'lucide-react';
 
 import { WeaveIngestLogo } from '@/components/weave-ingest-logo';
+import { LanguageSwitch } from '@/i18n/language-switch';
+import { useI18n } from '@/i18n/provider';
 
 /**
  * Centered full-page shell for the auth pages (/login, /setup):
@@ -15,12 +19,14 @@ export function AuthShell({
   subtitle?: string;
   children: React.ReactNode;
 }) {
+  const { t } = useI18n();
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-12">
+    <main className="relative flex min-h-screen items-center justify-center bg-slate-50 px-4 py-12">
+      <LanguageSwitch className="!absolute right-4 top-4" />
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center gap-3">
           <WeaveIngestLogo className="h-12 w-12 drop-shadow-md" />
-          <span className="text-lg font-semibold text-slate-950">Weave · Wissensportal</span>
+          <span className="text-lg font-semibold text-slate-950">{t('common.appTitle')}</span>
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
@@ -35,11 +41,12 @@ export function AuthShell({
 
 /** Full-page spinner shown while an auth page runs its mount checks. */
 export function AuthPageSpinner() {
+  const { t } = useI18n();
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-50">
       <div
         role="status"
-        aria-label="Wird geladen"
+        aria-label={t('common.loading')}
         className="h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-emerald-600"
       />
     </main>

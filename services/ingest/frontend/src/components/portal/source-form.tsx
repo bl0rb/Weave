@@ -8,6 +8,7 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { jsonBody, portalError, type KnowledgeSpace } from '@/lib/portal';
 import type { ImportSource, ImportRun } from '@/lib/imports';
 import { portalProfiles, type PortalProfile, type ProcessingProfile } from '@/lib/portal-profiles';
+import { useI18n } from '@/i18n/provider';
 import { EmptyState, Notice, PortalPage } from './shared';
 
 type UploadResult = { name: string; id?: string; ok: boolean; message: string };
@@ -16,6 +17,7 @@ const SOURCE_DRAFT_KEY = 'weave-source-form-draft';
 type SourceDraft = { collectionId: string; kind: 'files' | 'confluence'; sourceId: string; pageUrl: string; automatic: boolean; confirmedAccess: boolean; profileId: string };
 
 export function SourceForm({ initialCollection = '' }: { initialCollection?: string }) {
+  const { t, locale } = useI18n();
   const [spaces, setSpaces] = useState<KnowledgeSpace[] | null>(null);
   const [sources, setSources] = useState<ImportSource[]>([]);
   const [collectionId, setCollectionId] = useState(() => {
@@ -77,13 +79,13 @@ export function SourceForm({ initialCollection = '' }: { initialCollection?: str
     try {
       const data = await apiJson<{ items: KnowledgeSpace[] }>('/api/v1/collections');
       setSpaces(data.items.filter(space => space.can_upload ?? space.can_manage));
-    } catch (err) { setError(portalError(err)); }
-  }, []);
+    } catch (err) { setError(portalError(err, locale)); }
+  }, [locale]);
   const loadSources = useCallback(async () => {
     setSourceError('');
     try { const data = await apiJson<{ items: ImportSource[] }>('/api/v1/import/sources'); setSources(data.items); }
-    catch (err) { setSourceError(portalError(err)); }
-  }, []);
+    catch (err) { setSourceError(portalError(err, locale)); }
+  }, [locale]);
   const loadProfiles = useCallback(async () => {
     setProfileError('');
     try {
@@ -91,12 +93,12 @@ export function SourceForm({ initialCollection = '' }: { initialCollection?: str
         apiJson<{ profiles: ProcessingProfile[] }>('/api/v1/paddle/capabilities'),
         apiJson<{ default_profile: string }>('/api/v1/paddle/settings'),
       ]);
-      const choices = portalProfiles(capabilities.profiles);
+      const choices = portalProfiles(capabilities.profiles, locale);
       setProfiles(choices);
       setProfileId(current => choices.some(profile => profile.value === current) ? current
         : choices.find(profile => profile.value === settings.default_profile)?.value || choices[0]?.value || '');
-    } catch (err) { setProfileError(portalError(err)); }
-  }, []);
+    } catch (err) { setProfileError(portalError(err, locale)); }
+  }, [locale]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { void loadProfiles(); }, [loadProfiles]);
   useEffect(() => { if (kind === 'confluence') void loadSources(); }, [kind, loadSources]);
@@ -109,7 +111,7 @@ export function SourceForm({ initialCollection = '' }: { initialCollection?: str
       if (kind === 'files') {
         for (let index = 0; index < files.length; index++) {
           const file = files[index];
-          setProgress(`${index + 1} von ${files.length}: ${file.name}`);
+          setProgress(t('portal.sourceForm.progress', { current: index + 1, total: files.length, name: file.name }));
           let jobId: string | undefined;
           try {
             const body = new FormData(); body.append('file', file);
@@ -118,9 +120,9 @@ export function SourceForm({ initialCollection = '' }: { initialCollection?: str
             // Start only the newly uploaded document, never reprocess the
             // other (possibly already approved) files in this collection.
             await apiJson(`/api/v1/jobs/${upload.job_id}/restart`, jsonBody({ profile_id: selectedProfile.value }));
-            setResults(current => [...current, { name: file.name, id: jobId, ok: true, message: 'Hochgeladen und zur Verarbeitung übergeben' }]);
+            setResults(current => [...current, { name: file.name, id: jobId, ok: true, message: t('portal.sourceForm.uploadSuccess') }]);
           } catch (err) {
-            setResults(current => [...current, { name: file.name, id: jobId, ok: false, message: jobId ? 'Hochgeladen. Die Verarbeitung konnte nicht gestartet werden; bitte öffne das Dokument.' : portalError(err) }]);
+            setResults(current => [...current, { name: file.name, id: jobId, ok: false, message: jobId ? t('portal.sourceForm.uploadPartialFail') : portalError(err, locale) }]);
           }
         }
         setFiles([]);
@@ -129,69 +131,72 @@ export function SourceForm({ initialCollection = '' }: { initialCollection?: str
         setRun(created);
         if (automatic) {
           try { await apiJson(`/api/v1/import/sources/${encodeURIComponent(sourceId)}`, { ...jsonBody({ refresh_enabled: true, refresh_interval_seconds: 86400 }), method: 'PATCH' }); }
-          catch { setError('Der Import wurde gestartet. Die tägliche Aktualisierung konnte nicht aktiviert werden. Bitte prüfe die Verbindungseinstellungen.'); }
+          catch { setError(t('portal.sourceForm.autoRefreshFailed')); }
         }
       }
       sessionStorage.removeItem(SOURCE_DRAFT_KEY);
-    } catch (err) { setError(portalError(err)); }
+    } catch (err) { setError(portalError(err, locale)); }
     finally { setSaving(false); setProgress(''); }
   }
-  return <PortalPage title="Eine Quelle hinzufügen" description="Bringe Dokumente oder Confluence-Seiten in einen Wissensbereich. Die Veröffentlichung entscheidest du nach der Verarbeitung." eyebrow="SCHRITT 2 VON 3">
+  return <PortalPage title={t('portal.sourceForm.title')} description={t('portal.sourceForm.description')} eyebrow={t('portal.sourceForm.step')}>
     {error && <Notice error>{error}</Notice>}
-    {spaces === null && !error && <Notice>Wissensbereiche werden geladen …</Notice>}
-    {spaces?.length === 0 && <EmptyState title="Lege deinen eigenen Wissensbereich an" href="/knowledge/new" action="Wissensbereich anlegen">Quellen hinzufügen können die Eigentümer eines Wissensbereichs und Administratoren. Leserechte allein reichen dafür nicht aus.</EmptyState>}
+    {spaces === null && !error && <Notice>{t('portal.spaces.loading')}</Notice>}
+    {spaces?.length === 0 && <EmptyState title={t('portal.sourceForm.emptySpacesTitle')} href="/knowledge/new" action={t('portal.chrome.breadcrumb.knowledgeNew')}>{t('portal.sourceForm.emptySpacesBody')}</EmptyState>}
     {Boolean(spaces?.length) && !completed && <form className="portal-panel portal-source-form" onSubmit={submit}>
-      <fieldset disabled={saving || Boolean(run)}><legend><span className="portal-step">01</span> Wissensbereich wählen</legend><label>Wohin gehört die Quelle?<select required value={collectionId} onChange={event => setCollectionId(event.target.value)}><option value="">Bitte auswählen</option>{spaces?.map(space => <option key={space.collection_id} value={space.collection_id}>{space.name}</option>)}</select></label><Link className="portal-inline-link" href="/knowledge/new"><Plus size={14} />Neuen Wissensbereich anlegen</Link>
-        {selected && <p className="portal-field-hint">Berechtigte: {selected.read_teams.length ? selected.read_teams.join(', ') : 'Alle angemeldeten Teams'}.</p>}
+      <fieldset disabled={saving || Boolean(run)}><legend><span className="portal-step">01</span> {t('portal.sourceForm.step1Legend')}</legend><label>{t('portal.sourceForm.spaceSelectLabel')}<select required value={collectionId} onChange={event => setCollectionId(event.target.value)}><option value="">{t('portal.sourceForm.pleaseSelect')}</option>{spaces?.map(space => <option key={space.collection_id} value={space.collection_id}>{space.name}</option>)}</select></label><Link className="portal-inline-link" href="/knowledge/new"><Plus size={14} />{t('portal.sourceForm.newSpaceLink')}</Link>
+        {selected && <p className="portal-field-hint">{t('portal.spaces.authorizedLabel')} {selected.read_teams.length ? selected.read_teams.join(', ') : t('portal.newSpace.allTeams')}.</p>}
       </fieldset>
-      <fieldset disabled={saving || Boolean(run)}><legend><span className="portal-step">02</span> Quelle auswählen</legend><div className="portal-source-types"><label className={kind === 'files' ? 'selected' : ''}><input type="radio" name="kind" value="files" checked={kind === 'files'} onChange={() => setKind('files')} /><FileUp size={23} /><span><strong>Dateien hochladen</strong><small>PDF, Office, Bilder und E-Mails (.eml)</small></span></label><label className={kind === 'confluence' ? 'selected' : ''}><input type="radio" name="kind" value="confluence" checked={kind === 'confluence'} onChange={() => setKind('confluence')} /><Globe size={23} /><span><strong>Confluence verbinden</strong><small>Eine Seite mit ihren Unterseiten</small></span></label></div>
-        {kind === 'files' ? <label className="portal-upload">Dateien auswählen<input type="file" multiple required accept=".pdf,.docx,.pptx,.xlsx,.xls,.png,.jpg,.jpeg,.eml" onChange={event => setFiles(Array.from(event.target.files || []))} /><span>{files.length ? `${files.length} Datei(en) ausgewählt` : 'PDF, Office, Bilder und E-Mails (.eml). Mehrere Dateien sind möglich.'}</span><span>Bei E-Mails werden unterstützte Anhänge mitverarbeitet. Prüfe auch deren Inhalt vor der Freigabe.</span></label> : <div className="portal-form">
+      <fieldset disabled={saving || Boolean(run)}><legend><span className="portal-step">02</span> {t('portal.sourceForm.step2Legend')}</legend><div className="portal-source-types"><label className={kind === 'files' ? 'selected' : ''}><input type="radio" name="kind" value="files" checked={kind === 'files'} onChange={() => setKind('files')} /><FileUp size={23} /><span><strong>{t('portal.sourceForm.filesOption')}</strong><small>{t('portal.sourceForm.filesHint')}</small></span></label><label className={kind === 'confluence' ? 'selected' : ''}><input type="radio" name="kind" value="confluence" checked={kind === 'confluence'} onChange={() => setKind('confluence')} /><Globe size={23} /><span><strong>{t('portal.sourceForm.confluenceOption')}</strong><small>{t('portal.sourceForm.confluenceHint')}</small></span></label></div>
+        {kind === 'files' ? <label className="portal-upload">{t('portal.sourceForm.chooseFiles')}<input type="file" multiple required accept=".pdf,.docx,.pptx,.xlsx,.xls,.png,.jpg,.jpeg,.eml" onChange={event => setFiles(Array.from(event.target.files || []))} /><span>{files.length ? t('portal.sourceForm.filesSelectedCount', { count: files.length }) : t('portal.sourceForm.filesPlaceholder')}</span><span>{t('portal.sourceForm.emailAttachmentsHint')}</span></label> : <div className="portal-form">
           {sourceError && <Notice error action={loadSources}>{sourceError}</Notice>}
-          <label>Deine Confluence-Verbindung<select required value={sourceId} onChange={event => { setSourceId(event.target.value); setAutomatic(false); }}><option value="">Verbindung auswählen</option>{sources.map(source => <option key={source.id} value={source.id}>{source.name}</option>)}</select></label><Link className="portal-inline-link" href="/connections">Verbindung einrichten oder prüfen <ArrowRight size={14} /></Link>
-          <label>Confluence-Seite<input required type="url" value={pageUrl} onChange={event => setPageUrl(event.target.value)} placeholder="https://confluence.example.com/..." /></label><p className="portal-field-hint">Unterseiten und Anhänge werden innerhalb der konfigurierten Importgrenzen übernommen.</p>
-          <label className="portal-choice"><input type="checkbox" checked={automatic} onChange={event => setAutomatic(event.target.checked)} />Diese Verbindung täglich auf Änderungen prüfen</label><p className="portal-field-hint">Die Aktualisierung gilt für die ausgewählte Verbindung und verwendet deren zuletzt gestarteten Import. Neue Dokumentstände benötigen weiterhin deine Freigabe.</p>
-          <label className="portal-choice portal-access-confirm"><input required type="checkbox" checked={confirmedAccess} onChange={event => setConfirmedAccess(event.target.checked)} />Ich prüfe die Berechtigten vor der Freigabe. Individuelle Confluence-Seitenrechte werden nicht automatisch übernommen.</label>
+          <label>{t('portal.sourceForm.connectionLabel')}<select required value={sourceId} onChange={event => { setSourceId(event.target.value); setAutomatic(false); }}><option value="">{t('portal.sourceForm.chooseConnection')}</option>{sources.map(source => <option key={source.id} value={source.id}>{source.name}</option>)}</select></label><Link className="portal-inline-link" href="/connections">{t('portal.sourceForm.setupConnectionLink')} <ArrowRight size={14} /></Link>
+          <label>{t('portal.sourceForm.pageLabel')}<input required type="url" value={pageUrl} onChange={event => setPageUrl(event.target.value)} placeholder="https://confluence.example.com/..." /></label><p className="portal-field-hint">{t('portal.sourceForm.subpagesHint')}</p>
+          <label className="portal-choice"><input type="checkbox" checked={automatic} onChange={event => setAutomatic(event.target.checked)} />{t('portal.sourceForm.autoRefreshLabel')}</label><p className="portal-field-hint">{t('portal.sourceForm.autoRefreshHint')}</p>
+          <label className="portal-choice portal-access-confirm"><input required type="checkbox" checked={confirmedAccess} onChange={event => setConfirmedAccess(event.target.checked)} />{t('portal.sourceForm.confirmAccessLabel')}</label>
         </div>}
       </fieldset>
       <fieldset disabled={saving || Boolean(run)}>
-        <legend><span className="portal-step">03</span> Verarbeitung wählen</legend>
+        <legend><span className="portal-step">03</span> {t('portal.sourceForm.step3Legend')}</legend>
         {profileError && <Notice error action={loadProfiles}>{profileError}</Notice>}
-        {!profiles && !profileError && <Notice>Verarbeitungsprofile werden geladen …</Notice>}
-        {profiles?.length === 0 && <Notice error>Es ist kein passendes Verarbeitungsprofil verfügbar. Bitte wende dich an die Administration.</Notice>}
+        {!profiles && !profileError && <Notice>{t('portal.reprocess.loading')}</Notice>}
+        {profiles?.length === 0 && <Notice error>{t('portal.sourceForm.noProfile')}</Notice>}
         {Boolean(profiles?.length) && <>
-          <label>Wie sollen die Dokumente aufbereitet werden?
+          <label>{t('portal.sourceForm.profileSelectLabel')}
             <select required value={profileId} onChange={event => setProfileId(event.target.value)} aria-describedby="profile-description profile-scope">
-              {profiles?.some(profile => profile.kind === 'ocr') && <optgroup label="Dokumenterkennung">{profiles.filter(profile => profile.kind === 'ocr').map(profile => <option key={profile.value} value={profile.value}>{profile.label}</option>)}</optgroup>}
-              {profiles?.some(profile => profile.kind === 'vl') && <optgroup label="Eingerichtete KI-Modelle">{profiles.filter(profile => profile.kind === 'vl').map(profile => <option key={profile.value} value={profile.value}>{profile.label}</option>)}</optgroup>}
+              {profiles?.some(profile => profile.kind === 'ocr') && <optgroup label={t('portal.reprocess.ocrGroup')}>{profiles.filter(profile => profile.kind === 'ocr').map(profile => <option key={profile.value} value={profile.value}>{profile.label}</option>)}</optgroup>}
+              {profiles?.some(profile => profile.kind === 'vl') && <optgroup label={t('portal.reprocess.vlGroup')}>{profiles.filter(profile => profile.kind === 'vl').map(profile => <option key={profile.value} value={profile.value}>{profile.label}</option>)}</optgroup>}
             </select>
           </label>
           <p id="profile-description" className="portal-field-hint">{selectedProfile?.description}</p>
-          <p id="profile-scope" className="portal-field-hint">{kind === 'confluence' ? 'Das Profil wird für unterstützte Confluence-Anhänge verwendet. Der Text der Seiten wird direkt übernommen.' : 'Das Profil gilt für die ausgewählten Dateien und unterstützte E-Mail-Anhänge. Nachrichtentext wird direkt übernommen.'}</p>
+          <p id="profile-scope" className="portal-field-hint">{kind === 'confluence' ? t('portal.sourceForm.profileScopeConfluence') : t('portal.sourceForm.profileScopeFiles')}</p>
         </>}
       </fieldset>
-      <div className="portal-source-summary"><ShieldNotice /><div className="portal-form-actions"><Button type="submit" disabled={saving || !selected || !selectedProfile || Boolean(run) || (kind === 'files' ? files.length === 0 : !sourceId || !pageUrl.trim() || !confirmedAccess)}>{saving ? 'Wird gestartet …' : kind === 'files' ? 'Hochladen und verarbeiten' : 'Import starten'}</Button><Link href="/knowledge" className={buttonVariants({ variant: 'ghost' })}>Abbrechen</Link></div></div>
+      <div className="portal-source-summary"><ShieldNotice /><div className="portal-form-actions"><Button type="submit" disabled={saving || !selected || !selectedProfile || Boolean(run) || (kind === 'files' ? files.length === 0 : !sourceId || !pageUrl.trim() || !confirmedAccess)}>{saving ? t('common.starting') : kind === 'files' ? t('portal.sourceForm.uploadSubmit') : t('portal.sourceForm.importSubmit')}</Button><Link href="/knowledge" className={buttonVariants({ variant: 'ghost' })}>{t('common.cancel')}</Link></div></div>
     </form>}
     {progress && <Notice>{progress}</Notice>}
     {completed && <section className="portal-panel portal-form-panel max-w-[900px]" aria-labelledby="source-completed-title">
       <CheckCheck size={28} className="mb-4 text-emerald-700" aria-hidden="true" />
       <h2 id="source-completed-title" tabIndex={-1} ref={completedHeading}>
-        {run ? 'Confluence-Import gestartet' : results.every(result => result.ok) ? 'Upload abgeschlossen' : results.some(result => result.ok) ? 'Ein Teil deiner Dateien wurde übergeben' : 'Die Verarbeitung konnte nicht gestartet werden'}
+        {run ? t('portal.sourceForm.importStartedHeading') : results.every(result => result.ok) ? t('portal.sourceForm.uploadCompleteHeading') : results.some(result => result.ok) ? t('portal.sourceForm.uploadPartialHeading') : t('portal.sourceForm.uploadFailedHeading')}
       </h2>
       {(run || results.some(result => result.ok)) && <>
-        <p className="mt-3 text-sm leading-7 text-slate-600">{run ? 'Die Seiten werden jetzt im Hintergrund übernommen.' : `${results.filter(result => result.ok).length} ${results.filter(result => result.ok).length === 1 ? 'Datei wurde' : 'Dateien wurden'} zur Verarbeitung übergeben.`}</p>
-        <p className="mt-3 flex items-start gap-3 text-sm leading-7 text-slate-600"><Clock3 size={18} className="mt-1 shrink-0" aria-hidden="true" />Je nach Umfang und Auslastung kann die Verarbeitung einige Minuten dauern. Du kannst diese Seite verlassen und den Fortschritt unter „Verarbeitung“ verfolgen.</p>
-        <p className="mt-3 text-sm leading-7 text-slate-600">Anschließend prüfst du die Inhalte und gibst sie für die KI-Nutzung frei.</p>
+        <p className="mt-3 text-sm leading-7 text-slate-600">{run ? t('portal.sourceForm.pagesInBackground') : t('portal.sourceForm.filesHandedOff', { count: results.filter(result => result.ok).length })}</p>
+        <p className="mt-3 flex items-start gap-3 text-sm leading-7 text-slate-600"><Clock3 size={18} className="mt-1 shrink-0" aria-hidden="true" />{t('portal.sourceForm.processingTimeHint')}</p>
+        <p className="mt-3 text-sm leading-7 text-slate-600">{t('portal.sourceForm.reviewAfter')}</p>
       </>}
-      {results.some(result => !result.ok) && <div className="mt-5" role="alert"><h3 className="font-semibold">Diese Dateien benötigen deine Aufmerksamkeit</h3>
-        <ul className="portal-upload-results">{results.filter(result => !result.ok).map((result, index) => <li key={index}><strong>{result.name}</strong><span>{result.message}</span>{result.id && <Link href={`/jobs/${result.id}`}>Auftrag prüfen <ArrowRight size={14} aria-hidden="true" /></Link>}</li>)}</ul>
+      {results.some(result => !result.ok) && <div className="mt-5" role="alert"><h3 className="font-semibold">{t('portal.sourceForm.needsAttention')}</h3>
+        <ul className="portal-upload-results">{results.filter(result => !result.ok).map((result, index) => <li key={index}><strong>{result.name}</strong><span>{result.message}</span>{result.id && <Link href={`/jobs/${result.id}`}>{t('portal.sourceForm.checkJob')} <ArrowRight size={14} aria-hidden="true" /></Link>}</li>)}</ul>
       </div>}
-      <h3 className="mt-8 font-semibold">Wie möchtest du weitermachen?</h3>
+      <h3 className="mt-8 font-semibold">{t('portal.sourceForm.whatNext')}</h3>
       <div className="portal-form-actions">
-        <Link href="/processing" className={buttonVariants()}>Verarbeitung ansehen<ArrowRight size={16} aria-hidden="true" /></Link>
-        <Button type="button" variant="outline" onClick={addMore}>Weitere Quellen hinzufügen</Button>
+        <Link href="/processing" className={buttonVariants()}>{t('portal.reviews.viewProcessing')}<ArrowRight size={16} aria-hidden="true" /></Link>
+        <Button type="button" variant="outline" onClick={addMore}>{t('portal.sourceForm.addMore')}</Button>
       </div>
     </section>}
   </PortalPage>;
 }
 
-function ShieldNotice() { return <p>Der Inhalt wird zuerst verarbeitet. Für Bots und die KI-Suche wird er erst nach einer ausdrücklichen Freigabe bereitgestellt.</p>; }
+function ShieldNotice() {
+  const { t } = useI18n();
+  return <p>{t('portal.sourceForm.shieldNotice')}</p>;
+}

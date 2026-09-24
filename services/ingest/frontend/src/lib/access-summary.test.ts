@@ -29,4 +29,10 @@ describe('accessSummary', () => {
   it('reports "Nur Editoren" for a restricted space with no grants at all', () => {
     expect(accessSummary({ read_teams: [], visibility: 'restricted' })).toBe('Nur Editoren');
   });
+
+  it('translates the summary when an English locale is passed', () => {
+    expect(accessSummary({ read_teams: [] }, 'en')).toBe('Public');
+    expect(accessSummary({ read_teams: ['A', 'B'] }, 'en')).toBe('Team A, Team B');
+    expect(accessSummary({ read_teams: [], visibility: 'restricted' }, 'en')).toBe('Editors only');
+  });
 });
