@@ -60,6 +60,31 @@ export function portalDownloadError(error: unknown): string {
   return portalError(error);
 }
 
+/* -------------------------------------------------------------------------
+ * Zugriffsdialog (AccessDialog, src/components/portal/access-dialog.tsx) --
+ * the person-picker/team-chip directory search and the access-only PATCH.
+ * ---------------------------------------------------------------------- */
+
+/** One row of GET /api/v1/directory/users -- the access dialog's person-picker search result. */
+export type DirectoryUser = { id: string; username: string; display_name: string | null; team: string | null };
+/** One row of GET /api/v1/directory/teams -- every team plus its member_count, for the access dialog's team chips. */
+export type DirectoryTeam = { name: string; member_count: number };
+
+/** Person-picker search behind the access dialog -- 403 unless the caller is an admin or manages at least one collection. */
+export function searchDirectoryUsers(query: string, signal?: AbortSignal): Promise<{ items: DirectoryUser[] }> {
+  return apiJson(`/api/v1/directory/users?${new URLSearchParams({ q: query, limit: '20' })}`, { signal });
+}
+
+/** Team-chip listing behind the access dialog -- same authorization gate as {@link searchDirectoryUsers}. */
+export function loadDirectoryTeams(signal?: AbortSignal): Promise<{ items: DirectoryTeam[] }> {
+  return apiJson('/api/v1/directory/teams', { signal });
+}
+
+/** PATCH /api/v1/collections/{id} scoped to the access dialog's three fields -- 422 on an unknown team/user id, 403 unless the caller can manage the collection. */
+export function updateCollectionAccess(collectionId: string, access: { visibility: 'public' | 'restricted'; read_teams: string[]; read_users: string[] }): Promise<KnowledgeSpace> {
+  return apiJson(`/api/v1/collections/${encodeURIComponent(collectionId)}`, { ...jsonBody(access), method: 'PATCH' });
+}
+
 export function documentState(document: PortalDocument, live?: IndexingItem): { label: string; tone: 'neutral' | 'working' | 'warning' | 'success' | 'error'; hint?: string } {
   if (document.release) {
     const { delivery, indexing } = currentReleaseStatus(document.release, live);

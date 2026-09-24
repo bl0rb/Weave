@@ -6,6 +6,7 @@ import { AlertTriangle, Archive, CheckCheck, Pencil, Plus, RefreshCw, Trash2, Us
 import { apiJson } from '@/lib/api';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { apiSend, ConfirmDialog, Modal, inputClass } from '@/components/admin/admin-shared';
+import { AccessDialog } from './access-dialog';
 import { AccessLine } from './access-line';
 import { spaceColorVar, spaceMark } from '@/lib/space-color';
 import { useIndexingStatus } from '@/lib/use-indexing-status';
@@ -26,6 +27,7 @@ export function KnowledgeSpaces() {
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<KnowledgeSpace | null>(null);
   const [deleting, setDeleting] = useState<KnowledgeSpace | null>(null);
+  const [accessEditing, setAccessEditing] = useState<KnowledgeSpace | null>(null);
   const [notice, setNotice] = useState('');
   const load = useCallback(() => apiJson<{ items: KnowledgeSpace[] }>('/api/v1/collections')
     .then(areas => { setSpaces(areas.items); setError(''); })
@@ -71,7 +73,7 @@ export function KnowledgeSpaces() {
             <div><h2><Link href={`/knowledge/${space.collection_id}`}>{space.name}</Link></h2><p>{space.description || 'Dokumente und Quellen zu einem gemeinsamen Thema.'}</p></div>
           </div>
           <p className="text-sm font-semibold text-[var(--ink-2)]">Im Chat verfügbar: {stats.ready} {stats.ready === 1 ? 'Dokument' : 'Dokumente'}</p>
-          <AccessLine collection={space} href={`/knowledge/${space.collection_id}`} name={space.name} />
+          <AccessLine collection={space} name={space.name} canManage={space.can_manage} onChangeAccess={() => setAccessEditing(space)} />
           <p className="portal-space-state">{chips.length ? chips : <span className="portal-chip portal-chip-ok"><CheckCheck aria-hidden="true" />Alles aktuell</span>}</p>
           <div className="portal-space-actions">
             <div className="flex flex-wrap gap-2">
@@ -86,6 +88,11 @@ export function KnowledgeSpaces() {
     </div>{visible?.length === 0 && <EmptyState title="Kein passender Wissensbereich">Versuche einen anderen Suchbegriff.</EmptyState>}</> : !error && <EmptyState title="Womit möchtest du beginnen?" href="/knowledge/new" action="Wissensbereich anlegen">Lege deinen ersten Wissensbereich an. Danach kannst du Dateien und Confluence-Seiten hinzufügen.</EmptyState>}
     {editing && <KnowledgeSpaceEditor space={editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); setNotice('Wissensbereich gespeichert.'); await load(); }} />}
     {deleting && <ConfirmDialog title="Wissensbereich löschen" body={<p>Den leeren Wissensbereich <strong className="text-slate-950">{deleting.name}</strong> löschen? Enthält er Dokumente, einen laufenden Import oder eine Bot-Zuordnung, wird die Aktion zum Schutz der Inhalte und Rechte abgelehnt.</p>} confirmLabel="Wissensbereich löschen" onClose={() => setDeleting(null)} onConfirm={async () => { await apiSend(`/api/v1/collections/${encodeURIComponent(deleting.collection_id)}`, { method: 'DELETE' }); setDeleting(null); setNotice('Wissensbereich gelöscht.'); await load(); }} />}
+    {accessEditing && <AccessDialog collection={accessEditing} onClose={() => setAccessEditing(null)} onSaved={updated => {
+      setSpaces(current => current?.map(space => space.collection_id === updated.collection_id ? { ...space, ...updated } : space) ?? current);
+      setAccessEditing(null);
+      setNotice('Zugriff gespeichert.');
+    }} />}
   </PortalPage>;
 }
 

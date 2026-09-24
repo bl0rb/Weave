@@ -347,6 +347,41 @@ a.portal-tile:hover { border-color: var(--line-2); box-shadow: 0 4px 14px rgb(20
 .portal-space-new svg { width: 26px; height: 26px; color: var(--accent); }
 .portal-space-new small { max-width: 200px; color: var(--muted); font-size: 12.5px; }
 
+/* ---------- Zugriffsdialog (AccessDialog): Modus, Team-Chips, Personensuche ---------- */
+.portal-access-form { display: grid; gap: 4px; }
+.portal-access-mode { display: grid; gap: 8px; margin: 4px 0 16px; padding: 0; border: 0; }
+.portal-access-mode-option { display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 12px 14px; border: 1px solid var(--line-2); border-radius: 10px; cursor: pointer; font-weight: 500; }
+.portal-access-mode-option:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+.portal-access-mode-option:has(input:focus-visible) { outline: 3px solid var(--accent); outline-offset: 2px; }
+.portal-access-mode-option strong { display: block; font-size: 14px; }
+.portal-access-mode-option small { display: block; font-size: 12.5px; color: var(--muted); }
+.portal-access-label { display: block; margin: 18px 0 8px; font-size: 13px; font-weight: 600; }
+.portal-access-team-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.portal-access-team-chip { display: inline-flex; cursor: pointer; font-weight: 500; }
+.portal-access-team-chip input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.portal-access-team-chip span { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 12px; border: 1px solid var(--line-2); border-radius: 999px; background: var(--surface); font-size: 13px; }
+.portal-access-team-chip small { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.portal-access-team-chip input:checked + span { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; }
+.portal-access-team-chip input:focus-visible + span { outline: 3px solid var(--accent); outline-offset: 2px; }
+.portal-access-picker { border: 1px solid var(--line-2); border-radius: 10px; background: var(--surface); }
+.portal-access-picker:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.portal-access-person-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 8px 0; }
+.portal-access-person-chips:empty { display: none; }
+.portal-access-person-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 4px 0 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); font-size: 13px; font-weight: 600; }
+.portal-access-person-chip small { font-size: 12px; font-weight: 500; color: var(--muted); }
+.portal-access-person-chip button { display: grid; place-items: center; width: 24px; height: 24px; border: 0; border-radius: 50%; background: none; color: var(--muted); }
+.portal-access-person-chip button:hover { background: var(--hover); color: var(--ink); }
+.portal-access-search { display: flex; align-items: center; padding: 0 12px; }
+.portal-access-search input { flex: 1; display: block; margin: 0; padding: 11px 0; border: 0; background: none; outline: 0; font-size: 14px; color: var(--ink); }
+.portal-access-results { list-style: none; margin: 0; padding: 0; }
+.portal-access-results:not(:empty) { padding: 4px 6px 6px; border-top: 1px solid var(--line); }
+.portal-access-results button { display: flex; align-items: center; width: 100%; min-height: 36px; padding: 8px; border: 0; border-radius: 8px; background: none; color: var(--ink); text-align: left; font-size: 13.5px; font-weight: 600; }
+.portal-access-results button:hover, .portal-access-results button:focus-visible { background: var(--hover); }
+.portal-access-results small { display: block; font-size: 12px; font-weight: 500; color: var(--muted); }
+.portal-access-no-hit { padding: 10px 8px; font-size: 13px; color: var(--muted); }
+.portal-access-summary { margin: 16px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); color: var(--ink-2); font-size: 13px; line-height: 1.5; }
+@media (pointer: coarse) { .portal-access-team-chip span, .portal-access-person-chip, .portal-access-results button { min-height: 40px; } }
+
 /* ---------- Dokumente: Dokumentweg (Pipeline) ---------- */
 .portal-pipeline { display: flex; align-items: stretch; gap: 10px; padding: 14px 20px; overflow-x: auto; }
 .portal-pipeline button { display: flex; align-items: center; gap: 10px; min-height: 50px; padding: 7px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink-2); font-size: 13px; white-space: nowrap; }

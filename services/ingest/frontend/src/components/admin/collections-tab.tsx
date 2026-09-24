@@ -5,7 +5,9 @@ import Link from 'next/link';
 import { ArrowRight, Pencil, Plus, RefreshCw } from 'lucide-react';
 import { apiJson } from '@/lib/api';
 import { Button, buttonVariants } from '@/components/ui/button';
+import { accessSummary } from '@/lib/access-summary';
 import { jsonBody, portalError, type KnowledgeSpace } from '@/lib/portal';
+import { AccessDialog } from '@/components/portal/access-dialog';
 import { EmptyState, Notice } from '@/components/portal/shared';
 
 type ManagedCollection = Omit<KnowledgeSpace, 'can_manage'> & {
@@ -18,7 +20,6 @@ type ManagedCollection = Omit<KnowledgeSpace, 'can_manage'> & {
   released_count: number;
 };
 type CollectionPage = { items: ManagedCollection[]; total: number };
-type Team = { id: string; name: string };
 const PAGE_SIZE = 20;
 
 export function CollectionsTab() {
@@ -107,33 +108,25 @@ function CollectionEditor({ collection, onCancel, onSaved }: {
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
   const [original, setOriginal] = useState<KnowledgeSpace | null>(null);
-  const [teams, setTeams] = useState<Team[]>([]);
   const [name, setName] = useState(collection.name);
   const [description, setDescription] = useState(collection.description || '');
-  const [selected, setSelected] = useState<string[]>(collection.read_teams);
-  const [shareAll, setShareAll] = useState(collection.read_teams.length === 0);
-  const [confirmed, setConfirmed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
+  const [accessOpen, setAccessOpen] = useState(false);
 
   useEffect(() => {
     heading.current?.focus();
     const controller = new AbortController();
-    Promise.all([
-      apiJson<KnowledgeSpace>(`/api/v1/collections/${encodeURIComponent(collection.collection_id)}`, { signal: controller.signal }),
-      apiJson<{ items: Team[] }>('/api/v1/auth/admin/teams', { signal: controller.signal }),
-    ]).then(([current, available]) => {
-      if (controller.signal.aborted) return;
-      setOriginal(current); setName(current.name); setDescription(current.description || '');
-      setSelected(current.read_teams); setShareAll(current.read_teams.length === 0); setTeams(available.items); setError('');
-    }).catch(err => { if (!controller.signal.aborted) setError(portalError(err)); });
+    apiJson<KnowledgeSpace>(`/api/v1/collections/${encodeURIComponent(collection.collection_id)}`, { signal: controller.signal })
+      .then(current => {
+        if (controller.signal.aborted) return;
+        setOriginal(current); setName(current.name); setDescription(current.description || ''); setError('');
+      }).catch(err => { if (!controller.signal.aborted) setError(portalError(err)); });
     return () => controller.abort();
   }, [collection.collection_id, revision]);
 
-  const teamNames = [...new Set([...teams.map(team => team.name), ...(original?.read_teams || [])])].sort((a, b) => a.localeCompare(b, 'de'));
-  const widensToEveryone = shareAll && Boolean(original?.read_teams.length);
-  const canSave = Boolean(original && name.trim() && !saving && (shareAll ? !widensToEveryone || confirmed : selected.length > 0));
+  const canSave = Boolean(original && name.trim() && !saving);
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -141,7 +134,7 @@ function CollectionEditor({ collection, onCancel, onSaved }: {
     setSaving(true); setError('');
     try {
       await apiJson(`/api/v1/collections/${encodeURIComponent(collection.collection_id)}`, {
-        ...jsonBody({ name: name.trim(), description: description.trim(), read_teams: shareAll ? [] : selected }), method: 'PATCH',
+        ...jsonBody({ name: name.trim(), description: description.trim() }), method: 'PATCH',
       });
       onSaved();
     } catch (err) { setError(portalError(err)); setSaving(false); }
@@ -155,25 +148,16 @@ function CollectionEditor({ collection, onCancel, onSaved }: {
     <form className="portal-form" onSubmit={save}>
       <label>Name<input required maxLength={255} value={name} disabled={!original || saving} onChange={event => setName(event.target.value)} /></label>
       <label>Beschreibung<textarea rows={3} value={description} disabled={!original || saving} onChange={event => setDescription(event.target.value)} /></label>
-      <fieldset disabled={!original || saving}>
-        <legend>Berechtigte</legend>
-        <label className="portal-choice"><input type="radio" name="admin-readers" checked={!shareAll} onChange={() => { setShareAll(false); setConfirmed(false); }} />Ausgewählte Teams</label>
-        {!shareAll && <div className="ml-6">
-          {teamNames.map(team => <label className="portal-choice" key={team}><input type="checkbox" checked={selected.includes(team)}
-            onChange={event => setSelected(current => event.target.checked ? [...current, team] : current.filter(value => value !== team))} />
-            {team}{!teams.some(item => item.name === team) && <span className="text-xs text-slate-500">Bestehender Eintrag</span>}
-          </label>)}
-          {!selected.length && <p className="portal-field-hint">Wähle mindestens ein Team. Ohne Auswahl wird nicht gespeichert.</p>}
-          {!teamNames.length && <p className="portal-field-hint">Lege zuerst unter „Teams“ ein Team an.</p>}
-        </div>}
-        <label className="portal-choice"><input type="radio" name="admin-readers" checked={shareAll} onChange={() => setShareAll(true)} />Alle angemeldeten Teams</label>
-        {widensToEveryone && <label className="portal-choice portal-access-confirm"><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />Ich bestätige, dass freigegebene Inhalte allen angemeldeten Teams zur Verfügung stehen dürfen.</label>}
-      </fieldset>
+      <div className="portal-access-line">
+        <span><small>Berechtigte</small><strong>{original ? accessSummary(original) : '…'}</strong></span>
+        <Button type="button" variant="outline" size="sm" disabled={!original} onClick={() => setAccessOpen(true)}>Zugriff ändern</Button>
+      </div>
       <p className="portal-field-hint">Leserechte gelten für Chat, Bots und Suche. Die Administration und die Eigentümer behalten die Verwaltung. Änderungen werden an die Suche weitergegeben.</p>
       <div className="portal-form-actions"><Button type="submit" disabled={!canSave}>{saving ? 'Wird gespeichert …' : 'Änderungen speichern'}</Button>
         <Button type="button" variant="ghost" disabled={saving} onClick={onCancel}>Abbrechen</Button>
         <Link className="portal-inline-link" href={`/knowledge/${encodeURIComponent(collection.collection_id)}`}>Inhalte ansehen<ArrowRight size={14} /></Link>
       </div>
     </form>
+    {accessOpen && original && <AccessDialog collection={original} onClose={() => setAccessOpen(false)} onSaved={updated => { setOriginal(updated); setAccessOpen(false); }} />}
   </section>;
 }
