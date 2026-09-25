@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { LOCALES, type Locale } from './config';
 import { useI18n } from './provider';
 import { putJson } from '@/lib/api-client';
@@ -18,14 +18,24 @@ import { putJson } from '@/lib/api-client';
 export function LanguageSwitch({ className, persist = false }: { className?: string; persist?: boolean }) {
   const { locale, setLocale, t } = useI18n();
   const [saveFailed, setSaveFailed] = useState(false);
+  // Saves run strictly one after another and a superseded one is skipped,
+  // so the account always ends on the last choice (never an older request
+  // landing late), and only the newest save may report a failure.
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
+  const latestSave = useRef(0);
 
-  async function select(option: Locale) {
+  function select(option: Locale) {
     if (option === locale) return;
     setLocale(option);
     setSaveFailed(false);
     if (!persist) return;
-    const result = await putJson<{ locale: Locale }>('/api/session/locale', { locale: option });
-    if (!result.ok) setSaveFailed(true);
+    const seq = ++latestSave.current;
+    saveQueue.current = saveQueue.current.then(async () => {
+      if (seq !== latestSave.current) return;
+      // Never let the queue reject, or every later save would be skipped.
+      const result = await putJson<{ locale: Locale }>('/api/session/locale', { locale: option }).catch(() => null);
+      if (!result?.ok && seq === latestSave.current) setSaveFailed(true);
+    });
   }
 
   return (

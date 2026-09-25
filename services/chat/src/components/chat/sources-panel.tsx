@@ -12,10 +12,9 @@ interface SourcesPanelProps {
    * selected answer used no retrieval at all. Distinct from `[]`, which
    * means retrieval ran for that answer and found nothing. */
   sources: Source[] | null;
-  /** The knowledge-space scope this turn's retrieval actually ran
-   * against, for the trust card at the bottom — the composer's own
-   * current selection label (see `scopeLabel`), not tied to any one
-   * message. */
+  /** The knowledge-space scope the shown answer's retrieval actually ran
+   * against, for the trust card at the bottom — derived from that
+   * answer's own trace (see chat-app.tsx's `sourcesScopeLabel`). */
   scopeLabel: string;
 }
 

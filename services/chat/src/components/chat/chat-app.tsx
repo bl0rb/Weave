@@ -52,12 +52,6 @@ export function ChatApp() {
   const [conversations, setConversations] = useState<ConversationSummary[] | null>(null);
   const [conversationsError, setConversationsError] = useState<MappedError | null>(null);
 
-  // The last question actually sent, kept for the guard banner's own
-  // "Auswahl zurücksetzen & neu fragen" action (filter_excluded_all) — see
-  // handleResetScopeAndRetry below. Distinct from `draft`, which by then
-  // has already been cleared back to "".
-  const [lastSentMessage, setLastSentMessage] = useState<string | null>(null);
-
   // Which assistant message's sources the right-hand SourcesPanel shows —
   // `null` means "the latest one" (see `activeSourceMessage` below), the
   // default per design target 2. Reset to `null` on every new turn/
@@ -345,7 +339,6 @@ export function ChatApp() {
       const userMsg = userMessage(trimmed);
       const assistantMsg = pendingAssistantMessage();
       setMessages((prev) => [...prev, userMsg, assistantMsg]);
-      setLastSentMessage(trimmed);
       setSelectedSourceMessageId(null);
       setSending(true);
 
@@ -376,7 +369,9 @@ export function ChatApp() {
 
   async function handleSend() {
     const trimmed = draft.trim();
-    if (!trimmed) return;
+    // Same guard as sendTurn, checked BEFORE clearing the draft so a send
+    // that would be rejected never throws the typed question away.
+    if (!trimmed || !selectedBotId || sending) return;
     setDraft('');
     await sendTurn(trimmed, selectedCollections);
   }
@@ -386,10 +381,14 @@ export function ChatApp() {
   // what excluded every collection this bot could otherwise search, so
   // clearing it and resending the same question is guaranteed to be a
   // meaningfully different retry, not just a repeat of the same failure.
-  function handleResetScopeAndRetry() {
-    if (!lastSentMessage) return;
+  // Resends the question the clicked banner's answer responded to (the
+  // nearest preceding user message), not whatever was asked last.
+  function handleResetScopeAndRetry(assistantMessageId: string) {
+    const index = messages.findIndex((message) => message.id === assistantMessageId);
+    const question = messages.slice(0, Math.max(index, 0)).findLast((message) => message.role === 'user')?.content;
+    if (!question) return;
     setSelectedCollections([]);
-    void sendTurn(lastSentMessage, []);
+    void sendTurn(question, []);
   }
 
   // Loads one past conversation's full transcript (GET
@@ -482,6 +481,12 @@ export function ChatApp() {
   const activeSourceMessage =
     (selectedSourceMessageId ? assistantMessages.find((message) => message.id === selectedSourceMessageId) : null) ??
     latestAnsweredMessage;
+  // The trust card describes the scope the SHOWN answer's retrieval ran
+  // against (its own trace), not the composer's current selection; only an
+  // older backend that doesn't mirror `requested_collections` falls back.
+  const requestedCollections = activeSourceMessage?.trace?.retrieval?.requested_collections;
+  const sourcesScopeLabel =
+    requestedCollections === undefined ? currentScopeLabel : scopeLabel(requestedCollections ?? [], collections, t);
 
   return (
     <div className="chat-shell">
@@ -563,7 +568,7 @@ export function ChatApp() {
         />
       </main>
 
-      <SourcesPanel sources={activeSourceMessage?.sources ?? null} scopeLabel={currentScopeLabel} />
+      <SourcesPanel sources={activeSourceMessage?.sources ?? null} scopeLabel={sourcesScopeLabel} />
     </div>
   );
 }

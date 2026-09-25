@@ -33,9 +33,9 @@ interface MessageBubbleProps {
    * other message content (this component's own existing tests) don't
    * need to thread a bot name through just to render at all. */
   assistantName?: string;
-  /** Clears the composer's knowledge-space selection and resends the last
-   * question — forwarded to `GuardBanner`, which only renders it as a
-   * button for `reason: 'filter_excluded_all'`. */
+  /** Clears the composer's knowledge-space selection and resends the
+   * question this answer responded to — forwarded to `GuardBanner`, which
+   * only renders it as a button for `reason: 'filter_excluded_all'`. */
   onResetScopeAndRetry?: () => void;
   /** Whether this message is the one currently shown in the right-hand
    * sources panel (see chat-app.tsx's `selectedSourceMessageId`) — drives

@@ -8,7 +8,8 @@ import type { UiMessage } from '@/lib/chat-types';
 interface MessageListProps {
   messages: UiMessage[];
   assistantName?: string;
-  onResetScopeAndRetry?: () => void;
+  /** Called with the id of the answer whose guard banner was clicked. */
+  onResetScopeAndRetry?: (assistantMessageId: string) => void;
   selectedSourceMessageId: string | null;
   onSelectForSourcesPanel: (id: string) => void;
 }
@@ -46,7 +47,7 @@ export function MessageList({
           key={message.id}
           message={message}
           assistantName={assistantName}
-          onResetScopeAndRetry={onResetScopeAndRetry}
+          onResetScopeAndRetry={onResetScopeAndRetry ? () => onResetScopeAndRetry(message.id) : undefined}
           isSelectedForSourcesPanel={message.id === selectedSourceMessageId}
           onSelectForSourcesPanel={() => onSelectForSourcesPanel(message.id)}
         />

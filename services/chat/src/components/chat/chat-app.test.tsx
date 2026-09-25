@@ -371,6 +371,64 @@ describe('ChatApp collection filter', () => {
     // The scope picker itself must reflect the cleared selection too.
     expect(screen.getByRole('button', { name: /Alle Bereiche/ })).toBeTruthy();
   });
+
+  it('resends the question behind the clicked guard banner, not the last question asked', async () => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>((input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/bots')) return Promise.resolve(jsonResponse(BOTS));
+      if (url.endsWith('/api/collections')) return Promise.resolve(jsonResponse(COLLECTIONS));
+      if (url.endsWith('/api/chat/stream')) {
+        const body = JSON.parse((init!.body as string) ?? '{}');
+        const encoder = new TextEncoder();
+        // Only the first question, filtered, is excluded by the scope.
+        const guardTriggered = !!body.collections && body.message === 'Erste Frage';
+        const trace = {
+          type: 'trace',
+          trace: {
+            intent: 'faq', confidence: 1, needs_retrieval: true, needs_tool: false,
+            retrieval: null, model: null, router_mode: 'llm', timings_ms: {},
+            guard: { triggered: guardTriggered, reason: guardTriggered ? 'filter_excluded_all' : null },
+            n8n: null, agent: null,
+          },
+        };
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(trace)}\n\n`));
+            if (!guardTriggered) controller.enqueue(encoder.encode('data: {"type":"delta","text":"Antwort"}\n\n'));
+            controller.enqueue(encoder.encode('data: {"type":"sources","sources":[]}\n\n'));
+            controller.enqueue(encoder.encode('data: {"type":"done"}\n\n'));
+            controller.close();
+          },
+        });
+        return Promise.resolve(new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+      }
+      throw new Error(`unexpected fetch to ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const streamBodies = () =>
+      fetchMock.mock.calls
+        .filter(([req]) => String(req).endsWith('/api/chat/stream'))
+        .map(([, init]) => JSON.parse(init!.body as string));
+
+    render(<ChatApp />);
+    await screen.findByRole('option', { name: 'Bot A' });
+    fireEvent.click(screen.getByRole('button', { name: /Alle Bereiche/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /Legal 2026/ }));
+
+    await sendMessage(fetchMock, 'Erste Frage');
+    const resetButton = await screen.findByRole('button', { name: /Auswahl zurücksetzen & neu fragen/ });
+
+    fireEvent.change(screen.getByPlaceholderText('Nachricht schreiben…'), { target: { value: 'Zweite Frage' } });
+    const sendButton = screen.getByRole('button', { name: 'Nachricht senden' }) as HTMLButtonElement;
+    await waitFor(() => expect(sendButton.disabled).toBe(false));
+    fireEvent.click(sendButton);
+    await waitFor(() => expect(screen.getByText('Antwort')).toBeTruthy());
+
+    fireEvent.click(resetButton);
+    await waitFor(() => expect(streamBodies()).toHaveLength(3));
+    expect(streamBodies()[2].message).toBe('Erste Frage');
+    expect(streamBodies()[2]).not.toHaveProperty('collections');
+  });
 });
 
 describe('ChatApp account locale sync', () => {
