@@ -5,6 +5,9 @@ import { useRouter } from 'next/navigation';
 import { AlertCircle, KeyRound, LogIn } from 'lucide-react';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { useI18n } from '@/i18n/provider';
+import { LanguageSwitch } from '@/i18n/language-switch';
+import type { MessageKey } from '@/i18n/messages';
 import type { MappedError } from '@/lib/errors';
 
 // Keyed by the `error` query param /api/auth/sso/callback redirects here
@@ -12,13 +15,11 @@ import type { MappedError } from '@/lib/errors';
 // Deliberately separate from src/lib/errors.ts's `MESSAGES` table: that
 // one maps Weave-API HTTP statuses encountered mid-chat, this one maps
 // SSO-handoff-specific failure reasons that only ever occur on this page.
-const SSO_ERROR_MESSAGES: Record<string, string> = {
-  missing_code: 'Die SSO-Anmeldung ist ohne Code vom Gateway zurückgekommen. Bitte versuche es erneut.',
-  invalid_code: 'Der SSO-Anmeldevorgang ist abgelaufen oder ungültig. Bitte versuche es erneut.',
-  gateway_unreachable: 'Weave-API war während der SSO-Anmeldung nicht erreichbar. Bitte versuche es in Kürze erneut.',
+const SSO_ERROR_KEYS: Record<string, MessageKey> = {
+  missing_code: 'chat.login.ssoError.missingCode',
+  invalid_code: 'chat.login.ssoError.invalidCode',
+  gateway_unreachable: 'chat.login.ssoError.gatewayUnreachable',
 };
-const DEFAULT_SSO_ERROR_MESSAGE =
-  'Die Anmeldung über SSO ist fehlgeschlagen. Bitte versuche es erneut oder melde dich mit deinem Personal-Token an.';
 
 interface LoginFormProps {
   /** Weave-API's own GET /v1/auth/ingest/login URL (src/lib/sso.ts's
@@ -61,6 +62,7 @@ interface LoginFormProps {
  */
 export function LoginForm({ weaveLoginUrl, ssoLoginUrl, ssoError }: LoginFormProps) {
   const router = useRouter();
+  const { t } = useI18n();
   const [token, setToken] = useState('');
   const [pending, setPending] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -68,7 +70,7 @@ export function LoginForm({ weaveLoginUrl, ssoLoginUrl, ssoError }: LoginFormPro
   // A token-form submission failure (set below) always takes priority
   // over a stale `ssoError` still sitting in the URL from an earlier
   // failed SSO attempt — the user has since tried something else.
-  const displayError = formError ?? (ssoError ? (SSO_ERROR_MESSAGES[ssoError] ?? DEFAULT_SSO_ERROR_MESSAGE) : null);
+  const displayError = formError ?? (ssoError ? t(SSO_ERROR_KEYS[ssoError] ?? 'chat.login.ssoError.default') : null);
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -90,43 +92,41 @@ export function LoginForm({ weaveLoginUrl, ssoLoginUrl, ssoError }: LoginFormPro
       }
 
       const body = (await res.json().catch(() => null)) as MappedError | null;
-      setFormError(body?.message ?? 'Anmeldung fehlgeschlagen. Bitte versuche es erneut.');
+      setFormError(body?.message ?? t('chat.login.genericFailure'));
     } catch {
-      setFormError('Die Anmeldeseite konnte den Server nicht erreichen. Bitte versuche es erneut.');
+      setFormError(t('chat.login.networkFailure'));
     } finally {
       setPending(false);
     }
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[var(--background)] px-4 py-12 text-[var(--foreground)]">
+    <main className="flex min-h-screen items-center justify-center bg-[var(--bg)] px-4 py-12 text-[var(--ink)]">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--accent-soft)] text-[var(--accent)]">
+          <div className="flex h-12 w-12 items-center justify-center rounded-[var(--radius-card)] bg-[var(--accent-soft)] text-[var(--accent)]">
             <KeyRound className="h-6 w-6" aria-hidden="true" />
           </div>
-          <span className="text-lg font-semibold">Weave Chat</span>
+          <span className="text-lg font-semibold">{t('common.appTitle')}</span>
         </div>
 
-        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-sm sm:p-8">
-          <h1 className="text-lg font-semibold">Anmelden</h1>
-          <p className="mt-1 text-sm text-[var(--foreground-muted)]">
-            {weaveLoginUrl
-              ? 'Melde dich mit deinem Weave-Konto an — demselben, mit dem du dich auch bei Weave Ingest anmeldest.'
-              : 'Melde dich mit deinem persönlichen Weave-API-Token an. Es wird ausschließlich serverseitig als httpOnly-Cookie gespeichert — nie im Browser-JavaScript.'}
+        <div className="rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--surface)] p-6 shadow-sm sm:p-8">
+          <h1 className="text-lg font-semibold">{t('chat.login.heading')}</h1>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            {weaveLoginUrl ? t('chat.login.subtitleFederated') : t('chat.login.subtitleToken')}
           </p>
 
           {weaveLoginUrl ? (
             <>
               <a href={weaveLoginUrl} className={cn(buttonVariants(), 'mt-6 w-full')}>
                 <LogIn className="h-4 w-4" aria-hidden="true" />
-                Mit Weave anmelden
+                {t('chat.login.withWeave')}
               </a>
 
-              <div className="my-5 flex items-center gap-3 text-xs text-[var(--foreground-muted)]" aria-hidden="true">
-                <span className="h-px flex-1 bg-[var(--border)]" />
-                oder mit einem Token
-                <span className="h-px flex-1 bg-[var(--border)]" />
+              <div className="my-5 flex items-center gap-3 text-xs text-[var(--muted)]" aria-hidden="true">
+                <span className="h-px flex-1 bg-[var(--line)]" />
+                {t('chat.login.orWithToken')}
+                <span className="h-px flex-1 bg-[var(--line)]" />
               </div>
             </>
           ) : null}
@@ -134,7 +134,7 @@ export function LoginForm({ weaveLoginUrl, ssoLoginUrl, ssoError }: LoginFormPro
           <form onSubmit={onSubmit} className={cn('flex flex-col gap-4', weaveLoginUrl ? '' : 'mt-6')}>
             <div>
               <label htmlFor="token" className="mb-1.5 block text-sm font-medium">
-                Personal-API-Token
+                {t('chat.login.tokenLabel')}
               </label>
               <input
                 id="token"
@@ -148,14 +148,14 @@ export function LoginForm({ weaveLoginUrl, ssoLoginUrl, ssoError }: LoginFormPro
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
                 placeholder="wt_..."
-                className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 text-sm outline-none transition placeholder:text-[var(--foreground-muted)] focus-visible:border-[var(--accent)]"
+                className="h-10 w-full rounded-[var(--radius-control)] border border-[var(--line-2)] bg-[var(--surface)] px-3 text-sm outline-none transition placeholder:text-[var(--muted)] focus-visible:border-[var(--accent)] focus-visible:ring-[3px] focus-visible:ring-[var(--accent-soft)]"
               />
             </div>
 
             {displayError ? (
               <div
                 role="alert"
-                className="flex items-start gap-2 rounded-xl border border-[var(--danger)]/30 bg-[var(--danger-soft)] px-3 py-2.5 text-sm text-[var(--danger)]"
+                className="flex items-start gap-2 rounded-[var(--radius-control)] border border-[var(--err)]/30 bg-[var(--err-bg)] px-3 py-2.5 text-sm text-[var(--err)]"
               >
                 <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />
                 <span>{displayError}</span>
@@ -163,24 +163,28 @@ export function LoginForm({ weaveLoginUrl, ssoLoginUrl, ssoError }: LoginFormPro
             ) : null}
 
             <Button type="submit" disabled={pending || !token.trim()} className="mt-1 w-full">
-              {pending ? 'Wird geprüft…' : 'Anmelden'}
+              {pending ? t('chat.login.submitPending') : t('chat.login.submit')}
             </Button>
           </form>
 
           {ssoLoginUrl ? (
             <>
-              <div className="my-5 flex items-center gap-3 text-xs text-[var(--foreground-muted)]" aria-hidden="true">
-                <span className="h-px flex-1 bg-[var(--border)]" />
-                oder
-                <span className="h-px flex-1 bg-[var(--border)]" />
+              <div className="my-5 flex items-center gap-3 text-xs text-[var(--muted)]" aria-hidden="true">
+                <span className="h-px flex-1 bg-[var(--line)]" />
+                {t('chat.login.or')}
+                <span className="h-px flex-1 bg-[var(--line)]" />
               </div>
 
               <a href={ssoLoginUrl} className={cn(buttonVariants({ variant: 'outline' }), 'w-full')}>
                 <LogIn className="h-4 w-4" aria-hidden="true" />
-                Mit SSO anmelden
+                {t('chat.login.withSso')}
               </a>
             </>
           ) : null}
+        </div>
+
+        <div className="mt-6 flex justify-center">
+          <LanguageSwitch />
         </div>
       </div>
     </main>

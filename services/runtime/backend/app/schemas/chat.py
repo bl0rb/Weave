@@ -27,6 +27,15 @@ class ChatUser(BaseModel):
     id: str | None = None
     team: str | None = None
     teams: list[str] | None = None
+    # The caller's Weave-Ingest user id -- NOT the same as `id` above (this
+    # gateway's own local user id, a different UUID space). Used ONLY to
+    # resolve a per-person Collections grant (`read_users`) via
+    # `retrieval_client.list_collections(..., user=...)`, since that ACL is
+    # keyed on Weave-Ingest user ids specifically. Unset means the gateway
+    # had no known Weave-Ingest identity for this caller (e.g. a locally-
+    # provisioned account with no Ingest login) -- only the public + team
+    # parts of Collections readability apply then, never a wildcard.
+    subject: str | None = None
 
     @property
     def effective_teams(self) -> list[str]:

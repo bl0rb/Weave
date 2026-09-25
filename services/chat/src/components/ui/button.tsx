@@ -2,20 +2,26 @@ import * as React from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
+// Sizing/radius/focus match the portal's own button (services/ingest/
+// frontend/src/components/ui/button.tsx): 40px default / 32px "sm" (grows
+// to 40px on a coarse pointer via the `.btn-sm` marker class — see
+// globals.css), radius-control (8px), 14px/600 label, a reserved 1px
+// border so focus can recolor it without a layout shift, and a
+// accent-border + accent-soft ring focus treatment.
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-50',
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[var(--radius-control)] border border-transparent text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:border-[var(--accent)] focus-visible:ring-[3px] focus-visible:ring-[var(--accent-soft)] disabled:pointer-events-none disabled:opacity-50',
   {
     variants: {
       variant: {
-        default: 'bg-[var(--accent)] text-[var(--accent-foreground)] hover:opacity-90',
+        default: 'bg-[var(--accent)] text-[var(--on-accent)] hover:bg-[var(--accent-hover)]',
         outline:
-          'border border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)] hover:bg-[var(--surface-muted)]',
-        ghost: 'text-[var(--foreground)] hover:bg-[var(--surface-muted)]',
-        danger: 'bg-[var(--danger)] text-white hover:opacity-90',
+          'border-[var(--line-2)] bg-[var(--surface)] text-[var(--ink)] hover:bg-[var(--surface-2)]',
+        ghost: 'text-[var(--ink)] hover:bg-[var(--surface-2)]',
+        danger: 'bg-[var(--err)] text-white hover:opacity-90',
       },
       size: {
         default: 'h-10 px-4 py-2',
-        sm: 'h-8 rounded-md px-3 text-xs',
+        sm: 'btn-sm h-8 px-3',
       },
     },
     defaultVariants: {

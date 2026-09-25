@@ -41,6 +41,8 @@ Weave-API ist das **Bot-Gateway** und der zentrale Einstiegspunkt des Weave-Syst
 - POST `/v1/chat/completions`: { model (= bot_id), messages[], stream? } — OpenAI-Chat-Completions-Format, zustandslos, keine Persistierung, **kein** `collections`-Feld (siehe unten)
 - GET `/v1/models`: kein Body
 - GET `/v1/collections`: kein Body — die Team-Zugehörigkeit kommt aus dem Bearer-Token/der Session des Aufrufers, nie aus einem Parameter
+- GET `/v1/me`: kein Body — das eigene Profil des Aufrufers
+- PUT `/v1/me/locale`: { locale: "de" | "en" | null } — eigene UI-Sprachpräferenz setzen/löschen
 - POST `/internal/tokens/introspect`: { token } — hinter einem eigenen Service-Token, nicht dem End-Nutzer-Bearer-Token
 - GET `/v1/auth/oidc/login`, GET `/v1/auth/oidc/callback`, POST `/v1/auth/logout`: OIDC-Browser-Session (siehe "OIDC-Anmeldung einrichten" unten) — kein Body, nur wenn `OIDC_ISSUER`/`OIDC_CLIENT_ID` gesetzt sind, sonst `404`. `GET /v1/auth/oidc/login` akzeptiert zusätzlich einen optionalen `return_to`-Query-Parameter (siehe "Cross-Origin-Übergabe" unten)
 - POST `/v1/auth/session/exchange`: { code } — tauscht einen Übergabe-Code aus der Cross-Origin-Übergabe gegen ein echtes Sitzungs-Token; ebenfalls nur erreichbar, wenn OIDC konfiguriert ist, sonst `404`
@@ -51,6 +53,8 @@ Weave-API ist das **Bot-Gateway** und der zentrale Einstiegspunkt des Weave-Syst
 - POST `/v1/chat/completions`: JSON im OpenAI-Format `{ id, object, created, model, choices[], usage? }`, oder — mit `"stream": true` — `text/event-stream` aus `chat.completion.chunk`-Ereignissen + `[DONE]`
 - GET `/v1/models`: JSON im OpenAI-Format `{ object: "list", data: [{ id, object, created, owned_by }, ...] }`
 - GET `/v1/collections`: JSON-Array `[{ slug, name, description, public }, ...]` — Weave-Retrievals eigenes `CollectionOut`, unverändert durchgereicht
+- GET `/v1/me`: `{ username, locale }`
+- PUT `/v1/me/locale`: `{ locale }` bei Erfolg; `422` bei ungültigem Wert; `503` (Wert bleibt lokal unverändert), wenn der Aufrufer über Weave-Ingest authentifiziert ist und Weave-Ingest nicht erreichbar/konfiguriert ist
 - POST `/internal/tokens/introspect`: `{ active: true, user_id, username, team, is_admin }` bei gültigem Token, sonst `{ active: false }` (immer HTTP 200)
 - GET `/v1/auth/oidc/login`: `302` zum Provider, setzt ein kurzlebiges signiertes State-Cookie
 - GET `/v1/auth/oidc/callback`: `302` nach `/` (oder, bei gültigem `return_to`, nach `<return_to>?code=<code>` — siehe unten), setzt das Session-Cookie (`weave_api_session`, httpOnly) in **jedem** Fall
@@ -129,8 +133,13 @@ als `user.team` in `POST /v1/chat`s Aufruf an Weave-Runtimes eigene
 `allowed_teams`-Prüfung, und als `team`-Query-Parameter, den
 `GET /v1/collections` an Weave-Retrievals Collections-Lese-Autorität
 weiterreicht, um zu bestimmen, welche Collections dieser Nutzer lesen darf.
-Ein Nutzer ohne `--team` sieht dort nur öffentliche Collections (leere
-`read_teams`-Liste). Es gibt noch kein `--admin`-Flag -- ein `is_admin`
+Ein Nutzer ohne `--team` sieht dort nur öffentliche Collections
+(`visibility == "public"`, siehe `contracts/chunk-store.md`) -- ein
+über die CLI angelegter lokaler Nutzer hat zudem kein bekanntes
+Weave-Ingest-`subject`, sieht also auch keine ihm persönlich per
+`read_users` freigegebenen Collections (nur der öffentliche und der
+Team-Anteil der Regel gilt, siehe `contracts/internal-chat.md`). Es
+gibt noch kein `--admin`-Flag -- ein `is_admin`
 gesetzter Nutzer (siehe `POST /internal/tokens/introspect` unten) muss
 aktuell direkt in der Datenbank markiert werden.
 
@@ -346,12 +355,16 @@ data: {"type":"done"}
 Liefert die Collections, die der aufrufende Nutzer lesen darf -- authentifiziert
 und rate-limited wie jede andere `/v1/*`-Route. Weave-API beantwortet das
 nicht selbst, sondern fragt Weave-Retrievals eigene Collections-Lese-
-Autorität (`GET /api/v1/collections`, dort `app/api/collections.py`) nach dem
-**Team des aufrufenden Nutzers** -- niemals nach einem anderen Team, dafür
+Autorität (`GET /api/v1/collections`, dort `app/api/collections.py`) nach den
+**Teams des aufrufenden Nutzers UND, falls bekannt, seinem
+Weave-Ingest-`subject`** (das per `oidc_subject`-Präfix erkannte
+Weave-Ingest-Nutzer-Id eines über die Ingest-Anmeldung eingeloggten Nutzers,
+siehe `app/services/ingest_identity.py` -- ein rein lokal angelegter Nutzer
+hat keins) -- niemals nach einem anderen Nutzer/Team, dafür
 gibt es keinen Parameter (`app/services/retrieval_client.py`,
-`app/api/collections.py`). Ein Nutzer ohne `team` (siehe CLI oben) bekommt
-nur öffentliche Collections zurück, exakt Weave-Retrievals eigene
-`team=None`-Semantik.
+`app/api/collections.py`). Ein Nutzer ohne `team` und ohne bekanntes
+`subject` bekommt nur öffentliche Collections zurück, exakt Weave-Retrievals
+eigene `team=None`/`user=None`-Semantik.
 
 ```bash
 curl -s http://localhost:8004/v1/collections \

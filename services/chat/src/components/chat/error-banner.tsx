@@ -8,7 +8,7 @@ export function ErrorBanner({ error }: { error: MappedError }) {
   return (
     <div
       role="alert"
-      className="flex flex-col gap-1 rounded-lg border border-[var(--danger)]/30 bg-[var(--danger-soft)] px-3 py-2 text-xs text-[var(--danger)]"
+      className="flex flex-col gap-1 rounded-[var(--radius-control)] border border-[var(--err)]/30 bg-[var(--err-bg)] px-3 py-2 text-xs text-[var(--err)]"
     >
       <span className="flex items-start gap-2">
         <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />

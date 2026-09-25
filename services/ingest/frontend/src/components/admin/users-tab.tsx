@@ -28,10 +28,12 @@ import {
   Toggle,
   useAdminList,
 } from '@/components/admin/admin-shared';
+import { useI18n } from '@/i18n/provider';
 
 const NO_TEAM = '';
 
 export function UsersTab() {
+  const { t, formatDate } = useI18n();
   const users = useAdminList<AuthUser>('/api/v1/auth/admin/users');
   const teams = useAdminList<Team>('/api/v1/auth/admin/teams');
 
@@ -41,29 +43,31 @@ export function UsersTab() {
 
   const teamName = (id: string | null) =>
     id === null ? '—' : (teams.items.find((t) => t.id === id)?.name ?? `#${id}`);
+  const teamRoleLabel = (role: 'member' | 'reader') =>
+    role === 'reader' ? t('admin.users.teamRole.reader') : t('admin.users.teamRole.member');
 
   return (
     <div className="space-y-6">
       <SectionCard
-        title="Users"
-        description="Manage accounts, roles, and team membership."
+        title={t('admin.users.title')}
+        description={t('admin.users.description')}
         actions={
           <Button size="sm" onClick={() => setCreating(true)}>
             <Plus className="h-4 w-4" />
-            Create user
+            {t('admin.users.create')}
           </Button>
         }
       >
         <ErrorNotice message={users.error} />
         {users.loading ? (
-          <LoadingState label="Loading users…" />
+          <LoadingState label={t('admin.users.loading')} />
         ) : users.items.length === 0 ? (
           <div className="flex flex-col items-center gap-3 py-10 text-center">
             <UsersIcon className="h-8 w-8 text-slate-300" />
-            <p className="text-sm text-slate-500">No users yet. Create the first one to get started.</p>
+            <p className="text-sm text-slate-500">{t('admin.users.empty')}</p>
             <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
               <Plus className="h-4 w-4" />
-              Create user
+              {t('admin.users.create')}
             </Button>
           </div>
         ) : (
@@ -71,14 +75,14 @@ export function UsersTab() {
             <table className="w-full table-auto text-left text-xs sm:text-sm">
               <thead className="text-slate-500">
                 <tr>
-                  <th className="pb-2 pr-3 font-medium">Username</th>
-                  <th className="hidden pb-2 pr-3 font-medium md:table-cell">Email</th>
-                  <th className="pb-2 pr-3 font-medium">Role</th>
-                  <th className="hidden pb-2 pr-3 font-medium lg:table-cell">Teams</th>
-                  <th className="pb-2 pr-3 font-medium">Active</th>
-                  <th className="hidden pb-2 pr-3 font-medium sm:table-cell">SSO</th>
-                  <th className="hidden pb-2 pr-3 font-medium xl:table-cell">Created</th>
-                  <th className="pb-2 font-medium" />
+                  <th className="pb-2 pr-3 font-semibold">{t('common.username')}</th>
+                  <th className="hidden pb-2 pr-3 font-semibold md:table-cell">{t('common.email')}</th>
+                  <th className="pb-2 pr-3 font-semibold">{t('admin.users.column.role')}</th>
+                  <th className="hidden pb-2 pr-3 font-semibold lg:table-cell">{t('admin.users.column.teams')}</th>
+                  <th className="pb-2 pr-3 font-semibold">{t('admin.users.active')}</th>
+                  <th className="hidden pb-2 pr-3 font-semibold sm:table-cell">{t('admin.users.column.sso')}</th>
+                  <th className="hidden pb-2 pr-3 font-semibold xl:table-cell">{t('admin.users.column.created')}</th>
+                  <th className="pb-2 font-semibold" />
                 </tr>
               </thead>
               <tbody>
@@ -87,42 +91,44 @@ export function UsersTab() {
                     <td className="py-3 pr-3 font-medium text-slate-950">{u.username}</td>
                     <td className="hidden py-3 pr-3 text-slate-700 md:table-cell">{u.email}</td>
                     <td className="py-3 pr-3">
-                      <Badge tone={u.role === 'admin' ? 'emerald' : 'slate'}>{u.role}</Badge>
+                      <Badge tone={u.role === 'admin' ? 'emerald' : 'slate'}>
+                        {u.role === 'admin' ? t('admin.users.role.admin') : t('admin.users.role.user')}
+                      </Badge>
                     </td>
                     <td className="hidden py-3 pr-3 text-slate-700 lg:table-cell">
                       <span className="block max-w-xs break-words">
-                        {(u.team_ids ?? (u.team_id ? [u.team_id] : [])).map((id) => `${teamName(id)} (${u.team_roles?.[id] ?? 'member'})`).join(', ') || '—'}
+                        {(u.team_ids ?? (u.team_id ? [u.team_id] : [])).map((id) => `${teamName(id)} (${teamRoleLabel(u.team_roles?.[id] ?? 'member')})`).join(', ') || '—'}
                       </span>
                     </td>
                     <td className="py-3 pr-3">
                       <Badge tone={u.is_active ? 'emerald' : 'red'}>
-                        {u.is_active ? 'Active' : 'Inactive'}
+                        {u.is_active ? t('admin.users.active') : t('admin.users.inactive')}
                       </Badge>
                     </td>
                     <td className="hidden py-3 pr-3 sm:table-cell">
                       {u.oidc_provider_id !== null ? (
-                        <Badge tone="emerald">SSO</Badge>
+                        <Badge tone="emerald">{t('admin.users.column.sso')}</Badge>
                       ) : (
                         <span className="text-slate-400">—</span>
                       )}
                     </td>
                     <td className="hidden py-3 pr-3 text-slate-700 xl:table-cell">
-                      {new Date(u.created_at).toLocaleDateString()}
+                      {formatDate(u.created_at)}
                     </td>
                     <td className="py-3">
                       <div className="flex justify-end gap-1">
                         <button
                           onClick={() => setEditing(u)}
-                          aria-label={`Edit ${u.username}`}
-                          title="Edit"
+                          aria-label={t('admin.users.editAria', { username: u.username })}
+                          title={t('common.edit')}
                           className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
                         >
                           <Pencil className="h-4 w-4" />
                         </button>
                         <button
                           onClick={() => setDeleting(u)}
-                          aria-label={`Delete ${u.username}`}
-                          title="Delete"
+                          aria-label={t('admin.users.deleteAria', { username: u.username })}
+                          title={t('common.delete')}
                           className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-red-50 hover:text-red-600"
                         >
                           <Trash2 className="h-4 w-4" />
@@ -164,14 +170,14 @@ export function UsersTab() {
 
       {deleting && (
         <ConfirmDialog
-          title="Delete user"
+          title={t('admin.users.deleteTitle')}
           body={
             <p>
-              Delete <span className="font-semibold text-slate-950">{deleting.username}</span>?
-              This cannot be undone.
+              {t('admin.users.deleteBodyPrefix')} <span className="font-semibold text-slate-950">{deleting.username}</span>
+              {t('admin.users.deleteBodySuffix')}
             </p>
           }
-          confirmLabel="Delete user"
+          confirmLabel={t('admin.users.deleteTitle')}
           onClose={() => setDeleting(null)}
           onConfirm={async () => {
             await apiSend(`/api/v1/auth/admin/users/${deleting.id}`, { method: 'DELETE' });
@@ -197,11 +203,12 @@ function TeamMembershipFields({
   roles: Record<string, 'member' | 'reader'>;
   onChange: (primary: string, selected: string[], roles: Record<string, 'member' | 'reader'>) => void;
 }) {
+  const { t } = useI18n();
   return (
     <div className="space-y-3">
-      <Field label="Primary team">
+      <Field label={t('admin.users.primaryTeam')}>
         <select
-          aria-label="Primary team"
+          aria-label={t('admin.users.primaryTeam')}
           value={primary}
           onChange={(event) => {
             const next = event.target.value;
@@ -209,12 +216,12 @@ function TeamMembershipFields({
           }}
           className={inputClass}
         >
-          <option value={NO_TEAM}>No team</option>
+          <option value={NO_TEAM}>{t('admin.users.noTeam')}</option>
           {teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
         </select>
       </Field>
       <fieldset className="space-y-2">
-        <legend className="mb-2 text-sm font-medium text-slate-700">Team access</legend>
+        <legend className="mb-2 text-sm font-medium text-slate-700">{t('admin.users.teamAccess')}</legend>
         <div className="max-h-48 space-y-2 overflow-y-auto">
           {teams.map((team) => (
             <label key={team.id} className="flex items-start gap-2 text-sm text-slate-700">
@@ -229,7 +236,7 @@ function TeamMembershipFields({
                 className="mt-1 shrink-0"
               />
               <span className="min-w-0 break-words">{team.name}</span>
-              {selected.includes(team.id) && <select aria-label={`${team.name} role`} value={roles[team.id] ?? 'member'} onChange={(event) => onChange(primary, selected, { ...roles, [team.id]: event.target.value as 'member' | 'reader' })} className="ml-auto rounded border border-slate-200 px-1 py-0.5 text-xs"><option value="member">Member</option><option value="reader">Reader</option></select>}
+              {selected.includes(team.id) && <select aria-label={t('admin.users.teamRoleAria', { team: team.name })} value={roles[team.id] ?? 'member'} onChange={(event) => onChange(primary, selected, { ...roles, [team.id]: event.target.value as 'member' | 'reader' })} className="ml-auto rounded border border-slate-200 px-1 py-0.5 text-xs"><option value="member">{t('admin.users.teamRole.member')}</option><option value="reader">{t('admin.users.teamRole.reader')}</option></select>}
             </label>
           ))}
         </div>
@@ -247,6 +254,7 @@ function CreateUserModal({
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
+  const { t } = useI18n();
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -286,9 +294,9 @@ function CreateUserModal({
   }
 
   return (
-    <Modal title="Create user" onClose={onClose}>
+    <Modal title={t('admin.users.create')} onClose={onClose}>
       <form onSubmit={submit} className="space-y-4">
-        <Field label="Username">
+        <Field label={t('common.username')}>
           <input
             value={username}
             onChange={(e) => setUsername(e.target.value)}
@@ -297,7 +305,7 @@ function CreateUserModal({
             autoFocus
           />
         </Field>
-        <Field label="Email">
+        <Field label={t('common.email')}>
           <input
             type="email"
             value={email}
@@ -306,7 +314,7 @@ function CreateUserModal({
             required
           />
         </Field>
-        <Field label="Password" hint="Leave empty for SSO-only account.">
+        <Field label={t('common.password')} hint={t('admin.users.passwordHintCreate')}>
           <input
             type="password"
             value={password}
@@ -317,27 +325,27 @@ function CreateUserModal({
           />
         </Field>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Role">
+          <Field label={t('admin.users.column.role')}>
             <select
               value={role}
               onChange={(e) => setRole(e.target.value as UserRole)}
               className={inputClass}
             >
-              <option value="user">User</option>
-              <option value="admin">Admin</option>
+              <option value="user">{t('admin.users.role.user')}</option>
+              <option value="admin">{t('admin.users.role.admin')}</option>
             </select>
           </Field>
         </div>
         <TeamMembershipFields teams={teams} primary={teamId} selected={teamIds} roles={teamRoles} onChange={(primary, selected, roles) => { setTeamId(primary); setTeamIds(selected); setTeamRoles(roles); }} />
-        <Toggle checked={isActive} onChange={setIsActive} label="Active" />
+        <Toggle checked={isActive} onChange={setIsActive} label={t('admin.users.active')} />
         <ErrorNotice message={error} />
         <div className="flex flex-wrap justify-end gap-2 pt-1">
           <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={busy}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button type="submit" size="sm" disabled={busy}>
             {busy && <LoaderCircle className="h-4 w-4 animate-spin" />}
-            Create user
+            {t('admin.users.create')}
           </Button>
         </div>
       </form>
@@ -356,6 +364,7 @@ function EditUserModal({
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
+  const { t } = useI18n();
   const [email, setEmail] = useState(user.email);
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<UserRole>(user.role);
@@ -395,9 +404,9 @@ function EditUserModal({
   }
 
   return (
-    <Modal title={`Edit ${user.username}`} onClose={onClose}>
+    <Modal title={t('admin.users.editAria', { username: user.username })} onClose={onClose}>
       <form onSubmit={submit} className="space-y-4">
-        <Field label="Email">
+        <Field label={t('common.email')}>
           <input
             type="email"
             value={email}
@@ -406,7 +415,7 @@ function EditUserModal({
             required
           />
         </Field>
-        <Field label="New password" hint="Leave empty to keep the current password.">
+        <Field label={t('admin.users.newPassword')} hint={t('admin.users.passwordHintEdit')}>
           <input
             type="password"
             value={password}
@@ -417,27 +426,27 @@ function EditUserModal({
           />
         </Field>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Role">
+          <Field label={t('admin.users.column.role')}>
             <select
               value={role}
               onChange={(e) => setRole(e.target.value as UserRole)}
               className={inputClass}
             >
-              <option value="user">User</option>
-              <option value="admin">Admin</option>
+              <option value="user">{t('admin.users.role.user')}</option>
+              <option value="admin">{t('admin.users.role.admin')}</option>
             </select>
           </Field>
         </div>
         <TeamMembershipFields teams={teams} primary={teamId} selected={teamIds} roles={teamRoles} onChange={(primary, selected, roles) => { setTeamId(primary); setTeamIds(selected); setTeamRoles(roles); }} />
-        <Toggle checked={isActive} onChange={setIsActive} label="Active" />
+        <Toggle checked={isActive} onChange={setIsActive} label={t('admin.users.active')} />
         <ErrorNotice message={error} />
         <div className="flex flex-wrap justify-end gap-2 pt-1">
           <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={busy}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button type="submit" size="sm" disabled={busy}>
             {busy && <LoaderCircle className="h-4 w-4 animate-spin" />}
-            Save changes
+            {t('admin.users.saveChanges')}
           </Button>
         </div>
       </form>
@@ -446,6 +455,7 @@ function EditUserModal({
 }
 
 function ClaimOwnerlessCard({ users }: { users: AuthUser[] }) {
+  const { t } = useI18n();
   const [ownerId, setOwnerId] = useState<string>('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
@@ -461,7 +471,7 @@ function ClaimOwnerlessCard({ users }: { users: AuthUser[] }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ owner_id: ownerId } satisfies ClaimOwnerlessRequest),
       });
-      setResult(`${res.claimed} jobs assigned`);
+      setResult(t('admin.users.jobsAssigned', { count: res.claimed }));
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -471,18 +481,18 @@ function ClaimOwnerlessCard({ users }: { users: AuthUser[] }) {
 
   return (
     <SectionCard
-      title="Assign ownerless jobs"
-      description="Jobs created before authentication have no owner — assigning them makes them show up in that user's job list."
+      title={t('admin.users.claimTitle')}
+      description={t('admin.users.claimDescription')}
     >
       <div className="flex flex-wrap items-end gap-3">
         <div className="w-full max-w-xs">
-          <Field label="Assign to">
+          <Field label={t('admin.users.assignTo')}>
             <select
               value={ownerId}
               onChange={(e) => setOwnerId(e.target.value)}
               className={inputClass}
             >
-              <option value="">Select a user…</option>
+              <option value="">{t('admin.users.selectUser')}</option>
               {users.map((u) => (
                 <option key={u.id} value={String(u.id)}>
                   {u.username}
@@ -491,13 +501,13 @@ function ClaimOwnerlessCard({ users }: { users: AuthUser[] }) {
             </select>
           </Field>
         </div>
-        <Button variant="outline" size="sm" className="h-[38px]" onClick={claim} disabled={busy || ownerId === ''}>
+        <Button variant="outline" onClick={claim} disabled={busy || ownerId === ''}>
           {busy ? (
             <LoaderCircle className="h-4 w-4 animate-spin" />
           ) : (
             <Briefcase className="h-4 w-4" />
           )}
-          Assign jobs
+          {t('admin.users.assignJobs')}
         </Button>
       </div>
       <div aria-live="polite">

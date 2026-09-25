@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { applyAgentStatus, buildChatRequestBody, pendingAssistantMessage } from '@/lib/chat-types';
-import type { ChatStreamStatusEvent } from '@/types/weave-api';
+import { applyAgentStatus, buildChatRequestBody, pendingAssistantMessage, scopeLabel } from '@/lib/chat-types';
+import type { ChatStreamStatusEvent, Collection } from '@/types/weave-api';
 
 describe('buildChatRequestBody', () => {
   it('omits both conversation_id and collections when there is no conversation yet and no filter selected', () => {
@@ -53,6 +53,33 @@ describe('buildChatRequestBody', () => {
       conversation_id: 'conv-1',
       collections: ['legal-2026'],
     });
+  });
+});
+
+describe('scopeLabel', () => {
+  const COLLECTIONS: Collection[] = [
+    { slug: 'legal-2026', name: 'Legal 2026', description: null, public: false },
+    { slug: 'hr-docs', name: 'HR Docs', description: null, public: true },
+  ];
+
+  it('reads "Alle Bereiche" for an empty selection — the same selection that means "no filter" on the wire', () => {
+    expect(scopeLabel([], COLLECTIONS)).toBe('Alle Bereiche');
+  });
+
+  it('reads as the collection\'s own name for exactly one selected slug', () => {
+    expect(scopeLabel(['legal-2026'], COLLECTIONS)).toBe('Legal 2026');
+  });
+
+  it('falls back to the raw slug when the single selected one matches no loaded collection', () => {
+    expect(scopeLabel(['gone-slug'], COLLECTIONS)).toBe('gone-slug');
+  });
+
+  it('reads as "N Bereiche" for several selected slugs, regardless of whether they resolve', () => {
+    expect(scopeLabel(['legal-2026', 'hr-docs'], COLLECTIONS)).toBe('2 Bereiche');
+  });
+
+  it('still resolves a single selected name when the collections list has not loaded yet', () => {
+    expect(scopeLabel(['legal-2026'], null)).toBe('legal-2026');
   });
 });
 

@@ -91,6 +91,13 @@ class User(Base):
     # (`settings.oidc_issuer`), unlike Weave-Ingest's own per-provider
     # `oidc_provider_id` + `oidc_subject` pair.
     oidc_subject: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True, index=True)
+    # UI language preference ('de' | 'en'); `None` = no explicit choice. For
+    # a Weave-Ingest-backed identity this mirrors that service's own
+    # `users.locale` (see app/core/auth.py's `_refresh_ingest_identity` and
+    # app/services/ingest_identity.py) -- Weave-Ingest is the source of
+    # truth there, this column is just this gateway's cached copy plus the
+    # only value a local-only account (no ingest subject) has at all.
+    locale: Mapped[str | None] = mapped_column(String(2), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     api_tokens: Mapped[list['ApiToken']] = relationship(back_populates='user', cascade='all, delete-orphan')

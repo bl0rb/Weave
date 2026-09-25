@@ -95,11 +95,23 @@ class Collection(Base):
     slug: Mapped[str] = mapped_column(String(255), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Team slugs allowed to READ this collection; an empty list is the
-    # contract's own "readable by everyone" sentinel, not "readable by
-    # nobody" -- enforced by Weave-Retrieval, never interpreted here (this
-    # service only mirrors the value, it never itself gates on it).
+    # 'public' | 'restricted' -- the contract's authoritative public/
+    # restricted flag (replaces the old implicit "empty read_teams means
+    # public" convention). Plain string, not Weave-Ingest's own Python enum
+    # type -- this table is a disposable mirror re-synced from Ingest, no
+    # need to duplicate that type here. Still never evaluated by this
+    # service, only mirrored (see class docstring).
+    visibility: Mapped[str] = mapped_column(String(20), default='restricted', nullable=False)
+    # Team slugs allowed to READ this collection when `visibility` is
+    # 'restricted' -- one of the two additive ACLs (alongside `read_users`)
+    # Weave-Retrieval evaluates only in that case, never interpreted here
+    # (this service only mirrors the value, it never itself gates on it).
     read_teams: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    # Weave-Ingest user ids allowed to READ this collection when
+    # `visibility` is 'restricted' -- the person-level counterpart to
+    # `read_teams`, same "additive ACL, only meaningful when restricted"
+    # semantics, never interpreted here.
+    read_users: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     # Set to "now" on every upsert by sync_collections(), regardless of
     # whether any other field actually changed -- lets an operator (or a
     # future staleness check) tell a collection that is still being synced

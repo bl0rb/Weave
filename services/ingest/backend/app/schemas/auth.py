@@ -1,5 +1,6 @@
 import enum
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -32,8 +33,18 @@ class UserResponse(BaseModel):
     is_active: bool
     oidc_provider_id: str | None = None
     created_at: datetime
+    locale: Literal['de', 'en'] | None = None
 
     model_config = {'from_attributes': True}
+
+
+class LocaleUpdateRequest(BaseModel):
+    """Body of PATCH /auth/me and PUT /auth/handoff/identity/{id}/locale --
+    the only field either endpoint may change. `locale` is required (not
+    defaulted) so omitting it is a 422 like any other invalid value, and
+    `None` explicitly clears a previously-set preference."""
+
+    locale: Literal['de', 'en'] | None
 
 
 class ProviderPublic(BaseModel):
@@ -319,3 +330,4 @@ class HandoffExchangeResponse(BaseModel):
     team: str | None = None
     teams: list[str] = Field(default_factory=list)
     is_admin: bool
+    locale: Literal['de', 'en'] | None = None

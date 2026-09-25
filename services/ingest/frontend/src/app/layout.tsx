@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Lora, Source_Sans_3 } from 'next/font/google';
 import Script from 'next/script';
 import { AppChrome } from '@/components/app-chrome';
+import { I18nProvider } from '@/i18n/provider';
+import { getLocale, getTranslator } from '@/i18n/server';
 import "./globals.css";
 
 const sourceSans = Source_Sans_3({
@@ -14,10 +16,10 @@ const lora = Lora({
   variable: '--font-serif',
 });
 
-export const metadata: Metadata = {
-  title: "Weave · Wissensportal",
-  description: "Weave Wissensportal",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const { t } = await getTranslator();
+  return { title: t('common.appTitle'), description: t('common.appDescription') };
+}
 
 const THEME_INIT_SCRIPT = `
 (function () {
@@ -31,13 +33,14 @@ const THEME_INIT_SCRIPT = `
 })();
 `;
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const locale = await getLocale();
   return (
-    <html lang="de" className={`h-full antialiased ${sourceSans.variable} ${lora.variable}`}>
+    <html lang={locale} className={`h-full antialiased ${sourceSans.variable} ${lora.variable}`}>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
         {/*
@@ -54,7 +57,9 @@ export default function RootLayout({
         <Script src="/runtime-env.js" strategy="beforeInteractive" />
       </head>
       <body className="min-h-full flex flex-col">
-        <AppChrome>{children}</AppChrome>
+        <I18nProvider initialLocale={locale}>
+          <AppChrome>{children}</AppChrome>
+        </I18nProvider>
       </body>
     </html>
   );

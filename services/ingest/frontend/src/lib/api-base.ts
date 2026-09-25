@@ -9,8 +9,16 @@ declare global {
      */
     __WEAVE_INGEST_ENV__?: {
       apiUrl?: string | null;
+      /** Pre-validated WEAVE_CHAT_PUBLIC_URL — see resolveChatUrl in lib/chat-url.ts. */
+      chatUrl?: string | null;
     };
   }
+}
+
+/** Client-side counterpart to app/chat/page.tsx's server-side resolveChatUrl() call — reads the same value via runtime-env.js. */
+export function resolveChatPublicUrl(): string | null {
+  if (typeof window === 'undefined') return null;
+  return window.__WEAVE_INGEST_ENV__?.chatUrl ?? null;
 }
 
 function trimTrailingSlash(value: string): string {

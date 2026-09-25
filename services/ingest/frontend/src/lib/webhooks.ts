@@ -4,6 +4,8 @@
  */
 
 import { ApiError, apiFetch, apiJson } from '@/lib/api';
+import { DEFAULT_LOCALE, type Locale } from '@/i18n/config';
+import { translate } from '@/i18n/messages';
 
 /** Exact event strings the backend emits -- see webhook_connections.events. */
 export type WebhookEvent =
@@ -20,15 +22,17 @@ export const WEBHOOK_EVENTS: WebhookEvent[] = [
 ];
 
 /** Plain-language labels for the events checkbox group. */
-export const webhookEventLabel: Record<WebhookEvent, string> = {
-  'job.finished': 'Job finished',
-  'job.failed': 'Job failed',
-  'import_run.finished': 'Import run finished',
-  // See contracts/events/document.processed.md -- dispatched alongside
-  // job.finished for a successful job, carrying frontmatter + quality-gate
-  // data plus a markdown_url instead of the inline markdown job.finished sends.
-  'document.processed': 'Document processed',
-};
+export function webhookEventLabel(locale: Locale = DEFAULT_LOCALE): Record<WebhookEvent, string> {
+  return {
+    'job.finished': translate(locale, 'portal.webhooks.event.jobFinished'),
+    'job.failed': translate(locale, 'portal.webhooks.event.jobFailed'),
+    'import_run.finished': translate(locale, 'portal.webhooks.event.importRunFinished'),
+    // See contracts/events/document.processed.md -- dispatched alongside
+    // job.finished for a successful job, carrying frontmatter + quality-gate
+    // data plus a markdown_url instead of the inline markdown job.finished sends.
+    'document.processed': translate(locale, 'portal.webhooks.event.documentProcessed'),
+  };
+}
 
 export type WebhookConnection = {
   id: string;

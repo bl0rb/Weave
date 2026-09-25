@@ -27,6 +27,14 @@ from app.core.config import settings
 _HTTP_TIMEOUT_SECONDS = 10.0
 _HANDOFF_SECRET_HEADER = 'X-Weave-Handoff-Secret'
 
+# Namespace for `User.oidc_subject` (app/models/models.py) when the identity
+# came from Weave-Ingest rather than from a directly-configured OIDC
+# provider -- keeps the two kinds of subject from ever colliding in that
+# unique column, and makes the origin of an account readable straight out
+# of the database. The only writer of this namespaced form is
+# `_provision_ingest_user` in app/api/auth.py.
+INGEST_SUBJECT_PREFIX = 'weave-ingest:'
+
 
 class IngestIdentityError(Exception):
     """Raised when a handoff code cannot be redeemed: Weave-Ingest
@@ -49,10 +57,28 @@ class IngestIdentity:
     team: str | None
     is_admin: bool
     teams: list[str] | None = None
+    locale: str | None = None
 
     @property
     def effective_teams(self) -> list[str]:
         return list(self.teams) if self.teams is not None else ([self.team] if self.team else [])
+
+
+def ingest_subject(oidc_subject: str | None) -> str | None:
+    """The real Weave-Ingest user id backing a `User.oidc_subject` value,
+    or `None` when this account wasn't provisioned via the Weave-Ingest
+    handoff (see `_provision_ingest_user` in app/api/auth.py, which is
+    the only writer of the `INGEST_SUBJECT_PREFIX`-namespaced form) --
+    e.g. an account created via a directly-configured OIDC provider, or
+    one with no `oidc_subject` at all. Never guesses: a `None` here must
+    propagate as "omit `subject`", not as some other sentinel, so a
+    caller (Weave-Runtime, ultimately Weave-Retrieval's `read_users`
+    check) fails closed to team/public Collections access rather than
+    silently matching the wrong grant.
+    """
+    if oidc_subject is None or not oidc_subject.startswith(INGEST_SUBJECT_PREFIX):
+        return None
+    return oidc_subject[len(INGEST_SUBJECT_PREFIX):]
 
 
 def _client() -> httpx.Client:
@@ -101,6 +127,33 @@ def fetch_identity(subject: str) -> IngestIdentity | None:
     return identity
 
 
+def update_identity_locale(subject: str, locale: str | None) -> None:
+    """Pushes a locale change onto the Weave-Ingest identity behind
+    `subject` (PUT /v1/me/locale in app/api/me.py, for a `User.oidc_subject`
+    under `INGEST_SUBJECT_PREFIX`) -- same base URL/secret/timeout as
+    `fetch_identity`. Raises `IngestIdentityError` on any failure
+    (unreachable, misconfigured, non-204 response) so the caller can 503
+    without writing the value locally.
+    """
+    if not settings.ingest_api_url or not settings.ingest_handoff_secret:
+        raise IngestIdentityError('Identity refresh is not configured')
+    url = (
+        settings.ingest_api_url.rstrip('/')
+        + '/api/v1/auth/handoff/identity/'
+        + quote(subject, safe='')
+        + '/locale'
+    )
+    try:
+        with _client() as client:
+            response = client.put(
+                url, json={'locale': locale}, headers={_HANDOFF_SECRET_HEADER: settings.ingest_handoff_secret}
+            )
+    except httpx.HTTPError:
+        raise IngestIdentityError('Identity authority unavailable') from None
+    if response.status_code != 204:
+        raise IngestIdentityError('Identity authority unavailable')
+
+
 def _parse_identity(response: httpx.Response) -> IngestIdentity:
     try:
         payload = response.json()
@@ -121,6 +174,10 @@ def _parse_identity(response: httpx.Response) -> IngestIdentity:
     if 'teams' in payload and (not isinstance(teams, list) or any(not isinstance(team_name, str) or not team_name for team_name in teams)):
         raise IngestIdentityError('Weave-Ingest returned invalid team memberships')
 
+    locale = payload.get('locale')
+    if locale is not None and locale not in ('de', 'en'):
+        raise IngestIdentityError('Weave-Ingest returned an invalid locale')
+
     return IngestIdentity(
         subject=subject,
         username=username,
@@ -128,4 +185,5 @@ def _parse_identity(response: httpx.Response) -> IngestIdentity:
         team=team if isinstance(team, str) and team else None,
         is_admin=bool(is_admin),
         teams=teams,
+        locale=locale,
     )

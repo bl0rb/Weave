@@ -2,11 +2,12 @@
 
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, ShieldAlert } from 'lucide-react';
+import { useI18n } from '@/i18n/provider';
 import type { ChatTrace } from '@/types/weave-api';
 
 function Tag({ children }: { children: React.ReactNode }) {
   return (
-    <span className="inline-flex items-center rounded-md bg-[var(--surface-muted)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--foreground-muted)]">
+    <span className="inline-flex items-center rounded-[var(--radius-control)] bg-[var(--surface-2)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted)]">
       {children}
     </span>
   );
@@ -23,58 +24,62 @@ function Tag({ children }: { children: React.ReactNode }) {
  * gets a warning treatment instead of just another tag.
  */
 export function TracePanel({ trace }: { trace: ChatTrace }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="mt-3 border-t border-[var(--border)] pt-2">
+    <div className="mt-3 border-t border-[var(--line)] pt-2">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1 text-xs font-medium text-[var(--foreground-muted)] hover:text-[var(--foreground)]"
+        className="flex items-center gap-1 text-xs font-medium text-[var(--muted)] hover:text-[var(--ink)]"
         aria-expanded={open}
       >
         {open ? <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" /> : <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />}
-        Trace
+        {t('chat.trace.toggle')}
       </button>
 
       {open ? (
-        <div className="mt-2 flex flex-col gap-2 text-xs text-[var(--foreground-muted)]">
+        <div className="mt-2 flex flex-col gap-2 text-xs text-[var(--muted)]">
           <div className="flex flex-wrap gap-1.5">
-            <Tag>Intent: {trace.intent}</Tag>
-            <Tag>Konfidenz: {(trace.confidence * 100).toFixed(0)}%</Tag>
-            <Tag>Router: {trace.router_mode}</Tag>
-            <Tag>Retrieval nötig: {trace.needs_retrieval ? 'ja' : 'nein'}</Tag>
-            <Tag>Tool nötig: {trace.needs_tool ? 'ja' : 'nein'}</Tag>
-            {trace.model ? <Tag>Modell: {trace.model}</Tag> : null}
+            <Tag>{t('chat.trace.intent', { value: trace.intent })}</Tag>
+            <Tag>{t('chat.trace.confidence', { value: (trace.confidence * 100).toFixed(0) })}</Tag>
+            <Tag>{t('chat.trace.router', { value: trace.router_mode })}</Tag>
+            <Tag>{t('chat.trace.needsRetrieval', { value: trace.needs_retrieval ? t('chat.trace.yes') : t('chat.trace.no') })}</Tag>
+            <Tag>{t('chat.trace.needsTool', { value: trace.needs_tool ? t('chat.trace.yes') : t('chat.trace.no') })}</Tag>
+            {trace.model ? <Tag>{t('chat.trace.model', { value: trace.model })}</Tag> : null}
           </div>
 
           {trace.retrieval ? (
             <div>
-              <span className="font-medium">Retrieval: </span>
-              {trace.retrieval.used}/{trace.retrieval.candidates} Treffer verwendet
+              <span className="font-medium">{t('chat.trace.retrieval.label')}</span>
+              {t('chat.trace.retrieval.hits', { used: trace.retrieval.used, candidates: trace.retrieval.candidates })}
               {trace.retrieval.collections.length > 0 ? (
-                <> · durchsucht: {trace.retrieval.collections.join(', ')}</>
+                <> · {t('chat.trace.retrieval.searched', { collections: trace.retrieval.collections.join(', ') })}</>
               ) : (
-                <> · keine Collection durchsucht</>
+                <> · {t('chat.trace.retrieval.noneSearched')}</>
               )}
               {trace.retrieval.requested_collections ? (
                 <>
                   {' '}
-                  · eigener Filter:{' '}
-                  {trace.retrieval.requested_collections.length > 0
-                    ? trace.retrieval.requested_collections.join(', ')
-                    : '(Auswahl passt auf keine Collection)'}
+                  ·{' '}
+                  {t('chat.trace.retrieval.ownFilter', {
+                    value:
+                      trace.retrieval.requested_collections.length > 0
+                        ? trace.retrieval.requested_collections.join(', ')
+                        : t('chat.trace.retrieval.filterMatchesNone'),
+                  })}
                 </>
               ) : null}
             </div>
           ) : (
-            <div>Kein Retrieval-Aufruf für diesen Turn.</div>
+            <div>{t('chat.trace.retrieval.none')}</div>
           )}
 
           {trace.guard?.triggered ? (
             <div>
-              <span className="font-medium">Guard: </span>
-              ausgelöst ({trace.guard.reason ?? 'unbekannter Grund'})
+              <span className="font-medium">{t('chat.trace.guard.label')}</span>
+              {t('chat.trace.guard.triggered', { reason: trace.guard.reason ?? t('chat.trace.guard.unknownReason') })}
             </div>
           ) : null}
 
@@ -86,35 +91,42 @@ export function TracePanel({ trace }: { trace: ChatTrace }) {
               // reported sources outside its own delegation-token scope,
               // which Weave already discarded — this must read as a
               // warning, not an incidental number next to the other tags.
-              <div className="flex items-start gap-2 rounded-lg border border-[var(--warning)]/30 bg-[var(--warning-soft)] px-3 py-2 text-[var(--warning)]">
+              <div className="warning-callout flex items-start gap-2 rounded-[var(--radius-control)] border border-[var(--warn)]/30 bg-[var(--warn-bg)] px-3 py-2 text-[var(--warn)]">
                 <ShieldAlert className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />
                 <span>
-                  <span className="font-medium">{trace.n8n.dropped_sources} Quelle(n) verworfen.</span>{' '}
-                  Der n8n-Flow dieses Bots hat Quellen außerhalb seines erlaubten Collection-Umfangs gemeldet;
-                  Weave hat sie verworfen, bevor sie diese Antwort erreichen konnten. Das deutet auf eine
-                  fehlerhafte oder kompromittierte n8n-Konfiguration hin.
+                  <span className="font-medium">{t('chat.trace.n8n.dropped', { count: trace.n8n.dropped_sources })}</span>{' '}
+                  {t('chat.trace.n8n.droppedExplanation')}
                 </span>
               </div>
             ) : (
               <div>
-                <span className="font-medium">n8n: </span>
-                keine Quellen außerhalb des erlaubten Umfangs verworfen
+                <span className="font-medium">{t('chat.trace.n8n.label')}</span>
+                {t('chat.trace.n8n.noneDropped')}
               </div>
             )
           ) : null}
 
           {trace.agent ? (
             <div className="flex flex-col gap-1">
-              <span className="font-medium">Agent ({trace.agent.mode})</span>
+              <span className="font-medium">{t('chat.trace.agent.label', { mode: trace.agent.mode })}</span>
               <div className="flex flex-wrap gap-1.5">
                 {trace.agent.subagents.map((subagent) => (
                   <Tag key={subagent.id}>
-                    {subagent.id}: {subagent.status} · {subagent.searches_used} Suchen · {subagent.hits} Treffer
+                    {t('chat.trace.agent.subagent', {
+                      id: subagent.id,
+                      status: subagent.status,
+                      searches: subagent.searches_used,
+                      hits: subagent.hits,
+                    })}
                   </Tag>
                 ))}
                 {trace.agent.mode === 'graph' ? (
                   <Tag>
-                    {trace.agent.followups} Folgerunde(n) · Budget {trace.agent.budget_used}/{trace.agent.budget}
+                    {t('chat.trace.agent.followups', {
+                      count: trace.agent.followups,
+                      used: trace.agent.budget_used,
+                      budget: trace.agent.budget,
+                    })}
                   </Tag>
                 ) : null}
               </div>
@@ -124,9 +136,7 @@ export function TracePanel({ trace }: { trace: ChatTrace }) {
           {Object.keys(trace.timings_ms).length > 0 ? (
             <div className="flex flex-wrap gap-1.5">
               {Object.entries(trace.timings_ms).map(([key, ms]) => (
-                <Tag key={key}>
-                  {key}: {ms.toFixed(0)} ms
-                </Tag>
+                <Tag key={key}>{t('chat.trace.timing', { key, ms: ms.toFixed(0) })}</Tag>
               ))}
             </div>
           ) : null}

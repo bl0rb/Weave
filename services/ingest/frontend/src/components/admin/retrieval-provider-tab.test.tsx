@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { apiJson } from '@/lib/api';
-import { RetrievalProviderTab } from './retrieval-provider-tab';
+import { IndexMaintenanceSection, RetrievalProviderTab } from './retrieval-provider-tab';
 
 vi.mock('@/lib/api', async importOriginal => ({
   ...await importOriginal<typeof import('@/lib/api')>(),
@@ -31,15 +31,21 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-it('renders the Index-Wartung section with both maintenance buttons', async () => {
+it('renders the search/model config without the index maintenance section (moved to /admin/betrieb)', async () => {
   render(<RetrievalProviderTab />);
+  expect(await screen.findByRole('heading', { name: 'Suche und Modelle' })).toBeTruthy();
+  expect(screen.queryByRole('heading', { name: 'Index-Wartung' })).toBeNull();
+});
+
+it('renders the Index-Wartung section with both maintenance buttons', async () => {
+  render(<IndexMaintenanceSection />);
   expect(await screen.findByRole('heading', { name: 'Index-Wartung' })).toBeTruthy();
   expect(screen.getByRole('button', { name: /Vektoren neu berechnen/ })).toBeTruthy();
   expect(screen.getByRole('button', { name: /Index aus Freigaben neu aufbauen/ })).toBeTruthy();
 });
 
 it('starts a reindex only after the confirm dialog is accepted', async () => {
-  render(<RetrievalProviderTab />);
+  render(<IndexMaintenanceSection />);
   const trigger = await screen.findByRole('button', { name: 'Vektoren neu berechnen' });
   fireEvent.click(trigger);
 
@@ -61,7 +67,7 @@ it('starts a reindex only after the confirm dialog is accepted', async () => {
 });
 
 it('starts a rebuild only after the confirm dialog is accepted and shows the requeued count', async () => {
-  render(<RetrievalProviderTab />);
+  render(<IndexMaintenanceSection />);
   const trigger = await screen.findByRole('button', { name: 'Index aus Freigaben neu aufbauen' });
   fireEvent.click(trigger);
 
@@ -76,5 +82,5 @@ it('starts a rebuild only after the confirm dialog is accepted and shows the req
   fireEvent.click(screen.getByRole('button', { name: 'Neu aufbauen' }));
 
   await waitFor(() => expect(json).toHaveBeenCalledWith('/api/v1/admin/knowledge/rebuild', { method: 'POST' }));
-  expect(await screen.findByText(/7 Veröffentlichung\(en\) zur Neuauslieferung eingereiht\./)).toBeTruthy();
+  expect(await screen.findByText(/7 Veröffentlichungen zur Neuauslieferung eingereiht\./)).toBeTruthy();
 });

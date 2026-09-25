@@ -191,6 +191,24 @@ def test_a_second_login_resyncs_team_and_admin_but_keeps_one_account(configured,
         db.close()
 
 
+def test_identity_refresh_syncs_locale(configured, monkeypatch) -> None:
+    _mock_ingest(monkeypatch, identity={**IDENTITY, 'locale': 'de'})
+    start = _start_login()
+    _callback('locale-code-a', _state_from(start))
+
+    with _db() as db:
+        assert db.query(User).one().locale == 'de'
+
+    # The user changed their preference over in Ingest; the next identity
+    # refresh (any authenticated request, not just another login) syncs it.
+    _mock_ingest(monkeypatch, identity={**IDENTITY, 'locale': 'en'})
+    protected_url = '/v1/conversations/00000000-0000-0000-0000-000000000001'
+    assert client.get(protected_url).status_code == 404
+
+    with _db() as db:
+        assert db.query(User).one().locale == 'en'
+
+
 def test_existing_session_refreshes_memberships_and_fails_closed(configured, monkeypatch):
     _mock_ingest(monkeypatch, identity={**IDENTITY, 'teams': ['rechtsabteilung', 'buchhaltung']})
     start = _start_login(return_to=None)

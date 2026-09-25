@@ -973,6 +973,11 @@ def import_backup(
                         continue
                     data = json.loads(line)
                     row = _decode_row(table, data, tar, archive_fernet, report['warnings'])
+                    if table.name == 'collections' and 'visibility' not in row:
+                        # Archive from before 0032_collection_visibility: same
+                        # derivation as that migration's backfill, never the
+                        # model's fail-closed default for a formerly public row.
+                        row['visibility'] = 'restricted' if row.get('read_teams') else 'public'
                     for column_name in self_fk_columns:
                         if row.get(column_name) is not None:
                             deferred_updates.append((_pk_values(table, row), {column_name: row[column_name]}))

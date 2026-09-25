@@ -21,6 +21,7 @@ import {
   LoadingState,
   SectionCard,
 } from '@/components/admin/admin-shared';
+import { useI18n } from '@/i18n/provider';
 
 const TOKENS_PATH = '/api/v1/auth/tokens';
 
@@ -29,6 +30,7 @@ function formatDate(value: string | null): string {
 }
 
 export default function SettingsPage() {
+  const { t } = useI18n();
   const nameRef = useRef<HTMLInputElement>(null);
   const [tokens, setTokens] = useState<ApiTokenSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -134,19 +136,19 @@ export default function SettingsPage() {
   };
 
   return (
-    <main className="min-h-screen">
-      <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+    <main id="main-content" className="portal-page">
+      <>
         <header className="mb-6">
-          <h1 className="text-3xl font-semibold text-slate-950">API-Zugriff</h1>
-          <p className="mt-1 text-sm text-slate-500">Verwalte persönliche Zugriffstoken für die API.</p>
+          <h1 className="text-3xl font-semibold text-slate-950">{t('portal.settingsPage.title')}</h1>
+          <p className="mt-1 text-[15px] text-slate-500">{t('portal.settingsPage.subtitle')}</p>
         </header>
 
         <SectionCard
-          title="Persönliche Zugriffstoken"
-          description="Erstelle Zugriffstoken für programmatische API-Aufrufe. Sende sie als Authorization: Bearer-Header."
+          title={t('portal.settingsPage.cardTitle')}
+          description={t('portal.settingsPage.cardDescription')}
         >
           {unavailable ? (
-            <p className="py-6 text-center text-sm text-slate-500">Not available on this backend yet.</p>
+            <p className="py-6 text-center text-sm text-slate-500">{t('portal.settingsPage.notAvailable')}</p>
           ) : (
             <>
               <ErrorNotice message={error} />
@@ -156,13 +158,13 @@ export default function SettingsPage() {
                 className="mb-6 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4"
               >
                 <div className="w-full max-w-xs">
-                  <Field label="Name">
+                  <Field label={t('portal.settingsPage.nameLabel')}>
                     <input
                       ref={nameRef}
                       value={name}
                       onChange={(event) => setName(event.target.value)}
                       className={inputClass}
-                      placeholder="CI pipeline"
+                      placeholder={t('portal.settingsPage.namePlaceholder')}
                       required
                     />
                   </Field>
@@ -172,46 +174,46 @@ export default function SettingsPage() {
                       input, which — combined with items-end on the row — would push
                       this input off the baseline shared with the Name field and the
                       submit button. The "optional" cue lives in the placeholder instead. */}
-                  <Field label="Expires in (days)">
+                  <Field label={t('portal.settingsPage.expiresLabel')}>
                     <input
                       type="number"
                       min={1}
                       value={expiresInDays}
                       onChange={(event) => setExpiresInDays(event.target.value)}
                       className={inputClass}
-                      placeholder="Never (optional)"
+                      placeholder={t('portal.settingsPage.expiresPlaceholder')}
                     />
                   </Field>
                 </div>
                 <Button type="submit" size="sm" disabled={creating}>
                   <Plus className="h-4 w-4" />
-                  {creating ? 'Creating…' : 'Create token'}
+                  {creating ? t('portal.settingsPage.creating') : t('portal.settingsPage.createToken')}
                 </Button>
               </form>
               <ErrorNotice message={createError} />
 
               {createdToken && (
                 <div className="mb-6 rounded-xl border border-emerald-300 bg-emerald-50 p-4">
-                  <p className="text-sm font-semibold text-emerald-900">Token created: {createdToken.name}</p>
+                  <p className="text-sm font-semibold text-emerald-900">{t('portal.settingsPage.tokenCreated', { name: createdToken.name })}</p>
                   <div className="mt-2 flex items-center gap-2">
                     <code className="flex-1 overflow-x-auto rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs text-slate-950">
                       {createdToken.token}
                     </code>
                     <Button type="button" size="sm" variant="outline" onClick={copyToken}>
                       {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                      {copied ? 'Copied' : 'Copy'}
+                      {copied ? t('portal.settingsPage.copied') : t('portal.settingsPage.copy')}
                     </Button>
                   </div>
-                  <p className="mt-2 text-xs font-medium text-emerald-800">This token is shown only once — store it now.</p>
+                  <p className="mt-2 text-xs font-medium text-emerald-800">{t('portal.settingsPage.tokenShownOnce')}</p>
                 </div>
               )}
 
               {loading ? (
-                <LoadingState label="Loading tokens…" />
+                <LoadingState label={t('portal.settingsPage.loadingTokens')} />
               ) : tokens.length === 0 ? (
                 <div className="flex flex-col items-center gap-3 py-10 text-center">
                   <KeyRound className="h-8 w-8 text-slate-300" />
-                  <p className="text-sm text-slate-500">No API tokens yet. Create the first one to get started.</p>
+                  <p className="text-sm text-slate-500">{t('portal.settingsPage.emptyBody')}</p>
                   <Button
                     variant="outline"
                     size="sm"
@@ -221,7 +223,7 @@ export default function SettingsPage() {
                     }}
                   >
                     <Plus className="h-4 w-4" />
-                    Create token
+                    {t('portal.settingsPage.createToken')}
                   </Button>
                 </div>
               ) : (
@@ -229,11 +231,11 @@ export default function SettingsPage() {
                   <table className="w-full table-auto text-left text-xs sm:text-sm">
                     <thead className="text-slate-500">
                       <tr>
-                        <th className="pb-2 pr-3 font-medium">Name</th>
-                        <th className="pb-2 pr-3 font-medium">Token</th>
-                        <th className="hidden pb-2 pr-3 font-medium md:table-cell">Created</th>
-                        <th className="hidden pb-2 pr-3 font-medium lg:table-cell">Last used</th>
-                        <th className="hidden pb-2 pr-3 font-medium sm:table-cell">Expires</th>
+                        <th className="pb-2 pr-3 font-medium">{t('portal.settingsPage.colName')}</th>
+                        <th className="pb-2 pr-3 font-medium">{t('portal.settingsPage.colToken')}</th>
+                        <th className="hidden pb-2 pr-3 font-medium md:table-cell">{t('portal.settingsPage.colCreated')}</th>
+                        <th className="hidden pb-2 pr-3 font-medium lg:table-cell">{t('portal.settingsPage.colLastUsed')}</th>
+                        <th className="hidden pb-2 pr-3 font-medium sm:table-cell">{t('portal.settingsPage.colExpires')}</th>
                         <th className="pb-2 font-medium" />
                       </tr>
                     </thead>
@@ -249,8 +251,8 @@ export default function SettingsPage() {
                             <div className="flex justify-end">
                               <button
                                 onClick={() => setRevoking(token)}
-                                aria-label={`Revoke ${token.name}`}
-                                title="Revoke"
+                                aria-label={t('portal.settingsPage.revokeAria', { name: token.name })}
+                                title={t('portal.settingsPage.revoke')}
                                 className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-red-50 hover:text-red-600"
                               >
                                 <Trash2 className="h-4 w-4" />
@@ -269,14 +271,13 @@ export default function SettingsPage() {
 
         {revoking && (
           <ConfirmDialog
-            title="Revoke token"
+            title={t('portal.settingsPage.revokeDialogTitle')}
             body={
               <p>
-                Revoke <span className="font-semibold text-slate-950">{revoking.name}</span>? Any integration using it
-                will stop working immediately.
+                {t('portal.settingsPage.revokeDialogBodyPrefix')} <span className="font-semibold text-slate-950">{revoking.name}</span>{t('portal.settingsPage.revokeDialogBodySuffix')}
               </p>
             }
-            confirmLabel="Revoke token"
+            confirmLabel={t('portal.settingsPage.revokeDialogTitle')}
             onClose={() => setRevoking(null)}
             onConfirm={async () => {
               await apiSend(`${TOKENS_PATH}/${revoking.id}`, { method: 'DELETE' });
@@ -285,7 +286,7 @@ export default function SettingsPage() {
             }}
           />
         )}
-      </div>
+      </>
     </main>
   );
 }

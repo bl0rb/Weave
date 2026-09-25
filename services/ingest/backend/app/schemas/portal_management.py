@@ -2,6 +2,9 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+from app.models.models import CollectionVisibility
+from app.schemas.jobs import ReadUserDetail
+
 
 class PortalManagementOwner(BaseModel):
     id: str
@@ -19,6 +22,12 @@ class PortalCollectionItem(BaseModel):
     name: str
     description: str | None = None
     read_teams: list[str]
+    # Same access fields as CollectionResponse, so the admin table can show
+    # who may actually read a restricted space instead of inferring it from
+    # `read_teams` alone.
+    visibility: CollectionVisibility
+    read_users: list[str] = []
+    read_user_details: list[ReadUserDetail] = []
     owner: PortalManagementOwner | None = None
     document_count: int
     pending_count: int

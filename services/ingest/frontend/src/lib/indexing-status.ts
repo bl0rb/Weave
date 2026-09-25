@@ -1,3 +1,5 @@
+import { DEFAULT_LOCALE, INTL_LOCALE, type Locale } from '@/i18n/config';
+import { translate } from '@/i18n/messages';
 import type { Publication } from './portal';
 
 export type IndexingStatus = {
@@ -13,32 +15,32 @@ export function isIndexReady(indexing?: IndexingStatus | null): boolean {
   return indexing?.state === 'indexed' && indexing.chunk_count > 0 && Boolean(indexing.indexed_at && Number.isFinite(Date.parse(indexing.indexed_at)));
 }
 
-export function indexingDate(value: string): string {
-  return new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+export function indexingDate(value: string, locale: Locale = DEFAULT_LOCALE): string {
+  return new Intl.DateTimeFormat(INTL_LOCALE[locale], { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
 }
 
-export function publicationState(delivery: Publication['status'], indexing?: IndexingStatus | null): PublicationState {
+export function publicationState(delivery: Publication['status'], indexing?: IndexingStatus | null, locale: Locale = DEFAULT_LOCALE): PublicationState {
   if (isIndexReady(indexing)) return {
-    label: 'Für KI verfügbar', tone: 'success',
-    hint: `${indexing!.chunk_count} ${indexing!.chunk_count === 1 ? 'Textabschnitt' : 'Textabschnitte'} · ${indexingDate(indexing!.indexed_at!)}`,
+    label: translate(locale, 'portal.indexing.ready.label'), tone: 'success',
+    hint: `${translate(locale, 'portal.indexing.chunks.count', { count: indexing!.chunk_count })} · ${indexingDate(indexing!.indexed_at!, locale)}`,
   };
   switch (indexing?.state) {
-    case 'pending': return { label: 'Wird indiziert', tone: 'working', hint: 'Die freigegebenen Inhalte werden für die KI-Suche aufbereitet. Das kann etwas dauern.' };
+    case 'pending': return { label: translate(locale, 'portal.indexing.pending.label'), tone: 'working', hint: translate(locale, 'portal.indexing.pending.hint') };
     // Self-service since the 2026-09-22 incident (permanent embedding_request_failed
     // documents that used to need admin help): point at the new 'Neu indizieren' action.
-    case 'failed': return { label: 'Indexierung fehlgeschlagen', tone: 'error', hint: 'Die Indizierung ist fehlgeschlagen — mit „Neu indizieren“ erneut anstoßen.' };
-    case 'blocked': return { label: 'Indexierung blockiert', tone: 'error', hint: 'Die Qualitätsprüfung hat die Indexierung gestoppt. Bitte kläre den Inhalt mit der Administration.' };
-    case 'empty': return { label: 'Kein durchsuchbarer Inhalt', tone: 'warning', hint: 'Es wurden keine Textabschnitte für die KI-Suche gefunden. Bitte prüfe die Quelle mit der Administration.' };
+    case 'failed': return { label: translate(locale, 'portal.indexing.failed.label'), tone: 'error', hint: translate(locale, 'portal.indexing.failed.hint') };
+    case 'blocked': return { label: translate(locale, 'portal.indexing.blocked.label'), tone: 'error', hint: translate(locale, 'portal.indexing.blocked.hint') };
+    case 'empty': return { label: translate(locale, 'portal.indexing.empty.label'), tone: 'warning', hint: translate(locale, 'portal.indexing.empty.hint') };
     case 'indexed':
-    case 'incomplete': return { label: 'Index unvollständig', tone: 'error', hint: 'Der freigegebene Stand ist nicht vollständig durchsuchbar. Bitte wende dich an die Administration.' };
-    case 'mismatch': return { label: 'Freigabe nicht im Index', tone: 'warning', hint: 'Im Wissensindex liegt ein anderer Stand vor. Bitte wende dich an die Administration.' };
-    case 'superseded': return { label: 'Durch neueren Stand ersetzt', tone: 'neutral', hint: 'Diese Version wird nicht mehr durchsucht. Verwende den neueren Stand im Wissensbereich.' };
+    case 'incomplete': return { label: translate(locale, 'portal.indexing.incomplete.label'), tone: 'error', hint: translate(locale, 'portal.indexing.incomplete.hint') };
+    case 'mismatch': return { label: translate(locale, 'portal.indexing.mismatch.label'), tone: 'warning', hint: translate(locale, 'portal.indexing.mismatch.hint') };
+    case 'superseded': return { label: translate(locale, 'portal.indexing.superseded.label'), tone: 'neutral', hint: translate(locale, 'portal.indexing.superseded.hint') };
   }
-  if (delivery === 'failed') return { label: 'Übergabe fehlgeschlagen', tone: 'error', hint: 'Die Freigabe konnte nicht zugestellt werden. Öffne das Dokument, um die Übergabe erneut anzustoßen.' };
-  if (indexing?.state === 'unavailable') return { label: 'Indexstatus nicht verfügbar', tone: 'warning', hint: 'Der Status konnte gerade nicht abgefragt werden. Wir versuchen es automatisch erneut.' };
-  if (delivery === 'pending') return { label: 'Freigegeben', tone: 'working', hint: 'Die Freigabe ist gespeichert und wird automatisch zur Indexierung übergeben.' };
-  if (indexing?.state === 'not_received') return { label: 'Wartet auf Indexierung', tone: 'working', hint: 'Die freigegebenen Inhalte sind noch nicht im Wissensindex angekommen.' };
-  return { label: 'Zur Indexierung übergeben', tone: 'working', hint: 'Der aktuelle Indexstatus wird abgefragt.' };
+  if (delivery === 'failed') return { label: translate(locale, 'portal.indexing.deliveryFailed.label'), tone: 'error', hint: translate(locale, 'portal.indexing.deliveryFailed.hint') };
+  if (indexing?.state === 'unavailable') return { label: translate(locale, 'portal.indexing.statusUnavailable.label'), tone: 'warning', hint: translate(locale, 'portal.indexing.statusUnavailable.hint') };
+  if (delivery === 'pending') return { label: translate(locale, 'portal.indexing.released.label'), tone: 'working', hint: translate(locale, 'portal.indexing.released.hint') };
+  if (indexing?.state === 'not_received') return { label: translate(locale, 'portal.indexing.waitingForIndex.label'), tone: 'working', hint: translate(locale, 'portal.indexing.waitingForIndex.hint') };
+  return { label: translate(locale, 'portal.indexing.submitted.label'), tone: 'working', hint: translate(locale, 'portal.indexing.submitted.hint') };
 }
 
 // Do not let a response for another release decorate the current preview.

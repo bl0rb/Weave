@@ -14,7 +14,19 @@ from app.core import ratelimit
 from app.core.config import settings
 from app.core.ratelimit import FixedWindowRateLimiter
 from app.models.models import Conversation, Message, MessageRole
+from app.services.ingest_identity import IngestIdentity
 from tests.conftest import auth_headers, client, make_user_with_token
+
+
+def _stub_ingest_identity_refresh(monkeypatch, *, team: str | None) -> None:
+    """An Ingest-provisioned User (namespaced `oidc_subject`) has its team/
+    admin bit re-fetched from Weave-Ingest on every authenticated request
+    (app/core/auth.py's `_refresh_ingest_identity`) -- stub the fetch so a
+    test User can authenticate without a real Weave-Ingest to call."""
+    monkeypatch.setattr(
+        'app.core.auth.fetch_identity',
+        lambda subject: IngestIdentity(subject=subject, username='ignored', email='', team=team, is_admin=False),
+    )
 
 
 class _RecordingChat:
@@ -115,6 +127,55 @@ def test_chat_with_new_conversation_persists_the_turn_and_returns_the_answer(db_
     assert messages[1].role == MessageRole.ASSISTANT
     assert messages[1].sources[0]['text'] == 'VPN-FAQ'
     assert messages[1].trace['timings_ms']['total'] == 12
+
+
+def test_chat_forwards_the_callers_ingest_subject_to_runtime(db_session, monkeypatch):
+    """A User provisioned via the Weave-Ingest handoff (app/api/auth.py's
+    `_provision_ingest_user`) carries a namespaced `oidc_subject`
+    (`weave-ingest:<id>`) -- app/api/chat.py must resolve it back to the
+    real Weave-Ingest id (app/services/ingest_identity.ingest_subject) and
+    forward it as `subject`, for Weave-Runtime to pass on to Weave-
+    Retrieval's per-person Collections grants."""
+    user, raw_token = make_user_with_token(
+        db_session, username='chat-ingest-user', team='Support', oidc_subject='weave-ingest:ingest-user-id-1'
+    )
+    db_session.commit()
+    _stub_ingest_identity_refresh(monkeypatch, team='Support')
+
+    recorder = _RecordingChat(result={'answer': 'ok', 'sources': None, 'trace': None})
+    monkeypatch.setattr('app.services.runtime_client.chat', recorder)
+
+    response = client.post(
+        '/v1/chat', json={'bot_id': 'faq-bot', 'message': 'Hallo'}, headers=auth_headers(raw_token)
+    )
+
+    assert response.status_code == 200
+    assert recorder.calls[0]['user'] == {
+        'id': str(user.id),
+        'team': 'Support',
+        'teams': ['Support'],
+        'subject': 'ingest-user-id-1',
+    }
+
+
+def test_chat_omits_subject_for_a_non_ingest_user(db_session, monkeypatch):
+    """A plain/local user (no `oidc_subject`, or one from a directly-
+    configured OIDC provider rather than the Weave-Ingest handoff) has no
+    known Weave-Ingest id -- `subject` must be OMITTED entirely, not sent
+    as `None`, so Weave-Runtime's own forwarding logic can tell "unknown"
+    apart from an explicit empty value."""
+    user, raw_token = make_user_with_token(db_session, username='chat-local-user', team='Support')
+    db_session.commit()
+
+    recorder = _RecordingChat(result={'answer': 'ok', 'sources': None, 'trace': None})
+    monkeypatch.setattr('app.services.runtime_client.chat', recorder)
+
+    response = client.post(
+        '/v1/chat', json={'bot_id': 'faq-bot', 'message': 'Hallo'}, headers=auth_headers(raw_token)
+    )
+
+    assert response.status_code == 200
+    assert 'subject' not in recorder.calls[0]['user']
 
 
 def test_chat_forwards_a_collections_filter_to_runtime(db_session, monkeypatch):

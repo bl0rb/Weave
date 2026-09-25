@@ -50,9 +50,9 @@ def _registry_url() -> str:
 class CollectionSyncError(Exception):
     """Raised for any failure fetching or parsing the registry response --
     a transport error, a non-2xx status, or a response shaped unlike the
-    contract's `{'items': [{slug, name, description, read_teams}, ...]}`
-    (see `_extract_registry_items` below for why a bare list is still
-    tolerated defensively).
+    contract's `{'items': [{slug, name, description, visibility, read_teams,
+    read_users}, ...]}` (see `_extract_registry_items` below for why a bare
+    list is still tolerated defensively).
 
     Deliberately a single flat exception type (unlike ingest_client's
     Transient/Permanent split): callers here never retry synchronously --
@@ -97,6 +97,12 @@ def sync_collections(db: Session, *, timeout: float = _DEFAULT_TIMEOUT_SECONDS) 
     a full mirror, not an additive cache: a collection deleted at
     Weave-Ingest must stop being resolvable here too).
 
+    Each entry's `visibility`/`read_users` are persisted verbatim when
+    present. An older Weave-Ingest's registry response may omit them
+    entirely: `visibility` then falls back to 'public' if the entry's
+    `read_teams` is empty, else 'restricted' (the pre-`visibility`
+    contract), and `read_users` falls back to `[]`.
+
     Returns the number of collections in the upstream response (post-sync
     row count of `collections`). Raises CollectionSyncError on any failure;
     commits on success, never partially (a raised exception leaves `db`
@@ -133,6 +139,12 @@ def sync_collections(db: Session, *, timeout: float = _DEFAULT_TIMEOUT_SECONDS) 
         collection.name = entry.get('name', slug)
         collection.description = entry.get('description')
         collection.read_teams = entry.get('read_teams') or []
+        # `visibility`/`read_users` are absent from an older Weave-Ingest's
+        # registry response -- fall back to the pre-`visibility` contract
+        # ('public' iff `read_teams` is empty) using the JUST-ASSIGNED
+        # `read_teams` above, not any stale previous value.
+        collection.visibility = entry.get('visibility') or ('public' if not collection.read_teams else 'restricted')
+        collection.read_users = entry.get('read_users') or []
         collection.synced_at = now
 
     # Full-mirror semantics: drop any local row the upstream response no

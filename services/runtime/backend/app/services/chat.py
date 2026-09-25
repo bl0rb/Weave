@@ -515,7 +515,7 @@ def _resolve_rights_scope(bot: BotConfig, user: ChatUser) -> list[str]:
     RetrievalUnavailable/RetrievalError unchanged -- see this module's
     docstring for how `app/api/internal.py` maps each.
     """
-    readable = [collection.slug for collection in retrieval_client.list_collections(user.teams if user.teams is not None else user.team)]
+    readable = [collection.slug for collection in retrieval_client.list_collections(user.teams if user.teams is not None else user.team, user=user.subject)]
     bot_collections = bot.retrieval.collections
     if bot_collections:
         readable_set = set(readable)
@@ -1183,7 +1183,7 @@ def _resolve_agent_scope(
     if user_readable is None:
         user_readable = [
             collection.slug
-            for collection in retrieval_client.list_collections(user.teams if user.teams is not None else user.team)
+            for collection in retrieval_client.list_collections(user.teams if user.teams is not None else user.team, user=user.subject)
         ]
     combined_include_uncollected = bot.retrieval.include_uncollected and subagent.include_uncollected
 
@@ -1225,7 +1225,7 @@ def _available_agents_for_graph(
     """
     user_readable = [
         collection.slug
-        for collection in retrieval_client.list_collections(user.teams if user.teams is not None else user.team)
+        for collection in retrieval_client.list_collections(user.teams if user.teams is not None else user.team, user=user.subject)
     ]
     preferred = _select_subagent(bot, user)
     ordered = [preferred, *[subagent for subagent in bot.agent.subagents if subagent.id != preferred.id]]

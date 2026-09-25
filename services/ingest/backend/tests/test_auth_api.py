@@ -407,6 +407,29 @@ def test_renaming_team_updates_collection_and_bot_permissions(client: TestClient
     assert notified == ['rename-team-collection']
 
 
+def test_deleting_team_removes_it_from_collection_read_teams(client: TestClient, monkeypatch) -> None:
+    _create_user(username='deleteteamadmin', email='deleteteamadmin@example.com', password='CorrectHorse1', role=UserRole.ADMIN)
+    with _db() as db:
+        team = Team(name='Doomed Team')
+        db.add(team)
+        db.flush()
+        collection = Collection(slug='delete-team-collection', name='Knowledge', read_teams=['Doomed Team', 'Other Team'])
+        db.add(collection)
+        db.commit()
+        team_id = team.id
+    _login(client, 'deleteteamadmin', 'CorrectHorse1')
+    notified: list[str] = []
+    monkeypatch.setattr(auth_module.publication_tasks, 'publication_configured', lambda: True)
+    monkeypatch.setattr(auth_module.publication_tasks.notify_collection_registry_changed, 'delay', notified.append)
+
+    response = client.delete(f'/api/v1/auth/admin/teams/{team_id}')
+
+    assert response.status_code == 200
+    with _db() as db:
+        assert db.get(Collection, collection.id).read_teams == ['Other Team']
+    assert notified == ['delete-team-collection']
+
+
 def test_admin_cannot_demote_or_delete_last_active_admin(client: TestClient) -> None:
     _wipe_users_and_sessions()
     sole_admin = _create_user(username='soleadmin', email='soleadmin@example.com', password='CorrectHorse1', role=UserRole.ADMIN)
@@ -1359,3 +1382,117 @@ def test_handoff_stores_only_the_hash_of_the_code(client: TestClient, handoff_en
     finally:
         db.close()
     assert code not in stored
+
+
+# --- per-user locale preference ------------------------------------------------
+
+def test_get_me_returns_locale(client: TestClient) -> None:
+    _create_user(username='localereader', email='localereader@example.com')
+    _login(client, 'localereader', 'CorrectHorse1')
+
+    resp = client.get('/api/v1/auth/me')
+
+    assert resp.status_code == 200
+    assert resp.json()['locale'] is None
+
+
+def test_patch_me_sets_and_clears_locale(client: TestClient) -> None:
+    _create_user(username='localesetter', email='localesetter@example.com')
+    _login(client, 'localesetter', 'CorrectHorse1')
+
+    resp = client.patch('/api/v1/auth/me', json={'locale': 'de'})
+    assert resp.status_code == 200
+    assert resp.json()['locale'] == 'de'
+    assert client.get('/api/v1/auth/me').json()['locale'] == 'de'
+
+    resp = client.patch('/api/v1/auth/me', json={'locale': None})
+    assert resp.status_code == 200
+    assert resp.json()['locale'] is None
+
+
+def test_patch_me_rejects_an_invalid_locale(client: TestClient) -> None:
+    _create_user(username='localeinvalid', email='localeinvalid@example.com')
+    _login(client, 'localeinvalid', 'CorrectHorse1')
+
+    resp = client.patch('/api/v1/auth/me', json={'locale': 'fr'})
+
+    assert resp.status_code == 422
+
+
+def test_patch_me_requires_authentication(client: TestClient) -> None:
+    resp = client.patch('/api/v1/auth/me', json={'locale': 'de'})
+
+    assert resp.status_code == 401
+
+
+def test_handoff_identity_includes_locale(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr(settings, 'handoff_secret', 'identity-service-secret')
+    user = _create_user(username='localehandoff', email='localehandoff@example.com')
+    with _db() as db:
+        db.query(User).filter(User.id == user.id).update({'locale': 'en'})
+        db.commit()
+
+    resp = client.get(
+        f'/api/v1/auth/handoff/identity/{user.id}',
+        headers={'X-Weave-Handoff-Secret': 'identity-service-secret'},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()['locale'] == 'en'
+
+
+def test_handoff_locale_put_updates_only_locale(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr(settings, 'handoff_secret', 'identity-service-secret')
+    user = _create_user(username='localeputuser', email='localeputuser@example.com')
+    headers = {'X-Weave-Handoff-Secret': 'identity-service-secret'}
+
+    resp = client.put(f'/api/v1/auth/handoff/identity/{user.id}/locale', json={'locale': 'de'}, headers=headers)
+
+    assert resp.status_code == 204
+    with _db() as db:
+        refreshed = db.get(User, user.id)
+        assert refreshed.locale == 'de'
+        # Nothing else about the row moved -- the handoff secret authorizes
+        # only this one write.
+        assert refreshed.username == 'localeputuser'
+        assert refreshed.email == 'localeputuser@example.com'
+        assert refreshed.role == UserRole.USER
+        assert refreshed.is_active is True
+
+
+def test_handoff_locale_put_rejects_a_wrong_secret(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr(settings, 'handoff_secret', 'identity-service-secret')
+    user = _create_user(username='localewrongsecret', email='localewrongsecret@example.com')
+
+    resp = client.put(
+        f'/api/v1/auth/handoff/identity/{user.id}/locale',
+        json={'locale': 'de'},
+        headers={'X-Weave-Handoff-Secret': 'wrong'},
+    )
+
+    assert resp.status_code == 401
+
+
+def test_handoff_locale_put_is_404_for_an_unknown_user(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr(settings, 'handoff_secret', 'identity-service-secret')
+
+    resp = client.put(
+        '/api/v1/auth/handoff/identity/does-not-exist/locale',
+        json={'locale': 'de'},
+        headers={'X-Weave-Handoff-Secret': 'identity-service-secret'},
+    )
+
+    assert resp.status_code == 404
+
+
+def test_handoff_locale_put_is_503_when_unconfigured(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr(settings, 'handoff_secret', '')
+    user = _create_user(username='localeunconfigured', email='localeunconfigured@example.com')
+
+    resp = client.put(
+        f'/api/v1/auth/handoff/identity/{user.id}/locale',
+        json={'locale': 'de'},
+        headers={'X-Weave-Handoff-Secret': ''},
+    )
+
+    assert resp.status_code == 503

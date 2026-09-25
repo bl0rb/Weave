@@ -26,6 +26,7 @@ from app.models.models import (
     AuthProvider,
     Base,
     Collection,
+    CollectionVisibility,
     DocumentRelease,
     ImportAuthType,
     ImportSource,
@@ -543,5 +544,35 @@ def test_unknown_column_tolerated_missing_column_defaulted(monkeypatch, tmp_path
         # column's own Python default filled it in rather than erroring.
         assert team.created_at is not None
         assert any('unbekannte Spalte' in warning for warning in report['warnings'])
+    finally:
+        target_db.close()
+
+
+def test_pre_visibility_archive_keeps_team_restricted_collections_restricted(monkeypatch, tmp_path):
+    """An archive from before 0032_collection_visibility has no `visibility`
+    column: restore must derive it exactly like that migration's backfill,
+    never fall back to the model's default for either kind of row."""
+    archive_path = tmp_path / 'pre-0032.weave-backup.tar.gz'
+    _write_minimal_archive(archive_path, 'pw', {
+        'collections': [
+            {'id': 'c-public', 'slug': 'oeffentlich', 'name': 'Öffentlich', 'description': '', 'read_teams': []},
+            {'id': 'c-team', 'slug': 'service', 'name': 'Service', 'description': '', 'read_teams': ['Kundenservice']},
+        ],
+    })
+
+    target_engine, TargetSession = _new_engine(tmp_path, 'target_pre_0032.db')
+    _use_storage_dirs(monkeypatch, tmp_path, 'target_pre_0032')
+    target_db = TargetSession()
+    try:
+        admin = User(username='bootstrap', email='bootstrap@example.com', password_hash=hash_password('Boots1'), role=UserRole.ADMIN)
+        target_db.add(admin)
+        target_db.commit()
+
+        backup.import_backup(target_db, path=archive_path, passphrase='pw', importing_admin_id=admin.id)
+        target_db.commit()
+
+        assert target_db.get(Collection, 'c-public').visibility == CollectionVisibility.PUBLIC
+        assert target_db.get(Collection, 'c-team').visibility == CollectionVisibility.RESTRICTED
+        assert target_db.get(Collection, 'c-team').read_users == []
     finally:
         target_db.close()

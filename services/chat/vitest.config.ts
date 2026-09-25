@@ -1,6 +1,5 @@
 import path from 'node:path';
 import { defineConfig } from 'vitest/config';
-import tsconfigPaths from 'vite-tsconfig-paths';
 
 // Deliberately small by default: no global jsdom, no next/jest. Almost
 // everything under test here — the SSE parser, the error-mapping table, the
@@ -15,9 +14,13 @@ import tsconfigPaths from 'vite-tsconfig-paths';
 // trace-panel — which stays narrower than moving the whole suite onto
 // jsdom by default.
 export default defineConfig({
-  plugins: [tsconfigPaths()],
   resolve: {
     alias: {
+      // tsconfig.json's only `paths` entry, mirrored as a plain alias (as
+      // the ingest frontend does) instead of vite-tsconfig-paths, whose
+      // unmaintained tsconfck dependency only accepts TypeScript 5 and made
+      // npm 10 and npm 11 disagree about this package's lockfile.
+      '@': path.resolve(__dirname, 'src'),
       // Next's build resolves this package's "react-server" export
       // condition to a no-op; plain Node (and so Vitest) resolves its
       // default condition instead, which unconditionally throws. Swap in

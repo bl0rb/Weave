@@ -16,8 +16,10 @@ import {
   SectionCard,
   useAdminList,
 } from '@/components/admin/admin-shared';
+import { useI18n } from '@/i18n/provider';
 
 export function TeamsTab() {
+  const { t, formatDate } = useI18n();
   const teams = useAdminList<Team>('/api/v1/auth/admin/teams');
   const newNameRef = useRef<HTMLInputElement>(null);
 
@@ -79,23 +81,23 @@ export function TeamsTab() {
 
   return (
     <div className="space-y-6">
-      <SectionCard title="Create team" description="Teams scope job visibility for their members.">
+      <SectionCard title={t('admin.teams.createTitle')} description={t('admin.teams.createDescription')}>
         <form onSubmit={createTeam} className="flex flex-wrap items-center gap-3">
           <input
             ref={newNameRef}
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
-            placeholder="Team name"
+            placeholder={t('admin.teams.namePlaceholder')}
             required
             className={`${inputClass} mt-0 w-full max-w-xs`}
           />
-          <Button type="submit" size="sm" className="h-[38px]" disabled={creating || !newName.trim()}>
+          <Button type="submit" disabled={creating || !newName.trim()}>
             {creating ? (
               <LoaderCircle className="h-4 w-4 animate-spin" />
             ) : (
               <Plus className="h-4 w-4" />
             )}
-            Create team
+            {t('admin.teams.createTitle')}
           </Button>
         </form>
         {createError && (
@@ -105,14 +107,14 @@ export function TeamsTab() {
         )}
       </SectionCard>
 
-      <SectionCard title="Teams" description="Rename or remove existing teams.">
+      <SectionCard title={t('admin.teams.title')} description={t('admin.teams.description')}>
         <ErrorNotice message={teams.error} />
         {teams.loading ? (
-          <LoadingState label="Loading teams…" />
+          <LoadingState label={t('admin.teams.loading')} />
         ) : teams.items.length === 0 ? (
           <div className="flex flex-col items-center gap-3 py-10 text-center">
             <Building2 className="h-8 w-8 text-slate-300" />
-            <p className="text-sm text-slate-500">No teams yet. Create the first one to group users.</p>
+            <p className="text-sm text-slate-500">{t('admin.teams.empty')}</p>
             <Button
               variant="outline"
               size="sm"
@@ -122,7 +124,7 @@ export function TeamsTab() {
               }}
             >
               <Plus className="h-4 w-4" />
-              Create team
+              {t('admin.teams.createTitle')}
             </Button>
           </div>
         ) : (
@@ -147,8 +149,8 @@ export function TeamsTab() {
                     <button
                       onClick={() => saveRename(team.id)}
                       disabled={renameBusy || !renameValue.trim()}
-                      aria-label="Save team name"
-                      title="Save"
+                      aria-label={t('admin.teams.saveNameAria')}
+                      title={t('common.save')}
                       className="flex h-8 w-8 items-center justify-center rounded-lg text-emerald-600 transition hover:bg-emerald-50 disabled:opacity-50"
                     >
                       {renameBusy ? (
@@ -160,8 +162,8 @@ export function TeamsTab() {
                     <button
                       onClick={() => setRenamingId(null)}
                       disabled={renameBusy}
-                      aria-label="Cancel rename"
-                      title="Cancel"
+                      aria-label={t('admin.teams.cancelRenameAria')}
+                      title={t('common.cancel')}
                       className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
                     >
                       <X className="h-4 w-4" />
@@ -176,7 +178,7 @@ export function TeamsTab() {
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-slate-950">{team.name}</p>
                     <p className="text-xs text-slate-400">
-                      Created {new Date(team.created_at).toLocaleDateString()}
+                      {t('admin.teams.createdOn', { date: formatDate(team.created_at) })}
                     </p>
                   </div>
                 )}
@@ -184,16 +186,16 @@ export function TeamsTab() {
                   <div className="flex flex-shrink-0 gap-1">
                     <button
                       onClick={() => startRename(team)}
-                      aria-label={`Rename ${team.name}`}
-                      title="Rename"
+                      aria-label={t('admin.teams.renameAria', { team: team.name })}
+                      title={t('admin.teams.renameTooltip')}
                       className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
                     >
                       <Pencil className="h-4 w-4" />
                     </button>
                     <button
                       onClick={() => setDeleting(team)}
-                      aria-label={`Delete ${team.name}`}
-                      title="Delete"
+                      aria-label={t('admin.teams.deleteAria', { team: team.name })}
+                      title={t('common.delete')}
                       className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-red-50 hover:text-red-600"
                     >
                       <Trash2 className="h-4 w-4" />
@@ -208,14 +210,14 @@ export function TeamsTab() {
 
       {deleting && (
         <ConfirmDialog
-          title="Delete team"
+          title={t('admin.teams.deleteTitle')}
           body={
             <p>
-              Delete <span className="font-semibold text-slate-950">{deleting.name}</span>? Members
-              keep working normally — they only lose the team scope.
+              {t('admin.teams.deleteBodyPrefix')} <span className="font-semibold text-slate-950">{deleting.name}</span>
+              {t('admin.teams.deleteBodySuffix')}
             </p>
           }
-          confirmLabel="Delete team"
+          confirmLabel={t('admin.teams.deleteTitle')}
           onClose={() => setDeleting(null)}
           onConfirm={async () => {
             await apiSend(`/api/v1/auth/admin/teams/${deleting.id}`, { method: 'DELETE' });

@@ -22,7 +22,7 @@ it('preserves the knowledge collection when editing and rerunning an old import'
     return { items: [], profiles: [] };
   });
   render(<NewImportPage />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Start import' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Import starten' }));
   await waitFor(() => expect(navigation.push).toHaveBeenCalledWith('/imports/new-run'));
   const request = api.mock.calls.find(([path, options]) => path === '/api/v1/import/runs' && options?.method === 'POST');
   const payload = JSON.parse(String(request?.[1]?.body));

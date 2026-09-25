@@ -14,6 +14,7 @@ import {
   sendWebhook,
   webhookDeliveryStatusChip,
 } from '@/lib/webhooks';
+import { useI18n } from '@/i18n/provider';
 
 export type WebhookSendDialogJob = { id: string; label: string };
 
@@ -31,6 +32,7 @@ type WebhookSendDialogProps = {
  * finished delivery directly -- no polling needed.
  */
 export function WebhookSendDialog({ job, onClose, onSent }: WebhookSendDialogProps) {
+  const { t } = useI18n();
   const [connections, setConnections] = useState<WebhookConnection[]>([]);
   const [connectionsLoading, setConnectionsLoading] = useState(true);
   const [connectionsError, setConnectionsError] = useState<string | null>(null);
@@ -88,25 +90,25 @@ export function WebhookSendDialog({ job, onClose, onSent }: WebhookSendDialogPro
   const canSend = !connectionsUnavailable && connections.length > 0 && delivery === null;
 
   return (
-    <Modal title="Send to webhook" onClose={onClose}>
+    <Modal title={t('portal.webhookSend.title')} onClose={onClose}>
       <div className="space-y-4">
         <p className="text-sm text-slate-600">{job.label}</p>
 
         {connectionsUnavailable ? (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            Not available on this backend yet.
+            {t('portal.webhookSend.notAvailable')}
           </div>
         ) : connectionsLoading ? (
-          <LoadingState label="Loading connections..." />
+          <LoadingState label={t('portal.webhookSend.loadingConnections')} />
         ) : connectionsError ? (
           <ErrorNotice message={connectionsError} />
         ) : connections.length === 0 ? (
           <p className="text-sm text-slate-600">
-            No enabled webhook connections.{' '}
+            {t('portal.webhookSend.noneEnabled')}{' '}
             <Link href="/connections?tab=webhooks" className="text-emerald-700 hover:text-emerald-800">
-              Add one
+              {t('portal.webhookSend.addOne')}
             </Link>{' '}
-            first.
+            {t('portal.webhookSend.first')}
           </p>
         ) : delivery ? (
           <div aria-live="polite" className="rounded-xl border border-slate-200 px-4 py-3">
@@ -119,12 +121,12 @@ export function WebhookSendDialog({ job, onClose, onSent }: WebhookSendDialogPro
               </span>
             </div>
             {delivery.http_status !== null && (
-              <p className="mt-1 text-xs text-slate-500">HTTP {delivery.http_status}</p>
+              <p className="mt-1 text-xs text-slate-500">{t('portal.webhookSend.httpStatus', { status: delivery.http_status })}</p>
             )}
             {delivery.error_message && <p className="mt-2 text-xs text-red-600">{delivery.error_message}</p>}
           </div>
         ) : (
-          <Field label="Connection">
+          <Field label={t('portal.webhookSend.connectionLabel')}>
             <select
               value={selectedConnectionId}
               onChange={(event) => setSelectedConnectionId(event.target.value)}
@@ -145,7 +147,7 @@ export function WebhookSendDialog({ job, onClose, onSent }: WebhookSendDialogPro
 
         <div className="flex justify-end gap-2 pt-1">
           <Button type="button" variant="outline" size="sm" onClick={onClose}>
-            {delivery ? 'Close' : 'Cancel'}
+            {delivery ? t('common.close') : t('common.cancel')}
           </Button>
           {canSend && (
             <Button
@@ -155,7 +157,7 @@ export function WebhookSendDialog({ job, onClose, onSent }: WebhookSendDialogPro
               disabled={sendBusy || !selectedConnectionId}
             >
               {sendBusy && <LoaderCircle className="h-4 w-4 animate-spin" />}
-              {sendBusy ? 'Sending...' : 'Send'}
+              {sendBusy ? t('portal.webhookSend.sending') : t('portal.webhookSend.send')}
             </Button>
           )}
         </div>

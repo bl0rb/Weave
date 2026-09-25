@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useEffectEvent, useState } from 'react';
 import Link from 'next/link';
 import { AnimatePresence, motion } from 'framer-motion';
 import { CheckCircle2, LoaderCircle, XCircle } from 'lucide-react';
@@ -25,12 +25,16 @@ import {
   TEST_COOLDOWN_FALLBACK_MS,
 } from '@/lib/imports';
 import { listWebhookConnections, type WebhookConnection } from '@/lib/webhooks';
+import { useI18n } from '@/i18n/provider';
+import type { MessageKey } from '@/i18n/messages';
 
-const WIZARD_STEPS = [
-  { id: 1, title: 'Connection', description: 'Pick or create a Confluence connection and test it.' },
-  { id: 2, title: 'Scope', description: 'Choose a space or a single page tree to import.' },
-  { id: 3, title: 'Options + start', description: 'Limits, attachments, and where results are stored.' },
-];
+function wizardSteps(t: (key: MessageKey) => string) {
+  return [
+    { id: 1, title: t('portal.importWizard.step1.title'), description: t('portal.importWizard.step1.description') },
+    { id: 2, title: t('portal.importWizard.step2.title'), description: t('portal.importWizard.step2.description') },
+    { id: 3, title: t('portal.importWizard.step3.title'), description: t('portal.importWizard.step3.description') },
+  ];
+}
 
 // Mirrors the backend defaults (import_max_pages / import_max_depth); the
 // server clamps whatever the client sends, these are display hints only.
@@ -72,6 +76,7 @@ export default function NewImportPage() {
 }
 
 function NewImportPageInner() {
+  const { t } = useI18n();
   const router = useRouter();
   const searchParams = useSearchParams();
   const prefillFromRunId = searchParams.get('from');
@@ -138,6 +143,10 @@ function NewImportPageInner() {
   const selectedSource = sources.find((entry) => entry.id === selectedSourceId) ?? null;
   const selectedSubfolderOptions = folder ? (folderOptions[folder] ?? []) : [];
 
+  // Current-language messages without making `t` an effect dependency: a
+  // language switch must not re-run the load and reset the wizard.
+  const message = useEffectEvent((key: MessageKey) => t(key));
+
   useEffect(() => {
     let cancelled = false;
 
@@ -198,18 +207,18 @@ function NewImportPageInner() {
           setWebhookConnectionId(webhookConnectionsPayload.items.some(connection => connection.enabled && connection.id === options.webhook_connection_id) ? options.webhook_connection_id ?? '' : '');
           if (prefillSourceStillExists) {
             setWizardStep(3);
-            setPrefillNotice('Prefilled from a previous run — adjust anything and start.');
+            setPrefillNotice(message('portal.importWizard.prefillReused'));
           } else {
-            setConnectionMessage('The original connection is not available to your account. Choose or create your own connection.');
-            setPrefillNotice('Prefilled from a previous run — adjust anything and start.');
+            setConnectionMessage(message('portal.importWizard.prefillSourceMissing'));
+            setPrefillNotice(message('portal.importWizard.prefillReused'));
           }
         } else if (prefillFromRunId) {
-          setPrefillNotice('Could not load the previous run to prefill from.');
+          setPrefillNotice(message('portal.importWizard.prefillFailed'));
         }
       } catch (error) {
         if (!cancelled) {
           setSourcesLoadFailed(true);
-          setConnectionMessage(error instanceof ApiError ? error.detail : 'Failed to load import sources.');
+          setConnectionMessage(error instanceof ApiError ? error.detail : message('portal.importWizard.error.loadSourcesFailed'));
         }
       } finally {
         if (!cancelled) setSourcesLoaded(true);
@@ -276,11 +285,11 @@ function NewImportPageInner() {
     const credential = newCredential.trim();
     const authUsername = newEmail.trim();
     if (!name || !baseUrl || !credential) {
-      setConnectionMessage('Name, base URL, and the token are required.');
+      setConnectionMessage(t('portal.importWizard.error.nameRequired'));
       return;
     }
     if (newAuthType === 'cloud_basic' && !authUsername) {
-      setConnectionMessage('The Atlassian account email is required for Cloud connections.');
+      setConnectionMessage(t('portal.importWizard.error.cloudEmailRequired'));
       return;
     }
     setCreateBusy(true);
@@ -305,9 +314,9 @@ function NewImportPageInner() {
       setNewBaseUrl('');
       setNewEmail('');
       setNewCredential('');
-      setConnectionMessage('Source created. Test the connection before starting the import.');
+      setConnectionMessage(t('portal.importWizard.sourceCreated'));
     } catch (error) {
-      setConnectionMessage(error instanceof ApiError ? error.detail : 'Failed to create source.');
+      setConnectionMessage(error instanceof ApiError ? error.detail : t('portal.importWizard.error.createSourceFailed'));
     } finally {
       setCreateBusy(false);
     }
@@ -340,7 +349,7 @@ function NewImportPageInner() {
         armTestCooldown(selectedSourceId);
         setConnectionMessage(error.detail);
       } else {
-        setConnectionMessage(error instanceof ApiError ? error.detail : 'Connection test failed.');
+        setConnectionMessage(error instanceof ApiError ? error.detail : t('portal.importWizard.error.testFailed'));
       }
     } finally {
       setTestBusy(false);
@@ -351,7 +360,7 @@ function NewImportPageInner() {
     const folderValue = newFolderName.trim();
     const subfolderValue = newSubfolderName.trim();
     if (!folderValue && !subfolderValue) {
-      setStartError('Enter a folder or subfolder name first.');
+      setStartError(t('portal.importWizard.error.folderNameRequired'));
       return;
     }
     setFolderBusy(true);
@@ -379,7 +388,7 @@ function NewImportPageInner() {
       setNewFolderName('');
       setNewSubfolderName('');
     } catch (error) {
-      setStartError(error instanceof ApiError ? error.detail : 'Failed to create folder.');
+      setStartError(error instanceof ApiError ? error.detail : t('portal.importWizard.error.createFolderFailed'));
     } finally {
       setFolderBusy(false);
     }
@@ -387,23 +396,23 @@ function NewImportPageInner() {
 
   const startImport = async () => {
     if (!selectedSourceId) {
-      setStartError('Pick a connection first.');
+      setStartError(t('portal.importWizard.error.pickConnectionFirst'));
       setWizardStep(1);
       return;
     }
     if (!scopeValue.trim()) {
-      setStartError(scopeType === 'space' ? 'Enter a space key.' : 'Enter a page URL or id.');
+      setStartError(scopeType === 'space' ? t('portal.importWizard.error.enterSpaceKey') : t('portal.importWizard.error.enterPageUrl'));
       setWizardStep(2);
       return;
     }
     const parsedMaxPages = maxPages.trim() ? Number.parseInt(maxPages, 10) : null;
     if (parsedMaxPages !== null && (!Number.isFinite(parsedMaxPages) || parsedMaxPages < 1)) {
-      setStartError('Max pages must be a whole number of at least 1.');
+      setStartError(t('portal.importWizard.error.maxPagesInvalid'));
       return;
     }
     const parsedMaxDepth = maxDepth.trim() ? Number.parseInt(maxDepth, 10) : null;
     if (parsedMaxDepth !== null && (!Number.isFinite(parsedMaxDepth) || parsedMaxDepth < 0)) {
-      setStartError('Max depth must be a whole number of at least 0.');
+      setStartError(t('portal.importWizard.error.maxDepthInvalid'));
       return;
     }
 
@@ -443,7 +452,7 @@ function NewImportPageInner() {
         // value; 429: rate limited — the backend detail explains all three.
         setStartError(error.detail);
       } else {
-        setStartError('Failed to start the import.');
+        setStartError(t('portal.importWizard.error.startFailed'));
       }
       setStartBusy(false);
     }
@@ -466,11 +475,11 @@ function NewImportPageInner() {
       <div className="mx-auto w-full max-w-6xl px-4 py-8 text-slate-950 sm:px-6 lg:px-8">
         <section className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h1 className="text-3xl font-semibold">New Confluence Import</h1>
-            <p className="mt-2 text-slate-600">Connect, choose what to import, and start the run.</p>
+            <h1 className="text-3xl font-semibold">{t('portal.importWizard.title')}</h1>
+            <p className="mt-2 text-slate-600">{t('portal.importWizard.subtitle')}</p>
           </div>
           <Link href="/imports" className="text-sm text-emerald-700 hover:text-emerald-800">
-            Back to imports
+            {t('portal.importWizard.backToImports')}
           </Link>
         </section>
 
@@ -482,7 +491,7 @@ function NewImportPageInner() {
 
         <section className="rounded-xl border border-slate-200 bg-gradient-to-br from-emerald-50 to-white p-5">
           <div className="mb-5 grid gap-3 md:grid-cols-3">
-            {WIZARD_STEPS.map((step) => {
+            {wizardSteps(t).map((step) => {
               const active = wizardStep === step.id;
               const completed = wizardStep > step.id;
               return (
@@ -523,7 +532,7 @@ function NewImportPageInner() {
               >
                 {!sourcesLoaded ? (
                   <div className="flex items-center gap-2 py-6 text-sm text-slate-600">
-                    <LoaderCircle className="h-4 w-4 animate-spin" /> Loading connections...
+                    <LoaderCircle className="h-4 w-4 animate-spin" /> {t('portal.importWizard.loadingConnections')}
                   </div>
                 ) : (
                   <>
@@ -553,17 +562,17 @@ function NewImportPageInner() {
                                   }`}
                                 >
                                   {source.server_kind === 'cloud'
-                                    ? 'Cloud'
+                                    ? t('portal.importWizard.badge.cloud')
                                     : source.server_kind === 'datacenter'
-                                      ? 'Server/DC'
-                                      : 'untested'}
+                                      ? t('portal.importWizard.badge.serverDc')
+                                      : t('portal.importWizard.badge.untested')}
                                 </span>
                               </div>
                               <p className="mt-1 truncate text-xs text-slate-600">{source.base_url}</p>
                               <p className="mt-1 text-xs text-slate-500">
                                 {source.auth_type === 'cloud_basic'
-                                  ? `Email + API token (${source.auth_username})`
-                                  : 'Personal access token'}
+                                  ? t('portal.importWizard.authSummary.cloud', { email: source.auth_username })
+                                  : t('portal.importWizard.authSummary.pat')}
                               </p>
                             </button>
                           );
@@ -579,18 +588,18 @@ function NewImportPageInner() {
                             creatingSource ? 'border-emerald-300 bg-emerald-50' : 'border-slate-300 bg-white'
                           }`}
                         >
-                          <p className="text-sm font-semibold text-slate-950">New connection</p>
-                          <p className="mt-1 text-xs text-slate-600">Add another Confluence instance.</p>
+                          <p className="text-sm font-semibold text-slate-950">{t('portal.importWizard.newConnection')}</p>
+                          <p className="mt-1 text-xs text-slate-600">{t('portal.importWizard.newConnectionHint')}</p>
                         </button>
                       </div>
                     )}
 
                     {creatingSource && (
                       <div className="rounded-xl border border-slate-200 bg-white p-4">
-                        <p className="text-sm font-semibold text-slate-950">Create connection</p>
+                        <p className="text-sm font-semibold text-slate-950">{t('portal.importWizard.createConnection')}</p>
                         <div className="mt-3 grid gap-3 md:grid-cols-2">
                           <label className="text-sm text-slate-600">
-                            Name
+                            {t('portal.importWizard.nameLabel')}
                             <input
                               value={newName}
                               onChange={(event) => setNewName(event.target.value)}
@@ -599,7 +608,7 @@ function NewImportPageInner() {
                             />
                           </label>
                           <label className="text-sm text-slate-600">
-                            Base URL
+                            {t('portal.importWizard.baseUrlLabel')}
                             <input
                               value={newBaseUrl}
                               onChange={(event) => setNewBaseUrl(event.target.value)}
@@ -608,7 +617,7 @@ function NewImportPageInner() {
                             />
                           </label>
                           <div className="md:col-span-2">
-                            <p className="text-sm text-slate-600">Authentication</p>
+                            <p className="text-sm text-slate-600">{t('portal.importWizard.authenticationLabel')}</p>
                             <div className="mt-1 grid gap-3 md:grid-cols-2">
                               <button
                                 type="button"
@@ -617,8 +626,8 @@ function NewImportPageInner() {
                                   newAuthType === 'cloud_basic' ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white'
                                 }`}
                               >
-                                <p className="text-sm font-semibold text-slate-950">Confluence Cloud</p>
-                                <p className="mt-1 text-xs text-slate-600">Atlassian account email + API token.</p>
+                                <p className="text-sm font-semibold text-slate-950">{t('portal.importWizard.authCloudTitle')}</p>
+                                <p className="mt-1 text-xs text-slate-600">{t('portal.importWizard.authCloudHint')}</p>
                               </button>
                               <button
                                 type="button"
@@ -627,15 +636,15 @@ function NewImportPageInner() {
                                   newAuthType === 'pat_bearer' ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white'
                                 }`}
                               >
-                                <p className="text-sm font-semibold text-slate-950">Server / Data Center</p>
-                                <p className="mt-1 text-xs text-slate-600">Personal access token (PAT).</p>
+                                <p className="text-sm font-semibold text-slate-950">{t('portal.importWizard.authServerTitle')}</p>
+                                <p className="mt-1 text-xs text-slate-600">{t('portal.importWizard.authServerHint')}</p>
                               </button>
                             </div>
                           </div>
                           {newAuthType === 'cloud_basic' ? (
                             <>
                               <label className="text-sm text-slate-600">
-                                Atlassian account email
+                                {t('portal.importWizard.atlassianEmailLabel')}
                                 <input
                                   value={newEmail}
                                   onChange={(event) => setNewEmail(event.target.value)}
@@ -645,7 +654,7 @@ function NewImportPageInner() {
                                 />
                               </label>
                               <label className="text-sm text-slate-600">
-                                API token
+                                {t('portal.importWizard.apiTokenLabel')}
                                 <input
                                   value={newCredential}
                                   onChange={(event) => setNewCredential(event.target.value)}
@@ -663,7 +672,7 @@ function NewImportPageInner() {
                             </>
                           ) : (
                             <label className="text-sm text-slate-600 md:col-span-2">
-                              Personal access token
+                              {t('portal.importWizard.patLabel')}
                               <input
                                 value={newCredential}
                                 onChange={(event) => setNewCredential(event.target.value)}
@@ -678,11 +687,11 @@ function NewImportPageInner() {
                           )}
                         </div>
                         <p className="mt-2 text-xs text-slate-500">
-                          Tokens are stored encrypted and are write-only: they are never shown again.
+                          {t('portal.importWizard.tokensEncryptedHint')}
                         </p>
                         <div className="mt-3">
                           <Button onClick={() => void createSource()} disabled={createBusy}>
-                            {createBusy ? 'Creating...' : 'Create connection'}
+                            {createBusy ? t('portal.importWizard.creating') : t('portal.importWizard.createConnection')}
                           </Button>
                         </div>
                       </div>
@@ -692,10 +701,10 @@ function NewImportPageInner() {
                       <div className="flex flex-wrap items-center gap-3">
                         <Button variant="outline" onClick={() => void testConnection()} disabled={testDisabled}>
                           {testBusy
-                            ? 'Testing...'
+                            ? t('portal.importWizard.testing')
                             : cooldownSeconds > 0
-                              ? `Test connection (${cooldownSeconds}s)`
-                              : 'Test connection'}
+                              ? t('portal.importWizard.testConnectionCooldown', { seconds: cooldownSeconds })
+                              : t('portal.importWizard.testConnection')}
                         </Button>
                         {testResult && (
                           <span
@@ -704,7 +713,7 @@ function NewImportPageInner() {
                             }`}
                           >
                             {testResult.ok ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
-                            {testResult.detail ?? (testResult.ok ? 'Connected' : 'Connection failed')}
+                            {testResult.detail ?? (testResult.ok ? t('portal.importWizard.connected') : t('portal.importWizard.connectionFailed'))}
                           </span>
                         )}
                       </div>
@@ -718,20 +727,19 @@ function NewImportPageInner() {
                     {sourcesLoadFailed && (
                       <div>
                         <Button variant="outline" onClick={retryLoadSources}>
-                          Retry loading connections
+                          {t('portal.importWizard.retryLoadConnections')}
                         </Button>
                       </div>
                     )}
                     {!creatingSource && selectedSource && !selectedSource.server_kind && !(testResult?.ok ?? false) && (
                       <p className="text-xs text-amber-700">
-                        This connection has not been tested successfully yet; starting an import requires a successful
-                        test.
+                        {t('portal.importWizard.untestedWarning')}
                       </p>
                     )}
 
                     <div className="flex justify-end">
                       <Button onClick={() => setWizardStep(2)} disabled={!selectedSourceId || creatingSource}>
-                        Continue
+                        {t('portal.importWizard.continue')}
                       </Button>
                     </div>
                   </>
@@ -755,8 +763,8 @@ function NewImportPageInner() {
                       scopeType === 'space' ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white'
                     }`}
                   >
-                    <p className="text-sm font-semibold text-slate-950">Whole space</p>
-                    <p className="mt-1 text-xs text-slate-600">Import a space starting at its homepage.</p>
+                    <p className="text-sm font-semibold text-slate-950">{t('portal.importWizard.wholeSpaceTitle')}</p>
+                    <p className="mt-1 text-xs text-slate-600">{t('portal.importWizard.wholeSpaceHint')}</p>
                   </button>
                   <button
                     type="button"
@@ -765,12 +773,12 @@ function NewImportPageInner() {
                       scopeType === 'page' ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white'
                     }`}
                   >
-                    <p className="text-sm font-semibold text-slate-950">Page tree</p>
-                    <p className="mt-1 text-xs text-slate-600">Import a page and its children.</p>
+                    <p className="text-sm font-semibold text-slate-950">{t('portal.importWizard.pageTreeTitle')}</p>
+                    <p className="mt-1 text-xs text-slate-600">{t('portal.importWizard.pageTreeHint')}</p>
                   </button>
                 </div>
                 <label className="block text-sm text-slate-600">
-                  {scopeType === 'space' ? 'Space key or space URL' : 'Page URL or page id'}
+                  {scopeType === 'space' ? t('portal.importWizard.spaceKeyLabel') : t('portal.importWizard.pageUrlLabel')}
                   <input
                     value={scopeValue}
                     onChange={(event) => setScopeValue(event.target.value)}
@@ -783,15 +791,14 @@ function NewImportPageInner() {
                   />
                 </label>
                 <p className="text-xs text-slate-500">
-                  Pasting a full Confluence URL works — the server extracts the {scopeType === 'space' ? 'space key' : 'page id'}
-                  {scopeType === 'page' ? ', including /display/…-links' : ''}.
+                  {scopeType === 'space' ? t('portal.importWizard.pasteUrlHintSpace') : t('portal.importWizard.pasteUrlHintPage')}
                 </p>
                 <div className="flex justify-between gap-3">
                   <Button variant="outline" onClick={() => setWizardStep(1)}>
-                    Back
+                    {t('common.back')}
                   </Button>
                   <Button onClick={() => setWizardStep(3)} disabled={!scopeValue.trim()}>
-                    Continue
+                    {t('portal.importWizard.continue')}
                   </Button>
                 </div>
               </motion.div>
@@ -807,7 +814,7 @@ function NewImportPageInner() {
               >
                 <div className="grid gap-3 md:grid-cols-2">
                   <label className="text-sm text-slate-600">
-                    Max pages
+                    {t('portal.importWizard.maxPagesLabel')}
                     <input
                       value={maxPages}
                       onChange={(event) => setMaxPages(event.target.value)}
@@ -816,10 +823,10 @@ function NewImportPageInner() {
                       className="mt-1 w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950"
                       placeholder={`${SERVER_DEFAULT_MAX_PAGES} (server default)`}
                     />
-                    <p className="mt-1 text-xs text-slate-500">The server clamps values above its limit.</p>
+                    <p className="mt-1 text-xs text-slate-500">{t('portal.importWizard.maxPagesHint')}</p>
                   </label>
                   <label className="text-sm text-slate-600">
-                    Max depth
+                    {t('portal.importWizard.maxDepthLabel')}
                     <input
                       value={maxDepth}
                       onChange={(event) => setMaxDepth(event.target.value)}
@@ -828,7 +835,7 @@ function NewImportPageInner() {
                       className="mt-1 w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950"
                       placeholder={`${SERVER_DEFAULT_MAX_DEPTH} (server default)`}
                     />
-                    <p className="mt-1 text-xs text-slate-500">0 imports only the root page.</p>
+                    <p className="mt-1 text-xs text-slate-500">{t('portal.importWizard.maxDepthHint')}</p>
                   </label>
                 </div>
 
@@ -840,7 +847,7 @@ function NewImportPageInner() {
                       onChange={(event) => setIncludeAttachments(event.target.checked)}
                       className="h-4 w-4 accent-emerald-600"
                     />
-                    Include attachments and images
+                    {t('portal.importWizard.includeAttachments')}
                   </label>
                   <label
                     className={`flex items-center gap-2 text-sm ${includeAttachments ? 'text-slate-700' : 'text-slate-400'}`}
@@ -852,11 +859,11 @@ function NewImportPageInner() {
                       onChange={(event) => setOcrAttachments(event.target.checked)}
                       className="h-4 w-4 accent-emerald-600"
                     />
-                    OCR supported attachments (PDF, Office, images) as separate jobs
+                    {t('portal.importWizard.ocrAttachments')}
                   </label>
                   {includeAttachments && ocrAttachments && (
                     <label className="block text-sm text-slate-600">
-                      OCR profile
+                      {t('portal.importWizard.ocrProfileLabel')}
                       <select
                         value={selectedProfileId}
                         onChange={(event) => setSelectedProfileId(event.target.value)}
@@ -870,23 +877,22 @@ function NewImportPageInner() {
                       </select>
                       <p className="mt-1 text-xs text-slate-500">
                         {capabilities.profiles.find((option) => option.value === selectedProfileId)?.description ??
-                          'Profiles load from the OCR capabilities endpoint.'}
+                          t('portal.importWizard.ocrProfileFallback')}
                       </p>
                     </label>
                   )}
                   <div>
-                    <Toggle checked={pathTags} onChange={setPathTags} label="Use hierarchy as tags" />
+                    <Toggle checked={pathTags} onChange={setPathTags} label={t('portal.importWizard.hierarchyTagsLabel')} />
                     <p className="mt-1.5 text-xs text-slate-500">
-                      Each page&apos;s Confluence breadcrumb (space &gt; parent pages) is added to its job tags, so
-                      the jobs list can filter by section.
+                      {t('portal.importWizard.hierarchyTagsHint')}
                     </p>
                   </div>
                 </div>
 
                 <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-4">
-                  <p className="text-sm font-semibold text-slate-950">Export result to webhook</p>
+                  <p className="text-sm font-semibold text-slate-950">{t('portal.importWizard.webhookTitle')}</p>
                   <p className="text-xs text-slate-600">
-                    Optional — deliver the finished result to a configured external export receiver.
+                    {t('portal.importWizard.webhookHint')}
                   </p>
                   {webhookConnections.length > 0 ? (
                     <select
@@ -894,7 +900,7 @@ function NewImportPageInner() {
                       onChange={(event) => setWebhookConnectionId(event.target.value)}
                       className="mt-1 w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950 md:w-1/2"
                     >
-                      <option value="">Don&apos;t send</option>
+                      <option value="">{t('portal.importWizard.webhookNone')}</option>
                       {webhookConnections.map((connection) => (
                         <option key={connection.id} value={connection.id}>
                           {connection.name}
@@ -903,9 +909,9 @@ function NewImportPageInner() {
                     </select>
                   ) : (
                     <p className="text-xs text-slate-500">
-                      No webhook connections yet — create one under{' '}
+                      {t('portal.importWizard.noWebhooksPrefix')}{' '}
                       <Link href="/connections?tab=webhooks" className="text-emerald-700 hover:text-emerald-800">
-                        Connections › Webhooks
+                        {t('portal.importWizard.noWebhooksLink')}
                       </Link>
                       .
                     </p>
@@ -914,7 +920,7 @@ function NewImportPageInner() {
 
                 <div className="grid gap-3 md:grid-cols-2">
                   <label className="text-sm text-slate-600">
-                    Target folder (optional)
+                    {t('portal.importWizard.targetFolderLabel')}
                     <select
                       value={folder}
                       onChange={(event) => {
@@ -926,7 +932,7 @@ function NewImportPageInner() {
                       }}
                       className="mt-1 w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950"
                     >
-                      <option value="">Default (imports/&lt;space or page name&gt;)</option>
+                      <option value="">{t('portal.importWizard.targetFolderDefault')}</option>
                       {Object.keys(folderOptions)
                         .sort((left, right) => left.localeCompare(right))
                         .map((option) => (
@@ -937,14 +943,14 @@ function NewImportPageInner() {
                     </select>
                   </label>
                   <label className="text-sm text-slate-600">
-                    Target subfolder (optional)
+                    {t('portal.importWizard.targetSubfolderLabel')}
                     <select
                       value={subfolder}
                       onChange={(event) => setSubfolder(event.target.value)}
                       disabled={!folder}
                       className="mt-1 w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950"
                     >
-                      <option value="">No subfolder</option>
+                      <option value="">{t('portal.importWizard.noSubfolder')}</option>
                       {selectedSubfolderOptions.map((option) => (
                         <option key={option} value={option}>
                           {option}
@@ -953,7 +959,7 @@ function NewImportPageInner() {
                     </select>
                   </label>
                   <label className="text-sm text-slate-600">
-                    New folder
+                    {t('portal.importWizard.newFolderLabel')}
                     <input
                       value={newFolderName}
                       onChange={(event) => setNewFolderName(event.target.value)}
@@ -962,7 +968,7 @@ function NewImportPageInner() {
                     />
                   </label>
                   <label className="text-sm text-slate-600">
-                    New subfolder
+                    {t('portal.importWizard.newSubfolderLabel')}
                     <input
                       value={newSubfolderName}
                       onChange={(event) => setNewSubfolderName(event.target.value)}
@@ -972,11 +978,11 @@ function NewImportPageInner() {
                   </label>
                   <div className="flex items-end md:col-span-2">
                     <Button type="button" variant="outline" onClick={() => void createFolder()} disabled={folderBusy}>
-                      {folderBusy ? 'Adding...' : 'Add Folder'}
+                      {folderBusy ? t('portal.importWizard.adding') : t('portal.importWizard.addFolder')}
                     </Button>
                   </div>
                   <label className="text-sm text-slate-600 md:col-span-2">
-                    Tags, comma separated (optional)
+                    {t('portal.importWizard.tagsLabel')}
                     <input
                       value={tags}
                       onChange={(event) => setTags(event.target.value)}
@@ -985,7 +991,7 @@ function NewImportPageInner() {
                     />
                   </label>
                   <label className="text-sm text-slate-600 md:col-span-2">
-                    Email (optional)
+                    {t('portal.importWizard.emailLabel')}
                     <input
                       value={email}
                       onChange={(event) => setEmail(event.target.value)}
@@ -1004,10 +1010,10 @@ function NewImportPageInner() {
 
                 <div className="flex justify-between gap-3">
                   <Button variant="outline" onClick={() => setWizardStep(2)}>
-                    Back
+                    {t('common.back')}
                   </Button>
                   <Button onClick={() => void startImport()} disabled={startBusy}>
-                    {startBusy ? 'Starting...' : 'Start import'}
+                    {startBusy ? t('common.starting') : t('portal.importWizard.startImport')}
                   </Button>
                 </div>
               </motion.div>

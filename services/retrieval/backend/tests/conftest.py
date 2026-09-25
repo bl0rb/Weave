@@ -98,14 +98,17 @@ def make_chunk(document: Document, *, chunk_index: int = 0, embedding: list[floa
 def make_collection(**overrides) -> Collection:
     """A minimally-valid Collection row -- the registry mirror this service
     only ever reads (see app/models/models.py's own Collection docstring).
-    `read_teams=[]` (public) by default; pass e.g. `read_teams=['Engineering']`
-    for a team-restricted collection.
+    `visibility='public'` and `read_teams=[]`/`read_users=[]` by default;
+    pass e.g. `visibility='restricted', read_teams=['Engineering']` or
+    `read_users=['user-123']` for a restricted collection.
     """
     defaults = dict(
         slug='support-docs',
         name='Support Docs',
         description=None,
+        visibility='public',
         read_teams=[],
+        read_users=[],
         synced_at=datetime.now(timezone.utc),
     )
     defaults.update(overrides)

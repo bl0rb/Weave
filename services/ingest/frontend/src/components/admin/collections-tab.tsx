@@ -1,12 +1,15 @@
 'use client';
 
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useEffectEvent, useRef, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { ArrowRight, Pencil, Plus, RefreshCw } from 'lucide-react';
 import { apiJson } from '@/lib/api';
 import { Button, buttonVariants } from '@/components/ui/button';
+import { accessSummary } from '@/lib/access-summary';
 import { jsonBody, portalError, type KnowledgeSpace } from '@/lib/portal';
+import { AccessDialog } from '@/components/portal/access-dialog';
 import { EmptyState, Notice } from '@/components/portal/shared';
+import { useI18n } from '@/i18n/provider';
 
 type ManagedCollection = Omit<KnowledgeSpace, 'can_manage'> & {
   owner: { id: string; username: string } | null;
@@ -18,10 +21,12 @@ type ManagedCollection = Omit<KnowledgeSpace, 'can_manage'> & {
   released_count: number;
 };
 type CollectionPage = { items: ManagedCollection[]; total: number };
-type Team = { id: string; name: string };
 const PAGE_SIZE = 20;
 
 export function CollectionsTab() {
+  const { t, locale } = useI18n();
+  // Current-language error text without refetching on a language switch.
+  const loadError = useEffectEvent((err: unknown) => portalError(err, locale));
   const [page, setPage] = useState<CollectionPage | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -38,7 +43,7 @@ export function CollectionsTab() {
       .then(data => {
         if (!controller.signal.aborted) { setPage(data); setError(''); }
       }).catch(err => {
-        if (!controller.signal.aborted) setError(portalError(err));
+        if (!controller.signal.aborted) setError(loadError(err));
       });
     return () => controller.abort();
   }, [query, offset, revision]);
@@ -51,89 +56,85 @@ export function CollectionsTab() {
 
   return <div className="portal-page !max-w-none !p-0">
     <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-      <div><h2 className="text-xl font-semibold">Alle Wissensbereiche</h2>
-        <p className="mt-2 max-w-2xl text-sm text-slate-600">Verwalte Wissensbereiche und Berechtigte über alle Eigentümer hinweg. Der Bearbeitungsstand zeigt, wo Arbeit wartet.</p>
+      <div><h2 className="text-[17px] font-semibold">{t('admin.collections.title')}</h2>
+        <p className="mt-2 max-w-2xl text-sm text-slate-600">{t('admin.collections.description')}</p>
       </div>
-      <Link href="/knowledge/new" className={buttonVariants({ variant: 'outline' })}><Plus size={16} />Wissensbereich anlegen</Link>
+      <Link href="/knowledge/new" className={buttonVariants({ variant: 'outline' })}><Plus size={16} />{t('admin.collections.create')}</Link>
     </div>
     {notice && <Notice>{notice}</Notice>}
     {editing && <CollectionEditor key={editing.collection_id} collection={editing} onCancel={() => setEditing(null)}
-      onSaved={() => { setEditing(null); setNotice('Wissensbereich gespeichert.'); reload(); }} />}
+      onSaved={() => { setEditing(null); setNotice(t('admin.collections.saved')); reload(); }} />}
     <form onSubmit={search} className="mb-6 flex flex-wrap items-end gap-3">
-      <label className="min-w-56 flex-1">Wissensbereiche finden
-        <input type="search" value={draft} onChange={event => setDraft(event.target.value)} placeholder="Name oder Beschreibung" />
+      <label className="min-w-56 flex-1">{t('admin.collections.searchLabel')}
+        <input type="search" value={draft} onChange={event => setDraft(event.target.value)} placeholder={t('admin.collections.searchPlaceholder')} />
       </label>
-      <Button type="submit" variant="outline">Suchen</Button>
-      <Button type="button" variant="ghost" onClick={reload}><RefreshCw size={15} />Aktualisieren</Button>
+      <Button type="submit" variant="outline">{t('common.search')}</Button>
+      <Button type="button" variant="ghost" onClick={reload}><RefreshCw size={15} />{t('common.refresh')}</Button>
     </form>
     {error && <Notice error action={reload}>{error}</Notice>}
-    {!page && !error && <Notice>Wissensbereiche werden geladen …</Notice>}
-    {page && <section className="portal-panel" aria-label="Verwaltung aller Wissensbereiche">
-      <div className="portal-section-heading"><h3 className="font-semibold">{page.total} Wissensbereiche{query ? ' gefunden' : ''}</h3></div>
+    {!page && !error && <Notice>{t('admin.collections.loading')}</Notice>}
+    {page && <section className="portal-panel" aria-label={t('admin.collections.manageAriaLabel')}>
+      <div className="portal-section-heading"><h3 className="font-semibold">{query ? t('admin.collections.countFound', { count: page.total }) : t('admin.collections.count', { count: page.total })}</h3></div>
       {page.items.length ? <div className="portal-table-scroll"><table className="portal-table">
-        <thead><tr><th scope="col">Wissensbereich</th><th scope="col">Eigentümer</th><th scope="col">Berechtigte</th><th scope="col">Bearbeitungsstand</th><th scope="col">Verwaltung</th></tr></thead>
+        <thead><tr><th scope="col">{t('admin.collections.column.name')}</th><th scope="col">{t('admin.collections.column.owner')}</th><th scope="col">{t('admin.collections.column.access')}</th><th scope="col">{t('admin.collections.column.status')}</th><th scope="col">{t('admin.collections.column.manage')}</th></tr></thead>
         <tbody>{page.items.map(collection => <tr key={collection.collection_id}>
           <td className="min-w-48"><Link href={`/knowledge/${encodeURIComponent(collection.collection_id)}`} className="font-semibold text-emerald-800 hover:underline">{collection.name}</Link>
             {collection.description && <p className="mt-1 line-clamp-2 text-xs text-slate-500">{collection.description}</p>}
           </td>
-          <td>{collection.owner?.username || 'Kein Eigentümer'}</td>
-          <td className="min-w-36">{collection.read_teams.length ? collection.read_teams.join(', ') : 'Alle angemeldeten Teams'}</td>
-          <td className="min-w-48"><strong className="block font-medium">{collection.document_count} Dokumente</strong>
+          <td>{collection.owner?.username || t('admin.collections.noOwner')}</td>
+          <td className="min-w-36">{accessSummary(collection, locale)}</td>
+          <td className="min-w-48"><strong className="block font-medium">{t('common.documents.count', { count: collection.document_count })}</strong>
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {collection.pending_count > 0 && <span className="portal-badge portal-badge-neutral">{collection.pending_count} warten</span>}
-              {collection.running_count > 0 && <span className="portal-badge portal-badge-working">{collection.running_count} in Verarbeitung</span>}
-              {collection.review_count > 0 && <span className="portal-badge portal-badge-warning">{collection.review_count} zur Prüfung</span>}
-              {collection.failed_count > 0 && <span className="portal-badge portal-badge-error">{collection.failed_count} fehlgeschlagen</span>}
-              {collection.released_count > 0 && <span className="portal-badge portal-badge-success">{collection.released_count} freigegeben</span>}
+              {collection.pending_count > 0 && <span className="portal-badge portal-badge-neutral">{t('admin.collections.status.pending', { count: collection.pending_count })}</span>}
+              {collection.running_count > 0 && <span className="portal-badge portal-badge-working">{t('admin.collections.status.running', { count: collection.running_count })}</span>}
+              {collection.review_count > 0 && <span className="portal-badge portal-badge-warning">{t('admin.collections.status.review', { count: collection.review_count })}</span>}
+              {collection.failed_count > 0 && <span className="portal-badge portal-badge-error">{t('admin.collections.status.failed', { count: collection.failed_count })}</span>}
+              {collection.released_count > 0 && <span className="portal-badge portal-badge-success">{t('admin.collections.status.released', { count: collection.released_count })}</span>}
             </div>
           </td>
-          <td><Button variant="outline" size="sm" onClick={() => { setEditing(collection); setNotice(''); }} aria-label={`${collection.name} bearbeiten`}><Pencil size={14} />Bearbeiten</Button></td>
+          <td><Button variant="outline" size="sm" onClick={() => { setEditing(collection); setNotice(''); }} aria-label={t('admin.collections.editTitle', { name: collection.name })}><Pencil size={14} />{t('common.edit')}</Button></td>
         </tr>)}</tbody>
-      </table></div> : <EmptyState title={query ? 'Kein passender Wissensbereich' : 'Noch keine Wissensbereiche'}>
-        {query ? 'Versuche einen anderen Suchbegriff.' : 'Nutzer können im Portal ihren ersten Wissensbereich anlegen.'}
+      </table></div> : <EmptyState title={query ? t('admin.collections.empty.searchTitle') : t('admin.collections.empty.title')}>
+        {query ? t('admin.collections.empty.searchBody') : t('admin.collections.empty.body')}
       </EmptyState>}
-      {page.total > PAGE_SIZE && <nav className="portal-pagination" aria-label="Wissensbereiche blättern">
-        <span>{offset + 1}–{Math.min(offset + PAGE_SIZE, page.total)} von {page.total}</span>
-        <Button variant="outline" size="sm" disabled={offset === 0} onClick={() => { setPage(null); setOffset(value => Math.max(0, value - PAGE_SIZE)); }}>Zurück</Button>
-        <Button variant="outline" size="sm" disabled={offset + PAGE_SIZE >= page.total} onClick={() => { setPage(null); setOffset(value => value + PAGE_SIZE); }}>Weiter</Button>
+      {page.total > PAGE_SIZE && <nav className="portal-pagination" aria-label={t('admin.collections.paginationAriaLabel')}>
+        <span>{t('admin.collections.paginationRange', { from: offset + 1, to: Math.min(offset + PAGE_SIZE, page.total), total: page.total })}</span>
+        <Button variant="outline" size="sm" disabled={offset === 0} onClick={() => { setPage(null); setOffset(value => Math.max(0, value - PAGE_SIZE)); }}>{t('common.back')}</Button>
+        <Button variant="outline" size="sm" disabled={offset + PAGE_SIZE >= page.total} onClick={() => { setPage(null); setOffset(value => value + PAGE_SIZE); }}>{t('admin.collections.next')}</Button>
       </nav>}
     </section>}
-    <p className="portal-field-hint">„Freigegeben“ bedeutet, dass ein geprüfter Stand zur Übergabe bereitsteht. Ob die Indexierung abgeschlossen ist, lässt sich daraus nicht ableiten.</p>
+    <p className="portal-field-hint">{t('admin.collections.releasedNote')}</p>
   </div>;
 }
 
 function CollectionEditor({ collection, onCancel, onSaved }: {
   collection: ManagedCollection; onCancel: () => void; onSaved: () => void;
 }) {
+  const { t, locale } = useI18n();
+  // Current-language error text without reloading (and discarding the
+  // admin's unsaved edits) on a language switch.
+  const loadError = useEffectEvent((err: unknown) => portalError(err, locale));
   const heading = useRef<HTMLHeadingElement>(null);
   const [original, setOriginal] = useState<KnowledgeSpace | null>(null);
-  const [teams, setTeams] = useState<Team[]>([]);
   const [name, setName] = useState(collection.name);
   const [description, setDescription] = useState(collection.description || '');
-  const [selected, setSelected] = useState<string[]>(collection.read_teams);
-  const [shareAll, setShareAll] = useState(collection.read_teams.length === 0);
-  const [confirmed, setConfirmed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
+  const [accessOpen, setAccessOpen] = useState(false);
 
   useEffect(() => {
     heading.current?.focus();
     const controller = new AbortController();
-    Promise.all([
-      apiJson<KnowledgeSpace>(`/api/v1/collections/${encodeURIComponent(collection.collection_id)}`, { signal: controller.signal }),
-      apiJson<{ items: Team[] }>('/api/v1/auth/admin/teams', { signal: controller.signal }),
-    ]).then(([current, available]) => {
-      if (controller.signal.aborted) return;
-      setOriginal(current); setName(current.name); setDescription(current.description || '');
-      setSelected(current.read_teams); setShareAll(current.read_teams.length === 0); setTeams(available.items); setError('');
-    }).catch(err => { if (!controller.signal.aborted) setError(portalError(err)); });
+    apiJson<KnowledgeSpace>(`/api/v1/collections/${encodeURIComponent(collection.collection_id)}`, { signal: controller.signal })
+      .then(current => {
+        if (controller.signal.aborted) return;
+        setOriginal(current); setName(current.name); setDescription(current.description || ''); setError('');
+      }).catch(err => { if (!controller.signal.aborted) setError(loadError(err)); });
     return () => controller.abort();
   }, [collection.collection_id, revision]);
 
-  const teamNames = [...new Set([...teams.map(team => team.name), ...(original?.read_teams || [])])].sort((a, b) => a.localeCompare(b, 'de'));
-  const widensToEveryone = shareAll && Boolean(original?.read_teams.length);
-  const canSave = Boolean(original && name.trim() && !saving && (shareAll ? !widensToEveryone || confirmed : selected.length > 0));
+  const canSave = Boolean(original && name.trim() && !saving);
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -141,39 +142,30 @@ function CollectionEditor({ collection, onCancel, onSaved }: {
     setSaving(true); setError('');
     try {
       await apiJson(`/api/v1/collections/${encodeURIComponent(collection.collection_id)}`, {
-        ...jsonBody({ name: name.trim(), description: description.trim(), read_teams: shareAll ? [] : selected }), method: 'PATCH',
+        ...jsonBody({ name: name.trim(), description: description.trim() }), method: 'PATCH',
       });
       onSaved();
-    } catch (err) { setError(portalError(err)); setSaving(false); }
+    } catch (err) { setError(portalError(err, locale)); setSaving(false); }
   }
 
   return <section className="portal-panel portal-form-panel" aria-labelledby="edit-collection-title">
-    <h3 id="edit-collection-title" ref={heading} tabIndex={-1} className="text-lg font-semibold">{collection.name} bearbeiten</h3>
-    <p className="portal-field-hint">Eigentümer: {collection.owner?.username || 'Kein Eigentümer'}</p>
+    <h3 id="edit-collection-title" ref={heading} tabIndex={-1} className="text-[17px] font-semibold">{t('admin.collections.editTitle', { name: collection.name })}</h3>
+    <p className="portal-field-hint">{t('admin.collections.ownerLine', { name: collection.owner?.username || t('admin.collections.noOwner') })}</p>
     {error && <Notice error action={!original ? () => setRevision(value => value + 1) : undefined}>{error}</Notice>}
-    {!original && !error && <Notice>Einstellungen werden geladen …</Notice>}
+    {!original && !error && <Notice>{t('admin.collections.editorLoading')}</Notice>}
     <form className="portal-form" onSubmit={save}>
-      <label>Name<input required maxLength={255} value={name} disabled={!original || saving} onChange={event => setName(event.target.value)} /></label>
-      <label>Beschreibung<textarea rows={3} value={description} disabled={!original || saving} onChange={event => setDescription(event.target.value)} /></label>
-      <fieldset disabled={!original || saving}>
-        <legend>Berechtigte</legend>
-        <label className="portal-choice"><input type="radio" name="admin-readers" checked={!shareAll} onChange={() => { setShareAll(false); setConfirmed(false); }} />Ausgewählte Teams</label>
-        {!shareAll && <div className="ml-6">
-          {teamNames.map(team => <label className="portal-choice" key={team}><input type="checkbox" checked={selected.includes(team)}
-            onChange={event => setSelected(current => event.target.checked ? [...current, team] : current.filter(value => value !== team))} />
-            {team}{!teams.some(item => item.name === team) && <span className="text-xs text-slate-500">Bestehender Eintrag</span>}
-          </label>)}
-          {!selected.length && <p className="portal-field-hint">Wähle mindestens ein Team. Ohne Auswahl wird nicht gespeichert.</p>}
-          {!teamNames.length && <p className="portal-field-hint">Lege zuerst unter „Teams“ ein Team an.</p>}
-        </div>}
-        <label className="portal-choice"><input type="radio" name="admin-readers" checked={shareAll} onChange={() => setShareAll(true)} />Alle angemeldeten Teams</label>
-        {widensToEveryone && <label className="portal-choice portal-access-confirm"><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />Ich bestätige, dass freigegebene Inhalte allen angemeldeten Teams zur Verfügung stehen dürfen.</label>}
-      </fieldset>
-      <p className="portal-field-hint">Leserechte gelten für Chat, Bots und Suche. Die Administration und die Eigentümer behalten die Verwaltung. Änderungen werden an die Suche weitergegeben.</p>
-      <div className="portal-form-actions"><Button type="submit" disabled={!canSave}>{saving ? 'Wird gespeichert …' : 'Änderungen speichern'}</Button>
-        <Button type="button" variant="ghost" disabled={saving} onClick={onCancel}>Abbrechen</Button>
-        <Link className="portal-inline-link" href={`/knowledge/${encodeURIComponent(collection.collection_id)}`}>Inhalte ansehen<ArrowRight size={14} /></Link>
+      <label>{t('admin.collections.field.name')}<input required maxLength={255} value={name} disabled={!original || saving} onChange={event => setName(event.target.value)} /></label>
+      <label>{t('admin.collections.field.description')}<textarea rows={3} value={description} disabled={!original || saving} onChange={event => setDescription(event.target.value)} /></label>
+      <div className="portal-access-line">
+        <span><small>{t('admin.collections.column.access')}</small><strong>{original ? accessSummary(original, locale) : '…'}</strong></span>
+        <Button type="button" variant="outline" size="sm" disabled={!original} onClick={() => setAccessOpen(true)}>{t('admin.collections.changeAccess')}</Button>
+      </div>
+      <p className="portal-field-hint">{t('admin.collections.accessHint')}</p>
+      <div className="portal-form-actions"><Button type="submit" disabled={!canSave}>{saving ? t('admin.collections.saving') : t('admin.collections.saveChanges')}</Button>
+        <Button type="button" variant="ghost" disabled={saving} onClick={onCancel}>{t('common.cancel')}</Button>
+        <Link className="portal-inline-link" href={`/knowledge/${encodeURIComponent(collection.collection_id)}`}>{t('admin.collections.viewContents')}<ArrowRight size={14} /></Link>
       </div>
     </form>
+    {accessOpen && original && <AccessDialog collection={original} onClose={() => setAccessOpen(false)} onSaved={updated => { setOriginal(updated); setAccessOpen(false); }} />}
   </section>;
 }

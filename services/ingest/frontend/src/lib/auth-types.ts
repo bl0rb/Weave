@@ -3,9 +3,13 @@
  * (backend/app/api/v1/auth — see /api/v1/auth and /api/v1/auth/admin).
  */
 
+import type { Locale } from '@/i18n/config';
+
 export type UserRole = 'admin' | 'user';
 
-/** UserResponse from the backend. */
+/** UserResponse from the backend. `locale` is `null` until this user has
+ * ever chosen one explicitly (see PATCH /api/v1/auth/me and
+ * lib/auth-context.tsx, which syncs it into the UI on load). */
 export interface AuthUser {
   id: string;
   username: string;
@@ -17,6 +21,7 @@ export interface AuthUser {
   is_active: boolean;
   oidc_provider_id: string | null;
   created_at: string;
+  locale: Locale | null;
 }
 
 /** TeamResponse from the backend. */

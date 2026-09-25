@@ -163,7 +163,7 @@ def test_resolve_collection_scope_intersects_bot_collections_with_readable_colle
     with patch('app.services.chat.retrieval_client.list_collections', return_value=readable) as mock_list:
         scope = resolve_collection_scope(bot, ChatUser(team='legal'))
 
-    mock_list.assert_called_once_with('legal')
+    mock_list.assert_called_once_with('legal', user=None)
     # 'handbuch' is on the bot's own list but not readable by 'legal';
     # 'personal' is readable but not on the bot's own list -- neither
     # belongs in the intersection, only 'vertraege' does. The sentinel is
@@ -231,7 +231,17 @@ def test_resolve_collection_scope_forwards_the_users_team_to_list_collections():
     bot = _bot_with_collections([])
     with patch('app.services.chat.retrieval_client.list_collections', return_value=[]) as mock_list:
         resolve_collection_scope(bot, ChatUser(team=None))
-    mock_list.assert_called_once_with(None)
+    mock_list.assert_called_once_with(None, user=None)
+
+
+def test_resolve_collection_scope_forwards_the_users_subject_to_list_collections():
+    # ChatUser.subject (the caller's Weave-Ingest user id) must reach
+    # list_collections()'s own `user=` kwarg so a per-person Collections
+    # grant (`read_users`) takes effect for this chat turn.
+    bot = _bot_with_collections([])
+    with patch('app.services.chat.retrieval_client.list_collections', return_value=[]) as mock_list:
+        resolve_collection_scope(bot, ChatUser(team='legal', subject='ingest-user-123'))
+    mock_list.assert_called_once_with('legal', user='ingest-user-123')
 
 
 # --- resolve_collection_scope: include_uncollected -----------------------------

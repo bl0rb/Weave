@@ -1107,6 +1107,73 @@ def test_0019_managed_bots_migration_round_trip(tmp_path, monkeypatch) -> None:
     assert 'managed_bots' in set(inspect(engine).get_table_names())
 
 
+def test_0032_collection_visibility_backfills_from_read_teams(tmp_path, monkeypatch) -> None:
+    """`visibility` must reproduce each pre-existing collection's ACTUAL
+    current readability from 0014's own contract (empty `read_teams` =
+    public) byte-for-byte -- see 0032_collection_visibility's own docstring
+    for the backfill algorithm.
+    """
+    db_path = tmp_path / 'migration_scratch_0032.db'
+    db_url = f'sqlite:///{db_path}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+
+    engine = create_engine(db_url, future=True)
+    _build_legacy_metadata().create_all(bind=engine)
+    cfg = _alembic_config()
+    command.stamp(cfg, '0003_job_markdown_versions')
+    command.upgrade(cfg, '0031_backup_runs')
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO collections (id, owner_id, slug, name, read_teams, email, department, folder, subfolder, created_at, updated_at) "
+            "VALUES ('coll-public', NULL, 'coll-public', 'Public Space', '[]', '', '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        ))
+        conn.execute(text(
+            "INSERT INTO collections (id, owner_id, slug, name, read_teams, email, department, folder, subfolder, created_at, updated_at) "
+            "VALUES ('coll-restricted', NULL, 'coll-restricted', 'Team Space', '[\"ops\"]', '', '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        ))
+
+    command.upgrade(cfg, 'head')
+
+    insp = inspect(engine)
+    columns = {c['name'] for c in insp.get_columns('collections')}
+    assert {'visibility', 'read_users'} <= columns
+
+    with engine.begin() as conn:
+        rows = {row.id: row for row in conn.execute(text('SELECT id, visibility, read_users FROM collections'))}
+    assert rows['coll-public'].visibility == 'public'
+    assert rows['coll-public'].read_users == '[]'
+    assert rows['coll-restricted'].visibility == 'restricted'
+
+    # A fresh raw-SQL insert omitting visibility/read_users falls back to
+    # the columns' own NOT NULL defaults rather than failing -- unlike
+    # 0014's slug/name, both new columns always have a usable default, and
+    # 0034 makes the visibility default fail closed.
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO collections (id, owner_id, slug, name, read_teams, email, department, folder, subfolder, created_at, updated_at) "
+            "VALUES ('coll-post-migration', NULL, 'coll-post-migration', 'Post', '[]', '', '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        ))
+        default_visibility = conn.execute(
+            text("SELECT visibility FROM collections WHERE id = 'coll-post-migration'")
+        ).scalar_one()
+    assert default_visibility == 'restricted'
+
+    # --- downgrade one revision: only the 0032 columns disappear ---
+    command.downgrade(cfg, '0031_backup_runs')
+    insp = inspect(engine)
+    columns = {c['name'] for c in insp.get_columns('collections')}
+    assert not ({'visibility', 'read_users'} & columns)
+    assert 'read_teams' in columns  # 0014's own ACL column survives untouched
+
+    # --- re-upgrade: cleanly re-backfills from the 0031 baseline ---
+    command.upgrade(cfg, 'head')
+    with engine.begin() as conn:
+        visibilities = dict(conn.execute(text('SELECT id, visibility FROM collections')).fetchall())
+    assert visibilities['coll-public'] == 'public'
+    assert visibilities['coll-restricted'] == 'restricted'
+
+
 def test_migration_revision_ids_fit_alembic_version_column():
     """Alembic stores the current revision in alembic_version.version_num,
     a VARCHAR(32). PostgreSQL enforces that limit; SQLite (this suite's
@@ -1127,3 +1194,44 @@ def test_migration_revision_ids_fit_alembic_version_column():
         if len(rev.revision) > 32
     ]
     assert not too_long, f'revision ids exceed alembic_version VARCHAR(32): {too_long}'
+
+
+def test_0032_backfilled_visibility_reads_back_through_the_orm(tmp_path, monkeypatch) -> None:
+    """The strings 0032 writes ('public'/'restricted') must be exactly what the
+    ORM column reads and writes -- a names-vs-values mismatch here only shows
+    up against a migrated database, never against metadata.create_all()."""
+    from sqlalchemy.orm import Session as OrmSession
+
+    from app.models.models import Collection, CollectionVisibility
+
+    db_path = tmp_path / 'migration_scratch_0032_orm.db'
+    db_url = f'sqlite:///{db_path}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+    cfg = _alembic_config()
+
+    engine = create_engine(db_url, future=True)
+    _build_legacy_metadata().create_all(bind=engine)
+    command.stamp(cfg, '0003_job_markdown_versions')
+    command.upgrade(cfg, '0031_backup_runs')
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO collections (id, owner_id, slug, name, read_teams, email, department, folder, subfolder, created_at, updated_at) "
+            "VALUES ('c-public', NULL, 'public', 'Public', '[]', '', '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        ))
+        conn.execute(text(
+            "INSERT INTO collections (id, owner_id, slug, name, read_teams, email, department, folder, subfolder, created_at, updated_at) "
+            "VALUES ('c-team', NULL, 'team', 'Team', '[\"ops\"]', '', '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        ))
+    engine.dispose()
+
+    command.upgrade(cfg, 'head')
+    engine = create_engine(db_url, future=True)
+    with OrmSession(engine) as db:
+        assert db.get(Collection, 'c-public').visibility == CollectionVisibility.PUBLIC
+        assert db.get(Collection, 'c-team').visibility == CollectionVisibility.RESTRICTED
+        db.add(Collection(id='c-new', slug='new', name='New', description='', read_teams=[], visibility=CollectionVisibility.PUBLIC))
+        db.commit()
+    with engine.connect() as conn:
+        raw = conn.execute(text("SELECT visibility FROM collections WHERE id = 'c-new'")).scalar_one()
+    assert raw == 'public'
+    engine.dispose()

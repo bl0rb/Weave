@@ -32,6 +32,22 @@ export async function postJson<T>(path: string, body: unknown): Promise<JsonResu
   return toJsonResult<T>(response);
 }
 
+/** Same as {@link postJson}, for a Route Handler that expects `PUT`
+ * (currently only /api/session/locale). */
+export async function putJson<T>(path: string, body: unknown): Promise<JsonResult<T>> {
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (cause) {
+    return { ok: false, error: errorForNetworkFailure(cause) };
+  }
+  return toJsonResult<T>(response);
+}
+
 async function toJsonResult<T>(response: Response): Promise<JsonResult<T>> {
   if (response.ok) {
     return { ok: true, data: (await response.json()) as T };

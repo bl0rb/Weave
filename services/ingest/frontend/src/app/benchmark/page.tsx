@@ -16,6 +16,7 @@ import {
   type UploadProgress,
 } from '@/components/dashboard/shared';
 import { useVisiblePolling } from '@/lib/data-cache';
+import { useI18n } from '@/i18n/provider';
 import {
   ApiError,
   apiJson,
@@ -34,6 +35,7 @@ import {
 const RUNS_POLL_INTERVAL_MS = 4000;
 
 export default function BenchmarkPage() {
+  const { t, locale } = useI18n();
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -52,7 +54,7 @@ export default function BenchmarkPage() {
       .catch((error) => {
         if (!cancelled) {
           setConnectionsError(
-            error instanceof ApiError ? error.detail : 'Failed to load VL connections.',
+            error instanceof ApiError ? error.detail : t('portal.benchmark.loadConnectionsFailed'),
           );
         }
       })
@@ -62,7 +64,7 @@ export default function BenchmarkPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -109,7 +111,7 @@ export default function BenchmarkPage() {
     if (!file) return;
     if (!variantsValid) {
       setStartError(
-        `Select ${MIN_BENCHMARK_VARIANTS} to ${MAX_BENCHMARK_VARIANTS} combined connections and profile.`,
+        t('portal.benchmark.selectVariantsError', { min: MIN_BENCHMARK_VARIANTS, max: MAX_BENCHMARK_VARIANTS }),
       );
       return;
     }
@@ -141,10 +143,10 @@ export default function BenchmarkPage() {
           bytesLoaded: loaded,
           bytesTotal: total || file.size || 1,
         });
-      })) as BenchmarkRunDetail;
+      }, locale)) as BenchmarkRunDetail;
       router.push(`/benchmark/${result.id}`);
     } catch (error) {
-      setStartError(error instanceof UploadError ? error.message : 'Failed to start the benchmark.');
+      setStartError(error instanceof UploadError ? error.message : t('portal.benchmark.startFailed'));
     } finally {
       setUploadProgress(null);
       setBusy(false);
@@ -173,7 +175,7 @@ export default function BenchmarkPage() {
         setRunsError(null);
       } catch (error) {
         if (cancelled) return;
-        setRunsError(error instanceof ApiError ? error.detail : 'Failed to load benchmark runs.');
+        setRunsError(error instanceof ApiError ? error.detail : t('portal.benchmark.loadRunsFailed'));
       } finally {
         if (!cancelled) setRunsLoading(false);
       }
@@ -182,7 +184,7 @@ export default function BenchmarkPage() {
     return () => {
       cancelled = true;
     };
-  }, [runsReloadNonce]);
+  }, [runsReloadNonce, t]);
 
   const reloadRuns = () => setRunsReloadNonce((nonce) => nonce + 1);
   const refreshRuns = () => {
@@ -200,23 +202,22 @@ export default function BenchmarkPage() {
       <div className="mx-auto w-full max-w-6xl px-4 py-8 text-slate-950 sm:px-6 lg:px-8">
         <section className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h1 className="text-3xl font-semibold">VL Benchmark</h1>
+            <h1 className="text-3xl font-semibold">{t('portal.benchmark.title')}</h1>
             <p className="mt-2 text-slate-600">
-              Run one document through several vision-language models and compare their markdown output side by
-              side.
+              {t('portal.benchmark.subtitle')}
             </p>
           </div>
           <Button variant="outline" onClick={refreshRuns} disabled={runsLoading}>
-            <RefreshCcw className="mr-2 h-4 w-4" /> Refresh
+            <RefreshCcw className="mr-2 h-4 w-4" /> {t('common.refresh')}
           </Button>
         </section>
 
         <section id="start-benchmark" className="mb-8 rounded-xl border border-slate-200 bg-gradient-to-br from-emerald-50 to-white p-5">
-          <h2 className="mb-3 text-lg font-semibold">Start a benchmark</h2>
+          <h2 className="mb-3 text-[17px] font-semibold">{t('portal.benchmark.startHeading')}</h2>
 
           {connectionsError && (
             <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              {connectionsError} Benchmarks need at least one enabled VL connection.
+              {connectionsError} {t('portal.benchmark.connectionsErrorSuffix')}
             </p>
           )}
 
@@ -230,7 +231,7 @@ export default function BenchmarkPage() {
                 <button
                   type="button"
                   onClick={() => setFile(null)}
-                  aria-label="Remove selected file"
+                  aria-label={t('portal.benchmark.removeFile')}
                   className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
                 >
                   <X className="h-4 w-4" />
@@ -246,8 +247,8 @@ export default function BenchmarkPage() {
                 animate={{ borderColor: dragActive ? '#6ee7b7' : '#10b981' }}
               >
                 <UploadCloud className="mx-auto mb-4 h-10 w-10 text-slate-600" />
-                <p className="mb-2 text-lg font-medium">Drag and drop a file here</p>
-                <p className="mb-4 text-sm text-slate-600">PDF, DOCX, PPTX, XLSX, XLS, PNG, JPG, JPEG</p>
+                <p className="mb-2 text-lg font-medium">{t('portal.benchmark.dragDrop')}</p>
+                <p className="mb-4 text-sm text-slate-600">{t('portal.benchmark.fileTypes')}</p>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -260,28 +261,27 @@ export default function BenchmarkPage() {
                   }}
                 />
                 <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
-                  Select file
+                  {t('portal.benchmark.selectFile')}
                 </Button>
               </motion.div>
             )}
 
             <div>
               <div className="mb-2 flex flex-wrap items-center justify-between gap-4">
-                <p className="text-sm font-medium text-slate-950">VL connections</p>
+                <p className="text-sm font-medium text-slate-950">{t('portal.benchmark.vlConnections')}</p>
                 <p className="text-xs text-slate-500">
                   {selectedConnectionIds.length >= MAX_VL_CONNECTIONS
-                    ? `Limit reached (${MAX_VL_CONNECTIONS}/${MAX_VL_CONNECTIONS}).`
-                    : `Up to ${MAX_VL_CONNECTIONS} connections per run.`}
+                    ? t('portal.benchmark.limitReached', { max: MAX_VL_CONNECTIONS })
+                    : t('portal.benchmark.upTo', { max: MAX_VL_CONNECTIONS })}
                 </p>
               </div>
               {!connectionsLoaded ? (
                 <div className="flex items-center gap-2 py-4 text-sm text-slate-600">
-                  <LoaderCircle className="h-4 w-4 animate-spin" /> Loading connections...
+                  <LoaderCircle className="h-4 w-4 animate-spin" /> {t('portal.benchmark.loadingConnections')}
                 </div>
               ) : connections.length === 0 ? (
                 <p className="text-sm text-slate-600">
-                  No enabled VL connections yet. Ask an admin to add one — a benchmark needs at least{' '}
-                  {MIN_BENCHMARK_VARIANTS} variants.
+                  {t('portal.benchmark.noConnections', { min: MIN_BENCHMARK_VARIANTS })}
                 </p>
               ) : (
                 <div className="grid gap-3 md:grid-cols-2">
@@ -316,13 +316,13 @@ export default function BenchmarkPage() {
             </div>
 
             <label className="block text-sm text-slate-600">
-              OCR profile (optional baseline)
+              {t('portal.benchmark.ocrProfileLabel')}
               <select
                 value={selectedProfileId}
                 onChange={(event) => setSelectedProfileId(event.target.value)}
                 className="mt-1 w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950"
               >
-                <option value="">No profile (VL connections only)</option>
+                <option value="">{t('portal.benchmark.noProfileOption')}</option>
                 {capabilities.profiles
                   // Dynamic vl:<connection-id> entries are already offered above
                   // as VL connection checkboxes -- listing them again here as an
@@ -337,9 +337,9 @@ export default function BenchmarkPage() {
             </label>
 
             <p aria-live="polite" className={`text-xs ${variantsValid ? 'text-slate-500' : 'text-amber-700'}`}>
-              {totalVariants} of {MIN_BENCHMARK_VARIANTS}-{MAX_BENCHMARK_VARIANTS} variants selected
+              {t('portal.benchmark.variantsSelected', { count: totalVariants, min: MIN_BENCHMARK_VARIANTS, max: MAX_BENCHMARK_VARIANTS })}
               {!variantsValid &&
-                ` — select at least ${MIN_BENCHMARK_VARIANTS} combined connections and profile.`}
+                t('portal.benchmark.variantsSelectMore', { min: MIN_BENCHMARK_VARIANTS })}
             </p>
 
             {startError && (
@@ -352,7 +352,7 @@ export default function BenchmarkPage() {
               <div aria-live="polite" className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <div>
-                    <p className="font-medium text-slate-950">Uploading file</p>
+                    <p className="font-medium text-slate-950">{t('portal.benchmark.uploadingFile')}</p>
                     <p className="text-xs text-slate-500">{uploadProgress.currentFile}</p>
                   </div>
                 </div>
@@ -377,16 +377,16 @@ export default function BenchmarkPage() {
 
             <div className="flex justify-end">
               <Button onClick={() => void startBenchmark()} disabled={!file || !variantsValid || busy}>
-                {busy ? 'Starting...' : 'Start benchmark'}
+                {busy ? t('portal.benchmark.starting') : t('portal.benchmark.startBenchmark')}
               </Button>
             </div>
           </div>
         </section>
 
-        <section className="rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
+        <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-4">
-            <h2 className="text-lg font-semibold">Runs</h2>
-            <p className="text-sm text-slate-500">{runs.length} run(s)</p>
+            <h2 className="text-[17px] font-semibold">{t('portal.benchmark.runsHeading')}</h2>
+            <p className="text-sm text-slate-500">{t('portal.benchmark.runsCount', { count: runs.length })}</p>
           </div>
           {runsError && (
             <p role="alert" className="mb-3 text-sm text-red-600">
@@ -397,10 +397,10 @@ export default function BenchmarkPage() {
             <table className="w-full table-auto text-left text-xs sm:text-sm">
               <thead className="text-slate-500">
                 <tr>
-                  <th className="pb-2 font-medium">Filename</th>
-                  <th className="pb-2 font-medium">Status</th>
-                  <th className="pb-2 font-medium">Variants</th>
-                  <th className="hidden pb-2 font-medium md:table-cell">Created</th>
+                  <th className="pb-2 font-medium">{t('portal.benchmark.colFilename')}</th>
+                  <th className="pb-2 font-medium">{t('portal.benchmark.colStatus')}</th>
+                  <th className="pb-2 font-medium">{t('portal.benchmark.colVariants')}</th>
+                  <th className="hidden pb-2 font-medium md:table-cell">{t('portal.benchmark.colCreated')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -431,17 +431,17 @@ export default function BenchmarkPage() {
             {runs.length === 0 && !runsLoading && (
               <div className="flex flex-col items-center gap-3 py-10 text-center">
                 <FlaskConical className="h-8 w-8 text-slate-300" aria-hidden="true" />
-                <p className="text-sm text-slate-600">No benchmark runs yet. Upload a document to compare model output.</p>
+                <p className="text-sm text-slate-600">{t('portal.benchmark.emptyBody')}</p>
                 <a href="#start-benchmark">
                   <Button variant="outline" size="sm">
-                    Start a benchmark
+                    {t('portal.benchmark.startBenchmarkAction')}
                   </Button>
                 </a>
               </div>
             )}
             {runsLoading && (
               <div className="flex items-center gap-2 py-6 text-sm text-slate-600">
-                <LoaderCircle className="h-4 w-4 animate-spin" /> Loading benchmark runs...
+                <LoaderCircle className="h-4 w-4 animate-spin" /> {t('portal.benchmark.loadingRuns')}
               </div>
             )}
           </div>

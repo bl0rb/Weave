@@ -4,200 +4,240 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
-  Home,
-  Menu,
-  X,
-  Cpu,
-  FileInput,
-  FilePlus,
+  ChevronDown,
   FolderOpen,
-  Inbox,
-  Settings,
-  Shield,
+  Home,
+  KeyRound,
+  ListChecks,
   LogOut,
+  MessageSquare,
+  ArrowLeft,
+  ArrowUpRight,
+  FileText,
+  HelpCircle,
+  Inbox,
+  Lock,
+  Server,
+  ShieldCheck,
+  UsersRound,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { WeaveIngestLogo } from '@/components/weave-ingest-logo';
 import { ThemeToggle } from '@/components/theme-toggle';
+import { LanguageSwitch } from '@/i18n/language-switch';
+import { useI18n } from '@/i18n/provider';
+import type { MessageKey } from '@/i18n/messages';
+import { resolveChatPublicUrl } from '@/lib/api-base';
+import { loadDocuments } from '@/lib/portal';
+import { loadFailedJobs } from '@/lib/jobs-search';
 
-const navItems = [
-  { href: '/', label: 'Übersicht', icon: Home },
-  { href: '/knowledge', label: 'Wissensbereiche', icon: FolderOpen },
-  { href: '/sources/new', label: 'Quelle hinzufügen', icon: FilePlus },
-  { href: '/processing', label: 'Verarbeitung', icon: Cpu },
-  { href: '/imports', label: 'Confluence-Importe', icon: FileInput },
-  { href: '/reviews', label: 'Prüfen & freigeben', icon: Shield },
-  { href: '/chat', label: 'Chat', icon: Inbox },
-];
+type NavItem = { href: string; label: string; icon: typeof Home; badge?: number };
+type T = (key: MessageKey, vars?: Record<string, string | number>) => string;
 
-function isChildActive(href: string, pathname: string) {
-  return pathname === href || pathname.startsWith(`${href}/`);
+function portalNav(t: T): Omit<NavItem, 'badge'>[] {
+  return [
+    { href: '/', label: t('portal.nav.overview'), icon: Home },
+    { href: '/aufgaben', label: t('portal.nav.tasks'), icon: ListChecks },
+    { href: '/knowledge', label: t('portal.nav.knowledgeSpaces'), icon: FolderOpen },
+    { href: '/documents', label: t('portal.nav.documents'), icon: FileText },
+  ];
 }
 
-export function SidebarNav() {
-  const [open, setOpen] = useState(false);
+function adminNav(t: T): NavItem[] {
+  return [
+    { href: '/admin', label: t('portal.nav.overview'), icon: Home },
+    { href: '/admin/menschen', label: t('portal.nav.admin.people'), icon: UsersRound },
+    { href: '/admin/wissen', label: t('portal.nav.admin.knowledge'), icon: FolderOpen },
+    { href: '/admin/verarbeitung', label: t('portal.nav.admin.processing'), icon: Inbox },
+    { href: '/admin/betrieb', label: t('portal.nav.admin.operations'), icon: Server },
+  ];
+}
+
+function isActive(href: string, pathname: string): boolean {
+  return href === '/' || href === '/admin' ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
+}
+
+export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const pathname = usePathname();
   const drawerRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const { user, logout } = useAuth();
+  const { t } = useI18n();
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [tasksBadge, setTasksBadge] = useState<number | null>(null);
+  // Lazy initializer (not an effect): resolveChatPublicUrl() only ever reads
+  // a value injected before hydration (see runtime-env.js) and never
+  // changes during the page's lifetime.
+  const [chatUrl] = useState<string | null>(() => resolveChatPublicUrl());
+  const isAdminArea = pathname.startsWith('/admin');
+  const navItems: NavItem[] = isAdminArea ? adminNav(t) : portalNav(t).map((item) => (item.href === '/aufgaben' ? { ...item, badge: tasksBadge ?? undefined } : item));
 
-  // Close on outside click
+  // Aufgaben badge = open reviews + failed jobs. Both requests are as cheap
+  // as the APIs allow (limit 0/1, only `total` is read) and are refreshed on
+  // navigation so finishing a review or a retry clears the badge reasonably
+  // promptly without a polling loop.
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    Promise.all([loadDocuments(undefined, 0, 'review', undefined, 1), loadFailedJobs(0)])
+      .then(([reviews, failed]) => { if (!cancelled) setTasksBadge(reviews.total + failed.total); })
+      .catch(() => { if (!cancelled) setTasksBadge(null); });
+    return () => { cancelled = true; };
+  }, [user, pathname]);
+
   useEffect(() => {
     function onPointerDown(e: PointerEvent) {
-      if (open && drawerRef.current && !drawerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      if (open && drawerRef.current && !drawerRef.current.contains(e.target as Node)) onOpenChange(false);
+      if (menuOpen && menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
     }
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
-  }, [open]);
+  }, [open, menuOpen, onOpenChange]);
 
-  // Close on Escape
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key !== 'Escape') return;
+      onOpenChange(false);
+      setMenuOpen(false);
     }
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, []);
+  }, [onOpenChange]);
 
   return (
     <>
-      {/* Burger button — fixed top-left */}
-      <button
-        onClick={() => setOpen((v) => !v)}
-        aria-label={open ? 'Navigation schließen' : 'Navigation öffnen'}
-        aria-expanded={open}
-        className="fixed left-4 top-4 z-50 flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white shadow-md transition hover:bg-slate-50 lg:hidden"
-      >
-        {open ? <X className="h-4 w-4 text-slate-700" /> : <Menu className="h-4 w-4 text-slate-700" />}
-      </button>
+      {open && <div className="fixed inset-0 z-40 bg-black/40 lg:hidden" aria-hidden="true" onClick={() => onOpenChange(false)} />}
 
-      {/* Backdrop */}
-      {open && (
-        <div
-          className="fixed inset-0 z-40 bg-slate-950/30 backdrop-blur-sm lg:hidden"
-          aria-hidden="true"
-        />
-      )}
-
-      {/* Drawer */}
       <div
         ref={drawerRef}
-        className={`fixed left-0 top-0 z-40 flex h-full w-64 flex-col bg-white shadow-2xl transition-transform duration-200 lg:translate-x-0 lg:border-r lg:border-slate-100 lg:shadow-none ${
-          open ? 'translate-x-0' : '-translate-x-full'
-        }`}
+        className={`fixed left-0 top-0 z-40 flex h-full w-64 flex-col gap-3.5 overflow-y-auto border-r border-[var(--line)] bg-[var(--surface)] p-3.5 shadow-2xl transition-transform duration-200 lg:translate-x-0 lg:shadow-none ${open ? 'translate-x-0' : '-translate-x-full'}`}
       >
-        <div className="flex items-center gap-3 border-b border-slate-100 px-5 py-4">
-          <WeaveIngestLogo className="h-8 w-8" />
-          <div>
-            <span className="block text-base font-semibold text-slate-950">Weave</span>
-            <span className="block text-xs text-slate-500">Wissensportal</span>
-          </div>
+        <Link href={isAdminArea ? '/admin' : '/'} onClick={() => onOpenChange(false)} className="flex items-center gap-2.5 px-1.5 pb-1.5 pt-0.5 text-[var(--ink)] no-underline">
+          <WeaveIngestLogo className="h-8 w-8 flex-shrink-0" />
+          <span>
+            <span className="block text-[19px] font-bold leading-tight tracking-tight">Weave</span>
+            <span className="block text-[11.5px] font-medium text-[var(--muted)]">{isAdminArea ? t('portal.chrome.adminSubtitle') : t('portal.chrome.portalSubtitle')}</span>
+          </span>
+        </Link>
+
+        <div className="flex items-center gap-2.5 rounded-[10px] border border-[var(--line)] bg-[var(--surface-2)] px-2.5 py-2 text-[var(--muted)]">
+          <span className="grid h-8 w-8 flex-shrink-0 place-items-center rounded-lg bg-[var(--ink)] text-[11.5px] font-bold text-white">WV</span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[13.5px] font-semibold text-[var(--ink)]">{t('portal.chrome.brandLine')}</span>
+            <span className="block truncate text-xs">{isAdminArea ? t('portal.chrome.adminSubtitle') : user ? t('portal.chrome.loggedInAs', { username: user.username }) : t('portal.chrome.internalKnowledgeSpace')}</span>
+          </span>
         </div>
 
-        <nav aria-label="Portal" className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-4">
-          <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Portal</p>
-          {navItems.map(({ href, label, icon: Icon }) => {
-            const active = href === '/' ? pathname === '/' : href === '/processing'
-              ? ['/processing', '/jobs'].some(route => isChildActive(route, pathname))
-              : isChildActive(href, pathname);
-            return <Link key={href} href={href} aria-current={active ? 'page' : undefined}
-              onClick={() => setOpen(false)}
-              className={`relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ${
-                active ? 'bg-emerald-50 font-semibold text-emerald-800'
-                  : 'font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-950'
-              }`}>
-              {active && <span aria-hidden="true" className="absolute inset-y-1.5 left-0 w-[3px] rounded-r-full bg-emerald-600" />}
-              <Icon aria-hidden="true" className={`h-5 w-5 flex-shrink-0 ${active ? 'text-emerald-700' : 'text-slate-400'}`} />
-              {label}
-            </Link>;
+        {!isAdminArea && chatUrl && (
+          <a
+            href={chatUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="flex min-h-10 items-center gap-2.5 rounded-[var(--radius-control)] bg-[var(--accent)] px-3 text-[13.5px] font-semibold text-[var(--on-accent)] no-underline transition hover:bg-[var(--accent-hover)]"
+          >
+            <MessageSquare className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+            <span className="flex-1">{t('portal.chrome.openChat')}</span>
+            <ArrowUpRight className="h-[15px] w-[15px] flex-shrink-0 opacity-80" aria-hidden="true" />
+          </a>
+        )}
+
+        <nav aria-label={isAdminArea ? t('portal.chrome.adminSubtitle') : t('portal.chrome.mainNav')} className="flex flex-1 flex-col gap-0.5">
+          {navItems.map(({ href, label, icon: Icon, badge }) => {
+            const active = isActive(href, pathname);
+            return (
+              <Link
+                key={href}
+                href={href}
+                aria-current={active ? 'page' : undefined}
+                onClick={() => onOpenChange(false)}
+                className="shell-nav-link flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)] no-underline transition hover:bg-[var(--hover)] hover:text-[var(--ink)]"
+              >
+                <Icon className="h-[18px] w-[18px] flex-shrink-0 text-[var(--muted)]" aria-hidden="true" />
+                {label}
+                {Boolean(badge) && (
+                  <span className="ml-auto inline-grid h-5 min-w-[22px] place-items-center rounded-full bg-[var(--warn-bg)] px-1.5 text-[11.5px] font-bold text-[var(--warn)]">
+                    {badge}
+                  </span>
+                )}
+              </Link>
+            );
           })}
         </nav>
 
-        <div className="border-t border-slate-100 px-3 py-3">
-          {user ? (
-            <>
-              <Link
-                href="/settings"
-                aria-current={pathname === '/settings' || pathname.startsWith('/settings/') ? 'page' : undefined}
-                onClick={() => setOpen(false)}
-                className={`relative mb-2 flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ${
-                  pathname === '/settings' || pathname.startsWith('/settings/')
-                    ? 'bg-emerald-50 font-semibold text-emerald-800'
-                    : 'font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-950'
-                }`}
-              >
-                {(pathname === '/settings' || pathname.startsWith('/settings/')) && (
-                  <span
-                    aria-hidden="true"
-                    className="absolute inset-y-1.5 left-0 w-[3px] rounded-r-full bg-emerald-600"
-                  />
-                )}
-                <Settings
-                  className={`h-4 w-4 flex-shrink-0 ${
-                    pathname === '/settings' || pathname.startsWith('/settings/')
-                      ? 'text-emerald-700'
-                      : 'text-slate-400'
-                  }`}
-                />
-                API-Zugriff
-              </Link>
-              {user.role === 'admin' && (
-                <Link
-                  href="/admin"
-                  aria-current={pathname === '/admin' || pathname.startsWith('/admin/') ? 'page' : undefined}
-                  onClick={() => setOpen(false)}
-                  title="Wissensbereiche, Nutzer und Einstellungen verwalten"
-                  className={`relative mb-2 flex items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-sm transition ${
-                    pathname === '/admin' || pathname.startsWith('/admin/')
-                      ? 'bg-emerald-50 font-semibold text-emerald-800'
-                      : 'font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-950'
-                  }`}
-                >
-                  {(pathname === '/admin' || pathname.startsWith('/admin/')) && (
-                    <span
-                      aria-hidden="true"
-                      className="absolute inset-y-1.5 left-0 w-[3px] rounded-r-full bg-emerald-600"
-                    />
-                  )}
-                  <span className="flex items-center gap-3">
-                    <Shield
-                      className={`h-4 w-4 flex-shrink-0 ${
-                        pathname === '/admin' || pathname.startsWith('/admin/')
-                          ? 'text-emerald-700'
-                          : 'text-slate-400'
-                      }`}
-                    />
-                    Administration
-                  </span>
-                </Link>
-              )}
-              <div className="flex items-center justify-between gap-2 rounded-xl px-3 py-2">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-slate-950">{user.username}</p>
-                  <span
-                    className={`mt-0.5 inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                      user.role === 'admin'
-                        ? 'bg-emerald-50 text-emerald-700'
-                        : 'bg-slate-100 text-slate-600'
-                    }`}
-                  >
-                    {user.role}
-                  </span>
-                </div>
-                <ThemeToggle />
-                <button
-                  onClick={() => logout()}
-                  aria-label="Abmelden"
-                  title="Abmelden"
-                  className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
-                >
-                  <LogOut className="h-4 w-4" />
-                </button>
-              </div>
-            </>
+        <div className="mt-auto grid gap-2.5">
+          {isAdminArea ? (
+            <Link href="/" onClick={() => onOpenChange(false)} className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] font-medium text-[var(--ink-2)] no-underline hover:bg-[var(--hover)]">
+              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+              {t('portal.chrome.backToWorkspace')}
+            </Link>
           ) : (
-            <p className="px-3 py-1 text-xs text-slate-400">Weave Wissensportal</p>
+            <>
+              <button
+                type="button"
+                onClick={() => setHelpOpen((v) => !v)}
+                aria-expanded={helpOpen}
+                className="flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13.5px] font-medium text-[var(--ink-2)] transition hover:bg-[var(--hover)] hover:text-[var(--ink)]"
+              >
+                <HelpCircle className="h-[18px] w-[18px] flex-shrink-0 text-[var(--muted)]" aria-hidden="true" />
+                {t('portal.chrome.help')}
+              </button>
+              {helpOpen && (
+                <p className="-mt-1.5 px-2.5 pb-0.5 text-xs leading-relaxed text-[var(--muted)]">
+                  {t('portal.chrome.helpText')}
+                </p>
+              )}
+              <p className="flex gap-2 rounded-[10px] bg-[var(--surface-2)] p-2.5 text-xs leading-relaxed text-[var(--muted)]">
+                <Lock className="mt-0.5 h-4 w-4 flex-shrink-0 text-[var(--accent)]" aria-hidden="true" />
+                {t('portal.chrome.onPremNotice')}
+              </p>
+            </>
+          )}
+
+          {user && (
+            <div ref={menuRef} className="relative border-t border-[var(--line)] pt-2.5">
+              {menuOpen && (
+                <div role="menu" className="shell-profile-menu">
+                  <Link role="menuitem" href="/settings" onClick={() => { setMenuOpen(false); onOpenChange(false); }} className="flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)] no-underline hover:bg-[var(--hover)] hover:text-[var(--ink)]">
+                    <KeyRound className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
+                    {t('portal.chrome.apiTokens')}
+                  </Link>
+                  <div role="menuitem" className="flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)]">
+                    <ThemeToggle />
+                    {t('portal.chrome.colorScheme')}
+                  </div>
+                  <div role="menuitem" className="flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)]">
+                    <LanguageSwitch persist />
+                  </div>
+                  {user.role === 'admin' && (
+                    <Link role="menuitem" href="/admin" onClick={() => { setMenuOpen(false); onOpenChange(false); }} className="flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)] no-underline hover:bg-[var(--hover)] hover:text-[var(--ink)]">
+                      <ShieldCheck className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
+                      {t('portal.chrome.adminSubtitle')}
+                    </Link>
+                  )}
+                  <button type="button" role="menuitem" onClick={() => void logout()} className="flex min-h-10 w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13.5px] font-medium text-[var(--ink-2)] hover:bg-[var(--hover)] hover:text-[var(--ink)]">
+                    <LogOut className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
+                    {t('portal.chrome.logout')}
+                  </button>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => setMenuOpen((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                className="flex w-full items-center gap-2.5 rounded-lg px-1.5 py-1 text-left transition hover:bg-[var(--hover)]"
+              >
+                <span className="grid h-8 w-8 flex-shrink-0 place-items-center rounded-full bg-[var(--accent-soft)] text-xs font-bold text-[var(--accent-ink)]">
+                  {user.username.slice(0, 2).toUpperCase()}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-semibold text-[var(--ink)]">{user.username}</span>
+                  <span className="block text-[11.5px] uppercase tracking-wide text-[var(--muted)]">{user.role === 'admin' ? t('portal.chrome.admin') : t('portal.chrome.member')}</span>
+                </span>
+                <ChevronDown className={`h-4 w-4 flex-shrink-0 text-[var(--muted)] transition-transform ${menuOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
+              </button>
+            </div>
           )}
         </div>
       </div>

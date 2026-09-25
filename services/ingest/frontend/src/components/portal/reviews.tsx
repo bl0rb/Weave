@@ -15,25 +15,32 @@ import { ReprocessForm } from './reprocess-form';
 import { IndexingProgress } from './indexing-progress';
 import { useIndexingStatus } from '@/lib/use-indexing-status';
 import { currentReleaseStatus } from '@/lib/indexing-status';
+import { useI18n } from '@/i18n/provider';
+import { translate, type MessageKey } from '@/i18n/messages';
+import type { Locale } from '@/i18n/config';
 
-const qualityMissingReasonLabels: Record<string, string> = {
-  not_finished: 'Die Verarbeitung ist noch nicht abgeschlossen.',
-  failed: 'Die Verarbeitung ist fehlgeschlagen.',
-  legacy: 'Das Dokument wurde verarbeitet, bevor es die automatische Qualitätsprüfung gab.',
-  import_without_gate: 'Confluence-Importe durchlaufen keine automatische Qualitätsprüfung.',
-  unknown: 'Der Grund ist nicht bekannt.',
+const qualityMissingReasonKeys: Record<string, MessageKey> = {
+  not_finished: 'portal.reviews.quality.reason.notFinished',
+  failed: 'portal.reviews.quality.reason.failed',
+  legacy: 'portal.reviews.quality.reason.legacy',
+  import_without_gate: 'portal.reviews.quality.reason.importWithoutGate',
+  unknown: 'portal.reviews.quality.reason.unknown',
 };
-function qualityMissingReasonText(reason: string | null): string {
-  return (reason && qualityMissingReasonLabels[reason]) || qualityMissingReasonLabels.unknown;
+function qualityMissingReasonText(reason: string | null, locale: Locale): string {
+  const key = (reason && qualityMissingReasonKeys[reason]) || qualityMissingReasonKeys.unknown;
+  return translate(locale, key);
 }
 
-const reviewStateChips: Array<{ value: ReviewStateFilter; label: string }> = [
-  { value: 'review', label: 'Zur Prüfung' },
-  { value: 'all', label: 'Alle Dokumente' },
-  { value: 'skipped', label: 'Übersprungen' },
-];
+function reviewStateChips(t: (key: MessageKey) => string): Array<{ value: ReviewStateFilter; label: string }> {
+  return [
+    { value: 'review', label: t('portal.reviews.stateReview') },
+    { value: 'all', label: t('portal.reviews.stateAll') },
+    { value: 'skipped', label: t('portal.documents.state.skipped') },
+  ];
+}
 
 export function ReviewInbox() {
+  const { t, locale } = useI18n();
   const [documents, setDocuments] = useState<DocumentPage | null>(null);
   const [offset, setOffset] = useState(0);
   const [reviewState, setReviewState] = useState<ReviewStateFilter>('review');
@@ -47,7 +54,7 @@ export function ReviewInbox() {
   const [notice, setNotice] = useState('');
   const load = useCallback(() => loadDocuments(undefined, offset, reviewState, qualityGrade || undefined)
     .then(docs => { setDocuments(docs); setError(''); })
-    .catch(err => setError(portalError(err))), [offset, reviewState, qualityGrade]);
+    .catch(err => setError(portalError(err, locale))), [offset, reviewState, qualityGrade, locale]);
   useEffect(() => { void load(); }, [load]);
   const selectedDocuments = documents?.items.filter(document => selectedIds.has(document.id)) ?? [];
   const gradeCCount = selectedDocuments.filter(document => document.quality_grade?.toUpperCase() === 'C').length;
@@ -57,14 +64,14 @@ export function ReviewInbox() {
     setBulkBusy(true); setNotice('');
     try {
       const result = await bulkPortalAction([...selectedIds], action, acceptQualityWarnings);
-      setNotice(`${result.done} Dokument${result.done === 1 ? '' : 'e'} bearbeitet${result.errors.length ? `, ${result.errors.length} Fehler` : ''}.`);
+      setNotice(`${t('portal.spaces.bulkDoneNotice', { count: result.done })}${result.errors.length ? t('portal.spaces.bulkErrorSuffix', { count: result.errors.length }) : ''}.`);
       clearSelection();
       setDocuments(null);
       await load();
-    } catch (err) { setError(portalError(err)); } finally { setBulkBusy(false); setBulkDeleting(false); }
+    } catch (err) { setError(portalError(err, locale)); } finally { setBulkBusy(false); setBulkDeleting(false); }
   }
-  return <PortalPage title="Prüfen und freigeben" description="Lies den verarbeiteten Stand und entscheide, welche Inhalte euren Assistenten zur Verfügung stehen sollen." actions={<Button variant="outline" onClick={load}>Aktualisieren</Button>}>
-    <div className="portal-filter-row" role="group" aria-label="Dokumentauswahl">{reviewStateChips.map(chip => <button key={chip.value} aria-pressed={chip.value === reviewState} onClick={() => { setReviewState(chip.value); setOffset(0); setDocuments(null); clearSelection(); }}>{chip.label}</button>)}</div>
+  return <PortalPage title={t('portal.reviews.title')} description={t('portal.reviews.description')} actions={<Button variant="outline" onClick={load}>{t('common.refresh')}</Button>}>
+    <div className="portal-filter-row" role="group" aria-label={t('portal.reviews.selectionAria')}>{reviewStateChips(t).map(chip => <button key={chip.value} aria-pressed={chip.value === reviewState} onClick={() => { setReviewState(chip.value); setOffset(0); setDocuments(null); clearSelection(); }}>{chip.label}</button>)}</div>
     <QualityGradeFilterRow value={qualityGrade} onChange={value => { setQualityGrade(value); setOffset(0); setDocuments(null); }} />
     <QualityGradeLegend />
     {error && <Notice error action={load}>{error}</Notice>}
@@ -82,8 +89,8 @@ export function ReviewInbox() {
       onDelete={() => setBulkDeleting(true)}
       onClear={clearSelection}
     />
-    <section className="portal-panel">{!documents && !error ? <p role="status" className="portal-loading">Dokumente werden geladen …</p> : documents?.items.length ? <><DocumentTable documents={documents.items} selectedIds={selectedIds} onToggle={id => setSelectedIds(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; })} onToggleAll={checked => setSelectedIds(checked ? new Set(documents.items.map(document => document.id)) : new Set())} /><Pagination offset={offset} total={documents.total} onChange={value => { setDocuments(null); setOffset(value); }} /></> : !error && <EmptyState title={reviewState === 'review' ? 'Aktuell gibt es nichts zu prüfen' : reviewState === 'skipped' ? 'Keine übersprungenen Dokumente' : 'Noch keine zugeordneten Dokumente'} href="/sources/new" action="Quelle hinzufügen">{reviewState === 'review' ? 'Verarbeitete Dokumente erscheinen hier, sobald sie für eine Prüfung bereitstehen.' : 'Ordne eine Quelle einem Wissensbereich zu, damit sie hier erscheint.'}</EmptyState>}</section>
-    {bulkDeleting && <ConfirmDialog title="Dokumente löschen" body={<p>{selectedIds.size} Dokument{selectedIds.size === 1 ? '' : 'e'} unwiderruflich löschen?</p>} confirmLabel="Dokumente löschen" onClose={() => setBulkDeleting(false)} onConfirm={() => runBulk('delete')} />}
+    <section className="portal-panel">{!documents && !error ? <p role="status" className="portal-loading">{t('portal.tasks.documentsLoading')}</p> : documents?.items.length ? <><DocumentTable documents={documents.items} selectedIds={selectedIds} onToggle={id => setSelectedIds(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; })} onToggleAll={checked => setSelectedIds(checked ? new Set(documents.items.map(document => document.id)) : new Set())} /><Pagination offset={offset} total={documents.total} onChange={value => { setDocuments(null); setOffset(value); }} /></> : !error && <EmptyState title={reviewState === 'review' ? t('portal.reviews.emptyReviewTitle') : reviewState === 'skipped' ? t('portal.reviews.emptySkippedTitle') : t('portal.reviews.emptyUnassignedTitle')} href="/sources/new" action={t('portal.chrome.addSource')}>{reviewState === 'review' ? t('portal.reviews.emptyReviewBody') : t('portal.reviews.emptyOtherBody')}</EmptyState>}</section>
+    {bulkDeleting && <ConfirmDialog title={t('portal.spaces.deleteDocumentsTitle')} body={<p>{t('portal.spaces.deleteDocumentsBody', { count: selectedIds.size })}</p>} confirmLabel={t('portal.spaces.deleteDocumentsTitle')} onClose={() => setBulkDeleting(false)} onConfirm={() => runBulk('delete')} />}
   </PortalPage>;
 }
 
@@ -94,6 +101,7 @@ export function ReviewDocument({ id }: { id: string }) {
 function ReviewDocumentContent({ id }: { id: string }) {
   const router = useRouter();
   const { user } = useAuth();
+  const { t, locale, formatNumber } = useI18n();
   const [preview, setPreview] = useState<DocumentPreview | null>(null);
   const [config, setConfig] = useState<PortalConfig | null>(null);
   const [error, setError] = useState('');
@@ -106,9 +114,13 @@ function ReviewDocumentContent({ id }: { id: string }) {
   const [skipping, setSkipping] = useState(false);
   const [confirmReindex, setConfirmReindex] = useState(false);
   const startedHeading = useRef<HTMLHeadingElement>(null);
+  // Latest locale for error text without making it a `load` dependency: a
+  // language switch must not reload and reset the confirmation/reprocess form.
+  const localeRef = useRef(locale);
+  useEffect(() => { localeRef.current = locale; }, [locale]);
   const load = useCallback(() => Promise.all([apiJson<DocumentPreview>(`/api/v1/portal/documents/${encodeURIComponent(id)}`), apiJson<PortalConfig>('/api/v1/portal/config')])
     .then(([content, configuration]) => { setPreview(content); setConfig(configuration); setError(''); setConfirmed(false); setReprocessOpen(false); })
-    .catch(err => { setPreview(null); setError(portalError(err)); }), [id]);
+    .catch(err => { setPreview(null); setError(portalError(err, localeRef.current)); }), [id]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { if (reprocessStarted) startedHeading.current?.focus(); }, [reprocessStarted]);
   async function release() {
@@ -117,13 +129,13 @@ function ReviewDocumentContent({ id }: { id: string }) {
     try {
       const publication = await apiJson<Publication>(`/api/v1/portal/documents/${encodeURIComponent(id)}/release`, jsonBody({ markdown_sha256: preview.markdown_sha256, ...(preview.quality_grade?.toUpperCase() === 'C' ? { accept_quality_warning: true } : {}) }));
       setPreview({ ...preview, release: publication }); setConfirmed(false);
-    } catch (err) { setConfirmed(false); setError(portalError(err)); } finally { setSaving(false); }
+    } catch (err) { setConfirmed(false); setError(portalError(err, locale)); } finally { setSaving(false); }
   }
   async function retry() {
     if (saving || !preview?.release) return;
     setSaving(true); setError('');
     try { const publication = await apiJson<Publication>(`/api/v1/portal/releases/${preview.release.id}/retry`, { method: 'POST' }); setPreview({ ...preview, release: publication }); }
-    catch (err) { setError(portalError(err)); } finally { setSaving(false); }
+    catch (err) { setError(portalError(err, locale)); } finally { setSaving(false); }
   }
   async function reindex() {
     if (saving || !preview?.release) return;
@@ -132,27 +144,27 @@ function ReviewDocumentContent({ id }: { id: string }) {
       const publication = await reindexPortalDocument(id);
       setPreview({ ...preview, release: publication });
       setConfirmReindex(false);
-    } catch (err) { setError(portalError(err)); } finally { setSaving(false); }
+    } catch (err) { setError(portalError(err, locale)); } finally { setSaving(false); }
   }
   async function skip() {
     if (skipping || !preview) return;
     setSkipping(true); setError('');
     try { const updated = await skipPortalDocument(id); setPreview({ ...preview, review_decision: updated.review_decision }); }
-    catch (err) { setError(portalError(err)); } finally { setSkipping(false); }
+    catch (err) { setError(portalError(err, locale)); } finally { setSkipping(false); }
   }
   async function unskip() {
     if (skipping || !preview) return;
     setSkipping(true); setError('');
     try { const updated = await unskipPortalDocument(id); setPreview({ ...preview, review_decision: updated.review_decision }); }
-    catch (err) { setError(portalError(err)); } finally { setSkipping(false); }
+    catch (err) { setError(portalError(err, locale)); } finally { setSkipping(false); }
   }
   async function downloadDiagnostics() {
     if (downloadingDiagnostics || !preview?.release || user?.role !== 'admin') return;
     setDownloadingDiagnostics(true); setError('');
     try {
       const filename = `${markdownDownloadName(preview.original_filename).slice(0, -3)}-indexing-diagnostics.json`;
-      await downloadPortalFile(`/api/v1/portal/documents/${encodeURIComponent(id)}/indexing-diagnostics`, filename);
-    } catch (err) { setError(portalError(err)); } finally { setDownloadingDiagnostics(false); }
+      await downloadPortalFile(`/api/v1/portal/documents/${encodeURIComponent(id)}/indexing-diagnostics`, filename, locale);
+    } catch (err) { setError(portalError(err, locale)); } finally { setDownloadingDiagnostics(false); }
   }
   async function reprocess(profileId: string) {
     if (saving || reprocessStarted || !preview?.can_reprocess || preview.release) return;
@@ -165,60 +177,60 @@ function ReviewDocumentContent({ id }: { id: string }) {
       setReprocessStarted(true); setReprocessOpen(false);
     } catch (err) {
       setError(err instanceof ApiError && err.status === 409
-        ? 'Dieser Stand kann nicht mehr neu verarbeitet werden. Bitte lade ihn erneut; möglicherweise wurde er geändert, freigegeben oder bereits gestartet.'
-        : portalError(err));
+        ? t('portal.reviews.reprocessConflict')
+        : portalError(err, locale));
     } finally { setSaving(false); }
   }
   const { items: indexingItems } = useIndexingStatus(preview?.release ? [id] : []);
   const live = indexingItems[id];
-  const state = preview && documentState(preview, live);
+  const state = preview && documentState(preview, live, locale);
   const releaseStatus = preview?.release ? currentReleaseStatus(preview.release, live) : null;
   const delivery = releaseStatus?.delivery ?? null;
   const indexingFailed = releaseStatus?.indexing?.state === 'failed';
-  return <PortalPage title={preview?.original_filename || 'Dokument prüfen'} description="Prüfe Inhalt, Verständlichkeit und Berechtigte vor der Freigabe." eyebrow="VERÖFFENTLICHUNG" actions={!reprocessStarted && <Button variant="outline" disabled={saving} onClick={load}>Stand neu laden</Button>}>
-    <Link className="portal-back" href="/reviews">← Zurück zur Prüfung</Link>
+  return <PortalPage title={preview?.original_filename || t('portal.reviews.detailTitleFallback')} description={t('portal.reviews.detailDescription')} eyebrow={t('portal.reviews.detailEyebrow')} actions={!reprocessStarted && <Button variant="outline" disabled={saving} onClick={load}>{t('portal.reviews.reloadAction')}</Button>}>
+    <Link className="portal-back" href="/reviews">{t('portal.reviews.backLink')}</Link>
     {error && <Notice error action={load}>{error}</Notice>}
-    {!preview && !error && <Notice>Der verarbeitete Stand wird geladen …</Notice>}
+    {!preview && !error && <Notice>{t('portal.reviews.loadingDetail')}</Notice>}
     {reprocessStarted && <section className="portal-panel portal-form-panel" aria-labelledby="reprocess-started-title">
       <RefreshCw size={26} aria-hidden="true" className="mb-4" />
-      <h2 id="reprocess-started-title" tabIndex={-1} ref={startedHeading}>Erneute Verarbeitung gestartet</h2>
-      <p className="mt-4">Das Dokument wird mit dem gewählten Profil neu aufbereitet. Je nach Umfang und Auslastung kann das einige Minuten dauern.</p>
-      <p className="mt-3">Du kannst diese Seite verlassen. Prüfe das neue Ergebnis anschließend unter „Prüfen & freigeben“.</p>
-      <div className="portal-form-actions"><Link href="/processing" className={buttonVariants()}>Verarbeitung ansehen</Link><Link href="/reviews" className={buttonVariants({ variant: 'ghost' })}>Zurück zur Prüfung</Link></div>
+      <h2 id="reprocess-started-title" tabIndex={-1} ref={startedHeading}>{t('portal.reviews.reprocessStartedHeading')}</h2>
+      <p className="mt-4">{t('portal.reviews.reprocessStartedBody1')}</p>
+      <p className="mt-3">{t('portal.reviews.reprocessStartedBody2')}</p>
+      <div className="portal-form-actions"><Link href="/processing" className={buttonVariants()}>{t('portal.reviews.viewProcessing')}</Link><Link href="/reviews" className={buttonVariants({ variant: 'ghost' })}>{t('portal.reviews.backToReview')}</Link></div>
     </section>}
     {preview && !reprocessStarted && <><div className="portal-context-bar"><Link href={`/knowledge/${preview.collection_id}`}>{preview.collection_name}</Link><span aria-live="polite" className={`portal-badge portal-badge-${state?.tone}`}>{state?.label}</span></div>
-      <div className="portal-review-grid"><article className="portal-panel portal-preview"><h2>{preview.release ? 'Freigegebener Stand' : 'Verarbeiteter Inhalt'}</h2><p className="portal-field-hint">Dies ist der Stand, den du freigibst. Nachträgliche Änderungen verändern eine bestehende Freigabe nicht.</p><MarkdownView markdown={preview.markdown} jobId={preview.id} /></article>
-      <aside className="portal-panel portal-release-panel"><ShieldCheck size={27} /><h2>{reprocessOpen ? 'Erneut verarbeiten' : 'Freigabe'}</h2>
-        <dl><dt>Qualitätsbewertung</dt><dd>{preview.quality_grade ? `Stufe ${preview.quality_grade}` : 'Keine automatische Bewertung'}</dd><dt>Herkunft</dt><dd>{preview.source?.url ? <a href={preview.source.url} target="_blank" rel="noopener noreferrer">{preview.source.label}</a> : preview.source?.path ? `${preview.source.label}: ${preview.source.path}` : preview.source?.label}</dd><dt>Hinzugefügt</dt><dd>{dateLabel(preview.created_at)}</dd></dl>
-        <details className="portal-quality-reason"><summary>{preview.quality_grade ? `Warum Stufe ${preview.quality_grade}?` : 'Warum keine Bewertung?'}</summary>
+      <div className="portal-review-grid"><article className="portal-panel portal-preview"><h2>{preview.release ? t('portal.reviews.releasedHeading') : t('portal.reviews.processedHeading')}</h2><p className="portal-field-hint">{t('portal.reviews.previewHint')}</p><MarkdownView markdown={preview.markdown} jobId={preview.id} /></article>
+      <aside className="portal-panel portal-release-panel"><ShieldCheck size={27} /><h2>{reprocessOpen ? t('portal.reviews.reprocessHeading') : t('portal.reviews.releaseHeading')}</h2>
+        <dl><dt>{t('portal.reviews.qualityLabel')}</dt><dd>{preview.quality_grade ? t('portal.documents.grade', { grade: preview.quality_grade }) : t('portal.reviews.noAutoRating')}</dd><dt>{t('portal.reviews.originLabel')}</dt><dd>{preview.source?.url ? <a href={preview.source.url} target="_blank" rel="noopener noreferrer">{preview.source.label}</a> : preview.source?.path ? `${preview.source.label}: ${preview.source.path}` : preview.source?.label}</dd><dt>{t('portal.documents.columnAdded')}</dt><dd>{dateLabel(preview.created_at, locale)}</dd></dl>
+        <details className="portal-quality-reason"><summary>{preview.quality_grade ? t('portal.reviews.whyGrade', { grade: preview.quality_grade }) : t('portal.reviews.whyNoGrade')}</summary>
           {preview.quality ? <>
             <ul>
-              <li>OCR-Konfidenz: {preview.quality.signals.ocr_confidence != null ? `${Math.round(preview.quality.signals.ocr_confidence * 100)} % (Stichprobe: ${preview.quality.signals.confidence_sample_size.toLocaleString('de-DE')} Werte)` : 'nicht gemessen'}</li>
-              <li>Strukturqualität: {Math.round(preview.quality.signals.structure_quality * 100)} %</li>
-              <li>Textqualität: {Math.round(preview.quality.signals.text_quality * 100)} % (Rauschen {Math.round(preview.quality.signals.noise_penalty * 100)} %)</li>
-              <li>Feldprüfung: {preview.quality.issues.length} Auffälligkeiten{preview.quality.issues.length > 0 ? `: ${preview.quality.issues.join(', ')}` : ''}</li>
+              <li>{t('portal.reviews.quality.ocrConfidenceLabel')}{preview.quality.signals.ocr_confidence != null ? t('portal.reviews.quality.measured', { pct: Math.round(preview.quality.signals.ocr_confidence * 100), sample: formatNumber(preview.quality.signals.confidence_sample_size) }) : t('portal.reviews.quality.unmeasured')}</li>
+              <li>{t('portal.reviews.quality.structureQuality', { pct: Math.round(preview.quality.signals.structure_quality * 100) })}</li>
+              <li>{t('portal.reviews.quality.textQuality', { pct: Math.round(preview.quality.signals.text_quality * 100), noise: Math.round(preview.quality.signals.noise_penalty * 100) })}</li>
+              <li>{t('portal.reviews.quality.fieldCheck', { count: preview.quality.issues.length })}{preview.quality.issues.length > 0 ? `: ${preview.quality.issues.join(', ')}` : ''}</li>
             </ul>
-            <p>Schwellenwerte: A ab {Math.round(preview.quality.thresholds.A * 100)} %, B ab {Math.round(preview.quality.thresholds.B * 100)} %, sonst C.</p>
-            <p>Gesamtwert: {preview.quality.score != null ? `${Math.round(preview.quality.score * 100)} %` : 'unbekannt'}</p>
-          </> : <p>Keine automatische Bewertung – {qualityMissingReasonText(preview.quality_missing_reason)}</p>}
+            <p>{t('portal.reviews.quality.thresholds', { a: Math.round(preview.quality.thresholds.A * 100), b: Math.round(preview.quality.thresholds.B * 100) })}</p>
+            <p>{t('portal.reviews.quality.overallScoreLabel')}{preview.quality.score != null ? t('portal.reviews.quality.overallScoreValue', { pct: Math.round(preview.quality.score * 100) }) : t('portal.reviews.quality.unknown')}</p>
+          </> : <p>{t('portal.reviews.quality.noAutoRatingReason', { reason: qualityMissingReasonText(preview.quality_missing_reason, locale) })}</p>}
           <QualityGradeLegend />
         </details>
-        {preview.quality_grade?.trim().toUpperCase() === 'C' ? <Notice>Stufe C: Die automatische Prüfung meldet Qualitätsmängel. Eine bewusste Freigabe nach inhaltlicher Prüfung ist möglich.</Notice> : preview.quality_recommendation?.trim().toLowerCase() === 'block' && <Notice error>Die Qualitätsprüfung blockiert diesen Stand. Bitte korrigiere oder verarbeite das Dokument erneut.</Notice>}
-        {(!preview.quality_recommendation || preview.quality_recommendation.trim().toLowerCase() === 'warn') && <Notice>Bitte prüfe diesen Inhalt besonders sorgfältig. Die automatische Bewertung liefert keine uneingeschränkte Empfehlung.</Notice>}
-        {preview.release ? <><div className="portal-release-receipt"><CheckCheck size={23} /><strong>Freigabe gespeichert</strong><span>{dateLabel(preview.release.created_at)}</span>{preview.release.released_by && <span>Freigegeben von {preview.release.released_by}</span>}</div><p>Dieser Stand ist freigegeben und bleibt unverändert.</p>{delivery === 'failed' && <><Notice error>Die Übergabe ist fehlgeschlagen. Eine berechtigte Person kann sie erneut anstoßen.</Notice>{preview.can_release && <Button disabled={saving} onClick={retry}>Übergabe erneut versuchen</Button>}</>}<IndexingProgress release={preview.release} live={live} />{preview.can_release && (confirmReindex ? <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={saving} onClick={() => setConfirmReindex(false)}>Abbrechen</Button><Button variant={indexingFailed ? 'default' : 'outline'} disabled={saving} onClick={() => void reindex()}><RefreshCw size={16} />{saving ? 'Wird angestoßen …' : 'Ja, neu indizieren'}</Button></div> : <Button className="w-full" variant={indexingFailed ? 'default' : 'outline'} disabled={saving} onClick={() => setConfirmReindex(true)}><RefreshCw size={16} />Neu indizieren</Button>)}{user?.role === 'admin' && <Button className="w-full whitespace-normal h-auto py-3" variant="outline" disabled={downloadingDiagnostics} onClick={() => void downloadDiagnostics()}><Download size={16} />{downloadingDiagnostics ? 'Diagnose wird heruntergeladen …' : 'Indizierungsdiagnose herunterladen'}</Button>}</> : preview.review_decision === 'skipped' ? <>
-          <p className="portal-field-hint">Dieses Dokument wurde nicht freigegeben und übersprungen. Es erscheint nicht in der Liste „Zur Prüfung“.</p>
-          <Button className="w-full" variant="outline" disabled={skipping} onClick={() => void unskip()}>{skipping ? 'Wird aktualisiert …' : 'Wieder zur Prüfung'}</Button>
+        {preview.quality_grade?.trim().toUpperCase() === 'C' ? <Notice>{t('portal.reviews.noticeGradeC')}</Notice> : preview.quality_recommendation?.trim().toLowerCase() === 'block' && <Notice error>{t('portal.reviews.noticeBlocked')}</Notice>}
+        {(!preview.quality_recommendation || preview.quality_recommendation.trim().toLowerCase() === 'warn') && <Notice>{t('portal.reviews.noticeWarn')}</Notice>}
+        {preview.release ? <><div className="portal-release-receipt"><CheckCheck size={23} /><strong>{t('portal.reviews.releaseSaved')}</strong><span>{dateLabel(preview.release.created_at, locale)}</span>{preview.release.released_by && <span>{t('portal.documents.releasedBy', { name: preview.release.released_by })}</span>}</div><p>{t('portal.reviews.releaseImmutable')}</p>{delivery === 'failed' && <><Notice error>{t('portal.reviews.deliveryFailedNotice')}</Notice>{preview.can_release && <Button disabled={saving} onClick={retry}>{t('portal.reviews.retryDelivery')}</Button>}</>}<IndexingProgress release={preview.release} live={live} />{preview.can_release && (confirmReindex ? <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={saving} onClick={() => setConfirmReindex(false)}>{t('common.cancel')}</Button><Button variant={indexingFailed ? 'default' : 'outline'} disabled={saving} onClick={() => void reindex()}><RefreshCw size={16} />{saving ? t('portal.reviews.reindexTriggering') : t('portal.reviews.reindexConfirmYes')}</Button></div> : <Button className="w-full" variant={indexingFailed ? 'default' : 'outline'} disabled={saving} onClick={() => setConfirmReindex(true)}><RefreshCw size={16} />{t('portal.spaces.reindexConfirm')}</Button>)}{user?.role === 'admin' && <Button className="w-full whitespace-normal h-auto py-3" variant="outline" disabled={downloadingDiagnostics} onClick={() => void downloadDiagnostics()}><Download size={16} />{downloadingDiagnostics ? t('portal.reviews.diagnosticsDownloading') : t('portal.reviews.diagnosticsDownload')}</Button>}</> : preview.review_decision === 'skipped' ? <>
+          <p className="portal-field-hint">{t('portal.reviews.skippedHint')}</p>
+          <Button className="w-full" variant="outline" disabled={skipping} onClick={() => void unskip()}>{skipping ? t('portal.reviews.unskipping') : t('portal.reviews.unskip')}</Button>
         </> : reprocessOpen ? <ReprocessForm currentProfileId={preview.profile_id} busy={saving} onSubmit={reprocess} onCancel={() => { setReprocessOpen(false); setError(''); }} /> : <>
-          {preview.can_reprocess && <Button className="w-full whitespace-normal h-auto py-3" variant="outline" disabled={saving} onClick={() => { setReprocessOpen(true); setConfirmed(false); setError(''); }}>Erneut prüfen</Button>}
-          {!preview.release && preview.can_release && <Button className="w-full" variant="outline" disabled={skipping} onClick={() => void skip()}><Ban size={16} />{skipping ? 'Wird gespeichert …' : 'Nicht freigeben / überspringen'}</Button>}
-          {!deleting && <Button className="w-full" variant="outline" disabled={saving} onClick={() => setDeleting(true)}><Trash2 size={16} />Dokument löschen</Button>}
-          {!config?.publication_configured && <Notice>Die Administration muss die Verbindung zur Wissensindexierung noch einrichten.</Notice>}
-          {!preview.can_release && preview.quality_recommendation !== 'block' && <p className="portal-field-hint">Freigeben können der Dokument- oder Wissensbereichseigentümer sowie Administratoren. Geschützte Inhalte und Seiten aus noch nicht vollständig abgeschlossenen Importen lassen sich hier nicht freigeben.</p>}
-          <label className="portal-choice portal-approval"><input type="checkbox" checked={confirmed} disabled={saving || !preview.can_release || !config?.publication_configured} onChange={event => setConfirmed(event.target.checked)} />{preview.quality_grade?.toUpperCase() === 'C' ? 'Ich habe den Inhalt geprüft und gebe ihn trotz Qualitätsstufe C für die Berechtigten des Wissensbereichs frei.' : 'Ich habe den Inhalt geprüft und möchte diesen Stand für die Berechtigten des Wissensbereichs freigeben.'}</label>
-          <Button className="w-full" disabled={saving || !confirmed || !preview.can_release || !config?.publication_configured} onClick={release}>{saving ? 'Freigabe wird gespeichert …' : 'Geprüften Stand freigeben'}</Button>
-          <Link href="/reviews" className="portal-defer">Später prüfen</Link>
+          {preview.can_reprocess && <Button className="w-full whitespace-normal h-auto py-3" variant="outline" disabled={saving} onClick={() => { setReprocessOpen(true); setConfirmed(false); setError(''); }}>{t('portal.reviews.reprocessTrigger')}</Button>}
+          {!preview.release && preview.can_release && <Button className="w-full" variant="outline" disabled={skipping} onClick={() => void skip()}><Ban size={16} />{skipping ? t('portal.reviews.skipping') : t('portal.reviews.skipAction')}</Button>}
+          {!deleting && <Button className="w-full" variant="outline" disabled={saving} onClick={() => setDeleting(true)}><Trash2 size={16} />{t('portal.reviews.deleteDocument')}</Button>}
+          {!config?.publication_configured && <Notice>{t('portal.reviews.publicationNotConfigured')}</Notice>}
+          {!preview.can_release && preview.quality_recommendation !== 'block' && <p className="portal-field-hint">{t('portal.reviews.releasePermissionHint')}</p>}
+          <label className="portal-choice portal-approval"><input type="checkbox" checked={confirmed} disabled={saving || !preview.can_release || !config?.publication_configured} onChange={event => setConfirmed(event.target.checked)} />{preview.quality_grade?.toUpperCase() === 'C' ? t('portal.reviews.confirmGradeC') : t('portal.reviews.confirmDefault')}</label>
+          <Button className="w-full" disabled={saving || !confirmed || !preview.can_release || !config?.publication_configured} onClick={release}>{saving ? t('portal.reviews.releasing') : t('portal.reviews.releaseAction')}</Button>
+          <Link href="/reviews" className="portal-defer">{t('portal.reviews.reviewLater')}</Link>
         </>}
       </aside></div></>}
-    {deleting && preview && <ConfirmDialog title="Dokument löschen" body={<p>Das Dokument <strong className="text-slate-950">{preview.original_filename}</strong> unwiderruflich löschen?</p>} confirmLabel="Dokument löschen" onClose={() => setDeleting(false)} onConfirm={async () => { await apiSend(`/api/v1/jobs/${encodeURIComponent(id)}`, { method: 'DELETE' }); router.push('/reviews'); router.refresh(); }} />}
+    {deleting && preview && <ConfirmDialog title={t('portal.reviews.deleteDocument')} body={<p>{t('portal.reviews.deleteDialogBodyPrefix')} <strong className="text-slate-950">{preview.original_filename}</strong> {t('portal.reviews.deleteDialogBodySuffix')}</p>} confirmLabel={t('portal.reviews.deleteDocument')} onClose={() => setDeleting(false)} onConfirm={async () => { await apiSend(`/api/v1/jobs/${encodeURIComponent(id)}`, { method: 'DELETE' }); router.push('/reviews'); router.refresh(); }} />}
   </PortalPage>;
 }

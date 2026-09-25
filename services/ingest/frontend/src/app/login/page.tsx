@@ -8,6 +8,7 @@ import { resolveApiBaseUrl } from '@/lib/api-base';
 import type { ListResponse, PublicProvider, SetupStatusResponse } from '@/lib/auth-types';
 import { Button } from '@/components/ui/button';
 import { AuthField, AuthPageSpinner, AuthShell, FormError } from '@/components/auth/auth-card';
+import { useI18n } from '@/i18n/provider';
 
 /**
  * Where a completed sign-in continues when another Weave service sent the
@@ -31,6 +32,7 @@ function safeReturnTo(value: string | null): string | null {
 
 export default function LoginPage() {
   const router = useRouter();
+  const { t } = useI18n();
   const [checking, setChecking] = useState(true);
   const [providers, setProviders] = useState<PublicProvider[]>([]);
   // Read from window.location rather than useSearchParams() on purpose:
@@ -60,7 +62,7 @@ export default function LoginPage() {
       const timeout = window.setTimeout(() => {
         if (!cancelled) {
           setChecking(false);
-          setCheckError('Die Anmeldung konnte nicht rechtzeitig geprüft werden. Bitte versuche es erneut.');
+          setCheckError(t('portal.login.checkTimeout'));
         }
       }, 10000);
 
@@ -106,7 +108,7 @@ export default function LoginPage() {
     return () => {
       cancelled = true;
     };
-  }, [retry, router]);
+  }, [retry, router, t]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -126,13 +128,13 @@ export default function LoginPage() {
       window.location.assign(handoff ? handoffStartUrl(handoff.state) : returnTo || '/');
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        setError('Benutzername oder Passwort ist falsch.');
+        setError(t('portal.login.invalidCredentials'));
       } else if (err instanceof ApiError && err.status === 429) {
-        setError('Zu viele Versuche. Bitte versuche es gleich erneut.');
+        setError(t('portal.login.tooManyAttempts'));
       } else if (err instanceof ApiError) {
         setError(err.detail);
       } else {
-        setError('Der Dienst ist nicht erreichbar. Bitte versuche es erneut.');
+        setError(t('portal.login.serviceUnreachable'));
       }
       setPending(false);
     }
@@ -159,25 +161,21 @@ export default function LoginPage() {
 
   return (
     <AuthShell
-      title="Anmelden"
-      subtitle={
-        handoff
-          ? 'Melde dich mit deinem Weave-Konto an. Danach geht es zurück zum Chat.'
-          : 'Willkommen im Wissensportal. Melde dich mit deinem Weave-Konto an.'
-      }
+      title={t('portal.login.title')}
+      subtitle={handoff ? t('portal.login.subtitleHandoff') : t('portal.login.subtitleDefault')}
     >
       <form onSubmit={onSubmit} className="flex flex-col gap-4">
         {checkError && (
           <div className="space-y-2">
             <FormError message={checkError} />
             <Button type="button" variant="outline" onClick={() => { setCheckError(null); setChecking(true); setRetry((value) => value + 1); }}>
-              Erneut prüfen
+              {t('portal.login.retryCheck')}
             </Button>
           </div>
         )}
         <AuthField
           id="identifier"
-          label="Benutzername oder E-Mail"
+          label={t('portal.login.identifierLabel')}
           name="username"
           autoComplete="username"
           required
@@ -187,7 +185,7 @@ export default function LoginPage() {
         />
         <AuthField
           id="password"
-          label="Passwort"
+          label={t('common.password')}
           name="password"
           type="password"
           autoComplete="current-password"
@@ -199,7 +197,7 @@ export default function LoginPage() {
         <FormError message={error} />
 
         <Button type="submit" disabled={pending} className="mt-1 w-full rounded-xl">
-          {pending ? 'Anmeldung läuft …' : 'Anmelden'}
+          {pending ? t('portal.login.signingIn') : t('portal.login.title')}
         </Button>
       </form>
 
@@ -208,7 +206,7 @@ export default function LoginPage() {
           <div className="flex items-center gap-3" aria-hidden="true">
             <div className="h-px flex-1 bg-slate-200" />
             <span className="text-xs font-medium uppercase tracking-wide text-slate-400">
-              oder über eure Organisation
+              {t('portal.login.orDivider')}
             </span>
             <div className="h-px flex-1 bg-slate-200" />
           </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useEffectEvent, useRef, useState } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { useParams, useSearchParams } from 'next/navigation';
@@ -15,6 +15,9 @@ import { WebhookSendDialog } from '@/components/webhook-send-dialog';
 import { apiFetch, redirectIfSessionExpired, type JobVersionEntry, type JobVersionsResponse } from '@/lib/api';
 import { API_BASE_URL } from '@/lib/api-base';
 import { peekCached, setCached } from '@/lib/data-cache';
+import { useI18n } from '@/i18n/provider';
+import { translate, type MessageKey } from '@/i18n/messages';
+import { DEFAULT_LOCALE } from '@/i18n/config';
 
 const CAPABILITIES_PATH = '/api/v1/paddle/capabilities';
 
@@ -27,7 +30,7 @@ const CAPABILITIES_PATH = '/api/v1/paddle/capabilities';
 const MarkdownView = dynamic(() => import('@/components/markdown/markdown-view').then((mod) => mod.MarkdownView), {
   ssr: false,
   loading: () => (
-    <div className="animate-pulse space-y-3" role="status" aria-label="Loading rendered preview">
+    <div className="animate-pulse space-y-3" role="status" aria-label={translate(DEFAULT_LOCALE, 'portal.jobDetail.loadingPreview')}>
       <div className="h-4 w-3/4 rounded bg-slate-100" />
       <div className="h-4 w-full rounded bg-slate-100" />
       <div className="h-4 w-5/6 rounded bg-slate-100" />
@@ -36,10 +39,10 @@ const MarkdownView = dynamic(() => import('@/components/markdown/markdown-view')
   ),
 });
 
-const qualityRecommendationLabels: Record<string, string> = {
-  allow: 'zur Freigabe geeignet',
-  warn: 'sorgfältig prüfen',
-  block: 'Freigabe blockiert',
+const qualityRecommendationKeys: Record<string, MessageKey> = {
+  allow: 'portal.jobDetail.recommendation.allow',
+  warn: 'portal.jobDetail.recommendation.warn',
+  block: 'portal.jobDetail.recommendation.block',
 };
 
 const LOWER_PROFILE_RETRY_MAP: Record<string, string> = {
@@ -129,6 +132,7 @@ function JobDetailsPageInner() {
 }
 
 function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: boolean }) {
+  const { t } = useI18n();
   // Job metadata (unlike the markdown preview) isn't gated behind the
   // document password, so it's safe to reuse: re-opening a job you already
   // viewed this session (e.g. the browser back button) paints its header
@@ -215,6 +219,10 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
     }
   };
 
+  // Reads the current language without making `t` an effect dependency: a
+  // language switch must not re-run the load and discard an unsaved edit.
+  const loadFailedMessage = useEffectEvent(() => t('portal.jobDetail.loadFailed'));
+
   useEffect(() => {
     // Per-job state resets are handled by the key={id} remount in
     // JobDetailsPage; this effect only fetches.
@@ -226,7 +234,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
         return;
       }
       if (!jobResp.ok) {
-        setLoadError('Failed to load job');
+        setLoadError(loadFailedMessage());
         return;
       }
       const jobData = await jobResp.json();
@@ -288,7 +296,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
       if (await redirectIfSessionExpired()) {
         return;
       }
-      setLoadError('Invalid password');
+      setLoadError(t('portal.jobDetail.invalidPassword'));
       return;
     }
     if (previewResp.ok) {
@@ -308,18 +316,18 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
     return (
       <main className="min-h-screen bg-white px-4 py-6 text-slate-950 sm:px-6 lg:px-8">
         <div
-          className="mx-auto w-full max-w-6xl animate-pulse space-y-4 rounded-3xl border border-slate-200 bg-white p-4 sm:p-6 lg:p-8"
+          className="mx-auto w-full max-w-6xl animate-pulse space-y-4 rounded-xl border border-slate-200 bg-white p-4 sm:p-6 lg:p-8"
           role="status"
-          aria-label="Loading job"
+          aria-label={t('portal.jobDetail.loadingJobAria')}
         >
-          <div className="h-9 w-32 rounded-md bg-slate-100" />
+          <div className="h-9 w-32 rounded-xl bg-slate-100" />
           <div className="h-7 w-48 rounded bg-slate-100" />
           <div className="space-y-2">
             <div className="h-4 w-2/3 rounded bg-slate-100" />
             <div className="h-4 w-1/3 rounded bg-slate-100" />
             <div className="h-4 w-1/4 rounded bg-slate-100" />
           </div>
-          <div className="h-64 rounded-md border border-slate-100 bg-slate-50" />
+          <div className="h-64 rounded-xl border border-slate-100 bg-slate-50" />
         </div>
       </main>
     );
@@ -328,9 +336,9 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
   if (requirePassword) {
     return (
       <main className="min-h-screen bg-white p-8 text-slate-950">
-        <div className="mx-auto max-w-md space-y-4 rounded-3xl border border-slate-200 bg-white p-6">
-          <h1 className="font-serif text-3xl font-semibold">Password Required</h1>
-          <p className="text-sm text-slate-600">This job is password protected.</p>
+        <div className="mx-auto max-w-md space-y-4 rounded-xl border border-slate-200 bg-white p-6">
+          <h1 className="text-3xl font-semibold">{t('portal.jobs.browser.passwordRequired')}</h1>
+          <p className="text-sm text-slate-600">{t('portal.jobs.browser.passwordProtected')}</p>
           {loadError && (
             <p className="text-sm text-red-600" role="alert">
               {loadError}
@@ -341,13 +349,13 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && void loadMarkdownWithPassword()}
-            placeholder="Enter password"
-            className="w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950"
+            placeholder={t('portal.jobs.browser.enterPassword')}
+            className={inputClass}
           />
           <div className="flex gap-2">
-            <Button onClick={loadMarkdownWithPassword}>Unlock</Button>
+            <Button onClick={loadMarkdownWithPassword}>{t('portal.jobDetail.unlock')}</Button>
             <Link href="/jobs">
-              <Button variant="outline">Back</Button>
+              <Button variant="outline">{t('common.back')}</Button>
             </Link>
           </div>
         </div>
@@ -401,7 +409,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
       const response = await apiFetch(`/api/v1/jobs/${job.id}/retry-lower-profile`, { method: 'POST' });
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
-        const detail = typeof payload?.detail === 'string' ? payload.detail : 'Failed to retry with lower profile.';
+        const detail = typeof payload?.detail === 'string' ? payload.detail : t('portal.jobs.browser.alert.retryLowerFailed');
         setLoadError(detail);
         return;
       }
@@ -439,17 +447,17 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
         if (response.status === 401 && (await redirectIfSessionExpired())) return;
         setSaveMessage(
           response.status === 401
-            ? 'Speichern fehlgeschlagen: Das Dokumentpasswort ist falsch.'
-            : 'Speichern fehlgeschlagen. Prüfe, dass das YAML-Frontmatter erhalten bleibt.'
+            ? t('portal.jobDetail.saveFailedPassword')
+            : t('portal.jobDetail.saveFailedFrontmatter')
         );
         return;
       }
       const payload = await response.json();
       setMarkdown(draftMarkdown);
-      setSaveMessage(`Als Version ${payload.version} gespeichert.`);
+      setSaveMessage(t('portal.jobDetail.savedAsVersion', { version: payload.version }));
       setIsEditing(false);
     } catch {
-      setSaveMessage('Speichern fehlgeschlagen. Dein Entwurf bleibt erhalten. Bitte versuche es erneut.');
+      setSaveMessage(t('portal.jobDetail.saveFailedRetry'));
     } finally {
       setIsSaving(false);
     }
@@ -457,17 +465,17 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
 
   return (
     <main className="min-h-screen bg-white px-4 py-6 text-slate-950 sm:px-6 lg:px-8">
-      <div className="mx-auto w-full max-w-6xl space-y-4 rounded-3xl border border-slate-200 bg-white p-4 sm:p-6 lg:p-8">
+      <div className="mx-auto w-full max-w-6xl space-y-4 rounded-xl border border-slate-200 bg-white p-4 sm:p-6 lg:p-8">
         <div className="flex justify-start">
           <Link href="/jobs">
-            <Button variant="outline">Back to jobs</Button>
+            <Button variant="outline">{t('portal.jobDetail.backToJobs')}</Button>
           </Link>
         </div>
-        <h1 className="font-serif text-3xl font-semibold">Auftragsdetails</h1>
-        <p>Filename: {job.original_filename}</p>
-        {job.tags && job.tags.length > 0 && <p>Tags: {job.tags.join(', ')}</p>}
+        <h1 className="text-3xl font-semibold">{t('portal.jobDetail.title')}</h1>
+        <p>{t('portal.jobDetail.filenameLabel', { name: job.original_filename })}</p>
+        {job.tags && job.tags.length > 0 && <p>{t('portal.jobDetail.tagsLabel', { tags: job.tags.join(', ') })}</p>}
         <p className="flex items-center gap-2">
-          Status: {job.status}
+          {t('portal.jobDetail.statusLabel')} {job.status}
           {typeof job.document_version === 'number' && (
             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
               v{job.document_version}
@@ -477,51 +485,49 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
             <span
               className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-800"
             >
-              <Mail className="h-3 w-3" /> E-Mail-Anhang
+              <Mail className="h-3 w-3" /> {t('portal.jobs.browser.mailAttachment')}
             </span>
           )}
         </p>
-        <p>Created: {new Date(job.created_at).toLocaleString()}</p>
-        {selectedProfileId && <p>Profile: {profileIdDisplay(selectedProfileId, settings)}</p>}
-        {selectedProfileLabel && <p>Profile name: {selectedProfileLabel}</p>}
-        {converter && <p>Converter: {converter}</p>}
-        {pageCount !== null && blockCount !== null && <p>Structure: {pageCount} pages, {blockCount} blocks</p>}
+        <p>{t('portal.jobDetail.createdLabel', { date: new Date(job.created_at).toLocaleString() })}</p>
+        {selectedProfileId && <p>{t('portal.jobDetail.profileLabel', { name: profileIdDisplay(selectedProfileId, settings) })}</p>}
+        {selectedProfileLabel && <p>{t('portal.jobDetail.profileNameLabel', { name: selectedProfileLabel })}</p>}
+        {converter && <p>{t('portal.jobDetail.converterLabel', { name: converter })}</p>}
+        {pageCount !== null && blockCount !== null && <p>{t('portal.jobDetail.structureLabel', { pages: pageCount, blocks: blockCount })}</p>}
         {usedFallback && (
-          <div className="rounded-md border border-red-300 bg-red-50 p-3 text-red-900">
+          <div className="rounded-xl border border-red-300 bg-red-50 p-3 text-red-900">
             <p className="text-sm font-semibold">
-              OCR did not run — this result came from the {engine ?? 'plain-text'} extraction fallback.
+              {t('portal.jobDetail.ocrFallbackTitle', { engine: engine ?? 'plain-text' })}
             </p>
             <p className="mt-1 text-sm">
-              The selected profile{selectedProfileLabel ? ` (${selectedProfileLabel})` : ''} had no effect on this
-              output. Fix the worker (see reason below), then restart this job from the jobs list to run real OCR.
+              {t('portal.jobDetail.ocrFallbackBody', { label: selectedProfileLabel ? ` (${selectedProfileLabel})` : '' })}
             </p>
-            {fallbackReason && <p className="mt-1 break-words text-sm">Reason: {fallbackReason}</p>}
+            {fallbackReason && <p className="mt-1 break-words text-sm">{t('portal.jobDetail.reasonLabel', { reason: fallbackReason })}</p>}
           </div>
         )}
         {!usedFallback && profileMismatch && (
-          <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900">
+          <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-amber-900">
             <p className="text-sm">
-              Requested profile {selectedProfileId} is unknown to the worker; the job ran with {resolvedProfileId}{' '}
-              instead.
+              {t('portal.jobDetail.profileMismatch', { requested: selectedProfileId ?? '', resolved: resolvedProfileId ?? '' })}
             </p>
           </div>
         )}
         {job.status === 'FAILED' && (
-          <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900">
+          <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-amber-900">
             <p className="text-sm">
-              {warning || 'Processing stopped for this document. Retry manually with a lower profile.'}
+              {warning || t('portal.jobDetail.processingStoppedManual')}
             </p>
             {(suggestedLowerProfile || canRestartWithProfile) && (
               <div className="mt-2 flex flex-wrap gap-2">
                 {suggestedLowerProfile && (
                   <Button size="sm" variant="outline" disabled={isRetryingLower} onClick={retryWithLowerProfile}>
-                    {isRetryingLower ? 'Retrying...' : `Retry with ${suggestedLowerProfile}`}
+                    {isRetryingLower ? t('portal.jobDetail.retrying') : t('portal.jobDetail.retryWith', { profile: suggestedLowerProfile })}
                   </Button>
                 )}
                 {canRestartWithProfile && (
                   <Button size="sm" variant="outline" onClick={() => setRestartProfileDialogOpen(true)}>
                     <Settings2 className="h-4 w-4" />
-                    Re-run with profile…
+                    {t('portal.jobs.browser.rerunWithProfile')}
                   </Button>
                 )}
               </div>
@@ -531,25 +537,25 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
         {qualityGrade && (
           <div>
             <p>
-              Qualitätsstufe {qualityGrade}
+              {t('portal.documents.qualityGrade', { grade: qualityGrade })}
               {qualityScore !== null ? ` (${Math.round(qualityScore * 100)} %)` : ''}
-              {qualityRecommendation ? ` – ${qualityRecommendationLabels[qualityRecommendation] ?? qualityRecommendation}` : ''}
+              {qualityRecommendation ? ` – ${qualityRecommendationKeys[qualityRecommendation] ? t(qualityRecommendationKeys[qualityRecommendation]) : qualityRecommendation}` : ''}
             </p>
             <QualityGradeLegend />
           </div>
         )}
         {versions && versions.length > 1 && (
           <section>
-            <h2 className="mb-2 text-lg font-semibold">Versions</h2>
-            <div className="overflow-x-auto rounded-md border border-slate-200">
+            <h2 className="mb-2 text-[17px] font-semibold">{t('portal.jobDetail.versionsHeading')}</h2>
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full table-auto text-left text-sm">
                 <thead className="bg-slate-50 text-slate-500">
                   <tr>
-                    <th className="px-3 py-2 font-medium">Version</th>
-                    <th className="px-3 py-2 font-medium">SHA</th>
-                    <th className="px-3 py-2 font-medium">Status</th>
-                    <th className="px-3 py-2 font-medium">Created</th>
-                    <th className="px-3 py-2 font-medium">Uploaded by</th>
+                    <th className="px-3 py-2 font-medium">{t('portal.jobDetail.colVersion')}</th>
+                    <th className="px-3 py-2 font-medium">{t('portal.jobDetail.colSha')}</th>
+                    <th className="px-3 py-2 font-medium">{t('common.status')}</th>
+                    <th className="px-3 py-2 font-medium">{t('portal.jobDetail.colCreated')}</th>
+                    <th className="px-3 py-2 font-medium">{t('portal.jobDetail.colUploadedBy')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -563,7 +569,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
                             v{entry.document_version}
                           </Link>
                         )}
-                        {entry.is_current && <span className="ml-2 text-xs font-medium text-emerald-700">(current)</span>}
+                        {entry.is_current && <span className="ml-2 text-xs font-medium text-emerald-700">{t('portal.jobDetail.current')}</span>}
                       </td>
                       <td className="px-3 py-2 font-mono text-xs text-slate-600" title={entry.content_sha256 ?? ''}>
                         {entry.content_sha256 ? entry.content_sha256.slice(0, 12) : '-'}
@@ -583,29 +589,29 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
           </section>
         )}
         {!collectionId && (
-          <section className="rounded-md border border-amber-300 bg-amber-50 p-4 text-amber-950">
-            <h2 className="font-semibold">Keinem Wissensbereich zugeordnet</h2>
-            <p className="mt-1 text-sm">Dieser Auftrag kann nicht freigegeben werden. Starte den Import erneut und wähle dabei einen Wissensbereich aus.</p>
-            <Link href="/sources/new" className={`${buttonVariants({ variant: 'outline' })} mt-3`}>Quelle erneut importieren</Link>
+          <section className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-950">
+            <h2 className="font-semibold">{t('portal.jobDetail.noSpaceTitle')}</h2>
+            <p className="mt-1 text-sm">{t('portal.jobDetail.noSpaceBody')}</p>
+            <Link href="/sources/new" className={`${buttonVariants({ variant: 'outline' })} mt-3`}>{t('portal.jobDetail.reimportSource')}</Link>
           </section>
         )}
         <details>
-          <summary className="cursor-pointer font-semibold">Technische Verarbeitungsdetails</summary>
-          <pre className="overflow-x-auto rounded-md border border-slate-200 bg-white p-4 text-sm text-emerald-800">
+          <summary className="cursor-pointer font-semibold">{t('portal.jobDetail.technicalDetails')}</summary>
+          <pre className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-4 text-sm text-emerald-800">
             {JSON.stringify(job.processing_info ?? {}, null, 2)}
           </pre>
         </details>
         {job.status === 'FINISHED' && (
           <div className="flex flex-wrap gap-2">
             <a href={`${API}/api/v1/jobs/${job.id}/download${password ? `?password=${encodeURIComponent(password)}` : ''}`}>
-              <Button>Download Markdown</Button>
+              <Button>{t('portal.jobDetail.downloadMarkdown')}</Button>
             </a>
             <a href={`${API}/api/v1/jobs/${job.id}/export.json${password ? `?password=${encodeURIComponent(password)}` : ''}`}>
-              <Button variant="outline">Download JSON</Button>
+              <Button variant="outline">{t('portal.jobDetail.downloadJson')}</Button>
             </a>
             <Button variant="outline" onClick={() => setWebhookDialogOpen(true)}>
               <Webhook className="h-4 w-4" />
-              Send to webhook
+              {t('portal.jobs.browser.sendToWebhook')}
             </Button>
             <Button
               variant="outline"
@@ -615,24 +621,24 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
               }}
             >
               <Pencil className="h-4 w-4" />
-              Edit markdown
+              {t('portal.jobs.browser.editMarkdown')}
             </Button>
             {canRestartWithProfile && (
               <Button variant="outline" onClick={() => setRestartProfileDialogOpen(true)}>
                 <Settings2 className="h-4 w-4" />
-                Re-run with profile…
+                {t('portal.jobs.browser.rerunWithProfile')}
               </Button>
             )}
           </div>
         )}
         <section ref={markdownSectionRef}>
-          <h2 className="mb-2 text-lg font-semibold">Markdown Preview</h2>
+          <h2 className="mb-2 text-[17px] font-semibold">{t('portal.jobDetail.markdownPreviewHeading')}</h2>
           <div className="mb-2 flex items-center gap-2">
             <Button size="sm" variant={isEditing ? 'outline' : 'default'} onClick={() => setIsEditing(false)}>
-              Preview
+              {t('portal.jobDetail.previewTab')}
             </Button>
             <Button size="sm" variant={isEditing ? 'default' : 'outline'} onClick={() => setIsEditing(true)}>
-              Edit
+              {t('common.edit')}
             </Button>
           </div>
           {!isEditing && (
@@ -646,7 +652,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
                 variant={viewTab === 'rendered' ? 'default' : 'outline'}
                 onClick={() => setViewTab('rendered')}
               >
-                Rendered
+                {t('portal.jobDetail.renderedTab')}
               </Button>
               <Button
                 size="sm"
@@ -654,20 +660,20 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
                 variant={viewTab === 'raw' ? 'default' : 'outline'}
                 onClick={() => setViewTab('raw')}
               >
-                Raw
+                {t('portal.jobDetail.rawTab')}
               </Button>
             </div>
           )}
           {isEditing ? (
             <div className="space-y-2">
               <textarea
-                className="min-h-[380px] w-full rounded-md border border-slate-200 bg-white p-4 text-sm text-emerald-800"
+                className="min-h-[380px] w-full rounded-lg border border-slate-200 bg-white p-4 text-sm text-emerald-800"
                 value={draftMarkdown}
                 onChange={(event) => setDraftMarkdown(event.target.value)}
               />
               <div className="flex items-center gap-2">
                 <Button onClick={saveMarkdown} disabled={isSaving}>
-                  {isSaving ? 'Saving...' : 'Save as new version'}
+                  {isSaving ? t('portal.jobDetail.savingVersion') : t('portal.jobDetail.saveAsVersion')}
                 </Button>
                 <Button
                   variant="outline"
@@ -677,17 +683,17 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
                     setSaveMessage(null);
                   }}
                 >
-                  Cancel
+                  {t('common.cancel')}
                 </Button>
               </div>
               <div aria-live="polite">{saveMessage && <p className="text-sm text-slate-600">{saveMessage}</p>}</div>
             </div>
           ) : viewTab === 'rendered' ? (
-            <div className="rounded-md border border-slate-200 bg-white p-4">
+            <div className="rounded-xl border border-slate-200 bg-white p-4">
               <MarkdownView markdown={markdown} jobId={job.id} password={password || undefined} artifacts={artifacts} />
             </div>
           ) : (
-            <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-md border border-slate-200 bg-white p-4 text-sm text-emerald-800">{markdown}</pre>
+            <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-xl border border-slate-200 bg-white p-4 text-sm text-emerald-800">{markdown}</pre>
           )}
         </section>
       </div>
@@ -734,6 +740,7 @@ function RestartWithProfileDialog({
   onClose: () => void;
   onRestarted: () => void;
 }) {
+  const { t } = useI18n();
   const [capabilities, setCapabilities] = useState<PaddleCapabilities | null>(
     () => peekCached<PaddleCapabilities>(CAPABILITIES_PATH) ?? null
   );
@@ -783,7 +790,7 @@ function RestartWithProfileDialog({
     });
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
-      const detail = typeof payload?.detail === 'string' ? payload.detail : 'Failed to restart job.';
+      const detail = typeof payload?.detail === 'string' ? payload.detail : t('portal.jobs.browser.alert.restartFailed');
       setError(detail);
       setStarting(false);
       return;
@@ -793,11 +800,11 @@ function RestartWithProfileDialog({
   };
 
   return (
-    <Modal title={`Re-run "${jobLabel}" with a different profile`} onClose={onClose}>
+    <Modal title={t('portal.jobs.browser.dialog.rerunTitle', { filename: jobLabel })} onClose={onClose}>
       <div className="space-y-4">
-        {loading && <LoadingState label="Loading profiles..." />}
+        {loading && <LoadingState label={t('portal.jobs.browser.dialog.loadingProfiles')} />}
         {!loading && capabilities && capabilities.profiles.length > 0 && (
-          <Field label="Profile">
+          <Field label={t('portal.jobs.browser.dialog.profileLabel')}>
             <select className={inputClass} value={profileId} onChange={(event) => setProfileId(event.target.value)}>
               {capabilities.profiles.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -811,15 +818,15 @@ function RestartWithProfileDialog({
           </Field>
         )}
         {!loading && (!capabilities || capabilities.profiles.length === 0) && (
-          <p className="text-sm text-slate-600">No profiles available.</p>
+          <p className="text-sm text-slate-600">{t('portal.jobs.browser.dialog.noProfiles')}</p>
         )}
         <ErrorNotice message={error} />
         <div className="flex flex-wrap justify-end gap-2">
           <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={starting}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button type="button" size="sm" disabled={starting || !profileId} onClick={() => void handleStart()}>
-            {starting ? 'Starting...' : 'Start'}
+            {starting ? t('common.starting') : t('common.start')}
           </Button>
         </div>
       </div>

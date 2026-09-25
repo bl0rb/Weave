@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { apiJson } from '@/lib/api';
 import { setCached } from '@/lib/data-cache';
+import { useI18n } from '@/i18n/provider';
 import type { PaddleCapabilities, PaddleSettings } from '@/components/dashboard/shared';
 import {
   ErrorNotice,
@@ -19,6 +20,7 @@ const SETTINGS_PATH = '/api/v1/paddle/settings';
 const CAPABILITIES_PATH = '/api/v1/paddle/capabilities';
 
 export function PaddleTab() {
+  const { t } = useI18n();
   const [settings, setSettings] = useState<PaddleSettings | null>(null);
   const [capabilities, setCapabilities] = useState<PaddleCapabilities>({ profiles: [] });
   const [loading, setLoading] = useState(true);
@@ -82,9 +84,11 @@ export function PaddleTab() {
       // showing the pre-save value until its own TTL expires.
       setCached(SETTINGS_PATH, nextSettings);
       if (payload.default_profile !== requestedProfile) {
-        setSaveMessage(`Profile '${requestedProfile}' is not available. Saved as '${payload.default_profile}'.`);
+        setSaveMessage(
+          t('admin.paddle.profileFallback', { requested: requestedProfile, saved: payload.default_profile }),
+        );
       } else {
-        setSaveMessage('Settings saved');
+        setSaveMessage(t('admin.paddle.settingsSaved'));
       }
     } catch (err) {
       setSaveError(errorMessage(err));
@@ -95,16 +99,16 @@ export function PaddleTab() {
 
   return (
     <SectionCard
-      title="Paddle runtime"
-      description="Default OCR profile and processing timeout for every upload that does not override them."
+      title={t('admin.paddle.title')}
+      description={t('admin.paddle.description')}
     >
       <ErrorNotice message={error} />
       {loading || !settings ? (
-        <LoadingState label="Loading Paddle settings…" />
+        <LoadingState label={t('admin.paddle.loading')} />
       ) : (
         <div className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Default profile">
+            <Field label={t('admin.paddle.defaultProfileLabel')}>
               <select
                 className={inputClass}
                 value={settings.default_profile}
@@ -122,7 +126,7 @@ export function PaddleTab() {
                 <span className="mt-1 block text-xs font-normal text-slate-400">{selectedDescription}</span>
               )}
             </Field>
-            <Field label="Timeout (seconds)">
+            <Field label={t('admin.paddle.timeoutLabel')}>
               <input
                 type="number"
                 min={1}
@@ -138,7 +142,7 @@ export function PaddleTab() {
           </div>
           <div className="flex items-center gap-3">
             <Button size="sm" onClick={saveSettings} disabled={saving}>
-              {saving ? 'Saving…' : 'Save settings'}
+              {saving ? t('admin.paddle.saving') : t('admin.paddle.saveSettings')}
             </Button>
             <span aria-live="polite">
               {saveMessage && <span className="text-sm text-slate-600">{saveMessage}</span>}

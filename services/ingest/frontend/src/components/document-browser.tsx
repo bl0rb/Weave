@@ -11,6 +11,8 @@ import type { PaddleCapabilities } from '@/components/dashboard/shared';
 import { apiFetch, redirectIfSessionExpired } from '@/lib/api';
 import { API_BASE_URL } from '@/lib/api-base';
 import { peekCached, setCached, useVisiblePolling } from '@/lib/data-cache';
+import { useI18n } from '@/i18n/provider';
+import type { MessageKey } from '@/i18n/messages';
 
 const CAPABILITIES_PATH = '/api/v1/paddle/capabilities';
 
@@ -39,12 +41,14 @@ type Job = {
 /** The `?type=` deep-link values this view accepts (see app/jobs/page.tsx). */
 type JobTypeFilter = 'single' | 'collection' | 'import' | 'mail';
 
-const JOB_TYPE_FILTER_LABELS: Record<JobTypeFilter, string> = {
-  import: 'Confluence Import',
-  mail: 'Mail',
-  collection: 'Multiple files',
-  single: 'Single file',
-};
+function jobTypeFilterLabels(t: (key: MessageKey) => string): Record<JobTypeFilter, string> {
+  return {
+    import: t('portal.jobs.browser.typeImport'),
+    mail: t('portal.jobs.browser.typeMail'),
+    collection: t('portal.jobs.browser.typeCollection'),
+    single: t('portal.jobs.browser.typeSingle'),
+  };
+}
 
 type SortKey = 'document' | 'status' | 'profile' | 'pages' | 'created';
 type SortDirection = 'asc' | 'desc';
@@ -134,9 +138,8 @@ function isMailAttachmentJob(job: Job): boolean {
 }
 
 /**
- * Canonical job-type derivation for the `?type=` deep-link filter, mirroring
- * dashboard/processing-overview.tsx's jobType() (single/collection/import/
- * mail per the contract). Builds on isImportJob/isMailAttachmentJob above
+ * Canonical job-type derivation for the `?type=` deep-link filter
+ * (single/collection/import/mail per the contract). Builds on isImportJob/isMailAttachmentJob above
  * rather than re-deriving from settings.mode independently — 'import' here
  * additionally covers 'import_attachment' (the per-page jobs an import run
  * spawns), which isImportJob deliberately excludes since only 'import' jobs
@@ -279,6 +282,8 @@ export function DocumentBrowser({
   initialFolder,
   initialType,
 }: DocumentBrowserProps) {
+  const { t } = useI18n();
+  const JOB_TYPE_FILTER_LABELS = useMemo(() => jobTypeFilterLabels(t), [t]);
   const pageSize = 50;
   // Shared with the Home/Processing views' jobs fetch: seeding from it here
   // means returning to /jobs (or /jobs?folder=...) paints the last-known
@@ -425,7 +430,7 @@ export function DocumentBrowser({
       return;
     }
     if (!response.ok) {
-      alert('Failed to delete job');
+      alert(t('portal.jobs.browser.alert.deleteFailed'));
       return;
     }
     setProtectedJobId(null);
@@ -448,7 +453,7 @@ export function DocumentBrowser({
     try {
       const response = await apiFetch(`/api/v1/folders/${encodeURI(folderPath)}/download`);
       if (!response.ok) {
-        alert('No downloadable markdown files found in this folder.');
+        alert(t('portal.jobs.browser.alert.folderDownloadEmpty'));
         return;
       }
 
@@ -475,13 +480,13 @@ export function DocumentBrowser({
       const response = await apiFetch(`/api/v1/folders/${encodeURI(folderPath)}/restart`, { method: 'POST' });
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
-        const detail = typeof payload?.detail === 'string' ? payload.detail : 'Failed to restart folder jobs.';
+        const detail = typeof payload?.detail === 'string' ? payload.detail : t('portal.jobs.browser.alert.folderRestartFailed');
         alert(detail);
         return;
       }
       const payload = await response.json().catch(() => ({}));
       if (typeof payload?.restarted_jobs === 'number') {
-        alert(`Restarted ${payload.restarted_jobs} job(s) in folder.`);
+        alert(t('portal.jobs.browser.alert.folderRestarted', { count: payload.restarted_jobs }));
       }
       markJobsQueued((job) => {
         const path = jobFolderPath(job);
@@ -506,11 +511,11 @@ export function DocumentBrowser({
     try {
       const response = await apiFetch(`/api/v1/jobs/restart-pending`, { method: 'POST' });
       if (!response.ok) {
-        alert('Failed to restart pending jobs.');
+        alert(t('portal.jobs.browser.alert.pendingRestartFailed'));
         return;
       }
       const payload = await response.json();
-      alert(`Restarted ${payload.queued_jobs ?? 0} pending job(s).`);
+      alert(t('portal.jobs.browser.alert.pendingRestarted', { count: payload.queued_jobs ?? 0 }));
       await loadItems();
     } finally {
       setRestartingPending(false);
@@ -526,7 +531,7 @@ export function DocumentBrowser({
       const response = await apiFetch(`/api/v1/jobs/${jobId}/restart`, { method: 'POST' });
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
-        const detail = typeof payload?.detail === 'string' ? payload.detail : 'Failed to restart job.';
+        const detail = typeof payload?.detail === 'string' ? payload.detail : t('portal.jobs.browser.alert.restartFailed');
         alert(detail);
         return;
       }
@@ -551,7 +556,7 @@ export function DocumentBrowser({
       });
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
-        const detail = typeof payload?.detail === 'string' ? payload.detail : 'Failed to restart job.';
+        const detail = typeof payload?.detail === 'string' ? payload.detail : t('portal.jobs.browser.alert.restartFailed');
         alert(detail);
         return false;
       }
@@ -583,7 +588,7 @@ export function DocumentBrowser({
     }
     const lowerProfile = suggestedLowerProfile(job);
     if (!lowerProfile) {
-      alert('No lower profile available for this job.');
+      alert(t('portal.jobs.browser.alert.noLowerProfile'));
       return;
     }
 
@@ -592,7 +597,7 @@ export function DocumentBrowser({
       const response = await apiFetch(`/api/v1/jobs/${job.id}/retry-lower-profile`, { method: 'POST' });
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
-        const detail = typeof payload?.detail === 'string' ? payload.detail : 'Failed to retry with lower profile.';
+        const detail = typeof payload?.detail === 'string' ? payload.detail : t('portal.jobs.browser.alert.retryLowerFailed');
         alert(detail);
         return;
       }
@@ -736,36 +741,36 @@ export function DocumentBrowser({
   return (
     <div className="w-full text-slate-900">
 
-      <section className="mb-6 rounded-3xl border border-slate-200 bg-white p-5">
+      <section className="mb-6 rounded-xl border border-slate-200 bg-white p-5">
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <label className="text-sm text-slate-700 xl:col-span-2">
-            Search filename
+            {t('portal.jobs.browser.searchFilename')}
             <input
               value={query}
               onChange={(event) => {
                 setQuery(event.target.value);
                 setCurrentPage(1);
               }}
-              className="mt-1 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-emerald-300 focus:bg-white"
-              placeholder="invoice, report, contract"
+              className={inputClass}
+              placeholder={t('portal.jobs.browser.searchFilenamePlaceholder')}
             />
           </label>
           <label className="text-sm text-slate-700">
-            Tag filter
+            {t('portal.jobs.browser.tagFilter')}
             <input
               value={tag}
               onChange={(event) => {
                 setTag(event.target.value);
                 setCurrentPage(1);
               }}
-              className="mt-1 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-emerald-300 focus:bg-white"
-              placeholder="finance"
+              className={inputClass}
+              placeholder={t('portal.jobs.browser.tagFilterPlaceholder')}
             />
           </label>
           {includeDateFilters && (
             <>
               <label className="text-sm text-slate-700">
-                From date
+                {t('portal.jobs.browser.fromDate')}
                 <input
                   type="date"
                   value={fromDate}
@@ -773,11 +778,11 @@ export function DocumentBrowser({
                     setFromDate(event.target.value);
                     setCurrentPage(1);
                   }}
-                  className="mt-1 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950 outline-none transition focus:border-emerald-300 focus:bg-white"
+                  className={inputClass}
                 />
               </label>
               <label className="text-sm text-slate-700">
-                To date
+                {t('portal.jobs.browser.toDate')}
                 <input
                   type="date"
                   value={toDate}
@@ -785,7 +790,7 @@ export function DocumentBrowser({
                     setToDate(event.target.value);
                     setCurrentPage(1);
                   }}
-                  className="mt-1 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950 outline-none transition focus:border-emerald-300 focus:bg-white"
+                  className={inputClass}
                 />
               </label>
             </>
@@ -793,14 +798,14 @@ export function DocumentBrowser({
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => void loadItems()}>
-            Apply Filters
+            {t('portal.jobs.browser.applyFilters')}
           </Button>
           <Button variant="outline" onClick={() => void loadItems()}>
-            <RefreshCcw className="mr-2 h-4 w-4" /> Refresh
+            <RefreshCcw className="mr-2 h-4 w-4" /> {t('common.refresh')}
           </Button>
           {endpoint === 'jobs' && (
             <Button variant="outline" onClick={restartPendingJobs} disabled={restartingPending}>
-              {restartingPending ? 'Restarting...' : 'Restart pending jobs'}
+              {restartingPending ? t('portal.jobs.browser.restarting') : t('portal.jobs.browser.restartPending')}
             </Button>
           )}
           <Button
@@ -816,14 +821,14 @@ export function DocumentBrowser({
               void loadItems({ query: '', tag: '', fromDate: '', toDate: '' });
             }}
           >
-            Reset
+            {t('portal.jobs.browser.reset')}
           </Button>
         </div>
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[minmax(220px,280px)_minmax(0,1fr)]">
-        <aside className="overflow-hidden rounded-3xl border border-slate-200 bg-white p-4">
-          <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-700">Folders</h2>
+        <aside className="overflow-hidden rounded-xl border border-slate-200 bg-white p-4">
+          <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-700">{t('portal.jobs.browser.folders')}</h2>
           <div className="mt-3 space-y-1">
             <button
               type="button"
@@ -835,7 +840,7 @@ export function DocumentBrowser({
                 selectedFolder === 'all' ? 'bg-emerald-50 text-emerald-900' : 'text-slate-700 hover:bg-slate-50'
               }`}
             >
-              <span>All folders</span>
+              <span>{t('portal.jobs.browser.allFolders')}</span>
               <span className="text-xs text-slate-500">{items.length}</span>
             </button>
             {folderItems.map((folder) => (
@@ -891,21 +896,21 @@ export function DocumentBrowser({
           </div>
         </aside>
 
-        <div className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
+        <div className="min-w-0 rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
           <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-            <h2 className="text-lg font-semibold">Results</h2>
+            <h2 className="text-[17px] font-semibold">{t('portal.jobs.browser.results')}</h2>
             <p className="text-sm text-slate-500">
-              {sortedItems.length} document(s) · Page {displayPage} / {totalPages}
+              {t('portal.jobs.browser.resultsSummary', { count: sortedItems.length, page: displayPage, total: totalPages })}
             </p>
           </div>
           <div className="mb-3 flex flex-wrap items-center gap-2">
-            <div className="flex flex-wrap gap-2" role="group" aria-label="Filter by status">
+            <div className="flex flex-wrap gap-2" role="group" aria-label={t('portal.jobs.browser.filterByStatusAria')}>
               {(
                 [
-                  { key: 'all', label: 'All', count: statusCounts.all },
-                  { key: 'running', label: 'Running', count: statusCounts.running },
-                  { key: 'completed', label: 'Completed', count: statusCounts.completed },
-                  { key: 'failed', label: 'Failed', count: statusCounts.failed },
+                  { key: 'all', label: t('portal.jobs.browser.statusAll'), count: statusCounts.all },
+                  { key: 'running', label: t('portal.jobs.browser.statusRunning'), count: statusCounts.running },
+                  { key: 'completed', label: t('portal.jobs.browser.statusCompleted'), count: statusCounts.completed },
+                  { key: 'failed', label: t('portal.jobs.browser.statusFailed'), count: statusCounts.failed },
                 ] as const
               ).map((chip) => (
                 <button
@@ -946,10 +951,10 @@ export function DocumentBrowser({
                   setTypeFilter(null);
                   setCurrentPage(1);
                 }}
-                aria-label={`Clear type filter: ${JOB_TYPE_FILTER_LABELS[typeFilter]}`}
+                aria-label={t('portal.jobs.browser.clearTypeFilterAria', { label: JOB_TYPE_FILTER_LABELS[typeFilter] })}
                 className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 transition hover:bg-emerald-100"
               >
-                Type: {JOB_TYPE_FILTER_LABELS[typeFilter]}
+                {t('portal.jobs.browser.typePrefix')} {JOB_TYPE_FILTER_LABELS[typeFilter]}
                 <span aria-hidden="true">×</span>
               </button>
             )}
@@ -960,26 +965,26 @@ export function DocumentBrowser({
               <tr>
                 <th className="pb-2 pr-4">
                   <button type="button" className="font-medium hover:text-slate-800" onClick={() => setSort('document')}>
-                    Document{sortIndicator('document')}
+                    {t('portal.jobs.browser.columnDocument')}{sortIndicator('document')}
                   </button>
                 </th>
                 <th className="w-24 pb-2 pr-4">
                   <button type="button" className="font-medium hover:text-slate-800" onClick={() => setSort('status')}>
-                    Status{sortIndicator('status')}
+                    {t('portal.jobs.browser.columnStatus')}{sortIndicator('status')}
                   </button>
                 </th>
                 <th className="hidden w-32 pb-2 pr-4 lg:table-cell">
                   <button type="button" className="font-medium hover:text-slate-800" onClick={() => setSort('profile')}>
-                    Used Profile{sortIndicator('profile')}
+                    {t('portal.jobs.browser.columnProfile')}{sortIndicator('profile')}
                   </button>
                 </th>
                 <th className="w-16 pb-2 pr-4">
                   <button type="button" className="font-medium hover:text-slate-800" onClick={() => setSort('pages')}>
-                    Pages{sortIndicator('pages')}
+                    {t('portal.jobs.browser.columnPages')}{sortIndicator('pages')}
                   </button>
                 </th>
-                <th className="hidden w-28 pb-2 pr-4 sm:table-cell">Quality</th>
-                <th className="w-40 pb-2 text-right">Actions</th>
+                <th className="hidden w-28 pb-2 pr-4 sm:table-cell">{t('portal.jobs.browser.columnQuality')}</th>
+                <th className="w-40 pb-2 text-right">{t('portal.jobs.browser.columnActions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -990,7 +995,7 @@ export function DocumentBrowser({
                       <Link
                         href={`/jobs/${job.id}`}
                         className="line-clamp-2 font-medium text-slate-950 hover:text-emerald-700"
-                        title={`Uploaded ${new Date(job.created_at).toLocaleString()}`}
+                        title={t('portal.jobs.browser.uploadedAt', { date: new Date(job.created_at).toLocaleString() })}
                       >
                         {job.original_filename}
                       </Link>
@@ -1003,7 +1008,7 @@ export function DocumentBrowser({
                         <span
                           className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-800"
                         >
-                          <Mail className="h-3 w-3" /> E-Mail-Anhang
+                          <Mail className="h-3 w-3" /> {t('portal.jobs.browser.mailAttachment')}
                         </span>
                       )}
                     </div>
@@ -1011,12 +1016,12 @@ export function DocumentBrowser({
                       <p className="mt-1 text-xs text-amber-700">
                         {typeof job.processing_info?.execution?.warning === 'string'
                           ? job.processing_info.execution.warning
-                          : job.error_message || 'Processing stopped. Retry with a lower profile.'}
+                          : job.error_message || t('portal.jobs.browser.processingStoppedFallback')}
                       </p>
                     )}
                     {usedFallbackForJob(job) && (
                       <p className="mt-1 text-xs font-medium text-red-700">
-                        No OCR ran — plain-text fallback output (selected profile had no effect)
+                        {t('portal.jobs.browser.noOcrFallback')}
                       </p>
                     )}
                   </td>
@@ -1025,7 +1030,7 @@ export function DocumentBrowser({
                   </td>
                   <td className="hidden whitespace-nowrap py-3.5 pr-4 lg:table-cell">
                     {usedFallbackForJob(job) ? (
-                      <span className="text-red-700">fallback (no OCR)</span>
+                      <span className="text-red-700">{t('portal.jobs.browser.fallbackNoOcr')}</span>
                     ) : (
                       (() => {
                         const rawProfile = profileForJob(job);
@@ -1067,8 +1072,8 @@ export function DocumentBrowser({
                             className="h-8 w-8 px-0"
                             disabled={retryingLowerJobId === job.id}
                             onClick={() => void retryJobLowerProfile(job)}
-                            aria-label="Retry with lower profile"
-                            title="Retry with lower profile"
+                            aria-label={t('portal.jobs.browser.retryLowerProfile')}
+                            title={t('portal.jobs.browser.retryLowerProfile')}
                           >
                             {retryingLowerJobId === job.id ? (
                               <LoaderCircle className="h-4 w-4 animate-spin text-amber-700" />
@@ -1085,8 +1090,8 @@ export function DocumentBrowser({
                             className="h-8 w-8 px-0"
                             disabled={job.status === 'RUNNING' || restartingJobId === job.id}
                             onClick={() => void restartJob(job.id)}
-                            aria-label="Restart"
-                            title="Restart"
+                            aria-label={t('portal.jobs.browser.restart')}
+                            title={t('portal.jobs.browser.restart')}
                           >
                             {restartingJobId === job.id ? (
                               <LoaderCircle className="h-4 w-4 animate-spin text-slate-700" />
@@ -1103,8 +1108,8 @@ export function DocumentBrowser({
                             className="h-8 w-8 px-0"
                             disabled={restartingJobId === job.id}
                             onClick={() => setRestartProfileJob(job)}
-                            aria-label="Re-run with profile"
-                            title="Re-run with profile"
+                            aria-label={t('portal.jobs.browser.rerunWithProfile')}
+                            title={t('portal.jobs.browser.rerunWithProfile')}
                           >
                             <Settings2 className="h-4 w-4 text-slate-700" />
                           </Button>
@@ -1116,8 +1121,8 @@ export function DocumentBrowser({
                               size="sm"
                               variant="ghost"
                               className="h-8 w-8 px-0"
-                              aria-label="Edit markdown"
-                              title="Edit markdown"
+                              aria-label={t('portal.jobs.browser.editMarkdown')}
+                              title={t('portal.jobs.browser.editMarkdown')}
                             >
                               <Pencil className="h-4 w-4 text-slate-700" />
                             </Button>
@@ -1130,8 +1135,8 @@ export function DocumentBrowser({
                             variant="ghost"
                             className="h-8 w-8 px-0"
                             onClick={() => setWebhookDialogJob(job)}
-                            aria-label={`Send ${job.original_filename} to webhook`}
-                            title="Send to webhook"
+                            aria-label={t('portal.jobs.browser.sendToWebhookAria', { filename: job.original_filename })}
+                            title={t('portal.jobs.browser.sendToWebhook')}
                           >
                             <Webhook className="h-4 w-4 text-emerald-700" />
                           </Button>
@@ -1144,8 +1149,8 @@ export function DocumentBrowser({
                             className="h-8 w-8 px-0"
                             disabled={job.status === 'RUNNING'}
                             onClick={() => void removeJob(job.id)}
-                            aria-label="Delete"
-                            title="Delete"
+                            aria-label={t('common.delete')}
+                            title={t('common.delete')}
                           >
                             <Trash2 className="h-4 w-4 text-red-600" />
                           </Button>
@@ -1160,14 +1165,14 @@ export function DocumentBrowser({
           {sortedItems.length > pageSize && (
             <div className="mt-4 flex items-center justify-between gap-3 text-sm text-slate-600">
               <p>
-                Showing {(displayPage - 1) * pageSize + 1}-{Math.min(displayPage * pageSize, sortedItems.length)} of {sortedItems.length}
+                {t('portal.jobs.browser.showingRange', { from: (displayPage - 1) * pageSize + 1, to: Math.min(displayPage * pageSize, sortedItems.length), total: sortedItems.length })}
               </p>
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" disabled={displayPage === 1} onClick={() => setCurrentPage((page) => page - 1)}>
-                  Previous
+                  {t('common.previous')}
                 </Button>
                 <Button variant="outline" size="sm" disabled={displayPage === totalPages} onClick={() => setCurrentPage((page) => page + 1)}>
-                  Next
+                  {t('common.next')}
                 </Button>
               </div>
             </div>
@@ -1176,11 +1181,11 @@ export function DocumentBrowser({
             <div className="flex flex-col items-center gap-3 py-12 text-center">
               <Inbox className="h-8 w-8 text-slate-300" />
               <div>
-                <p className="text-sm font-medium text-slate-700">No documents yet</p>
-                <p className="mt-1 text-sm text-slate-500">Upload a document to start processing it.</p>
+                <p className="text-sm font-medium text-slate-700">{t('portal.jobs.browser.noDocumentsTitle')}</p>
+                <p className="mt-1 text-sm text-slate-500">{t('portal.jobs.browser.noDocumentsBody')}</p>
               </div>
               <Link href="/processing/new">
-                <Button>Upload your first document</Button>
+                <Button>{t('portal.jobs.browser.uploadFirst')}</Button>
               </Link>
             </div>
           )}
@@ -1188,8 +1193,8 @@ export function DocumentBrowser({
             <div className="flex flex-col items-center gap-3 py-12 text-center">
               <SearchX className="h-8 w-8 text-slate-300" />
               <div>
-                <p className="text-sm font-medium text-slate-700">No documents match these filters</p>
-                <p className="mt-1 text-sm text-slate-500">Try a different search, folder, or status.</p>
+                <p className="text-sm font-medium text-slate-700">{t('portal.jobs.browser.noMatchTitle')}</p>
+                <p className="mt-1 text-sm text-slate-500">{t('portal.jobs.browser.noMatchBody')}</p>
               </div>
               <Button
                 variant="outline"
@@ -1205,13 +1210,13 @@ export function DocumentBrowser({
                   void loadItems({ query: '', tag: '', fromDate: '', toDate: '' });
                 }}
               >
-                Clear filters
+                {t('portal.jobs.browser.clearFilters')}
               </Button>
             </div>
           )}
           {loading && (
             <div className="flex items-center gap-2 py-6 text-sm text-slate-600">
-              <LoaderCircle className="h-4 w-4 animate-spin" /> Loading documents...
+              <LoaderCircle className="h-4 w-4 animate-spin" /> {t('portal.jobs.browser.loadingDocuments')}
             </div>
           )}
         </div>
@@ -1220,22 +1225,22 @@ export function DocumentBrowser({
 
       {protectedJobId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
-          <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
-            <h2 className="mb-3 text-lg font-semibold">Password Required</h2>
-            <p className="mb-4 text-sm text-slate-600">This job is password protected.</p>
+          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-lg">
+            <h2 className="mb-3 text-[17px] font-semibold">{t('portal.jobs.browser.passwordRequired')}</h2>
+            <p className="mb-4 text-sm text-slate-600">{t('portal.jobs.browser.passwordProtected')}</p>
             <input
               type="password"
               value={protectedJobPassword}
               onChange={(e) => setProtectedJobPassword(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && void handlePasswordSubmit()}
-              placeholder="Enter password"
-              className="mb-4 w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950"
+              placeholder={t('portal.jobs.browser.enterPassword')}
+              className={`mb-4 ${inputClass}`}
               autoFocus
             />
             <div className="flex gap-2">
-              <Button onClick={handlePasswordSubmit}>Delete</Button>
+              <Button onClick={handlePasswordSubmit}>{t('common.delete')}</Button>
               <Button variant="outline" onClick={() => setProtectedJobId(null)}>
-                Cancel
+                {t('common.cancel')}
               </Button>
             </div>
           </div>
@@ -1278,6 +1283,7 @@ function RestartWithProfileDialog({
   onClose: () => void;
   onStart: (profileId: string) => Promise<boolean>;
 }) {
+  const { t } = useI18n();
   const [capabilities, setCapabilities] = useState<PaddleCapabilities | null>(
     () => peekCached<PaddleCapabilities>(CAPABILITIES_PATH) ?? null
   );
@@ -1324,11 +1330,11 @@ function RestartWithProfileDialog({
   };
 
   return (
-    <Modal title={`Re-run "${job.original_filename}" with a different profile`} onClose={onClose}>
+    <Modal title={t('portal.jobs.browser.dialog.rerunTitle', { filename: job.original_filename })} onClose={onClose}>
       <div className="space-y-4">
-        {loading && <LoadingState label="Loading profiles..." />}
+        {loading && <LoadingState label={t('portal.jobs.browser.dialog.loadingProfiles')} />}
         {!loading && capabilities && capabilities.profiles.length > 0 && (
-          <Field label="Profile">
+          <Field label={t('portal.jobs.browser.dialog.profileLabel')}>
             <select className={inputClass} value={profileId} onChange={(event) => setProfileId(event.target.value)}>
               {capabilities.profiles.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -1342,14 +1348,14 @@ function RestartWithProfileDialog({
           </Field>
         )}
         {!loading && (!capabilities || capabilities.profiles.length === 0) && (
-          <p className="text-sm text-slate-600">No profiles available.</p>
+          <p className="text-sm text-slate-600">{t('portal.jobs.browser.dialog.noProfiles')}</p>
         )}
         <div className="flex justify-end gap-2">
           <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={busy}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button type="button" size="sm" disabled={busy || !profileId} onClick={handleStart}>
-            {busy ? 'Starting...' : 'Start'}
+            {busy ? t('common.starting') : t('common.start')}
           </Button>
         </div>
       </div>

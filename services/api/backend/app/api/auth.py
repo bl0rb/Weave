@@ -139,7 +139,12 @@ from app.core.security import (
 from app.models.models import Session as SessionModel
 from app.models.models import SessionExchangeCode, User
 from app.schemas.auth import SessionExchangeRequest, SessionExchangeResponse
-from app.services.ingest_identity import IngestIdentity, IngestIdentityError, exchange_handoff_code
+from app.services.ingest_identity import (
+    INGEST_SUBJECT_PREFIX,
+    IngestIdentity,
+    IngestIdentityError,
+    exchange_handoff_code,
+)
 from app.services.oidc import (
     OIDCError,
     exchange_code_for_tokens,
@@ -757,11 +762,6 @@ _INGEST_STATE_COOKIE = 'weave_api_ingest_state'
 # Scoped like the OIDC state cookie above: these two endpoints only.
 _INGEST_STATE_COOKIE_PATH = '/v1/auth/ingest'
 _INGEST_STATE_TTL = timedelta(minutes=10)
-# Namespace for `User.oidc_subject` when the identity came from Weave-Ingest
-# rather than from a directly-configured OIDC provider. Keeps the two kinds
-# of subject from ever colliding in that unique column, and makes the origin
-# of an account readable straight out of the database.
-_INGEST_SUBJECT_PREFIX = 'weave-ingest:'
 
 
 def _provision_ingest_user(db: Session, identity: IngestIdentity) -> User:
@@ -777,7 +777,7 @@ def _provision_ingest_user(db: Session, identity: IngestIdentity) -> User:
     It is unique here and may have been suffixed on creation to avoid a
     collision; re-syncing it would either fail or quietly rename the wrong
     account. It is a display name here, never an identity."""
-    subject = _INGEST_SUBJECT_PREFIX + identity.subject
+    subject = INGEST_SUBJECT_PREFIX + identity.subject
     user = db.scalar(select(User).where(User.oidc_subject == subject))
     if user is None:
         user = User(
@@ -785,6 +785,7 @@ def _provision_ingest_user(db: Session, identity: IngestIdentity) -> User:
             team=identity.team,
             teams=identity.effective_teams,
             is_admin=identity.is_admin,
+            locale=identity.locale,
             oidc_subject=subject,
             disabled=False,
         )
@@ -802,10 +803,16 @@ def _provision_ingest_user(db: Session, identity: IngestIdentity) -> User:
                 )
         return user
 
-    if user.team != identity.team or user.teams != identity.effective_teams or user.is_admin != identity.is_admin:
+    if (
+        user.team != identity.team
+        or user.teams != identity.effective_teams
+        or user.is_admin != identity.is_admin
+        or user.locale != identity.locale
+    ):
         user.team = identity.team
         user.teams = identity.effective_teams
         user.is_admin = identity.is_admin
+        user.locale = identity.locale
         db.commit()
     return user
 

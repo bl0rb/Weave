@@ -54,14 +54,11 @@ it('does not accidentally open an area to everyone when a user has no team', asy
   expect(save.disabled).toBe(false);
 });
 
-it('starts creation directly from the journey and empty state, without a header upload action', async () => {
+it('keeps the lean Übersicht free of a "Wissensbereich anlegen" shortcut and header upload action', async () => {
   api.mockResolvedValue({ items: [], total: 0 });
   const { container } = render(<PortalHome />);
-  await screen.findByRole('link', { name: 'Wissensbereich anlegen' });
-  expect(screen.queryByText('WISSEN VERBINDET')).toBeNull();
-  const startLinks = screen.getAllByRole('link', { name: /Wissensbereich anlegen/ });
-  expect(startLinks.length).toBe(2);
-  startLinks.forEach(link => expect(link.getAttribute('href')).toBe('/knowledge/new'));
+  await screen.findByRole('heading', { name: /^Guten (Morgen|Tag|Abend), Ada\.$/ });
+  expect(screen.queryByRole('link', { name: /Wissensbereich anlegen/ })).toBeNull();
   expect(container.querySelector('header.portal-header a')).toBeNull();
 });
 

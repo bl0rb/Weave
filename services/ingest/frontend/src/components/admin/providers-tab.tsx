@@ -25,10 +25,12 @@ import {
   Toggle,
   useAdminList,
 } from '@/components/admin/admin-shared';
+import { useI18n } from '@/i18n/provider';
 
 const DEFAULT_SCOPES = 'openid profile email';
 
 export function ProvidersTab() {
+  const { t } = useI18n();
   const providers = useAdminList<AdminProvider>('/api/v1/auth/admin/providers');
 
   const [creating, setCreating] = useState(false);
@@ -59,25 +61,25 @@ export function ProvidersTab() {
   return (
     <div className="space-y-6">
       <SectionCard
-        title="Identity providers"
-        description="OIDC providers users can sign in with; stored client secrets are never displayed."
+        title={t('admin.providers.title')}
+        description={t('admin.providers.description')}
         actions={
           <Button size="sm" onClick={() => setCreating(true)}>
             <Plus className="h-4 w-4" />
-            Add provider
+            {t('admin.providers.add')}
           </Button>
         }
       >
         <ErrorNotice message={providers.error} />
         {providers.loading ? (
-          <LoadingState label="Loading providers…" />
+          <LoadingState label={t('admin.providers.loading')} />
         ) : providers.items.length === 0 ? (
           <div className="flex flex-col items-center gap-3 py-10 text-center">
             <KeyRound className="h-8 w-8 text-slate-300" />
-            <p className="text-sm text-slate-500">No identity providers yet. Add one to enable SSO login.</p>
+            <p className="text-sm text-slate-500">{t('admin.providers.empty')}</p>
             <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
               <Plus className="h-4 w-4" />
-              Add provider
+              {t('admin.providers.add')}
             </Button>
           </div>
         ) : (
@@ -92,24 +94,24 @@ export function ProvidersTab() {
                         {p.slug}
                       </span>
                       <Badge tone={p.enabled ? 'emerald' : 'slate'}>
-                        {p.enabled ? 'Enabled' : 'Disabled'}
+                        {p.enabled ? t('admin.providers.enabled') : t('admin.providers.disabled')}
                       </Badge>
                       <Badge tone={p.client_secret_set ? 'emerald' : 'amber'}>
-                        {p.client_secret_set ? 'Secret set' : 'No secret'}
+                        {p.client_secret_set ? t('admin.providers.secretSet') : t('admin.providers.noSecret')}
                       </Badge>
-                      {p.use_email_as_username && <Badge tone="slate">Email as username</Badge>}
+                      {p.use_email_as_username && <Badge tone="slate">{t('admin.providers.emailAsUsername')}</Badge>}
                     </div>
                     <dl className="mt-2 space-y-1 text-xs text-slate-500">
                       <div className="flex gap-2">
-                        <dt className="w-16 flex-shrink-0 font-medium">Issuer</dt>
+                        <dt className="w-16 flex-shrink-0 font-medium">{t('admin.providers.issuer')}</dt>
                         <dd className="break-all">{p.issuer_url}</dd>
                       </div>
                       <div className="flex gap-2">
-                        <dt className="w-16 flex-shrink-0 font-medium">Client ID</dt>
+                        <dt className="w-16 flex-shrink-0 font-medium">{t('admin.providers.clientId')}</dt>
                         <dd className="break-all font-mono">{p.client_id}</dd>
                       </div>
                       <div className="flex gap-2">
-                        <dt className="w-16 flex-shrink-0 font-medium">Scopes</dt>
+                        <dt className="w-16 flex-shrink-0 font-medium">{t('admin.providers.scopes')}</dt>
                         <dd className="break-all">{p.scopes}</dd>
                       </div>
                     </dl>
@@ -126,20 +128,20 @@ export function ProvidersTab() {
                       ) : (
                         <PlugZap className="h-4 w-4" />
                       )}
-                      Test connection
+                      {t('admin.providers.testConnection')}
                     </Button>
                     <button
                       onClick={() => setEditing(p)}
-                      aria-label={`Edit ${p.display_name}`}
-                      title="Edit"
+                      aria-label={t('admin.providers.editAria', { name: p.display_name })}
+                      title={t('common.edit')}
                       className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
                     >
                       <Pencil className="h-4 w-4" />
                     </button>
                     <button
                       onClick={() => setDeleting(p)}
-                      aria-label={`Delete ${p.display_name}`}
-                      title="Delete"
+                      aria-label={t('admin.providers.deleteAria', { name: p.display_name })}
+                      title={t('common.delete')}
                       className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-red-50 hover:text-red-600"
                     >
                       <Trash2 className="h-4 w-4" />
@@ -176,14 +178,14 @@ export function ProvidersTab() {
 
       {deleting && (
         <ConfirmDialog
-          title="Delete provider"
+          title={t('admin.providers.deleteTitle')}
           body={
             <p>
-              Delete <span className="font-semibold text-slate-950">{deleting.display_name}</span>?
-              Users who signed in through this provider will no longer be able to log in with it.
+              {t('admin.providers.deleteBodyPrefix')} <span className="font-semibold text-slate-950">{deleting.display_name}</span>
+              {t('admin.providers.deleteBodySuffix')}
             </p>
           }
-          confirmLabel="Delete provider"
+          confirmLabel={t('admin.providers.deleteTitle')}
           onClose={() => setDeleting(null)}
           onConfirm={async () => {
             await apiSend(`/api/v1/auth/admin/providers/${deleting.id}`, { method: 'DELETE' });
@@ -197,6 +199,7 @@ export function ProvidersTab() {
 }
 
 function TestResult({ result }: { result: ProviderTestResponse }) {
+  const { t } = useI18n();
   return (
     <div
       className={`mt-3 rounded-xl border px-4 py-3 text-sm ${
@@ -211,26 +214,26 @@ function TestResult({ result }: { result: ProviderTestResponse }) {
         ) : (
           <CircleX className="h-4 w-4 flex-shrink-0" />
         )}
-        {result.ok ? 'Connection successful' : 'Connection failed'}
+        {result.ok ? t('admin.providers.testSuccess') : t('admin.providers.testFailed')}
       </div>
       {result.detail && <p className="mt-1 text-xs">{result.detail}</p>}
       {(result.issuer || result.authorization_endpoint || result.token_endpoint) && (
         <dl className="mt-2 space-y-1 text-xs">
           {result.issuer && (
             <div className="flex gap-2">
-              <dt className="w-24 flex-shrink-0 font-medium">Issuer</dt>
+              <dt className="w-24 flex-shrink-0 font-medium">{t('admin.providers.issuer')}</dt>
               <dd className="break-all">{result.issuer}</dd>
             </div>
           )}
           {result.authorization_endpoint && (
             <div className="flex gap-2">
-              <dt className="w-24 flex-shrink-0 font-medium">Authorization</dt>
+              <dt className="w-24 flex-shrink-0 font-medium">{t('admin.providers.authorization')}</dt>
               <dd className="break-all">{result.authorization_endpoint}</dd>
             </div>
           )}
           {result.token_endpoint && (
             <div className="flex gap-2">
-              <dt className="w-24 flex-shrink-0 font-medium">Token</dt>
+              <dt className="w-24 flex-shrink-0 font-medium">{t('admin.providers.token')}</dt>
               <dd className="break-all">{result.token_endpoint}</dd>
             </div>
           )}
@@ -250,6 +253,7 @@ function ProviderModal({
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
+  const { t } = useI18n();
   const isEdit = provider !== undefined;
 
   const [slug, setSlug] = useState(provider?.slug ?? '');
@@ -308,10 +312,10 @@ function ProviderModal({
   }
 
   return (
-    <Modal title={isEdit ? `Edit ${provider.display_name}` : 'Add identity provider'} onClose={onClose}>
+    <Modal title={isEdit ? t('admin.providers.editAria', { name: provider.display_name }) : t('admin.providers.add')} onClose={onClose}>
       <form onSubmit={submit} className="space-y-4">
         {!isEdit && (
-          <Field label="Slug" hint="URL-safe identifier, e.g. entra or keycloak. Cannot be changed later.">
+          <Field label={t('admin.providers.slugLabel')} hint={t('admin.providers.slugHint')}>
             <input
               value={slug}
               onChange={(e) => setSlug(e.target.value)}
@@ -319,11 +323,11 @@ function ProviderModal({
               required
               autoFocus
               pattern="[a-z0-9-]+"
-              title="Lowercase letters, digits, and hyphens"
+              title={t('admin.providers.slugPattern')}
             />
           </Field>
         )}
-        <Field label="Display name" hint="Shown on the login button.">
+        <Field label={t('admin.providers.displayName')} hint={t('admin.providers.displayNameHint')}>
           <input
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
@@ -331,17 +335,17 @@ function ProviderModal({
             required
           />
         </Field>
-        <Field label="Issuer URL">
+        <Field label={t('admin.providers.issuerUrl')}>
           <input
             type="url"
             value={issuerUrl}
             onChange={(e) => setIssuerUrl(e.target.value)}
             className={inputClass}
             required
-            placeholder="https://login.example.com/realms/main"
+            placeholder={t('admin.providers.issuerUrlPlaceholder')}
           />
         </Field>
-        <Field label="Client ID">
+        <Field label={t('admin.providers.clientId')}>
           <input
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}
@@ -350,8 +354,8 @@ function ProviderModal({
           />
         </Field>
         <Field
-          label="Client secret"
-          hint={isEdit ? 'Unchanged unless filled.' : undefined}
+          label={t('admin.providers.clientSecret')}
+          hint={isEdit ? t('admin.providers.clientSecretHintEdit') : undefined}
         >
           <input
             type="password"
@@ -359,11 +363,11 @@ function ProviderModal({
             onChange={(e) => setClientSecret(e.target.value)}
             className={inputClass}
             required={!isEdit}
-            placeholder={isEdit ? 'unchanged unless filled' : undefined}
+            placeholder={isEdit ? t('admin.providers.clientSecretPlaceholderEdit') : undefined}
             autoComplete="new-password"
           />
         </Field>
-        <Field label="Scopes">
+        <Field label={t('admin.providers.scopes')}>
           <input
             value={scopes}
             onChange={(e) => setScopes(e.target.value)}
@@ -372,29 +376,28 @@ function ProviderModal({
             placeholder={DEFAULT_SCOPES}
           />
         </Field>
-        <Toggle checked={enabled} onChange={setEnabled} label="Enabled" />
+        <Toggle checked={enabled} onChange={setEnabled} label={t('admin.providers.enabled')} />
         <div>
           <Toggle
             checked={useEmailAsUsername}
             onChange={setUseEmailAsUsername}
-            label="Use email as username"
+            label={t('admin.providers.emailAsUsername')}
           />
           <p
             className="mt-1.5 text-xs text-slate-500"
-            title="Applies on first login and renames existing accounts on their next login."
+            title={t('admin.providers.emailAsUsernameTooltip')}
           >
-            For providers like Microsoft Entra whose preferred_username is a UPN, the account&apos;s username becomes
-            the email address.
+            {t('admin.providers.emailAsUsernameText')}
           </p>
         </div>
         <ErrorNotice message={error} />
         <div className="flex flex-wrap justify-end gap-2 pt-1">
           <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={busy}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button type="submit" size="sm" disabled={busy}>
             {busy && <LoaderCircle className="h-4 w-4 animate-spin" />}
-            {isEdit ? 'Save changes' : 'Add provider'}
+            {isEdit ? t('admin.providers.saveChanges') : t('admin.providers.add')}
           </Button>
         </div>
       </form>

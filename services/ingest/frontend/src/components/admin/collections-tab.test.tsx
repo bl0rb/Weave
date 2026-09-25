@@ -6,13 +6,19 @@ import { CollectionsTab } from './collections-tab';
 
 vi.mock('@/lib/api', async importOriginal => ({ ...await importOriginal<typeof import('@/lib/api')>(), apiJson: vi.fn() }));
 const api = vi.mocked(apiJson);
-const area = { collection_id: 'area', slug: 'wissen', name: 'Wissen', description: 'Thema', read_teams: ['Service'], owner: { id: 'user', username: 'Ada' }, document_count: 6, pending_count: 2, running_count: 1, review_count: 1, failed_count: 1, released_count: 1 };
+const area = {
+  collection_id: 'area', slug: 'wissen', name: 'Wissen', description: 'Thema',
+  read_teams: ['Service'], visibility: 'restricted', read_users: [], read_user_details: [],
+  owner: { id: 'user', username: 'Ada' }, document_count: 6, pending_count: 2, running_count: 1, review_count: 1, failed_count: 1, released_count: 1,
+};
+const teams = { items: [{ name: 'Service', member_count: 4 }, { name: 'Recht', member_count: 2 }] };
 
 beforeEach(() => {
   api.mockReset();
   api.mockImplementation(async path => {
     if (path.startsWith('/api/v1/portal/admin/collections')) return { items: [area], total: 1 };
-    if (path === '/api/v1/auth/admin/teams') return { items: [{ id: 'team', name: 'Service' }, { id: 'legal', name: 'Recht' }] };
+    if (path === '/api/v1/directory/teams') return teams;
+    if (path.startsWith('/api/v1/directory/users')) return { items: [] };
     return area;
   });
 });
@@ -21,7 +27,7 @@ afterEach(cleanup);
 async function edit() {
   render(<CollectionsTab />);
   fireEvent.click(await screen.findByRole('button', { name: 'Wissen bearbeiten' }));
-  await screen.findByRole('checkbox', { name: /^Service/ });
+  await screen.findByRole('textbox', { name: 'Name' });
 }
 
 it('shows ownership and separate processing and approval counts', async () => {
@@ -33,32 +39,24 @@ it('shows ownership and separate processing and approval counts', async () => {
   expect(screen.queryByText(/erfolgreich indexiert/i)).toBeNull();
 });
 
-it('cannot turn an empty team selection into public read access', async () => {
-  await edit();
-  fireEvent.click(screen.getByRole('checkbox', { name: 'Service' }));
-  const save = screen.getByRole('button', { name: 'Änderungen speichern' }) as HTMLButtonElement;
-  expect(save.disabled).toBe(true);
-  fireEvent.click(save);
-  expect(api.mock.calls.some(([, options]) => options?.method === 'PATCH')).toBe(false);
-  fireEvent.click(screen.getByRole('radio', { name: 'Alle angemeldeten Teams' }));
-  expect(save.disabled).toBe(true);
-  fireEvent.click(screen.getByRole('checkbox', { name: /Ich bestätige/ }));
-  expect(save.disabled).toBe(false);
-  fireEvent.click(save);
-  await screen.findByText('Wissensbereich gespeichert.');
-  const mutation = api.mock.calls.find(([, options]) => options?.method === 'PATCH');
-  expect(JSON.parse(mutation?.[1]?.body as string).read_teams).toEqual([]);
-});
-
-it('preserves existing readers not returned in the current team list when renaming', async () => {
-  api.mockImplementation(async path => path === '/api/v1/auth/admin/teams' ? { items: [] }
-    : path.startsWith('/api/v1/portal/admin/collections') ? { items: [area], total: 1 } : area);
+it('renames a collection without touching its access', async () => {
   await edit();
   fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Neues Thema' } });
   fireEvent.click(screen.getByRole('button', { name: 'Änderungen speichern' }));
   await waitFor(() => expect(api.mock.calls.some(([, options]) => options?.method === 'PATCH')).toBe(true));
   const mutation = api.mock.calls.find(([, options]) => options?.method === 'PATCH');
-  expect(JSON.parse(mutation?.[1]?.body as string)).toEqual({ name: 'Neues Thema', description: 'Thema', read_teams: ['Service'] });
+  expect(JSON.parse(mutation?.[1]?.body as string)).toEqual({ name: 'Neues Thema', description: 'Thema' });
+  await screen.findByText('Wissensbereich gespeichert.');
+});
+
+it('opens the access dialog and saves the selected teams', async () => {
+  await edit();
+  fireEvent.click(screen.getByRole('button', { name: 'Zugriff ändern' }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: /^Recht/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Zugriff speichern' }));
+  await waitFor(() => expect(api.mock.calls.some(([, options]) => options?.method === 'PATCH')).toBe(true));
+  const mutation = api.mock.calls.find(([, options]) => options?.method === 'PATCH');
+  expect(JSON.parse(mutation?.[1]?.body as string)).toEqual({ visibility: 'restricted', read_teams: ['Service', 'Recht'], read_users: [] });
 });
 
 it('shows a denied admin response without a collection editor', async () => {

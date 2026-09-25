@@ -1,10 +1,21 @@
 import type { Metadata } from 'next';
+import { Source_Sans_3 } from 'next/font/google';
+import { I18nProvider } from '@/i18n/provider';
+import { getLocale, getTranslator } from '@/i18n/server';
 import './globals.css';
 
-export const metadata: Metadata = {
-  title: 'Weave Chat',
-  description: 'Chat-Oberfläche für die Weave-Bots — spricht ausschließlich mit Weave-API.',
-};
+// Same font as the portal (services/ingest/frontend/src/app/layout.tsx),
+// loaded the same way via next/font so both apps render with it self-hosted
+// rather than a render-blocking Google Fonts request.
+const sourceSans = Source_Sans_3({
+  subsets: ['latin'],
+  variable: '--font-sans',
+});
+
+export async function generateMetadata(): Promise<Metadata> {
+  const { t } = await getTranslator();
+  return { title: t('common.appTitle'), description: t('common.appDescription') };
+}
 
 // Inline, pre-hydration script: applies a previously chosen theme (stored
 // in localStorage by theme-toggle.tsx) before first paint, so there is no
@@ -23,13 +34,16 @@ const THEME_INIT_SCRIPT = `
 })();
 `;
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const locale = await getLocale();
   return (
-    <html lang="de" className="h-full">
+    <html lang={locale} className={`h-full ${sourceSans.variable}`}>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
-      <body className="h-full antialiased">{children}</body>
+      <body className="h-full antialiased">
+        <I18nProvider initialLocale={locale}>{children}</I18nProvider>
+      </body>
     </html>
   );
 }
