@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { AlertTriangle, ArrowRight, CheckCheck, Clock3, FileText } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
@@ -14,8 +14,17 @@ import { Notice, PortalPage } from './shared';
 /** Bounds the stat tiles / "Als Nächstes" / "Aktivität" below to the most recent N documents visible to the user — see the /aufgaben and /documents pages for the full, paginated lists. */
 const HOME_DOCUMENT_LIMIT = 200;
 
-function greeting(t: (key: MessageKey) => string): string {
-  const hour = new Date().getHours();
+const noSubscription = () => () => {};
+
+/** The browser's local hour, or null during SSR/hydration: the server's
+ * time zone differs from the user's, so rendering it there would produce a
+ * hydration text mismatch. */
+function useLocalHour(): number | null {
+  return useSyncExternalStore(noSubscription, () => new Date().getHours(), () => null);
+}
+
+function greeting(t: (key: MessageKey) => string, hour: number | null): string {
+  if (hour === null) return t('portal.home.greeting.day');
   if (hour < 11) return t('portal.home.greeting.morning');
   if (hour < 18) return t('portal.home.greeting.day');
   return t('portal.home.greeting.evening');
@@ -43,6 +52,7 @@ const ACTIVITY_COLOR: Record<PipelineStage, string> = {
 export function PortalHome() {
   const { user } = useAuth();
   const { t, locale } = useI18n();
+  const hour = useLocalHour();
   const [documents, setDocuments] = useState<PortalDocument[] | null>(null);
   const [error, setError] = useState('');
   const load = useCallback(() => loadDocuments(undefined, 0, 'all', undefined, HOME_DOCUMENT_LIMIT)
@@ -74,7 +84,7 @@ export function PortalHome() {
     : t('portal.home.summaryAllClear');
 
   return (
-    <PortalPage title={`${greeting(t)}${user ? `, ${user.username}` : ''}.`} description={summary}>
+    <PortalPage title={`${greeting(t, hour)}${user ? `, ${user.username}` : ''}.`} description={summary}>
       {error && <Notice error action={load}>{error}</Notice>}
       <section aria-labelledby="stand-title">
         <h2 className="sr-only" id="stand-title">{t('portal.home.statusHeading')}</h2>

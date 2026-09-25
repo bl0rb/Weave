@@ -61,7 +61,13 @@ export function AccessDialog({ collection, onClose, onSaved }: {
 
   useEffect(() => {
     const controller = new AbortController();
-    loadDirectoryTeams(controller.signal).then(data => setTeams(data.items)).catch(err => setTeamsError(portalError(err, locale)));
+    loadDirectoryTeams(controller.signal).then(data => {
+      setTeams(data.items);
+      // Drop grants to teams that no longer exist (deleted, or a typo from
+      // create): they have no chip to untick, and PATCH would 422 on them.
+      const known = new Set(data.items.map(team => team.name));
+      setSelectedTeams(current => current.filter(name => known.has(name)));
+    }).catch(err => setTeamsError(portalError(err, locale)));
     return () => controller.abort();
   }, [locale]);
 

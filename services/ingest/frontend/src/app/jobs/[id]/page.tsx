@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useEffectEvent, useRef, useState } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { useParams, useSearchParams } from 'next/navigation';
@@ -219,6 +219,10 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
     }
   };
 
+  // Reads the current language without making `t` an effect dependency: a
+  // language switch must not re-run the load and discard an unsaved edit.
+  const loadFailedMessage = useEffectEvent(() => t('portal.jobDetail.loadFailed'));
+
   useEffect(() => {
     // Per-job state resets are handled by the key={id} remount in
     // JobDetailsPage; this effect only fetches.
@@ -230,7 +234,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
         return;
       }
       if (!jobResp.ok) {
-        setLoadError(t('portal.jobDetail.loadFailed'));
+        setLoadError(loadFailedMessage());
         return;
       }
       const jobData = await jobResp.json();
@@ -277,7 +281,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
     return () => {
       active = false;
     };
-  }, [jobId, openEditOnLoad, t]);
+  }, [jobId, openEditOnLoad]);
 
   const loadMarkdownWithPassword = async () => {
     const id = jobId;

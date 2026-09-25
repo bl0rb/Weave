@@ -277,7 +277,6 @@ export const admin: Record<keyof typeof de, string> = {
   'collections.column.status': 'Processing Status',
   'collections.column.manage': 'Management',
   'collections.noOwner': 'No Owner',
-  'collections.allTeams': 'All Signed-in Teams',
   'collections.status.pending': '{count} waiting',
   'collections.status.running': '{count} processing',
   'collections.status.review': '{count} pending review',

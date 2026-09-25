@@ -8,6 +8,7 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { apiSend, ConfirmDialog, Modal, inputClass } from '@/components/admin/admin-shared';
 import { AccessDialog } from './access-dialog';
 import { AccessLine } from './access-line';
+import { accessSummary } from '@/lib/access-summary';
 import { spaceColorVar, spaceMark } from '@/lib/space-color';
 import { useIndexingStatus } from '@/lib/use-indexing-status';
 import { bulkPortalAction, collectionDownloadName, downloadPortalFile, jsonBody, loadDocuments, markdownDownloadName, pipelineStage, portalDownloadError, portalError, reindexKnowledgeSpace, type DocumentPage, type KnowledgeSpace, type PortalDocument, type QualityGradeFilter } from '@/lib/portal';
@@ -204,7 +205,7 @@ export function KnowledgeDetail({ id }: { id: string }) {
     {error && <Notice error action={load}>{error}</Notice>}
     {notice && <Notice>{notice}</Notice>}
     {downloadError && <Notice error>{downloadError}</Notice>}
-    {space && <div className="portal-context-bar"><span><Users size={17} />{t('portal.spaces.authorizedLabel')} {space.read_teams.length ? space.read_teams.join(', ') : t('portal.newSpace.allTeams')}</span><span>{t('portal.spaces.publicationHint')}</span></div>}
+    {space && <div className="portal-context-bar"><span><Users size={17} />{t('portal.spaces.authorizedLabel')} {accessSummary(space, locale)}</span><span>{t('portal.spaces.publicationHint')}</span></div>}
     <section className="portal-panel"><div className="portal-section-heading"><div><p className="portal-eyebrow">{t('portal.spaces.contentsEyebrow')}</p><h2>{t('portal.nav.documents')}{documents ? ` · ${documents.total}` : ''}</h2><QualityGradeFilterRow value={qualityGrade} onChange={value => { setQualityGrade(value); setOffset(0); setDocuments(null); }} /><QualityGradeLegend /></div><div className="flex flex-wrap items-center gap-2">{(space?.can_upload ?? space?.can_manage) && Boolean(documents?.total) && (confirmReleaseAll ? <><Button variant="outline" size="sm" disabled={releasingAll} onClick={() => setConfirmReleaseAll(false)}>{t('common.cancel')}</Button><Button variant="danger" size="sm" disabled={releasingAll} onClick={() => void releaseAll()}><CheckCheck size={15} />{releasingAll ? t('portal.spaces.releasingAll') : t('portal.spaces.confirmReleaseAll')}</Button></> : <Button variant="outline" size="sm" onClick={() => setConfirmReleaseAll(true)}><CheckCheck size={15} />{t('portal.spaces.releaseCollection')}</Button>)}{Boolean(documents?.total) && <Button variant="outline" size="sm" disabled={downloadingId !== null} onClick={() => void downloadAll()}><Archive size={15} />{downloadingId === 'collection' ? t('portal.spaces.zipCreating') : t('portal.spaces.zipAll')}</Button>}{(space?.can_upload ?? space?.can_manage) && Boolean(documents?.total) && <Link href={`/sources/new?collection=${encodeURIComponent(id)}`} className={buttonVariants({ variant: 'outline', size: 'sm' })}><Plus size={15} />{t('portal.chrome.addSource')}</Link>}{(space?.can_upload ?? space?.can_manage) && Boolean(documents?.total) && <Button variant="outline" size="sm" onClick={() => setReindexing(true)}><RefreshCw size={15} />{t('portal.spaces.reindexSpace')}</Button>}<Button variant="ghost" size="sm" onClick={load}>{t('common.refresh')}</Button></div></div>
       <BulkActionBar
         count={selectedIds.size}

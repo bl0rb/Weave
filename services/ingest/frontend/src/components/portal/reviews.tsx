@@ -114,9 +114,13 @@ function ReviewDocumentContent({ id }: { id: string }) {
   const [skipping, setSkipping] = useState(false);
   const [confirmReindex, setConfirmReindex] = useState(false);
   const startedHeading = useRef<HTMLHeadingElement>(null);
+  // Latest locale for error text without making it a `load` dependency: a
+  // language switch must not reload and reset the confirmation/reprocess form.
+  const localeRef = useRef(locale);
+  useEffect(() => { localeRef.current = locale; }, [locale]);
   const load = useCallback(() => Promise.all([apiJson<DocumentPreview>(`/api/v1/portal/documents/${encodeURIComponent(id)}`), apiJson<PortalConfig>('/api/v1/portal/config')])
     .then(([content, configuration]) => { setPreview(content); setConfig(configuration); setError(''); setConfirmed(false); setReprocessOpen(false); })
-    .catch(err => { setPreview(null); setError(portalError(err, locale)); }), [id, locale]);
+    .catch(err => { setPreview(null); setError(portalError(err, localeRef.current)); }), [id]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { if (reprocessStarted) startedHeading.current?.focus(); }, [reprocessStarted]);
   async function release() {

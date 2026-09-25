@@ -276,7 +276,6 @@ export const admin = {
   'collections.column.status': 'Bearbeitungsstand',
   'collections.column.manage': 'Verwaltung',
   'collections.noOwner': 'Kein Eigentümer',
-  'collections.allTeams': 'Alle angemeldeten Teams',
   'collections.status.pending': '{count} wartet|{count} warten',
   'collections.status.running': '{count} in Verarbeitung',
   'collections.status.review': '{count} zur Prüfung',

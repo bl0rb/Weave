@@ -1,8 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { AlertTriangle, ArrowRight, Info } from 'lucide-react';
 import { apiJson } from '@/lib/api';
 import { buttonVariants } from '@/components/ui/button';
@@ -59,7 +59,6 @@ function actionFor(document: PortalDocument, stage: PipelineStage, t: (key: Mess
 const isPipelineStage = (value: string): value is PipelineStage => ['processing', 'review', 'indexing', 'ready', 'error'].includes(value);
 
 export function PortalDocuments({ initialQuery, initialStand, initialBereich }: { initialQuery?: string; initialStand?: string; initialBereich?: string }) {
-  const router = useRouter();
   const pathname = usePathname();
   const { t, locale } = useI18n();
   const [spaces, setSpaces] = useState<KnowledgeSpace[] | null>(null);
@@ -74,21 +73,31 @@ export function PortalDocuments({ initialQuery, initialStand, initialBereich }: 
 
   const collectionId = useMemo(() => spaces?.find((space) => space.slug === bereichSlug)?.collection_id, [spaces, bereichSlug]);
 
+  // Only the newest request may write state, so a slower earlier response
+  // (e.g. unfiltered vs. filtered) can never overwrite a newer one.
+  const requestSeq = useRef(0);
   const load = useCallback(() => {
+    // A ?bereich= slug can only be resolved once the spaces are loaded;
+    // fetching before that would briefly show every space's documents.
+    if (bereichSlug && spaces === null) return;
+    const seq = ++requestSeq.current;
     loadDocuments(collectionId, 0, 'all', undefined, DOCUMENTS_FETCH_LIMIT)
-      .then((page) => { setDocuments(page.items); setError(''); })
-      .catch((err) => setError(portalError(err, locale)));
-  }, [collectionId, locale]);
+      .then((page) => { if (seq === requestSeq.current) { setDocuments(page.items); setError(''); } })
+      .catch((err) => { if (seq === requestSeq.current) setError(portalError(err, locale)); });
+  }, [bereichSlug, spaces, collectionId, locale]);
   useEffect(() => { void load(); }, [load]);
 
-  // Reflect the current filters in the URL (shareable / back-button friendly) without remounting this component — the fetch above only depends on collectionId.
+  // Reflect the current filters in the URL (shareable) without a server
+  // round trip: history.replaceState keeps the page's searchParams props
+  // unchanged, so only an external navigation (e.g. the topbar search)
+  // remounts this component via the key in app/documents/page.tsx.
   useEffect(() => {
     const params = new URLSearchParams();
     if (query.trim()) params.set('q', query.trim());
     if (stand) params.set('stand', stand);
     if (bereichSlug) params.set('bereich', bereichSlug);
     const search = params.toString();
-    router.replace(search ? `${pathname}?${search}` : pathname, { scroll: false });
+    window.history.replaceState(null, '', search ? `${pathname}?${search}` : pathname);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, stand, bereichSlug]);
 

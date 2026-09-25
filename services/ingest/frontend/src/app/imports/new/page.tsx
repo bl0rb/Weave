@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useEffectEvent, useState } from 'react';
 import Link from 'next/link';
 import { AnimatePresence, motion } from 'framer-motion';
 import { CheckCircle2, LoaderCircle, XCircle } from 'lucide-react';
@@ -143,6 +143,10 @@ function NewImportPageInner() {
   const selectedSource = sources.find((entry) => entry.id === selectedSourceId) ?? null;
   const selectedSubfolderOptions = folder ? (folderOptions[folder] ?? []) : [];
 
+  // Current-language messages without making `t` an effect dependency: a
+  // language switch must not re-run the load and reset the wizard.
+  const message = useEffectEvent((key: MessageKey) => t(key));
+
   useEffect(() => {
     let cancelled = false;
 
@@ -203,18 +207,18 @@ function NewImportPageInner() {
           setWebhookConnectionId(webhookConnectionsPayload.items.some(connection => connection.enabled && connection.id === options.webhook_connection_id) ? options.webhook_connection_id ?? '' : '');
           if (prefillSourceStillExists) {
             setWizardStep(3);
-            setPrefillNotice(t('portal.importWizard.prefillReused'));
+            setPrefillNotice(message('portal.importWizard.prefillReused'));
           } else {
-            setConnectionMessage(t('portal.importWizard.prefillSourceMissing'));
-            setPrefillNotice(t('portal.importWizard.prefillReused'));
+            setConnectionMessage(message('portal.importWizard.prefillSourceMissing'));
+            setPrefillNotice(message('portal.importWizard.prefillReused'));
           }
         } else if (prefillFromRunId) {
-          setPrefillNotice(t('portal.importWizard.prefillFailed'));
+          setPrefillNotice(message('portal.importWizard.prefillFailed'));
         }
       } catch (error) {
         if (!cancelled) {
           setSourcesLoadFailed(true);
-          setConnectionMessage(error instanceof ApiError ? error.detail : t('portal.importWizard.error.loadSourcesFailed'));
+          setConnectionMessage(error instanceof ApiError ? error.detail : message('portal.importWizard.error.loadSourcesFailed'));
         }
       } finally {
         if (!cancelled) setSourcesLoaded(true);
@@ -225,7 +229,7 @@ function NewImportPageInner() {
     return () => {
       cancelled = true;
     };
-  }, [loadNonce, prefillFromRunId, t]);
+  }, [loadNonce, prefillFromRunId]);
 
   const retryLoadSources = () => {
     setSourcesLoaded(false);

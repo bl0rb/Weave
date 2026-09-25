@@ -6,6 +6,7 @@ import { ArrowRight, CheckCheck, Clock3, FileUp, Globe, Plus } from 'lucide-reac
 import { apiJson } from '@/lib/api';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { jsonBody, portalError, type KnowledgeSpace } from '@/lib/portal';
+import { accessSummary } from '@/lib/access-summary';
 import type { ImportSource, ImportRun } from '@/lib/imports';
 import { portalProfiles, type PortalProfile, type ProcessingProfile } from '@/lib/portal-profiles';
 import { useI18n } from '@/i18n/provider';
@@ -144,7 +145,7 @@ export function SourceForm({ initialCollection = '' }: { initialCollection?: str
     {spaces?.length === 0 && <EmptyState title={t('portal.sourceForm.emptySpacesTitle')} href="/knowledge/new" action={t('portal.chrome.breadcrumb.knowledgeNew')}>{t('portal.sourceForm.emptySpacesBody')}</EmptyState>}
     {Boolean(spaces?.length) && !completed && <form className="portal-panel portal-source-form" onSubmit={submit}>
       <fieldset disabled={saving || Boolean(run)}><legend><span className="portal-step">01</span> {t('portal.sourceForm.step1Legend')}</legend><label>{t('portal.sourceForm.spaceSelectLabel')}<select required value={collectionId} onChange={event => setCollectionId(event.target.value)}><option value="">{t('portal.sourceForm.pleaseSelect')}</option>{spaces?.map(space => <option key={space.collection_id} value={space.collection_id}>{space.name}</option>)}</select></label><Link className="portal-inline-link" href="/knowledge/new"><Plus size={14} />{t('portal.sourceForm.newSpaceLink')}</Link>
-        {selected && <p className="portal-field-hint">{t('portal.spaces.authorizedLabel')} {selected.read_teams.length ? selected.read_teams.join(', ') : t('portal.newSpace.allTeams')}.</p>}
+        {selected && <p className="portal-field-hint">{t('portal.spaces.authorizedLabel')} {accessSummary(selected, locale)}.</p>}
       </fieldset>
       <fieldset disabled={saving || Boolean(run)}><legend><span className="portal-step">02</span> {t('portal.sourceForm.step2Legend')}</legend><div className="portal-source-types"><label className={kind === 'files' ? 'selected' : ''}><input type="radio" name="kind" value="files" checked={kind === 'files'} onChange={() => setKind('files')} /><FileUp size={23} /><span><strong>{t('portal.sourceForm.filesOption')}</strong><small>{t('portal.sourceForm.filesHint')}</small></span></label><label className={kind === 'confluence' ? 'selected' : ''}><input type="radio" name="kind" value="confluence" checked={kind === 'confluence'} onChange={() => setKind('confluence')} /><Globe size={23} /><span><strong>{t('portal.sourceForm.confluenceOption')}</strong><small>{t('portal.sourceForm.confluenceHint')}</small></span></label></div>
         {kind === 'files' ? <label className="portal-upload">{t('portal.sourceForm.chooseFiles')}<input type="file" multiple required accept=".pdf,.docx,.pptx,.xlsx,.xls,.png,.jpg,.jpeg,.eml" onChange={event => setFiles(Array.from(event.target.files || []))} /><span>{files.length ? t('portal.sourceForm.filesSelectedCount', { count: files.length }) : t('portal.sourceForm.filesPlaceholder')}</span><span>{t('portal.sourceForm.emailAttachmentsHint')}</span></label> : <div className="portal-form">

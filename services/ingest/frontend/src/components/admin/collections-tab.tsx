@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useEffectEvent, useRef, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { ArrowRight, Pencil, Plus, RefreshCw } from 'lucide-react';
 import { apiJson } from '@/lib/api';
@@ -24,7 +24,9 @@ type CollectionPage = { items: ManagedCollection[]; total: number };
 const PAGE_SIZE = 20;
 
 export function CollectionsTab() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  // Current-language error text without refetching on a language switch.
+  const loadError = useEffectEvent((err: unknown) => portalError(err, locale));
   const [page, setPage] = useState<CollectionPage | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -41,7 +43,7 @@ export function CollectionsTab() {
       .then(data => {
         if (!controller.signal.aborted) { setPage(data); setError(''); }
       }).catch(err => {
-        if (!controller.signal.aborted) setError(portalError(err));
+        if (!controller.signal.aborted) setError(loadError(err));
       });
     return () => controller.abort();
   }, [query, offset, revision]);
@@ -80,7 +82,7 @@ export function CollectionsTab() {
             {collection.description && <p className="mt-1 line-clamp-2 text-xs text-slate-500">{collection.description}</p>}
           </td>
           <td>{collection.owner?.username || t('admin.collections.noOwner')}</td>
-          <td className="min-w-36">{collection.read_teams.length ? collection.read_teams.join(', ') : t('admin.collections.allTeams')}</td>
+          <td className="min-w-36">{accessSummary(collection, locale)}</td>
           <td className="min-w-48"><strong className="block font-medium">{t('common.documents.count', { count: collection.document_count })}</strong>
             <div className="mt-2 flex flex-wrap gap-1.5">
               {collection.pending_count > 0 && <span className="portal-badge portal-badge-neutral">{t('admin.collections.status.pending', { count: collection.pending_count })}</span>}
@@ -108,7 +110,10 @@ export function CollectionsTab() {
 function CollectionEditor({ collection, onCancel, onSaved }: {
   collection: ManagedCollection; onCancel: () => void; onSaved: () => void;
 }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  // Current-language error text without reloading (and discarding the
+  // admin's unsaved edits) on a language switch.
+  const loadError = useEffectEvent((err: unknown) => portalError(err, locale));
   const heading = useRef<HTMLHeadingElement>(null);
   const [original, setOriginal] = useState<KnowledgeSpace | null>(null);
   const [name, setName] = useState(collection.name);
@@ -125,7 +130,7 @@ function CollectionEditor({ collection, onCancel, onSaved }: {
       .then(current => {
         if (controller.signal.aborted) return;
         setOriginal(current); setName(current.name); setDescription(current.description || ''); setError('');
-      }).catch(err => { if (!controller.signal.aborted) setError(portalError(err)); });
+      }).catch(err => { if (!controller.signal.aborted) setError(loadError(err)); });
     return () => controller.abort();
   }, [collection.collection_id, revision]);
 
@@ -140,7 +145,7 @@ function CollectionEditor({ collection, onCancel, onSaved }: {
         ...jsonBody({ name: name.trim(), description: description.trim() }), method: 'PATCH',
       });
       onSaved();
-    } catch (err) { setError(portalError(err)); setSaving(false); }
+    } catch (err) { setError(portalError(err, locale)); setSaving(false); }
   }
 
   return <section className="portal-panel portal-form-panel" aria-labelledby="edit-collection-title">
@@ -152,7 +157,7 @@ function CollectionEditor({ collection, onCancel, onSaved }: {
       <label>{t('admin.collections.field.name')}<input required maxLength={255} value={name} disabled={!original || saving} onChange={event => setName(event.target.value)} /></label>
       <label>{t('admin.collections.field.description')}<textarea rows={3} value={description} disabled={!original || saving} onChange={event => setDescription(event.target.value)} /></label>
       <div className="portal-access-line">
-        <span><small>{t('admin.collections.column.access')}</small><strong>{original ? accessSummary(original) : '…'}</strong></span>
+        <span><small>{t('admin.collections.column.access')}</small><strong>{original ? accessSummary(original, locale) : '…'}</strong></span>
         <Button type="button" variant="outline" size="sm" disabled={!original} onClick={() => setAccessOpen(true)}>{t('admin.collections.changeAccess')}</Button>
       </div>
       <p className="portal-field-hint">{t('admin.collections.accessHint')}</p>
