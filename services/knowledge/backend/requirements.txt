@@ -5,7 +5,7 @@
 #
 #   pip install -r requirements.in && pip freeze --local > requirements.txt
 #
-alembic==1.19.2
+alembic==1.20.0
 amqp==5.3.1
 annotated-doc==0.0.5
 annotated-types==0.8.0
@@ -44,13 +44,13 @@ python-dotenv==1.2.3
 pyyaml==6.0.3
 redis==6.2.0
 six==1.17.0
-sqlalchemy==2.0.52
+sqlalchemy==2.0.54
 starlette==1.6.0
 typing-extensions==4.16.0
 typing-inspection==0.4.4
 tzdata==2026.3
 tzlocal==5.4.4
-uvicorn[standard]==0.52.4
+uvicorn[standard]==0.53.0
 uvloop==0.22.1
 vine==5.1.0
 watchfiles==1.2.0
