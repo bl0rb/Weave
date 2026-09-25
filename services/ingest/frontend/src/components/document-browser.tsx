@@ -138,9 +138,8 @@ function isMailAttachmentJob(job: Job): boolean {
 }
 
 /**
- * Canonical job-type derivation for the `?type=` deep-link filter, mirroring
- * dashboard/processing-overview.tsx's jobType() (single/collection/import/
- * mail per the contract). Builds on isImportJob/isMailAttachmentJob above
+ * Canonical job-type derivation for the `?type=` deep-link filter
+ * (single/collection/import/mail per the contract). Builds on isImportJob/isMailAttachmentJob above
  * rather than re-deriving from settings.mode independently — 'import' here
  * additionally covers 'import_attachment' (the per-page jobs an import run
  * spawns), which isImportJob deliberately excludes since only 'import' jobs

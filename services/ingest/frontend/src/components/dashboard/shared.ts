@@ -3,7 +3,6 @@ import { DEFAULT_LOCALE, type Locale } from '@/i18n/config';
 import { translate } from '@/i18n/messages';
 
 export type JobStatus = 'PENDING' | 'RUNNING' | 'FINISHED' | 'FAILED';
-export type UIState = 'Idle' | 'Processing' | 'Finished';
 
 export type Job = {
   id: string;
@@ -24,34 +23,6 @@ export type Job = {
     };
   } | null;
   created_at: string;
-};
-
-export type PaddleIndicator = 'running' | 'failed' | 'stopped';
-
-export type ContainerState = {
-  name: string;
-  state: 'running' | 'stopped' | 'degraded' | 'unknown';
-  detail?: string | null;
-};
-
-export type RuntimeCapabilityInfo = {
-  torch_available: boolean;
-  cuda_available: boolean;
-  selected_device: 'cuda' | 'cpu';
-  platform: string;
-  no_cuda_reason?: string | null;
-};
-
-export type PaddleStatusResponse = {
-  status: PaddleIndicator;
-  detail?: string | null;
-  runtime?: RuntimeCapabilityInfo | null;
-  pending_jobs?: number;
-  running_jobs?: number;
-  queue_total?: number;
-  running_workers?: number;
-  worker_nodes?: string[];
-  containers?: ContainerState[];
 };
 
 export type PaddleSettings = {
@@ -75,15 +46,7 @@ export type PaddleCapabilities = {
   profiles: PaddleOption[];
 };
 
-export type DashboardStats = {
-  processed_documents: number;
-  processed_pages: number;
-  errors: number;
-  database_size_bytes: number | null;
-};
-
 export type UploadMode = 'single' | 'collection';
-export type DashboardView = 'home' | 'processing';
 
 export type UploadProgress = {
   phase: 'single' | 'collection';
