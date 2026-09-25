@@ -5,17 +5,23 @@ import { useRouter } from 'next/navigation';
 import { DEFAULT_LOCALE, INTL_LOCALE, LOCALE_COOKIE, type Locale } from './config';
 import { translate, type MessageKey, type MessageVars } from './messages';
 
-type I18nContextValue = { locale: Locale; setLocale: (locale: Locale) => void };
+type I18nContextValue = { locale: Locale; setLocale: (locale: Locale) => void; applyLocale: (locale: Locale) => void };
 
 // Without a provider (unit tests, isolated renders) everything falls back to
 // German, which is also what the existing tests assert.
-const I18nContext = createContext<I18nContextValue>({ locale: DEFAULT_LOCALE, setLocale: () => {} });
+const I18nContext = createContext<I18nContextValue>({ locale: DEFAULT_LOCALE, setLocale: () => {}, applyLocale: () => {} });
 
 export function I18nProvider({ initialLocale, children }: { initialLocale: Locale; children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(initialLocale);
   const router = useRouter();
 
-  const setLocale = useCallback(
+  // The pure mechanism — cookie + <html lang> + refresh, never anything
+  // account-related. `setLocale` (the user-facing action <LanguageSwitch/>
+  // calls) is currently the same function; `applyLocale` is the name
+  // callers that must NEVER persist (the account-locale sync effect in
+  // auth-context.tsx / chat-app.tsx) use, so that intent is explicit at
+  // the call site even though the mechanism is shared.
+  const applyLocale = useCallback(
     (next: Locale) => {
       document.cookie = `${LOCALE_COOKIE}=${next}; path=/; max-age=31536000; samesite=lax`;
       document.documentElement.lang = next;
@@ -26,12 +32,12 @@ export function I18nProvider({ initialLocale, children }: { initialLocale: Local
     [router],
   );
 
-  const value = useMemo(() => ({ locale, setLocale }), [locale, setLocale]);
+  const value = useMemo(() => ({ locale, setLocale: applyLocale, applyLocale }), [locale, applyLocale]);
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }
 
 export function useI18n() {
-  const { locale, setLocale } = useContext(I18nContext);
+  const { locale, setLocale, applyLocale } = useContext(I18nContext);
   const t = useCallback((key: MessageKey, vars?: MessageVars) => translate(locale, key, vars), [locale]);
   const formatDate = useCallback(
     (value: string | number | Date | null | undefined, options: Intl.DateTimeFormatOptions = { dateStyle: 'medium' }) => {
@@ -46,5 +52,5 @@ export function useI18n() {
     (value: number, options?: Intl.NumberFormatOptions) => new Intl.NumberFormat(INTL_LOCALE[locale], options).format(value),
     [locale],
   );
-  return { locale, setLocale, t, formatDate, formatNumber };
+  return { locale, setLocale, applyLocale, t, formatDate, formatNumber };
 }

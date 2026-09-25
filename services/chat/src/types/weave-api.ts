@@ -25,6 +25,15 @@ export interface Bot {
   retrieval: { enabled: boolean };
 }
 
+/** GET /v1/me — this user's own account summary. `locale` is `null` until
+ * the account has ever chosen one explicitly (see /api/session/me and
+ * i18n/language-switch.tsx, which persists a change via PUT
+ * /v1/me/locale through /api/session/locale). */
+export interface MeResponse {
+  username: string;
+  locale: 'de' | 'en' | null;
+}
+
 /** Weave-Retrieval's CollectionOut, unchanged. `public` collections are
  * readable by anyone regardless of team. */
 export interface Collection {

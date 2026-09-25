@@ -5,6 +5,7 @@ export const common = {
   'language': 'Sprache',
   'language.de': 'Deutsch',
   'language.en': 'English',
+  'language.saveFailed': 'Sprache konnte nicht im Konto gespeichert werden.',
   'save': 'Speichern',
   'cancel': 'Abbrechen',
   'close': 'Schließen',

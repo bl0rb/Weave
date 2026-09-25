@@ -13,6 +13,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { ChatApp } from '@/components/chat/chat-app';
+import { I18nProvider } from '@/i18n/provider';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ replace: vi.fn(), refresh: vi.fn() }),
@@ -369,5 +370,68 @@ describe('ChatApp collection filter', () => {
 
     // The scope picker itself must reflect the cleared selection too.
     expect(screen.getByRole('button', { name: /Alle Bereiche/ })).toBeTruthy();
+  });
+});
+
+describe('ChatApp account locale sync', () => {
+  beforeEach(() => {
+    window.matchMedia =
+      window.matchMedia ??
+      ((() => ({
+        matches: false,
+        media: '',
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      })) as unknown as typeof window.matchMedia);
+    Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? vi.fn();
+    document.documentElement.lang = 'de';
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    document.documentElement.lang = 'de';
+  });
+
+  function fetchMockWithMe(meLocale: 'de' | 'en' | null) {
+    return vi.fn<(input: RequestInfo | URL) => Promise<Response>>((input) => {
+      const url = String(input);
+      if (url.endsWith('/api/bots')) return Promise.resolve(jsonResponse([BOTS[0]]));
+      if (url.endsWith('/api/collections')) return Promise.resolve(jsonResponse([]));
+      if (url.endsWith('/api/conversations')) return Promise.resolve(jsonResponse([]));
+      if (url.endsWith('/api/session/me')) return Promise.resolve(jsonResponse({ username: 'ada', locale: meLocale }));
+      throw new Error(`unexpected fetch to ${url}`);
+    });
+  }
+
+  it('applies the account locale over the cookie/browser locale once, on load', async () => {
+    vi.stubGlobal('fetch', fetchMockWithMe('en'));
+
+    render(
+      <I18nProvider initialLocale="de">
+        <ChatApp />
+      </I18nProvider>,
+    );
+
+    await waitFor(() => expect(document.documentElement.lang).toBe('en'));
+  });
+
+  it('leaves the locale untouched and makes no persistence write when the account locale is null', async () => {
+    const fetchMock = fetchMockWithMe(null);
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <I18nProvider initialLocale="de">
+        <ChatApp />
+      </I18nProvider>,
+    );
+
+    await screen.findByRole('option', { name: 'Bot A' });
+    expect(document.documentElement.lang).toBe('de');
+    expect(fetchMock.mock.calls.some(([req]) => String(req).endsWith('/api/session/locale'))).toBe(false);
   });
 });

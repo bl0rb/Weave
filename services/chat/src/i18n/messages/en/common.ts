@@ -6,4 +6,5 @@ export const common: Record<keyof typeof de, string> = {
   'language': 'Language',
   'language.de': 'Deutsch',
   'language.en': 'English',
+  'language.saveFailed': 'Could not save the language to your account.',
 };

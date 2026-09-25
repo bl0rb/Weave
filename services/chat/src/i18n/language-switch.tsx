@@ -1,24 +1,47 @@
 'use client';
 
-import { LOCALES } from './config';
+import { useState } from 'react';
+import { LOCALES, type Locale } from './config';
 import { useI18n } from './provider';
+import { putJson } from '@/lib/api-client';
 
-/** Two-option segmented control; the choice is stored in the shared `weave_locale` cookie. */
-export function LanguageSwitch({ className }: { className?: string }) {
+/**
+ * Two-option segmented control; the choice is stored in the shared
+ * `weave_locale` cookie. With `persist` (the signed-in rail footer, not
+ * the login page) it also saves the choice to the account via PUT
+ * /api/session/locale, optimistically: the new language is applied to
+ * this browser immediately regardless of whether that save succeeds — a
+ * failure only shows a small inline notice next to the control, it never
+ * reverts the choice (see chat-app.tsx's own mount-time sync for the read
+ * side of this).
+ */
+export function LanguageSwitch({ className, persist = false }: { className?: string; persist?: boolean }) {
   const { locale, setLocale, t } = useI18n();
+  const [saveFailed, setSaveFailed] = useState(false);
+
+  async function select(option: Locale) {
+    if (option === locale) return;
+    setLocale(option);
+    setSaveFailed(false);
+    if (!persist) return;
+    const result = await putJson<{ locale: Locale }>('/api/session/locale', { locale: option });
+    if (!result.ok) setSaveFailed(true);
+  }
+
   return (
-    <div role="group" aria-label={t('common.language')} className={`chat-lang-switch ${className ?? ''}`}>
-      {LOCALES.map((option) => (
-        <button
-          key={option}
-          type="button"
-          lang={option}
-          aria-pressed={locale === option}
-          onClick={() => option !== locale && setLocale(option)}
-        >
-          {t(`common.language.${option}`)}
-        </button>
-      ))}
+    <div className="flex flex-col gap-1">
+      <div role="group" aria-label={t('common.language')} className={`chat-lang-switch ${className ?? ''}`}>
+        {LOCALES.map((option) => (
+          <button key={option} type="button" lang={option} aria-pressed={locale === option} onClick={() => select(option)}>
+            {t(`common.language.${option}`)}
+          </button>
+        ))}
+      </div>
+      {saveFailed ? (
+        <p role="alert" className="text-[11px] text-[var(--err)]">
+          {t('common.language.saveFailed')}
+        </p>
+      ) : null}
     </div>
   );
 }

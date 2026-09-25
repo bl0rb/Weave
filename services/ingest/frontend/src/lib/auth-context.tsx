@@ -36,7 +36,7 @@ async function fetchMe(): Promise<AuthUser | null> {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const { t } = useI18n();
+  const { t, locale, applyLocale } = useI18n();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
@@ -82,7 +82,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (res.ok) {
           const me = (await res.json()) as AuthUser;
-          if (!cancelled) setUser(me);
+          if (!cancelled) {
+            setUser(me);
+            // Account locale wins over whatever the cookie/browser picked,
+            // but only once, right here at load — `locale`/`applyLocale`
+            // are read at mount time only (see the eslint-disable below);
+            // this must never become a dependency of this effect, or every
+            // manual switch via <LanguageSwitch/> would refetch /auth/me
+            // and immediately re-apply the (by-then stale) account value.
+            if (me.locale && me.locale !== locale) applyLocale(me.locale);
+          }
         } else {
           if (!cancelled) setUser(null);
 
@@ -113,6 +122,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once on mount; `locale`/`applyLocale` are intentionally read at mount time only, see comment above.
   }, [router]);
 
   const value = useMemo(

@@ -225,7 +225,7 @@ export function Rail({
               </Button>
             </div>
           </div>
-          <LanguageSwitch className="self-start" />
+          <LanguageSwitch className="self-start" persist />
         </div>
       </aside>
     </>

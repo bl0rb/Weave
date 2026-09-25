@@ -23,11 +23,11 @@ import {
   userMessage,
   type UiMessage,
 } from '@/lib/chat-types';
-import type { Bot, ChatRequestBody, ChatResponseBody, Collection, ConversationSummary, StoredConversation } from '@/types/weave-api';
+import type { Bot, ChatRequestBody, ChatResponseBody, Collection, ConversationSummary, MeResponse, StoredConversation } from '@/types/weave-api';
 
 export function ChatApp() {
   const router = useRouter();
-  const { t } = useI18n();
+  const { t, locale, applyLocale } = useI18n();
 
   const [bots, setBots] = useState<Bot[] | null>(null);
   const [botsError, setBotsError] = useState<MappedError | null>(null);
@@ -99,9 +99,10 @@ export function ChatApp() {
     let cancelled = false;
 
     (async () => {
-      const [botsResult, collectionsResult] = await Promise.all([
+      const [botsResult, collectionsResult, meResult] = await Promise.all([
         getJson<Bot[]>('/api/bots'),
         getJson<Collection[]>('/api/collections'),
+        getJson<MeResponse>('/api/session/me'),
       ]);
       if (cancelled) return;
 
@@ -120,6 +121,16 @@ export function ChatApp() {
         setCollections(collectionsResult.data);
       } else {
         setCollectionsError(collectionsResult.error);
+      }
+
+      // Account locale wins over whatever the cookie/browser picked, but
+      // only once, right here at mount — `locale`/`applyLocale` are read
+      // at mount time only (see the eslint-disable below); this must
+      // never become a dependency of this effect, or every manual switch
+      // via <LanguageSwitch/> would re-run it and immediately re-apply
+      // the (by-then stale) account value.
+      if (meResult.ok && meResult.data.locale && meResult.data.locale !== locale) {
+        applyLocale(meResult.data.locale);
       }
 
       await refreshConversations();

@@ -207,7 +207,7 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
                     {t('portal.chrome.colorScheme')}
                   </div>
                   <div role="menuitem" className="flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)]">
-                    <LanguageSwitch />
+                    <LanguageSwitch persist />
                   </div>
                   {user.role === 'admin' && (
                     <Link role="menuitem" href="/admin" onClick={() => { setMenuOpen(false); onOpenChange(false); }} className="flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)] no-underline hover:bg-[var(--hover)] hover:text-[var(--ink)]">
