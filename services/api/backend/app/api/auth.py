@@ -785,6 +785,7 @@ def _provision_ingest_user(db: Session, identity: IngestIdentity) -> User:
             team=identity.team,
             teams=identity.effective_teams,
             is_admin=identity.is_admin,
+            locale=identity.locale,
             oidc_subject=subject,
             disabled=False,
         )
@@ -802,10 +803,16 @@ def _provision_ingest_user(db: Session, identity: IngestIdentity) -> User:
                 )
         return user
 
-    if user.team != identity.team or user.teams != identity.effective_teams or user.is_admin != identity.is_admin:
+    if (
+        user.team != identity.team
+        or user.teams != identity.effective_teams
+        or user.is_admin != identity.is_admin
+        or user.locale != identity.locale
+    ):
         user.team = identity.team
         user.teams = identity.effective_teams
         user.is_admin = identity.is_admin
+        user.locale = identity.locale
         db.commit()
     return user
 

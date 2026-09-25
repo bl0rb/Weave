@@ -2160,6 +2160,21 @@
             "title": "Is Admin",
             "type": "boolean"
           },
+          "locale": {
+            "anyOf": [
+              {
+                "enum": [
+                  "de",
+                  "en"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locale"
+          },
           "subject": {
             "title": "Subject",
             "type": "string"
@@ -3529,6 +3544,31 @@
           "failed"
         ],
         "title": "KnowledgeRebuildStatusResponse",
+        "type": "object"
+      },
+      "LocaleUpdateRequest": {
+        "description": "Body of PATCH /auth/me and PUT /auth/handoff/identity/{id}/locale --\nthe only field either endpoint may change. `locale` is required (not\ndefaulted) so omitting it is a 422 like any other invalid value, and\n`None` explicitly clears a previously-set preference.",
+        "properties": {
+          "locale": {
+            "anyOf": [
+              {
+                "enum": [
+                  "de",
+                  "en"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locale"
+          }
+        },
+        "required": [
+          "locale"
+        ],
+        "title": "LocaleUpdateRequest",
         "type": "object"
       },
       "LoginRequest": {
@@ -7110,6 +7150,21 @@
             "title": "Is Active",
             "type": "boolean"
           },
+          "locale": {
+            "anyOf": [
+              {
+                "enum": [
+                  "de",
+                  "en"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locale"
+          },
           "oidc_provider_id": {
             "anyOf": [
               {
@@ -9898,6 +9953,52 @@
         ]
       }
     },
+    "/api/v1/auth/handoff/identity/{user_id}/locale": {
+      "put": {
+        "description": "Server-to-server locale sync -- lets Weave-API push a locale change\nmade on its side back onto the Weave-Ingest identity it's mirroring.\n\nAuthenticated exactly like GET /handoff/identity/{user_id} above (same\nshared-secret header, constant-time compare, 503 if unconfigured, 401 on\na wrong secret, 404 for an unknown/inactive user). The handoff secret\nauthorizes ONLY this one write -- setting `locale` -- nothing else about\nthe user row, and no other endpoint.",
+        "operationId": "update_handoff_identity_locale_api_v1_auth_handoff_identity__user_id__locale_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocaleUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Handoff Identity Locale",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/v1/auth/handoff/start": {
       "get": {
         "description": "Step 1. Requires an ordinary session here, so it does not care in the\nslightest HOW that session came about -- a local password, any of the\nconfigured OIDC providers, a future third method. That is the whole\nreason the chat can accept every login this service supports without\nknowing that any of them exist.",
@@ -10029,6 +10130,46 @@
           }
         },
         "summary": "Me",
+        "tags": [
+          "auth"
+        ]
+      },
+      "patch": {
+        "description": "Self-service preference update. `locale` is the only field this\nendpoint lets a user change about their own account -- everything else\n(email, role, team, ...) stays admin-only via /auth/admin/users.",
+        "operationId": "update_me_api_v1_auth_me_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocaleUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Me",
         "tags": [
           "auth"
         ]

@@ -78,10 +78,16 @@ def _refresh_ingest_identity(db: Session, user: User) -> User | None:
         raise HTTPException(status_code=503, detail='Identity authority unavailable') from None
     if identity is None:
         return None
-    if user.team != identity.team or user.teams != identity.effective_teams or user.is_admin != identity.is_admin:
+    if (
+        user.team != identity.team
+        or user.teams != identity.effective_teams
+        or user.is_admin != identity.is_admin
+        or user.locale != identity.locale
+    ):
         user.team = identity.team
         user.teams = identity.effective_teams
         user.is_admin = identity.is_admin
+        user.locale = identity.locale
         db.commit()
     return user
 

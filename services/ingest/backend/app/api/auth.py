@@ -66,6 +66,7 @@ from app.schemas.auth import (
     HandoffExchangeRequest,
     HandoffExchangeResponse,
     ClaimOwnerlessResponse,
+    LocaleUpdateRequest,
     LoginRequest,
     OrphanedFileEntry,
     OrphanedFilesReportResponse,
@@ -224,6 +225,7 @@ def _user_response(user: User, db: Session) -> UserResponse:
         is_active=user.is_active,
         oidc_provider_id=user.oidc_provider_id,
         created_at=user.created_at,
+        locale=user.locale,
     )
 
 
@@ -479,6 +481,18 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)) 
 
 @router_authenticated.get('/me', response_model=UserResponse)
 def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> UserResponse:
+    return _user_response(user, db)
+
+
+@router_authenticated.patch('/me', response_model=UserResponse)
+def update_me(
+    payload: LocaleUpdateRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> UserResponse:
+    """Self-service preference update. `locale` is the only field this
+    endpoint lets a user change about their own account -- everything else
+    (email, role, team, ...) stays admin-only via /auth/admin/users."""
+    user.locale = payload.locale
+    db.commit()
     return _user_response(user, db)
 
 
@@ -1111,6 +1125,7 @@ def _handoff_identity(db: Session, user: User) -> HandoffExchangeResponse:
         team=team.name if team else None,
         teams=list(db.scalars(select(Team.name).where(Team.id.in_(user.team_ids))).all()),
         is_admin=user.role == UserRole.ADMIN,
+        locale=user.locale,
     )
 
 
@@ -1125,6 +1140,32 @@ def current_handoff_identity(user_id: str, request: Request, db: Session = Depen
     if user is None or not user.is_active:
         raise HTTPException(status_code=404, detail='Identity unavailable')
     return _handoff_identity(db, user)
+
+
+@router_public.put('/handoff/identity/{user_id}/locale', status_code=status.HTTP_204_NO_CONTENT)
+def update_handoff_identity_locale(
+    user_id: str, payload: LocaleUpdateRequest, request: Request, db: Session = Depends(get_db)
+) -> Response:
+    """Server-to-server locale sync -- lets Weave-API push a locale change
+    made on its side back onto the Weave-Ingest identity it's mirroring.
+
+    Authenticated exactly like GET /handoff/identity/{user_id} above (same
+    shared-secret header, constant-time compare, 503 if unconfigured, 401 on
+    a wrong secret, 404 for an unknown/inactive user). The handoff secret
+    authorizes ONLY this one write -- setting `locale` -- nothing else about
+    the user row, and no other endpoint.
+    """
+    secret = settings.handoff_secret
+    if not secret:
+        raise HTTPException(status_code=503, detail='service misconfigured')
+    if not hmac.compare_digest(request.headers.get(_HANDOFF_SECRET_HEADER, '').encode(), secret.encode()):
+        raise HTTPException(status_code=401, detail='Invalid handoff credentials')
+    user = db.get(User, user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=404, detail='Identity unavailable')
+    user.locale = payload.locale
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # --- admin: users --------------------------------------------------------------

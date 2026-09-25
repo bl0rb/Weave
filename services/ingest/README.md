@@ -309,6 +309,7 @@ Common endpoints:
 - `PUT /api/v1/jobs/{id}/save` — edit markdown (creates an edit version)
 - `POST /api/v1/benchmarks` — start a benchmark run; `GET /api/v1/benchmarks/{id}/report` for the comparison
 - `GET /api/v1/vl-connections` — enabled VL connections (id, name, model)
+- `PATCH /api/v1/auth/me` — set or clear the caller's own UI language preference (`{"locale": "de" | "en" | null}`, 422 for any other value); `GET /api/v1/auth/me` and the admin user endpoints return the same `locale` field
 - `POST /api/v1/auth/tokens` / `GET` / `DELETE /api/v1/auth/tokens/{id}` — API token management (session only)
 - `GET` / `POST /api/v1/auth/admin/bots`, `PUT` / `DELETE /api/v1/auth/admin/bots/{id}` — centrally manage n8n-backed bots (admin; secret values are write-only)
 - `GET /api/v1/internal/bots` — enabled bot projection for Weave Runtime (service token; `Cache-Control: no-store`)

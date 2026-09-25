@@ -465,6 +465,11 @@ class User(Base):
         String(36), ForeignKey('auth_providers.id', ondelete='SET NULL'), nullable=True
     )
     oidc_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # UI language preference ('de' | 'en'); NULL = no explicit choice (client
+    # falls back to browser/Accept-Language). Plain string + application-
+    # level validation (UserResponse / PATCH /auth/me), not a DB enum -- see
+    # 0033_user_locale's docstring.
+    locale: Mapped[str | None] = mapped_column(String(2), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(

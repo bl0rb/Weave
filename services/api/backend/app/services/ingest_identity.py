@@ -57,6 +57,7 @@ class IngestIdentity:
     team: str | None
     is_admin: bool
     teams: list[str] | None = None
+    locale: str | None = None
 
     @property
     def effective_teams(self) -> list[str]:
@@ -126,6 +127,33 @@ def fetch_identity(subject: str) -> IngestIdentity | None:
     return identity
 
 
+def update_identity_locale(subject: str, locale: str | None) -> None:
+    """Pushes a locale change onto the Weave-Ingest identity behind
+    `subject` (PUT /v1/me/locale in app/api/me.py, for a `User.oidc_subject`
+    under `INGEST_SUBJECT_PREFIX`) -- same base URL/secret/timeout as
+    `fetch_identity`. Raises `IngestIdentityError` on any failure
+    (unreachable, misconfigured, non-204 response) so the caller can 503
+    without writing the value locally.
+    """
+    if not settings.ingest_api_url or not settings.ingest_handoff_secret:
+        raise IngestIdentityError('Identity refresh is not configured')
+    url = (
+        settings.ingest_api_url.rstrip('/')
+        + '/api/v1/auth/handoff/identity/'
+        + quote(subject, safe='')
+        + '/locale'
+    )
+    try:
+        with _client() as client:
+            response = client.put(
+                url, json={'locale': locale}, headers={_HANDOFF_SECRET_HEADER: settings.ingest_handoff_secret}
+            )
+    except httpx.HTTPError:
+        raise IngestIdentityError('Identity authority unavailable') from None
+    if response.status_code != 204:
+        raise IngestIdentityError('Identity authority unavailable')
+
+
 def _parse_identity(response: httpx.Response) -> IngestIdentity:
     try:
         payload = response.json()
@@ -146,6 +174,10 @@ def _parse_identity(response: httpx.Response) -> IngestIdentity:
     if 'teams' in payload and (not isinstance(teams, list) or any(not isinstance(team_name, str) or not team_name for team_name in teams)):
         raise IngestIdentityError('Weave-Ingest returned invalid team memberships')
 
+    locale = payload.get('locale')
+    if locale is not None and locale not in ('de', 'en'):
+        raise IngestIdentityError('Weave-Ingest returned an invalid locale')
+
     return IngestIdentity(
         subject=subject,
         username=username,
@@ -153,4 +185,5 @@ def _parse_identity(response: httpx.Response) -> IngestIdentity:
         team=team if isinstance(team, str) and team else None,
         is_admin=bool(is_admin),
         teams=teams,
+        locale=locale,
     )

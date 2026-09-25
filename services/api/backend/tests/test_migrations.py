@@ -172,6 +172,40 @@ def test_0004_session_exchange_codes_migration_upgrade_downgrade_round_trip(tmp_
     assert 'session_exchange_codes' in insp.get_table_names()
 
 
+def test_0006_user_locale_migration_upgrade_downgrade_round_trip(tmp_path, monkeypatch):
+    """Verifies 0006_user_locale (users.locale, the per-user UI language
+    preference) on top of an already-upgraded 0005 schema -- same
+    round-trip discipline as the 0003/0004 tests above."""
+    db_path = tmp_path / 'migration_scratch_user_locale.db'
+    db_url = f'sqlite:///{db_path}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+
+    cfg = _alembic_config()
+    command.upgrade(cfg, '0005_user_teams')
+
+    command.upgrade(cfg, 'head')
+
+    engine = create_engine(db_url, future=True)
+    insp = inspect(engine)
+    user_columns = {c['name']: c for c in insp.get_columns('users')}
+    assert 'locale' in user_columns
+    assert user_columns['locale']['nullable'] is True
+
+    # --- downgrade back to 0005: only this migration's own column
+    # disappears, the rest of the schema survives untouched ---
+    command.downgrade(cfg, '0005_user_teams')
+    insp = inspect(engine)
+    user_columns = {c['name'] for c in insp.get_columns('users')}
+    assert 'locale' not in user_columns
+    assert 'teams' in user_columns  # 0005's own column survives the downgrade
+
+    # --- re-upgrade: should cleanly re-apply from 0005 ---
+    command.upgrade(cfg, 'head')
+    insp = inspect(engine)
+    user_columns = {c['name'] for c in insp.get_columns('users')}
+    assert 'locale' in user_columns
+
+
 def test_migration_history_has_a_single_head():
     from alembic.script import ScriptDirectory
 
