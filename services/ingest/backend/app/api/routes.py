@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from redis import Redis
 from sqlalchemy import func, or_, select, text
-from sqlalchemy.orm import Session, defer
+from sqlalchemy.orm import Session, defer, selectinload
 
 from app.api.deps import get_current_user, require_admin, require_knowledge_registry_reader
 from app.core.config import settings
@@ -185,17 +185,16 @@ def _load_job_owners(db: Session, jobs: list[Job]) -> dict[str, JobOwner]:
     }
 
 
-def _collection_control_job_filter(db: Session, user: User):
-    """Return a job predicate for member contributors to shared collections.
+def _collection_control_filter(db: Session, user: User):
+    """SQL counterpart of `_can_manage_collection` for non-admins: a
+    Collection predicate matching every collection ``user`` may operate.
 
-    Collection uploads may be owned by another user, while an explicitly
-    configured ``read_teams`` member is still allowed to operate those
-    documents.  Keep this separate from the ordinary owner/team job boundary
-    so a reader membership never becomes a write grant.
+    Only the owner, member-role teammates of the owner and member-role
+    members of a configured ``read_teams`` team qualify. ``read_users`` is a
+    read (chat) grant only and never appears here.
     """
     conditions = [Collection.owner_id == user.id]
     member_team_ids = _member_team_ids(db, user)
-    collection_id_expr = Job.processing_info['settings']['collection_id'].as_string()
     if member_team_ids:
         conditions.append(Collection.owner_id.in_(select(User.id).where(User.team_id.in_(member_team_ids))))
     member_team_names = set(db.scalars(select(Team.name).where(Team.id.in_(member_team_ids))).all()) if member_team_ids else set()
@@ -212,10 +211,22 @@ def _collection_control_job_filter(db: Session, user: User):
             .where(team_values.c.value.in_(member_team_names))
             .exists()
         )
+    return or_(*conditions)
+
+
+def _collection_control_job_filter(db: Session, user: User):
+    """Return a job predicate for member contributors to shared collections.
+
+    Collection uploads may be owned by another user, while an explicitly
+    configured ``read_teams`` member is still allowed to operate those
+    documents.  Keep this separate from the ordinary owner/team job boundary
+    so a reader membership never becomes a write grant.
+    """
+    collection_id_expr = Job.processing_info['settings']['collection_id'].as_string()
     return Job.id.in_(
         select(Job.id)
         .join(Collection, Collection.id == collection_id_expr)
-        .where(or_(*conditions))
+        .where(_collection_control_filter(db, user))
     )
 
 
@@ -368,8 +379,8 @@ def _can_manage_collection(db: Session, collection: Collection, user: User) -> b
         return True
     if _can_manage_owner_team(db, collection.owner_id, user):
         return True
-    if user.id in (collection.read_users or []):
-        return True
+    # `read_users` is deliberately absent: sharing a space with a person is
+    # a read (chat) grant, never upload/release/delete rights.
     member_team_ids = _member_team_ids(db, user)
     if not member_team_ids:
         return False
@@ -384,13 +395,11 @@ def _can_manage_any_collection(db: Session, user: User) -> bool:
     `read_users`/`read_teams` grant; nobody else gets a system-wide listing
     of accounts/teams merely for having an ordinary login. Mirrors
     `_can_manage_collection`'s own rule, evaluated across every collection
-    instead of one specific row."""
+    instead of one specific row -- as a single EXISTS-style query, since the
+    person search calls this on every keystroke."""
     if user.role == UserRole.ADMIN:
         return True
-    if db.scalar(select(Collection.id).where(Collection.owner_id == user.id).limit(1)) is not None:
-        return True
-    collections = db.scalars(select(Collection)).all()
-    return any(_can_manage_collection(db, collection, user) for collection in collections)
+    return db.scalar(select(Collection.id).where(_collection_control_filter(db, user)).limit(1)) is not None
 
 
 def _require_collection_owner_control(collection: Collection, user: User) -> None:
@@ -488,7 +497,21 @@ def _validate_known_users(db: Session, user_ids: list[str]) -> None:
         )
 
 
-def _read_user_details(db: Session, read_users: list[str]) -> list[ReadUserDetail]:
+def _load_read_users(db: Session, user_ids: set[str]) -> dict[str, User]:
+    """One query (plus one for their primary teams) for every `read_users`
+    id a response needs, instead of a query and a lazy `user.team` load per
+    collection and per person."""
+    if not user_ids:
+        return {}
+    return {
+        user.id: user
+        for user in db.scalars(select(User).where(User.id.in_(user_ids)).options(selectinload(User.team))).all()
+    }
+
+
+def _read_user_details(
+    db: Session, read_users: list[str], users_by_id: dict[str, User] | None = None
+) -> list[ReadUserDetail]:
     """Resolve `read_users` (Weave-Ingest user ids) into the person-picker's
     display shape, in the same order -- a stale id (its User row deleted
     since the grant was made) is silently dropped, never surfaced as a
@@ -496,7 +519,8 @@ def _read_user_details(db: Session, read_users: list[str]) -> list[ReadUserDetai
     field, same discipline as the directory endpoints."""
     if not read_users:
         return []
-    users_by_id = {user.id: user for user in db.scalars(select(User).where(User.id.in_(read_users))).all()}
+    if users_by_id is None:
+        users_by_id = _load_read_users(db, set(read_users))
     details = []
     for user_id in read_users:
         user = users_by_id.get(user_id)
@@ -506,7 +530,14 @@ def _read_user_details(db: Session, read_users: list[str]) -> list[ReadUserDetai
     return details
 
 
-def _collection_to_response(db: Session, collection: Collection, user: User, *, job_ids: list[str] | None = None) -> CollectionResponse:
+def _collection_to_response(
+    db: Session,
+    collection: Collection,
+    user: User,
+    *,
+    job_ids: list[str] | None = None,
+    read_users_by_id: dict[str, User] | None = None,
+) -> CollectionResponse:
     return CollectionResponse(
         collection_id=collection.id,
         can_manage=user.role == UserRole.ADMIN or collection.owner_id == user.id,
@@ -517,7 +548,7 @@ def _collection_to_response(db: Session, collection: Collection, user: User, *, 
         visibility=collection.visibility,
         read_teams=list(collection.read_teams or []),
         read_users=list(collection.read_users or []),
-        read_user_details=_read_user_details(db, list(collection.read_users or [])),
+        read_user_details=_read_user_details(db, list(collection.read_users or []), read_users_by_id),
         email=collection.email,
         department=collection.department,
         folder=collection.folder,
@@ -1168,7 +1199,13 @@ def list_collections(db: Session = Depends(get_db), user: User = Depends(get_cur
     collections = db.scalars(select(Collection).order_by(Collection.created_at.desc())).all()
     if user.role != UserRole.ADMIN:
         collections = [collection for collection in collections if _can_read_collection(db, collection, user)]
-    return CollectionListResponse(items=[_collection_to_response(db, collection, user) for collection in collections])
+    read_users_by_id = _load_read_users(db, {user_id for c in collections for user_id in (c.read_users or [])})
+    return CollectionListResponse(
+        items=[
+            _collection_to_response(db, collection, user, read_users_by_id=read_users_by_id)
+            for collection in collections
+        ]
+    )
 
 
 @knowledge_router.get('/collections/registry', response_model=CollectionRegistryResponse)
@@ -1362,7 +1399,12 @@ def list_directory_users(
     here (see DirectoryUserEntry's own docstring). Active users only; never
     returns email or any other personal field."""
     _require_directory_access(db, user)
-    query = select(User).where(User.is_active.is_(True)).outerjoin(Team, Team.id == User.team_id)
+    query = (
+        select(User)
+        .where(User.is_active.is_(True))
+        .outerjoin(Team, Team.id == User.team_id)
+        .options(selectinload(User.team))
+    )
     cleaned = q.strip().lower()
     if cleaned:
         pattern = f'%{cleaned}%'

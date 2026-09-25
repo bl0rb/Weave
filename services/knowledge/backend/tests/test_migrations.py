@@ -251,6 +251,11 @@ def test_0005_collection_visibility_migration_upgrade_downgrade_round_trip(tmp_p
     with engine.begin() as conn:
         team_row = conn.execute(select(collections).where(collections.c.slug == 'team-only')).mappings().one()
     assert team_row['visibility'] == 'restricted'
+    # 0006: an insert that bypasses the ORM default mirrors fail closed.
+    with engine.begin() as conn:
+        conn.execute(insert(collections).values(slug='post-migration', name='Post', read_teams=[], synced_at=now))
+        post_row = conn.execute(select(collections).where(collections.c.slug == 'post-migration')).mappings().one()
+    assert post_row['visibility'] == 'restricted'
     engine.dispose()
 
     # --- downgrade to just before 0005: the two new columns are gone,

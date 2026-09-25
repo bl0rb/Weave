@@ -1326,8 +1326,22 @@ def admin_delete_team(team_id: str, db: Session = Depends(get_db)) -> dict[str, 
     team = db.get(Team, team_id)
     if team is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Team not found')
+    # Same denormalized-name sync as admin_update_team: drop the grant so a
+    # later team re-created under this name never inherits it, and the
+    # access dialog's PATCH never 422s on an unknown team.
+    changed_collection_slugs: list[str] = []
+    for collection in db.scalars(select(Collection)).all():
+        if team.name in (collection.read_teams or []):
+            collection.read_teams = [value for value in collection.read_teams if value != team.name]
+            changed_collection_slugs.append(collection.slug)
     db.delete(team)
     db.commit()
+    try:
+        if publication_tasks.publication_configured():
+            for slug in changed_collection_slugs:
+                publication_tasks.notify_collection_registry_changed.delay(slug)
+    except Exception:  # pragma: no cover - notification must never break a delete
+        logger.exception('Knowledge registry notification failed after team delete %s', team_id)
     return {'status': 'deleted'}
 
 

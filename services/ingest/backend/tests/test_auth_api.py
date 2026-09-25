@@ -407,6 +407,29 @@ def test_renaming_team_updates_collection_and_bot_permissions(client: TestClient
     assert notified == ['rename-team-collection']
 
 
+def test_deleting_team_removes_it_from_collection_read_teams(client: TestClient, monkeypatch) -> None:
+    _create_user(username='deleteteamadmin', email='deleteteamadmin@example.com', password='CorrectHorse1', role=UserRole.ADMIN)
+    with _db() as db:
+        team = Team(name='Doomed Team')
+        db.add(team)
+        db.flush()
+        collection = Collection(slug='delete-team-collection', name='Knowledge', read_teams=['Doomed Team', 'Other Team'])
+        db.add(collection)
+        db.commit()
+        team_id = team.id
+    _login(client, 'deleteteamadmin', 'CorrectHorse1')
+    notified: list[str] = []
+    monkeypatch.setattr(auth_module.publication_tasks, 'publication_configured', lambda: True)
+    monkeypatch.setattr(auth_module.publication_tasks.notify_collection_registry_changed, 'delay', notified.append)
+
+    response = client.delete(f'/api/v1/auth/admin/teams/{team_id}')
+
+    assert response.status_code == 200
+    with _db() as db:
+        assert db.get(Collection, collection.id).read_teams == ['Other Team']
+    assert notified == ['delete-team-collection']
+
+
 def test_admin_cannot_demote_or_delete_last_active_admin(client: TestClient) -> None:
     _wipe_users_and_sessions()
     sole_admin = _create_user(username='soleadmin', email='soleadmin@example.com', password='CorrectHorse1', role=UserRole.ADMIN)

@@ -3,9 +3,9 @@ app/models/models.py's Collection docstring and the rc/loom-redesign task
 that added them alongside the pre-existing `read_teams` team ACL).
 
 Covers what test_collections_api.py's own docstring says belongs in a
-dedicated real-per-user-authz file: `_can_read_collection`/
-`_can_manage_collection` granting access via `read_users` exactly like they
-already do via `read_teams`, POST/PATCH persisting and validating
+dedicated real-per-user-authz file: `_can_read_collection`
+granting read access via `read_users` (never `_can_manage_collection`'s
+upload/operate rights), POST/PATCH persisting and validating
 `visibility`/`read_users`, and the two new directory endpoints
 (GET /directory/users, GET /directory/teams) that back the person/team
 picker -- authorization and the no-email-leak guarantee.
@@ -81,7 +81,7 @@ def test_create_honors_explicit_visibility_override():
 
 # --- read access via read_users, mirroring read_teams ------------------------
 
-def test_read_users_grants_read_and_manage_like_read_teams_does():
+def test_read_users_grants_read_but_never_upload_or_directory_access():
     owner = _user('share-read-owner')
     grantee = _user('share-read-grantee')
     outsider = _user('share-read-outsider')
@@ -96,10 +96,17 @@ def test_read_users_grants_read_and_manage_like_read_teams_does():
     grantee_client = login_as(grantee.username)
     detail = grantee_client.get(f'/api/v1/collections/{collection_id}')
     assert detail.status_code == 200, detail.text
-    # read_users grants the same "eligible member" upload/operate rights
-    # read_teams membership already grants -- see _can_manage_collection.
-    assert detail.json()['can_upload'] is True
+    # read_users is a read (chat) grant only: no upload/operate rights and
+    # no system-wide directory listing -- see _can_manage_collection.
+    assert detail.json()['can_upload'] is False
     assert detail.json()['can_manage'] is False
+    upload = grantee_client.post(
+        f'/api/v1/collections/{collection_id}/upload',
+        files={'file': ('shared.pdf', b'%PDF-1.4 minimal', 'application/pdf')},
+    )
+    assert upload.status_code == 403, upload.text
+    assert grantee_client.get('/api/v1/directory/users').status_code == 403
+    assert grantee_client.get('/api/v1/directory/teams').status_code == 403
 
     outsider_client = login_as(outsider.username)
     assert outsider_client.get(f'/api/v1/collections/{collection_id}').status_code == 404

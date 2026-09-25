@@ -1147,7 +1147,8 @@ def test_0032_collection_visibility_backfills_from_read_teams(tmp_path, monkeypa
 
     # A fresh raw-SQL insert omitting visibility/read_users falls back to
     # the columns' own NOT NULL defaults rather than failing -- unlike
-    # 0014's slug/name, both new columns always have a usable default.
+    # 0014's slug/name, both new columns always have a usable default, and
+    # 0034 makes the visibility default fail closed.
     with engine.begin() as conn:
         conn.execute(text(
             "INSERT INTO collections (id, owner_id, slug, name, read_teams, email, department, folder, subfolder, created_at, updated_at) "
@@ -1156,7 +1157,7 @@ def test_0032_collection_visibility_backfills_from_read_teams(tmp_path, monkeypa
         default_visibility = conn.execute(
             text("SELECT visibility FROM collections WHERE id = 'coll-post-migration'")
         ).scalar_one()
-    assert default_visibility == 'public'
+    assert default_visibility == 'restricted'
 
     # --- downgrade one revision: only the 0032 columns disappear ---
     command.downgrade(cfg, '0031_backup_runs')
