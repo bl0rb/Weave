@@ -80,7 +80,7 @@ export function CollectionsTab() {
           <td className="min-w-48"><Link href={`/knowledge/${encodeURIComponent(collection.collection_id)}`} className="font-semibold text-emerald-800 hover:underline">{collection.name}</Link>
             {collection.description && <p className="mt-1 line-clamp-2 text-xs text-slate-500">{collection.description}</p>}
           </td>
-          <td>{collection.grants.some(grant => grant.role === 'owner') ? ownerSummary(collection.grants) : t('admin.collections.noOwner')}
+          <td>{collection.grants.some(grant => grant.role === 'owner') ? ownerSummary(collection.grants, locale) : t('admin.collections.noOwner')}
             {collection.responsible_team && <p className="mt-1 text-xs text-slate-500">{t('portal.spaces.responsibleLine', { team: collection.responsible_team.name })}</p>}
           </td>
           <td className="min-w-36">{accessSummary(collection, locale)}</td>
@@ -154,7 +154,7 @@ function CollectionEditor({ collection, onCancel, onSaved }: {
 
   return <section className="portal-panel portal-form-panel" aria-labelledby="edit-collection-title">
     <h3 id="edit-collection-title" ref={heading} tabIndex={-1} className="text-[17px] font-semibold">{t('admin.collections.editTitle', { name: collection.name })}</h3>
-    <p className="portal-field-hint">{t('admin.collections.ownerLine', { name: collection.grants.some(grant => grant.role === 'owner') ? ownerSummary(collection.grants) : t('admin.collections.noOwner') })}{collection.created_by && ` · ${t('admin.collections.createdByLine', { name: collection.created_by.username })}`}</p>
+    <p className="portal-field-hint">{t('admin.collections.ownerLine', { name: collection.grants.some(grant => grant.role === 'owner') ? ownerSummary(collection.grants, locale) : t('admin.collections.noOwner') })}{collection.created_by && ` · ${t('admin.collections.createdByLine', { name: collection.created_by.username })}`}</p>
     {error && <Notice error action={!original ? () => setRevision(value => value + 1) : undefined}>{error}</Notice>}
     {!original && !error && <Notice>{t('admin.collections.editorLoading')}</Notice>}
     <form className="portal-form" onSubmit={save}>

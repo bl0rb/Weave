@@ -25,11 +25,12 @@ from app.api.routes import (
     _can_own_collection,
     _collection_control_job_filter,
     _content_disposition,
-    _delete_job_artifacts,
     _is_import_page_job,
     _job_folder_path,
     _require_visible,
     _require_visible_collection,
+    _withdraw_and_delete_job,
+    dispatch_withdrawals,
     restart_job,
 )
 from app.core.config import settings
@@ -946,6 +947,7 @@ def bulk_portal_documents(
     done = 0
     errors: list[PortalBulkErrorItem] = []
     releases: list[DocumentRelease] = []
+    withdrawals: list[str] = []
     for job_id in payload.job_ids:
         try:
             job = db.get(Job, job_id, with_for_update=True)
@@ -1010,11 +1012,11 @@ def bulk_portal_documents(
                 if job.password_hash:
                     errors.append(PortalBulkErrorItem(job_id=job_id, reason='Passwortgeschützte Dokumente können nur einzeln gelöscht werden'))
                     continue
-                if db.scalar(select(DocumentRelease.id).where(DocumentRelease.job_id == job.id)) is not None:
+                if not payload.withdraw_released and db.scalar(select(DocumentRelease.id).where(DocumentRelease.job_id == job.id)) is not None:
                     errors.append(PortalBulkErrorItem(job_id=job_id, reason='Freigegebene Dokumente können nicht gelöscht werden'))
                     continue
-                _delete_job_artifacts(job)
-                db.delete(job)
+                if _withdraw_and_delete_job(db, job):
+                    withdrawals.append(job_id)
                 done += 1
         except HTTPException as exc:
             errors.append(PortalBulkErrorItem(job_id=job_id, reason=str(exc.detail)))
@@ -1027,6 +1029,7 @@ def bulk_portal_documents(
             publication_tasks.deliver_release.delay(release.id)
         except Exception:
             logger.exception('publication queue unavailable for release %s', release.id)
+    dispatch_withdrawals(withdrawals)
     return PortalBulkActionResponse(done=done, errors=errors)
 
 

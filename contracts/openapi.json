@@ -4902,6 +4902,29 @@
         "title": "OrphanedFilesReportResponse",
         "type": "object"
       },
+      "OwnedItem": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "sole_owner": {
+            "default": false,
+            "title": "Sole Owner",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "OwnedItem",
+        "type": "object"
+      },
       "PaddleCapabilitiesResponse": {
         "properties": {
           "profiles": {
@@ -5283,6 +5306,11 @@
             "minItems": 1,
             "title": "Job Ids",
             "type": "array"
+          },
+          "withdraw_released": {
+            "default": false,
+            "title": "Withdraw Released",
+            "type": "boolean"
           }
         },
         "required": [
@@ -7066,6 +7094,73 @@
         "title": "TeamUpdateRequest",
         "type": "object"
       },
+      "TeamUsageItem": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "TeamUsageItem",
+        "type": "object"
+      },
+      "TeamUsageResponse": {
+        "description": "Where a team is used, shown before deleting it: its grants go with\nit, and it stops being the responsible team.",
+        "properties": {
+          "bots": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TeamUsageItem"
+            },
+            "title": "Bots",
+            "type": "array"
+          },
+          "collections": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TeamUsageItem"
+            },
+            "title": "Collections",
+            "type": "array"
+          },
+          "member_count": {
+            "title": "Member Count",
+            "type": "integer"
+          },
+          "responsible_for": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TeamUsageItem"
+            },
+            "title": "Responsible For",
+            "type": "array"
+          }
+        },
+        "required": [
+          "member_count"
+        ],
+        "title": "TeamUsageResponse",
+        "type": "object"
+      },
       "TechnicalIdentityAuditEntry": {
         "properties": {
           "actor": {
@@ -7580,6 +7675,29 @@
           "status"
         ],
         "title": "UploadResponse",
+        "type": "object"
+      },
+      "UserOwnershipResponse": {
+        "description": "What a person owns, shown before deleting them.",
+        "properties": {
+          "bots": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/OwnedItem"
+            },
+            "title": "Bots",
+            "type": "array"
+          },
+          "collections": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/OwnedItem"
+            },
+            "title": "Collections",
+            "type": "array"
+          }
+        },
+        "title": "UserOwnershipResponse",
         "type": "object"
       },
       "UserResponse": {
@@ -9579,6 +9697,48 @@
         ]
       }
     },
+    "/api/v1/auth/admin/teams/{team_id}/usage": {
+      "get": {
+        "operationId": "admin_team_usage_api_v1_auth_admin_teams__team_id__usage_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "team_id",
+            "required": true,
+            "schema": {
+              "title": "Team Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamUsageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin Team Usage",
+        "tags": [
+          "auth-admin"
+        ]
+      }
+    },
     "/api/v1/auth/admin/technical-identities": {
       "get": {
         "operationId": "list_technical_identities_api_v1_auth_admin_technical_identities_get",
@@ -9874,6 +10034,7 @@
     },
     "/api/v1/auth/admin/users/{user_id}": {
       "delete": {
+        "description": "Delete an account. Its grants go with it; where it is the last owner\nof a knowledge space or bot, `successor_id` names the person who takes\nover all of its owner roles (409 without one, ADR 0008).",
         "operationId": "admin_delete_user_api_v1_auth_admin_users__user_id__delete",
         "parameters": [
           {
@@ -9883,6 +10044,22 @@
             "schema": {
               "title": "User Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "successor_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Successor Id"
             }
           }
         ],
@@ -9963,6 +10140,48 @@
           }
         },
         "summary": "Admin Update User",
+        "tags": [
+          "auth-admin"
+        ]
+      }
+    },
+    "/api/v1/auth/admin/users/{user_id}/ownership": {
+      "get": {
+        "operationId": "admin_user_ownership_api_v1_auth_admin_users__user_id__ownership_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserOwnershipResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin User Ownership",
         "tags": [
           "auth-admin"
         ]
@@ -11335,7 +11554,7 @@
     },
     "/api/v1/collections/{collection_id}": {
       "delete": {
-        "description": "Delete an empty collection controlled by the caller.\n\nDocuments are deliberately never cascaded from a collection delete: a\nrelease may already have reached the shared RAG store.  The owner must\nremove documents explicitly first, while pending/running Confluence\nimports also block deletion so they cannot create orphaned jobs after\nthis transaction commits.",
+        "description": "Delete a collection controlled by the caller.\n\nBy default only an empty collection: documents are never cascaded by\naccident, since a release may already have reached the shared RAG\nstore. With `with_content` (and the collection's exact name as\n`confirm_name`) an owner deletes it with every document; released ones\nare withdrawn from Knowledge on the way (ADR 0008). Password-protected\ndocuments still have to be deleted one by one. Pending/running\nConfluence imports block deletion either way so they cannot create\norphaned jobs after this transaction commits, and so does any bot or\nactive technical identity naming the slug -- a later collection with\nthe same slug would otherwise inherit that access.",
         "operationId": "delete_collection_api_v1_collections__collection_id__delete",
         "parameters": [
           {
@@ -11345,6 +11564,32 @@
             "schema": {
               "title": "Collection Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "with_content",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "With Content",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "confirm_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Confirm Name"
             }
           }
         ],
@@ -12572,6 +12817,16 @@
                 }
               ],
               "title": "Password"
+            }
+          },
+          {
+            "in": "query",
+            "name": "withdraw",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Withdraw",
+              "type": "boolean"
             }
           }
         ],

@@ -12,8 +12,8 @@ import zipfile
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from redis import Redis
-from sqlalchemy import func, or_, select, text
-from sqlalchemy.orm import Session, defer, selectinload
+from sqlalchemy import and_, func, or_, select, text
+from sqlalchemy.orm import Session, aliased, defer, selectinload
 
 from app.api.deps import get_current_user, require_admin, require_knowledge_registry_reader
 from app.core.config import settings
@@ -29,12 +29,14 @@ from app.models.models import (
     ImportRun,
     ImportRunStatus,
     Job,
+    KnowledgeWithdrawal,
     JobArtifact,
     JobMarkdownVersion,
     JobStatus,
     ManagedBot,
     Tag,
     Team,
+    TechnicalIdentity,
     User,
     UserRole,
     user_teams,
@@ -227,11 +229,15 @@ def _visible_job_filter(user: User, db: Session | None = None):
     `/markdown-files` and `/folders/*` queries below.
 
     admin => None (no extra filter, sees everything).
-    non-admin => owner_id == user.id, OR owner_id belongs to a user whose
-    CURRENT team_id matches user.team_id (only when the caller is on a
-    team). When a database session is supplied, collection contributors
-    also see that collection's jobs. Ownerless rows without such a grant
-    stay admin-only until claimed via POST /auth/admin/jobs/claim-ownerless.
+    A job in a knowledge space follows only the space's roles (ADR 0008):
+    members and owners see and operate it, readers use it in chat only, and
+    whoever loses the grant loses their own uploads there too.
+    Any other job => owner_id == user.id, OR owner_id belongs to a user
+    whose CURRENT team_id matches user.team_id (only when the caller is on
+    a team). Ownerless rows stay admin-only until claimed via POST
+    /auth/admin/jobs/claim-ownerless. Without a database session the
+    space roles cannot be resolved, so that legacy personal rule applies
+    to every job (only the version-chain lookup calls it that way).
     """
     if user.role == UserRole.ADMIN:
         return None
@@ -239,9 +245,13 @@ def _visible_job_filter(user: User, db: Session | None = None):
     if user.team_ids:
         teammate_ids = select(User.id).where(User.team_id.in_(user.team_ids))
         conditions.append(Job.owner_id.in_(teammate_ids))
-    if db is not None:
-        conditions.append(_collection_control_job_filter(db, user))
-    return or_(*conditions)
+    if db is None:
+        return or_(*conditions)
+    collection_id_expr = Job.processing_info['settings']['collection_id'].as_string()
+    # Aliased and never correlated: callers may already join `collections`.
+    space = aliased(Collection)
+    outside_any_collection = ~select(space.id).where(space.id == collection_id_expr).correlate_except(space).exists()
+    return or_(and_(outside_any_collection, or_(*conditions)), _collection_control_job_filter(db, user))
 
 
 def _apply_visible_filter(query, user: User, *, db: Session | None = None):
@@ -277,16 +287,17 @@ def _owner_visible(db: Session, owner_id: str | None, user: User) -> bool:
 
 
 def _job_visible(db: Session, job: Job, user: User) -> bool:
-    """Owner/team visibility plus an explicit collection contribution grant."""
-    if _owner_visible(db, job.owner_id, user):
-        return True
+    """Python counterpart of `_visible_job_filter`: a job in a knowledge
+    space needs member rights there, any other job the owner/team rule."""
     collection_id = None
     info = job.processing_info if isinstance(job.processing_info, dict) else {}
     settings_info = info.get('settings') if isinstance(info.get('settings'), dict) else {}
     if isinstance(settings_info.get('collection_id'), str):
         collection_id = settings_info['collection_id']
     collection = db.get(Collection, collection_id) if collection_id else None
-    return collection is not None and _can_manage_collection(db, collection, user)
+    if collection is not None:
+        return _can_manage_collection(db, collection, user)
+    return _owner_visible(db, job.owner_id, user)
 
 
 def _require_visible(db: Session, job: Job, user: User) -> None:
@@ -1247,16 +1258,23 @@ def update_collection(
 def delete_collection(
     collection_id: str,
     request: Request,
+    with_content: bool = False,
+    confirm_name: str | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> dict[str, str]:
-    """Delete an empty collection controlled by the caller.
+    """Delete a collection controlled by the caller.
 
-    Documents are deliberately never cascaded from a collection delete: a
-    release may already have reached the shared RAG store.  The owner must
-    remove documents explicitly first, while pending/running Confluence
-    imports also block deletion so they cannot create orphaned jobs after
-    this transaction commits.
+    By default only an empty collection: documents are never cascaded by
+    accident, since a release may already have reached the shared RAG
+    store. With `with_content` (and the collection's exact name as
+    `confirm_name`) an owner deletes it with every document; released ones
+    are withdrawn from Knowledge on the way (ADR 0008). Password-protected
+    documents still have to be deleted one by one. Pending/running
+    Confluence imports block deletion either way so they cannot create
+    orphaned jobs after this transaction commits, and so does any bot or
+    active technical identity naming the slug -- a later collection with
+    the same slug would otherwise inherit that access.
     """
     enforce_rate_limit(request)
     collection = db.get(Collection, collection_id)
@@ -1265,12 +1283,23 @@ def delete_collection(
     _require_visible_collection(db, collection, user)
     _require_collection_owner_control(db, collection, user)
     slug = collection.slug
+    if with_content and (confirm_name or '').strip() != collection.name:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail='Zum Löschen mit allen Inhalten muss der Name des Wissensbereichs bestätigt werden.',
+        )
 
     collection_ref = Job.processing_info['settings']['collection_id'].as_string()
-    if db.scalar(select(Job.id).where(collection_ref == collection.id).limit(1)) is not None:
+    jobs = db.scalars(select(Job).where(collection_ref == collection.id).options(*_JOB_BLOB_DEFER_OPTIONS)).all()
+    if jobs and not with_content:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail='Der Wissensbereich enthält noch Dokumente und kann deshalb nicht gelöscht werden.',
+        )
+    if any(job.password_hash for job in jobs):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='Der Wissensbereich enthält passwortgeschützte Dokumente. Bitte lösche sie zuerst einzeln.',
         )
 
     import_collection_ref = ImportRun.options['collection_id'].as_string()
@@ -1297,9 +1326,19 @@ def delete_collection(
             status_code=status.HTTP_409_CONFLICT,
             detail='Der Wissensbereich ist noch einem Bot zugeordnet. Bitte entferne zuerst diese Zuordnung.',
         )
+    identity_scopes = db.scalars(
+        select(TechnicalIdentity.allowed_collections).where(TechnicalIdentity.revoked_at.is_(None))
+    ).all()
+    if any(slug in (scopes or []) for scopes in identity_scopes):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='Der Wissensbereich ist noch einer technischen Identität zugeordnet. Bitte entferne zuerst diese Zuordnung.',
+        )
 
+    withdrawn = [job.id for job in jobs if _withdraw_and_delete_job(db, job)]
     db.delete(collection)
     db.commit()
+    dispatch_withdrawals(withdrawn)
     try:
         if publication_tasks.publication_configured():
             publication_tasks.notify_collection_registry_changed.delay(slug)
@@ -2384,6 +2423,7 @@ def delete_job(
     job_id: str,
     request: Request,
     password: str | None = None,
+    withdraw: bool = False,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> dict[str, str]:
@@ -2397,17 +2437,45 @@ def delete_job(
 
     _check_job_password(job, password)
 
-    if db.scalar(select(DocumentRelease.id).where(DocumentRelease.job_id == job.id)) is not None:
+    if not withdraw and db.scalar(select(DocumentRelease.id).where(DocumentRelease.job_id == job.id)) is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail='Job has an issued portal release and cannot be deleted',
         )
 
-    _delete_job_artifacts(job)
-
-    db.delete(job)
+    withdrawn = _withdraw_and_delete_job(db, job)
     db.commit()
+    dispatch_withdrawals([job_id] if withdrawn else [])
     return {'status': 'deleted'}
+
+
+def _withdraw_and_delete_job(db: Session, job: Job) -> bool:
+    """Delete a job; a released one is withdrawn from Knowledge on the way
+    (ADR 0008). Knowledge keeps a tombstone per job id and ignores any later
+    release of it, so a release still in flight cannot bring it back.
+    Returns whether a withdrawal was queued -- dispatch it after commit."""
+    releases = db.scalars(select(DocumentRelease).where(DocumentRelease.job_id == job.id)).all()
+    queued = False
+    if releases:
+        if db.get(KnowledgeWithdrawal, job.id) is None:
+            db.add(KnowledgeWithdrawal(job_id=job.id))
+            queued = True
+        for release in releases:
+            db.delete(release)
+        # `document_releases.job_id` is ON DELETE RESTRICT.
+        db.flush()
+    _delete_job_artifacts(job)
+    db.delete(job)
+    return queued
+
+
+def dispatch_withdrawals(job_ids: list[str]) -> None:
+    """Best effort: the periodic reconciler delivers anything left pending."""
+    for job_id in job_ids:
+        try:
+            celery_app.send_task('deliver_knowledge_withdrawal', args=[job_id])
+        except Exception:  # pragma: no cover - broker outage must not fail the delete
+            logger.exception('Knowledge withdrawal dispatch failed for job %s', job_id)
 
 
 @router.get('/paddle/status', response_model=PaddleStatusResponse)

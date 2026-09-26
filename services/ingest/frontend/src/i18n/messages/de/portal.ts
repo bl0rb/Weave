@@ -95,6 +95,7 @@ export const portal = {
   'access.role.owner': 'Besitzer',
   'access.role.member': 'Mitglied',
   'access.role.reader': 'Leser',
+  'access.inactive': 'deaktiviert',
 
   // src/components/portal/new-knowledge-space.tsx
   'newSpace.step': 'SCHRITT 1 VON 3',
@@ -141,8 +142,10 @@ export const portal = {
   'spaces.emptyBody': 'Lege deinen ersten Wissensbereich an. Danach kannst du Dateien und Confluence-Seiten hinzufügen.',
   'spaces.savedNotice': 'Wissensbereich gespeichert.',
   'spaces.deleteDialogTitle': 'Wissensbereich löschen',
-  'spaces.deleteDialogBodyPrefix': 'Den leeren Wissensbereich',
-  'spaces.deleteDialogBodySuffix': ' löschen? Enthält er Dokumente, einen laufenden Import oder eine Bot-Zuordnung, wird die Aktion zum Schutz der Inhalte und Rechte abgelehnt.',
+  'spaces.deleteDialogBodyPrefix': 'Den Wissensbereich',
+  'spaces.deleteDialogBodySuffix': ' löschen? Ohne die Option unten muss er leer sein. Ein laufender Import, eine Bot-Zuordnung oder eine technische Identität verhindern das Löschen immer.',
+  'spaces.deleteWithContent': 'Mit allen Dokumenten löschen – freigegebene werden aus dem Wissen zurückgezogen. Das kann nicht rückgängig gemacht werden.',
+  'spaces.deleteConfirmName': 'Zur Bestätigung den Namen „{name}“ eingeben',
   'spaces.deletedNotice': 'Wissensbereich gelöscht.',
   'spaces.accessSavedNotice': 'Zugriff gespeichert.',
   'spaces.editDialogTitle': 'Wissensbereich bearbeiten',
@@ -161,6 +164,7 @@ export const portal = {
   'spaces.emptyContentBody': 'Die Eigentümer des Wissensbereichs können eine Quelle hinzufügen. Verbinde eine Confluence-Seite oder lade Dokumente hoch. Nach der Verarbeitung prüfst du den Inhalt.',
   'spaces.deleteDocumentsTitle': 'Dokumente löschen',
   'spaces.deleteDocumentsBody': '{count} Dokument unwiderruflich löschen?|{count} Dokumente unwiderruflich löschen?',
+  'spaces.withdrawReleased': 'Auch freigegebene Dokumente löschen – sie werden dabei aus dem Wissen zurückgezogen.',
   'spaces.reindexBodyPrefix': 'Alle freigegebenen Dokumente in',
   'spaces.reindexBodySuffix': 'erneut indizieren?',
   'spaces.reindexConfirm': 'Neu indizieren',

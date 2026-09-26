@@ -271,10 +271,13 @@ export function ConfirmDialog({
   confirmLabel,
   onConfirm,
   onClose,
+  confirmDisabled = false,
 }: {
   title: string;
   body: React.ReactNode;
   confirmLabel: string;
+  /** Keeps the confirm button disabled, e.g. until a name is typed. */
+  confirmDisabled?: boolean;
   /** May throw — the error detail is rendered inside the dialog. */
   onConfirm: () => Promise<void>;
   onClose: () => void;
@@ -303,7 +306,7 @@ export function ConfirmDialog({
           <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>
             {t('common.cancel')}
           </Button>
-          <Button variant="danger" size="sm" onClick={handleConfirm} disabled={busy}>
+          <Button variant="danger" size="sm" onClick={handleConfirm} disabled={busy || confirmDisabled}>
             {busy && <LoaderCircle className="h-4 w-4 animate-spin" />}
             {confirmLabel}
           </Button>

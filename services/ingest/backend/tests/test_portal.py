@@ -469,7 +469,8 @@ def test_portal_release_requires_control_and_stale_preview_is_rejected(monkeypat
     denied = login_as(teammate.username).post(
         f'/api/v1/portal/documents/{job.id}/release', json={'markdown_sha256': preview['markdown_sha256']}
     )
-    assert denied.status_code == 403
+    # A reader of the space doesn't even see its documents (ADR 0008).
+    assert denied.status_code == 404
 
     db = _db()
     try:
@@ -863,7 +864,8 @@ def test_portal_reindex_document_requires_control(monkeypatch):
     owner_client.post(f'/api/v1/portal/documents/{job.id}/release', json={'markdown_sha256': preview['markdown_sha256']})
 
     denied = login_as(teammate.username).post(f'/api/v1/portal/documents/{job.id}/reindex')
-    assert denied.status_code == 403, denied.text
+    # A reader of the space doesn't even see its documents (ADR 0008).
+    assert denied.status_code == 404, denied.text
 
 
 def test_portal_reindex_collection_requeues_every_non_withdrawn_release(monkeypatch):

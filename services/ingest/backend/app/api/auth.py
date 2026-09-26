@@ -25,7 +25,7 @@ from authlib.common.security import generate_token
 from authlib.oauth2.rfc7636 import create_s256_code_challenge
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -42,7 +42,13 @@ from app.database.session import get_db
 from app.models.models import (
     ApiToken,
     AuthProvider,
+    BotGrant,
+    BotRole,
+    Collection,
+    CollectionGrant,
+    CollectionRole,
     Job,
+    ManagedBot,
     LoginHandoffCode,
     Session as SessionModel,
     Team,
@@ -77,10 +83,14 @@ from app.schemas.auth import (
     ProvidersPublicResponse,
     SetupRequest,
     SetupStatusResponse,
+    OwnedItem,
     TeamCreateRequest,
     TeamListResponse,
     TeamResponse,
     TeamUpdateRequest,
+    TeamUsageItem,
+    TeamUsageResponse,
+    UserOwnershipResponse,
     UserResponse,
     VlConnectionAdminListResponse,
     VlConnectionAdminResponse,
@@ -1256,15 +1266,86 @@ def _set_user_teams(db: Session, user: User, team_ids: list[str] | None, primary
     user.team_id = primary or (user.team_id if user.team_id in selected else next(iter(selected), None))
 
 
+def _owned(db: Session, user_id: str) -> UserOwnershipResponse:
+    """Every collection and bot ``user_id`` owns, flagging where nobody else does."""
+    collections = []
+    for grant in db.scalars(
+        select(CollectionGrant).where(CollectionGrant.user_id == user_id, CollectionGrant.role == CollectionRole.OWNER)
+    ).all():
+        others = [g for g in grant.collection.grants if g.role == CollectionRole.OWNER and g.user_id != user_id]
+        collections.append(OwnedItem(id=grant.collection_id, name=grant.collection.name, sole_owner=not others))
+    bots = []
+    for grant in db.scalars(select(BotGrant).where(BotGrant.user_id == user_id, BotGrant.role == BotRole.OWNER)).all():
+        others = [g for g in grant.bot.grants if g.role == BotRole.OWNER and g.user_id != user_id]
+        bots.append(OwnedItem(id=grant.bot_id, name=grant.bot.name, sole_owner=not others))
+    return UserOwnershipResponse(
+        collections=sorted(collections, key=lambda item: item.name.lower()),
+        bots=sorted(bots, key=lambda item: item.name.lower()),
+    )
+
+
+@router_admin.get('/users/{user_id}/ownership', response_model=UserOwnershipResponse)
+def admin_user_ownership(user_id: str, db: Session = Depends(get_db)) -> UserOwnershipResponse:
+    if db.get(User, user_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
+    return _owned(db, user_id)
+
+
+def _transfer_ownership(db: Session, user: User, successor: User) -> None:
+    """The successor becomes owner wherever ``user`` was (ADR 0008)."""
+    for grant in db.scalars(
+        select(CollectionGrant).where(CollectionGrant.user_id == user.id, CollectionGrant.role == CollectionRole.OWNER)
+    ).all():
+        existing = next((g for g in grant.collection.grants if g.user_id == successor.id), None)
+        if existing is not None:
+            existing.role = CollectionRole.OWNER
+        else:
+            grant.collection.grants.append(CollectionGrant(user_id=successor.id, role=CollectionRole.OWNER))
+    for grant in db.scalars(select(BotGrant).where(BotGrant.user_id == user.id, BotGrant.role == BotRole.OWNER)).all():
+        existing = next((g for g in grant.bot.grants if g.user_id == successor.id), None)
+        if existing is not None:
+            existing.role = BotRole.OWNER
+        else:
+            grant.bot.grants.append(BotGrant(user_id=successor.id, role=BotRole.OWNER))
+
+
 @router_admin.delete('/users/{user_id}')
-def admin_delete_user(user_id: str, db: Session = Depends(get_db)) -> dict[str, str]:
+def admin_delete_user(user_id: str, successor_id: str | None = None, db: Session = Depends(get_db)) -> dict[str, str]:
+    """Delete an account. Its grants go with it; where it is the last owner
+    of a knowledge space or bot, `successor_id` names the person who takes
+    over all of its owner roles (409 without one, ADR 0008)."""
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
     if user.role == UserRole.ADMIN and user.is_active and _count_active_admins(db, exclude_user_id=user.id) < 1:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Cannot delete the last active admin')
+    owned = _owned(db, user.id)
+    sole = [item.name for item in owned.collections + owned.bots if item.sole_owner]
+    if successor_id:
+        successor = db.get(User, successor_id)
+        if successor is None or successor.id == user.id or not successor.is_active:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='Successor must be another active user')
+        _transfer_ownership(db, user, successor)
+    elif sole:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f'Last owner of: {", ".join(sole)}. Choose a successor.',
+        )
+    # Every space the person was named in changes its registry entry.
+    changed_slugs = list(db.scalars(
+        select(Collection.slug)
+        .join(CollectionGrant, CollectionGrant.collection_id == Collection.id)
+        .where(CollectionGrant.user_id == user.id)
+        .distinct()
+    ).all())
     db.delete(user)
     db.commit()
+    try:
+        if publication_tasks.publication_configured():
+            for slug in changed_slugs:
+                publication_tasks.notify_collection_registry_changed.delay(slug)
+    except Exception:  # pragma: no cover - notification must never break a delete
+        logger.exception('Knowledge registry notification failed after user delete %s', user_id)
     return {'status': 'deleted'}
 
 
@@ -1310,6 +1391,27 @@ def admin_update_team(team_id: str, payload: TeamUpdateRequest, db: Session = De
     except Exception:  # pragma: no cover - notification must never break a rename
         logger.exception('Knowledge registry notification failed after team rename %s', team.id)
     return _team_response(team)
+
+
+@router_admin.get('/teams/{team_id}/usage', response_model=TeamUsageResponse)
+def admin_team_usage(team_id: str, db: Session = Depends(get_db)) -> TeamUsageResponse:
+    team = db.get(Team, team_id)
+    if team is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Team not found')
+    members = db.scalar(
+        select(func.count(func.distinct(User.id))).where(
+            or_(User.team_id == team.id, User.id.in_(select(user_teams.c.user_id).where(user_teams.c.team_id == team.id)))
+        )
+    ) or 0
+    grants = db.scalars(select(CollectionGrant).where(CollectionGrant.team_id == team.id)).all()
+    responsible = db.scalars(select(Collection).where(Collection.responsible_team_id == team.id)).all()
+    bots = db.scalars(select(ManagedBot).join(BotGrant, BotGrant.bot_id == ManagedBot.id).where(BotGrant.team_id == team.id)).all()
+    return TeamUsageResponse(
+        member_count=int(members),
+        collections=[TeamUsageItem(id=g.collection_id, name=g.collection.name, role=g.role.value) for g in grants],
+        responsible_for=[TeamUsageItem(id=c.id, name=c.name) for c in responsible],
+        bots=[TeamUsageItem(id=b.id, name=b.name) for b in bots],
+    )
 
 
 @router_admin.delete('/teams/{team_id}')

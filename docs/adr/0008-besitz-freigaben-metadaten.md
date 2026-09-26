@@ -74,6 +74,16 @@ SSO-Konten entstehen bei der ersten Anmeldung. Eine Freigabe an eine SSO-Person 
 
 Weave-Knowledge und Weave-Retrieval brauchen nur die Leserechte. Der Registry-Vertrag (`visibility`, `read_teams`, `read_users`) bleibt deshalb unverändert: Weave-Ingest berechnet ihn aus allen Freigaben, da jede Rolle Lesen einschließt. Rechteänderungen erfordern weiterhin keine Neuindizierung.
 
+### Löschen und Entfernen
+
+- **Person deaktivieren:** Anmeldung und Chat sind sofort gesperrt, da Weave-API die Identität bei jeder Anfrage in Weave-Ingest prüft. Die Freigaben bleiben, damit das Deaktivieren umkehrbar ist; die Oberfläche markiert deaktivierte Besitzer.
+- **Person löschen:** Ihre Freigaben entfallen. Ist sie letzter Besitzer eines Bereichs oder Bots, bestimmt die Administration einen Nachfolger, der alle ihre Besitzerrollen übernimmt; ohne Nachfolger wird das Löschen abgelehnt.
+- **Team löschen:** Seine Freigaben und Mitgliedschaften entfallen, und es ist nirgends mehr zuständiges Team. Vorher zeigt die Oberfläche, welche Bereiche und Bots betroffen sind.
+- **Freigabe entziehen, Teamrolle ändern:** wirkt sofort. Dokumente eines Bereichs folgen nur dessen Rollen: Mitglieder und Besitzer sehen und bearbeiten sie, Leser nutzen den Bereich im Chat. Wer die Freigabe verliert, verliert damit auch den Zugriff auf seine eigenen Uploads dort.
+- **Dokument löschen:** Mitglieder, Besitzer und Administration. Ein freigegebenes Dokument wird dabei aus dem Wissen zurückgezogen; Weave-Knowledge merkt sich die Rücknahme und ignoriert spätere Freigaben desselben Dokuments.
+- **Bereich löschen:** leer, oder durch einen Besitzer mitsamt allen Dokumenten, nachdem er den Namen eingegeben hat. Passwortgeschützte Dokumente, laufende Importe und die Zuordnung zu einem Bot oder einer aktiven technischen Identität verhindern das Löschen – sonst erbte ein späterer Bereich mit demselben Kurznamen diesen Zugriff.
+- **Bot löschen:** nur Administration; seine Freigaben entfallen.
+
 ### Migration
 
 - `owner_id` wird zur Besitzer-Freigabe und zu `created_by_id`.

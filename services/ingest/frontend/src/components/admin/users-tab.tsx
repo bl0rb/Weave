@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Briefcase, LoaderCircle, Pencil, Plus, Trash2, Users as UsersIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -167,24 +167,86 @@ export function UsersTab() {
       )}
 
       {deleting && (
-        <ConfirmDialog
-          title={t('admin.users.deleteTitle')}
-          body={
-            <p>
-              {t('admin.users.deleteBodyPrefix')} <span className="font-semibold text-slate-950">{deleting.username}</span>
-              {t('admin.users.deleteBodySuffix')}
-            </p>
-          }
-          confirmLabel={t('admin.users.deleteTitle')}
+        <DeleteUserDialog
+          user={deleting}
+          candidates={users.items.filter((u) => u.id !== deleting.id && u.is_active)}
           onClose={() => setDeleting(null)}
-          onConfirm={async () => {
-            await apiSend(`/api/v1/auth/admin/users/${deleting.id}`, { method: 'DELETE' });
+          onDeleted={async () => {
             setDeleting(null);
             await users.reload();
           }}
         />
       )}
     </div>
+  );
+}
+
+type OwnedItem = { id: string; name: string; sole_owner: boolean };
+
+/** Deleting a person who is the last owner of a knowledge space or bot needs
+ * a successor who takes over all of their owner roles (ADR 0008). */
+function DeleteUserDialog({
+  user,
+  candidates,
+  onClose,
+  onDeleted,
+}: {
+  user: AuthUser;
+  candidates: AuthUser[];
+  onClose: () => void;
+  onDeleted: () => Promise<void>;
+}) {
+  const { t } = useI18n();
+  const [owned, setOwned] = useState<{ collections: OwnedItem[]; bots: OwnedItem[] } | null>(null);
+  const [successor, setSuccessor] = useState('');
+  useEffect(() => {
+    apiJson<{ collections: OwnedItem[]; bots: OwnedItem[] }>(`/api/v1/auth/admin/users/${user.id}/ownership`)
+      .then(setOwned)
+      .catch(() => setOwned({ collections: [], bots: [] }));
+  }, [user.id]);
+  const items = owned ? [...owned.collections, ...owned.bots] : [];
+  const needsSuccessor = items.some((item) => item.sole_owner);
+  return (
+    <ConfirmDialog
+      title={t('admin.users.deleteTitle')}
+      confirmLabel={t('admin.users.deleteTitle')}
+      confirmDisabled={!owned || (needsSuccessor && !successor)}
+      body={
+        <>
+          <p>
+            {t('admin.users.deleteBodyPrefix')} <span className="font-semibold text-slate-950">{user.username}</span>
+            {t('admin.users.deleteBodySuffix')}
+          </p>
+          {items.length > 0 && (
+            <div className="mt-3 space-y-2 text-sm">
+              <p>{t('admin.users.ownedIntro')}</p>
+              <ul className="list-disc pl-5">
+                {items.map((item) => (
+                  <li key={item.id}>
+                    {item.name}
+                    {item.sole_owner && <span className="text-[var(--muted)]"> · {t('admin.users.soleOwner')}</span>}
+                  </li>
+                ))}
+              </ul>
+              <Field label={t('admin.users.successor')} hint={needsSuccessor ? t('admin.users.successorRequired') : t('admin.users.successorOptional')}>
+                <select aria-label={t('admin.users.successor')} className={inputClass} value={successor} onChange={(event) => setSuccessor(event.target.value)}>
+                  <option value="">{t('admin.users.chooseSuccessor')}</option>
+                  {candidates.map((candidate) => (
+                    <option key={candidate.id} value={candidate.id}>{candidate.username}</option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+          )}
+        </>
+      }
+      onClose={onClose}
+      onConfirm={async () => {
+        const query = successor ? `?${new URLSearchParams({ successor_id: successor })}` : '';
+        await apiSend(`/api/v1/auth/admin/users/${user.id}${query}`, { method: 'DELETE' });
+        await onDeleted();
+      }}
+    />
   );
 }
 

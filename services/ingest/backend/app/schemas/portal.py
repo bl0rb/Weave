@@ -121,6 +121,9 @@ class PortalBulkActionRequest(BaseModel):
     job_ids: list[str] = Field(min_length=1, max_length=100)
     action: Literal['release', 'skip', 'unskip', 'delete']
     accept_quality_warnings: bool = False
+    # `delete` only: also delete released documents, withdrawing them from
+    # Knowledge first (ADR 0008). Without it they are reported as errors.
+    withdraw_released: bool = False
 
 
 class PortalBulkErrorItem(BaseModel):

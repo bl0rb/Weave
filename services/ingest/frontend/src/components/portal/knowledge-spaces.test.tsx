@@ -81,7 +81,7 @@ it('renames a knowledge space through the existing patch contract', async () => 
 it('requires a confirmation before deleting an empty knowledge space', async () => {
   render(<KnowledgeSpaces />);
   fireEvent.click(await screen.findByRole('button', { name: 'Servicewissen löschen' }));
-  expect(screen.getByText(/Dokumente, einen laufenden Import oder eine Bot-Zuordnung/)).toBeTruthy();
+  expect(screen.getByText(/Ohne die Option unten muss er leer sein/)).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Wissensbereich löschen' }));
 
   await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
@@ -89,6 +89,22 @@ it('requires a confirmation before deleting an empty knowledge space', async () 
     { method: 'DELETE' },
   ));
   expect(await screen.findByText('Wissensbereich gelöscht.')).toBeTruthy();
+});
+
+it('deletes a knowledge space with all its content only after its name is typed', async () => {
+  render(<KnowledgeSpaces />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Servicewissen löschen' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: /Mit allen Dokumenten löschen/ }));
+  const confirm = screen.getByRole('button', { name: 'Wissensbereich löschen' }) as HTMLButtonElement;
+  expect(confirm.disabled).toBe(true);
+  fireEvent.change(screen.getByRole('textbox', { name: /Namen „Servicewissen“ eingeben/ }), { target: { value: 'Servicewissen' } });
+  expect(confirm.disabled).toBe(false);
+  fireEvent.click(confirm);
+
+  await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
+    '/api/v1/collections/area-1?with_content=true&confirm_name=Servicewissen',
+    { method: 'DELETE' },
+  ));
 });
 
 it('reindexes a knowledge space after confirmation and shows the requeued count', async () => {

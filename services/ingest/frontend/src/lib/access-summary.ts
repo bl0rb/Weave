@@ -25,8 +25,10 @@ export function accessSummary(collection: AccessSummaryInput, locale: Locale = D
   return parts.length ? parts.join(', ') : translate(locale, 'portal.access.adminsOnly');
 }
 
-/** The owners' names, or a dash when a space has none (legacy, admin-managed). */
-export function ownerSummary(grants: CollectionGrant[]): string {
-  const owners = grants.filter(grant => grant.role === 'owner').map(grant => grant.name);
+/** The owners' names, deactivated ones marked, or a dash when a space has
+ * none (legacy, admin-managed). */
+export function ownerSummary(grants: CollectionGrant[], locale: Locale = DEFAULT_LOCALE): string {
+  const owners = grants.filter(grant => grant.role === 'owner')
+    .map(grant => grant.is_active === false ? `${grant.name} (${translate(locale, 'portal.access.inactive')})` : grant.name);
   return owners.length ? owners.join(', ') : '—';
 }

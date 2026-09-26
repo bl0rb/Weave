@@ -163,8 +163,9 @@ export function summarizePipeline(documents: PortalDocument[], live: Record<stri
   return counts;
 }
 
-export function bulkPortalAction(jobIds: string[], action: BulkAction, acceptQualityWarnings = false): Promise<BulkActionResult> {
-  return apiJson('/api/v1/portal/documents/bulk', jsonBody({ job_ids: jobIds, action, accept_quality_warnings: acceptQualityWarnings }));
+/** `withdrawReleased` (delete only): released documents are withdrawn from the knowledge index and deleted too. */
+export function bulkPortalAction(jobIds: string[], action: BulkAction, acceptQualityWarnings = false, withdrawReleased = false): Promise<BulkActionResult> {
+  return apiJson('/api/v1/portal/documents/bulk', jsonBody({ job_ids: jobIds, action, accept_quality_warnings: acceptQualityWarnings, withdraw_released: withdrawReleased }));
 }
 
 export function skipPortalDocument(jobId: string): Promise<PortalDocument> {

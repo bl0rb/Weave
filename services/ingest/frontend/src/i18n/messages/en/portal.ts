@@ -96,6 +96,7 @@ export const portal: Record<keyof typeof de, string> = {
   'access.role.owner': 'Owner',
   'access.role.member': 'Member',
   'access.role.reader': 'Reader',
+  'access.inactive': 'deactivated',
 
   // src/components/portal/new-knowledge-space.tsx
   'newSpace.step': 'STEP 1 OF 3',
@@ -142,8 +143,10 @@ export const portal: Record<keyof typeof de, string> = {
   'spaces.emptyBody': 'Create your first knowledge space. Then you can add files and Confluence pages.',
   'spaces.savedNotice': 'Knowledge space saved.',
   'spaces.deleteDialogTitle': 'Delete knowledge space',
-  'spaces.deleteDialogBodyPrefix': 'Delete the empty knowledge space',
-  'spaces.deleteDialogBodySuffix': '? If it contains documents, a running import, or a bot assignment, the action is rejected to protect the content and permissions.',
+  'spaces.deleteDialogBodyPrefix': 'Delete the knowledge space',
+  'spaces.deleteDialogBodySuffix': '? Without the option below it has to be empty. A running import, a bot assignment or a technical identity always prevent deletion.',
+  'spaces.deleteWithContent': 'Delete with all documents – released ones are withdrawn from the knowledge index. This cannot be undone.',
+  'spaces.deleteConfirmName': 'Type the name “{name}” to confirm',
   'spaces.deletedNotice': 'Knowledge space deleted.',
   'spaces.accessSavedNotice': 'Access saved.',
   'spaces.editDialogTitle': 'Edit knowledge space',
@@ -162,6 +165,7 @@ export const portal: Record<keyof typeof de, string> = {
   'spaces.emptyContentBody': 'The owners of this knowledge space can add a source. Connect a Confluence page or upload documents. You’ll review the content once it’s processed.',
   'spaces.deleteDocumentsTitle': 'Delete documents',
   'spaces.deleteDocumentsBody': 'Permanently delete {count} document?|Permanently delete {count} documents?',
+  'spaces.withdrawReleased': 'Also delete released documents – they are withdrawn from the knowledge index.',
   'spaces.reindexBodyPrefix': 'Reindex all released documents in',
   'spaces.reindexBodySuffix': 'again?',
   'spaces.reindexConfirm': 'Reindex',

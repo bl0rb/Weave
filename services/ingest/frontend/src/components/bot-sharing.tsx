@@ -80,7 +80,7 @@ export function BotSharing({ isPublic, onPublicChange, grants, onGrantsChange, t
       {persons.map(person => {
         const locked = person.role === 'owner' && !canEditOwners;
         return <li className="portal-access-grant-row" key={person.user_id}>
-          <span>{person.name}{person.team && <small>{person.team}</small>}</span>
+          <span>{person.name}{person.team && <small>{person.team}</small>}{person.is_active === false && <small className="portal-field-error">{t('portal.access.inactive')}</small>}</span>
           {canEditOwners
             ? <select className="portal-role-select" value={person.role} onChange={event => setRole(person.user_id as string, event.target.value as BotRole)} aria-label={t('portal.access.dialog.roleAria', { name: person.name })}>
               <option value="owner">{roleLabel('owner')}</option>

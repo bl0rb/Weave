@@ -16,7 +16,7 @@ export type AccessDialogCollection = {
   grants: CollectionGrant[];
 };
 
-type Person = { id: string; username: string; team?: string | null; role: CollectionRole };
+type Person = { id: string; username: string; team?: string | null; role: CollectionRole; isActive?: boolean };
 type TeamRole = Exclude<CollectionRole, 'owner'>;
 
 const PERSON_ROLES: CollectionRole[] = ['owner', 'member', 'reader'];
@@ -40,7 +40,7 @@ export function AccessDialog({ collection, onClose, onSaved }: {
   const [mode, setMode] = useState<'public' | 'restricted'>(collection.visibility);
   const [persons, setPersons] = useState<Person[]>(() => collection.grants
     .filter(grant => grant.user_id)
-    .map(grant => ({ id: grant.user_id as string, username: grant.name, team: grant.team, role: grant.role })));
+    .map(grant => ({ id: grant.user_id as string, username: grant.name, team: grant.team, role: grant.role, isActive: grant.is_active })));
   const [teamRoles, setTeamRoles] = useState<Record<string, TeamRole>>(() => Object.fromEntries(collection.grants
     .filter(grant => grant.team_id)
     .map(grant => [grant.team_id as string, grant.role === 'reader' ? 'reader' : 'member'])));
@@ -161,7 +161,7 @@ export function AccessDialog({ collection, onClose, onSaved }: {
       <label className="portal-access-label" htmlFor="access-search">{t('portal.access.dialog.personsLabel')}</label>
       <ul className="portal-access-grants" aria-label={t('portal.access.dialog.personsLabel')}>
         {persons.map(person => <li className="portal-access-grant-row" key={person.id}>
-          <span>{person.username}{person.team && <small>{person.team}</small>}</span>
+          <span>{person.username}{person.team && <small>{person.team}</small>}{person.isActive === false && <small className="portal-field-error">{t('portal.access.inactive')}</small>}</span>
           <select className="portal-role-select" value={person.role} disabled={saving} onChange={event => setPersonRole(person.id, event.target.value as CollectionRole)}
             aria-label={t('portal.access.dialog.roleAria', { name: person.username })}>
             {PERSON_ROLES.map(role => <option key={role} value={role}>{roleLabel(role)}</option>)}

@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Building2, Check, LoaderCircle, Pencil, Plus, Trash2, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -212,10 +212,13 @@ export function TeamsTab() {
         <ConfirmDialog
           title={t('admin.teams.deleteTitle')}
           body={
-            <p>
-              {t('admin.teams.deleteBodyPrefix')} <span className="font-semibold text-slate-950">{deleting.name}</span>
-              {t('admin.teams.deleteBodySuffix')}
-            </p>
+            <>
+              <p>
+                {t('admin.teams.deleteBodyPrefix')} <span className="font-semibold text-slate-950">{deleting.name}</span>
+                {t('admin.teams.deleteBodySuffix')}
+              </p>
+              <TeamUsage teamId={deleting.id} />
+            </>
           }
           confirmLabel={t('admin.teams.deleteTitle')}
           onClose={() => setDeleting(null)}
@@ -226,6 +229,37 @@ export function TeamsTab() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+
+type TeamUsageItem = { id: string; name: string; role?: string | null };
+type TeamUsageResponse = { member_count: number; collections: TeamUsageItem[]; responsible_for: TeamUsageItem[]; bots: TeamUsageItem[] };
+
+/** What loses access when the team is deleted (ADR 0008). */
+function TeamUsage({ teamId }: { teamId: string }) {
+  const { t } = useI18n();
+  const [usage, setUsage] = useState<TeamUsageResponse | null>(null);
+  useEffect(() => {
+    apiJson<TeamUsageResponse>(`/api/v1/auth/admin/teams/${teamId}/usage`).then(setUsage).catch(() => setUsage(null));
+  }, [teamId]);
+  if (!usage) return null;
+  const sections: [string, TeamUsageItem[]][] = [
+    [t('admin.teams.usage.collections'), usage.collections],
+    [t('admin.teams.usage.responsible'), usage.responsible_for],
+    [t('admin.teams.usage.bots'), usage.bots],
+  ];
+  const used = sections.some(([, items]) => items.length > 0);
+  return (
+    <div className="mt-3 space-y-2 text-sm">
+      <p>{t('admin.teams.usage.members', { count: usage.member_count })}</p>
+      {used ? sections.filter(([, items]) => items.length > 0).map(([title, items]) => (
+        <div key={title}>
+          <p className="font-medium">{title}</p>
+          <ul className="list-disc pl-5">{items.map((item) => <li key={item.id}>{item.name}</li>)}</ul>
+        </div>
+      )) : <p className="text-[var(--muted)]">{t('admin.teams.usage.none')}</p>}
     </div>
   );
 }
