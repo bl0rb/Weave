@@ -551,9 +551,12 @@ def test_unknown_column_tolerated_missing_column_defaulted(monkeypatch, tmp_path
 def test_pre_visibility_archive_keeps_team_restricted_collections_restricted(monkeypatch, tmp_path):
     """An archive from before 0032_collection_visibility has no `visibility`
     column: restore must derive it exactly like that migration's backfill,
-    never fall back to the model's default for either kind of row."""
+    never fall back to the model's default for either kind of row. Being
+    older than 0035_collection_grants too, its `read_teams` become member
+    grants exactly like that migration's backfill."""
     archive_path = tmp_path / 'pre-0032.weave-backup.tar.gz'
     _write_minimal_archive(archive_path, 'pw', {
+        'teams': [{'id': 'team-k', 'name': 'Kundenservice'}],
         'collections': [
             {'id': 'c-public', 'slug': 'oeffentlich', 'name': 'Öffentlich', 'description': '', 'read_teams': []},
             {'id': 'c-team', 'slug': 'service', 'name': 'Service', 'description': '', 'read_teams': ['Kundenservice']},
@@ -568,11 +571,14 @@ def test_pre_visibility_archive_keeps_team_restricted_collections_restricted(mon
         target_db.add(admin)
         target_db.commit()
 
-        backup.import_backup(target_db, path=archive_path, passphrase='pw', importing_admin_id=admin.id)
+        report = backup.import_backup(target_db, path=archive_path, passphrase='pw', importing_admin_id=admin.id)
         target_db.commit()
 
         assert target_db.get(Collection, 'c-public').visibility == CollectionVisibility.PUBLIC
-        assert target_db.get(Collection, 'c-team').visibility == CollectionVisibility.RESTRICTED
-        assert target_db.get(Collection, 'c-team').read_users == []
+        assert target_db.get(Collection, 'c-public').grants == []
+        team_collection = target_db.get(Collection, 'c-team')
+        assert team_collection.visibility == CollectionVisibility.RESTRICTED
+        assert [(grant.team_id, grant.role.value) for grant in team_collection.grants] == [('team-k', 'member')]
+        assert not any('unbekannte Spalte' in warning for warning in report['warnings'])
     finally:
         target_db.close()

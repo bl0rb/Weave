@@ -66,7 +66,7 @@ def test_eml_collection_upload_waits_for_manual_restart_and_portal_release(monke
 
     collection_response = portal_client.post(
         '/api/v1/collections',
-        json={'name': 'Incoming portal mail'},
+        json={'description': 'Test purpose', 'name': 'Incoming portal mail'},
     )
     assert collection_response.status_code == 200, collection_response.text
     collection = collection_response.json()

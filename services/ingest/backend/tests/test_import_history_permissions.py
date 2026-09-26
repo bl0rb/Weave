@@ -1,6 +1,6 @@
 from app.models.models import Collection, ImportRun, ImportRunStatus, Team, UserRole
 from tests.test_import_api import _db, _make_run, _make_source, _make_team, _user
-from conftest import login_as
+from conftest import add_legacy_collection, login_as
 
 
 def test_completed_import_is_visible_to_collection_contributor_without_credential_control():
@@ -11,9 +11,9 @@ def test_completed_import_is_visible_to_collection_contributor_without_credentia
     source = _make_source(owner.id, server_kind='cloud')
     run = _make_run(owner_id=owner.id, source_id=source.id, status=ImportRunStatus.FINISHED)
     with _db() as db:
-        collection = Collection(owner_id=owner.id, slug=f'history-{run.id}', name='Existing import', read_teams=[db.get(Team, team_id).name])
-        db.add(collection)
-        db.flush()
+        collection = add_legacy_collection(
+            db, owner_id=owner.id, slug=f'history-{run.id}', name='Existing import', read_teams=[db.get(Team, team_id).name]
+        )
         db.get(ImportRun, run.id).options = {'collection_id': collection.id}
         db.commit()
     client = login_as(contributor.username)

@@ -5,14 +5,13 @@ import Link from 'next/link';
 import { ArrowRight, Pencil, Plus, RefreshCw } from 'lucide-react';
 import { apiJson } from '@/lib/api';
 import { Button, buttonVariants } from '@/components/ui/button';
-import { accessSummary } from '@/lib/access-summary';
-import { jsonBody, portalError, type KnowledgeSpace } from '@/lib/portal';
+import { accessSummary, ownerSummary } from '@/lib/access-summary';
+import { jsonBody, loadDirectoryTeams, portalError, type DirectoryTeam, type KnowledgeSpace } from '@/lib/portal';
 import { AccessDialog } from '@/components/portal/access-dialog';
 import { EmptyState, Notice } from '@/components/portal/shared';
 import { useI18n } from '@/i18n/provider';
 
-type ManagedCollection = Omit<KnowledgeSpace, 'can_manage'> & {
-  owner: { id: string; username: string } | null;
+type ManagedCollection = Omit<KnowledgeSpace, 'can_manage' | 'can_upload' | 'role'> & {
   document_count: number;
   pending_count: number;
   running_count: number;
@@ -81,7 +80,9 @@ export function CollectionsTab() {
           <td className="min-w-48"><Link href={`/knowledge/${encodeURIComponent(collection.collection_id)}`} className="font-semibold text-emerald-800 hover:underline">{collection.name}</Link>
             {collection.description && <p className="mt-1 line-clamp-2 text-xs text-slate-500">{collection.description}</p>}
           </td>
-          <td>{collection.owner?.username || t('admin.collections.noOwner')}</td>
+          <td>{collection.grants.some(grant => grant.role === 'owner') ? ownerSummary(collection.grants) : t('admin.collections.noOwner')}
+            {collection.responsible_team && <p className="mt-1 text-xs text-slate-500">{t('portal.spaces.responsibleLine', { team: collection.responsible_team.name })}</p>}
+          </td>
           <td className="min-w-36">{accessSummary(collection, locale)}</td>
           <td className="min-w-48"><strong className="block font-medium">{t('common.documents.count', { count: collection.document_count })}</strong>
             <div className="mt-2 flex flex-wrap gap-1.5">
@@ -118,6 +119,8 @@ function CollectionEditor({ collection, onCancel, onSaved }: {
   const [original, setOriginal] = useState<KnowledgeSpace | null>(null);
   const [name, setName] = useState(collection.name);
   const [description, setDescription] = useState(collection.description || '');
+  const [responsibleTeam, setResponsibleTeam] = useState(collection.responsible_team?.id ?? '');
+  const [teams, setTeams] = useState<DirectoryTeam[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
@@ -129,12 +132,13 @@ function CollectionEditor({ collection, onCancel, onSaved }: {
     apiJson<KnowledgeSpace>(`/api/v1/collections/${encodeURIComponent(collection.collection_id)}`, { signal: controller.signal })
       .then(current => {
         if (controller.signal.aborted) return;
-        setOriginal(current); setName(current.name); setDescription(current.description || ''); setError('');
+        setOriginal(current); setName(current.name); setDescription(current.description || ''); setResponsibleTeam(current.responsible_team?.id ?? ''); setError('');
       }).catch(err => { if (!controller.signal.aborted) setError(loadError(err)); });
+    loadDirectoryTeams(controller.signal).then(data => setTeams(data.items)).catch(() => { /* the select then only offers "no team" */ });
     return () => controller.abort();
   }, [collection.collection_id, revision]);
 
-  const canSave = Boolean(original && name.trim() && !saving);
+  const canSave = Boolean(original && name.trim() && description.trim() && !saving);
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -142,7 +146,7 @@ function CollectionEditor({ collection, onCancel, onSaved }: {
     setSaving(true); setError('');
     try {
       await apiJson(`/api/v1/collections/${encodeURIComponent(collection.collection_id)}`, {
-        ...jsonBody({ name: name.trim(), description: description.trim() }), method: 'PATCH',
+        ...jsonBody({ name: name.trim(), description: description.trim(), responsible_team_id: responsibleTeam }), method: 'PATCH',
       });
       onSaved();
     } catch (err) { setError(portalError(err, locale)); setSaving(false); }
@@ -150,12 +154,16 @@ function CollectionEditor({ collection, onCancel, onSaved }: {
 
   return <section className="portal-panel portal-form-panel" aria-labelledby="edit-collection-title">
     <h3 id="edit-collection-title" ref={heading} tabIndex={-1} className="text-[17px] font-semibold">{t('admin.collections.editTitle', { name: collection.name })}</h3>
-    <p className="portal-field-hint">{t('admin.collections.ownerLine', { name: collection.owner?.username || t('admin.collections.noOwner') })}</p>
+    <p className="portal-field-hint">{t('admin.collections.ownerLine', { name: collection.grants.some(grant => grant.role === 'owner') ? ownerSummary(collection.grants) : t('admin.collections.noOwner') })}{collection.created_by && ` · ${t('admin.collections.createdByLine', { name: collection.created_by.username })}`}</p>
     {error && <Notice error action={!original ? () => setRevision(value => value + 1) : undefined}>{error}</Notice>}
     {!original && !error && <Notice>{t('admin.collections.editorLoading')}</Notice>}
     <form className="portal-form" onSubmit={save}>
       <label>{t('admin.collections.field.name')}<input required maxLength={255} value={name} disabled={!original || saving} onChange={event => setName(event.target.value)} /></label>
-      <label>{t('admin.collections.field.description')}<textarea rows={3} value={description} disabled={!original || saving} onChange={event => setDescription(event.target.value)} /></label>
+      <label>{t('admin.collections.field.description')}<textarea required rows={3} value={description} disabled={!original || saving} onChange={event => setDescription(event.target.value)} /></label>
+      <label>{t('portal.newSpace.responsibleTeam')}<select value={responsibleTeam} disabled={!original || saving} onChange={event => setResponsibleTeam(event.target.value)}>
+        <option value="">{t('portal.newSpace.noResponsibleTeam')}</option>
+        {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
+      </select></label>
       <div className="portal-access-line">
         <span><small>{t('admin.collections.column.access')}</small><strong>{original ? accessSummary(original, locale) : '…'}</strong></span>
         <Button type="button" variant="outline" size="sm" disabled={!original} onClick={() => setAccessOpen(true)}>{t('admin.collections.changeAccess')}</Button>

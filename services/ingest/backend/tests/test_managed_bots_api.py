@@ -46,7 +46,7 @@ def _team() -> str:
 def _scope(admin_client, team_name: str) -> str:
     response = admin_client.post(
         '/api/v1/collections',
-        json={'name': f'Bot Wissen {uuid.uuid4().hex[:6]}', 'read_teams': [team_name]},
+        json={'description': 'Test purpose', 'name': f'Bot Wissen {uuid.uuid4().hex[:6]}', 'read_teams': [team_name]},
     )
     assert response.status_code == 200, response.text
     return response.json()['slug']

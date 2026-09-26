@@ -26,7 +26,7 @@ from app.models.models import (
 )
 from app.services import security
 from app.workers import publication_tasks
-from tests.conftest import TestingSessionLocal, client, create_test_user, login_as
+from tests.conftest import TestingSessionLocal, add_legacy_collection, client, create_test_user, login_as
 
 
 def _db():
@@ -49,13 +49,13 @@ def _team(name: str) -> Team:
 def _collection(owner_id: str, *, read_teams: list[str] | None = None) -> Collection:
     db = _db()
     try:
-        value = Collection(
+        value = add_legacy_collection(
+            db,
             owner_id=owner_id,
             slug=f'portal-{uuid.uuid4().hex[:12]}',
             name='Portal collection',
             read_teams=read_teams or [],
         )
-        db.add(value)
         db.commit()
         db.refresh(value)
         db.expunge(value)
@@ -200,7 +200,12 @@ def test_portal_config_returns_authenticated_team_name(monkeypatch):
     )
     response = login_as(user.username).get('/api/v1/portal/config')
     assert response.status_code == 200
-    assert response.json() == {'publication_configured': False, 'team_name': team.name, 'team_names': [team.name]}
+    assert response.json() == {
+        'publication_configured': False,
+        'team_name': team.name,
+        'team_names': [team.name],
+        'teams': [{'id': team.id, 'name': team.name}],
+    }
 
 
 def test_portal_config_lists_every_team_membership_not_only_the_primary(monkeypatch):

@@ -42,7 +42,6 @@ from app.database.session import get_db
 from app.models.models import (
     ApiToken,
     AuthProvider,
-    Collection,
     Job,
     LoginHandoffCode,
     ManagedBot,
@@ -94,6 +93,7 @@ from app.schemas.auth import (
     WorkerLogListResponse,
 )
 from app.services import paddle_service
+from app.services.collection_access import team_grant_collection_slugs
 from app.services.oidc import (
     OIDCError,
     exchange_code_for_tokens,
@@ -1300,14 +1300,10 @@ def admin_update_team(team_id: str, payload: TeamUpdateRequest, db: Session = De
     old_name = team.name
     team.name = name
 
-    # Runtime permissions and collection ACLs use the team name as their
-    # cross-service identifier. Keep those denormalized references in sync
-    # with the canonical Team row when an admin renames it.
-    changed_collection_slugs: list[str] = []
-    for collection in db.scalars(select(Collection)).all():
-        if old_name in (collection.read_teams or []):
-            collection.read_teams = [name if value == old_name else value for value in collection.read_teams]
-            changed_collection_slugs.append(collection.slug)
+    # Runtime permissions and the collection registry use the team name as
+    # their cross-service identifier. Bots keep a denormalized copy; the
+    # registry is computed from grants (by id) but Knowledge must re-pull.
+    changed_collection_slugs = team_grant_collection_slugs(db, team.id)
     for bot in db.scalars(select(ManagedBot)).all():
         if old_name in (bot.teams or []):
             bot.teams = [name if value == old_name else value for value in bot.teams]
@@ -1326,14 +1322,9 @@ def admin_delete_team(team_id: str, db: Session = Depends(get_db)) -> dict[str, 
     team = db.get(Team, team_id)
     if team is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Team not found')
-    # Same denormalized-name sync as admin_update_team: drop the grant so a
-    # later team re-created under this name never inherits it, and the
-    # access dialog's PATCH never 422s on an unknown team.
-    changed_collection_slugs: list[str] = []
-    for collection in db.scalars(select(Collection)).all():
-        if team.name in (collection.read_teams or []):
-            collection.read_teams = [value for value in collection.read_teams if value != team.name]
-            changed_collection_slugs.append(collection.slug)
+    # The team's collection grants go with it (FK cascade); Knowledge must
+    # re-pull the registry of every space it was named in.
+    changed_collection_slugs = team_grant_collection_slugs(db, team.id)
     db.delete(team)
     db.commit()
     try:

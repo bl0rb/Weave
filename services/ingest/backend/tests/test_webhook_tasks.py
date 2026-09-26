@@ -39,7 +39,7 @@ from app.services.webhooks import (
 )
 from app.workers import webhook_tasks
 from app.workers.webhook_tasks import deliver_webhook
-from tests.conftest import TestingSessionLocal, create_test_user
+from tests.conftest import TestingSessionLocal, add_legacy_collection, create_test_user
 
 
 @pytest.fixture()
@@ -529,14 +529,13 @@ def test_historical_collection_delivery_is_failed_without_network_call(db_sessio
         email='webhook_legacy_collection@example.com',
     )
     connection = _make_connection(db_session, user.id)
-    collection = Collection(
+    collection = add_legacy_collection(
+        db_session,
         id=str(uuid.uuid4()),
         slug='legacy-collection',
         name='Legacy collection',
         owner_id=user.id,
-        read_teams=[],
     )
-    db_session.add(collection)
     db_session.commit()
     delivery = _make_delivery(
         db_session,

@@ -36,6 +36,7 @@ from app.core.config import settings
 from app.database.session import SessionLocal
 from app.models.models import (
     Collection,
+    CollectionRole,
     ImportPageState,
     ImportRun,
     ImportRunStatus,
@@ -45,9 +46,9 @@ from app.models.models import (
     JobStatus,
     Tag,
     User,
-    UserRole,
 )
 from app.services import security
+from app.services.collection_access import collection_role, role_at_least
 from app.services.confluence import AttachmentMeta, ConfluenceError, Page, PageSource, create_client
 from app.services.confluence_markdown import add_frontmatter_keys, convert_page, rewrite_cross_page_links, sanitize_filename
 from app.services.paddle_service import effective_pipeline_profile_id, vl_settings_for_worker
@@ -783,7 +784,7 @@ def _resolve_collection(db, source: ImportSource, options: dict) -> Collection |
     source_owner = db.get(User, source.owner_id)
     if source_owner is None:
         raise ValueError('import source owner no longer exists; refusing collection assignment')
-    if source_owner.role != UserRole.ADMIN and collection.owner_id != source.owner_id:
+    if not role_at_least(collection_role(db, collection, source_owner), CollectionRole.MEMBER):
         raise ValueError('assigned collection is no longer controllable by the import source owner')
 
     # Re-normalize queued snapshots from the authoritative row. This also

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Column,
     JSON,
     DateTime,
@@ -486,7 +487,6 @@ class User(Base):
     oidc_provider: Mapped[AuthProvider | None] = relationship(back_populates='users')
     sessions: Mapped[list['Session']] = relationship(back_populates='user', cascade='all, delete-orphan')
     owned_jobs: Mapped[list[Job]] = relationship(back_populates='owner')
-    owned_collections: Mapped[list['Collection']] = relationship(back_populates='owner')
     import_sources: Mapped[list['ImportSource']] = relationship(back_populates='owner', cascade='all, delete-orphan')
     import_runs: Mapped[list['ImportRun']] = relationship(back_populates='owner')
     benchmark_runs: Mapped[list['BenchmarkRun']] = relationship(back_populates='owner')
@@ -561,6 +561,15 @@ class CollectionVisibility(str, enum.Enum):
     RESTRICTED = 'restricted'
 
 
+class CollectionRole(str, enum.Enum):
+    """A role on a knowledge space (ADR 0008). Ordered: every role includes
+    the rights of the ones below it (owner > member > reader)."""
+
+    OWNER = 'owner'
+    MEMBER = 'member'
+    READER = 'reader'
+
+
 class Collection(Base):
     """Persistent replacement for the in-memory `_COLLECTIONS` dict in
     app/api/routes.py (survives restart + works across multiple replicas).
@@ -573,24 +582,15 @@ class Collection(Base):
     Weave-Retrieval's per-team read authorization key on -- never `id`,
     which stays this table's plain internal primary key.
 
-    `visibility` is the single authoritative public/restricted flag,
-    everywhere in the system (Weave-Knowledge, Weave-Retrieval, Weave-
-    Runtime, Weave-API all read it the same way) -- `PUBLIC` means every
-    user may read this collection's documents regardless of `read_teams`/
-    `read_users`; `RESTRICTED` means only `read_teams`/`read_users` (plus
-    this collection's own owner/managers/admins) may. This replaced the
-    previous implicit contract (see 0014_collection_registry) that an EMPTY
-    `read_teams` meant public -- a `RESTRICTED` collection with neither
-    teams nor users configured is readable only by its owner/managers/
-    admins (fail closed), not by everyone, unlike the old sentinel.
-    `read_teams` is that same contract's team-level read ACL (team slugs
-    allowed to read this collection's documents), and `read_users` its
-    person-level counterpart (Weave-Ingest user ids, as strings, allowed to
-    read it individually) -- both are additive grants evaluated only when
-    `visibility` is `RESTRICTED`. Neither ACL list, nor `visibility`,
-    appears in the frontmatter (see `slug`'s docstring note above): a
-    rights change here must not require re-indexing every document already
-    tagged with this collection's slug.
+    Rights come only from `grants` (ADR 0008): persons and teams with the
+    role owner, member or reader, plus admins. `visibility` is the single
+    authoritative public/restricted flag, everywhere in the system --
+    `PUBLIC` makes every user a reader regardless of grants; `RESTRICTED`
+    means only the grants (and admins) may read. The registry contract's
+    `read_teams`/`read_users` are computed from the grants (every role
+    includes reading, see app/services/collection_access.py); neither they
+    nor `visibility` appear in the frontmatter, so a rights change never
+    requires re-indexing documents already tagged with this slug.
     """
 
     __tablename__ = 'collections'
@@ -601,13 +601,9 @@ class Collection(Base):
     # label alongside `slug`'s stable identity; POST /collections defaults
     # it from the slug when the caller doesn't supply one.
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # The space's purpose ("Zweck", ADR 0008): required for new spaces,
+    # optional for spaces created before 0035.
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    read_teams: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
-    # Person-level counterpart to `read_teams` above (see this class's own
-    # docstring) -- Weave-Ingest user ids as strings, never usernames/emails,
-    # so a later username change or an admin's own display preferences never
-    # invalidate a grant.
-    read_users: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     visibility: Mapped[CollectionVisibility] = mapped_column(
         # Stored by VALUE ('public'/'restricted'), unlike this module's other
         # enums: 0032's backfill writes these strings and the registry
@@ -622,8 +618,15 @@ class Collection(Base):
         default=CollectionVisibility.RESTRICTED,
         nullable=False,
     )
-    owner_id: Mapped[str | None] = mapped_column(
+    # Who created the space. Set once, never changed -- unlike the owner
+    # grants, it survives a hand-over (ADR 0008).
+    created_by_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    # The team responsible for the content: information for finding and
+    # maintaining the space, never a right on its own (ADR 0008).
+    responsible_team_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('teams.id', ondelete='SET NULL'), nullable=True, index=True
     )
     email: Mapped[str] = mapped_column(String(320), default='', nullable=False)
     department: Mapped[str] = mapped_column(String(255), default='', nullable=False)
@@ -635,7 +638,51 @@ class Collection(Base):
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
     )
 
-    owner: Mapped[User | None] = relationship(back_populates='owned_collections')
+    created_by: Mapped[User | None] = relationship(foreign_keys=[created_by_id])
+    responsible_team: Mapped[Team | None] = relationship(foreign_keys=[responsible_team_id])
+    grants: Mapped[list['CollectionGrant']] = relationship(
+        back_populates='collection', cascade='all, delete-orphan', passive_deletes=True, lazy='selectin'
+    )
+
+
+class CollectionGrant(Base):
+    """One entry of a knowledge space's access list (ADR 0008): a person
+    (local or SSO account) or a team, with a role. Teams can be members or
+    readers, never owners; for a team grant each person gets the lower of
+    the grant's role and their own team role (`user_teams.role`)."""
+
+    __tablename__ = 'collection_grants'
+    __table_args__ = (
+        UniqueConstraint('collection_id', 'user_id', name='uq_collection_grants_user'),
+        UniqueConstraint('collection_id', 'team_id', name='uq_collection_grants_team'),
+        CheckConstraint('(user_id IS NULL) <> (team_id IS NULL)', name='ck_collection_grants_subject'),
+        CheckConstraint("team_id IS NULL OR role <> 'owner'", name='ck_collection_grants_team_role'),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    collection_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey('collections.id', ondelete='CASCADE'), nullable=False, index=True
+    )
+    user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('users.id', ondelete='CASCADE'), nullable=True, index=True
+    )
+    team_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('teams.id', ondelete='CASCADE'), nullable=True, index=True
+    )
+    role: Mapped[CollectionRole] = mapped_column(
+        # Stored by value, like `Collection.visibility`: 0035's backfill
+        # writes these strings directly.
+        Enum(
+            CollectionRole, name='collection_role', native_enum=False, validate_strings=True,
+            values_callable=lambda members: [member.value for member in members],
+        ),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    collection: Mapped[Collection] = relationship(back_populates='grants')
+    user: Mapped[User | None] = relationship(lazy='joined')
+    team: Mapped[Team | None] = relationship(lazy='joined')
 
 
 class ImportAuthType(str, enum.Enum):

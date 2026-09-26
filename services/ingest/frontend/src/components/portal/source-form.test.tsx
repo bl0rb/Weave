@@ -6,7 +6,7 @@ import { SourceForm } from './source-form';
 
 vi.mock('@/lib/api', async importOriginal => ({ ...await importOriginal<typeof import('@/lib/api')>(), apiJson: vi.fn() }));
 const api = vi.mocked(apiJson);
-const space = { collection_id: 'area', name: 'Service', read_teams: ['Service'], can_manage: true };
+const space = { collection_id: 'area', name: 'Service', visibility: 'restricted', grants: [], can_manage: true };
 beforeEach(() => {
   api.mockReset();
   api.mockImplementation(async path => path === '/api/v1/collections' ? { items: [space] }

@@ -37,7 +37,7 @@ beforeEach(() => {
     if (init?.method === 'POST') return savedBot;
     if (path === '/api/v1/auth/admin/bots') return { items: [] };
     if (path === '/api/v1/auth/admin/teams') return { items: [{ id: 'team-1', name: 'Service', created_at: '2026-09-04T08:00:00Z' }] };
-    if (path === '/api/v1/collections') return { items: [{ collection_id: 'area-1', slug: 'servicewissen', name: 'Servicewissen', description: null, read_teams: ['Service'], can_manage: true }] };
+    if (path === '/api/v1/collections') return { items: [{ collection_id: 'area-1', slug: 'servicewissen', name: 'Servicewissen', description: null, visibility: 'restricted', grants: [], can_manage: true }] };
     throw new Error(`unexpected request: ${path}`);
   });
   fetcher.mockResolvedValue({ ok: true } as Response);

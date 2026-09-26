@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent } from
 import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ErrorNotice, Modal } from '@/components/admin/admin-shared';
-import { loadDirectoryTeams, portalError, searchDirectoryUsers, updateCollectionAccess, type DirectoryTeam, type DirectoryUser, type KnowledgeSpace } from '@/lib/portal';
+import { loadDirectoryTeams, portalError, searchDirectoryUsers, updateCollectionAccess, type CollectionGrant, type CollectionRole, type DirectoryTeam, type DirectoryUser, type GrantInput, type KnowledgeSpace } from '@/lib/portal';
 import { useI18n } from '@/i18n/provider';
 
 /** Minimal shape the dialog needs from a collection -- both the portal cards'
@@ -12,28 +12,23 @@ import { useI18n } from '@/i18n/provider';
 export type AccessDialogCollection = {
   collection_id: string;
   name: string;
-  read_teams: string[];
-  visibility?: 'public' | 'restricted';
-  read_users?: string[];
-  read_user_details?: { id: string; username: string; display_name?: string | null; team?: string | null }[];
+  visibility: 'public' | 'restricted';
+  grants: CollectionGrant[];
 };
 
-type Person = { id: string; username: string; display_name?: string | null; team?: string | null };
+type Person = { id: string; username: string; team?: string | null; role: CollectionRole };
+type TeamRole = Exclude<CollectionRole, 'owner'>;
 
-const personLabel = (person: Person) => person.display_name?.trim() || person.username;
+const PERSON_ROLES: CollectionRole[] = ['owner', 'member', 'reader'];
+const TEAM_ROLES: TeamRole[] = ['member', 'reader'];
 const SEARCH_DEBOUNCE_MS = 250;
 
-/** Same public/restricted inference accessSummary() uses for a collection that predates the `visibility` field. */
-function initialMode(collection: AccessDialogCollection): 'public' | 'restricted' {
-  if (collection.visibility) return collection.visibility;
-  return collection.read_teams.length === 0 ? 'public' : 'restricted';
-}
-
 /**
- * Knowledge-space access dialog -- who may use a collection's documents in
- * chat. Reuses the app's existing Modal (admin-shared.tsx), already used
- * for the other portal editors (KnowledgeSpaceEditor, ConfirmDialog) and
- * already dark-mode-safe via globals.css's html.dark overrides.
+ * Knowledge-space access dialog (ADR 0008): who may read the space, and
+ * which persons and teams are owners, members or readers. Reuses the app's
+ * existing Modal (admin-shared.tsx), already used for the other portal
+ * editors (KnowledgeSpaceEditor, ConfirmDialog) and already dark-mode-safe
+ * via globals.css's html.dark overrides.
  */
 export function AccessDialog({ collection, onClose, onSaved }: {
   collection: AccessDialogCollection;
@@ -42,9 +37,13 @@ export function AccessDialog({ collection, onClose, onSaved }: {
   onSaved: (updated: KnowledgeSpace) => void;
 }) {
   const { t, locale } = useI18n();
-  const [mode, setMode] = useState<'public' | 'restricted'>(() => initialMode(collection));
-  const [selectedTeams, setSelectedTeams] = useState<string[]>(collection.read_teams);
-  const [persons, setPersons] = useState<Person[]>(collection.read_user_details ?? []);
+  const [mode, setMode] = useState<'public' | 'restricted'>(collection.visibility);
+  const [persons, setPersons] = useState<Person[]>(() => collection.grants
+    .filter(grant => grant.user_id)
+    .map(grant => ({ id: grant.user_id as string, username: grant.name, team: grant.team, role: grant.role })));
+  const [teamRoles, setTeamRoles] = useState<Record<string, TeamRole>>(() => Object.fromEntries(collection.grants
+    .filter(grant => grant.team_id)
+    .map(grant => [grant.team_id as string, grant.role === 'reader' ? 'reader' : 'member'])));
   const [teams, setTeams] = useState<DirectoryTeam[]>([]);
   const [teamsError, setTeamsError] = useState('');
   const [query, setQuery] = useState('');
@@ -63,10 +62,10 @@ export function AccessDialog({ collection, onClose, onSaved }: {
     const controller = new AbortController();
     loadDirectoryTeams(controller.signal).then(data => {
       setTeams(data.items);
-      // Drop grants to teams that no longer exist (deleted, or a typo from
-      // create): they have no chip to untick, and PATCH would 422 on them.
-      const known = new Set(data.items.map(team => team.name));
-      setSelectedTeams(current => current.filter(name => known.has(name)));
+      // Drop grants to teams that no longer exist: they have no row to
+      // untick, and PATCH would 422 on them.
+      const known = new Set(data.items.map(team => team.id));
+      setTeamRoles(current => Object.fromEntries(Object.entries(current).filter(([id]) => known.has(id))));
     }).catch(err => setTeamsError(portalError(err, locale)));
     return () => controller.abort();
   }, [locale]);
@@ -85,17 +84,26 @@ export function AccessDialog({ collection, onClose, onSaved }: {
 
   // Cleared as soon as the query itself is empty, so a stale `results` batch from a just-cleared search never flashes back in.
   const visibleResults = useMemo(() => query.trim() ? results.filter(user => !persons.some(person => person.id === user.id)) : [], [query, results, persons]);
+  const teamNames = useMemo(() => new Set(teams.filter(team => teamRoles[team.id]).map(team => team.name)), [teams, teamRoles]);
+  const hasOwner = persons.some(person => person.role === 'owner');
 
-  function addPerson(person: Person) {
-    setPersons(current => current.some(existing => existing.id === person.id) ? current : [...current, person]);
+  function addPerson(user: DirectoryUser) {
+    setPersons(current => current.some(existing => existing.id === user.id) ? current : [...current, { id: user.id, username: user.username, team: user.team, role: 'reader' }]);
     setQuery('');
     setResults([]);
+  }
+  function setPersonRole(id: string, role: CollectionRole) {
+    setPersons(current => current.map(person => person.id === id ? { ...person, role } : person));
   }
   function removePerson(id: string) {
     setPersons(current => current.filter(person => person.id !== id));
   }
-  function toggleTeam(name: string, checked: boolean) {
-    setSelectedTeams(current => checked ? [...current, name] : current.filter(team => team !== name));
+  function toggleTeam(id: string, checked: boolean) {
+    setTeamRoles(current => {
+      const next = { ...current };
+      if (checked) next[id] = 'member'; else delete next[id];
+      return next;
+    });
   }
   function onSearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === 'Enter') {
@@ -104,37 +112,34 @@ export function AccessDialog({ collection, onClose, onSaved }: {
     }
   }
 
-  // Reach: every selected team's member_count, plus selected persons whose
-  // own team isn't already selected (avoids double-counting them).
-  const reach = mode === 'public' ? null
-    : teams.filter(team => selectedTeams.includes(team.name)).reduce((sum, team) => sum + team.member_count, 0)
-      + persons.filter(person => !(person.team && selectedTeams.includes(person.team))).length;
-  const detail = [
-    selectedTeams.map(team => t('portal.access.team', { team })).join(', '),
-    persons.length === 1 ? personLabel(persons[0]) : persons.length ? t('portal.access.dialog.personsCount', { count: persons.length }) : '',
-  ].filter(Boolean).join(' + ');
+  // Reach: every granted team's member_count, plus granted persons whose
+  // own team isn't already granted (avoids double-counting them).
+  const reach = teams.filter(team => teamRoles[team.id]).reduce((sum, team) => sum + team.member_count, 0)
+    + persons.filter(person => !(person.team && teamNames.has(person.team))).length;
   const summary = mode === 'public'
     ? t('portal.access.dialog.summaryPublic')
     : reach
-      ? `${t('portal.access.dialog.summaryReach', { count: reach })} · ${detail}`
+      ? t('portal.access.dialog.summaryReach', { count: reach })
       : t('portal.access.dialog.summaryNoAccess');
 
   async function save(event: FormEvent) {
     event.preventDefault();
+    if (!hasOwner) return;
     setSaving(true);
     setError('');
+    const grants: GrantInput[] = [
+      ...persons.map(person => ({ user_id: person.id, role: person.role })),
+      ...Object.entries(teamRoles).map(([team_id, role]) => ({ team_id, role })),
+    ];
     try {
-      const updated = await updateCollectionAccess(collection.collection_id, {
-        visibility: mode,
-        read_teams: mode === 'public' ? [] : selectedTeams,
-        read_users: mode === 'public' ? [] : persons.map(person => person.id),
-      });
-      onSaved(updated);
+      onSaved(await updateCollectionAccess(collection.collection_id, { visibility: mode, grants }));
     } catch (err) {
       setError(portalError(err, locale));
       setSaving(false);
     }
   }
+
+  const roleLabel = (role: CollectionRole) => t(`portal.access.role.${role}`);
 
   return <Modal title={collection.name} onClose={onClose}>
     <p className="portal-eyebrow">{t('portal.access.dialog.eyebrow')}</p>
@@ -152,42 +157,56 @@ export function AccessDialog({ collection, onClose, onSaved }: {
           <span><strong>{t('portal.access.dialog.modePublic.title')}</strong><small>{t('portal.access.dialog.modePublic.hint')}</small></span>
         </label>
       </fieldset>
-      {mode === 'restricted' && <>
-        <p className="portal-access-label" id="access-teams-label">{t('portal.access.dialog.teamsLabel')}</p>
-        {teamsError && <p className="portal-field-hint">{teamsError}</p>}
-        <div className="portal-access-team-chips" role="group" aria-labelledby="access-teams-label">
-          {teams.map(team => <label className="portal-access-team-chip" key={team.name}>
-            <input type="checkbox" checked={selectedTeams.includes(team.name)} disabled={saving} onChange={event => toggleTeam(team.name, event.target.checked)} />
-            <span>{team.name}<small>{team.member_count}</small></span>
-          </label>)}
+
+      <label className="portal-access-label" htmlFor="access-search">{t('portal.access.dialog.personsLabel')}</label>
+      <ul className="portal-access-grants" aria-label={t('portal.access.dialog.personsLabel')}>
+        {persons.map(person => <li className="portal-access-grant-row" key={person.id}>
+          <span>{person.username}{person.team && <small>{person.team}</small>}</span>
+          <select className="portal-role-select" value={person.role} disabled={saving} onChange={event => setPersonRole(person.id, event.target.value as CollectionRole)}
+            aria-label={t('portal.access.dialog.roleAria', { name: person.username })}>
+            {PERSON_ROLES.map(role => <option key={role} value={role}>{roleLabel(role)}</option>)}
+          </select>
+          <button type="button" className="portal-access-remove" disabled={saving} onClick={() => removePerson(person.id)} aria-label={t('portal.access.dialog.removePerson', { name: person.username })}><X size={14} aria-hidden="true" /></button>
+        </li>)}
+      </ul>
+      <div className="portal-access-picker">
+        <div className="portal-access-search">
+          <input id="access-search" type="search" autoComplete="off" placeholder={t('portal.access.dialog.searchPlaceholder')} value={query} disabled={saving}
+            onChange={event => setQuery(event.target.value)} onKeyDown={onSearchKeyDown}
+            aria-describedby="access-hint" aria-controls="access-results" />
         </div>
-        <label className="portal-access-label" htmlFor="access-search">{t('portal.access.dialog.personsLabel')}</label>
-        <div className="portal-access-picker">
-          <div className="portal-access-person-chips">
-            {persons.map(person => <span className="portal-access-person-chip" key={person.id}>
-              {personLabel(person)}{person.team && <small>{person.team}</small>}
-              <button type="button" disabled={saving} onClick={() => removePerson(person.id)} aria-label={t('portal.access.dialog.removePerson', { name: personLabel(person) })}><X size={14} aria-hidden="true" /></button>
-            </span>)}
-          </div>
-          <div className="portal-access-search">
-            <input id="access-search" type="search" autoComplete="off" placeholder={t('portal.access.dialog.searchPlaceholder')} value={query} disabled={saving}
-              onChange={event => setQuery(event.target.value)} onKeyDown={onSearchKeyDown}
-              aria-describedby="access-hint" aria-controls="access-results" />
-          </div>
-          <ul className="portal-access-results" id="access-results" aria-live="polite" aria-label={t('portal.access.dialog.resultsAriaLabel')}>
-            {visibleResults.map(user => <li key={user.id}>
-              <button type="button" onClick={() => addPerson(user)}>
-                <span>{personLabel(user)}<small>{user.team ? `${t('portal.access.team', { team: user.team })}${selectedTeams.includes(user.team) ? ` · ${t('portal.access.dialog.hasTeamAccessSuffix')}` : ''}` : ''}</small></span>
-              </button>
-            </li>)}
-            {query.trim() && !visibleResults.length && <li className="portal-access-no-hit">{t('portal.access.dialog.noResults')}</li>}
-          </ul>
-        </div>
-        <p className="portal-field-hint" id="access-hint">{t('portal.access.dialog.searchHint')}</p>
-      </>}
+        <ul className="portal-access-results" id="access-results" aria-live="polite" aria-label={t('portal.access.dialog.resultsAriaLabel')}>
+          {visibleResults.map(user => <li key={user.id}>
+            <button type="button" onClick={() => addPerson(user)}>
+              <span>{user.username}<small>{user.team ? `${t('portal.access.team', { team: user.team })}${teamNames.has(user.team) ? ` · ${t('portal.access.dialog.hasTeamAccessSuffix')}` : ''}` : ''}</small></span>
+            </button>
+          </li>)}
+          {query.trim() && !visibleResults.length && <li className="portal-access-no-hit">{t('portal.access.dialog.noResults')}</li>}
+        </ul>
+      </div>
+      <p className="portal-field-hint" id="access-hint">{t('portal.access.dialog.searchHint')}</p>
+      {!hasOwner && <p className="portal-field-hint portal-field-error" role="alert">{t('portal.access.dialog.ownerRequired')}</p>}
+
+      <p className="portal-access-label" id="access-teams-label">{t('portal.access.dialog.teamsLabel')}</p>
+      {teamsError && <p className="portal-field-hint">{teamsError}</p>}
+      <ul className="portal-access-grants" aria-labelledby="access-teams-label">
+        {teams.map(team => <li className="portal-access-grant-row" key={team.id}>
+          <label>
+            <input type="checkbox" checked={Boolean(teamRoles[team.id])} disabled={saving} onChange={event => toggleTeam(team.id, event.target.checked)} />
+            <span>{team.name}<small>{t('portal.access.dialog.memberCount', { count: team.member_count })}</small></span>
+          </label>
+          {teamRoles[team.id] && <select className="portal-role-select" value={teamRoles[team.id]} disabled={saving}
+            onChange={event => setTeamRoles(current => ({ ...current, [team.id]: event.target.value as TeamRole }))}
+            aria-label={t('portal.access.dialog.roleAria', { name: team.name })}>
+            {TEAM_ROLES.map(role => <option key={role} value={role}>{roleLabel(role)}</option>)}
+          </select>}
+        </li>)}
+      </ul>
+      <p className="portal-field-hint">{t('portal.access.dialog.teamRoleHint')}</p>
+
       <p className="portal-access-summary" aria-live="polite"><strong>{summary}</strong></p>
       <div className="portal-form-actions">
-        <Button type="submit" disabled={saving}>{saving ? t('portal.access.dialog.saving') : t('portal.access.dialog.save')}</Button>
+        <Button type="submit" disabled={saving || !hasOwner}>{saving ? t('portal.access.dialog.saving') : t('portal.access.dialog.save')}</Button>
         <Button type="button" variant="ghost" disabled={saving} onClick={onClose}>{t('common.cancel')}</Button>
       </div>
       <p className="portal-field-hint">{t('portal.access.dialog.footer')}</p>

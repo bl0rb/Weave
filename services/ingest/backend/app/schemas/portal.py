@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.jobs import CollectionTeamRef
+
 
 ReleaseStatus = Literal['pending', 'sent', 'failed']
 
@@ -145,3 +147,6 @@ class PortalConfigResponse(BaseModel):
     # system-wide team directory: a non-admin only ever sees their own
     # memberships here.
     team_names: list[str] = Field(default_factory=list)
+    # The same teams with their ids, for the grants and the responsible
+    # team of a new knowledge space (ADR 0008).
+    teams: list[CollectionTeamRef] = Field(default_factory=list)

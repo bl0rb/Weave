@@ -18,16 +18,21 @@ const area = {
   slug: 'servicewissen',
   name: 'Servicewissen',
   description: 'Anleitungen für den Service.',
-  read_teams: ['Service'],
+  visibility: 'restricted',
+  grants: [{ user_id: 'u1', team_id: null, role: 'owner', name: 'Ada' }, { user_id: null, team_id: 't-service', role: 'member', name: 'Service' }],
+  created_by: { id: 'u1', username: 'Ada' },
+  responsible_team: { id: 't-service', name: 'Service' },
+  role: 'owner',
   can_manage: true,
+  can_upload: true,
 };
 
 beforeEach(() => {
   json.mockReset();
   fetcher.mockReset();
-  json.mockImplementation(async (_path, init) => init?.method === 'PATCH'
+  json.mockImplementation(async (path, init) => init?.method === 'PATCH'
     ? { ...area, name: 'Neuer Name' }
-    : { items: [area] });
+    : path === '/api/v1/directory/teams' ? { items: [{ id: 't-service', name: 'Service', member_count: 3 }] } : { items: [area] });
   fetcher.mockResolvedValue({ ok: true } as Response);
 });
 
@@ -36,6 +41,7 @@ afterEach(cleanup);
 it('offers two "Wissensbereich anlegen" entry points, both pointing to /knowledge/new', async () => {
   render(<KnowledgeSpaces />);
   await screen.findByRole('heading', { name: 'Servicewissen' });
+  expect(screen.getByText('Besitzer: Ada · Zuständig: Team Service')).toBeTruthy();
   const startLinks = screen.getAllByRole('link', { name: /Wissensbereich anlegen/ });
   expect(startLinks.length).toBe(2);
   startLinks.forEach(link => expect(link.getAttribute('href')).toBe('/knowledge/new'));
@@ -62,13 +68,13 @@ it('renames a knowledge space through the existing patch contract', async () => 
   render(<KnowledgeSpaces />);
   fireEvent.click(await screen.findByRole('button', { name: 'Servicewissen umbenennen' }));
   fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Neuer Name' } });
-  fireEvent.change(screen.getByRole('textbox', { name: 'Beschreibung' }), { target: { value: 'Neue Beschreibung' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Zweck' }), { target: { value: 'Neue Beschreibung' } });
   fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
 
   await waitFor(() => expect(json.mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(true));
   const mutation = json.mock.calls.find(([, init]) => init?.method === 'PATCH');
   expect(mutation?.[0]).toBe('/api/v1/collections/area-1');
-  expect(JSON.parse(mutation?.[1]?.body as string)).toEqual({ name: 'Neuer Name', description: 'Neue Beschreibung' });
+  expect(JSON.parse(mutation?.[1]?.body as string)).toEqual({ name: 'Neuer Name', description: 'Neue Beschreibung', responsible_team_id: 't-service' });
   expect(await screen.findByText('Wissensbereich gespeichert.')).toBeTruthy();
 });
 
@@ -103,7 +109,7 @@ it('reindexes a knowledge space after confirmation and shows the requeued count'
 it('hides Wissensbereich neu indizieren for non-managers', async () => {
   const document = { id: 'd1', original_filename: 'Doc.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, release: null, source: { kind: 'upload', label: 'Hochgeladen', path: null, url: null } };
   json.mockImplementation(async path => typeof path === 'string' && path.startsWith('/api/v1/portal/documents')
-    ? { items: [document], total: 1 } : { ...area, can_manage: false });
+    ? { items: [document], total: 1 } : { ...area, role: 'reader', can_manage: false, can_upload: false });
   render(<KnowledgeDetail id="area-1" />);
   await screen.findByText('Doc.pdf');
   expect(screen.queryByRole('button', { name: 'Wissensbereich neu indizieren' })).toBeNull();

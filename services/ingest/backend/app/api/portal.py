@@ -22,6 +22,7 @@ from app.api.routes import (
     _active_process_job_ids,
     _apply_visible_filter,
     _can_manage_collection,
+    _can_own_collection,
     _collection_control_job_filter,
     _content_disposition,
     _delete_job_artifacts,
@@ -48,7 +49,7 @@ from app.models.models import (
     User,
     UserRole,
 )
-from app.schemas.jobs import JobRestartRequest
+from app.schemas.jobs import CollectionTeamRef, JobRestartRequest
 from app.schemas.portal import (
     PortalBulkActionRequest,
     PortalBulkActionResponse,
@@ -404,13 +405,12 @@ def _require_publishable(job: Job, collection: Collection, db, user: User, suppl
 @router.get('/config', response_model=PortalConfigResponse)
 def portal_config(db=Depends(get_db), user: User = Depends(get_current_user)) -> PortalConfigResponse:
     team = db.get(Team, user.team_id) if user.team_id else None
-    team_names = list(db.scalars(
-        select(Team.name).where(Team.id.in_(user.team_ids)).order_by(Team.name)
-    )) if user.team_ids else []
+    teams = list(db.scalars(select(Team).where(Team.id.in_(user.team_ids)).order_by(Team.name))) if user.team_ids else []
     return PortalConfigResponse(
         publication_configured=publication_configured(),
         team_name=team.name if team is not None else None,
-        team_names=team_names,
+        team_names=[member_team.name for member_team in teams],
+        teams=[CollectionTeamRef(id=member_team.id, name=member_team.name) for member_team in teams],
     )
 
 
@@ -1035,7 +1035,7 @@ def _release_control(db, release: DocumentRelease, user: User) -> tuple[Job, Col
     collection = _collection_for_job(db, job)
     if collection is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Document collection not found')
-    if user.role != UserRole.ADMIN and release.owner_id != user.id and collection.owner_id != user.id:
+    if release.owner_id != user.id and not _can_own_collection(db, collection, user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='User cannot retry this release')
     return job, collection
 

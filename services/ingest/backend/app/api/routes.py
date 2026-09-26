@@ -20,6 +20,8 @@ from app.core.config import settings
 from app.database.session import get_db
 from app.models.models import (
     Collection,
+    CollectionGrant,
+    CollectionRole,
     CollectionVisibility,
     DocumentRelease,
     ImportRun,
@@ -40,12 +42,15 @@ from app.models.models import (
 from app.schemas.jobs import (
     ContainerState,
     CollectionCreateRequest,
+    CollectionGrantInput,
+    CollectionGrantResponse,
     CollectionListResponse,
     CollectionRegistryEntry,
     CollectionRegistryResponse,
     CollectionResponse,
     CollectionStartRequest,
     CollectionStartResponse,
+    CollectionTeamRef,
     CollectionUpdateRequest,
     DashboardStatsResponse,
     DirectoryTeamEntry,
@@ -70,11 +75,18 @@ from app.schemas.jobs import (
     PaddleSettingsUpdate,
     PaddleStatusResponse,
     PasswordVerificationRequest,
-    ReadUserDetail,
     RuntimeCapabilityInfo,
     UploadResponse,
 )
 from app.schemas.import_ import JobArtifactListResponse, JobArtifactResponse
+from app.services.collection_access import (
+    collection_role,
+    user_team_roles,
+    member_collection_filter,
+    owns_any_collection,
+    registry_acl,
+    role_at_least,
+)
 from app.services.field_validation import validate_document
 from app.services.paddle_service import (
     effective_pipeline_profile_id,
@@ -187,39 +199,16 @@ def _load_job_owners(db: Session, jobs: list[Job]) -> dict[str, JobOwner]:
 
 def _collection_control_filter(db: Session, user: User):
     """SQL counterpart of `_can_manage_collection` for non-admins: a
-    Collection predicate matching every collection ``user`` may operate.
-
-    Only the owner, member-role teammates of the owner and member-role
-    members of a configured ``read_teams`` team qualify. ``read_users`` is a
-    read (chat) grant only and never appears here.
-    """
-    conditions = [Collection.owner_id == user.id]
-    member_team_ids = _member_team_ids(db, user)
-    if member_team_ids:
-        conditions.append(Collection.owner_id.in_(select(User.id).where(User.team_id.in_(member_team_ids))))
-    member_team_names = set(db.scalars(select(Team.name).where(Team.id.in_(member_team_ids))).all()) if member_team_ids else set()
-    if member_team_names:
-        if db.bind.dialect.name == 'sqlite':
-            team_values = func.json_each(Collection.read_teams).table_valued('value').alias('job_collection_read_team')
-        else:
-            team_values = func.json_array_elements_text(Collection.read_teams).table_valued('value').render_derived(
-                name='job_collection_read_team'
-            )
-        conditions.append(
-            select(1)
-            .select_from(team_values)
-            .where(team_values.c.value.in_(member_team_names))
-            .exists()
-        )
-    return or_(*conditions)
+    Collection predicate matching every collection where ``user`` is at
+    least a member (ADR 0008). Readers never appear here."""
+    return member_collection_filter(db, user)
 
 
 def _collection_control_job_filter(db: Session, user: User):
     """Return a job predicate for member contributors to shared collections.
 
-    Collection uploads may be owned by another user, while an explicitly
-    configured ``read_teams`` member is still allowed to operate those
-    documents.  Keep this separate from the ordinary owner/team job boundary
+    Collection uploads may be owned by another user, while a member of the
+    collection (ADR 0008) is still allowed to operate those documents.  Keep this separate from the ordinary owner/team job boundary
     so a reader membership never becomes a write grant.
     """
     collection_id_expr = Job.processing_info['settings']['collection_id'].as_string()
@@ -304,47 +293,8 @@ def _require_visible(db: Session, job: Job, user: User) -> None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Job not found')
 
 
-def _user_team_names(db: Session, user: User) -> set[str]:
-    if not user.team_ids:
-        return set()
-    return set(db.scalars(select(Team.name).where(Team.id.in_(user.team_ids))).all())
-
-
-def _member_team_ids(db: Session, user: User) -> set[str]:
-    """Return the teams in which ``user`` may contribute to a collection.
-
-    ``users.team_id`` is the pre-multi-membership representation and remains
-    populated for existing accounts.  A deployment can therefore contain a
-    legacy primary-team user without a corresponding ``user_teams`` row (for
-    example when the row was created before the membership backfill ran).
-    Treat that *missing* primary row as the old default ``member`` role, but
-    honor an explicit row -- especially ``reader`` -- when one exists.
-    """
-    team_ids = set(user.team_ids)
-    if not team_ids:
-        return set()
-
-    rows = db.execute(
-        select(user_teams.c.team_id, user_teams.c.role).where(
-            user_teams.c.user_id == user.id,
-            user_teams.c.team_id.in_(team_ids),
-        )
-    ).all()
-    roles = {team_id: role for team_id, role in rows}
-    member_team_ids = {team_id for team_id, role in roles.items() if role == 'member'}
-    # Before user_teams existed, the legacy primary team was implicitly a
-    # member. Do not apply this fallback when an explicit role row exists.
-    if user.team_id in team_ids and user.team_id not in roles:
-        member_team_ids.add(user.team_id)
-    return member_team_ids
-
-
 def _can_read_collection(db: Session, collection: Collection, user: User) -> bool:
-    if _owner_visible(db, collection.owner_id, user):
-        return True
-    if user.id in (collection.read_users or []):
-        return True
-    return bool(set(collection.read_teams or []).intersection(_user_team_names(db, user)))
+    return collection_role(db, collection, user) is not None
 
 
 def _require_visible_collection(db: Session, collection: Collection, user: User) -> None:
@@ -352,67 +302,36 @@ def _require_visible_collection(db: Session, collection: Collection, user: User)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
 
 
-def _visible_collection_filter(user: User):
-    """Mirrors `_visible_job_filter`/import_routes._visible_run_filter/
-    benchmarks._visible_benchmark_filter: own + current-teammates + admin-
-    all. Legacy NULL-owner collections stay admin-only, same as jobs."""
-    if user.role == UserRole.ADMIN:
-        return None
-    conditions = [Collection.owner_id == user.id]
-    if user.team_ids:
-        teammate_ids = select(User.id).where(User.team_id.in_(user.team_ids))
-        conditions.append(Collection.owner_id.in_(teammate_ids))
-    return or_(*conditions)
-
-
-def _can_manage_owner_team(db: Session, owner_id: str | None, user: User) -> bool:
-    if user.role == UserRole.ADMIN or owner_id is None:
-        return user.role == UserRole.ADMIN
-    owner_team_id = db.scalar(select(User.team_id).where(User.id == owner_id))
-    if owner_team_id is None:
-        return False
-    return owner_team_id in _member_team_ids(db, user)
-
-
 def _can_manage_collection(db: Session, collection: Collection, user: User) -> bool:
-    if user.role == UserRole.ADMIN or collection.owner_id == user.id:
-        return True
-    if _can_manage_owner_team(db, collection.owner_id, user):
-        return True
-    # `read_users` is deliberately absent: sharing a space with a person is
-    # a read (chat) grant, never upload/release/delete rights.
-    member_team_ids = _member_team_ids(db, user)
-    if not member_team_ids:
-        return False
-    member_team_names = set(db.scalars(select(Team.name).where(Team.id.in_(member_team_ids))).all())
-    return bool(member_team_names.intersection(collection.read_teams or []))
+    """Member rights (ADR 0008): upload and operate the space's documents."""
+    return role_at_least(collection_role(db, collection, user), CollectionRole.MEMBER)
 
 
-def _can_manage_any_collection(db: Session, user: User) -> bool:
+def _can_own_collection(db: Session, collection: Collection, user: User) -> bool:
+    """Owner rights (ADR 0008): settings, sharing and deletion."""
+    return role_at_least(collection_role(db, collection, user), CollectionRole.OWNER)
+
+
+def _can_share_any_collection(db: Session, user: User) -> bool:
     """Gate for the directory endpoints (list_directory_users/
-    list_directory_teams): an admin or anyone who can manage at least one
-    collection may look somebody up to add them to a collection's
-    `read_users`/`read_teams` grant; nobody else gets a system-wide listing
-    of accounts/teams merely for having an ordinary login. Mirrors
-    `_can_manage_collection`'s own rule, evaluated across every collection
-    instead of one specific row -- as a single EXISTS-style query, since the
-    person search calls this on every keystroke."""
-    if user.role == UserRole.ADMIN:
-        return True
-    return db.scalar(select(Collection.id).where(_collection_control_filter(db, user)).limit(1)) is not None
+    list_directory_teams): an admin or an owner of at least one collection
+    may look somebody up to share a space with them; nobody else gets a
+    system-wide listing of accounts/teams merely for having an ordinary
+    login."""
+    return user.role == UserRole.ADMIN or owns_any_collection(db, user)
 
 
-def _require_collection_owner_control(collection: Collection, user: User) -> None:
-    if user.role != UserRole.ADMIN and collection.owner_id != user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Only the collection owner or an admin can do this')
+def _require_collection_owner_control(db: Session, collection: Collection, user: User) -> None:
+    if not _can_own_collection(db, collection, user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Only a collection owner or an admin can do this')
 
 
 def _require_collection_control(db: Session, collection: Collection, user: User) -> None:
-    """Eligible members of a collection's configured reader teams may upload
-    and operate its documents, while collection settings remain owner-only."""
+    """Members of a collection may upload and operate its documents, while
+    collection settings remain owner-only."""
     if not _can_manage_collection(db, collection, user):
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail='Only the collection owner, an eligible team member, or an admin can do this'
+            status_code=status.HTTP_403_FORBIDDEN, detail='Only a collection owner, a member, or an admin can do this'
         )
 
 
@@ -466,68 +385,73 @@ def _unique_collection_slug(db: Session, base: str) -> str:
     return candidate
 
 
-def _validate_known_teams(db: Session, names: list[str]) -> None:
-    """PATCH-only guard (see CollectionUpdateRequest's docstring): create
-    keeps `read_teams`'s long-standing laissez-faire acceptance of any
-    string, but a PATCH that names a team which doesn't exist is almost
-    always a typo the person picker should have caught -- 422 with the
-    offending name(s) rather than silently persisting a grant nobody can
-    ever satisfy."""
-    if not names:
-        return
-    known = set(db.scalars(select(Team.name).where(Team.name.in_(names))).all())
-    unknown = [name for name in names if name not in known]
+def _validated_team_id(db: Session, team_id: str | None) -> str | None:
+    """`responsible_team_id`: None/blank clears it, anything else must be an
+    existing team (422 otherwise)."""
+    cleaned = (team_id or '').strip()
+    if not cleaned:
+        return None
+    if db.get(Team, cleaned) is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f'Unknown team: {cleaned}')
+    return cleaned
+
+
+def _validated_grants(db: Session, grants: list[CollectionGrantInput]) -> list[CollectionGrantInput]:
+    """422 on unknown users/teams and on one subject named twice with
+    different roles; exact duplicates collapse."""
+    by_subject: dict[tuple[str, str], CollectionGrantInput] = {}
+    for grant in grants:
+        key = ('user', grant.user_id) if grant.user_id is not None else ('team', grant.team_id)
+        previous = by_subject.get(key)
+        if previous is not None and previous.role != grant.role:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f'Conflicting roles for {key[0]} {key[1]}'
+            )
+        by_subject[key] = grant
+    user_ids = [subject for kind, subject in by_subject if kind == 'user']
+    team_ids = [subject for kind, subject in by_subject if kind == 'team']
+    known_users = set(db.scalars(select(User.id).where(User.id.in_(user_ids))).all()) if user_ids else set()
+    known_teams = set(db.scalars(select(Team.id).where(Team.id.in_(team_ids))).all()) if team_ids else set()
+    unknown = [user_id for user_id in user_ids if user_id not in known_users]
+    unknown += [team_id for team_id in team_ids if team_id not in known_teams]
     if unknown:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Unknown team(s): {', '.join(unknown)}",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Unknown user or team id(s): {', '.join(unknown)}"
         )
+    return list(by_subject.values())
 
 
-def _validate_known_users(db: Session, user_ids: list[str]) -> None:
-    """PATCH-only counterpart to `_validate_known_teams` for `read_users`."""
-    if not user_ids:
-        return
-    known = set(db.scalars(select(User.id).where(User.id.in_(user_ids))).all())
-    unknown = [user_id for user_id in user_ids if user_id not in known]
-    if unknown:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Unknown user id(s): {', '.join(unknown)}",
-        )
+def _replace_grants(collection: Collection, grants: list[CollectionGrantInput]) -> None:
+    """Replace the access list in place. A subject that stays keeps its row
+    and only changes its role -- deleting and re-inserting it would trip
+    the unique constraint, since the unit of work inserts before it
+    deletes."""
+    wanted = {(grant.user_id, grant.team_id): grant.role for grant in grants}
+    for existing in list(collection.grants):
+        key = (existing.user_id, existing.team_id)
+        if key in wanted:
+            existing.role = wanted.pop(key)
+        else:
+            collection.grants.remove(existing)
+    for (user_id, team_id), role in wanted.items():
+        collection.grants.append(CollectionGrant(user_id=user_id, team_id=team_id, role=role))
 
 
-def _load_read_users(db: Session, user_ids: set[str]) -> dict[str, User]:
-    """One query (plus one for their primary teams) for every `read_users`
-    id a response needs, instead of a query and a lazy `user.team` load per
-    collection and per person."""
-    if not user_ids:
-        return {}
-    return {
-        user.id: user
-        for user in db.scalars(select(User).where(User.id.in_(user_ids)).options(selectinload(User.team))).all()
-    }
+_ROLE_ORDER = {CollectionRole.OWNER: 0, CollectionRole.MEMBER: 1, CollectionRole.READER: 2}
 
 
-def _read_user_details(
-    db: Session, read_users: list[str], users_by_id: dict[str, User] | None = None
-) -> list[ReadUserDetail]:
-    """Resolve `read_users` (Weave-Ingest user ids) into the person-picker's
-    display shape, in the same order -- a stale id (its User row deleted
-    since the grant was made) is silently dropped, never surfaced as a
-    phantom entry with no username to show. No email or other personal
-    field, same discipline as the directory endpoints."""
-    if not read_users:
-        return []
-    if users_by_id is None:
-        users_by_id = _load_read_users(db, set(read_users))
-    details = []
-    for user_id in read_users:
-        user = users_by_id.get(user_id)
-        if user is None:
-            continue
-        details.append(ReadUserDetail(id=user.id, username=user.username, display_name=None, team=user.team.name if user.team else None))
-    return details
+def _grant_responses(collection: Collection) -> list[CollectionGrantResponse]:
+    """Owners first, then members and readers; persons before teams."""
+    items = []
+    for grant in collection.grants:
+        if grant.user is not None:
+            items.append(CollectionGrantResponse(
+                user_id=grant.user_id, role=grant.role, name=grant.user.username,
+                team=grant.user.team.name if grant.user.team else None, is_active=grant.user.is_active,
+            ))
+        elif grant.team is not None:
+            items.append(CollectionGrantResponse(team_id=grant.team_id, role=grant.role, name=grant.team.name))
+    return sorted(items, key=lambda item: (_ROLE_ORDER[item.role], item.team_id is not None, item.name.lower()))
 
 
 def _collection_to_response(
@@ -536,19 +460,23 @@ def _collection_to_response(
     user: User,
     *,
     job_ids: list[str] | None = None,
-    read_users_by_id: dict[str, User] | None = None,
+    team_roles: dict[str, CollectionRole] | None = None,
 ) -> CollectionResponse:
+    role = collection_role(db, collection, user, team_roles=team_roles)
     return CollectionResponse(
         collection_id=collection.id,
-        can_manage=user.role == UserRole.ADMIN or collection.owner_id == user.id,
-        can_upload=_can_manage_collection(db, collection, user),
+        can_manage=role_at_least(role, CollectionRole.OWNER),
+        can_upload=role_at_least(role, CollectionRole.MEMBER),
+        role=role,
         slug=collection.slug,
         name=collection.name,
         description=collection.description,
         visibility=collection.visibility,
-        read_teams=list(collection.read_teams or []),
-        read_users=list(collection.read_users or []),
-        read_user_details=_read_user_details(db, list(collection.read_users or []), read_users_by_id),
+        grants=_grant_responses(collection),
+        created_by=JobOwner(id=collection.created_by.id, username=collection.created_by.username)
+        if collection.created_by else None,
+        responsible_team=CollectionTeamRef(id=collection.responsible_team.id, name=collection.responsible_team.name)
+        if collection.responsible_team else None,
         email=collection.email,
         department=collection.department,
         folder=collection.folder,
@@ -1152,31 +1080,35 @@ def create_collection(
     if not name:
         name = slug
 
-    description = payload.description.strip() if payload.description else None
-    read_teams = list(payload.read_teams or [])
-    read_users = list(payload.read_users or [])
+    description = (payload.description or '').strip()
+    if not description:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='description (purpose) is required')
+    responsible_team_id = _validated_team_id(db, payload.responsible_team_id)
+    grants = [grant for grant in _validated_grants(db, payload.grants) if grant.user_id != user.id]
     if payload.visibility is not None:
         visibility = payload.visibility
     else:
-        # Backward-compatible default: a caller that never heard of
-        # `visibility` gets exactly the old behavior -- public unless it
-        # named a team or a person to restrict to.
-        visibility = CollectionVisibility.RESTRICTED if (read_teams or read_users) else CollectionVisibility.PUBLIC
+        # Backward-compatible default: public unless the caller named
+        # somebody to share the space with.
+        visibility = CollectionVisibility.RESTRICTED if grants else CollectionVisibility.PUBLIC
 
     collection = Collection(
-        owner_id=user.id,
+        created_by_id=user.id,
+        responsible_team_id=responsible_team_id,
         slug=slug,
         name=name,
         description=description,
         visibility=visibility,
-        read_teams=read_teams,
-        read_users=read_users,
         email=email,
         department=department,
         folder=folder_clean,
         subfolder=subfolder_clean,
         password_hash=password_hash,
     )
+    # The creator is always an owner (ADR 0008).
+    collection.grants.append(CollectionGrant(user_id=user.id, role=CollectionRole.OWNER))
+    for grant in grants:
+        collection.grants.append(CollectionGrant(user_id=grant.user_id, team_id=grant.team_id, role=grant.role))
     db.add(collection)
     db.commit()
     try:
@@ -1192,20 +1124,17 @@ def create_collection(
 
 @router.get('/collections', response_model=CollectionListResponse)
 def list_collections(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> CollectionListResponse:
-    """Same visibility rule as GET /jobs (`_visible_job_filter`): own +
-    current-teammates' + (for an admin) every collection. Does not populate
-    `job_ids` per item -- see CollectionResponse's docstring -- use GET
-    /collections/{id} for a single collection's job membership."""
+    """Every collection the caller may read (ADR 0008 grants, public
+    spaces, admins everything). Does not populate `job_ids` per item -- use
+    GET /collections/{id} for a single collection's job membership."""
     collections = db.scalars(select(Collection).order_by(Collection.created_at.desc())).all()
-    if user.role != UserRole.ADMIN:
-        collections = [collection for collection in collections if _can_read_collection(db, collection, user)]
-    read_users_by_id = _load_read_users(db, {user_id for c in collections for user_id in (c.read_users or [])})
-    return CollectionListResponse(
-        items=[
-            _collection_to_response(db, collection, user, read_users_by_id=read_users_by_id)
-            for collection in collections
-        ]
-    )
+    team_roles = user_team_roles(db, user)
+    items = []
+    for collection in collections:
+        response = _collection_to_response(db, collection, user, team_roles=team_roles)
+        if response.role is not None:
+            items.append(response)
+    return CollectionListResponse(items=items)
 
 
 @knowledge_router.get('/collections/registry', response_model=CollectionRegistryResponse)
@@ -1235,22 +1164,21 @@ def get_collections_registry(
     only the ACL/identity fields the contract defines
     (CollectionRegistryEntry): slug/name/description plus `visibility` (the
     single authoritative public/restricted flag) and the two additive ACLs,
-    `read_teams`/`read_users`.
+    `read_teams`/`read_users`, computed from the grants (ADR 0008).
     """
     collections = db.scalars(select(Collection).order_by(Collection.slug)).all()
-    return CollectionRegistryResponse(
-        items=[
-            CollectionRegistryEntry(
-                slug=collection.slug,
-                name=collection.name,
-                description=collection.description,
-                visibility=collection.visibility,
-                read_teams=list(collection.read_teams or []),
-                read_users=list(collection.read_users or []),
-            )
-            for collection in collections
-        ]
-    )
+    items = []
+    for collection in collections:
+        read_teams, read_users = registry_acl(collection)
+        items.append(CollectionRegistryEntry(
+            slug=collection.slug,
+            name=collection.name,
+            description=collection.description,
+            visibility=collection.visibility,
+            read_teams=read_teams,
+            read_users=read_users,
+        ))
+    return CollectionRegistryResponse(items=items)
 
 
 @router.get('/collections/{collection_id}', response_model=CollectionResponse)
@@ -1275,7 +1203,7 @@ def update_collection(
     if collection is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
     _require_visible_collection(db, collection, user)
-    _require_collection_owner_control(collection, user)
+    _require_collection_owner_control(db, collection, user)
 
     if payload.name is not None:
         name = payload.name.strip()
@@ -1283,15 +1211,17 @@ def update_collection(
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='name cannot be empty')
         collection.name = name
     if payload.description is not None:
-        collection.description = payload.description.strip() or None
-    if payload.read_teams is not None:
-        read_teams = list(dict.fromkeys(payload.read_teams))
-        _validate_known_teams(db, read_teams)
-        collection.read_teams = read_teams
-    if payload.read_users is not None:
-        read_users = list(dict.fromkeys(payload.read_users))
-        _validate_known_users(db, read_users)
-        collection.read_users = read_users
+        description = payload.description.strip()
+        if not description:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='description (purpose) cannot be empty')
+        collection.description = description
+    if payload.responsible_team_id is not None:
+        collection.responsible_team_id = _validated_team_id(db, payload.responsible_team_id)
+    if payload.grants is not None:
+        grants = _validated_grants(db, payload.grants)
+        if not any(grant.role == CollectionRole.OWNER for grant in grants):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='A collection needs at least one owner')
+        _replace_grants(collection, grants)
     if payload.visibility is not None:
         collection.visibility = payload.visibility
 
@@ -1327,7 +1257,7 @@ def delete_collection(
     if collection is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
     _require_visible_collection(db, collection, user)
-    _require_collection_owner_control(collection, user)
+    _require_collection_owner_control(db, collection, user)
     slug = collection.slug
 
     collection_ref = Job.processing_info['settings']['collection_id'].as_string()
@@ -1373,15 +1303,14 @@ def delete_collection(
 
 
 def _require_directory_access(db: Session, user: User) -> None:
-    """Shared 403 gate for both directory endpoints below: an admin or
-    anyone who can manage at least one collection may search the
-    user/team directory to populate a collection's `read_users`/
-    `read_teams` grant; nobody else gets a system-wide listing of accounts
-    or teams just for having an ordinary login."""
-    if user.role != UserRole.ADMIN and not _can_manage_any_collection(db, user):
+    """Shared 403 gate for both directory endpoints below: an admin or an
+    owner of at least one collection may search the user/team directory to
+    share a space; nobody else gets a system-wide listing of accounts or
+    teams just for having an ordinary login."""
+    if not _can_share_any_collection(db, user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail='Only an admin or a collection manager may use the directory',
+            detail='Only an admin or a collection owner may use the directory',
         )
 
 
@@ -1392,7 +1321,7 @@ def list_directory_users(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> DirectoryUsersResponse:
-    """Person-picker search for a collection's `read_users` grant (see
+    """Person-picker search for a collection's person grants (see
     CollectionUpdateRequest's docstring). Case-insensitive substring match
     on username or (primary) team name -- there is no per-user display name
     field on this service's `User` model, so `display_name` is always null
@@ -1433,13 +1362,13 @@ def _team_member_counts(db: Session) -> dict[str, int]:
 
 @router.get('/directory/teams', response_model=DirectoryTeamsResponse)
 def list_directory_teams(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> DirectoryTeamsResponse:
-    """Team-picker listing for a collection's `read_teams` grant -- same
+    """Team-picker listing for a collection's team grants -- same
     authorization gate as GET /directory/users."""
     _require_directory_access(db, user)
     counts = _team_member_counts(db)
     teams = db.scalars(select(Team).order_by(Team.name)).all()
     return DirectoryTeamsResponse(
-        items=[DirectoryTeamEntry(name=team.name, member_count=counts.get(team.id, 0)) for team in teams]
+        items=[DirectoryTeamEntry(id=team.id, name=team.name, member_count=counts.get(team.id, 0)) for team in teams]
     )
 
 

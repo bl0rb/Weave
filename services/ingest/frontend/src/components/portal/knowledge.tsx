@@ -8,10 +8,10 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { apiSend, ConfirmDialog, Modal, inputClass } from '@/components/admin/admin-shared';
 import { AccessDialog } from './access-dialog';
 import { AccessLine } from './access-line';
-import { accessSummary } from '@/lib/access-summary';
+import { accessSummary, ownerSummary } from '@/lib/access-summary';
 import { spaceColorVar, spaceMark } from '@/lib/space-color';
 import { useIndexingStatus } from '@/lib/use-indexing-status';
-import { bulkPortalAction, collectionDownloadName, downloadPortalFile, jsonBody, loadDocuments, markdownDownloadName, pipelineStage, portalDownloadError, portalError, reindexKnowledgeSpace, type DocumentPage, type KnowledgeSpace, type PortalDocument, type QualityGradeFilter } from '@/lib/portal';
+import { bulkPortalAction, collectionDownloadName, downloadPortalFile, jsonBody, loadDirectoryTeams, loadDocuments, markdownDownloadName, pipelineStage, portalDownloadError, portalError, reindexKnowledgeSpace, type DirectoryTeam, type DocumentPage, type KnowledgeSpace, type PortalDocument, type QualityGradeFilter } from '@/lib/portal';
 import { useI18n } from '@/i18n/provider';
 import { BulkActionBar, DocumentTable, EmptyState, Notice, Pagination, PortalPage, QualityGradeFilterRow, QualityGradeLegend } from './shared';
 
@@ -76,6 +76,7 @@ export function KnowledgeSpaces() {
             <div><h2><Link href={`/knowledge/${space.collection_id}`}>{space.name}</Link></h2><p>{space.description || t('portal.spaces.defaultDescription')}</p></div>
           </div>
           <p className="text-sm font-semibold text-[var(--ink-2)]">{t('portal.spaces.readyCount', { count: stats.ready })}</p>
+          <p className="text-xs text-[var(--muted)]">{t('portal.spaces.ownersLine', { owners: ownerSummary(space.grants) })}{space.responsible_team && ` · ${t('portal.spaces.responsibleLine', { team: space.responsible_team.name })}`}</p>
           <AccessLine collection={space} name={space.name} canManage={space.can_manage} onChangeAccess={() => setAccessEditing(space)} />
           <p className="portal-space-state">{chips.length ? chips : <span className="portal-chip portal-chip-ok"><CheckCheck aria-hidden="true" />{t('portal.spaces.allCurrent')}</span>}</p>
           <div className="portal-space-actions">
@@ -102,16 +103,23 @@ export function KnowledgeSpaces() {
 function KnowledgeSpaceEditor({ space, onClose, onSaved }: { space: KnowledgeSpace; onClose: () => void; onSaved: () => Promise<void> }) {
   const { t, locale } = useI18n();
   const [name, setName] = useState(space.name);
-  const [description, setDescription] = useState(space.description || '');
+  const [purpose, setPurpose] = useState(space.description || '');
+  const [responsibleTeam, setResponsibleTeam] = useState(space.responsible_team?.id ?? '');
+  const [teams, setTeams] = useState<DirectoryTeam[]>(space.responsible_team ? [{ ...space.responsible_team, member_count: 0 }] : []);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  useEffect(() => {
+    const controller = new AbortController();
+    loadDirectoryTeams(controller.signal).then(data => setTeams(data.items)).catch(() => { /* keeps the current team only */ });
+    return () => controller.abort();
+  }, []);
   async function save(event: FormEvent) {
     event.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim() || !purpose.trim()) return;
     setSaving(true); setError('');
     try {
       await apiJson(`/api/v1/collections/${encodeURIComponent(space.collection_id)}`, {
-        ...jsonBody({ name: name.trim(), description: description.trim() }), method: 'PATCH',
+        ...jsonBody({ name: name.trim(), description: purpose.trim(), responsible_team_id: responsibleTeam }), method: 'PATCH',
       });
       await onSaved();
     } catch (err) { setError(portalError(err, locale)); setSaving(false); }
@@ -120,8 +128,12 @@ function KnowledgeSpaceEditor({ space, onClose, onSaved }: { space: KnowledgeSpa
     {error && <Notice error>{error}</Notice>}
     <form className="space-y-4" onSubmit={save}>
       <label className="block text-sm font-medium text-slate-700">{t('common.name')}<input autoFocus required maxLength={255} className={inputClass} value={name} onChange={event => setName(event.target.value)} /></label>
-      <label className="block text-sm font-medium text-slate-700">{t('common.description')}<textarea rows={4} maxLength={4000} className={inputClass} value={description} onChange={event => setDescription(event.target.value)} /></label>
-      <div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" onClick={onClose} disabled={saving}>{t('common.cancel')}</Button><Button type="submit" disabled={saving || !name.trim()}>{saving ? t('portal.access.dialog.saving') : t('common.save')}</Button></div>
+      <label className="block text-sm font-medium text-slate-700">{t('portal.newSpace.purposeLabel')}<textarea required rows={4} maxLength={4000} className={inputClass} value={purpose} onChange={event => setPurpose(event.target.value)} /></label>
+      <label className="block text-sm font-medium text-slate-700">{t('portal.newSpace.responsibleTeam')}<select className={inputClass} value={responsibleTeam} onChange={event => setResponsibleTeam(event.target.value)}>
+        <option value="">{t('portal.newSpace.noResponsibleTeam')}</option>
+        {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
+      </select></label>
+      <div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" onClick={onClose} disabled={saving}>{t('common.cancel')}</Button><Button type="submit" disabled={saving || !name.trim() || !purpose.trim()}>{saving ? t('portal.access.dialog.saving') : t('common.save')}</Button></div>
     </form>
   </Modal>;
 }

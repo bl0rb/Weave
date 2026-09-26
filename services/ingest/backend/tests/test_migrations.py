@@ -10,6 +10,7 @@ alembic to 0003, and drive 0004 itself through the real alembic machinery.
 no postgres-specific DDL) specifically so this works.
 """
 
+import json
 from pathlib import Path
 
 import pytest
@@ -953,7 +954,8 @@ def test_0014_collection_registry_backfills_non_empty_table(tmp_path, monkeypatc
             "VALUES ('legacy-coll-bare', NULL, '', '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
         ))
 
-    command.upgrade(cfg, 'head')
+    # 0035 later drops read_teams/read_users/owner_id (see its own test).
+    command.upgrade(cfg, '0034_visibility_fail_closed')
 
     insp = inspect(engine)
     columns = {c['name'] for c in insp.get_columns('collections')}
@@ -1029,7 +1031,8 @@ def test_0015_webhook_collection_event_round_trip(tmp_path, monkeypatch) -> None
     assert 'collection_id' not in delivery_columns_before
 
     # --- upgrade the one revision under test ---
-    command.upgrade(cfg, 'head')
+    # 0035 later drops read_teams/read_users/owner_id (see its own test).
+    command.upgrade(cfg, '0034_visibility_fail_closed')
 
     insp = inspect(engine)
     delivery_columns = {c['name'] for c in insp.get_columns('webhook_deliveries')}
@@ -1133,7 +1136,8 @@ def test_0032_collection_visibility_backfills_from_read_teams(tmp_path, monkeypa
             "VALUES ('coll-restricted', NULL, 'coll-restricted', 'Team Space', '[\"ops\"]', '', '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
         ))
 
-    command.upgrade(cfg, 'head')
+    # 0035 later drops read_teams/read_users/owner_id (see its own test).
+    command.upgrade(cfg, '0034_visibility_fail_closed')
 
     insp = inspect(engine)
     columns = {c['name'] for c in insp.get_columns('collections')}
@@ -1229,9 +1233,67 @@ def test_0032_backfilled_visibility_reads_back_through_the_orm(tmp_path, monkeyp
     with OrmSession(engine) as db:
         assert db.get(Collection, 'c-public').visibility == CollectionVisibility.PUBLIC
         assert db.get(Collection, 'c-team').visibility == CollectionVisibility.RESTRICTED
-        db.add(Collection(id='c-new', slug='new', name='New', description='', read_teams=[], visibility=CollectionVisibility.PUBLIC))
+        db.add(Collection(id='c-new', slug='new', name='New', description='', visibility=CollectionVisibility.PUBLIC))
         db.commit()
     with engine.connect() as conn:
         raw = conn.execute(text("SELECT visibility FROM collections WHERE id = 'c-new'")).scalar_one()
     assert raw == 'public'
+    engine.dispose()
+
+
+def test_0035_collection_grants_keep_every_existing_right(tmp_path, monkeypatch) -> None:
+    """owner_id -> owner grant + created_by_id, read_users -> readers,
+    read_teams -> member teams, the owner's primary team -> member team and
+    responsible_team_id; the old columns are dropped. The downgrade maps
+    the grants back."""
+    db_url = f'sqlite:///{tmp_path / "collection_grants.db"}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+    engine = create_engine(db_url, future=True)
+    _build_legacy_metadata().create_all(bind=engine)
+    cfg = _alembic_config()
+    command.stamp(cfg, '0003_job_markdown_versions')
+    command.upgrade(cfg, '0034_visibility_fail_closed')
+    with engine.begin() as conn:
+        for team_id, name in [('t-owner', 'Owner Team'), ('t-ops', 'ops')]:
+            conn.execute(text("INSERT INTO teams (id, name, created_at) VALUES (:id, :name, CURRENT_TIMESTAMP)"), {'id': team_id, 'name': name})
+        for user_id, team_id in [('owner', 't-owner'), ('reader', None)]:
+            conn.execute(text(
+                "INSERT INTO users (id, username, email, role, is_active, team_id, created_at, updated_at) "
+                "VALUES (:id, :id, :email, 'user', 1, :team, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            ), {'id': user_id, 'email': f'{user_id}@example.com', 'team': team_id})
+        conn.execute(text(
+            "INSERT INTO collections (id, owner_id, slug, name, read_teams, read_users, visibility, email, department, folder, subfolder, created_at, updated_at) "
+            "VALUES ('c-shared', 'owner', 'shared', 'Shared', '[\"ops\", \"gone\"]', '[\"reader\", \"owner\", \"deleted\"]', 'restricted', '', '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        ))
+        conn.execute(text(
+            "INSERT INTO collections (id, owner_id, slug, name, read_teams, read_users, visibility, email, department, folder, subfolder, created_at, updated_at) "
+            "VALUES ('c-legacy', NULL, 'legacy', 'Legacy', '[]', '[]', 'public', '', '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        ))
+
+    command.upgrade(cfg, 'head')
+
+    columns = {column['name'] for column in inspect(engine).get_columns('collections')}
+    assert {'created_by_id', 'responsible_team_id'} <= columns
+    assert not {'owner_id', 'read_teams', 'read_users'} & columns
+    with engine.connect() as conn:
+        grants = conn.execute(text(
+            'SELECT collection_id, user_id, team_id, role FROM collection_grants ORDER BY collection_id, role, user_id, team_id'
+        )).all()
+        rows = {row.id: row for row in conn.execute(text('SELECT id, created_by_id, responsible_team_id FROM collections'))}
+    assert grants == [
+        ('c-shared', None, 't-ops', 'member'),
+        ('c-shared', None, 't-owner', 'member'),
+        ('c-shared', 'owner', None, 'owner'),
+        ('c-shared', 'reader', None, 'reader'),
+    ]
+    assert (rows['c-shared'].created_by_id, rows['c-shared'].responsible_team_id) == ('owner', 't-owner')
+    assert (rows['c-legacy'].created_by_id, rows['c-legacy'].responsible_team_id) == (None, None)
+
+    command.downgrade(cfg, '0034_visibility_fail_closed')
+    with engine.connect() as conn:
+        row = conn.execute(text("SELECT owner_id, read_teams, read_users FROM collections WHERE id = 'c-shared'")).one()
+    assert row.owner_id == 'owner'
+    assert sorted(json.loads(row.read_teams)) == ['Owner Team', 'ops']
+    assert json.loads(row.read_users) == ['reader']
+    assert 'collection_grants' not in inspect(engine).get_table_names()
     engine.dispose()

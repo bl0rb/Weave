@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import and_, case, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_user, require_admin
 from app.api.portal import _apply_quality_grade_filter
-from app.api.routes import _apply_visible_filter, _load_read_users, _read_user_details
+from app.api.routes import _apply_visible_filter, _grant_responses
 from app.database.session import get_db
 from app.models.models import Collection, DocumentRelease, ImportRun, ImportRunStatus, Job, JobStatus, KnowledgeWithdrawal, User
+from app.schemas.jobs import CollectionTeamRef
 from app.schemas.portal_management import (
     PortalActivityCounts,
     PortalActivityItem,
@@ -66,7 +67,7 @@ def _build_admin_collections_query(q: str | None = None):
 
     Jobs are aggregated before Collection is joined. The only GROUP BY is on
     the extracted collection-id text, so PostgreSQL never has to compare the
-    Collection.read_teams JSON value (or any other JSON column).
+    value of any JSON column.
     """
     quality_grade, quality_recommendation = _quality_expressions()
     reviewable = _reviewable_job_expression(quality_grade, quality_recommendation)
@@ -94,7 +95,7 @@ def _build_admin_collections_query(q: str | None = None):
             Collection.slug,
             Collection.name,
             Collection.description,
-            Collection.read_teams,
+            Collection.visibility,
             User.id,
             User.username,
             aggregates.c.document_count,
@@ -105,12 +106,10 @@ def _build_admin_collections_query(q: str | None = None):
             aggregates.c.released_count,
             Collection.created_at,
             Collection.updated_at,
-            Collection.visibility,
-            Collection.read_users,
         )
         .select_from(Collection)
         .outerjoin(aggregates, aggregates.c.collection_id == Collection.id)
-        .outerjoin(User, User.id == Collection.owner_id)
+        .outerjoin(User, User.id == Collection.created_by_id)
     )
     if q:
         pattern = f'%{q}%'
@@ -146,21 +145,27 @@ def list_admin_collections(
     total = int(db.scalar(total_query) or 0)
     rows = db.execute(query.order_by(Collection.created_at.desc(), Collection.id.desc()).offset(offset).limit(limit)).all()
 
-    read_users_by_id = _load_read_users(db, {user_id for row in rows for user_id in (row[16] or [])})
+    collections = {
+        collection.id: collection
+        for collection in db.scalars(
+            select(Collection).where(Collection.id.in_([row[0] for row in rows])).options(selectinload(Collection.responsible_team))
+        ).all()
+    }
     items = []
     for row in rows:
-        owner = PortalManagementOwner(id=row[5], username=row[6]) if row[5] is not None else None
+        collection = collections[row[0]]
+        created_by = PortalManagementOwner(id=row[5], username=row[6]) if row[5] is not None else None
         items.append(
             PortalCollectionItem(
                 collection_id=row[0],
                 slug=row[1],
                 name=row[2],
                 description=row[3],
-                read_teams=list(row[4] or []),
-                visibility=row[15],
-                read_users=list(row[16] or []),
-                read_user_details=_read_user_details(db, list(row[16] or []), read_users_by_id),
-                owner=owner,
+                visibility=row[4],
+                grants=_grant_responses(collection),
+                created_by=created_by,
+                responsible_team=CollectionTeamRef(id=collection.responsible_team.id, name=collection.responsible_team.name)
+                if collection.responsible_team else None,
                 document_count=int(row[7] or 0),
                 pending_count=int(row[8] or 0),
                 running_count=int(row[9] or 0),
