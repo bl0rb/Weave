@@ -13,6 +13,7 @@ Dieses Verzeichnis enthält die Architektur-Entscheidungen der Weave-Plattform. 
 | [0005](0005-geteiltes-read-model.md) | Geteiltes Read-Model fuer den Chunk-Store | angenommen | 2026-08-31 |
 | [0006](0006-foederierte-anmeldung.md) | Weave-Ingest als Identitaetsanbieter der Plattform | angenommen | 2026-09-01 |
 | [0007](0007-zentrale-chat-provider-konfiguration.md) | Zentrale Chat-Provider-Konfiguration in Weave-Ingest | angenommen | 2026-09-02 |
+| [0008](0008-besitz-freigaben-metadaten.md) | Besitz, Freigaben und Metadaten für Wissensbereiche und Bots | angenommen | 2026-09-26 |
 
 ## Format
 
@@ -47,3 +48,6 @@ Weave-API führt keine eigene Kontenwelt mehr, sondern föderiert an Weave-Inges
 
 ### 0007: Zentrale Chat-Provider-Konfiguration
 Weave-Ingest speichert den OpenAI-kompatiblen Endpoint, Modellnamen und den verschlüsselten API-Key. Die zustandslose Runtime liest für jeden direkten Chat-Turn einen frischen, dienst-authentifizierten Snapshot. Änderungen gelten damit für alle Replikate ohne Neustart; n8n-Flows behalten ihre eigene Modellkonfiguration.
+
+### 0008: Besitz, Freigaben und Metadaten
+Rechte an Wissensbereichen entstehen nur über Freigaben an Personen (lokal oder SSO) oder Teams mit den Rollen Besitzer, Mitglied und Leser; Bots kennen Besitzer und Nutzer. Beim Anlegen werden Zweck, zuständiges Team und Ersteller erfasst. Bots antworten nur aus Bereichen, die der Fragende selbst lesen darf; SSO-Personen sind nach ihrer ersten Anmeldung freigebbar.
