@@ -1,4 +1,5 @@
-"""Admin CRUD and Runtime-only projection for n8n-backed bots."""
+"""Admin CRUD, owner maintenance (ADR 0008) and Runtime-only projection
+for n8n-backed bots."""
 
 import hmac
 import httpx
@@ -9,18 +10,24 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import origin_guard, require_admin
+from app.api.deps import get_current_user, origin_guard, require_admin
 from app.core.config import settings
 from app.database.session import get_db
-from app.models.models import BotTombstone, Collection, ManagedBot, Team, User
+from app.models.models import BotGrant, BotRole, BotTombstone, Collection, ManagedBot, Team, User, UserRole
 from app.schemas.managed_bots import (
+    BotGrantInput,
+    BotGrantResponse,
     ManagedBotAdminResponse,
     ManagedBotCreate,
     ManagedBotInternalListResponse,
     ManagedBotInternalResponse,
     ManagedBotListResponse,
+    ManagedBotOwnerListResponse,
+    ManagedBotOwnerResponse,
+    ManagedBotOwnerUpdate,
     ManagedBotUpdate,
 )
+from app.services.collection_access import collection_role
 from app.services.security import (
     decrypt_managed_bot_auth_token,
     encrypt_managed_bot_auth_token,
@@ -34,6 +41,21 @@ router_admin = APIRouter(
     dependencies=[Depends(require_admin), Depends(origin_guard)],
 )
 router_internal = APIRouter(prefix='/api/v1/internal/bots', tags=['managed-bots-internal'])
+router_owner = APIRouter(prefix='/api/v1/bots', tags=['managed-bots-owner'], dependencies=[Depends(origin_guard)])
+
+
+def _grant_responses(row: ManagedBot) -> list[BotGrantResponse]:
+    """Owners first, then users; persons before teams."""
+    items = []
+    for grant in row.grants:
+        if grant.user is not None:
+            items.append(BotGrantResponse(
+                user_id=grant.user_id, role=grant.role, name=grant.user.username,
+                team=grant.user.team.name if grant.user.team else None, is_active=grant.user.is_active,
+            ))
+        elif grant.team is not None:
+            items.append(BotGrantResponse(team_id=grant.team_id, role=grant.role, name=grant.team.name))
+    return sorted(items, key=lambda item: (item.role != BotRole.OWNER, item.team_id is not None, item.name.lower()))
 
 
 def _admin_response(row: ManagedBot) -> ManagedBotAdminResponse:
@@ -55,7 +77,8 @@ def _admin_response(row: ManagedBot) -> ManagedBotAdminResponse:
         streaming=row.streaming,
         has_auth_token=bool(row.auth_token_encrypted),
         timeout_seconds=row.timeout_seconds,
-        teams=list(row.teams or []),
+        public=row.public,
+        grants=_grant_responses(row),
         collections=list(row.collections or []),
         require_sources=row.require_sources,
         no_context_reply=row.no_context_reply,
@@ -67,7 +90,7 @@ def _admin_response(row: ManagedBot) -> ManagedBotAdminResponse:
     )
 
 
-def _runtime_bots() -> list[ManagedBotAdminResponse]:
+def _runtime_bots(db: Session | None = None) -> list[ManagedBotAdminResponse]:
     if not settings.runtime_api_token:
         return []
     base_url = settings.runtime_bots_base_url.rstrip('/')
@@ -103,6 +126,8 @@ def _runtime_bots() -> list[ManagedBotAdminResponse]:
         # Managed n8n bots remain administrable when Runtime is temporarily
         # unavailable; the next refresh exposes local YAML bots again.
         return []
+    # YAML bots name teams; show the ones this service knows as user grants.
+    teams_by_name = {team.name: team for team in db.scalars(select(Team)).all()} if db is not None else {}
     result = []
     for item in items:
         try:
@@ -127,7 +152,13 @@ def _runtime_bots() -> list[ManagedBotAdminResponse]:
             top_k=retrieval.get('top_k', 20), final_k=retrieval.get('final_k', 5), rerank=bool(retrieval.get('rerank', True)),
             include_uncollected=bool(retrieval.get('include_uncollected', True)), streaming=bool(n8n.get('streaming', False)),
             has_auth_token=bool(n8n.get('auth_token')), timeout_seconds=n8n.get('timeout_seconds', 120),
-            teams=list(permissions.get('teams') or []), collections=list(retrieval.get('collections') or []),
+            public=not (permissions.get('teams') or permissions.get('users')) if permissions.get('public') is None
+            else bool(permissions.get('public')),
+            grants=[
+                BotGrantResponse(team_id=teams_by_name[name].id, role=BotRole.USER, name=name)
+                for name in permissions.get('teams') or [] if name in teams_by_name
+            ],
+            collections=list(retrieval.get('collections') or []),
             require_sources=bool(guard.get('require_sources', True)), no_context_reply=guard.get('no_context_reply', ''),
             agent=config.get('agent'),
             created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc), source='runtime', editable=True,
@@ -145,19 +176,35 @@ def _require_runtime_token(request: Request) -> None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='invalid service token')
 
 
-def _validate_references(payload: ManagedBotCreate | ManagedBotUpdate, db: Session) -> None:
-    known_teams = set(db.scalars(select(Team.name).where(Team.name.in_(payload.teams))).all())
-    unknown_teams = sorted(set(payload.teams) - known_teams)
-    if unknown_teams:
+def _validated_grants(db: Session, grants: list[BotGrantInput]) -> list[BotGrantInput]:
+    """422 on unknown users/teams and on one subject named twice with
+    different roles; exact duplicates collapse."""
+    by_subject: dict[tuple[str | None, str | None], BotGrantInput] = {}
+    for grant in grants:
+        key = (grant.user_id, grant.team_id)
+        previous = by_subject.get(key)
+        if previous is not None and previous.role != grant.role:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f'Widersprüchliche Rollen für {grant.user_id or grant.team_id}',
+            )
+        by_subject[key] = grant
+    user_ids = [user_id for user_id, _ in by_subject if user_id]
+    team_ids = [team_id for _, team_id in by_subject if team_id]
+    known = set(db.scalars(select(User.id).where(User.id.in_(user_ids))).all()) if user_ids else set()
+    known |= set(db.scalars(select(Team.id).where(Team.id.in_(team_ids))).all()) if team_ids else set()
+    unknown = sorted(set(user_ids + team_ids) - known)
+    if unknown:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f'Unbekannte Teams: {", ".join(unknown_teams)}',
+            detail=f'Unbekannte Personen oder Teams: {", ".join(unknown)}',
         )
+    return list(by_subject.values())
 
-    known_collections = set(
-        db.scalars(select(Collection.slug).where(Collection.slug.in_(payload.collections))).all()
-    )
-    unknown_collections = sorted(set(payload.collections) - known_collections)
+
+def _validate_collections(db: Session, slugs: list[str]) -> None:
+    known_collections = set(db.scalars(select(Collection.slug).where(Collection.slug.in_(slugs))).all())
+    unknown_collections = sorted(set(slugs) - known_collections)
     if unknown_collections:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -165,7 +212,21 @@ def _validate_references(payload: ManagedBotCreate | ManagedBotUpdate, db: Sessi
         )
 
 
-def _apply(row: ManagedBot, payload: ManagedBotCreate | ManagedBotUpdate, admin: User) -> None:
+def _replace_grants(row: ManagedBot, grants: list[BotGrantInput]) -> None:
+    """Replace the access list in place; a subject that stays keeps its row
+    and only changes its role (see routes._replace_grants for why)."""
+    wanted = {(grant.user_id, grant.team_id): grant.role for grant in grants}
+    for existing in list(row.grants):
+        key = (existing.user_id, existing.team_id)
+        if key in wanted:
+            existing.role = wanted.pop(key)
+        else:
+            row.grants.remove(existing)
+    for (user_id, team_id), role in wanted.items():
+        row.grants.append(BotGrant(user_id=user_id, team_id=team_id, role=role))
+
+
+def _apply(row: ManagedBot, payload: ManagedBotCreate | ManagedBotUpdate, admin: User, grants: list[BotGrantInput]) -> None:
     next_url = payload.webhook_url
     url_changed = bool(row.webhook_url and row.webhook_url != next_url)
     row.name = payload.name
@@ -183,7 +244,8 @@ def _apply(row: ManagedBot, payload: ManagedBotCreate | ManagedBotUpdate, admin:
     row.include_uncollected = payload.include_uncollected
     row.streaming = payload.streaming
     row.timeout_seconds = payload.timeout_seconds
-    row.teams = list(payload.teams)
+    row.public = payload.public
+    _replace_grants(row, grants)
     row.collections = list(payload.collections)
     row.require_sources = payload.require_sources
     row.no_context_reply = payload.no_context_reply
@@ -202,7 +264,7 @@ def list_managed_bots(request: Request, db: Session = Depends(get_db)) -> Manage
     managed = [_admin_response(row) for row in rows]
     managed_ids = {item.id for item in managed}
     tombstoned_ids = set(db.scalars(select(BotTombstone.id)).all())
-    runtime = [item for item in _runtime_bots() if item.id not in managed_ids and item.id not in tombstoned_ids]
+    runtime = [item for item in _runtime_bots(db) if item.id not in managed_ids and item.id not in tombstoned_ids]
     return ManagedBotListResponse(items=sorted(managed + runtime, key=lambda item: (item.name, item.id)))
 
 
@@ -216,13 +278,14 @@ def create_managed_bot(
     enforce_rate_limit(request)
     if db.get(ManagedBot, payload.id) is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Diese Bot-ID wird bereits verwendet.')
-    _validate_references(payload, db)
+    grants = _validated_grants(db, payload.grants)
+    _validate_collections(db, payload.collections)
     # Re-creating a previously deleted Runtime/YAML bot restores it.
     tombstone = db.get(BotTombstone, payload.id)
     if tombstone is not None:
         db.delete(tombstone)
     row = ManagedBot(id=payload.id, name=payload.name, webhook_url=payload.webhook_url)
-    _apply(row, payload, admin)
+    _apply(row, payload, admin, grants)
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -253,8 +316,9 @@ def update_managed_bot(
         tombstone = db.get(BotTombstone, bot_id)
         if tombstone is not None:
             db.delete(tombstone)
-    _validate_references(payload, db)
-    _apply(row, payload, admin)
+    grants = _validated_grants(db, payload.grants)
+    _validate_collections(db, payload.collections)
+    _apply(row, payload, admin, grants)
     db.commit()
     db.refresh(row)
     return _admin_response(row)
@@ -318,10 +382,115 @@ def internal_managed_bots(response: Response, db: Session = Depends(get_db)) -> 
             streaming=row.streaming,
             auth_token=auth_token,
             timeout_seconds=row.timeout_seconds,
-            teams=list(row.teams or []),
+            teams=sorted(grant.team.name for grant in row.grants if grant.team is not None),
+            users=sorted(grant.user_id for grant in row.grants if grant.user_id is not None),
+            public=row.public,
             collections=list(row.collections or []),
             require_sources=row.require_sources,
             no_context_reply=row.no_context_reply,
             agent=dict(row.agent_config) if row.agent_config else None,
         ))
     return ManagedBotInternalListResponse(items=items, disabled_ids=sorted(disabled_ids))
+
+
+# --- Owner maintenance (ADR 0008) --------------------------------------------
+
+def _owner_response(row: ManagedBot) -> ManagedBotOwnerResponse:
+    return ManagedBotOwnerResponse(
+        id=row.id,
+        kind=row.kind,
+        name=row.name,
+        description=row.description,
+        enabled=row.enabled,
+        system_prompt=row.system_prompt,
+        retrieval_enabled=row.retrieval_enabled,
+        collections=list(row.collections or []),
+        require_sources=row.require_sources,
+        no_context_reply=row.no_context_reply,
+        public=row.public,
+        grants=_grant_responses(row),
+        updated_at=row.updated_at,
+    )
+
+
+def _owned_bot(db: Session, bot_id: str, user: User) -> ManagedBot:
+    """404 unless ``user`` owns the bot (or is an admin) -- never reveals
+    that a bot the caller doesn't own exists."""
+    row = db.get(ManagedBot, bot_id)
+    if row is None or (
+        user.role != UserRole.ADMIN
+        and not any(grant.user_id == user.id and grant.role == BotRole.OWNER for grant in row.grants)
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bot nicht gefunden.')
+    return row
+
+
+@router_owner.get('', response_model=ManagedBotOwnerListResponse)
+def list_owned_bots(
+    request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> ManagedBotOwnerListResponse:
+    """The managed bots the caller owns. Admins use the admin surface for
+    every bot; here they too only see their own."""
+    enforce_rate_limit(request)
+    rows = db.scalars(
+        select(ManagedBot)
+        .join(BotGrant, BotGrant.bot_id == ManagedBot.id)
+        .where(BotGrant.user_id == user.id, BotGrant.role == BotRole.OWNER)
+        .order_by(ManagedBot.name, ManagedBot.id)
+    ).all()
+    return ManagedBotOwnerListResponse(items=[_owner_response(row) for row in rows])
+
+
+@router_owner.patch('/{bot_id}', response_model=ManagedBotOwnerResponse)
+def update_owned_bot(
+    bot_id: str,
+    payload: ManagedBotOwnerUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ManagedBotOwnerResponse:
+    """Owners maintain the content and the users of their bot; the
+    connection and the owners themselves stay with the administrators."""
+    enforce_rate_limit(request)
+    row = _owned_bot(db, bot_id, user)
+    if payload.description is not None:
+        row.description = payload.description.strip() or None
+    if payload.system_prompt is not None:
+        prompt = payload.system_prompt.strip()
+        if row.kind == 'llm' and not prompt:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail='LLM-Bots brauchen einen Systemprompt.')
+        row.system_prompt = prompt or None
+    if payload.collections is not None:
+        _validate_collections(db, payload.collections)
+        # An owner may only attach spaces they can read themselves; spaces
+        # an administrator attached before may stay.
+        added = [slug for slug in payload.collections if slug not in (row.collections or [])]
+        collections = {c.slug: c for c in db.scalars(select(Collection).where(Collection.slug.in_(added))).all()} if added else {}
+        unreadable = sorted(slug for slug in added if collection_role(db, collections[slug], user) is None)
+        if unreadable:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f'Keine Leserechte für: {", ".join(unreadable)}',
+            )
+        row.collections = list(payload.collections)
+    if payload.require_sources is not None:
+        row.require_sources = payload.require_sources
+    if payload.no_context_reply is not None:
+        reply = payload.no_context_reply.strip()
+        if not reply:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail='no_context_reply cannot be empty')
+        row.no_context_reply = reply
+    if payload.public is not None:
+        row.public = payload.public
+    if payload.grants is not None:
+        owners = [
+            BotGrantInput(user_id=grant.user_id, role=BotRole.OWNER)
+            for grant in row.grants if grant.role == BotRole.OWNER
+        ]
+        owner_ids = {grant.user_id for grant in owners}
+        users = [grant for grant in _validated_grants(db, payload.grants) if grant.user_id not in owner_ids]
+        _replace_grants(row, owners + users)
+    row.updated_by_id = user.id
+    db.commit()
+    db.refresh(row)
+    return _owner_response(row)

@@ -309,7 +309,6 @@ def test_collection_delete_never_cascades_documents_or_races_an_active_import():
             id=f'collection-guard-{uuid.uuid4().hex[:8]}',
             name='Collection Guard',
             webhook_url='https://n8n.example.com/webhook/guard',
-            teams=[],
             collections=[bot_collection_slug],
             updated_by_id=owner.id,
         ))

@@ -44,7 +44,6 @@ from app.models.models import (
     AuthProvider,
     Job,
     LoginHandoffCode,
-    ManagedBot,
     Session as SessionModel,
     Team,
     User,
@@ -1297,16 +1296,12 @@ def admin_update_team(team_id: str, payload: TeamUpdateRequest, db: Session = De
     conflict = db.scalar(select(Team.id).where(Team.name == name, Team.id != team.id))
     if conflict is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Team already exists')
-    old_name = team.name
     team.name = name
 
-    # Runtime permissions and the collection registry use the team name as
-    # their cross-service identifier. Bots keep a denormalized copy; the
-    # registry is computed from grants (by id) but Knowledge must re-pull.
+    # The collection registry and Runtime's bot permissions use the team
+    # name as their cross-service identifier. Both are computed from grants
+    # (by id), but Knowledge must re-pull the registry.
     changed_collection_slugs = team_grant_collection_slugs(db, team.id)
-    for bot in db.scalars(select(ManagedBot)).all():
-        if old_name in (bot.teams or []):
-            bot.teams = [name if value == old_name else value for value in bot.teams]
     db.commit()
     try:
         if publication_tasks.publication_configured():

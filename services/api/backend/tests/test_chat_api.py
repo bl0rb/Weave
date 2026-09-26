@@ -107,7 +107,7 @@ def test_chat_with_new_conversation_persists_the_turn_and_returns_the_answer(db_
     assert call['bot_id'] == 'faq-bot'
     assert call['message'] == 'Wie setze ich mein VPN-Passwort zurueck?'
     assert call['history'] == []
-    assert call['user'] == {'id': str(user.id), 'team': 'Support', 'teams': ['Support']}
+    assert call['user'] == {'id': str(user.id), 'team': 'Support', 'teams': ['Support'], 'is_admin': False}
     # No `collections` in the request body -- app/api/chat.py must forward
     # exactly that absence (None), not invent a filter that was never asked
     # for. See test_chat_forwards_a_collections_filter_to_runtime below for
@@ -154,6 +154,7 @@ def test_chat_forwards_the_callers_ingest_subject_to_runtime(db_session, monkeyp
         'id': str(user.id),
         'team': 'Support',
         'teams': ['Support'],
+        'is_admin': False,
         'subject': 'ingest-user-id-1',
     }
 

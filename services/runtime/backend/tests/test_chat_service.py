@@ -123,6 +123,32 @@ def test_check_permissions_denies_a_missing_team_when_bot_restricts_teams():
         pass
 
 
+def _granted_bot(*, teams: list[str] | None = None, users: list[str] | None = None, public: bool | None = None) -> BotConfig:
+    return BotConfig.model_validate(
+        {**_BASE_BOT, 'permissions': {'teams': teams or [], 'users': users or [], 'public': public}}
+    )
+
+
+def test_check_permissions_allows_a_personally_granted_ingest_subject():
+    bot = _granted_bot(users=['ingest-user-1'], public=False)
+    _check_permissions(bot, ChatUser(team='sales', subject='ingest-user-1'))
+    with pytest.raises(BotPermissionDenied):
+        _check_permissions(bot, ChatUser(team='sales', subject='ingest-user-2'))
+    with pytest.raises(BotPermissionDenied):
+        _check_permissions(bot, ChatUser(team='sales'))
+
+
+def test_check_permissions_closes_a_managed_bot_without_grants_except_for_admins():
+    closed = _granted_bot(public=False)
+    with pytest.raises(BotPermissionDenied):
+        _check_permissions(closed, ChatUser(team='anything', subject='someone'))
+    _check_permissions(closed, ChatUser(team=None, is_admin=True))
+
+
+def test_check_permissions_opens_a_public_bot_despite_grants():
+    _check_permissions(_granted_bot(teams=['legal'], public=True), ChatUser(team='sales'))
+
+
 # --- _allowed_teams ------------------------------------------------------------
 
 

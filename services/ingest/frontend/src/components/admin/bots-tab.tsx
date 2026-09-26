@@ -6,6 +6,8 @@ import { Bot, KeyRound, Pencil, Plus, Trash2, Workflow } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiJson } from '@/lib/api';
 import type { Team } from '@/lib/auth-types';
+import { BotSharing } from '@/components/bot-sharing';
+import { toGrantInputs, type BotGrant } from '@/lib/bots';
 import type { KnowledgeSpace } from '@/lib/portal';
 import {
   Badge,
@@ -88,7 +90,8 @@ type ManagedBot = {
   streaming: boolean;
   has_auth_token: boolean;
   timeout_seconds: number;
-  teams: string[];
+  public: boolean;
+  grants: BotGrant[];
   collections: string[];
   require_sources: boolean;
   no_context_reply: string;
@@ -125,7 +128,8 @@ const emptyDraft = (noContextReply: string): BotDraft => ({
   clear_auth_token: false,
   has_auth_token: false,
   timeout_seconds: 120,
-  teams: [],
+  public: false,
+  grants: [],
   collections: [],
   require_sources: true,
   no_context_reply: noContextReply,
@@ -235,7 +239,7 @@ export function BotsTab() {
             <div className="flex flex-wrap items-center gap-2"><Bot size={18} className="text-emerald-700" /><h3 className="font-semibold text-slate-950">{item.name}</h3><Badge tone={item.enabled ? 'emerald' : 'slate'}>{item.enabled ? t('admin.bots.status.active') : t('admin.bots.status.inactive')}</Badge><Badge tone={item.source === 'runtime' ? 'slate' : 'emerald'}>{item.source === 'runtime' ? t('admin.bots.kind.configBot') : t('admin.bots.kind.managed')}</Badge>{item.streaming && <Badge tone="amber">{t('admin.bots.badge.streaming')}</Badge>}{item.has_auth_token && <Badge tone="amber">{t('admin.bots.badge.bearerToken')}</Badge>}</div>
             <p className="mt-1 text-sm text-slate-600">{item.description || item.id}</p>
             {item.webhook_url && <p className="mt-2 break-all text-xs text-slate-400">{item.webhook_url}</p>}
-            <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-500"><span>{t('admin.bots.teamsLabel', { teams: item.teams.length ? item.teams.join(', ') : t('admin.bots.teamsAll') })}</span><span>{t('admin.bots.spacesLabel', { value: item.collections.length ? item.collections.length : t('admin.bots.spacesAllAuthorized') })}</span></div>
+            <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-500"><span>{t('admin.bots.teamsLabel', { teams: item.public ? t('admin.bots.teamsAll') : item.grants.filter(grant => grant.role === 'user').map(grant => grant.name).join(', ') || t('admin.bots.teamsNone') })}</span><span>{t('admin.bots.ownersLabel', { owners: item.grants.filter(grant => grant.role === 'owner').map(grant => grant.name).join(', ') || '—' })}</span><span>{t('admin.bots.spacesLabel', { value: item.collections.length ? item.collections.length : t('admin.bots.spacesAllAuthorized') })}</span></div>
           </div>
           {item.editable !== false && <div className="flex gap-1"><Button variant="ghost" size="sm" onClick={() => setEditing(item)} aria-label={t('admin.bots.editAria', { name: item.name })}><Pencil size={15} />{t('common.edit')}</Button><Button variant="ghost" size="sm" onClick={() => setDeleting(item)} aria-label={t('admin.bots.deleteAria', { name: item.name })}><Trash2 size={15} /></Button></div>}
         </li>)}
@@ -261,7 +265,7 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const set = <K extends keyof BotDraft>(key: K, value: BotDraft[K]) => setDraft(current => ({ ...current, [key]: value }));
-  const toggleValue = (key: 'teams' | 'collections', value: string) => set(key, draft[key].includes(value) ? draft[key].filter(item => item !== value) : [...draft[key], value]);
+  const toggleValue = (key: 'collections', value: string) => set(key, draft[key].includes(value) ? draft[key].filter(item => item !== value) : [...draft[key], value]);
   const agentErrors = draft.kind === 'llm' ? validateAgent(draft.agent ?? null, t) : [];
   const canSave = Boolean(
     draft.id.trim() && draft.name.trim() &&
@@ -291,7 +295,8 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
       auth_token: draft.auth_token || null,
       clear_auth_token: draft.clear_auth_token,
       timeout_seconds: draft.timeout_seconds,
-      teams: draft.teams,
+      public: draft.public,
+      grants: toGrantInputs(draft.grants),
       collections: draft.collections,
       require_sources: draft.require_sources,
       no_context_reply: draft.no_context_reply,
@@ -337,7 +342,7 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
           )}
         </div>
       )}
-      <ScopeChoices title={t('admin.bots.scope.teams.title')} emptyLabel={t('admin.bots.scope.teams.empty')} items={teams.map(team => team.name)} selected={draft.teams} onToggle={value => toggleValue('teams', value)} />
+      <BotSharing isPublic={draft.public} onPublicChange={value => set('public', value)} grants={draft.grants} onGrantsChange={value => set('grants', value)} teams={teams} canEditOwners disabled={saving} />
       <ScopeChoices title={t('admin.bots.scope.spaces.title')} emptyLabel={t('admin.bots.scope.spaces.empty')} items={spaces.map(space => space.slug)} selected={draft.collections} onToggle={value => toggleValue('collections', value)} />
       <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-4"><Button type="button" variant="outline" onClick={onClose} disabled={saving}>{t('common.cancel')}</Button><Button type="submit" disabled={!canSave}>{saving ? t('admin.bots.saving') : t('admin.bots.save')}</Button></div>
     </form>

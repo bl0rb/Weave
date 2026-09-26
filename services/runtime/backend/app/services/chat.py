@@ -309,8 +309,8 @@ NO_COLLECTION_SENTINEL = '__none__'
 # validation concern (that's BotConfigError) or a bot-registry lookup
 # concern (that's BotNotFoundError).
 class BotPermissionDenied(Exception):
-    """Raised by `_check_permissions` when `bot.permissions.teams` is
-    non-empty and the caller's `user.team` is not a member of it -- mapped
+    """Raised by `_check_permissions` when the bot is not public and no
+    team, personal grant or admin right of the caller matches it -- mapped
     to 403 by app/api/internal.py. `bot_id`/`user_team` are carried
     separately (not just baked into the message) so a caller building its
     own error response/log line doesn't have to parse them back out."""
@@ -374,23 +374,25 @@ def _elapsed_ms(start: float) -> float:
 
 
 def _check_permissions(bot: BotConfig, user: ChatUser) -> None:
-    """Enforce `bot.permissions.teams` (app/schemas/bot.py) -- an empty list
-    means every team may use this bot (see that field's own docstring), so
-    this is a no-op in that case regardless of `user.team` (including when
-    `user.team` itself is unset -- an anonymous/system-initiated chat is
-    still allowed onto an unrestricted bot). A non-empty list requires
-    `user.team` to be a member; `None` (no team propagated at all) never
-    matches a non-empty list, the same as any other value that isn't in it.
+    """Enforce `bot.permissions` (app/schemas/bot.py, ADR 0008): a public
+    bot is open to everyone (including an anonymous/system-initiated chat).
+    Otherwise the caller needs one of the granted teams, a personal grant
+    (their Weave-Ingest id, `user.subject`) or admin rights. A missing team
+    or subject never matches anything.
     """
-    allowed_teams = bot.permissions.teams
-    if not allowed_teams:
+    permissions = bot.permissions
+    if permissions.is_public or user.is_admin:
         return
-    if not set(user.effective_teams).intersection(allowed_teams):
-        raise BotPermissionDenied(
-            f'bot {bot.id!r} is restricted to teams {allowed_teams!r}; caller team is {user.team!r}',
-            bot_id=bot.id,
-            user_team=user.team,
-        )
+    if set(user.effective_teams).intersection(permissions.teams):
+        return
+    if user.subject is not None and user.subject in permissions.users:
+        return
+    raise BotPermissionDenied(
+        f'bot {bot.id!r} is restricted to teams {permissions.teams!r} and {len(permissions.users)} person(s); '
+        f'caller team is {user.team!r}',
+        bot_id=bot.id,
+        user_team=user.team,
+    )
 
 
 def _allowed_teams(bot: BotConfig, user: ChatUser) -> list[str] | None:

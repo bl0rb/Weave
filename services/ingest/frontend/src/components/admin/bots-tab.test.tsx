@@ -22,7 +22,8 @@ const savedBot = {
   streaming: false,
   has_auth_token: false,
   timeout_seconds: 120,
-  teams: ['Service'],
+  public: false,
+  grants: [{ user_id: null, team_id: 'team-1', role: 'user', name: 'Service' }],
   collections: ['servicewissen'],
   require_sources: true,
   no_context_reply: 'Keine Belege.',
@@ -76,7 +77,8 @@ it('creates a scoped n8n bot and keeps pending bearer delivery disabled', async 
   const mutation = json.mock.calls.find(([, init]) => init?.method === 'POST');
   const body = JSON.parse(mutation?.[1]?.body as string);
   expect(body.id).toBe('service-assistent');
-  expect(body.teams).toEqual(['Service']);
+  expect(body.public).toBe(false);
+  expect(body.grants).toEqual([{ team_id: 'team-1', role: 'user' }]);
   expect(body.collections).toEqual(['servicewissen']);
   expect(body.streaming).toBe(false);
   expect(body.auth_token).toBeNull();
@@ -189,4 +191,30 @@ it('allows deleting a bundled Runtime bot after confirmation', async () => {
     '/api/v1/auth/admin/bots/service-assistent',
     { method: 'DELETE' },
   ));
+});
+
+it('assigns an owner through the person search and shares the bot with everyone', async () => {
+  json.mockImplementation(async (path, init) => {
+    if (init?.method === 'POST') return savedBot;
+    if (path === '/api/v1/auth/admin/bots') return { items: [] };
+    if (path === '/api/v1/auth/admin/teams') return { items: [] };
+    if (path === '/api/v1/collections') return { items: [] };
+    if (typeof path === 'string' && path.startsWith('/api/v1/directory/users')) return { items: [{ id: 'u-ada', username: 'ada', display_name: null, team: null }] };
+    throw new Error(`unexpected request: ${path}`);
+  });
+  render(<BotsTab />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Bot hinzufügen' }));
+  fireEvent.change(screen.getByRole('textbox', { name: /^Bot-ID/ }), { target: { value: 'wissens-bot' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Anzeigename' }), { target: { value: 'Wissens-Bot' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'System-Prompt' }), { target: { value: 'Hilf.' } });
+  fireEvent.change(screen.getByRole('searchbox', { name: 'Person suchen' }), { target: { value: 'ada' } });
+  fireEvent.click(await screen.findByRole('button', { name: /^ada/ }));
+  fireEvent.change(screen.getByRole('combobox', { name: 'Rolle von ada' }), { target: { value: 'owner' } });
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Für alle angemeldeten Nutzer freigeben' }));
+
+  fireEvent.click(screen.getByRole('button', { name: 'Bot speichern' }));
+  await waitFor(() => expect(json.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true));
+  const body = JSON.parse(json.mock.calls.find(([, init]) => init?.method === 'POST')?.[1]?.body as string);
+  expect(body.public).toBe(true);
+  expect(body.grants).toEqual([{ user_id: 'u-ada', role: 'owner' }]);
 });

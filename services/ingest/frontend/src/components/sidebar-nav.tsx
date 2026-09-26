@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
+  Bot,
   ChevronDown,
   FolderOpen,
   Home,
@@ -29,17 +30,20 @@ import { useI18n } from '@/i18n/provider';
 import type { MessageKey } from '@/i18n/messages';
 import { resolveChatPublicUrl } from '@/lib/api-base';
 import { loadDocuments } from '@/lib/portal';
+import { listOwnedBots } from '@/lib/bots';
 import { loadFailedJobs } from '@/lib/jobs-search';
 
 type NavItem = { href: string; label: string; icon: typeof Home; badge?: number };
 type T = (key: MessageKey, vars?: Record<string, string | number>) => string;
 
-function portalNav(t: T): Omit<NavItem, 'badge'>[] {
+function portalNav(t: T, ownsBots: boolean): Omit<NavItem, 'badge'>[] {
   return [
     { href: '/', label: t('portal.nav.overview'), icon: Home },
     { href: '/aufgaben', label: t('portal.nav.tasks'), icon: ListChecks },
     { href: '/knowledge', label: t('portal.nav.knowledgeSpaces'), icon: FolderOpen },
     { href: '/documents', label: t('portal.nav.documents'), icon: FileText },
+    // Only for bot owners (ADR 0008); everybody else has nothing to maintain there.
+    ...(ownsBots ? [{ href: '/bots', label: t('portal.nav.bots'), icon: Bot }] : []),
   ];
 }
 
@@ -66,12 +70,13 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
   const [helpOpen, setHelpOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [tasksBadge, setTasksBadge] = useState<number | null>(null);
+  const [ownsBots, setOwnsBots] = useState(false);
   // Lazy initializer (not an effect): resolveChatPublicUrl() only ever reads
   // a value injected before hydration (see runtime-env.js) and never
   // changes during the page's lifetime.
   const [chatUrl] = useState<string | null>(() => resolveChatPublicUrl());
   const isAdminArea = pathname.startsWith('/admin');
-  const navItems: NavItem[] = isAdminArea ? adminNav(t) : portalNav(t).map((item) => (item.href === '/aufgaben' ? { ...item, badge: tasksBadge ?? undefined } : item));
+  const navItems: NavItem[] = isAdminArea ? adminNav(t) : portalNav(t, ownsBots).map((item) => (item.href === '/aufgaben' ? { ...item, badge: tasksBadge ?? undefined } : item));
 
   // Aufgaben badge = open reviews + failed jobs. Both requests are as cheap
   // as the APIs allow (limit 0/1, only `total` is read) and are refreshed on
@@ -85,6 +90,13 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
       .catch(() => { if (!cancelled) setTasksBadge(null); });
     return () => { cancelled = true; };
   }, [user, pathname]);
+
+  useEffect(() => {
+    if (!user) return;
+    const controller = new AbortController();
+    listOwnedBots(controller.signal).then(data => setOwnsBots(data.items.length > 0)).catch(() => setOwnsBots(false));
+    return () => controller.abort();
+  }, [user]);
 
   useEffect(() => {
     function onPointerDown(e: PointerEvent) {

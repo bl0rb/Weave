@@ -1300,6 +1300,107 @@
         "title": "Body_upload_document_to_collection_api_v1_collections__collection_id__upload_post",
         "type": "object"
       },
+      "BotGrantInput": {
+        "additionalProperties": false,
+        "description": "One entry of a bot's access list (ADR 0008): exactly one of\n`user_id` (a local or SSO account) or `team_id`. Teams can only be\nusers, never owners.",
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/BotRole"
+          },
+          "team_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Id"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "title": "BotGrantInput",
+        "type": "object"
+      },
+      "BotGrantResponse": {
+        "description": "A resolved bot grant; `name` is the username or team name.",
+        "properties": {
+          "is_active": {
+            "default": true,
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/BotRole"
+          },
+          "team": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team"
+          },
+          "team_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Id"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "role",
+          "name"
+        ],
+        "title": "BotGrantResponse",
+        "type": "object"
+      },
+      "BotRole": {
+        "description": "A role on a managed bot (ADR 0008): owners maintain its content and\nsharing, users may chat with it.",
+        "enum": [
+          "owner",
+          "user"
+        ],
+        "title": "BotRole",
+        "type": "string"
+      },
       "ChatProviderAdminResponse": {
         "properties": {
           "base_url": {
@@ -3783,6 +3884,13 @@
             "title": "Final K",
             "type": "integer"
           },
+          "grants": {
+            "items": {
+              "$ref": "#/components/schemas/BotGrantResponse"
+            },
+            "title": "Grants",
+            "type": "array"
+          },
           "has_auth_token": {
             "title": "Has Auth Token",
             "type": "boolean"
@@ -3807,6 +3915,11 @@
           "no_context_reply": {
             "title": "No Context Reply",
             "type": "string"
+          },
+          "public": {
+            "default": false,
+            "title": "Public",
+            "type": "boolean"
           },
           "require_sources": {
             "title": "Require Sources",
@@ -3846,13 +3959,6 @@
               }
             ],
             "title": "System Prompt"
-          },
-          "teams": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Teams",
-            "type": "array"
           },
           "temperature": {
             "anyOf": [
@@ -3901,7 +4007,6 @@
           "streaming",
           "has_auth_token",
           "timeout_seconds",
-          "teams",
           "collections",
           "require_sources",
           "no_context_reply",
@@ -3973,6 +4078,14 @@
             "title": "Final K",
             "type": "integer"
           },
+          "grants": {
+            "items": {
+              "$ref": "#/components/schemas/BotGrantInput"
+            },
+            "maxItems": 500,
+            "title": "Grants",
+            "type": "array"
+          },
           "id": {
             "maxLength": 255,
             "minLength": 1,
@@ -4005,6 +4118,11 @@
             "minLength": 1,
             "title": "No Context Reply",
             "type": "string"
+          },
+          "public": {
+            "default": false,
+            "title": "Public",
+            "type": "boolean"
           },
           "require_sources": {
             "default": true,
@@ -4042,14 +4160,6 @@
               }
             ],
             "title": "System Prompt"
-          },
-          "teams": {
-            "items": {
-              "type": "string"
-            },
-            "maxItems": 100,
-            "title": "Teams",
-            "type": "array"
           },
           "temperature": {
             "anyOf": [
@@ -4182,6 +4292,11 @@
             "title": "No Context Reply",
             "type": "string"
           },
+          "public": {
+            "default": false,
+            "title": "Public",
+            "type": "boolean"
+          },
           "require_sources": {
             "title": "Require Sources",
             "type": "boolean"
@@ -4243,6 +4358,13 @@
             "title": "Top K",
             "type": "integer"
           },
+          "users": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Users",
+            "type": "array"
+          },
           "webhook_url": {
             "anyOf": [
               {
@@ -4280,6 +4402,209 @@
           }
         },
         "title": "ManagedBotListResponse",
+        "type": "object"
+      },
+      "ManagedBotOwnerListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ManagedBotOwnerResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "title": "ManagedBotOwnerListResponse",
+        "type": "object"
+      },
+      "ManagedBotOwnerResponse": {
+        "description": "What a bot owner sees and maintains (ADR 0008): the content and the\nsharing, never the technical connection (webhook, secret, timeout).",
+        "properties": {
+          "collections": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Collections",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "grants": {
+            "items": {
+              "$ref": "#/components/schemas/BotGrantResponse"
+            },
+            "title": "Grants",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "no_context_reply": {
+            "title": "No Context Reply",
+            "type": "string"
+          },
+          "public": {
+            "title": "Public",
+            "type": "boolean"
+          },
+          "require_sources": {
+            "title": "Require Sources",
+            "type": "boolean"
+          },
+          "retrieval_enabled": {
+            "default": false,
+            "title": "Retrieval Enabled",
+            "type": "boolean"
+          },
+          "system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Prompt"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "description",
+          "enabled",
+          "collections",
+          "require_sources",
+          "no_context_reply",
+          "public",
+          "updated_at"
+        ],
+        "title": "ManagedBotOwnerResponse",
+        "type": "object"
+      },
+      "ManagedBotOwnerUpdate": {
+        "additionalProperties": false,
+        "description": "Owner PATCH: every field optional (None = unchanged). `grants`\nreplaces the users; owners stay as the administrators set them.",
+        "properties": {
+          "collections": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 500,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collections"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "grants": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/BotGrantInput"
+                },
+                "maxItems": 500,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grants"
+          },
+          "no_context_reply": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "No Context Reply"
+          },
+          "public": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Public"
+          },
+          "require_sources": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Require Sources"
+          },
+          "system_prompt": {
+            "anyOf": [
+              {
+                "maxLength": 12000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Prompt"
+          }
+        },
+        "title": "ManagedBotOwnerUpdate",
         "type": "object"
       },
       "ManagedBotUpdate": {
@@ -4344,6 +4669,14 @@
             "title": "Final K",
             "type": "integer"
           },
+          "grants": {
+            "items": {
+              "$ref": "#/components/schemas/BotGrantInput"
+            },
+            "maxItems": 500,
+            "title": "Grants",
+            "type": "array"
+          },
           "include_uncollected": {
             "default": true,
             "title": "Include Uncollected",
@@ -4370,6 +4703,11 @@
             "minLength": 1,
             "title": "No Context Reply",
             "type": "string"
+          },
+          "public": {
+            "default": false,
+            "title": "Public",
+            "type": "boolean"
           },
           "require_sources": {
             "default": true,
@@ -4407,14 +4745,6 @@
               }
             ],
             "title": "System Prompt"
-          },
-          "teams": {
-            "items": {
-              "type": "string"
-            },
-            "maxItems": 100,
-            "title": "Teams",
-            "type": "array"
           },
           "temperature": {
             "anyOf": [
@@ -10851,6 +11181,81 @@
         "summary": "Get Benchmark Report",
         "tags": [
           "benchmarks"
+        ]
+      }
+    },
+    "/api/v1/bots": {
+      "get": {
+        "description": "The managed bots the caller owns. Admins use the admin surface for\nevery bot; here they too only see their own.",
+        "operationId": "list_owned_bots_api_v1_bots_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedBotOwnerListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Owned Bots",
+        "tags": [
+          "managed-bots-owner"
+        ]
+      }
+    },
+    "/api/v1/bots/{bot_id}": {
+      "patch": {
+        "description": "Owners maintain the content and the users of their bot; the\nconnection and the owners themselves stay with the administrators.",
+        "operationId": "update_owned_bot_api_v1_bots__bot_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bot_id",
+            "required": true,
+            "schema": {
+              "title": "Bot Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManagedBotOwnerUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedBotOwnerResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Owned Bot",
+        "tags": [
+          "managed-bots-owner"
         ]
       }
     },

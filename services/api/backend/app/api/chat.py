@@ -67,7 +67,7 @@ def chat(
 
     history = conversations_service.build_history(conversation, exclude_message_id=user_message.id)
 
-    runtime_user = {'id': str(user.id), 'team': user.team, 'teams': user.effective_teams}
+    runtime_user = {'id': str(user.id), 'team': user.team, 'teams': user.effective_teams, 'is_admin': user.is_admin}
     subject = ingest_subject(user.oidc_subject)
     if subject is not None:
         runtime_user['subject'] = subject
@@ -271,7 +271,7 @@ def chat_stream(
     )
     history = conversations_service.build_history(conversation, exclude_message_id=user_message.id)
 
-    runtime_user = {'id': str(user.id), 'team': user.team, 'teams': user.effective_teams}
+    runtime_user = {'id': str(user.id), 'team': user.team, 'teams': user.effective_teams, 'is_admin': user.is_admin}
     subject = ingest_subject(user.oidc_subject)
     if subject is not None:
         runtime_user['subject'] = subject

@@ -23,6 +23,8 @@ from app.core.config import settings
 from app.main import app
 from app.models.models import (
     AuthProvider,
+    BotGrant,
+    BotRole,
     Collection,
     CollectionGrant,
     CollectionRole,
@@ -393,7 +395,8 @@ def test_renaming_team_updates_collection_and_bot_permissions(client: TestClient
         db.flush()
         collection = Collection(slug='rename-team-collection', name='Knowledge')
         collection.grants.append(CollectionGrant(team_id=team.id, role=CollectionRole.READER))
-        bot = ManagedBot(id='rename-team-bot', name='Bot', teams=['Old Team'])
+        bot = ManagedBot(id='rename-team-bot', name='Bot')
+        bot.grants.append(BotGrant(team_id=team.id, role=BotRole.USER))
         db.add_all([collection, bot])
         db.commit()
         team_id = team.id
@@ -407,7 +410,8 @@ def test_renaming_team_updates_collection_and_bot_permissions(client: TestClient
     assert response.status_code == 200
     with _db() as db:
         assert registry_acl(db.get(Collection, collection.id))[0] == ['New Team']
-        assert db.get(ManagedBot, bot.id).teams == ['New Team']
+        # Bots name teams by id; Runtime gets the current name projected.
+        assert [grant.team.name for grant in db.get(ManagedBot, bot.id).grants] == ['New Team']
     assert notified == ['rename-team-collection']
 
 

@@ -334,6 +334,17 @@ class PermissionsConfig(BaseModel):
     # "no team may"; that's why general-assistant.yaml leaves this empty
     # while legal-support.yaml restricts it to ['legal', 'management'].
     teams: list[str] = Field(default_factory=list)
+    # Weave-Ingest user ids (ChatUser.subject) granted this bot individually
+    # (ADR 0008).
+    users: list[str] = Field(default_factory=list)
+    # Explicit "shared with everyone". None keeps the YAML contract above
+    # (no teams and no users = everyone); Ingest-managed bots always send
+    # it, so a managed bot without grants is closed (ADR 0008).
+    public: bool | None = None
+
+    @property
+    def is_public(self) -> bool:
+        return self.public if self.public is not None else not (self.teams or self.users)
 
 
 # German because it is a user-facing string, unlike everything else on this
@@ -495,4 +506,6 @@ class BotSummary(BaseModel):
     retrieval: BotRetrievalSummary
     kind: str = 'llm'
     teams: list[str] = Field(default_factory=list)
+    users: list[str] = Field(default_factory=list)
+    public: bool = True
     collections: list[str] = Field(default_factory=list)

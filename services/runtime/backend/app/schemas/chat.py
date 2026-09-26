@@ -36,6 +36,9 @@ class ChatUser(BaseModel):
     # provisioned account with no Ingest login) -- only the public + team
     # parts of Collections readability apply then, never a wildcard.
     subject: str | None = None
+    # Weave-Ingest administrators may use every bot (ADR 0008), like they
+    # may manage every knowledge space. Propagated by the gateway.
+    is_admin: bool = False
 
     @property
     def effective_teams(self) -> list[str]:

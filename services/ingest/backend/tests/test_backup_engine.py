@@ -582,3 +582,36 @@ def test_pre_visibility_archive_keeps_team_restricted_collections_restricted(mon
         assert not any('unbekannte Spalte' in warning for warning in report['warnings'])
     finally:
         target_db.close()
+
+
+def test_pre_bot_grants_archive_turns_bot_teams_into_user_grants(monkeypatch, tmp_path):
+    """An archive from before 0036_bot_grants names teams on each bot:
+    an empty list stays usable by everyone, a known team becomes a user
+    grant -- the same rules as that migration."""
+    archive_path = tmp_path / 'pre-0036.weave-backup.tar.gz'
+    _write_minimal_archive(archive_path, 'pw', {
+        'teams': [{'id': 'team-legal', 'name': 'legal'}],
+        'managed_bots': [
+            {'id': 'open-bot', 'name': 'Open', 'webhook_url': 'https://n8n.example.com/webhook/a', 'teams': [], 'collections': []},
+            {'id': 'legal-bot', 'name': 'Legal', 'webhook_url': 'https://n8n.example.com/webhook/b', 'teams': ['legal', 'gone'], 'collections': []},
+        ],
+    })
+
+    target_engine, TargetSession = _new_engine(tmp_path, 'target_pre_0036.db')
+    _use_storage_dirs(monkeypatch, tmp_path, 'target_pre_0036')
+    target_db = TargetSession()
+    try:
+        admin = User(username='bootstrap', email='bootstrap@example.com', password_hash=hash_password('Boots1'), role=UserRole.ADMIN)
+        target_db.add(admin)
+        target_db.commit()
+
+        report = backup.import_backup(target_db, path=archive_path, passphrase='pw', importing_admin_id=admin.id)
+        target_db.commit()
+
+        assert target_db.get(ManagedBot, 'open-bot').public is True
+        legal = target_db.get(ManagedBot, 'legal-bot')
+        assert legal.public is False
+        assert [(grant.team_id, grant.role.value) for grant in legal.grants] == [('team-legal', 'user')]
+        assert not any('unbekannte Spalte' in warning for warning in report['warnings'])
+    finally:
+        target_db.close()

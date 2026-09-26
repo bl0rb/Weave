@@ -342,14 +342,24 @@ class RetrievalProviderConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now(), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
 
+class BotRole(str, enum.Enum):
+    """A role on a managed bot (ADR 0008): owners maintain its content and
+    sharing, users may chat with it."""
+
+    OWNER = 'owner'
+    USER = 'user'
+
+
 class ManagedBot(Base):
     """Admin-managed n8n bot exposed to Weave-Runtime.
 
     Runtime remains stateless and reads enabled rows through the authenticated
     internal control-plane endpoint.  ``auth_token_encrypted`` is write-only
     on the admin API and decrypted only for that service-to-service response.
-    Team names and collection slugs intentionally match the identifiers used
-    by Runtime's existing permission and retrieval contracts.
+    Collection slugs intentionally match the identifiers used by Runtime's
+    retrieval contract; who may use the bot comes from `grants` and
+    `public` (ADR 0008) and is projected to Runtime as team names and
+    Weave-Ingest user ids.
     """
 
     __tablename__ = 'managed_bots'
@@ -371,7 +381,9 @@ class ManagedBot(Base):
     streaming: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0', nullable=False)
     auth_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=120, server_default='120', nullable=False)
-    teams: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    # Shared with every user. Without it only the grants (and admins) may
+    # use the bot -- fail closed, unlike the old "empty team list = all".
+    public: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0', nullable=False)
     collections: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     require_sources: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1', nullable=False)
     # Opaque agent-mode configuration (Weave-Runtime's `BotConfig.agent`,
@@ -403,6 +415,46 @@ class ManagedBot(Base):
         onupdate=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
+
+    grants: Mapped[list['BotGrant']] = relationship(
+        back_populates='bot', cascade='all, delete-orphan', passive_deletes=True, lazy='selectin'
+    )
+
+
+class BotGrant(Base):
+    """One entry of a bot's access list (ADR 0008): a person (local or SSO
+    account) or a team, as owner or user. Teams can only be users."""
+
+    __tablename__ = 'bot_grants'
+    __table_args__ = (
+        UniqueConstraint('bot_id', 'user_id', name='uq_bot_grants_user'),
+        UniqueConstraint('bot_id', 'team_id', name='uq_bot_grants_team'),
+        CheckConstraint('(user_id IS NULL) <> (team_id IS NULL)', name='ck_bot_grants_subject'),
+        CheckConstraint("team_id IS NULL OR role <> 'owner'", name='ck_bot_grants_team_role'),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    bot_id: Mapped[str] = mapped_column(
+        String(255), ForeignKey('managed_bots.id', ondelete='CASCADE'), nullable=False, index=True
+    )
+    user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('users.id', ondelete='CASCADE'), nullable=True, index=True
+    )
+    team_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('teams.id', ondelete='CASCADE'), nullable=True, index=True
+    )
+    role: Mapped[BotRole] = mapped_column(
+        Enum(
+            BotRole, name='bot_role', native_enum=False, validate_strings=True,
+            values_callable=lambda members: [member.value for member in members],
+        ),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    bot: Mapped[ManagedBot] = relationship(back_populates='grants')
+    user: Mapped['User | None'] = relationship(lazy='joined')
+    team: Mapped[Team | None] = relationship(lazy='joined')
 
 
 class BotTombstone(Base):

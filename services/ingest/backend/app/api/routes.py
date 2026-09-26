@@ -19,6 +19,8 @@ from app.api.deps import get_current_user, require_admin, require_knowledge_regi
 from app.core.config import settings
 from app.database.session import get_db
 from app.models.models import (
+    BotGrant,
+    BotRole,
     Collection,
     CollectionGrant,
     CollectionRole,
@@ -315,10 +317,14 @@ def _can_own_collection(db: Session, collection: Collection, user: User) -> bool
 def _can_share_any_collection(db: Session, user: User) -> bool:
     """Gate for the directory endpoints (list_directory_users/
     list_directory_teams): an admin or an owner of at least one collection
-    may look somebody up to share a space with them; nobody else gets a
+    or bot may look somebody up to share it with them; nobody else gets a
     system-wide listing of accounts/teams merely for having an ordinary
     login."""
-    return user.role == UserRole.ADMIN or owns_any_collection(db, user)
+    if user.role == UserRole.ADMIN or owns_any_collection(db, user):
+        return True
+    return db.scalar(
+        select(BotGrant.id).where(BotGrant.user_id == user.id, BotGrant.role == BotRole.OWNER).limit(1)
+    ) is not None
 
 
 def _require_collection_owner_control(db: Session, collection: Collection, user: User) -> None:

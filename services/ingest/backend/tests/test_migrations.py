@@ -1089,7 +1089,8 @@ def test_0019_managed_bots_migration_round_trip(tmp_path, monkeypatch) -> None:
     command.upgrade(cfg, '0018_chat_provider_config')
     assert 'managed_bots' not in set(inspect(engine).get_table_names())
 
-    command.upgrade(cfg, 'head')
+    # 0036 later turns `teams` into bot_grants (see its own test).
+    command.upgrade(cfg, '0035_collection_grants')
     inspector = inspect(engine)
     assert 'managed_bots' in set(inspector.get_table_names())
     assert {
@@ -1296,4 +1297,39 @@ def test_0035_collection_grants_keep_every_existing_right(tmp_path, monkeypatch)
     assert sorted(json.loads(row.read_teams)) == ['Owner Team', 'ops']
     assert json.loads(row.read_users) == ['reader']
     assert 'collection_grants' not in inspect(engine).get_table_names()
+    engine.dispose()
+
+
+def test_0036_bot_grants_keep_who_may_use_a_bot(tmp_path, monkeypatch) -> None:
+    """An empty `teams` list stays usable by everyone (`public`), a named
+    team becomes a user grant; the downgrade maps them back."""
+    db_url = f'sqlite:///{tmp_path / "bot_grants.db"}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+    engine = create_engine(db_url, future=True)
+    _build_legacy_metadata().create_all(bind=engine)
+    cfg = _alembic_config()
+    command.stamp(cfg, '0003_job_markdown_versions')
+    command.upgrade(cfg, '0035_collection_grants')
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO teams (id, name, created_at) VALUES ('t-legal', 'legal', CURRENT_TIMESTAMP)"))
+        for bot_id, teams in [('open-bot', '[]'), ('legal-bot', '["legal", "gone"]')]:
+            conn.execute(text(
+                "INSERT INTO managed_bots (id, name, webhook_url, teams, collections) "
+                "VALUES (:id, :id, 'https://n8n.example.com/webhook/x', :teams, '[]')"
+            ), {'id': bot_id, 'teams': teams})
+
+    command.upgrade(cfg, 'head')
+
+    assert 'teams' not in {column['name'] for column in inspect(engine).get_columns('managed_bots')}
+    with engine.connect() as conn:
+        public = dict(conn.execute(text('SELECT id, public FROM managed_bots')).all())
+        grants = conn.execute(text('SELECT bot_id, user_id, team_id, role FROM bot_grants')).all()
+    assert public == {'open-bot': 1, 'legal-bot': 0}
+    assert grants == [('legal-bot', None, 't-legal', 'user')]
+
+    command.downgrade(cfg, '0035_collection_grants')
+    with engine.connect() as conn:
+        teams = dict(conn.execute(text('SELECT id, teams FROM managed_bots')).all())
+    assert json.loads(teams['open-bot']) == []
+    assert json.loads(teams['legal-bot']) == ['legal']
     engine.dispose()
