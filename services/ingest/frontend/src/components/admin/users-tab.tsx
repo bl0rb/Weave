@@ -30,8 +30,6 @@ import {
 } from '@/components/admin/admin-shared';
 import { useI18n } from '@/i18n/provider';
 
-const NO_TEAM = '';
-
 export function UsersTab() {
   const { t, formatDate } = useI18n();
   const users = useAdminList<AuthUser>('/api/v1/auth/admin/users');
@@ -192,56 +190,40 @@ export function UsersTab() {
 
 function TeamMembershipFields({
   teams,
-  primary,
   selected,
   roles,
   onChange,
 }: {
   teams: Team[];
-  primary: string;
   selected: string[];
   roles: Record<string, 'member' | 'reader'>;
-  onChange: (primary: string, selected: string[], roles: Record<string, 'member' | 'reader'>) => void;
+  onChange: (selected: string[], roles: Record<string, 'member' | 'reader'>) => void;
 }) {
   const { t } = useI18n();
   return (
-    <div className="space-y-3">
-      <Field label={t('admin.users.primaryTeam')}>
-        <select
-          aria-label={t('admin.users.primaryTeam')}
-          value={primary}
-          onChange={(event) => {
-            const next = event.target.value;
-            onChange(next, next ? Array.from(new Set([...selected, next])) : [], roles);
-          }}
-          className={inputClass}
-        >
-          <option value={NO_TEAM}>{t('admin.users.noTeam')}</option>
-          {teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
-        </select>
-      </Field>
-      <fieldset className="space-y-2">
-        <legend className="mb-2 text-sm font-medium text-slate-700">{t('admin.users.teamAccess')}</legend>
-        <div className="max-h-48 space-y-2 overflow-y-auto">
-          {teams.map((team) => (
-            <label key={team.id} className="flex items-start gap-2 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={selected.includes(team.id)}
-                disabled={team.id === primary}
-                onChange={(event) => {
-                  const next = event.target.checked ? [...selected, team.id] : selected.filter((id) => id !== team.id);
-                  onChange(primary || next[0] || NO_TEAM, next, { ...roles, ...(event.target.checked ? { [team.id]: roles[team.id] ?? 'member' } : {}) });
-                }}
-                className="mt-1 shrink-0"
-              />
-              <span className="min-w-0 break-words">{team.name}</span>
-              {selected.includes(team.id) && <select aria-label={t('admin.users.teamRoleAria', { team: team.name })} value={roles[team.id] ?? 'member'} onChange={(event) => onChange(primary, selected, { ...roles, [team.id]: event.target.value as 'member' | 'reader' })} className="ml-auto rounded border border-slate-200 px-1 py-0.5 text-xs"><option value="member">{t('admin.users.teamRole.member')}</option><option value="reader">{t('admin.users.teamRole.reader')}</option></select>}
-            </label>
-          ))}
-        </div>
-      </fieldset>
-    </div>
+    <fieldset className="space-y-2">
+      <legend className="mb-2 text-sm font-medium text-slate-700">{t('admin.users.teamAccess')}</legend>
+      <div className="max-h-48 space-y-2 overflow-y-auto">
+        {teams.map((team) => (
+          <label key={team.id} className="flex items-center gap-3 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={selected.includes(team.id)}
+              onChange={(event) => {
+                if (event.target.checked) {
+                  onChange([...selected, team.id], { ...roles, [team.id]: roles[team.id] ?? 'member' });
+                } else {
+                  onChange(selected.filter((id) => id !== team.id), Object.fromEntries(Object.entries(roles).filter(([id]) => id !== team.id)));
+                }
+              }}
+              className="shrink-0"
+            />
+            <span className="min-w-0 flex-1 break-words">{team.name}</span>
+            {selected.includes(team.id) && <select aria-label={t('admin.users.teamRoleAria', { team: team.name })} value={roles[team.id] ?? 'member'} onChange={(event) => onChange(selected, { ...roles, [team.id]: event.target.value as 'member' | 'reader' })} className="ui-control !mt-0 !w-auto shrink-0"><option value="member">{t('admin.users.teamRole.member')}</option><option value="reader">{t('admin.users.teamRole.reader')}</option></select>}
+          </label>
+        ))}
+      </div>
+    </fieldset>
   );
 }
 
@@ -259,7 +241,6 @@ function CreateUserModal({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<UserRole>('user');
-  const [teamId, setTeamId] = useState<string>(NO_TEAM);
   const [teamIds, setTeamIds] = useState<string[]>([]);
   const [teamRoles, setTeamRoles] = useState<Record<string, 'member' | 'reader'>>({});
   const [isActive, setIsActive] = useState(true);
@@ -276,7 +257,6 @@ function CreateUserModal({
       role,
       is_active: isActive,
       ...(password ? { password } : {}),
-      ...(teamId !== NO_TEAM ? { team_id: teamId } : {}),
       team_ids: teamIds,
       team_roles: teamRoles,
     };
@@ -336,7 +316,7 @@ function CreateUserModal({
             </select>
           </Field>
         </div>
-        <TeamMembershipFields teams={teams} primary={teamId} selected={teamIds} roles={teamRoles} onChange={(primary, selected, roles) => { setTeamId(primary); setTeamIds(selected); setTeamRoles(roles); }} />
+        <TeamMembershipFields teams={teams} selected={teamIds} roles={teamRoles} onChange={(selected, roles) => { setTeamIds(selected); setTeamRoles(roles); }} />
         <Toggle checked={isActive} onChange={setIsActive} label={t('admin.users.active')} />
         <ErrorNotice message={error} />
         <div className="flex flex-wrap justify-end gap-2 pt-1">
@@ -368,7 +348,6 @@ function EditUserModal({
   const [email, setEmail] = useState(user.email);
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<UserRole>(user.role);
-  const [teamId, setTeamId] = useState<string>(user.team_id === null ? NO_TEAM : String(user.team_id));
   const [teamIds, setTeamIds] = useState<string[]>(user.team_ids ?? (user.team_id ? [user.team_id] : []));
   const [teamRoles, setTeamRoles] = useState<Record<string, 'member' | 'reader'>>(
     Object.fromEntries((user.team_ids ?? (user.team_id ? [user.team_id] : [])).map((id) => [id, user.team_roles?.[id] ?? 'member'])),
@@ -386,7 +365,6 @@ function EditUserModal({
       role,
       is_active: isActive,
       ...(password ? { password } : {}),
-      ...(teamId === NO_TEAM ? { clear_team: true } : { team_id: teamId }),
       team_ids: teamIds,
       team_roles: teamRoles,
     };
@@ -437,7 +415,7 @@ function EditUserModal({
             </select>
           </Field>
         </div>
-        <TeamMembershipFields teams={teams} primary={teamId} selected={teamIds} roles={teamRoles} onChange={(primary, selected, roles) => { setTeamId(primary); setTeamIds(selected); setTeamRoles(roles); }} />
+        <TeamMembershipFields teams={teams} selected={teamIds} roles={teamRoles} onChange={(selected, roles) => { setTeamIds(selected); setTeamRoles(roles); }} />
         <Toggle checked={isActive} onChange={setIsActive} label={t('admin.users.active')} />
         <ErrorNotice message={error} />
         <div className="flex flex-wrap justify-end gap-2 pt-1">

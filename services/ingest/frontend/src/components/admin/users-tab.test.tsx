@@ -18,23 +18,25 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-it('saves multiple memberships without changing the primary team', async () => {
+it('saves multiple memberships without a primary team field', async () => {
   render(<UsersTab />);
   fireEvent.click(await screen.findByRole('button', { name: 'alice bearbeiten' }));
+  expect(screen.queryByRole('combobox', { name: 'Hauptteam' })).toBeNull();
   fireEvent.click(await screen.findByRole('checkbox', { name: 'Finance' }));
-  expect((screen.getByRole('checkbox', { name: /^Legal/ }) as HTMLInputElement).disabled).toBe(true);
   fireEvent.click(screen.getByRole('button', { name: 'Änderungen speichern' }));
   await waitFor(() => expect(api.mock.calls.some(([, options]) => options?.method === 'PATCH')).toBe(true));
   const mutation = api.mock.calls.find(([, options]) => options?.method === 'PATCH');
-  expect(JSON.parse(mutation?.[1]?.body as string)).toMatchObject({ team_id: 'a', team_ids: ['a', 'b'], team_roles: { a: 'member', b: 'member' } });
+  const body = JSON.parse(mutation?.[1]?.body as string);
+  expect(body).toMatchObject({ team_ids: ['a', 'b'], team_roles: { a: 'member', b: 'member' } });
+  expect(body).not.toHaveProperty('team_id');
 });
 
-it('clears all memberships when selecting no team', async () => {
+it('clears all memberships when unchecking every team', async () => {
   render(<UsersTab />);
   fireEvent.click(await screen.findByRole('button', { name: 'alice bearbeiten' }));
-  fireEvent.change(screen.getByRole('combobox', { name: 'Hauptteam' }), { target: { value: '' } });
+  fireEvent.click(screen.getByRole('checkbox', { name: /^Legal/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Änderungen speichern' }));
   await waitFor(() => expect(api.mock.calls.some(([, options]) => options?.method === 'PATCH')).toBe(true));
   const mutation = api.mock.calls.find(([, options]) => options?.method === 'PATCH');
-  expect(JSON.parse(mutation?.[1]?.body as string)).toMatchObject({ clear_team: true, team_ids: [] });
+  expect(JSON.parse(mutation?.[1]?.body as string)).toEqual(expect.objectContaining({ team_ids: [], team_roles: {} }));
 });
