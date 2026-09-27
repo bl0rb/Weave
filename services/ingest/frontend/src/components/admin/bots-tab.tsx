@@ -144,6 +144,8 @@ const emptyDraft = (noContextReply: string): BotDraft => ({
   agent: null,
 });
 
+type BotStep = 'basics' | 'behavior' | 'knowledge' | 'agents' | 'sharing' | 'review';
+
 const emptyAgentLimits = (): AgentLimits => ({ max_parallel: 3, max_followups: 1, budget_searches: 9, timeout_seconds: 120 });
 const emptyAgent = (): AgentConfig => ({ enabled: true, subagents: [], limits: emptyAgentLimits() });
 
@@ -264,6 +266,7 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
   const [draft, setDraft] = useState<BotDraft>(() => bot ? { ...bot, auth_token: '', clear_auth_token: false } : emptyDraft(t('admin.bots.defaultNoContextReply')));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [step, setStep] = useState<BotStep>('basics');
   const set = <K extends keyof BotDraft>(key: K, value: BotDraft[K]) => setDraft(current => ({ ...current, [key]: value }));
   const toggleValue = (key: 'collections', value: string) => set(key, draft[key].includes(value) ? draft[key].filter(item => item !== value) : [...draft[key], value]);
   const agentErrors = draft.kind === 'llm' ? validateAgent(draft.agent ?? null, t) : [];
@@ -314,44 +317,107 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
   const modalTitle = bot
     ? t('admin.bots.editTitle', { name: bot.name })
     : (draft.kind === 'n8n' ? t('admin.bots.add.n8n') : t('admin.bots.add.llm'));
+  const spaceChoices = spaces.map(space => ({ value: space.slug, label: space.name }));
+  const steps: BotStep[] = draft.kind === 'llm'
+    ? ['basics', 'behavior', 'knowledge', 'agents', 'sharing', 'review']
+    : ['basics', 'behavior', 'knowledge', 'sharing', 'review'];
+  const stepIndex = Math.max(0, steps.indexOf(step));
+  const stepProblems: Partial<Record<BotStep, string[]>> = {
+    basics: [
+      ...(!draft.id.trim() ? [t('admin.bots.problem.id')] : []),
+      ...(!draft.name.trim() ? [t('admin.bots.problem.name')] : []),
+    ],
+    behavior: draft.kind === 'llm'
+      ? (!draft.system_prompt?.trim() ? [t('admin.bots.problem.systemPrompt')] : [])
+      : (!draft.webhook_url?.trim() ? [t('admin.bots.problem.webhook')] : []),
+    agents: agentErrors,
+  };
+  const goTo = (next: BotStep) => setStep(next);
 
-  return <Modal title={modalTitle} onClose={onClose}>
+  return <Modal size="lg" title={modalTitle} onClose={onClose} footer={<>
+    <Button type="button" variant="outline" onClick={onClose} disabled={saving}>{t('common.cancel')}</Button>
+    {stepIndex > 0 && <Button type="button" variant="outline" onClick={() => goTo(steps[stepIndex - 1])} disabled={saving}>{t('admin.bots.nav.back')}</Button>}
+    {stepIndex < steps.length - 1 && <Button type="button" variant={bot ? 'outline' : 'default'} onClick={() => goTo(steps[stepIndex + 1])}>{t('admin.bots.nav.next')}</Button>}
+    {(bot || step === 'review') && <Button type="submit" form="bot-editor-form" disabled={!canSave}>{saving ? t('admin.bots.saving') : t('admin.bots.save')}</Button>}
+  </>}>
     <ErrorNotice message={error} />
-    <form className="space-y-5" onSubmit={save}>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label={t('admin.bots.field.id.label')} hint={bot ? t('admin.bots.field.id.hintExisting') : t('admin.bots.field.id.hintNew')}><input className={inputClass} required disabled={Boolean(bot)} pattern="[a-z0-9]+(?:-[a-z0-9]+)*" value={draft.id} onChange={event => set('id', event.target.value.toLowerCase())} placeholder={t('admin.bots.field.id.placeholder')} /></Field>
-        <Field label={t('admin.bots.field.name.label')}><input className={inputClass} required value={draft.name} onChange={event => set('name', event.target.value)} placeholder={t('admin.bots.field.name.placeholder')} /></Field>
-      </div>
-      <Field label={t('admin.bots.field.description')}><textarea className={inputClass} rows={2} value={draft.description || ''} onChange={event => set('description', event.target.value || null)} /></Field>
-      <Field label={t('admin.bots.field.kind.label')}><select className={inputClass} value={draft.kind} onChange={event => set('kind', event.target.value as BotDraft['kind'])}><option value="llm">{t('admin.bots.field.kind.optionLlm')}</option><option value="n8n">{t('admin.bots.field.kind.optionN8n')}</option></select></Field>
-      {draft.kind === 'n8n' ? <Field label={t('admin.bots.field.webhook.label')} hint={t('admin.bots.field.webhook.hint')}><input className={inputClass} type="url" required value={draft.webhook_url || ''} onChange={event => set('webhook_url', event.target.value)} placeholder="https://n8n.example.com/webhook/weave-agent" /></Field> : <Field label={t('admin.bots.field.systemPrompt.label')}><textarea className={inputClass} rows={5} required value={draft.system_prompt || ''} onChange={event => set('system_prompt', event.target.value)} placeholder={t('admin.bots.field.systemPrompt.placeholder')} /></Field>}
-      <div className="grid gap-4 sm:grid-cols-2"><Field label={t('admin.bots.field.bearerToken.label')} hint={t('admin.bots.field.bearerToken.hint')}><div className="relative"><KeyRound className="pointer-events-none absolute left-3 top-4 h-4 w-4 text-slate-400" /><input className={`${inputClass} pl-9`} type="password" autoComplete="new-password" disabled value="" placeholder={draft.has_auth_token ? t('admin.bots.field.bearerToken.placeholderStored') : t('admin.bots.field.bearerToken.placeholderPending')} readOnly /></div></Field><Field label={t('admin.bots.field.timeout.label')} hint={t('admin.bots.field.timeout.hint')}><input className={inputClass} type="number" min={1} max={14400} value={draft.timeout_seconds} onChange={event => set('timeout_seconds', Number(event.target.value) || 120)} /></Field></div>
-      <div className="space-y-3 rounded-xl bg-slate-50 p-4"><Toggle checked={draft.enabled} onChange={value => set('enabled', value)} label={t('admin.bots.toggle.enabled')} />{draft.kind === 'n8n' && <Toggle checked={draft.streaming} onChange={value => set('streaming', value)} label={t('admin.bots.toggle.streaming')} />}<Toggle checked={draft.require_sources} onChange={value => set('require_sources', value)} label={t('admin.bots.toggle.requireSources')} />{draft.kind === 'llm' && <Toggle checked={Boolean(draft.retrieval_enabled)} onChange={value => set('retrieval_enabled', value)} label={t('admin.bots.toggle.retrieval')} />}</div>
-      {draft.kind === 'llm' && draft.retrieval_enabled && <div className="grid gap-4 sm:grid-cols-4"><Field label={t('admin.bots.field.topK')}><input className={inputClass} type="number" min={1} value={draft.top_k} onChange={event => set('top_k', Number(event.target.value) || 20)} /></Field><Field label={t('admin.bots.field.finalK')}><input className={inputClass} type="number" min={1} max={draft.top_k} value={draft.final_k} onChange={event => set('final_k', Number(event.target.value) || 5)} /></Field><Field label={t('admin.bots.field.temperature')}><input className={inputClass} type="number" min={0} max={2} step={0.1} value={draft.temperature ?? 0.2} onChange={event => set('temperature', Number(event.target.value))} /></Field><Toggle checked={Boolean(draft.rerank)} onChange={value => set('rerank', value)} label={t('admin.bots.field.reranking')} /></div>}
-      {draft.kind === 'llm' && draft.retrieval_enabled && <Field label={t('admin.bots.field.departmentFilter.label')} hint={t('admin.bots.field.departmentFilter.hint')}><input className={inputClass} value={String(draft.retrieval_filters?.department || '')} onChange={event => set('retrieval_filters', { ...draft.retrieval_filters, department: event.target.value || null })} placeholder={t('admin.bots.field.departmentFilter.placeholder')} /></Field>}
-      {draft.require_sources && <Field label={t('admin.bots.field.noContextReply.label')}><textarea className={inputClass} rows={2} value={draft.no_context_reply} onChange={event => set('no_context_reply', event.target.value)} /></Field>}
-      {draft.kind === 'llm' && (
-        <div className="space-y-3 rounded-xl border border-slate-200 p-4">
-          <Toggle
-            checked={Boolean(draft.agent?.enabled)}
-            onChange={value => set('agent', value ? (draft.agent ?? emptyAgent()) : (draft.agent ? { ...draft.agent, enabled: false } : null))}
-            label={t('admin.bots.toggle.agentMode')}
-          />
-          {draft.agent?.enabled && (
-            <AgentEditor agent={draft.agent} spaces={spaces} onChange={next => set('agent', next)} errors={agentErrors} />
-          )}
+    <nav aria-label={t('admin.bots.nav.stepsLabel')} className="mb-5">
+      <ol className="flex flex-wrap gap-2">
+        {steps.map((item, index) => {
+          const problems = stepProblems[item]?.length ?? 0;
+          return <li key={item}>
+            <button type="button" onClick={() => goTo(item)} aria-current={item === step ? 'step' : undefined}
+              className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm ${item === step ? 'border-[var(--accent)] bg-[var(--accent-soft)] font-semibold text-[var(--accent-ink)]' : 'border-[var(--line-2)] text-[var(--ink-2)] hover:bg-[var(--hover)]'}`}>
+              <span className="text-xs tabular-nums">{index + 1}</span>{t(`admin.bots.step.${item}`)}{problems > 0 && <span className="h-2 w-2 rounded-full bg-amber-500" aria-label={t('admin.bots.nav.stepHasProblems')} />}
+            </button>
+          </li>;
+        })}
+      </ol>
+    </nav>
+    <form id="bot-editor-form" className="space-y-5" onSubmit={save}>
+      {step === 'basics' && <section className="space-y-4" aria-label={t('admin.bots.step.basics')}>
+        <Field label={t('admin.bots.field.kind.label')}><select className={inputClass} value={draft.kind} disabled={Boolean(bot)} onChange={event => set('kind', event.target.value as BotDraft['kind'])}><option value="llm">{t('admin.bots.field.kind.optionLlm')}</option><option value="n8n">{t('admin.bots.field.kind.optionN8n')}</option></select></Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label={t('admin.bots.field.id.label')} hint={bot ? t('admin.bots.field.id.hintExisting') : t('admin.bots.field.id.hintNew')}><input className={inputClass} required disabled={Boolean(bot)} pattern="[a-z0-9]+(?:-[a-z0-9]+)*" value={draft.id} onChange={event => set('id', event.target.value.toLowerCase())} placeholder={t('admin.bots.field.id.placeholder')} /></Field>
+          <Field label={t('admin.bots.field.name.label')}><input className={inputClass} required value={draft.name} onChange={event => set('name', event.target.value)} placeholder={t('admin.bots.field.name.placeholder')} /></Field>
         </div>
-      )}
-      <BotSharing isPublic={draft.public} onPublicChange={value => set('public', value)} grants={draft.grants} onGrantsChange={value => set('grants', value)} teams={teams} canEditOwners disabled={saving} />
-      <ScopeChoices title={t('admin.bots.scope.spaces.title')} emptyLabel={t('admin.bots.scope.spaces.empty')} items={spaces.map(space => space.slug)} selected={draft.collections} onToggle={value => toggleValue('collections', value)} />
-      <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-4"><Button type="button" variant="outline" onClick={onClose} disabled={saving}>{t('common.cancel')}</Button><Button type="submit" disabled={!canSave}>{saving ? t('admin.bots.saving') : t('admin.bots.save')}</Button></div>
+        <Field label={t('admin.bots.field.description')}><textarea className={inputClass} rows={3} value={draft.description || ''} onChange={event => set('description', event.target.value || null)} /></Field>
+        <Toggle checked={draft.enabled} onChange={value => set('enabled', value)} label={t('admin.bots.toggle.enabled')} />
+      </section>}
+
+      {step === 'behavior' && <section className="space-y-4" aria-label={t('admin.bots.step.behavior')}>
+        {draft.kind === 'n8n' ? <>
+          <Field label={t('admin.bots.field.webhook.label')} hint={t('admin.bots.field.webhook.hint')}><input className={inputClass} type="url" required value={draft.webhook_url || ''} onChange={event => set('webhook_url', event.target.value)} placeholder="https://n8n.example.com/webhook/weave-agent" /></Field>
+          <div className="grid gap-4 sm:grid-cols-2"><Field label={t('admin.bots.field.bearerToken.label')} hint={t('admin.bots.field.bearerToken.hint')}><div className="relative"><KeyRound className="pointer-events-none absolute left-3 top-4 h-4 w-4 text-slate-400" /><input className={`${inputClass} pl-9`} type="password" autoComplete="new-password" disabled value="" placeholder={draft.has_auth_token ? t('admin.bots.field.bearerToken.placeholderStored') : t('admin.bots.field.bearerToken.placeholderPending')} readOnly /></div></Field><Field label={t('admin.bots.field.timeout.label')} hint={t('admin.bots.field.timeout.hint')}><input className={inputClass} type="number" min={1} max={14400} value={draft.timeout_seconds} onChange={event => set('timeout_seconds', Number(event.target.value) || 120)} /></Field></div>
+          <Toggle checked={draft.streaming} onChange={value => set('streaming', value)} label={t('admin.bots.toggle.streaming')} />
+        </> : <>
+          <Field label={t('admin.bots.field.systemPrompt.label')}><textarea className={inputClass} rows={12} required value={draft.system_prompt || ''} onChange={event => set('system_prompt', event.target.value)} placeholder={t('admin.bots.field.systemPrompt.placeholder')} /></Field>
+          <Field label={t('admin.bots.field.temperature')}><input className={inputClass} type="number" min={0} max={2} step={0.1} value={draft.temperature ?? 0.2} onChange={event => set('temperature', Number(event.target.value))} /></Field>
+        </>}
+      </section>}
+
+      {step === 'knowledge' && <section className="space-y-4" aria-label={t('admin.bots.step.knowledge')}>
+        {draft.kind === 'llm' && <Toggle checked={Boolean(draft.retrieval_enabled)} onChange={value => set('retrieval_enabled', value)} label={t('admin.bots.toggle.retrieval')} />}
+        <ScopeChoices title={t('admin.bots.scope.spaces.title')} emptyLabel={t('admin.bots.scope.spaces.empty')} items={spaceChoices} selected={draft.collections} onToggle={value => toggleValue('collections', value)} />
+        {draft.kind === 'llm' && draft.retrieval_enabled && <div className="grid gap-4 sm:grid-cols-3"><Field label={t('admin.bots.field.topK')}><input className={inputClass} type="number" min={1} value={draft.top_k} onChange={event => set('top_k', Number(event.target.value) || 20)} /></Field><Field label={t('admin.bots.field.finalK')}><input className={inputClass} type="number" min={1} max={draft.top_k} value={draft.final_k} onChange={event => set('final_k', Number(event.target.value) || 5)} /></Field><div className="flex items-end pb-2"><Toggle checked={Boolean(draft.rerank)} onChange={value => set('rerank', value)} label={t('admin.bots.field.reranking')} /></div></div>}
+        {draft.kind === 'llm' && draft.retrieval_enabled && <Field label={t('admin.bots.field.departmentFilter.label')} hint={t('admin.bots.field.departmentFilter.hint')}><input className={inputClass} value={String(draft.retrieval_filters?.department || '')} onChange={event => set('retrieval_filters', { ...draft.retrieval_filters, department: event.target.value || null })} placeholder={t('admin.bots.field.departmentFilter.placeholder')} /></Field>}
+        <Toggle checked={draft.require_sources} onChange={value => set('require_sources', value)} label={t('admin.bots.toggle.requireSources')} />
+        {draft.require_sources && <Field label={t('admin.bots.field.noContextReply.label')}><textarea className={inputClass} rows={2} value={draft.no_context_reply} onChange={event => set('no_context_reply', event.target.value)} /></Field>}
+      </section>}
+
+      {step === 'agents' && draft.kind === 'llm' && <section className="space-y-4" aria-label={t('admin.bots.step.agents')}>
+        <Toggle
+          checked={Boolean(draft.agent?.enabled)}
+          onChange={value => set('agent', value ? (draft.agent ? { ...draft.agent, enabled: true } : emptyAgent()) : (draft.agent ? { ...draft.agent, enabled: false } : null))}
+          label={t('admin.bots.toggle.agentMode')}
+        />
+        {draft.agent?.enabled
+          ? <AgentEditor agent={draft.agent} spaces={spaces} onChange={next => set('agent', next)} errors={agentErrors} />
+          : <p className="text-sm text-[var(--muted)]">{t('admin.bots.agent.offHint')}</p>}
+      </section>}
+
+      {step === 'sharing' && <BotSharing isPublic={draft.public} onPublicChange={value => set('public', value)} grants={draft.grants} onGrantsChange={value => set('grants', value)} teams={teams} canEditOwners disabled={saving} />}
+
+      {step === 'review' && <section className="space-y-4" aria-label={t('admin.bots.step.review')}>
+        <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-[max-content_1fr]">
+          <dt className="font-medium text-[var(--ink-2)]">{t('admin.bots.field.name.label')}</dt><dd>{draft.name || '—'} <span className="text-[var(--muted)]">({draft.id || '—'})</span></dd>
+          <dt className="font-medium text-[var(--ink-2)]">{t('admin.bots.field.kind.label')}</dt><dd>{draft.kind === 'llm' ? t('admin.bots.field.kind.optionLlm') : t('admin.bots.field.kind.optionN8n')}</dd>
+          <dt className="font-medium text-[var(--ink-2)]">{t('admin.bots.scope.spaces.title')}</dt><dd>{draft.collections.length ? draft.collections.map(slug => spaces.find(space => space.slug === slug)?.name ?? slug).join(', ') : t('admin.bots.spacesAllAuthorized')}</dd>
+          {draft.kind === 'llm' && <><dt className="font-medium text-[var(--ink-2)]">{t('admin.bots.step.agents')}</dt><dd>{draft.agent?.enabled ? draft.agent.subagents.map(subagent => subagent.name || subagent.id).join(', ') || '—' : t('admin.bots.review.agentOff')}</dd></>}
+          <dt className="font-medium text-[var(--ink-2)]">{t('admin.bots.review.usableBy')}</dt><dd>{draft.public ? t('admin.bots.teamsAll') : draft.grants.filter(grant => grant.role === 'user').map(grant => grant.name).join(', ') || t('admin.bots.teamsNone')}</dd>
+          <dt className="font-medium text-[var(--ink-2)]">{t('admin.bots.review.owners')}</dt><dd>{draft.grants.filter(grant => grant.role === 'owner').map(grant => grant.name).join(', ') || '—'}</dd>
+        </dl>
+        {steps.some(item => stepProblems[item]?.length) ? <ul role="alert" className="list-disc space-y-1 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 pl-8 text-sm text-amber-800">
+          {steps.flatMap(item => (stepProblems[item] ?? []).map(problem => <li key={`${item}-${problem}`}><button type="button" className="underline" onClick={() => goTo(item)}>{t(`admin.bots.step.${item}`)}</button>: {problem}</li>))}
+        </ul> : <p className="text-sm text-emerald-700">{t('admin.bots.review.ready')}</p>}
+      </section>}
     </form>
   </Modal>;
 }
 
-function ScopeChoices({ title, emptyLabel, items, selected, onToggle }: { title: string; emptyLabel: string; items: string[]; selected: string[]; onToggle: (value: string) => void }) {
+function ScopeChoices({ title, emptyLabel, items, selected, onToggle }: { title: string; emptyLabel: string; items: { value: string; label: string }[]; selected: string[]; onToggle: (value: string) => void }) {
   const { t } = useI18n();
-  return <fieldset><legend className="text-sm font-medium text-slate-700">{title}</legend><p className="mt-1 text-xs text-slate-400">{emptyLabel}</p>{items.length ? <div className="mt-2 grid max-h-36 gap-2 overflow-y-auto rounded-xl border border-slate-200 p-3 sm:grid-cols-2">{items.map(item => <label key={item} className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={selected.includes(item)} onChange={() => onToggle(item)} />{item}</label>)}</div> : <p className="mt-2 text-sm text-amber-700">{t('admin.bots.scope.noEntries')}</p>}</fieldset>;
+  return <fieldset><legend className="text-sm font-medium text-slate-700">{title}</legend><p className="mt-1 text-xs text-slate-400">{emptyLabel}</p>{items.length ? <div className="mt-2 grid max-h-56 gap-2 overflow-y-auto rounded-xl border border-slate-200 p-3 sm:grid-cols-2 lg:grid-cols-3">{items.map(item => <label key={item.value} className="flex items-center gap-2 text-sm text-slate-700" title={item.value}><input type="checkbox" checked={selected.includes(item.value)} onChange={() => onToggle(item.value)} />{item.label}</label>)}</div> : <p className="mt-2 text-sm text-amber-700">{t('admin.bots.scope.noEntries')}</p>}</fieldset>;
 }
 
 function AgentEditor({
@@ -364,29 +430,41 @@ function AgentEditor({
   const removeSubagent = (index: number) => onChange({ ...agent, subagents: agent.subagents.filter((_, i) => i !== index) });
   const addSubagent = () => onChange({ ...agent, subagents: [...agent.subagents, emptySubagent(agent.subagents.map(s => s.id))] });
 
-  return <div className="space-y-3">
+  const [selected, setSelected] = useState(0);
+  const current = Math.min(selected, Math.max(0, agent.subagents.length - 1));
+  const subagent = agent.subagents[current];
+
+  return <div className="space-y-4">
     {errors.length > 0 && (
       <ul role="alert" className="list-disc space-y-1 rounded-xl border border-red-200 bg-red-50 px-4 py-3 pl-8 text-xs text-red-700">
         {errors.map(err => <li key={err}>{err}</li>)}
       </ul>
     )}
-    {agent.subagents.length === 0 && <p className="text-sm text-amber-700">{t('admin.bots.agent.noSubagents')}</p>}
-    <div className="space-y-3">
-      {agent.subagents.map((subagent, index) => (
-        <SubagentEditor
-          key={index}
-          subagent={subagent}
-          spaces={spaces}
-          onChange={next => setSubagent(index, next)}
-          onRemove={() => removeSubagent(index)}
-        />
-      ))}
+    <div className="grid gap-4 md:grid-cols-[14rem_1fr]">
+      <div className="space-y-2">
+        <p className="text-sm font-medium text-slate-700">{t('admin.bots.agent.listTitle')}</p>
+        {agent.subagents.length === 0 && <p className="text-sm text-amber-700">{t('admin.bots.agent.noSubagents')}</p>}
+        <ul className="space-y-1" aria-label={t('admin.bots.agent.listTitle')}>
+          {agent.subagents.map((item, index) => <li key={index}>
+            <button type="button" onClick={() => setSelected(index)} aria-current={index === current ? 'true' : undefined}
+              className={`w-full rounded-lg border px-3 py-2 text-left text-sm ${index === current ? 'border-[var(--accent)] bg-[var(--accent-soft)]' : 'border-[var(--line-2)] hover:bg-[var(--hover)]'}`}>
+              <span className="block font-medium">{item.name || item.id || t('admin.bots.agent.unnamed')}</span>
+              <span className="block truncate text-xs text-[var(--muted)]">{item.mission || '—'}</span>
+            </button>
+          </li>)}
+        </ul>
+        <Button type="button" variant="outline" size="sm" onClick={() => { addSubagent(); setSelected(agent.subagents.length); }}><Plus size={15} />{t('admin.bots.agent.addSubagent')}</Button>
+      </div>
+      <div className="min-w-0">
+        {subagent
+          ? <SubagentEditor key={current} subagent={subagent} spaces={spaces} onChange={next => setSubagent(current, next)} onRemove={() => { removeSubagent(current); setSelected(Math.max(0, current - 1)); }} />
+          : <p className="rounded-xl border border-dashed border-[var(--line-2)] p-6 text-sm text-[var(--muted)]">{t('admin.bots.agent.selectHint')}</p>}
+      </div>
     </div>
-    <Button type="button" variant="outline" size="sm" onClick={addSubagent}><Plus size={15} />{t('admin.bots.agent.addSubagent')}</Button>
 
     <fieldset className="rounded-xl bg-slate-50 p-3">
       <legend className="px-1 text-sm font-medium text-slate-700">{t('admin.bots.agent.limitsLegend')}</legend>
-      <div className="mt-2 grid gap-3 sm:grid-cols-2">
+      <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Field label={t('admin.bots.agent.field.maxParallel')}><input className={inputClass} type="number" min={1} max={20} value={agent.limits.max_parallel} onChange={event => setLimits({ max_parallel: Number(event.target.value) || 1 })} /></Field>
         <Field label={t('admin.bots.agent.field.maxFollowups')}><input className={inputClass} type="number" min={0} max={10} value={agent.limits.max_followups} onChange={event => setLimits({ max_followups: Number(event.target.value) || 0 })} /></Field>
         <Field label={t('admin.bots.agent.field.budgetSearches')}><input className={inputClass} type="number" min={0} max={500} value={agent.limits.budget_searches} onChange={event => setLimits({ budget_searches: Number(event.target.value) || 0 })} /></Field>
@@ -426,7 +504,7 @@ function SubagentEditor({
         : [...subagent.collections, slug],
     });
 
-  return <div className="space-y-3 rounded-xl border border-slate-200 p-3">
+  return <div className="space-y-4 rounded-xl border border-slate-200 p-4">
     <div className="flex items-start justify-between gap-2">
       <div className="grid flex-1 gap-3 sm:grid-cols-2">
         <Field label={t('admin.bots.field.subagent.name')}>
@@ -452,10 +530,12 @@ function SubagentEditor({
       <Button type="button" variant="ghost" size="sm" onClick={onRemove} aria-label={t('admin.bots.subagent.removeAria', { name: subagent.name || subagent.id })}><Trash2 size={15} /></Button>
     </div>
     <Field label={t('admin.bots.field.description')}><input className={inputClass} value={subagent.description || ''} onChange={event => onChange({ ...subagent, description: event.target.value || null })} /></Field>
-    <Field label={t('admin.bots.field.mission.label')}><textarea className={inputClass} rows={2} value={subagent.mission} onChange={event => onChange({ ...subagent, mission: event.target.value })} placeholder={t('admin.bots.field.mission.placeholder')} /></Field>
-    <ScopeChoices title={t('admin.bots.scope.spaces.title')} emptyLabel={t('admin.bots.subagent.scope.empty')} items={spaces.map(space => space.slug)} selected={subagent.collections} onToggle={toggleCollection} />
+    <Field label={t('admin.bots.field.mission.label')}><textarea className={inputClass} rows={5} value={subagent.mission} onChange={event => onChange({ ...subagent, mission: event.target.value })} placeholder={t('admin.bots.field.mission.placeholder')} /></Field>
+    <ScopeChoices title={t('admin.bots.scope.spaces.title')} emptyLabel={t('admin.bots.subagent.scope.empty')} items={spaces.map(space => ({ value: space.slug, label: space.name }))} selected={subagent.collections} onToggle={toggleCollection} />
     <Toggle checked={subagent.include_uncollected} onChange={value => onChange({ ...subagent, include_uncollected: value })} label={t('admin.bots.toggle.includeUncollected')} />
-    <div className="grid gap-3 sm:grid-cols-2">
+    <details className="rounded-xl border border-slate-200 p-3">
+    <summary className="cursor-pointer text-sm font-medium text-slate-700">{t('admin.bots.subagent.filtersSummary')}</summary>
+    <div className="mt-3 grid gap-3 sm:grid-cols-2">
       <Field label={t('admin.bots.field.filter.team')}><input className={inputClass} value={subagent.filters.team || ''} onChange={event => setFilter('team', event.target.value)} /></Field>
       <Field label={t('admin.bots.field.filter.department')}><input className={inputClass} value={subagent.filters.department || ''} onChange={event => setFilter('department', event.target.value)} /></Field>
       <Field label={t('admin.bots.field.filter.source')}><input className={inputClass} value={subagent.filters.source || ''} onChange={event => setFilter('source', event.target.value)} /></Field>
@@ -469,6 +549,7 @@ function SubagentEditor({
         />
       </Field>
     </div>
+    </details>
     <fieldset className="rounded-xl bg-slate-50 p-3"><legend className="px-1 text-sm font-medium text-slate-700">{t('admin.bots.subagent.limitsLegend')}</legend>
       <div className="mt-2 grid gap-3 sm:grid-cols-3">
         <Field label={t('admin.bots.subagent.field.maxSearches')}><input className={inputClass} type="number" min={1} max={50} value={subagent.limits.max_searches} onChange={event => setLimits({ max_searches: Number(event.target.value) || 1 })} /></Field>

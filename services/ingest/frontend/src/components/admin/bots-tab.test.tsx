@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { apiFetch, apiJson } from '@/lib/api';
@@ -46,13 +46,29 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
+/** Jumps to a step of the bot configuration flow. */
+function step(name: RegExp) {
+  fireEvent.click(within(screen.getByRole('navigation', { name: 'Schritte der Bot-Konfiguration' })).getByRole('button', { name }));
+}
+
 it('starts new bots as LLM bots and labels the dialog accordingly', async () => {
   render(<BotsTab />);
   fireEvent.click(await screen.findByRole('button', { name: 'Bot hinzufügen' }));
 
   expect(screen.getByRole('heading', { name: 'LLM-Bot hinzufügen' })).toBeTruthy();
   expect((screen.getByRole('combobox', { name: 'Bot-Typ' }) as HTMLSelectElement).value).toBe('llm');
+  step(/Verhalten/);
   expect(screen.getByRole('textbox', { name: 'System-Prompt' })).toBeTruthy();
+});
+
+it('walks through the steps with Weiter and saves only from the review', async () => {
+  render(<BotsTab />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Bot hinzufügen' }));
+  expect(screen.queryByRole('button', { name: 'Bot speichern' })).toBeNull();
+  for (let index = 0; index < 5; index += 1) fireEvent.click(screen.getByRole('button', { name: 'Weiter' }));
+  expect(within(screen.getByRole('navigation', { name: 'Schritte der Bot-Konfiguration' })).getByRole('button', { name: /Überprüfen/ }).getAttribute('aria-current')).toBe('step');
+  expect(screen.getByRole('alert').textContent).toContain('Bot-ID fehlt');
+  expect((screen.getByRole('button', { name: 'Bot speichern' }) as HTMLButtonElement).disabled).toBe(true);
 });
 
 it('creates a scoped n8n bot and keeps pending bearer delivery disabled', async () => {
@@ -60,17 +76,19 @@ it('creates a scoped n8n bot and keeps pending bearer delivery disabled', async 
   fireEvent.click(await screen.findByRole('button', { name: 'Bot hinzufügen' }));
 
   fireEvent.change(screen.getByRole('combobox', { name: 'Bot-Typ' }), { target: { value: 'n8n' } });
-
   fireEvent.change(screen.getByRole('textbox', { name: /^Bot-ID/ }), { target: { value: 'service-assistent' } });
   fireEvent.change(screen.getByRole('textbox', { name: 'Anzeigename' }), { target: { value: 'Service-Assistent' } });
+  step(/Verhalten/);
   fireEvent.change(screen.getByRole('textbox', { name: /^n8n-Webhook/ }), { target: { value: 'https://n8n.example.com/webhook/service' } });
-  fireEvent.click(screen.getByRole('checkbox', { name: 'Service' }));
-  fireEvent.click(screen.getByRole('checkbox', { name: 'servicewissen' }));
-
   const streaming = screen.getByRole('switch', { name: /n8n-Streaming/ }) as HTMLButtonElement;
   const bearer = screen.getByLabelText(/^Bearer-Token/) as HTMLInputElement;
   expect(streaming.disabled).toBe(false);
   expect(bearer.disabled).toBe(true);
+  step(/Wissen$/);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Servicewissen' }));
+  step(/Freigabe/);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Service' }));
+  step(/Überprüfen/);
 
   fireEvent.click(screen.getByRole('button', { name: 'Bot speichern' }));
   await waitFor(() => expect(json.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true));
@@ -85,16 +103,18 @@ it('creates a scoped n8n bot and keeps pending bearer delivery disabled', async 
   expect(await screen.findByText(/Bot-Konfiguration gespeichert/)).toBeTruthy();
 });
 
-it('shows the agent-mode toggle only for LLM bots, off by default', async () => {
+it('shows the subagent step only for LLM bots, with agent mode off by default', async () => {
   render(<BotsTab />);
   fireEvent.click(await screen.findByRole('button', { name: 'Bot hinzufügen' }));
 
+  step(/Subagenten/);
   const agentToggle = screen.getByRole('switch', { name: /Agentenmodus/ }) as HTMLButtonElement;
   expect(agentToggle.getAttribute('aria-checked')).toBe('false');
   expect(screen.queryByRole('button', { name: 'Subagent hinzufügen' })).toBeNull();
 
+  step(/Grundlagen/);
   fireEvent.change(screen.getByRole('combobox', { name: 'Bot-Typ' }), { target: { value: 'n8n' } });
-  expect(screen.queryByRole('switch', { name: /Agentenmodus/ })).toBeNull();
+  expect(within(screen.getByRole('navigation', { name: 'Schritte der Bot-Konfiguration' })).queryByRole('button', { name: /Subagenten/ })).toBeNull();
 });
 
 it('blocks saving an enabled agent mode with no subagent, then allows it once one is added and filled in', async () => {
@@ -103,12 +123,16 @@ it('blocks saving an enabled agent mode with no subagent, then allows it once on
 
   fireEvent.change(screen.getByRole('textbox', { name: /^Bot-ID/ }), { target: { value: 'agent-bot' } });
   fireEvent.change(screen.getByRole('textbox', { name: 'Anzeigename' }), { target: { value: 'Agent Bot' } });
+  step(/Verhalten/);
   fireEvent.change(screen.getByRole('textbox', { name: 'System-Prompt' }), { target: { value: 'Antworte anhand der Recherche.' } });
 
+  step(/Subagenten/);
   fireEvent.click(screen.getByRole('switch', { name: /Agentenmodus/ }));
   expect(screen.getByText(/Mindestens ein Subagent ist erforderlich/)).toBeTruthy();
+  step(/Überprüfen/);
   expect((screen.getByRole('button', { name: 'Bot speichern' }) as HTMLButtonElement).disabled).toBe(true);
 
+  step(/Subagenten/);
   fireEvent.click(screen.getByRole('button', { name: 'Subagent hinzufügen' }));
   expect(screen.getByText(/Der fachliche Auftrag darf nicht leer sein/)).toBeTruthy();
   expect(screen.getByText(/Mindestens ein Wissensbereich ist erforderlich/)).toBeTruthy();
@@ -117,14 +141,11 @@ it('blocks saving an enabled agent mode with no subagent, then allows it once on
   expect((screen.getByRole('textbox', { name: /^ID \(Slug\)/ }) as HTMLInputElement).value).toBe('it-support');
 
   fireEvent.change(screen.getByRole('textbox', { name: 'Fachlicher Auftrag' }), { target: { value: 'Beantwortet IT-Fragen.' } });
-  // Two "servicewissen" checkboxes exist -- one for the subagent's own
-  // Collections picker (inside the agent section, first in DOM order) and
-  // one for the bot-level "Wissensbereiche" scope further down.
-  fireEvent.click(screen.getAllByRole('checkbox', { name: 'servicewissen' })[0]);
-
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Servicewissen' }));
   expect(screen.queryByRole('alert')).toBeNull();
-  expect((screen.getByRole('button', { name: 'Bot speichern' }) as HTMLButtonElement).disabled).toBe(false);
 
+  step(/Überprüfen/);
+  expect((screen.getByRole('button', { name: 'Bot speichern' }) as HTMLButtonElement).disabled).toBe(false);
   fireEvent.click(screen.getByRole('button', { name: 'Bot speichern' }));
   await waitFor(() => expect(json.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true));
   const mutation = json.mock.calls.find(([, init]) => init?.method === 'POST');
@@ -146,7 +167,9 @@ it('sends agent: null when the agent-mode toggle stays off', async () => {
 
   fireEvent.change(screen.getByRole('textbox', { name: /^Bot-ID/ }), { target: { value: 'plain-bot' } });
   fireEvent.change(screen.getByRole('textbox', { name: 'Anzeigename' }), { target: { value: 'Plain Bot' } });
+  step(/Verhalten/);
   fireEvent.change(screen.getByRole('textbox', { name: 'System-Prompt' }), { target: { value: 'Antworte normal.' } });
+  step(/Überprüfen/);
 
   fireEvent.click(screen.getByRole('button', { name: 'Bot speichern' }));
   await waitFor(() => expect(json.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true));
@@ -206,11 +229,14 @@ it('assigns an owner through the person search and shares the bot with everyone'
   fireEvent.click(await screen.findByRole('button', { name: 'Bot hinzufügen' }));
   fireEvent.change(screen.getByRole('textbox', { name: /^Bot-ID/ }), { target: { value: 'wissens-bot' } });
   fireEvent.change(screen.getByRole('textbox', { name: 'Anzeigename' }), { target: { value: 'Wissens-Bot' } });
+  step(/Verhalten/);
   fireEvent.change(screen.getByRole('textbox', { name: 'System-Prompt' }), { target: { value: 'Hilf.' } });
+  step(/Freigabe/);
   fireEvent.change(screen.getByRole('searchbox', { name: 'Person suchen' }), { target: { value: 'ada' } });
   fireEvent.click(await screen.findByRole('button', { name: /^ada/ }));
   fireEvent.change(screen.getByRole('combobox', { name: 'Rolle von ada' }), { target: { value: 'owner' } });
   fireEvent.click(screen.getByRole('checkbox', { name: 'Für alle angemeldeten Nutzer freigeben' }));
+  step(/Überprüfen/);
 
   fireEvent.click(screen.getByRole('button', { name: 'Bot speichern' }));
   await waitFor(() => expect(json.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true));

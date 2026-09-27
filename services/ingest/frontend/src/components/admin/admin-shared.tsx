@@ -219,17 +219,22 @@ export function Toggle({
   );
 }
 
+const MODAL_WIDTH = { sm: 'max-w-lg', md: 'max-w-2xl', lg: 'max-w-5xl' } as const;
+
 export function Modal({
   title,
   onClose,
   children,
   footer,
+  size = 'md',
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
   /** Optional right-aligned action row, rendered as a bordered footer strip below the body. */
   footer?: React.ReactNode;
+  /** sm for confirmations, md (default) for forms, lg for multi-step editors. */
+  size?: keyof typeof MODAL_WIDTH;
 }) {
   const { t } = useI18n();
   useEffect(() => {
@@ -247,7 +252,7 @@ export function Modal({
         onClick={onClose}
         aria-hidden="true"
       />
-      <div className="relative flex max-h-[90dvh] w-full max-w-lg flex-col overflow-y-auto rounded-xl border border-[var(--line)] bg-[var(--surface)] shadow-2xl">
+      <div className={`relative flex max-h-[90dvh] w-full ${MODAL_WIDTH[size]} flex-col overflow-y-auto rounded-xl border border-[var(--line)] bg-[var(--surface)] shadow-2xl`}>
         <div className="flex items-center justify-between gap-3 border-b border-[var(--line)] px-5 py-4">
           <h3 className="min-w-0 break-words text-[17px] font-semibold text-[var(--ink)]">{title}</h3>
           <button
@@ -299,6 +304,7 @@ export function ConfirmDialog({
 
   return (
     <Modal
+      size="sm"
       title={title}
       onClose={onClose}
       footer={

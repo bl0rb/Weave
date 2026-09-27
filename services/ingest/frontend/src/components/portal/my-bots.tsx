@@ -94,7 +94,7 @@ function OwnedBotEditor({ bot, onClose, onSaved }: { bot: OwnedBot; onClose: () 
     } catch (err) { setError(portalError(err, locale)); setSaving(false); }
   }
 
-  return <Modal title={t('portal.bots.editTitle', { name: bot.name })} onClose={onClose}>
+  return <Modal size="lg" title={t('portal.bots.editTitle', { name: bot.name })} onClose={onClose}>
     {error && <Notice error>{error}</Notice>}
     <form className="space-y-4" onSubmit={save}>
       <label className="block text-sm font-medium text-[var(--ink-2)]">{t('common.description')}<textarea rows={2} maxLength={4000} className={inputClass} value={description} disabled={saving} onChange={event => setDescription(event.target.value)} /></label>
