@@ -20,6 +20,7 @@ last-used/last-seen timestamp.
 import hashlib
 import hmac
 import logging
+import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, Header, HTTPException, Request, status
@@ -52,6 +53,22 @@ _LAST_USED_TOUCH_THRESHOLD = timedelta(seconds=60)
 
 def _hash_token(raw_token: str) -> str:
     return hashlib.sha256(raw_token.encode('utf-8')).hexdigest()
+
+
+# 32 random bytes, url-safe base64 -- never contains a '.', which is how
+# Weave-Tools tells a personal token apart from a delegation token.
+_TOKEN_BYTES = 32
+
+
+def issue_api_token(db: Session, user: User, *, label: str, expires_days: int | None) -> tuple[ApiToken, str]:
+    """Add a personal API token for ``user`` (not committed) and return it
+    with its raw value -- the only time that value exists; only its sha256
+    is stored."""
+    raw_token = secrets.token_urlsafe(_TOKEN_BYTES)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=expires_days) if expires_days is not None else None
+    token = ApiToken(user_id=user.id, token_sha256=_hash_token(raw_token), label=label, expires_at=expires_at)
+    db.add(token)
+    return token, raw_token
 
 
 def _aware_utc(value: datetime) -> datetime:

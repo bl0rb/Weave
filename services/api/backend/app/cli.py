@@ -14,37 +14,19 @@ out of scope for this skeleton stage (see README's Status).
 """
 
 import argparse
-import hashlib
 import logging
-import secrets
 import sys
-from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.auth import issue_api_token
 from app.core.db import SessionLocal
-from app.models.models import ApiToken, User
-
-# 32 random bytes (secrets.token_urlsafe's own default), url-safe base64
-# encoded -- the same shape/strength Weave-Ingest's own API-token issuance
-# uses, just without that service's 'pd_' product prefix (this token is
-# never displayed alongside other products' tokens in one UI, so there is
-# nothing for a prefix to disambiguate here).
-_TOKEN_BYTES = 32
-
-
-def _hash_token(raw_token: str) -> str:
-    return hashlib.sha256(raw_token.encode('utf-8')).hexdigest()
+from app.models.models import User
 
 
 def _issue_token(db: Session, user: User, *, label: str, expires_days: int | None) -> str:
-    raw_token = secrets.token_urlsafe(_TOKEN_BYTES)
-    expires_at = (
-        datetime.now(timezone.utc) + timedelta(days=expires_days) if expires_days is not None else None
-    )
-    token = ApiToken(user_id=user.id, token_sha256=_hash_token(raw_token), label=label, expires_at=expires_at)
-    db.add(token)
+    _, raw_token = issue_api_token(db, user, label=label, expires_days=expires_days)
     db.commit()
     return raw_token
 

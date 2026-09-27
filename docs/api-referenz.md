@@ -28,6 +28,7 @@ Alle Antworten sind JSON, sofern nicht anders angegeben (Streaming-Endpunkte lie
 | Wissensbereiche sehen, die ich lesen darf | Weave-API | `GET /v1/collections` |
 | Eigene Konversationen einsehen/löschen | Weave-API | `GET /v1/conversations`, `DELETE /v1/conversations/{id}` |
 | Eigenes Profil / UI-Sprache lesen und setzen | Weave-API | `GET /v1/me`, `PUT /v1/me/locale` |
+| Eigene API-Tokens erstellen, auflisten, widerrufen | Weave-API | `GET/POST /v1/me/tokens`, `DELETE /v1/me/tokens/{id}` |
 | Als Agent/Skript in meinem eigenen Scope suchen | Weave-Tools | MCP `search`, `POST /api/v1/tools/search` |
 | Als Agent/Skript meine lesbaren Collections auflisten | Weave-Tools | MCP `list_collections`, `GET /api/v1/tools/collections` |
 | Einen Wissensbereich anlegen, pflegen, freigeben, löschen | Weave-Ingest | `POST/GET/PATCH/DELETE /api/v1/collections` |
@@ -48,13 +49,9 @@ Alle Antworten sind JSON, sofern nicht anders angegeben (Streaming-Endpunkte lie
 
 Zwei Zugangswege, die beide zur selben `Authorization`-Prüfung führen:
 
-1. **Personal-API-Token (für Maschinen/Skripte, empfohlen für Integrationen).** Es gibt **keinen** Selbstbedienungs-Endpunkt dafür — ein Token wird von einer Person mit Zugriff auf den Weave-API-Server über die mitgelieferte Verwaltungs-CLI ausgestellt:
+1. **Personal-API-Token (für Maschinen/Skripte, empfohlen für Integrationen).** Jede angemeldete Person erstellt ihre Tokens selbst: in Weave-Chat über **API-Zugang** im Menü unten links, oder per API mit `POST /v1/me/tokens` (siehe unten). Ein Token hat genau die Rechte seiner Person. Betreiber können zusätzlich per Verwaltungs-CLI Tokens ausstellen (`python -m app.cli create-token --username alice [--expires-days 30]`).
 
-   ```bash
-   python -m app.cli create-token --username alice [--expires-days 30]
-   ```
-
-   Das rohe Token wird genau einmal auf der Konsole ausgegeben (nur `sha256(token)` wird gespeichert) und muss danach in jedem Request im Header mitgeschickt werden:
+   Das rohe Token wird genau einmal angezeigt (nur `sha256(token)` wird gespeichert) und muss danach in jedem Request im Header mitgeschickt werden:
 
    ```
    Authorization: Bearer <token>
@@ -156,6 +153,25 @@ curl -s -X PUT https://weave.example.com/v1/me/locale \
 ```
 
 > **Hinweis:** Ist der Aufrufer über Weave-Ingest föderiert angemeldet, wird der Wert zuerst dort geschrieben; ist Weave-Ingest nicht erreichbar, antwortet dieser Endpunkt mit `503` und ändert nichts lokal (kein Auseinanderlaufen der beiden Systeme).
+
+### Eigene API-Tokens
+
+#### `GET /v1/me/tokens` / `POST /v1/me/tokens` / `DELETE /v1/me/tokens/{id}`
+
+Persönliche API-Tokens selbst verwalten. Die Antwort auf `POST` enthält das Token im Feld `token` — nur dieses eine Mal; `GET` listet danach nur Bezeichnung und Daten.
+
+| Feld (`POST`) | Typ | Pflicht | Bedeutung |
+|---|---|---|---|
+| `label` | `string`, 1–100 Zeichen | ja | Bezeichnung, z. B. „n8n Vertrieb“ |
+| `expires_in_days` | `int` (1–3650) \| `null` | nein | Laufzeit, Default 90 Tage; `null` = unbegrenzt |
+
+**Antwort (`POST`, Beispiel)**
+
+```json
+{ "id": "5d1c…", "label": "n8n Vertrieb", "created_at": "2026-09-27T08:00:00Z", "expires_at": "2026-12-26T08:00:00Z", "last_used_at": null, "token": "<nur jetzt sichtbar>" }
+```
+
+> **Wichtig:** Diese drei Endpunkte verlangen eine angemeldete Sitzung (Session-Cookie). Mit `Authorization: Bearer …` antworten sie mit `403` — ein gestohlenes Token kann sich so weder selbst ersetzen noch andere Tokens widerrufen. Höchstens 20 Tokens pro Person (`409` darüber).
 
 ### Bots
 
