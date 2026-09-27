@@ -65,7 +65,7 @@ def test_list_bots_response_does_not_leak_system_prompt():
     resp = client.get('/internal/bots', headers=AUTH_HEADERS)
     body = resp.json()
     for bot in body:
-        assert set(bot) == {'id', 'name', 'description', 'retrieval', 'kind', 'teams', 'users', 'public', 'collections'}
+        assert set(bot) == {'id', 'name', 'description', 'retrieval', 'kind', 'teams', 'public', 'collections'}
 
 
 # --- POST /internal/chat --------------------------------------------------

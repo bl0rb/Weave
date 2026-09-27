@@ -506,6 +506,7 @@ class BotSummary(BaseModel):
     retrieval: BotRetrievalSummary
     kind: str = 'llm'
     teams: list[str] = Field(default_factory=list)
-    users: list[str] = Field(default_factory=list)
+    # Deliberately no `permissions.users`: this listing is passed through to
+    # every signed-in chat user, who must not learn who else was granted.
     public: bool = True
     collections: list[str] = Field(default_factory=list)
