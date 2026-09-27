@@ -149,6 +149,7 @@ def test_admin_bot_list_projects_nonempty_runtime_roster(monkeypatch):
                 'id': 'general-assistant', 'name': 'Allgemeiner Assistent',
                 'description': 'YAML bot', 'kind': 'llm',
                 'retrieval': {'enabled': True}, 'teams': [], 'collections': [],
+                'permissions': {'teams': ['legal-unbekannt']},
             }],
         })(),
     )
@@ -158,6 +159,9 @@ def test_admin_bot_list_projects_nonempty_runtime_roster(monkeypatch):
     assert item['kind'] == 'llm'
     assert item['source'] == 'runtime'
     assert item['editable'] is True
+    # A team Ingest doesn't know is still shown, so the bot isn't listed as closed.
+    assert item['public'] is False
+    assert [(grant['team_id'], grant['name']) for grant in item['grants']] == [(None, 'legal-unbekannt')]
 
 def test_non_admin_cannot_manage_bots_and_unknown_scope_is_rejected():
     admin = _identity('bot-reference-admin', role=UserRole.ADMIN)

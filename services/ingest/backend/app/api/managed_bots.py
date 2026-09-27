@@ -126,7 +126,9 @@ def _runtime_bots(db: Session | None = None) -> list[ManagedBotAdminResponse]:
         # Managed n8n bots remain administrable when Runtime is temporarily
         # unavailable; the next refresh exposes local YAML bots again.
         return []
-    # YAML bots name teams; show the ones this service knows as user grants.
+    # YAML bots name teams. Known ones become ordinary user grants; unknown
+    # names are still shown (without an id) so the list doesn't claim the
+    # bot is closed, and are dropped once an admin saves an override.
     teams_by_name = {team.name: team for team in db.scalars(select(Team)).all()} if db is not None else {}
     result = []
     for item in items:
@@ -155,8 +157,8 @@ def _runtime_bots(db: Session | None = None) -> list[ManagedBotAdminResponse]:
             public=not (permissions.get('teams') or permissions.get('users')) if permissions.get('public') is None
             else bool(permissions.get('public')),
             grants=[
-                BotGrantResponse(team_id=teams_by_name[name].id, role=BotRole.USER, name=name)
-                for name in permissions.get('teams') or [] if name in teams_by_name
+                BotGrantResponse(team_id=teams_by_name[name].id if name in teams_by_name else None, role=BotRole.USER, name=name)
+                for name in permissions.get('teams') or []
             ],
             collections=list(retrieval.get('collections') or []),
             require_sources=bool(guard.get('require_sources', True)), no_context_reply=guard.get('no_context_reply', ''),

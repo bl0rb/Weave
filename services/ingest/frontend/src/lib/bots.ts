@@ -23,9 +23,10 @@ export type OwnedBotUpdate = Partial<Pick<OwnedBot, 'description' | 'system_prom
   grants?: BotGrantInput[];
 };
 
-export const toGrantInputs = (grants: BotGrant[]): BotGrantInput[] => grants.map(grant => grant.user_id
-  ? { user_id: grant.user_id, role: grant.role }
-  : { team_id: grant.team_id as string, role: grant.role });
+/** Grants without an id (a YAML bot's team unknown to Weave-Ingest) can't be saved and are dropped. */
+export const toGrantInputs = (grants: BotGrant[]): BotGrantInput[] => grants.flatMap((grant): BotGrantInput[] => grant.user_id
+  ? [{ user_id: grant.user_id, role: grant.role }]
+  : grant.team_id ? [{ team_id: grant.team_id, role: grant.role }] : []);
 
 export function listOwnedBots(signal?: AbortSignal): Promise<{ items: OwnedBot[] }> {
   return apiJson('/api/v1/bots', { signal });
