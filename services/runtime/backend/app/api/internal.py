@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from app.core.auth import require_service_token
 from app.schemas.bot import BotConfig, BotRetrievalSummary, BotSummary
-from app.schemas.chat import ChatRequest, ChatResponse, ChatStreamEvent
+from app.schemas.chat import ChatRequest, ChatResponse, ChatStreamEvent, ChatUser
 from app.services import chat as chat_service
 from app.services.botconfig import BotNotFoundError, list_bots
 from app.services.chat_config_client import ChatConfigUnavailable
@@ -42,24 +42,43 @@ class ConversationTitleResponse(BaseModel):
     title: str
 
 
-@router.get('/bots', response_model=list[BotSummary])
-def list_bots_endpoint() -> list[BotSummary]:
+def _summary(bot: BotConfig) -> BotSummary:
+    return BotSummary(
+        id=bot.id,
+        name=bot.name,
+        description=bot.description,
+        retrieval=BotRetrievalSummary(enabled=bot.retrieval.enabled),
+        kind='n8n' if bot.model.provider == 'n8n' else 'llm',
+        teams=list(bot.permissions.teams),
+        public=bot.permissions.is_public,
+        collections=list(bot.retrieval.collections),
+    )
+
+
+def _bots_or_503() -> list[BotConfig]:
     try:
-        bots = list_bots()
+        return list_bots()
     except ChatConfigUnavailable as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-    return [
-        BotSummary(
-            id=bot.id,
-            name=bot.name,
-            description=bot.description,
-            retrieval=BotRetrievalSummary(enabled=bot.retrieval.enabled),
-            kind='n8n' if bot.model.provider == 'n8n' else 'llm',
-            teams=list(bot.permissions.teams),
-            collections=list(bot.retrieval.collections),
-        )
-        for bot in bots
-    ]
+
+
+@router.get('/bots', response_model=list[BotSummary])
+def list_bots_endpoint() -> list[BotSummary]:
+    return [_summary(bot) for bot in _bots_or_503()]
+
+
+@router.post('/bots/visible', response_model=list[BotSummary])
+def list_visible_bots_endpoint(user: ChatUser) -> list[BotSummary]:
+    """The bots ``user`` may chat with (ADR 0008) -- the same check a chat
+    turn runs, so a gateway never lists a bot that would answer 403."""
+    visible = []
+    for bot in _bots_or_503():
+        try:
+            chat_service._check_permissions(bot, user)
+        except chat_service.BotPermissionDenied:
+            continue
+        visible.append(_summary(bot))
+    return visible
 
 
 @router.get('/bot-configs', response_model=list[BotConfig])

@@ -47,7 +47,7 @@ Lokale Beispiel- und Fallback-Bots sind YAML-Dateien unter `bots/` (Default-Verz
 - **`model`**: Provider (Default `fake`, für Dev/Tests ohne echten API-Key), Modellname, optionale Temperatur
 - **`system_prompt`**: der Prompt, mit dem der Bot startet
 - **`retrieval`**: aus/ein (Default aus), Metadaten-Filter (Team, Abteilung, Tags, Quelle, Sprache, Dokumenttyp), `top_k`/`final_k`/Rerank-Toggle — dieselben Konzepte wie Weave-Retrievals eigene `SearchFilters`/`SearchRequest` —, sowie `collections` (welche Collections dieser Bot nutzen darf, Default alle vom anfragenden Nutzer lesbaren; siehe Collections-Vertrag unten)
-- **`permissions.teams`**: welche User-Teams den Bot nutzen dürfen (leere Liste = alle)
+- **`permissions.teams`**: welche User-Teams den Bot nutzen dürfen (leere Liste = alle); daneben `permissions.users` (Weave-Ingest-Nutzer-IDs) und `permissions.public` für von Weave-Ingest verwaltete Bots (ADR 0008: ohne Freigabe geschlossen)
 - **`guard`**: erzwingt bei aktiviertem Retrieval eine belegte Antwort (`require_sources`, Default an) statt einer vom LLM erfundenen — ohne brauchbare Quellen antwortet der Bot stattdessen mit `no_context_reply`
 
 Zwei Beispiel-Bots liegen bereits vor: `bots/general-assistant.yaml` (kein Retrieval, für jedes Team) und `bots/legal-support.yaml` (Retrieval auf `filters.department: legal` und `collections: [vertraege]` eingeschränkt, nur für die Teams `legal`/`management` — das Beispiel aus dem Weave-Konzept für einen quellenpflichtigen, collection-gebundenen Bot mit eingeschränkten Berechtigungen). Ein dritter, `bots/n8n-agent.yaml.example` (absichtlich mit dieser Endung, nicht `.yaml` — siehe die Datei selbst), zeigt `model.provider: n8n`: statt eines direkten LLM-Aufrufs delegiert ein solcher Bot seinen Turn an einen n8n-Agentenflow, der über ein kurzlebiges, signiertes Delegations-Token GENAU den Lese-Umfang des anfragenden Menschen erhält und darüber selbst gegen Weave-Tools sucht/handelt — voller Vertrag in [`contracts/n8n-flow.md`](../../contracts/n8n-flow.md), Settings `WEAVE_DELEGATION_SECRET`/`DELEGATION_TOKEN_TTL_SECONDS`/`N8N_ALLOWED_BASE_URLS`/`TOOLS_BASE_URL`.
@@ -83,7 +83,7 @@ Jede Route unter `/internal/*` verlangt `Authorization: Bearer <RUNTIME_API_TOKE
 - `POST /internal/chat/stream` — derselbe Chat-Turn, als `text/event-stream` statt einer einzelnen JSON-Antwort: `trace` (einmal, vor dem ersten Textstück) → `delta` (mehrfach) → `sources` + `done`, oder statt der letzten beiden ein abschließendes `error`, falls die Generierung mittendrin fehlschlägt. Volle Ereignis-/Fehlerdefinition im selben Vertrag, Abschnitt "Streaming".
 
   1. `load_bot(bot_id)` — unbekannt → `404`.
-  2. Permissions: `bot.permissions.teams` nicht leer und `user.team` nicht enthalten → `403`.
+  2. Permissions: Bot nicht öffentlich und weder Team (`permissions.teams`) noch Person (`permissions.users` gegen `user.subject`) freigegeben, und `user.is_admin` nicht gesetzt → `403`.
   3. Intent-Routing (`ROUTER_MODE=rules|llm`, siehe `backend/app/services/router.py`) über `conversational`, `knowledge`, `document`, `action`, `complex`.
   4. Je nach Intent:
      - `conversational`: LLM mit `system_prompt` + `history` + `message`, keine Quellen.

@@ -137,6 +137,20 @@ def test_centrally_managed_bot_is_merged_with_local_roster(bots_dir, monkeypatch
     assert managed.n8n.timeout_seconds == 75
     assert managed.n8n.auth_token.get_secret_value() == 'secret-token'
     assert 'secret-token' not in repr(managed)
+    # No `public` flag from an older Ingest keeps "no grants = everyone".
+    assert managed.permissions.public is None
+
+
+def test_managed_bot_grants_are_projected_into_permissions(bots_dir, monkeypatch):
+    monkeypatch.setattr(settings, 'n8n_allowed_base_urls', ['https://n8n.example.test/webhook/'])
+    monkeypatch.setattr('app.services.botconfig.fetch_managed_bots', lambda: [{
+        'id': 'closed-agent', 'name': 'Closed', 'webhook_url': 'https://n8n.example.test/webhook/closed',
+        'teams': [], 'users': ['ingest-user-1'], 'public': False,
+    }])
+
+    managed = next(bot for bot in list_bots() if bot.id == 'closed-agent')
+    assert managed.permissions.users == ['ingest-user-1']
+    assert managed.permissions.is_public is False
 
 
 def test_managed_bot_outside_allowlist_is_skipped_not_fatal(bots_dir, monkeypatch, caplog):

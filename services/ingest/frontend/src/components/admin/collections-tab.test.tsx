@@ -8,10 +8,15 @@ vi.mock('@/lib/api', async importOriginal => ({ ...await importOriginal<typeof i
 const api = vi.mocked(apiJson);
 const area = {
   collection_id: 'area', slug: 'wissen', name: 'Wissen', description: 'Thema',
-  read_teams: ['Service'], visibility: 'restricted', read_users: [], read_user_details: [],
-  owner: { id: 'user', username: 'Ada' }, document_count: 6, pending_count: 2, running_count: 1, review_count: 1, failed_count: 1, released_count: 1,
+  visibility: 'restricted',
+  grants: [
+    { user_id: 'user', team_id: null, role: 'owner', name: 'Ada', team: null },
+    { user_id: null, team_id: 't-service', role: 'member', name: 'Service' },
+  ],
+  created_by: { id: 'user', username: 'Ada' }, responsible_team: { id: 't-service', name: 'Service' },
+  document_count: 6, pending_count: 2, running_count: 1, review_count: 1, failed_count: 1, released_count: 1,
 };
-const teams = { items: [{ name: 'Service', member_count: 4 }, { name: 'Recht', member_count: 2 }] };
+const teams = { items: [{ id: 't-service', name: 'Service', member_count: 4 }, { id: 't-recht', name: 'Recht', member_count: 2 }] };
 
 beforeEach(() => {
   api.mockReset();
@@ -45,18 +50,21 @@ it('renames a collection without touching its access', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Änderungen speichern' }));
   await waitFor(() => expect(api.mock.calls.some(([, options]) => options?.method === 'PATCH')).toBe(true));
   const mutation = api.mock.calls.find(([, options]) => options?.method === 'PATCH');
-  expect(JSON.parse(mutation?.[1]?.body as string)).toEqual({ name: 'Neues Thema', description: 'Thema' });
+  expect(JSON.parse(mutation?.[1]?.body as string)).toEqual({ name: 'Neues Thema', description: 'Thema', responsible_team_id: 't-service' });
   await screen.findByText('Wissensbereich gespeichert.');
 });
 
-it('opens the access dialog and saves the selected teams', async () => {
+it('opens the access dialog and saves the selected teams with their roles', async () => {
   await edit();
   fireEvent.click(screen.getByRole('button', { name: 'Zugriff ändern' }));
   fireEvent.click(await screen.findByRole('checkbox', { name: /^Recht/ }));
-  fireEvent.click(screen.getByRole('button', { name: 'Zugriff speichern' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Freigabe speichern' }));
   await waitFor(() => expect(api.mock.calls.some(([, options]) => options?.method === 'PATCH')).toBe(true));
   const mutation = api.mock.calls.find(([, options]) => options?.method === 'PATCH');
-  expect(JSON.parse(mutation?.[1]?.body as string)).toEqual({ visibility: 'restricted', read_teams: ['Service', 'Recht'], read_users: [] });
+  expect(JSON.parse(mutation?.[1]?.body as string)).toEqual({
+    visibility: 'restricted',
+    grants: [{ user_id: 'user', role: 'owner' }, { team_id: 't-service', role: 'member' }, { team_id: 't-recht', role: 'member' }],
+  });
 });
 
 it('shows a denied admin response without a collection editor', async () => {

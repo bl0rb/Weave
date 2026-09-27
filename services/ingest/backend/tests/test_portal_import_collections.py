@@ -24,7 +24,7 @@ from app.services.publications import build_release_payload, canonical_snapshot
 from app.workers import import_tasks, refresh_tasks
 from app.workers.celery_app import celery_app
 from app.workers.import_tasks import import_confluence
-from tests.conftest import TestingSessionLocal, client, create_test_user, login_as
+from tests.conftest import TestingSessionLocal, add_legacy_collection, client, create_test_user, login_as
 
 
 BASE_URL = 'https://acme.example.com'
@@ -70,8 +70,7 @@ def _source(owner_id: str, *, refresh_enabled: bool = False) -> ImportSource:
 def _collection(owner_id: str, *, slug: str = 'portal-docs', name: str = 'Portal Docs') -> Collection:
     db = _db()
     try:
-        collection = Collection(owner_id=owner_id, slug=f'{slug}-{uuid.uuid4().hex[:6]}', name=name)
-        db.add(collection)
+        collection = add_legacy_collection(db, owner_id=owner_id, slug=f'{slug}-{uuid.uuid4().hex[:6]}', name=name)
         db.commit()
         db.refresh(collection)
         db.expunge(collection)

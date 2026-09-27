@@ -17,7 +17,7 @@ from sqlalchemy import select
 
 from app.models.models import Collection, Job, JobStatus, Team, User, UserRole, user_teams
 from app.services.security import rate_limiter
-from conftest import TestingSessionLocal, create_test_user, login_as
+from conftest import TestingSessionLocal, add_legacy_collection, create_test_user, login_as
 
 
 @pytest.fixture(autouse=True)
@@ -177,13 +177,13 @@ def test_collection_member_can_edit_existing_job_from_shared_reader_team():
     db = _db()
     try:
         team_name = db.scalar(select(Team.name).where(Team.id == contributor_team_id))
-        collection = Collection(
+        collection = add_legacy_collection(
+            db,
             owner_id=owner.id,
             slug='authz-collection-job',
             name='Shared jobs',
             read_teams=[team_name],
         )
-        db.add(collection)
         db.commit()
         db.refresh(collection)
         collection_id = collection.id

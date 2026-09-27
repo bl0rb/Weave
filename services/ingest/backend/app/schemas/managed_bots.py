@@ -7,6 +7,8 @@ from urllib.parse import urlsplit
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.models.models import BotRole
+
 
 _BOT_ID_RE = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
 _UNSAFE_URL_CHARS = re.compile(r'[\\\x00-\x1f\x7f]')
@@ -139,6 +141,37 @@ class AgentConfig(BaseModel):
         return self
 
 
+class BotGrantInput(BaseModel):
+    """One entry of a bot's access list (ADR 0008): exactly one of
+    `user_id` (a local or SSO account) or `team_id`. Teams can only be
+    users, never owners."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    user_id: str | None = None
+    team_id: str | None = None
+    role: BotRole
+
+    @model_validator(mode='after')
+    def validate_subject(self) -> 'BotGrantInput':
+        if (self.user_id is None) == (self.team_id is None):
+            raise ValueError('a grant names exactly one of user_id or team_id')
+        if self.team_id is not None and self.role == BotRole.OWNER:
+            raise ValueError('owners are persons, a team can only be a user')
+        return self
+
+
+class BotGrantResponse(BaseModel):
+    """A resolved bot grant; `name` is the username or team name."""
+
+    user_id: str | None = None
+    team_id: str | None = None
+    role: BotRole
+    name: str
+    team: str | None = None
+    is_active: bool = True
+
+
 class ManagedBotWrite(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
@@ -159,7 +192,9 @@ class ManagedBotWrite(BaseModel):
     auth_token: str | None = Field(default=None, max_length=8192)
     clear_auth_token: bool = False
     timeout_seconds: int = Field(default=120, ge=1, le=14400)
-    teams: list[str] = Field(default_factory=list, max_length=100)
+    # Who may use the bot (ADR 0008): everyone, or only the grants.
+    public: bool = False
+    grants: list[BotGrantInput] = Field(default_factory=list, max_length=500)
     collections: list[str] = Field(default_factory=list, max_length=500)
     require_sources: bool = True
     no_context_reply: str = Field(
@@ -215,7 +250,7 @@ class ManagedBotWrite(BaseModel):
         # preserve the administrator's exact endpoint after whitespace trim.
         return value
 
-    @field_validator('teams', 'collections')
+    @field_validator('collections')
     @classmethod
     def normalize_scope(cls, values: list[str]) -> list[str]:
         return list(dict.fromkeys(value.strip() for value in values if value.strip()))
@@ -271,7 +306,8 @@ class ManagedBotAdminResponse(BaseModel):
     streaming: bool
     has_auth_token: bool
     timeout_seconds: int
-    teams: list[str]
+    public: bool = False
+    grants: list[BotGrantResponse] = Field(default_factory=list)
     collections: list[str]
     require_sources: bool
     no_context_reply: str
@@ -303,7 +339,12 @@ class ManagedBotInternalResponse(BaseModel):
     streaming: bool
     auth_token: str = ''
     timeout_seconds: int
+    # Projection of the grants for Runtime's permission check (ADR 0008):
+    # team names, Weave-Ingest user ids (owners included) and whether the
+    # bot is shared with everyone.
     teams: list[str]
+    users: list[str] = Field(default_factory=list)
+    public: bool = False
     collections: list[str]
     require_sources: bool
     no_context_reply: str
@@ -315,3 +356,54 @@ class ManagedBotInternalListResponse(BaseModel):
     # IDs explicitly removed from the effective Runtime roster.  This lets
     # Runtime suppress bundled YAML bots whose config is read-only here.
     disabled_ids: list[str] = Field(default_factory=list)
+
+
+class ManagedBotOwnerResponse(BaseModel):
+    """What a bot owner sees and maintains (ADR 0008): the content and the
+    sharing, never the technical connection (webhook, secret, timeout)."""
+
+    id: str
+    kind: str
+    name: str
+    description: str | None
+    enabled: bool
+    system_prompt: str | None = None
+    retrieval_enabled: bool = False
+    collections: list[str]
+    require_sources: bool
+    no_context_reply: str
+    public: bool
+    grants: list[BotGrantResponse] = Field(default_factory=list)
+    updated_at: datetime
+
+
+class ManagedBotOwnerListResponse(BaseModel):
+    items: list[ManagedBotOwnerResponse] = Field(default_factory=list)
+
+
+class ManagedBotOwnerUpdate(BaseModel):
+    """Owner PATCH: every field optional (None = unchanged). `grants`
+    replaces the users; owners stay as the administrators set them."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    description: str | None = Field(default=None, max_length=4000)
+    system_prompt: str | None = Field(default=None, max_length=12000)
+    collections: list[str] | None = Field(default=None, max_length=500)
+    require_sources: bool | None = None
+    no_context_reply: str | None = Field(default=None, min_length=1, max_length=2000)
+    public: bool | None = None
+    grants: list[BotGrantInput] | None = Field(default=None, max_length=500)
+
+    @field_validator('collections')
+    @classmethod
+    def normalize_collections(cls, values: list[str] | None) -> list[str] | None:
+        if values is None:
+            return None
+        return list(dict.fromkeys(value.strip() for value in values if value.strip()))
+
+    @model_validator(mode='after')
+    def validate_user_grants_only(self) -> 'ManagedBotOwnerUpdate':
+        if self.grants and any(grant.role == BotRole.OWNER for grant in self.grants):
+            raise ValueError('owners are set by an administrator')
+        return self

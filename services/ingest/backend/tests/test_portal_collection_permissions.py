@@ -57,8 +57,10 @@ def test_shared_collection_job_visibility_and_release_match_membership(monkeypat
         assert released.json()['released'] == 1
 
 
-def test_postgres_collection_predicate_declares_json_value_column():
-    """PostgreSQL requires the derived column alias that SQLite rejects."""
+def test_postgres_collection_predicate_uses_plain_grant_columns():
+    """The member predicate reads collection_grants (ADR 0008): plain
+    columns, no JSON set-returning functions, so PostgreSQL and SQLite
+    compile the same shape."""
     from types import SimpleNamespace
 
     class Database:
@@ -67,11 +69,8 @@ def test_postgres_collection_predicate_declares_json_value_column():
         def execute(self, statement):
             return SimpleNamespace(all=lambda: [('team', 'member')])
 
-        def scalars(self, statement):
-            return SimpleNamespace(all=lambda: ['Service'])
-
     user = User(id='user', team_id='team')
     expression = _collection_control_job_filter(Database(), user)
     sql = str(select(Job.id).where(expression).compile(dialect=postgresql.dialect()))
-    assert 'json_array_elements_text' in sql
-    assert 'AS job_collection_read_team(value)' in sql
+    assert 'collection_grants.team_id IN' in sql
+    assert 'json_array_elements_text' not in sql

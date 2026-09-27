@@ -4,7 +4,7 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from app.core.config import settings
 from app.models.models import BotTombstone, ManagedBot, Team, UserRole
@@ -43,10 +43,20 @@ def _team() -> str:
     return name
 
 
+def _team_id(team_name: str) -> str:
+    """The team's id; an unknown name is passed through as an unknown id."""
+    with TestingSessionLocal() as db:
+        return db.scalar(select(Team.id).where(Team.name == team_name)) or team_name
+
+
 def _scope(admin_client, team_name: str) -> str:
     response = admin_client.post(
         '/api/v1/collections',
-        json={'name': f'Bot Wissen {uuid.uuid4().hex[:6]}', 'read_teams': [team_name]},
+        json={
+            'description': 'Test purpose',
+            'name': f'Bot Wissen {uuid.uuid4().hex[:6]}',
+            'grants': [{'team_id': _team_id(team_name), 'role': 'reader'}],
+        },
     )
     assert response.status_code == 200, response.text
     return response.json()['slug']
@@ -62,7 +72,7 @@ def _payload(team_name: str, collection_slug: str, **overrides):
         'streaming': False,
         'auth_token': 'webhook-bearer-secret',
         'timeout_seconds': 90,
-        'teams': [team_name],
+        'grants': [{'team_id': _team_id(team_name), 'role': 'user'}],
         'collections': [collection_slug],
         'require_sources': True,
         'no_context_reply': 'Dazu liegen keine belegten Informationen vor.',
@@ -110,6 +120,8 @@ def test_admin_crud_is_redacted_and_runtime_projection_requires_service_token(mo
     assert projected['id'] == payload['id']
     assert projected['auth_token'] == 'webhook-bearer-secret'
     assert projected['teams'] == [team_name]
+    assert projected['users'] == []
+    assert projected['public'] is False
     assert projected['collections'] == [collection_slug]
 
     update_body = {key: value for key, value in payload.items() if key != 'id'}
@@ -137,6 +149,7 @@ def test_admin_bot_list_projects_nonempty_runtime_roster(monkeypatch):
                 'id': 'general-assistant', 'name': 'Allgemeiner Assistent',
                 'description': 'YAML bot', 'kind': 'llm',
                 'retrieval': {'enabled': True}, 'teams': [], 'collections': [],
+                'permissions': {'teams': ['legal-unbekannt']},
             }],
         })(),
     )
@@ -146,6 +159,9 @@ def test_admin_bot_list_projects_nonempty_runtime_roster(monkeypatch):
     assert item['kind'] == 'llm'
     assert item['source'] == 'runtime'
     assert item['editable'] is True
+    # A team Ingest doesn't know is still shown, so the bot isn't listed as closed.
+    assert item['public'] is False
+    assert [(grant['team_id'], grant['name']) for grant in item['grants']] == [(None, 'legal-unbekannt')]
 
 def test_non_admin_cannot_manage_bots_and_unknown_scope_is_rejected():
     admin = _identity('bot-reference-admin', role=UserRole.ADMIN)
@@ -162,7 +178,7 @@ def test_non_admin_cannot_manage_bots_and_unknown_scope_is_rejected():
     bad_team = _payload('Unbekanntes Team', collection_slug)
     rejected_team = admin_client.post('/api/v1/auth/admin/bots', json=bad_team)
     assert rejected_team.status_code == 422
-    assert 'Unbekannte Teams' in rejected_team.text
+    assert 'Unbekannte Personen oder Teams' in rejected_team.text
 
     bad_collection = _payload(team_name, 'nicht-vorhanden')
     rejected_collection = admin_client.post('/api/v1/auth/admin/bots', json=bad_collection)
@@ -230,7 +246,7 @@ def test_deleting_a_runtime_bot_persists_suppression_and_hides_it(monkeypatch):
     admin = _identity('runtime-delete-admin', role=UserRole.ADMIN)
     admin_client = login_as(admin.username)
     runtime_bot = SimpleNamespace(id='general-assistant')
-    monkeypatch.setattr('app.api.managed_bots._runtime_bots', lambda: [runtime_bot])
+    monkeypatch.setattr('app.api.managed_bots._runtime_bots', lambda *args: [runtime_bot])
 
     deleted = admin_client.delete('/api/v1/auth/admin/bots/general-assistant')
     assert deleted.status_code == 200, deleted.text
@@ -449,3 +465,91 @@ def test_bot_without_agent_config_projects_none():
     created = admin_client.post('/api/v1/auth/admin/bots', json=payload)
     assert created.status_code == 201, created.text
     assert created.json()['agent'] is None
+
+
+# --- Owners and users (ADR 0008) ----------------------------------------------
+
+def _owned_bot(admin_client, owner, collection_slug: str, **overrides) -> dict:
+    payload = _payload(_team(), collection_slug, **overrides)
+    payload['grants'] = [{'user_id': owner.id, 'role': 'owner'}]
+    created = admin_client.post('/api/v1/auth/admin/bots', json=payload)
+    assert created.status_code == 201, created.text
+    return created.json()
+
+
+def test_projection_names_every_granted_person_and_team(monkeypatch):
+    admin_client = login_as(_identity('grant-projection-admin', role=UserRole.ADMIN).username)
+    owner = _identity('grant-projection-owner')
+    user = _identity('grant-projection-user')
+    team_name = _team()
+    payload = _payload(team_name, _scope(admin_client, team_name))
+    payload['grants'] = [
+        {'user_id': owner.id, 'role': 'owner'},
+        {'user_id': user.id, 'role': 'user'},
+        {'team_id': _team_id(team_name), 'role': 'user'},
+    ]
+    created = admin_client.post('/api/v1/auth/admin/bots', json=payload)
+    assert created.status_code == 201, created.text
+    assert [(grant['user_id'], grant['role']) for grant in created.json()['grants'] if grant['user_id']][0] == (owner.id, 'owner')
+    assert admin_client.post('/api/v1/auth/admin/bots', json={
+        **payload, 'id': f'team-owner-{uuid.uuid4().hex[:6]}', 'grants': [{'team_id': _team_id(team_name), 'role': 'owner'}],
+    }).status_code == 422
+
+    monkeypatch.setattr(settings, 'chat_config_service_token', 'runtime-control-token')
+    projected = admin_client.get('/api/v1/internal/bots', headers={'Authorization': 'Bearer runtime-control-token'}).json()['items'][0]
+    assert projected['teams'] == [team_name]
+    assert projected['users'] == sorted([owner.id, user.id])
+    assert projected['public'] is False
+
+
+def test_owner_lists_and_maintains_content_and_users_but_not_the_connection(monkeypatch):
+    admin_client = login_as(_identity('bot-owner-admin', role=UserRole.ADMIN).username)
+    owner = _identity('bot-owner')
+    colleague = _identity('bot-owner-colleague')
+    team_name = _team()
+    bot = _owned_bot(admin_client, owner, _scope(admin_client, team_name))
+
+    owner_client = login_as(owner.username)
+    listed = owner_client.get('/api/v1/bots')
+    assert listed.status_code == 200, listed.text
+    assert [item['id'] for item in listed.json()['items']] == [bot['id']]
+    assert 'webhook_url' not in listed.json()['items'][0]
+    assert login_as(colleague.username).get('/api/v1/bots').json()['items'] == []
+    assert login_as(colleague.username).patch(f"/api/v1/bots/{bot['id']}", json={'description': 'x'}).status_code == 404
+
+    updated = owner_client.patch(f"/api/v1/bots/{bot['id']}", json={
+        'description': 'Beantwortet Fragen zum Service.',
+        'public': True,
+        'grants': [{'user_id': colleague.id, 'role': 'user'}],
+    })
+    assert updated.status_code == 200, updated.text
+    body = updated.json()
+    assert body['description'] == 'Beantwortet Fragen zum Service.'
+    assert body['public'] is True
+    assert [(grant['user_id'], grant['role']) for grant in body['grants']] == [(owner.id, 'owner'), (colleague.id, 'user')]
+    # Owners are set by an administrator.
+    promoted = owner_client.patch(f"/api/v1/bots/{bot['id']}", json={'grants': [{'user_id': colleague.id, 'role': 'owner'}]})
+    assert promoted.status_code == 422
+    # A bot owner may look people up to share the bot.
+    assert owner_client.get('/api/v1/directory/users').status_code == 200
+
+
+def test_owner_can_only_attach_knowledge_spaces_they_can_read():
+    admin_client = login_as(_identity('bot-scope-admin', role=UserRole.ADMIN).username)
+    owner = _identity('bot-scope-owner')
+    team_name = _team()
+    attached = _scope(admin_client, team_name)
+    bot = _owned_bot(admin_client, owner, attached)
+    foreign = admin_client.post('/api/v1/collections', json={
+        'name': 'Fremd', 'description': 'Test purpose', 'visibility': 'restricted',
+    }).json()['slug']
+    own = login_as(owner.username).post('/api/v1/collections', json={'name': 'Eigen', 'description': 'Test purpose'}).json()['slug']
+
+    owner_client = login_as(owner.username)
+    denied = owner_client.patch(f"/api/v1/bots/{bot['id']}", json={'collections': [attached, foreign]})
+    assert denied.status_code == 403
+    assert foreign in denied.json()['detail']
+    # A space an administrator attached may stay even if the owner can't read it.
+    allowed = owner_client.patch(f"/api/v1/bots/{bot['id']}", json={'collections': [attached, own]})
+    assert allowed.status_code == 200, allowed.text
+    assert allowed.json()['collections'] == [attached, own]

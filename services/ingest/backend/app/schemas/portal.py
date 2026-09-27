@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.jobs import CollectionTeamRef
+
 
 ReleaseStatus = Literal['pending', 'sent', 'failed']
 
@@ -119,6 +121,9 @@ class PortalBulkActionRequest(BaseModel):
     job_ids: list[str] = Field(min_length=1, max_length=100)
     action: Literal['release', 'skip', 'unskip', 'delete']
     accept_quality_warnings: bool = False
+    # `delete` only: also delete released documents, withdrawing them from
+    # Knowledge first (ADR 0008). Without it they are reported as errors.
+    withdraw_released: bool = False
 
 
 class PortalBulkErrorItem(BaseModel):
@@ -145,3 +150,6 @@ class PortalConfigResponse(BaseModel):
     # system-wide team directory: a non-admin only ever sees their own
     # memberships here.
     team_names: list[str] = Field(default_factory=list)
+    # The same teams with their ids, for the grants and the responsible
+    # team of a new knowledge space (ADR 0008).
+    teams: list[CollectionTeamRef] = Field(default_factory=list)

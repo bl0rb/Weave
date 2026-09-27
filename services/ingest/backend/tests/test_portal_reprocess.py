@@ -158,7 +158,7 @@ def test_portal_reprocess_allows_finished_attachment_after_import(monkeypatch):
     assert dispatched == [(job.id, 'ppocrv6_medium_structurev3', 'import_attachment', None, None)]
 
 
-def test_portal_reprocess_reader_is_forbidden_and_cross_team_is_hidden():
+def test_portal_reprocess_reader_and_cross_team_are_hidden():
     team = _team('Portal reprocess authz')
     owner = _user('portal-reprocess-control-owner', team_id=team.id)
     reader = _user('portal-reprocess-reader', team_id=team.id)
@@ -173,15 +173,14 @@ def test_portal_reprocess_reader_is_forbidden_and_cross_team_is_hidden():
     owner_client = login_as(owner.username)
     preview = _preview(owner_client, job)
 
+    # A reader of the space doesn't even see its documents (ADR 0008).
     reader_client = login_as(reader.username)
-    reader_detail = reader_client.get(f'/api/v1/portal/documents/{job.id}')
-    assert reader_detail.status_code == 200
-    assert reader_detail.json()['can_reprocess'] is False
+    assert reader_client.get(f'/api/v1/portal/documents/{job.id}').status_code == 404
     reader_response = reader_client.post(
         f'/api/v1/portal/documents/{job.id}/reprocess',
         json={'profile_id': 'ppocrv6_medium_structurev3', 'markdown_sha256': preview['markdown_sha256']},
     )
-    assert reader_response.status_code == 403
+    assert reader_response.status_code == 404
 
     outsider_client = login_as(outsider.username)
     assert outsider_client.get(f'/api/v1/portal/documents/{job.id}').status_code == 404

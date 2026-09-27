@@ -1,50 +1,34 @@
 /**
- * Human-readable "who can use this in chat" line for a knowledge space —
- * the Wissensbereiche card's <AccessLine> (see
- * src/components/portal/access-line.tsx). Pure and framework-free so it is
- * trivial to unit test.
- *
- * Today the backend (CollectionResponse, see
- * services/ingest/backend/app/schemas/jobs.py) only carries `read_teams`:
- * empty means every team can read it. A planned follow-up adds explicit
- * `visibility` and per-user grants (`read_user_details`) — both optional
- * here so this keeps working unchanged once the API starts sending them.
+ * Human-readable summaries of a knowledge space's grants (ADR 0008) — the
+ * Wissensbereiche card's <AccessLine> (see
+ * src/components/portal/access-line.tsx) and the admin table. Pure and
+ * framework-free so it is trivial to unit test.
  */
 
 import { DEFAULT_LOCALE, type Locale } from '@/i18n/config';
 import { translate } from '@/i18n/messages';
-
-export type AccessUserDetail = {
-  id: string;
-  username: string;
-  display_name?: string;
-  team?: string;
-};
+import type { CollectionGrant } from '@/lib/portal';
 
 export type AccessSummaryInput = {
-  read_teams: string[];
-  /** Not sent by the API yet — once present it takes precedence over the read_teams-only inference below. */
-  visibility?: 'public' | 'restricted';
-  /** Not sent by the API yet — individual grants layered on top of read_teams when visibility is 'restricted'. */
-  read_user_details?: AccessUserDetail[];
+  visibility: 'public' | 'restricted';
+  grants: CollectionGrant[];
 };
 
-function personLabel(user: AccessUserDetail): string {
-  return user.display_name?.trim() || user.username;
+function grantLabel(grant: CollectionGrant, locale: Locale): string {
+  return grant.team_id ? translate(locale, 'portal.access.team', { team: grant.name }) : grant.name;
 }
 
+/** Who can use the space in chat: everybody, or every grant (each role includes reading). */
 export function accessSummary(collection: AccessSummaryInput, locale: Locale = DEFAULT_LOCALE): string {
-  const teamLabel = (team: string) => translate(locale, 'portal.access.team', { team });
   if (collection.visibility === 'public') return translate(locale, 'portal.access.public');
-  if (collection.visibility === 'restricted') {
-    const parts = [
-      ...collection.read_teams.map(teamLabel),
-      ...(collection.read_user_details ?? []).map(personLabel),
-    ];
-    return parts.length ? parts.join(', ') : translate(locale, 'portal.access.editorsOnly');
-  }
-  // No visibility field yet (today's API): read_teams alone decides it —
-  // empty means every team can read the collection.
-  if (collection.read_teams.length === 0) return translate(locale, 'portal.access.public');
-  return collection.read_teams.map(teamLabel).join(', ');
+  const parts = collection.grants.map(grant => grantLabel(grant, locale));
+  return parts.length ? parts.join(', ') : translate(locale, 'portal.access.adminsOnly');
+}
+
+/** The owners' names, deactivated ones marked, or a dash when a space has
+ * none (legacy, admin-managed). */
+export function ownerSummary(grants: CollectionGrant[], locale: Locale = DEFAULT_LOCALE): string {
+  const owners = grants.filter(grant => grant.role === 'owner')
+    .map(grant => grant.is_active === false ? `${grant.name} (${translate(locale, 'portal.access.inactive')})` : grant.name);
+  return owners.length ? owners.join(', ') : '—';
 }

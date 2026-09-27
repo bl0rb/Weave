@@ -23,7 +23,11 @@ from app.core.config import settings
 from app.main import app
 from app.models.models import (
     AuthProvider,
+    BotGrant,
+    BotRole,
     Collection,
+    CollectionGrant,
+    CollectionRole,
     Job,
     JobStatus,
     LoginHandoffCode,
@@ -35,6 +39,7 @@ from app.models.models import (
     WorkerLogEntry,
     user_teams,
 )
+from app.services.collection_access import registry_acl
 from app.services.security import encrypt_client_secret, hash_password, rate_limiter
 from conftest import BROWSER_HEADERS, TestingSessionLocal
 
@@ -388,8 +393,10 @@ def test_renaming_team_updates_collection_and_bot_permissions(client: TestClient
         team = Team(name='Old Team')
         db.add(team)
         db.flush()
-        collection = Collection(slug='rename-team-collection', name='Knowledge', read_teams=['Old Team'])
-        bot = ManagedBot(id='rename-team-bot', name='Bot', teams=['Old Team'])
+        collection = Collection(slug='rename-team-collection', name='Knowledge')
+        collection.grants.append(CollectionGrant(team_id=team.id, role=CollectionRole.READER))
+        bot = ManagedBot(id='rename-team-bot', name='Bot')
+        bot.grants.append(BotGrant(team_id=team.id, role=BotRole.USER))
         db.add_all([collection, bot])
         db.commit()
         team_id = team.id
@@ -402,18 +409,22 @@ def test_renaming_team_updates_collection_and_bot_permissions(client: TestClient
 
     assert response.status_code == 200
     with _db() as db:
-        assert db.get(Collection, collection.id).read_teams == ['New Team']
-        assert db.get(ManagedBot, bot.id).teams == ['New Team']
+        assert registry_acl(db.get(Collection, collection.id))[0] == ['New Team']
+        # Bots name teams by id; Runtime gets the current name projected.
+        assert [grant.team.name for grant in db.get(ManagedBot, bot.id).grants] == ['New Team']
     assert notified == ['rename-team-collection']
 
 
-def test_deleting_team_removes_it_from_collection_read_teams(client: TestClient, monkeypatch) -> None:
+def test_deleting_team_removes_its_collection_grants(client: TestClient, monkeypatch) -> None:
     _create_user(username='deleteteamadmin', email='deleteteamadmin@example.com', password='CorrectHorse1', role=UserRole.ADMIN)
     with _db() as db:
         team = Team(name='Doomed Team')
-        db.add(team)
+        other = Team(name='Other Team')
+        db.add_all([team, other])
         db.flush()
-        collection = Collection(slug='delete-team-collection', name='Knowledge', read_teams=['Doomed Team', 'Other Team'])
+        collection = Collection(slug='delete-team-collection', name='Knowledge')
+        collection.grants.append(CollectionGrant(team_id=team.id, role=CollectionRole.READER))
+        collection.grants.append(CollectionGrant(team_id=other.id, role=CollectionRole.MEMBER))
         db.add(collection)
         db.commit()
         team_id = team.id
@@ -426,7 +437,7 @@ def test_deleting_team_removes_it_from_collection_read_teams(client: TestClient,
 
     assert response.status_code == 200
     with _db() as db:
-        assert db.get(Collection, collection.id).read_teams == ['Other Team']
+        assert registry_acl(db.get(Collection, collection.id))[0] == ['Other Team']
     assert notified == ['delete-team-collection']
 
 

@@ -13,13 +13,13 @@ import { useI18n } from '@/i18n/provider';
 export function AccessLine({ collection, name, canManage, onChangeAccess }: {
   collection: AccessSummaryInput;
   name: string;
-  /** Only a manager (owner or admin) may open the access dialog -- everyone else just sees the summary. */
+  /** Only an owner or admin may open the access dialog -- everyone else just sees the summary. */
   canManage: boolean;
   onChangeAccess: () => void;
 }) {
   const { t, locale } = useI18n();
   const summary = accessSummary(collection, locale);
-  const isPublic = collection.visibility === 'public' || (!collection.visibility && collection.read_teams.length === 0);
+  const isPublic = collection.visibility === 'public';
   return (
     <div className="portal-access-line">
       {isPublic ? <Globe aria-hidden="true" /> : <Users aria-hidden="true" />}

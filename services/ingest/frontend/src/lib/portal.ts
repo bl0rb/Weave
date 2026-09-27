@@ -1,15 +1,25 @@
 import { ApiError, apiFetch, apiJson } from '@/lib/api';
-import type { AccessUserDetail } from '@/lib/access-summary';
 import { DEFAULT_LOCALE, INTL_LOCALE, type Locale } from '@/i18n/config';
 import { translate } from '@/i18n/messages';
 import { currentReleaseStatus, isIndexReady, publicationState, type IndexingItem } from './indexing-status';
 
+/** Roles on a knowledge space (ADR 0008): owner > member > reader. */
+export type CollectionRole = 'owner' | 'member' | 'reader';
+export type TeamRef = { id: string; name: string };
+/** One entry of a space's access list: a person (`user_id`) or a team (`team_id`). */
+export type CollectionGrant = {
+  user_id: string | null; team_id: string | null; role: CollectionRole; name: string;
+  /** A person's primary team, for display. */
+  team?: string | null; is_active?: boolean;
+};
+export type GrantInput = { user_id?: string; team_id?: string; role: CollectionRole };
 export type KnowledgeSpace = {
-  collection_id: string; slug: string; name: string; description: string | null; read_teams: string[]; can_manage: boolean; can_upload: boolean;
-  // Landing concurrently on the backend (see services/ingest/backend's
-  // CollectionResponse) — optional here until every deployment is on the
-  // new schema. accessSummary()/<AccessLine> already understand them.
-  visibility?: 'public' | 'restricted'; read_users?: string[]; read_user_details?: AccessUserDetail[];
+  collection_id: string; slug: string; name: string;
+  /** The space's purpose ("Zweck"); required for new spaces, may be empty on older ones. */
+  description: string | null;
+  can_manage: boolean; can_upload: boolean; role: CollectionRole | null;
+  visibility: 'public' | 'restricted'; grants: CollectionGrant[];
+  created_by: { id: string; username: string } | null; responsible_team: TeamRef | null;
 };
 export type Publication = { id: string; created_at: string; status: 'pending' | 'sent' | 'failed'; error_message: string | null; released_by: string | null };
 export type PortalSource = { kind: 'upload' | 'confluence' | 'mail' | 'unknown'; label: string; path: string | null; url: string | null };
@@ -38,7 +48,7 @@ export type DocumentPreview = PortalDocument & {
   markdown: string; markdown_sha256: string; profile_id: string | null; can_reprocess: boolean;
   quality: QualityDetail | null; quality_missing_reason: QualityMissingReason | null;
 };
-export type PortalConfig = { publication_configured: boolean; team_name: string | null; team_names: string[] };
+export type PortalConfig = { publication_configured: boolean; team_name: string | null; team_names: string[]; teams: TeamRef[] };
 export const jsonBody = (body: unknown): RequestInit => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
 export function portalError(error: unknown, locale: Locale = DEFAULT_LOCALE): string {
@@ -70,9 +80,9 @@ export function portalDownloadError(error: unknown, locale: Locale = DEFAULT_LOC
 /** One row of GET /api/v1/directory/users -- the access dialog's person-picker search result. */
 export type DirectoryUser = { id: string; username: string; display_name: string | null; team: string | null };
 /** One row of GET /api/v1/directory/teams -- every team plus its member_count, for the access dialog's team chips. */
-export type DirectoryTeam = { name: string; member_count: number };
+export type DirectoryTeam = { id: string; name: string; member_count: number };
 
-/** Person-picker search behind the access dialog -- 403 unless the caller is an admin or manages at least one collection. */
+/** Person-picker search behind the access dialog -- 403 unless the caller is an admin or owns at least one collection. */
 export function searchDirectoryUsers(query: string, signal?: AbortSignal): Promise<{ items: DirectoryUser[] }> {
   return apiJson(`/api/v1/directory/users?${new URLSearchParams({ q: query, limit: '20' })}`, { signal });
 }
@@ -82,8 +92,8 @@ export function loadDirectoryTeams(signal?: AbortSignal): Promise<{ items: Direc
   return apiJson('/api/v1/directory/teams', { signal });
 }
 
-/** PATCH /api/v1/collections/{id} scoped to the access dialog's three fields -- 422 on an unknown team/user id, 403 unless the caller can manage the collection. */
-export function updateCollectionAccess(collectionId: string, access: { visibility: 'public' | 'restricted'; read_teams: string[]; read_users: string[] }): Promise<KnowledgeSpace> {
+/** PATCH /api/v1/collections/{id} scoped to the access dialog's fields -- `grants` replaces the whole list and needs an owner; 422 on an unknown team/user id, 403 unless the caller owns the collection. */
+export function updateCollectionAccess(collectionId: string, access: { visibility: 'public' | 'restricted'; grants: GrantInput[] }): Promise<KnowledgeSpace> {
   return apiJson(`/api/v1/collections/${encodeURIComponent(collectionId)}`, { ...jsonBody(access), method: 'PATCH' });
 }
 
@@ -153,8 +163,9 @@ export function summarizePipeline(documents: PortalDocument[], live: Record<stri
   return counts;
 }
 
-export function bulkPortalAction(jobIds: string[], action: BulkAction, acceptQualityWarnings = false): Promise<BulkActionResult> {
-  return apiJson('/api/v1/portal/documents/bulk', jsonBody({ job_ids: jobIds, action, accept_quality_warnings: acceptQualityWarnings }));
+/** `withdrawReleased` (delete only): released documents are withdrawn from the knowledge index and deleted too. */
+export function bulkPortalAction(jobIds: string[], action: BulkAction, acceptQualityWarnings = false, withdrawReleased = false): Promise<BulkActionResult> {
+  return apiJson('/api/v1/portal/documents/bulk', jsonBody({ job_ids: jobIds, action, accept_quality_warnings: acceptQualityWarnings, withdraw_released: withdrawReleased }));
 }
 
 export function skipPortalDocument(jobId: string): Promise<PortalDocument> {

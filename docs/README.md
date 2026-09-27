@@ -19,6 +19,10 @@ claude.ai werden aus genau diesen Dateien neu veröffentlicht.
 
 - **[betrieb.md](betrieb.md)** — dieselbe Betriebsdoku als Markdown. Das ist die
   maßgebliche Fassung; das HTML ist die lesbare Aufbereitung davon.
+- **[api-referenz.md](api-referenz.md)** — die Schnittstellen für Fachbereiche und
+  Integratoren (Chat, OpenAI-kompatibler Zugang, Suche für Agenten, Wissensbereiche
+  und Dokumente) mit Beispielen in curl und Python. Vorlage für die Referenz auf
+  werkworks.de.
 - **[adr/](adr/)** — sieben Architekturentscheidungen mit Kontext, Konsequenzen und
   verworfenen Alternativen, zuletzt 0006 (föderierte Anmeldung) und 0007
   (zentrale Chat-Provider-Konfiguration). Sie beantworten die Frage, die in einem Jahr am

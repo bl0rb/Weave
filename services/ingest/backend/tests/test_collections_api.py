@@ -1,5 +1,5 @@
-"""Collections contract tests: the slug/name/description/read_teams fields
-added on top of the pre-existing collections table (see app/models/models.py's
+"""Collections contract tests: the slug/name/description fields and the
+grants (ADR 0008) on top of the pre-existing collections table (see app/models/models.py's
 Collection docstring and README.md's "Collections" section), GET /collections
 visibility, PATCH ownership, the GET /collections/registry sync endpoint for
 Weave-Knowledge, and the full create -> upload -> process -> frontmatter
@@ -7,12 +7,12 @@ chain that stamps a collection's slug/name into every document processed
 through it.
 
 Real cookie-based logins (create_test_user/login_as, same idioms as
-test_import_api.py/test_benchmarks_api.py) because collection visibility
-(_visible_collection_filter/_owner_visible) joins against the real users
-table, exactly like the job/run/benchmark authz tests. test_api.py's
-collection tests keep using its admin-bypass fixture for everything that
-doesn't need real per-user authz (create-time slug/description/read_teams
-persistence); this file is only for what does.
+test_import_api.py/test_benchmarks_api.py) because collection roles
+(app/services/collection_access.py) resolve against the real users and
+team memberships, exactly like the job/run/benchmark authz tests.
+test_api.py's collection tests keep using its admin-bypass fixture for
+everything that doesn't need real per-user authz (create-time
+slug/description persistence); this file is only for what does.
 """
 
 from io import BytesIO
@@ -21,7 +21,6 @@ from unittest.mock import patch
 
 import pytest
 import yaml
-from sqlalchemy import select
 
 from app.models.models import ImportRun, ImportRunStatus, Job, JobStatus, ManagedBot, Team, UserRole, user_teams
 from app.services.security import rate_limiter
@@ -72,11 +71,21 @@ def _make_team(name_prefix: str) -> str:
         db.close()
 
 
+def _create(client, name: str, *, team_id: str | None = None, team_role: str = 'member', **extra):
+    """A restricted space, optionally shared with one team -- the shape the
+    old implicit "owner's primary team" rule used to give every space."""
+    grants = [{'team_id': team_id, 'role': team_role}] if team_id else []
+    return client.post(
+        '/api/v1/collections',
+        json={'name': name, 'description': 'Test purpose', 'visibility': 'restricted', 'grants': grants, **extra},
+    )
+
+
 def test_collections_visibility_and_patch_control_matrix():
-    """own + current-teammates' + admin-all for reads (GET /collections,
-    GET /collections/{id}), same rule as GET /jobs; PATCH additionally
-    requires ownership or admin -- read is not control, same split as
-    import_routes._require_run_control/benchmarks._require_benchmark_control."""
+    """Grants decide reads (GET /collections, GET /collections/{id}); PATCH
+    additionally requires the owner role or admin -- read is not control,
+    same split as import_routes._require_run_control/
+    benchmarks._require_benchmark_control."""
     team_id = _make_team('coll-team')
     owner = _user('coll-owner', team_id=team_id)
     teammate = _user('coll-teammate', team_id=team_id)
@@ -84,7 +93,7 @@ def test_collections_visibility_and_patch_control_matrix():
     admin = _user('coll-admin', role=UserRole.ADMIN)
 
     owner_client = login_as(owner.username)
-    create_resp = owner_client.post('/api/v1/collections', json={'name': 'Team Docs'})
+    create_resp = _create(owner_client, 'Team Docs', team_id=team_id)
     assert create_resp.status_code == 200
     collection_id = create_resp.json()['collection_id']
 
@@ -106,14 +115,16 @@ def test_collections_visibility_and_patch_control_matrix():
     assert admin_patch.json()['name'] == 'Renamed by Admin'
 
     ops_team_id = _make_team('ops')
-    db = TestingSessionLocal()
-    try:
-        ops_team_name = db.get(Team, ops_team_id).name
-    finally:
-        db.close()
-    owner_patch = owner_client.patch(f'/api/v1/collections/{collection_id}', json={'read_teams': [ops_team_name]})
-    assert owner_patch.status_code == 200
-    assert owner_patch.json()['read_teams'] == [ops_team_name]
+    owner_patch = owner_client.patch(
+        f'/api/v1/collections/{collection_id}',
+        json={'grants': [{'user_id': owner.id, 'role': 'owner'}, {'team_id': ops_team_id, 'role': 'reader'}]},
+    )
+    assert owner_patch.status_code == 200, owner_patch.text
+    assert [(g['user_id'], g['team_id'], g['role']) for g in owner_patch.json()['grants']] == [
+        (owner.id, None, 'owner'), (None, ops_team_id, 'reader'),
+    ]
+    # The former team lost its grant with the replace.
+    assert teammate_client.get(f'/api/v1/collections/{collection_id}').status_code == 404
     # CollectionUpdateRequest carries no `slug` field -- it never changes.
     assert owner_patch.json()['slug'] == admin_patch.json()['slug']
 
@@ -128,7 +139,7 @@ def test_legacy_primary_team_member_can_add_to_a_collection_after_upgrade():
     teammate = _user('legacy-collection-teammate', team_id=team_id)
 
     owner_client = login_as(owner.username)
-    created = owner_client.post('/api/v1/collections', json={'name': 'Legacy team knowledge'})
+    created = _create(owner_client, 'Legacy team knowledge', team_id=team_id)
     assert created.status_code == 200, created.text
     collection_id = created.json()['collection_id']
 
@@ -154,7 +165,7 @@ def test_explicit_reader_role_still_cannot_add_to_a_collection():
         db.execute(user_teams.insert().values(user_id=reader.id, team_id=team_id, role='reader'))
         db.commit()
 
-    created = login_as(owner.username).post('/api/v1/collections', json={'name': 'Reader-only legacy team'})
+    created = _create(login_as(owner.username), 'Reader-only legacy team', team_id=team_id)
     assert created.status_code == 200, created.text
     collection_id = created.json()['collection_id']
     reader_client = login_as(reader.username)
@@ -168,18 +179,12 @@ def test_explicit_reader_role_still_cannot_add_to_a_collection():
 
 def test_legacy_primary_team_member_can_add_to_an_explicitly_shared_collection():
     """The same fallback applies when the collection is owned by another
-    team and this legacy account is entitled through ``read_teams``."""
+    team and this legacy account is entitled through a team grant."""
     owner_team_id = _make_team('legacy-shared-owner-team')
     reader_team_id = _make_team('legacy-shared-reader-team')
     owner = _user('legacy-shared-owner', team_id=owner_team_id)
     contributor = _user('legacy-shared-contributor', team_id=reader_team_id)
-    with TestingSessionLocal() as db:
-        reader_team_name = db.scalar(select(Team.name).where(Team.id == reader_team_id))
-
-    created = login_as(owner.username).post(
-        '/api/v1/collections',
-        json={'name': 'Explicitly shared legacy knowledge', 'read_teams': [reader_team_name]},
-    )
+    created = _create(login_as(owner.username), 'Explicitly shared legacy knowledge', team_id=reader_team_id)
     assert created.status_code == 200, created.text
     collection_id = created.json()['collection_id']
     contributor_client = login_as(contributor.username)
@@ -203,9 +208,9 @@ def test_multiple_memberships_grant_reads_without_resharing_owned_collections():
     admin_client = login_as(_user('multi-admin', role=UserRole.ADMIN).username)
     reader_client = login_as(reader.username)
     client_b = login_as(owner_b.username)
-    own_id = reader_client.post('/api/v1/collections', json={'name': 'Owned in A'}).json()['collection_id']
-    collection_b = client_b.post('/api/v1/collections', json={'name': 'Owned in B'}).json()['collection_id']
-    collection_c = login_as(owner_c.username).post('/api/v1/collections', json={'name': 'Owned in C'}).json()['collection_id']
+    own_id = _create(reader_client, 'Owned in A', team_id=team_a).json()['collection_id']
+    collection_b = _create(client_b, 'Owned in B', team_id=team_b).json()['collection_id']
+    collection_c = _create(login_as(owner_c.username), 'Owned in C', team_id=team_c).json()['collection_id']
     assert reader_client.get(f'/api/v1/collections/{collection_b}').status_code == 404
     updated = admin_client.patch(f'/api/v1/auth/admin/users/{reader.id}', json={'team_ids': [team_a, team_b], 'team_id': team_a, 'team_roles': {team_a: 'reader', team_b: 'reader'}})
     assert updated.status_code == 200, updated.text
@@ -232,7 +237,7 @@ def test_empty_collection_can_be_deleted_only_by_owner_or_admin():
     outsider = _user('coll-delete-outsider')
 
     owner_client = login_as(owner.username)
-    created = owner_client.post('/api/v1/collections', json={'name': 'Leerer Bereich'})
+    created = _create(owner_client, 'Leerer Bereich', team_id=team_id)
     assert created.status_code == 200, created.text
     collection_id = created.json()['collection_id']
 
@@ -252,7 +257,7 @@ def test_collection_delete_never_cascades_documents_or_races_an_active_import():
     owner = _user('coll-delete-protected-owner')
     owner_client = login_as(owner.username)
 
-    with_document = owner_client.post('/api/v1/collections', json={'name': 'Bereich mit Dokument'})
+    with_document = owner_client.post('/api/v1/collections', json={'description': 'Test purpose', 'name': 'Bereich mit Dokument'})
     assert with_document.status_code == 200, with_document.text
     document_collection_id = with_document.json()['collection_id']
     db = TestingSessionLocal()
@@ -272,7 +277,7 @@ def test_collection_delete_never_cascades_documents_or_races_an_active_import():
     assert 'enthält noch Dokumente' in blocked_document.json()['detail']
     assert owner_client.get(f'/api/v1/collections/{document_collection_id}').status_code == 200
 
-    with_import = owner_client.post('/api/v1/collections', json={'name': 'Bereich mit Import'})
+    with_import = owner_client.post('/api/v1/collections', json={'description': 'Test purpose', 'name': 'Bereich mit Import'})
     assert with_import.status_code == 200, with_import.text
     import_collection_id = with_import.json()['collection_id']
     db = TestingSessionLocal()
@@ -294,7 +299,7 @@ def test_collection_delete_never_cascades_documents_or_races_an_active_import():
     assert 'läuft noch ein Import' in blocked_import.json()['detail']
     assert owner_client.get(f'/api/v1/collections/{import_collection_id}').status_code == 200
 
-    assigned = owner_client.post('/api/v1/collections', json={'name': 'Bereich für Bot'})
+    assigned = owner_client.post('/api/v1/collections', json={'description': 'Test purpose', 'name': 'Bereich für Bot'})
     assert assigned.status_code == 200, assigned.text
     bot_collection_id = assigned.json()['collection_id']
     bot_collection_slug = assigned.json()['slug']
@@ -304,7 +309,6 @@ def test_collection_delete_never_cascades_documents_or_races_an_active_import():
             id=f'collection-guard-{uuid.uuid4().hex[:8]}',
             name='Collection Guard',
             webhook_url='https://n8n.example.com/webhook/guard',
-            teams=[],
             collections=[bot_collection_slug],
             updated_by_id=owner.id,
         ))
@@ -328,11 +332,13 @@ def test_collections_registry_lists_every_collection_unfiltered_by_visibility():
     Knowledge's sync token as needing."""
     owner = _user('registry-owner')
     admin = _user('registry-admin', role=UserRole.ADMIN)
+    team_id = _make_team('ops')
+    with TestingSessionLocal() as db:
+        team_name = db.get(Team, team_id).name
 
     owner_client = login_as(owner.username)
-    create_resp = owner_client.post(
-        '/api/v1/collections',
-        json={'name': 'Registry Sample', 'slug': f'registry-sample-{uuid.uuid4().hex[:8]}', 'read_teams': ['ops']},
+    create_resp = _create(
+        owner_client, 'Registry Sample', team_id=team_id, team_role='reader', slug=f'registry-sample-{uuid.uuid4().hex[:8]}'
     )
     assert create_resp.status_code == 200
     slug = create_resp.json()['slug']
@@ -345,10 +351,12 @@ def test_collections_registry_lists_every_collection_unfiltered_by_visibility():
     assert entry == {
         'slug': slug,
         'name': 'Registry Sample',
-        'description': None,
+        'description': 'Test purpose',
         'visibility': 'restricted',
-        'read_teams': ['ops'],
-        'read_users': [],
+        # Computed from the grants: every role includes reading, so the
+        # owner is named too.
+        'read_teams': [team_name],
+        'read_users': [owner.id],
     }
     assert set(entry.keys()) == {'slug', 'name', 'description', 'visibility', 'read_teams', 'read_users'}
 
@@ -364,7 +372,7 @@ def test_collections_registry_rejects_non_admin():
     outsider = _user('registry-reject-outsider')
 
     owner_client = login_as(owner.username)
-    create_resp = owner_client.post('/api/v1/collections', json={'name': 'Owner Only Collection'})
+    create_resp = owner_client.post('/api/v1/collections', json={'description': 'Test purpose', 'name': 'Owner Only Collection'})
     assert create_resp.status_code == 200
 
     assert owner_client.get('/api/v1/collections/registry').status_code == 403
@@ -387,7 +395,7 @@ def test_create_collection_notifies_knowledge_without_external_webhook_payload(m
     ) as notify:
         response = owner_client.post(
             '/api/v1/collections',
-            json={'name': 'Knowledge notification', 'read_teams': ['ops']},
+            json={'description': 'Test purpose', 'name': 'Knowledge notification'},
         )
 
     assert response.status_code == 200, response.text
@@ -399,14 +407,9 @@ def test_patch_collection_notifies_knowledge_with_stable_slug(monkeypatch):
 
     monkeypatch.setattr(routes.publication_tasks, 'publication_configured', lambda: True)
     legal_team_id = _make_team('legal')
-    db = TestingSessionLocal()
-    try:
-        legal_team_name = db.get(Team, legal_team_id).name
-    finally:
-        db.close()
     owner = _user('coll-notify-patch')
     owner_client = login_as(owner.username)
-    created = owner_client.post('/api/v1/collections', json={'name': 'Before'})
+    created = owner_client.post('/api/v1/collections', json={'description': 'Test purpose', 'name': 'Before'})
     assert created.status_code == 200, created.text
 
     with patch.object(
@@ -415,7 +418,7 @@ def test_patch_collection_notifies_knowledge_with_stable_slug(monkeypatch):
     ) as notify:
         response = owner_client.patch(
             f"/api/v1/collections/{created.json()['collection_id']}",
-            json={'name': 'After', 'read_teams': [legal_team_name]},
+            json={'name': 'After', 'grants': [{'user_id': owner.id, 'role': 'owner'}, {'team_id': legal_team_id, 'role': 'reader'}]},
         )
 
     assert response.status_code == 200, response.text
@@ -434,7 +437,7 @@ def test_collection_notification_enqueue_failure_does_not_rollback_create(monkey
         lambda *_: (_ for _ in ()).throw(RuntimeError('broker unavailable')),
     )
 
-    response = owner_client.post('/api/v1/collections', json={'name': 'Still committed'})
+    response = owner_client.post('/api/v1/collections', json={'description': 'Test purpose', 'name': 'Still committed'})
     assert response.status_code == 200, response.text
     assert owner_client.get(f"/api/v1/collections/{response.json()['collection_id']}").status_code == 200
 
@@ -450,7 +453,7 @@ def test_collection_change_skips_broker_when_knowledge_is_not_configured(monkeyp
         routes.publication_tasks.notify_collection_registry_changed,
         'delay',
     ) as notify:
-        response = owner_client.post('/api/v1/collections', json={'name': 'No Knowledge channel'})
+        response = owner_client.post('/api/v1/collections', json={'description': 'Test purpose', 'name': 'No Knowledge channel'})
 
     assert response.status_code == 200, response.text
     notify.assert_not_called()
@@ -518,7 +521,7 @@ def test_full_chain_collection_create_upload_process_frontmatter_has_collection_
     owner = _user('chain-owner')
     owner_client = login_as(owner.username)
 
-    create_resp = owner_client.post('/api/v1/collections', json={'name': 'Chain Collection'})
+    create_resp = owner_client.post('/api/v1/collections', json={'description': 'Test purpose', 'name': 'Chain Collection'})
     assert create_resp.status_code == 200
     collection_body = create_resp.json()
     collection_id = collection_body['collection_id']

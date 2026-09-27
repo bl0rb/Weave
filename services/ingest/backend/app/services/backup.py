@@ -84,15 +84,19 @@ from app.core.config import settings
 from app.models.models import (
     Base,
     BackupRun,
+    BotGrant,
+    BotRole,
     DocumentRelease,
     ImportRun,
     ImportRunStatus,
     Job,
     KnowledgeWithdrawal,
+    Team,
     User,
     UserRole,
 )
 from app.services import security
+from app.services.collection_access import backfill_legacy_grants
 from app.workers import publication_tasks
 
 logger = logging.getLogger(__name__)
@@ -350,6 +354,16 @@ def target_state(db: Session) -> dict:
 
 
 # --- Table helpers ----------------------------------------------------------
+
+def _backfill_legacy_bot_grants(db: Session, legacy: dict[str, list[str]]) -> None:
+    """Restore counterpart of migration 0036: every known team name of an
+    archived bot becomes a user grant; unknown names are skipped."""
+    team_id_by_name = {name: team_id for team_id, name in db.execute(select(Team.id, Team.name)).all()}
+    for bot_id, teams in legacy.items():
+        for team_id in dict.fromkeys(team_id_by_name[name] for name in teams if name in team_id_by_name):
+            db.add(BotGrant(bot_id=bot_id, team_id=team_id, role=BotRole.USER))
+    db.flush()
+
 
 def _exported_tables() -> list[Table]:
     return [t for t in Base.metadata.sorted_tables if t.name not in EXCLUDED_TABLES]
@@ -887,6 +901,17 @@ def import_backup(
             if row.created_by is not None
         }
 
+        # Archives from before 0035_collection_grants carry access rights as
+        # `owner_id`/`read_teams`/`read_users` on each collection row; keep
+        # them aside and convert them into grants once users/teams exist.
+        legacy_collection_acl: dict[str, dict] | None = (
+            {} if 'collection_grants' not in manifest.get('tables', {}) else None
+        )
+        # Same for bots before 0036_bot_grants: `teams` (names, empty = all).
+        legacy_bot_teams: dict[str, list[str]] | None = (
+            {} if 'bot_grants' not in manifest.get('tables', {}) else None
+        )
+
         # 1. Wipe every included table in reverse dependency order. A no-op
         # set of DELETEs when the target is already fresh, so the force and
         # fresh-target paths share this one code path.
@@ -972,12 +997,21 @@ def import_backup(
                     if not line:
                         continue
                     data = json.loads(line)
+                    if table.name == 'collections' and legacy_collection_acl is not None:
+                        legacy_collection_acl[data.get('id')] = {
+                            key: data.pop(key, None) for key in ('owner_id', 'read_teams', 'read_users')
+                        }
+                    if table.name == 'managed_bots' and legacy_bot_teams is not None:
+                        teams = data.pop('teams', None) or []
+                        legacy_bot_teams[data.get('id')] = teams
+                        data.setdefault('public', not teams)
                     row = _decode_row(table, data, tar, archive_fernet, report['warnings'])
                     if table.name == 'collections' and 'visibility' not in row:
                         # Archive from before 0032_collection_visibility: same
                         # derivation as that migration's backfill, never the
                         # model's fail-closed default for a formerly public row.
-                        row['visibility'] = 'restricted' if row.get('read_teams') else 'public'
+                        legacy_acl = (legacy_collection_acl or {}).get(row.get('id')) or {}
+                        row['visibility'] = 'restricted' if legacy_acl.get('read_teams') else 'public'
                     for column_name in self_fk_columns:
                         if row.get(column_name) is not None:
                             deferred_updates.append((_pk_values(table, row), {column_name: row[column_name]}))
@@ -1013,6 +1047,11 @@ def import_backup(
                 report['warnings'].append(
                     f'Tabelle {table.name}: {rows_done} Zeile(n) importiert, {expected} im Archiv erwartet.'
                 )
+
+        if legacy_collection_acl:
+            backfill_legacy_grants(db, legacy_collection_acl)
+        if legacy_bot_teams:
+            _backfill_legacy_bot_grants(db, legacy_bot_teams)
 
         # 3. Restore the on-disk upload/result trees.
         report['files_restored'] = _restore_files(tar)

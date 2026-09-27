@@ -62,7 +62,6 @@ from app.schemas.openai import (
     OpenAIModelList,
 )
 from app.services import runtime_client
-from app.services.ingest_identity import ingest_subject
 from app.services.runtime_client import RuntimeClientError, list_bots
 
 router = APIRouter(prefix='/v1', tags=['openai-compat'])
@@ -192,10 +191,7 @@ def chat_completions(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    runtime_user = {'id': str(user.id), 'team': user.team, 'teams': user.effective_teams}
-    subject = ingest_subject(user.oidc_subject)
-    if subject is not None:
-        runtime_user['subject'] = subject
+    runtime_user = runtime_client.runtime_user(user)
 
     # Deliberately NEVER threads a Collections filter through to
     # runtime_client.chat()/chat_stream() here, unlike POST /v1/chat
@@ -246,8 +242,8 @@ def chat_completions(
     )
 
 
-@router.get('/models', response_model=OpenAIModelList, dependencies=[Depends(enforce_rate_limit)])
-def list_models() -> OpenAIModelList:
+@router.get('/models', response_model=OpenAIModelList)
+def list_models(user: User = Depends(enforce_rate_limit)) -> OpenAIModelList:
     """OpenAI's own model-listing endpoint, fed from the same bot registry
     GET /v1/bots already proxies (app/api/bots.py) -- see
     app/schemas/openai.py's OpenAIModel/OpenAIModelList docstrings for the
@@ -261,7 +257,8 @@ def list_models() -> OpenAIModelList:
     like that route's own docstring explains for itself.
     """
     try:
-        bots = list_bots()
+        # Only the bots this caller may chat with (ADR 0008).
+        bots = list_bots(runtime_client.runtime_user(user))
     except RuntimeClientError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Briefcase, LoaderCircle, Pencil, Plus, Trash2, Users as UsersIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -29,8 +29,6 @@ import {
   useAdminList,
 } from '@/components/admin/admin-shared';
 import { useI18n } from '@/i18n/provider';
-
-const NO_TEAM = '';
 
 export function UsersTab() {
   const { t, formatDate } = useI18n();
@@ -169,18 +167,11 @@ export function UsersTab() {
       )}
 
       {deleting && (
-        <ConfirmDialog
-          title={t('admin.users.deleteTitle')}
-          body={
-            <p>
-              {t('admin.users.deleteBodyPrefix')} <span className="font-semibold text-slate-950">{deleting.username}</span>
-              {t('admin.users.deleteBodySuffix')}
-            </p>
-          }
-          confirmLabel={t('admin.users.deleteTitle')}
+        <DeleteUserDialog
+          user={deleting}
+          candidates={users.items.filter((u) => u.id !== deleting.id && u.is_active)}
           onClose={() => setDeleting(null)}
-          onConfirm={async () => {
-            await apiSend(`/api/v1/auth/admin/users/${deleting.id}`, { method: 'DELETE' });
+          onDeleted={async () => {
             setDeleting(null);
             await users.reload();
           }}
@@ -190,58 +181,111 @@ export function UsersTab() {
   );
 }
 
+type OwnedItem = { id: string; name: string; sole_owner: boolean };
+
+/** Deleting a person who is the last owner of a knowledge space or bot needs
+ * a successor who takes over all of their owner roles (ADR 0008). */
+function DeleteUserDialog({
+  user,
+  candidates,
+  onClose,
+  onDeleted,
+}: {
+  user: AuthUser;
+  candidates: AuthUser[];
+  onClose: () => void;
+  onDeleted: () => Promise<void>;
+}) {
+  const { t } = useI18n();
+  const [owned, setOwned] = useState<{ collections: OwnedItem[]; bots: OwnedItem[] } | null>(null);
+  const [successor, setSuccessor] = useState('');
+  useEffect(() => {
+    apiJson<{ collections: OwnedItem[]; bots: OwnedItem[] }>(`/api/v1/auth/admin/users/${user.id}/ownership`)
+      .then(setOwned)
+      .catch(() => setOwned({ collections: [], bots: [] }));
+  }, [user.id]);
+  const items = owned ? [...owned.collections, ...owned.bots] : [];
+  const needsSuccessor = items.some((item) => item.sole_owner);
+  return (
+    <ConfirmDialog
+      title={t('admin.users.deleteTitle')}
+      confirmLabel={t('admin.users.deleteTitle')}
+      confirmDisabled={!owned || (needsSuccessor && !successor)}
+      body={
+        <>
+          <p>
+            {t('admin.users.deleteBodyPrefix')} <span className="font-semibold text-slate-950">{user.username}</span>
+            {t('admin.users.deleteBodySuffix')}
+          </p>
+          {items.length > 0 && (
+            <div className="mt-3 space-y-2 text-sm">
+              <p>{t('admin.users.ownedIntro')}</p>
+              <ul className="list-disc pl-5">
+                {items.map((item) => (
+                  <li key={item.id}>
+                    {item.name}
+                    {item.sole_owner && <span className="text-[var(--muted)]"> · {t('admin.users.soleOwner')}</span>}
+                  </li>
+                ))}
+              </ul>
+              <Field label={t('admin.users.successor')} hint={needsSuccessor ? t('admin.users.successorRequired') : t('admin.users.successorOptional')}>
+                <select aria-label={t('admin.users.successor')} className={inputClass} value={successor} onChange={(event) => setSuccessor(event.target.value)}>
+                  <option value="">{t('admin.users.chooseSuccessor')}</option>
+                  {candidates.map((candidate) => (
+                    <option key={candidate.id} value={candidate.id}>{candidate.username}</option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+          )}
+        </>
+      }
+      onClose={onClose}
+      onConfirm={async () => {
+        const query = successor ? `?${new URLSearchParams({ successor_id: successor })}` : '';
+        await apiSend(`/api/v1/auth/admin/users/${user.id}${query}`, { method: 'DELETE' });
+        await onDeleted();
+      }}
+    />
+  );
+}
+
 function TeamMembershipFields({
   teams,
-  primary,
   selected,
   roles,
   onChange,
 }: {
   teams: Team[];
-  primary: string;
   selected: string[];
   roles: Record<string, 'member' | 'reader'>;
-  onChange: (primary: string, selected: string[], roles: Record<string, 'member' | 'reader'>) => void;
+  onChange: (selected: string[], roles: Record<string, 'member' | 'reader'>) => void;
 }) {
   const { t } = useI18n();
   return (
-    <div className="space-y-3">
-      <Field label={t('admin.users.primaryTeam')}>
-        <select
-          aria-label={t('admin.users.primaryTeam')}
-          value={primary}
-          onChange={(event) => {
-            const next = event.target.value;
-            onChange(next, next ? Array.from(new Set([...selected, next])) : [], roles);
-          }}
-          className={inputClass}
-        >
-          <option value={NO_TEAM}>{t('admin.users.noTeam')}</option>
-          {teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
-        </select>
-      </Field>
-      <fieldset className="space-y-2">
-        <legend className="mb-2 text-sm font-medium text-slate-700">{t('admin.users.teamAccess')}</legend>
-        <div className="max-h-48 space-y-2 overflow-y-auto">
-          {teams.map((team) => (
-            <label key={team.id} className="flex items-start gap-2 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={selected.includes(team.id)}
-                disabled={team.id === primary}
-                onChange={(event) => {
-                  const next = event.target.checked ? [...selected, team.id] : selected.filter((id) => id !== team.id);
-                  onChange(primary || next[0] || NO_TEAM, next, { ...roles, ...(event.target.checked ? { [team.id]: roles[team.id] ?? 'member' } : {}) });
-                }}
-                className="mt-1 shrink-0"
-              />
-              <span className="min-w-0 break-words">{team.name}</span>
-              {selected.includes(team.id) && <select aria-label={t('admin.users.teamRoleAria', { team: team.name })} value={roles[team.id] ?? 'member'} onChange={(event) => onChange(primary, selected, { ...roles, [team.id]: event.target.value as 'member' | 'reader' })} className="ml-auto rounded border border-slate-200 px-1 py-0.5 text-xs"><option value="member">{t('admin.users.teamRole.member')}</option><option value="reader">{t('admin.users.teamRole.reader')}</option></select>}
-            </label>
-          ))}
-        </div>
-      </fieldset>
-    </div>
+    <fieldset className="space-y-2">
+      <legend className="mb-2 text-sm font-medium text-slate-700">{t('admin.users.teamAccess')}</legend>
+      <div className="max-h-48 space-y-2 overflow-y-auto">
+        {teams.map((team) => (
+          <label key={team.id} className="flex items-center gap-3 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={selected.includes(team.id)}
+              onChange={(event) => {
+                if (event.target.checked) {
+                  onChange([...selected, team.id], { ...roles, [team.id]: roles[team.id] ?? 'member' });
+                } else {
+                  onChange(selected.filter((id) => id !== team.id), Object.fromEntries(Object.entries(roles).filter(([id]) => id !== team.id)));
+                }
+              }}
+              className="shrink-0"
+            />
+            <span className="min-w-0 flex-1 break-words">{team.name}</span>
+            {selected.includes(team.id) && <select aria-label={t('admin.users.teamRoleAria', { team: team.name })} value={roles[team.id] ?? 'member'} onChange={(event) => onChange(selected, { ...roles, [team.id]: event.target.value as 'member' | 'reader' })} className="ui-control !mt-0 !w-auto shrink-0"><option value="member">{t('admin.users.teamRole.member')}</option><option value="reader">{t('admin.users.teamRole.reader')}</option></select>}
+          </label>
+        ))}
+      </div>
+    </fieldset>
   );
 }
 
@@ -259,7 +303,6 @@ function CreateUserModal({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<UserRole>('user');
-  const [teamId, setTeamId] = useState<string>(NO_TEAM);
   const [teamIds, setTeamIds] = useState<string[]>([]);
   const [teamRoles, setTeamRoles] = useState<Record<string, 'member' | 'reader'>>({});
   const [isActive, setIsActive] = useState(true);
@@ -276,7 +319,6 @@ function CreateUserModal({
       role,
       is_active: isActive,
       ...(password ? { password } : {}),
-      ...(teamId !== NO_TEAM ? { team_id: teamId } : {}),
       team_ids: teamIds,
       team_roles: teamRoles,
     };
@@ -336,7 +378,7 @@ function CreateUserModal({
             </select>
           </Field>
         </div>
-        <TeamMembershipFields teams={teams} primary={teamId} selected={teamIds} roles={teamRoles} onChange={(primary, selected, roles) => { setTeamId(primary); setTeamIds(selected); setTeamRoles(roles); }} />
+        <TeamMembershipFields teams={teams} selected={teamIds} roles={teamRoles} onChange={(selected, roles) => { setTeamIds(selected); setTeamRoles(roles); }} />
         <Toggle checked={isActive} onChange={setIsActive} label={t('admin.users.active')} />
         <ErrorNotice message={error} />
         <div className="flex flex-wrap justify-end gap-2 pt-1">
@@ -368,7 +410,6 @@ function EditUserModal({
   const [email, setEmail] = useState(user.email);
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<UserRole>(user.role);
-  const [teamId, setTeamId] = useState<string>(user.team_id === null ? NO_TEAM : String(user.team_id));
   const [teamIds, setTeamIds] = useState<string[]>(user.team_ids ?? (user.team_id ? [user.team_id] : []));
   const [teamRoles, setTeamRoles] = useState<Record<string, 'member' | 'reader'>>(
     Object.fromEntries((user.team_ids ?? (user.team_id ? [user.team_id] : [])).map((id) => [id, user.team_roles?.[id] ?? 'member'])),
@@ -386,7 +427,6 @@ function EditUserModal({
       role,
       is_active: isActive,
       ...(password ? { password } : {}),
-      ...(teamId === NO_TEAM ? { clear_team: true } : { team_id: teamId }),
       team_ids: teamIds,
       team_roles: teamRoles,
     };
@@ -437,7 +477,7 @@ function EditUserModal({
             </select>
           </Field>
         </div>
-        <TeamMembershipFields teams={teams} primary={teamId} selected={teamIds} roles={teamRoles} onChange={(primary, selected, roles) => { setTeamId(primary); setTeamIds(selected); setTeamRoles(roles); }} />
+        <TeamMembershipFields teams={teams} selected={teamIds} roles={teamRoles} onChange={(selected, roles) => { setTeamIds(selected); setTeamRoles(roles); }} />
         <Toggle checked={isActive} onChange={setIsActive} label={t('admin.users.active')} />
         <ErrorNotice message={error} />
         <div className="flex flex-wrap justify-end gap-2 pt-1">

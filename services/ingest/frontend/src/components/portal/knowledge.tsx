@@ -8,10 +8,10 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { apiSend, ConfirmDialog, Modal, inputClass } from '@/components/admin/admin-shared';
 import { AccessDialog } from './access-dialog';
 import { AccessLine } from './access-line';
-import { accessSummary } from '@/lib/access-summary';
+import { accessSummary, ownerSummary } from '@/lib/access-summary';
 import { spaceColorVar, spaceMark } from '@/lib/space-color';
 import { useIndexingStatus } from '@/lib/use-indexing-status';
-import { bulkPortalAction, collectionDownloadName, downloadPortalFile, jsonBody, loadDocuments, markdownDownloadName, pipelineStage, portalDownloadError, portalError, reindexKnowledgeSpace, type DocumentPage, type KnowledgeSpace, type PortalDocument, type QualityGradeFilter } from '@/lib/portal';
+import { bulkPortalAction, collectionDownloadName, downloadPortalFile, jsonBody, loadDirectoryTeams, loadDocuments, markdownDownloadName, pipelineStage, portalDownloadError, portalError, reindexKnowledgeSpace, type DirectoryTeam, type DocumentPage, type KnowledgeSpace, type PortalDocument, type QualityGradeFilter } from '@/lib/portal';
 import { useI18n } from '@/i18n/provider';
 import { BulkActionBar, DocumentTable, EmptyState, Notice, Pagination, PortalPage, QualityGradeFilterRow, QualityGradeLegend } from './shared';
 
@@ -76,6 +76,7 @@ export function KnowledgeSpaces() {
             <div><h2><Link href={`/knowledge/${space.collection_id}`}>{space.name}</Link></h2><p>{space.description || t('portal.spaces.defaultDescription')}</p></div>
           </div>
           <p className="text-sm font-semibold text-[var(--ink-2)]">{t('portal.spaces.readyCount', { count: stats.ready })}</p>
+          <p className="text-xs text-[var(--muted)]">{t('portal.spaces.ownersLine', { owners: ownerSummary(space.grants, locale) })}{space.responsible_team && ` · ${t('portal.spaces.responsibleLine', { team: space.responsible_team.name })}`}</p>
           <AccessLine collection={space} name={space.name} canManage={space.can_manage} onChangeAccess={() => setAccessEditing(space)} />
           <p className="portal-space-state">{chips.length ? chips : <span className="portal-chip portal-chip-ok"><CheckCheck aria-hidden="true" />{t('portal.spaces.allCurrent')}</span>}</p>
           <div className="portal-space-actions">
@@ -90,7 +91,7 @@ export function KnowledgeSpaces() {
       <Link href="/knowledge/new" className="portal-panel portal-space-card portal-space-new"><Plus aria-hidden="true" /><strong>{t('portal.chrome.breadcrumb.knowledgeNew')}</strong><small>{t('portal.spaces.newCardHint')}</small></Link>
     </div>{visible?.length === 0 && <EmptyState title={t('portal.spaces.noMatchTitle')}>{t('portal.spaces.noMatchBody')}</EmptyState>}</> : !error && <EmptyState title={t('portal.spaces.emptyTitle')} href="/knowledge/new" action={t('portal.chrome.breadcrumb.knowledgeNew')}>{t('portal.spaces.emptyBody')}</EmptyState>}
     {editing && <KnowledgeSpaceEditor space={editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); setNotice(t('portal.spaces.savedNotice')); await load(); }} />}
-    {deleting && <ConfirmDialog title={t('portal.spaces.deleteDialogTitle')} body={<p>{t('portal.spaces.deleteDialogBodyPrefix')} <strong className="text-slate-950">{deleting.name}</strong>{t('portal.spaces.deleteDialogBodySuffix')}</p>} confirmLabel={t('portal.spaces.deleteDialogTitle')} onClose={() => setDeleting(null)} onConfirm={async () => { await apiSend(`/api/v1/collections/${encodeURIComponent(deleting.collection_id)}`, { method: 'DELETE' }); setDeleting(null); setNotice(t('portal.spaces.deletedNotice')); await load(); }} />}
+    {deleting && <DeleteSpaceDialog space={deleting} onClose={() => setDeleting(null)} onDeleted={async () => { setDeleting(null); setNotice(t('portal.spaces.deletedNotice')); await load(); }} />}
     {accessEditing && <AccessDialog collection={accessEditing} onClose={() => setAccessEditing(null)} onSaved={updated => {
       setSpaces(current => current?.map(space => space.collection_id === updated.collection_id ? { ...space, ...updated } : space) ?? current);
       setAccessEditing(null);
@@ -99,19 +100,44 @@ export function KnowledgeSpaces() {
   </PortalPage>;
 }
 
+/** Deletes an empty space, or -- after typing its name -- one with all its
+ * documents; released ones are withdrawn from the knowledge index (ADR 0008). */
+function DeleteSpaceDialog({ space, onClose, onDeleted }: { space: KnowledgeSpace; onClose: () => void; onDeleted: () => Promise<void> }) {
+  const { t } = useI18n();
+  const [withContent, setWithContent] = useState(false);
+  const [confirmName, setConfirmName] = useState('');
+  const params = withContent ? `?${new URLSearchParams({ with_content: 'true', confirm_name: confirmName })}` : '';
+  return <ConfirmDialog title={t('portal.spaces.deleteDialogTitle')} confirmLabel={t('portal.spaces.deleteDialogTitle')}
+    confirmDisabled={withContent && confirmName !== space.name}
+    body={<>
+      <p>{t('portal.spaces.deleteDialogBodyPrefix')} <strong className="text-slate-950">{space.name}</strong>{t('portal.spaces.deleteDialogBodySuffix')}</p>
+      <label className="mt-3 flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={withContent} onChange={event => { setWithContent(event.target.checked); setConfirmName(''); }} />{t('portal.spaces.deleteWithContent')}</label>
+      {withContent && <label className="mt-3 block text-sm font-medium text-[var(--ink-2)]">{t('portal.spaces.deleteConfirmName', { name: space.name })}<input className={inputClass} value={confirmName} autoComplete="off" onChange={event => setConfirmName(event.target.value)} /></label>}
+    </>}
+    onClose={onClose}
+    onConfirm={async () => { await apiSend(`/api/v1/collections/${encodeURIComponent(space.collection_id)}${params}`, { method: 'DELETE' }); await onDeleted(); }} />;
+}
+
 function KnowledgeSpaceEditor({ space, onClose, onSaved }: { space: KnowledgeSpace; onClose: () => void; onSaved: () => Promise<void> }) {
   const { t, locale } = useI18n();
   const [name, setName] = useState(space.name);
-  const [description, setDescription] = useState(space.description || '');
+  const [purpose, setPurpose] = useState(space.description || '');
+  const [responsibleTeam, setResponsibleTeam] = useState(space.responsible_team?.id ?? '');
+  const [teams, setTeams] = useState<DirectoryTeam[]>(space.responsible_team ? [{ ...space.responsible_team, member_count: 0 }] : []);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  useEffect(() => {
+    const controller = new AbortController();
+    loadDirectoryTeams(controller.signal).then(data => setTeams(data.items)).catch(() => { /* keeps the current team only */ });
+    return () => controller.abort();
+  }, []);
   async function save(event: FormEvent) {
     event.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim() || !purpose.trim()) return;
     setSaving(true); setError('');
     try {
       await apiJson(`/api/v1/collections/${encodeURIComponent(space.collection_id)}`, {
-        ...jsonBody({ name: name.trim(), description: description.trim() }), method: 'PATCH',
+        ...jsonBody({ name: name.trim(), description: purpose.trim(), responsible_team_id: responsibleTeam }), method: 'PATCH',
       });
       await onSaved();
     } catch (err) { setError(portalError(err, locale)); setSaving(false); }
@@ -120,8 +146,12 @@ function KnowledgeSpaceEditor({ space, onClose, onSaved }: { space: KnowledgeSpa
     {error && <Notice error>{error}</Notice>}
     <form className="space-y-4" onSubmit={save}>
       <label className="block text-sm font-medium text-slate-700">{t('common.name')}<input autoFocus required maxLength={255} className={inputClass} value={name} onChange={event => setName(event.target.value)} /></label>
-      <label className="block text-sm font-medium text-slate-700">{t('common.description')}<textarea rows={4} maxLength={4000} className={inputClass} value={description} onChange={event => setDescription(event.target.value)} /></label>
-      <div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" onClick={onClose} disabled={saving}>{t('common.cancel')}</Button><Button type="submit" disabled={saving || !name.trim()}>{saving ? t('portal.access.dialog.saving') : t('common.save')}</Button></div>
+      <label className="block text-sm font-medium text-slate-700">{t('portal.newSpace.purposeLabel')}<textarea required rows={4} maxLength={4000} className={inputClass} value={purpose} onChange={event => setPurpose(event.target.value)} /></label>
+      <label className="block text-sm font-medium text-slate-700">{t('portal.newSpace.responsibleTeam')}<select className={inputClass} value={responsibleTeam} onChange={event => setResponsibleTeam(event.target.value)}>
+        <option value="">{t('portal.newSpace.noResponsibleTeam')}</option>
+        {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
+      </select></label>
+      <div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" onClick={onClose} disabled={saving}>{t('common.cancel')}</Button><Button type="submit" disabled={saving || !name.trim() || !purpose.trim()}>{saving ? t('portal.access.dialog.saving') : t('common.save')}</Button></div>
     </form>
   </Modal>;
 }
@@ -143,6 +173,7 @@ export function KnowledgeDetail({ id }: { id: string }) {
   const [releaseConfirmed, setReleaseConfirmed] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [withdrawReleased, setWithdrawReleased] = useState(false);
   const [reindexing, setReindexing] = useState(false);
   const load = useCallback(() => Promise.all([apiJson<KnowledgeSpace>(`/api/v1/collections/${encodeURIComponent(id)}`), loadDocuments(id, offset, 'all', qualityGrade || undefined)])
     .then(([area, docs]) => { setSpace(area); setDocuments(docs); setError(''); })
@@ -193,12 +224,12 @@ export function KnowledgeDetail({ id }: { id: string }) {
     if (bulkBusy || selectedIds.size === 0) return;
     setBulkBusy(true); setNotice('');
     try {
-      const result = await bulkPortalAction([...selectedIds], action, acceptQualityWarnings);
+      const result = await bulkPortalAction([...selectedIds], action, acceptQualityWarnings, action === 'delete' && withdrawReleased);
       setNotice(`${t('portal.spaces.bulkDoneNotice', { count: result.done })}${result.errors.length ? t('portal.spaces.bulkErrorSuffix', { count: result.errors.length }) : ''}.`);
       clearSelection();
       setDocuments(null);
       await load();
-    } catch (err) { setError(portalError(err, locale)); } finally { setBulkBusy(false); setBulkDeleting(false); }
+    } catch (err) { setError(portalError(err, locale)); } finally { setBulkBusy(false); setBulkDeleting(false); setWithdrawReleased(false); }
   }
   return <PortalPage title={space?.name || t('portal.documents.columnSpace')} description={space?.description || t('portal.spaces.detailDefaultDescription')} eyebrow={t('portal.spaces.detailEyebrow')}>
     <Link className="portal-back" href="/knowledge">{t('portal.newSpace.backLink')}</Link>
@@ -222,7 +253,7 @@ export function KnowledgeDetail({ id }: { id: string }) {
       />
       {!documents && !error ? <p className="portal-loading" role="status">{t('portal.tasks.documentsLoading')}</p> : documents?.items.length ? <><DocumentTable documents={documents.items} onDownloadMarkdown={document => void downloadDocument(document)} downloadingId={downloadingId} selectedIds={selectedIds} onToggle={docId => setSelectedIds(previous => { const next = new Set(previous); if (next.has(docId)) next.delete(docId); else next.add(docId); return next; })} onToggleAll={checked => setSelectedIds(checked ? new Set(documents.items.map(document => document.id)) : new Set())} /><Pagination offset={offset} total={documents.total} onChange={value => { setDocuments(null); setOffset(value); }} /></> : !error && <EmptyState title={t('portal.spaces.emptyContentTitle')} href={(space?.can_upload ?? space?.can_manage) ? `/sources/new?collection=${encodeURIComponent(id)}` : undefined} action={(space?.can_upload ?? space?.can_manage) ? t('portal.chrome.addSource') : undefined}>{t('portal.spaces.emptyContentBody')}</EmptyState>}
     </section>
-    {bulkDeleting && <ConfirmDialog title={t('portal.spaces.deleteDocumentsTitle')} body={<p>{t('portal.spaces.deleteDocumentsBody', { count: selectedIds.size })}</p>} confirmLabel={t('portal.spaces.deleteDocumentsTitle')} onClose={() => setBulkDeleting(false)} onConfirm={() => runBulk('delete')} />}
+    {bulkDeleting && <ConfirmDialog title={t('portal.spaces.deleteDocumentsTitle')} body={<><p>{t('portal.spaces.deleteDocumentsBody', { count: selectedIds.size })}</p><label className="mt-3 flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={withdrawReleased} onChange={event => setWithdrawReleased(event.target.checked)} />{t('portal.spaces.withdrawReleased')}</label></>} confirmLabel={t('portal.spaces.deleteDocumentsTitle')} onClose={() => { setBulkDeleting(false); setWithdrawReleased(false); }} onConfirm={() => runBulk('delete')} />}
     {reindexing && <ConfirmDialog title={t('portal.spaces.reindexSpace')} body={<p>{t('portal.spaces.reindexBodyPrefix')} <strong className="text-slate-950">{space?.name}</strong> {t('portal.spaces.reindexBodySuffix')}</p>} confirmLabel={t('portal.spaces.reindexConfirm')} onClose={() => setReindexing(false)} onConfirm={async () => {
       const result = await reindexKnowledgeSpace(id);
       setReindexing(false);

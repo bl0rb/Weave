@@ -316,7 +316,7 @@ it('selects documents and releases them in bulk', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Freigeben' }));
   await waitFor(() => expect(api.mock.calls.some(([path]) => path === '/api/v1/portal/documents/bulk')).toBe(true));
   const call = api.mock.calls.find(([path]) => path === '/api/v1/portal/documents/bulk');
-  expect(JSON.parse(call?.[1]?.body as string)).toEqual({ job_ids: ['d1'], action: 'release', accept_quality_warnings: false });
+  expect(JSON.parse(call?.[1]?.body as string)).toEqual({ job_ids: ['d1'], action: 'release', accept_quality_warnings: false, withdraw_released: false });
 });
 
 it('resets the bulk release confirmation after a batch so a new selection needs re-confirming', async () => {

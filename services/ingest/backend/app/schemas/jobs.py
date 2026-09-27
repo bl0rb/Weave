@@ -1,14 +1,32 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
-from app.models.models import CollectionVisibility, JobStatus
+from app.models.models import CollectionRole, CollectionVisibility, JobStatus
 
 
 class UploadResponse(BaseModel):
     job_id: str
     status: JobStatus
+
+
+class CollectionGrantInput(BaseModel):
+    """One entry of a knowledge space's access list (ADR 0008): exactly one
+    of `user_id` (a local or SSO account) or `team_id`, with a role. Teams
+    can be members or readers, never owners."""
+
+    user_id: str | None = None
+    team_id: str | None = None
+    role: CollectionRole
+
+    @model_validator(mode='after')
+    def _one_subject(self) -> 'CollectionGrantInput':
+        if (self.user_id is None) == (self.team_id is None):
+            raise ValueError('a grant names exactly one of user_id or team_id')
+        if self.team_id is not None and self.role == CollectionRole.OWNER:
+            raise ValueError('owners are persons, a team can only be member or reader')
+        return self
 
 
 class CollectionCreateRequest(BaseModel):
@@ -17,22 +35,14 @@ class CollectionCreateRequest(BaseModel):
     # app/models/models.py's Collection docstring. Left unset (or blank),
     # the server derives one from `name` (see routes._unique_collection_slug).
     slug: str | None = None
+    # The space's purpose ("Zweck"); required, see routes.create_collection.
     description: str | None = None
-    # Left unset, create_collection derives it: PUBLIC when both `read_teams`
-    # and `read_users` are empty (byte-for-byte the old pre-visibility
-    # default), RESTRICTED otherwise -- see that route's own docstring.
+    # Left unset, create_collection derives it: PUBLIC when `grants` is
+    # empty, RESTRICTED otherwise.
     visibility: CollectionVisibility | None = None
-    # Team slugs allowed to READ this collection's documents when
-    # `visibility` is RESTRICTED; enforced by Weave-Retrieval against the
-    # registry this service publishes at GET /collections/registry -- never
-    # by Weave-Ingest itself.
-    read_teams: list[str] = Field(default_factory=list)
-    # Person-level counterpart to `read_teams` above: Weave-Ingest user ids
-    # (as strings) individually granted read access when `visibility` is
-    # RESTRICTED. Unlike PATCH (CollectionUpdateRequest), create does not
-    # validate these against real user ids -- same laissez-faire treatment
-    # `read_teams` has always had here.
-    read_users: list[str] = Field(default_factory=list)
+    responsible_team_id: str | None = None
+    # Additional grants; the creator always becomes an owner.
+    grants: list[CollectionGrantInput] = Field(default_factory=list)
     email: str = ''
     department: str = ''
     folder: str = ''
@@ -46,52 +56,54 @@ class CollectionUpdateRequest(BaseModel):
     it is the collection's stable cross-service identity (see Collection's
     docstring) and already-processed documents carry it in their frontmatter.
 
-    Unlike create, `read_teams`/`read_users` here are validated against real
-    team names / user ids (422 on any unknown entry) and de-duplicated --
-    see routes.update_collection.
+    `grants` replaces the whole access list and must keep at least one
+    owner. `responsible_team_id` is cleared with an empty string.
     """
 
     name: str | None = None
     description: str | None = None
     visibility: CollectionVisibility | None = None
-    read_teams: list[str] | None = None
-    read_users: list[str] | None = None
+    responsible_team_id: str | None = None
+    grants: list[CollectionGrantInput] | None = None
 
 
-class ReadUserDetail(BaseModel):
-    """One resolved entry of a CollectionResponse's `read_user_details` --
-    the person-picker's own display shape for an id already present in
-    `read_users`. Never carries email or any other personal field, same
-    discipline as the directory endpoints (routes.list_directory_users)."""
+class CollectionGrantResponse(BaseModel):
+    """A resolved grant. `name` is the username or team name; `team` a
+    person's primary team, for display. Never email or any other personal
+    field, same discipline as the directory endpoints."""
 
-    id: str
-    username: str
-    display_name: str | None = None
+    user_id: str | None = None
+    team_id: str | None = None
+    role: CollectionRole
+    name: str
     team: str | None = None
+    is_active: bool = True
+
+
+class CollectionTeamRef(BaseModel):
+    id: str
+    name: str
 
 
 class CollectionResponse(BaseModel):
+    # `can_manage`: owner rights (settings, sharing, delete);
+    # `can_upload`: member rights (documents). `role` is the caller's
+    # effective role, see app/services/collection_access.py.
     can_manage: bool = False
     can_upload: bool = False
+    role: CollectionRole | None = None
     collection_id: str
     slug: str
     name: str
     description: str | None = None
     visibility: CollectionVisibility
-    read_teams: list[str] = Field(default_factory=list)
-    read_users: list[str] = Field(default_factory=list)
-    # Resolved display shape of `read_users` above, in the same order --
-    # see ReadUserDetail's own docstring. A stale id (its User row deleted
-    # since the grant was made) is silently dropped here, never surfaced as
-    # a phantom entry with no username to show.
-    read_user_details: list[ReadUserDetail] = Field(default_factory=list)
+    grants: list[CollectionGrantResponse] = Field(default_factory=list)
+    created_by: 'JobOwner | None' = None
+    responsible_team: CollectionTeamRef | None = None
     email: str
     department: str
     folder: str = ''
     subfolder: str = ''
-    # Populated by GET /collections/{id} only -- GET /collections (the list
-    # endpoint) leaves this [] rather than running the O(visible jobs) scan
-    # in routes._collection_job_ids once per row.
     job_ids: list[str] = Field(default_factory=list)
 
 
@@ -133,6 +145,7 @@ class DirectoryUsersResponse(BaseModel):
 
 
 class DirectoryTeamEntry(BaseModel):
+    id: str
     name: str
     member_count: int
 
@@ -308,3 +321,6 @@ class FolderActionResponse(BaseModel):
 
 class PasswordVerificationRequest(BaseModel):
     password: str = Field(min_length=1)
+
+
+CollectionResponse.model_rebuild()

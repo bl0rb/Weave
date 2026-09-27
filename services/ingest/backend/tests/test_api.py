@@ -1,4 +1,5 @@
 import io
+import uuid
 import zipfile
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from app.api.deps import get_current_user
 from app.api.routes import _JOB_LIST_PAGE_LIMIT_MAX
 from app.database.session import get_db
 from app.main import app
-from app.models.models import Collection, Job, JobMarkdownVersion, JobStatus, User, UserRole, VlConnection, WebhookConnection
+from app.models.models import Collection, Job, JobMarkdownVersion, JobStatus, Team, User, UserRole, VlConnection, WebhookConnection
 from app.services import security
 from conftest import TestingSessionLocal, client, override_get_db
 
@@ -488,7 +489,7 @@ def test_collection_flow(monkeypatch, tmp_path):
 
     create_resp = client.post(
         '/api/v1/collections',
-        json={'folder': 'accounts', 'subfolder': '2026'},
+        json={'description': 'Test purpose', 'folder': 'accounts', 'subfolder': '2026'},
     )
     assert create_resp.status_code == 200
     collection_id = create_resp.json()['collection_id']
@@ -545,7 +546,7 @@ def test_collection_start_with_vl_profile_sets_vl_settings_and_dispatches_openai
         ),
     )
 
-    create_resp = client.post('/api/v1/collections', json={'folder': 'vl-accounts', 'subfolder': '2026'})
+    create_resp = client.post('/api/v1/collections', json={'description': 'Test purpose', 'folder': 'vl-accounts', 'subfolder': '2026'})
     collection_id = create_resp.json()['collection_id']
     upload_resp = client.post(
         f'/api/v1/collections/{collection_id}/upload',
@@ -585,7 +586,7 @@ def test_collection_start_with_unknown_vl_profile_is_422_and_starts_nothing(monk
     delayed: list[tuple] = []
     monkeypatch.setattr(routes.process_job, 'delay', lambda *args, **kwargs: delayed.append(args))
 
-    create_resp = client.post('/api/v1/collections', json={'folder': 'vl-bad', 'subfolder': '2026'})
+    create_resp = client.post('/api/v1/collections', json={'description': 'Test purpose', 'folder': 'vl-bad', 'subfolder': '2026'})
     collection_id = create_resp.json()['collection_id']
     client.post(
         f'/api/v1/collections/{collection_id}/upload',
@@ -617,7 +618,7 @@ def test_collection_persists_in_db_across_sessions(tmp_path):
 
     create_resp = client.post(
         '/api/v1/collections',
-        json={'email': 'ops@example.com', 'department': 'finance', 'folder': 'audits', 'subfolder': '2026-q1'},
+        json={'description': 'Test purpose', 'email': 'ops@example.com', 'department': 'finance', 'folder': 'audits', 'subfolder': '2026-q1'},
     )
     assert create_resp.status_code == 200
     collection_id = create_resp.json()['collection_id']
@@ -633,7 +634,8 @@ def test_collection_persists_in_db_across_sessions(tmp_path):
         assert row.department == 'finance'
         assert row.folder == 'audits'
         assert row.subfolder == '2026-q1'
-        assert row.owner_id == _TEST_ADMIN_USER.id
+        assert row.created_by_id == _TEST_ADMIN_USER.id
+        assert [(grant.user_id, grant.role.value) for grant in row.grants] == [(_TEST_ADMIN_USER.id, 'owner')]
     finally:
         fresh_session.close()
 
@@ -650,19 +652,19 @@ def test_create_collection_generates_unique_slug_from_name():
     (lowercased, non-alnum runs collapsed to hyphens) and de-duplicates a
     second collection with the same name via a numeric suffix rather than
     failing outright -- see routes._unique_collection_slug."""
-    resp1 = client.post('/api/v1/collections', json={'name': 'Kundenservice 2026!'})
+    resp1 = client.post('/api/v1/collections', json={'description': 'Test purpose', 'name': 'Kundenservice 2026!'})
     assert resp1.status_code == 200
     body1 = resp1.json()
     assert body1['slug'] == 'kundenservice-2026'
     assert body1['name'] == 'Kundenservice 2026!'
 
-    resp2 = client.post('/api/v1/collections', json={'name': 'Kundenservice 2026!'})
+    resp2 = client.post('/api/v1/collections', json={'description': 'Test purpose', 'name': 'Kundenservice 2026!'})
     assert resp2.status_code == 200
     assert resp2.json()['slug'] == 'kundenservice-2026-2'
 
 
 def test_create_collection_without_name_defaults_name_and_slug_from_folder():
-    resp = client.post('/api/v1/collections', json={'folder': 'Audits 2026'})
+    resp = client.post('/api/v1/collections', json={'description': 'Test purpose', 'folder': 'Audits 2026'})
     assert resp.status_code == 200
     body = resp.json()
     assert body['slug'] == 'audits-2026'
@@ -670,31 +672,43 @@ def test_create_collection_without_name_defaults_name_and_slug_from_folder():
 
 
 def test_create_collection_with_explicit_slug_validates_format_and_uniqueness():
-    bad = client.post('/api/v1/collections', json={'name': 'Finance', 'slug': 'Not A Slug!'})
+    bad = client.post('/api/v1/collections', json={'description': 'Test purpose', 'name': 'Finance', 'slug': 'Not A Slug!'})
     assert bad.status_code == 422
 
-    ok = client.post('/api/v1/collections', json={'name': 'Finance', 'slug': 'finance-eu'})
+    ok = client.post('/api/v1/collections', json={'description': 'Test purpose', 'name': 'Finance', 'slug': 'finance-eu'})
     assert ok.status_code == 200
     assert ok.json()['slug'] == 'finance-eu'
 
-    dup = client.post('/api/v1/collections', json={'name': 'Finance Duplicate', 'slug': 'finance-eu'})
+    dup = client.post('/api/v1/collections', json={'description': 'Test purpose', 'name': 'Finance Duplicate', 'slug': 'finance-eu'})
     assert dup.status_code == 409
 
 
-def test_create_collection_persists_description_and_read_teams():
+def test_create_collection_persists_description_and_team_grants():
+    db = TestingSessionLocal()
+    try:
+        teams = [Team(name=f'legal-{uuid.uuid4().hex[:6]}'), Team(name=f'compliance-{uuid.uuid4().hex[:6]}')]
+        db.add_all(teams)
+        db.commit()
+        team_ids = [team.id for team in teams]
+    finally:
+        db.close()
     resp = client.post(
         '/api/v1/collections',
-        json={'name': 'Legal', 'description': 'Legal department documents', 'read_teams': ['legal', 'compliance']},
+        json={
+            'name': 'Legal',
+            'description': 'Legal department documents',
+            'grants': [{'team_id': team_id, 'role': 'reader'} for team_id in team_ids],
+        },
     )
     assert resp.status_code == 200
     body = resp.json()
     assert body['description'] == 'Legal department documents'
-    assert body['read_teams'] == ['legal', 'compliance']
+    assert {grant['team_id'] for grant in body['grants'] if grant['team_id']} == set(team_ids)
 
     db = TestingSessionLocal()
     try:
         row = db.get(Collection, body['collection_id'])
-        assert row.read_teams == ['legal', 'compliance']
+        assert {grant.team_id for grant in row.grants if grant.team_id} == set(team_ids)
         assert row.description == 'Legal department documents'
     finally:
         db.close()

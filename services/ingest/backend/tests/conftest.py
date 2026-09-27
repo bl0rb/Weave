@@ -25,7 +25,8 @@ from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 from app.database.session import get_db
 from app.main import app
-from app.models.models import Base, User, UserRole
+from app.models.models import Base, Collection, User, UserRole
+from app.services.collection_access import backfill_legacy_grants
 from app.services import security as security_module
 from app.services.security import hash_password
 
@@ -201,3 +202,17 @@ def login_as(identifier: str, password: str = DEFAULT_TEST_PASSWORD) -> TestClie
     resp = authed_client.post('/api/v1/auth/login', json={'identifier': identifier, 'password': password})
     assert resp.status_code == 200, resp.text
     return authed_client
+
+
+def add_legacy_collection(db, *, owner_id=None, read_teams=None, read_users=None, **fields) -> Collection:
+    """A collection whose grants come from the pre-ADR-0008 fields, exactly
+    as migration 0035 and backup restore derive them: the owner, readers
+    for `read_users`, member teams for `read_teams` and the owner's primary
+    team."""
+    collection = Collection(**fields)
+    db.add(collection)
+    db.flush()
+    backfill_legacy_grants(
+        db, {collection.id: {'owner_id': owner_id, 'read_teams': read_teams or [], 'read_users': read_users or []}}
+    )
+    return collection

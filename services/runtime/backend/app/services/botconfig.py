@@ -298,7 +298,12 @@ def _managed_bot(raw: dict) -> BotConfig:
                 'rerank': bool(raw.get('rerank', True)),
                 'include_uncollected': bool(raw.get('include_uncollected', True)) if is_llm else False,
             },
-            'permissions': {'teams': raw.get('teams') or []},
+            'permissions': {
+                'teams': raw.get('teams') or [],
+                'users': raw.get('users') or [],
+                # An older Ingest sends no flag: keep its "no teams = all".
+                'public': raw['public'] if 'public' in raw else None,
+            },
             'guard': {
                 'require_sources': bool(raw.get('require_sources', True)),
                 'no_context_reply': raw.get('no_context_reply') or 'Ich habe dazu keine belegten Informationen gefunden.',

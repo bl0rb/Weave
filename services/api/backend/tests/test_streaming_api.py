@@ -105,8 +105,9 @@ def test_list_models_lists_the_bots_from_the_runtime_registry(db_session, runtim
     db_session.commit()
 
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.method == 'GET'
-        assert request.url.path == '/internal/bots'
+        # Only the bots this caller may chat with (ADR 0008).
+        assert request.method == 'POST'
+        assert request.url.path == '/internal/bots/visible'
         bots = [{'id': 'faq-bot', 'name': 'FAQ Bot'}, {'id': 'legal-support', 'name': 'Legal'}]
         return httpx.Response(200, json=bots)
 

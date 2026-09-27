@@ -11,44 +11,72 @@ vi.mock('next/navigation', () => ({ useRouter: () => navigation }));
 vi.mock('@/lib/auth-context', () => ({ useAuth: () => ({ user: { username: 'Ada' } }) }));
 vi.mock('@/lib/api', async importOriginal => ({ ...await importOriginal<typeof import('@/lib/api')>(), apiJson: vi.fn() }));
 const api = vi.mocked(apiJson);
-const area = { collection_id: 'area', slug: 'service', name: 'Servicewissen', description: '', read_teams: ['Service'], can_manage: true, can_upload: true };
+const area = {
+  collection_id: 'area', slug: 'service', name: 'Servicewissen', description: 'Antworten für den Service',
+  visibility: 'restricted', grants: [], created_by: null, responsible_team: null, role: 'owner', can_manage: true, can_upload: true,
+};
+const serviceConfig = { team_name: 'Service', team_names: ['Service'], teams: [{ id: 't-service', name: 'Service' }], publication_configured: true };
 
 beforeEach(() => { api.mockReset(); navigation.replace.mockReset(); });
 afterEach(cleanup);
 
-it('creates the area for the own team and continues with that area selected', async () => {
-  api.mockResolvedValueOnce({ team_name: 'Service', team_names: ['Service'], publication_configured: true });
+it('creates the area with purpose, responsible team and member team, then continues with it selected', async () => {
+  api.mockResolvedValueOnce(serviceConfig);
   render(<NewKnowledgeSpace />);
   await screen.findByRole('checkbox', { name: 'Service' });
+  expect((screen.getByRole('combobox', { name: /Zuständiges Team/ }) as HTMLSelectElement).value).toBe('t-service');
   fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: '  Servicewissen  ' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Zweck' }), { target: { value: ' Antworten für den Service ' } });
   api.mockResolvedValueOnce(area);
   fireEvent.click(screen.getByRole('button', { name: 'Anlegen und Quelle hinzufügen' }));
   await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('/sources/new?collection=area'));
-  expect(JSON.parse(api.mock.calls[1][1]?.body as string)).toEqual({ name: 'Servicewissen', description: '', read_teams: ['Service'] });
+  expect(JSON.parse(api.mock.calls[1][1]?.body as string)).toEqual({
+    name: 'Servicewissen',
+    description: 'Antworten für den Service',
+    responsible_team_id: 't-service',
+    visibility: 'restricted',
+    grants: [{ team_id: 't-service', role: 'member' }],
+  });
 });
 
-it('preselects all of the caller\'s own teams and allows narrowing the selection', async () => {
-  api.mockResolvedValueOnce({ team_name: 'Service', team_names: ['Service', 'Vertrieb'], publication_configured: true });
+it('requires a purpose before the area can be created', async () => {
+  api.mockResolvedValueOnce(serviceConfig);
   render(<NewKnowledgeSpace />);
   await screen.findByRole('checkbox', { name: 'Service' });
-  expect((screen.getByRole('checkbox', { name: 'Service' }) as HTMLInputElement).checked).toBe(true);
-  expect((screen.getByRole('checkbox', { name: 'Vertrieb' }) as HTMLInputElement).checked).toBe(true);
-  fireEvent.click(screen.getByRole('checkbox', { name: 'Vertrieb' }));
-  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Übergreifendes Wissen' } });
-  api.mockResolvedValueOnce(area);
-  fireEvent.click(screen.getByRole('button', { name: 'Anlegen und Quelle hinzufügen' }));
-  await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
-  expect(JSON.parse(api.mock.calls[1][1]?.body as string).read_teams).toEqual(['Service']);
-});
-
-it('does not accidentally open an area to everyone when a user has no team', async () => {
-  api.mockResolvedValue({ team_name: null, team_names: [], publication_configured: true });
-  render(<NewKnowledgeSpace />);
-  await screen.findByText(/muss dir die Administration zuerst ein Team/);
   fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Bereich' } });
   const save = screen.getByRole('button', { name: 'Anlegen und Quelle hinzufügen' }) as HTMLButtonElement;
   expect(save.disabled).toBe(true);
-  fireEvent.click(screen.getByRole('radio', { name: 'Alle angemeldeten Teams' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Zweck' }), { target: { value: 'Wofür' } });
+  expect(save.disabled).toBe(false);
+});
+
+it('lets the member teams be narrowed and adds a newly chosen responsible team', async () => {
+  api.mockResolvedValueOnce({ ...serviceConfig, team_names: ['Service', 'Vertrieb'], teams: [{ id: 't-service', name: 'Service' }, { id: 't-sales', name: 'Vertrieb' }] });
+  render(<NewKnowledgeSpace />);
+  await screen.findByRole('checkbox', { name: 'Service' });
+  expect((screen.getByRole('checkbox', { name: 'Vertrieb' }) as HTMLInputElement).checked).toBe(false);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Service' }));
+  fireEvent.change(screen.getByRole('combobox', { name: /Zuständiges Team/ }), { target: { value: 't-sales' } });
+  expect((screen.getByRole('checkbox', { name: 'Vertrieb' }) as HTMLInputElement).checked).toBe(true);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Übergreifendes Wissen' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Zweck' }), { target: { value: 'Vertriebswissen' } });
+  api.mockResolvedValueOnce(area);
+  fireEvent.click(screen.getByRole('button', { name: 'Anlegen und Quelle hinzufügen' }));
+  await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
+  const body = JSON.parse(api.mock.calls[1][1]?.body as string);
+  expect(body.grants).toEqual([{ team_id: 't-sales', role: 'member' }]);
+  expect(body.responsible_team_id).toBe('t-sales');
+});
+
+it('only opens an area to everyone after an explicit confirmation', async () => {
+  api.mockResolvedValue({ team_name: null, team_names: [], teams: [], publication_configured: true });
+  render(<NewKnowledgeSpace />);
+  await screen.findByRole('radio', { name: 'Alle angemeldeten Nutzer' });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Bereich' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Zweck' }), { target: { value: 'Wofür' } });
+  const save = screen.getByRole('button', { name: 'Anlegen und Quelle hinzufügen' }) as HTMLButtonElement;
+  expect(save.disabled).toBe(false);
+  fireEvent.click(screen.getByRole('radio', { name: 'Alle angemeldeten Nutzer' }));
   expect(save.disabled).toBe(true);
   fireEvent.click(screen.getByRole('checkbox'));
   expect(save.disabled).toBe(false);

@@ -109,6 +109,37 @@ class TeamListResponse(BaseModel):
     items: list[TeamResponse]
 
 
+class OwnedItem(BaseModel):
+    id: str
+    name: str
+    # True when nobody else owns it -- deleting the person then needs a
+    # successor (ADR 0008).
+    sole_owner: bool = False
+
+
+class UserOwnershipResponse(BaseModel):
+    """What a person owns, shown before deleting them."""
+
+    collections: list[OwnedItem] = []
+    bots: list[OwnedItem] = []
+
+
+class TeamUsageItem(BaseModel):
+    id: str
+    name: str
+    role: str | None = None
+
+
+class TeamUsageResponse(BaseModel):
+    """Where a team is used, shown before deleting it: its grants go with
+    it, and it stops being the responsible team."""
+
+    member_count: int
+    collections: list[TeamUsageItem] = []
+    responsible_for: list[TeamUsageItem] = []
+    bots: list[TeamUsageItem] = []
+
+
 # --- Admin: OIDC providers ----------------------------------------------------
 
 class ProviderCreateRequest(BaseModel):

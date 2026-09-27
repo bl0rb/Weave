@@ -61,7 +61,8 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.database.session import SessionLocal
-from app.models.models import Collection, ImportRun, ImportRunStatus, ImportSource, User, UserRole
+from app.models.models import Collection, CollectionRole, ImportRun, ImportRunStatus, ImportSource, User
+from app.services.collection_access import collection_role, role_at_least
 from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -223,7 +224,7 @@ def _start_refresh_run(db, source: ImportSource, template: ImportRun | None = No
         source_owner = db.get(User, source.owner_id)
         if source_owner is None:
             raise ValueError('import source owner no longer exists; refusing collection assignment')
-        if source_owner.role != UserRole.ADMIN and collection.owner_id != source.owner_id:
+        if not role_at_least(collection_role(db, collection, source_owner), CollectionRole.MEMBER):
             raise ValueError('assigned collection is no longer controllable by the import source owner')
         # Keep the original id as the mapping anchor and refresh display values
         # from the authoritative Collection row.

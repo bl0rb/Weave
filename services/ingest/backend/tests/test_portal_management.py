@@ -15,7 +15,7 @@ from app.models.models import (
     JobStatus,
     UserRole,
 )
-from tests.conftest import TestingSessionLocal, create_test_user, login_as
+from tests.conftest import TestingSessionLocal, add_legacy_collection, create_test_user, login_as
 
 
 @pytest.fixture
@@ -37,14 +37,14 @@ def _user(prefix: str, *, role: UserRole = UserRole.USER, team_id: str | None = 
 def _collection(owner_id: str | None, *, name: str, description: str | None = None) -> Collection:
     db = TestingSessionLocal()
     try:
-        collection = Collection(
+        collection = add_legacy_collection(
+            db,
             owner_id=owner_id,
             slug=f'{name.lower()}-{uuid.uuid4().hex[:10]}',
             name=name,
             description=description,
             read_teams=['support'],
         )
-        db.add(collection)
         db.commit()
         db.refresh(collection)
         db.expunge(collection)
@@ -175,9 +175,11 @@ def test_admin_collection_inventory_includes_empty_rows_and_sql_counts():
     assert body['total'] == 2
     by_name = {item['name']: item for item in body['items']}
     assert by_name[f'Empty {marker}']['document_count'] == 0
-    assert by_name[f'Empty {marker}']['owner'] is None
+    assert by_name[f'Empty {marker}']['created_by'] is None
+    assert by_name[f'Empty {marker}']['grants'] == []
     item = by_name[f'Management {marker}']
-    assert item['owner'] == {'id': owner.id, 'username': owner.username}
+    assert item['created_by'] == {'id': owner.id, 'username': owner.username}
+    assert [(grant['user_id'], grant['role']) for grant in item['grants'] if grant['user_id']] == [(owner.id, 'owner')]
     assert item['document_count'] == 7
     assert item['pending_count'] == 1
     assert item['running_count'] == 1
@@ -190,8 +192,8 @@ def test_admin_collection_statement_is_standalone_and_postgres_ready(admin_colle
     """The statement is executable directly by a future live-PG fixture.
 
     The endpoint test above executes it on SQLite; this additionally checks
-    the PostgreSQL rendering and guards that JSON read_teams is selected, but
-    never appears in a GROUP BY clause.
+    the PostgreSQL rendering and guards that no JSON column ever appears in a
+    GROUP BY clause.
     """
     statement = admin_collection_statement
     db = TestingSessionLocal()

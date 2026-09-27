@@ -112,7 +112,7 @@ def test_chat_sends_the_real_internal_chat_request_shape(db_session, runtime):
         'bot_id': 'legal-support',
         'message': 'Hallo!',
         'history': [],
-        'user': {'id': str(user.id), 'team': 'legal', 'teams': ['legal']},
+        'user': {'id': str(user.id), 'team': 'legal', 'teams': ['legal'], 'is_admin': False},
     }
 
 
@@ -141,7 +141,7 @@ def test_chat_forwards_a_collections_filter_in_the_real_request_body(db_session,
         'bot_id': 'legal-support',
         'message': 'Hallo!',
         'history': [],
-        'user': {'id': str(user.id), 'team': 'legal', 'teams': ['legal']},
+        'user': {'id': str(user.id), 'team': 'legal', 'teams': ['legal'], 'is_admin': False},
         'collections': ['legal-internal'],
     }
 
@@ -282,7 +282,7 @@ def test_chat_completions_openai_round_trip_with_no_conversation_persisted(db_se
         {'role': 'user', 'content': 'Wie war das Wetter gestern?'},
         {'role': 'assistant', 'content': 'Gestern war es sonnig.'},
     ]
-    assert sent['user'] == {'id': str(user.id), 'team': 'legal', 'teams': ['legal']}
+    assert sent['user'] == {'id': str(user.id), 'team': 'legal', 'teams': ['legal'], 'is_admin': False}
 
     # Nothing was ever persisted -- no Conversation, no Message row, for
     # ANY user, not just this one (the shim is stateless by construction).

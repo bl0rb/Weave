@@ -37,7 +37,7 @@ beforeEach(() => {
   json.mockImplementation(async (path, init) => {
     if (path === '/api/v1/auth/admin/technical-identities' && init?.method === 'POST') return createdResponse;
     if (path === '/api/v1/auth/admin/technical-identities') return { items: [] };
-    if (path === '/api/v1/collections') return { items: [{ collection_id: 'area-1', slug: 'handbuch', name: 'Handbuch', description: null, read_teams: [], can_manage: true }] };
+    if (path === '/api/v1/collections') return { items: [{ collection_id: 'area-1', slug: 'handbuch', name: 'Handbuch', description: null, visibility: 'public', grants: [], can_manage: true }] };
     if (String(path).endsWith('/rotate')) return { ...savedIdentity, token: 'wti_rotated-raw-token' };
     if (String(path).endsWith('/audit')) return { items: [] };
     throw new Error(`unexpected request: ${path}`);

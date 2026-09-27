@@ -22,13 +22,15 @@ from app.api.routes import (
     _active_process_job_ids,
     _apply_visible_filter,
     _can_manage_collection,
+    _can_own_collection,
     _collection_control_job_filter,
     _content_disposition,
-    _delete_job_artifacts,
     _is_import_page_job,
     _job_folder_path,
     _require_visible,
     _require_visible_collection,
+    _withdraw_and_delete_job,
+    dispatch_withdrawals,
     restart_job,
 )
 from app.core.config import settings
@@ -48,7 +50,7 @@ from app.models.models import (
     User,
     UserRole,
 )
-from app.schemas.jobs import JobRestartRequest
+from app.schemas.jobs import CollectionTeamRef, JobRestartRequest
 from app.schemas.portal import (
     PortalBulkActionRequest,
     PortalBulkActionResponse,
@@ -404,13 +406,12 @@ def _require_publishable(job: Job, collection: Collection, db, user: User, suppl
 @router.get('/config', response_model=PortalConfigResponse)
 def portal_config(db=Depends(get_db), user: User = Depends(get_current_user)) -> PortalConfigResponse:
     team = db.get(Team, user.team_id) if user.team_id else None
-    team_names = list(db.scalars(
-        select(Team.name).where(Team.id.in_(user.team_ids)).order_by(Team.name)
-    )) if user.team_ids else []
+    teams = list(db.scalars(select(Team).where(Team.id.in_(user.team_ids)).order_by(Team.name))) if user.team_ids else []
     return PortalConfigResponse(
         publication_configured=publication_configured(),
         team_name=team.name if team is not None else None,
-        team_names=team_names,
+        team_names=[member_team.name for member_team in teams],
+        teams=[CollectionTeamRef(id=member_team.id, name=member_team.name) for member_team in teams],
     )
 
 
@@ -946,6 +947,7 @@ def bulk_portal_documents(
     done = 0
     errors: list[PortalBulkErrorItem] = []
     releases: list[DocumentRelease] = []
+    withdrawals: list[str] = []
     for job_id in payload.job_ids:
         try:
             job = db.get(Job, job_id, with_for_update=True)
@@ -1010,11 +1012,11 @@ def bulk_portal_documents(
                 if job.password_hash:
                     errors.append(PortalBulkErrorItem(job_id=job_id, reason='Passwortgeschützte Dokumente können nur einzeln gelöscht werden'))
                     continue
-                if db.scalar(select(DocumentRelease.id).where(DocumentRelease.job_id == job.id)) is not None:
+                if not payload.withdraw_released and db.scalar(select(DocumentRelease.id).where(DocumentRelease.job_id == job.id)) is not None:
                     errors.append(PortalBulkErrorItem(job_id=job_id, reason='Freigegebene Dokumente können nicht gelöscht werden'))
                     continue
-                _delete_job_artifacts(job)
-                db.delete(job)
+                if _withdraw_and_delete_job(db, job):
+                    withdrawals.append(job_id)
                 done += 1
         except HTTPException as exc:
             errors.append(PortalBulkErrorItem(job_id=job_id, reason=str(exc.detail)))
@@ -1027,6 +1029,7 @@ def bulk_portal_documents(
             publication_tasks.deliver_release.delay(release.id)
         except Exception:
             logger.exception('publication queue unavailable for release %s', release.id)
+    dispatch_withdrawals(withdrawals)
     return PortalBulkActionResponse(done=done, errors=errors)
 
 
@@ -1035,7 +1038,7 @@ def _release_control(db, release: DocumentRelease, user: User) -> tuple[Job, Col
     collection = _collection_for_job(db, job)
     if collection is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Document collection not found')
-    if user.role != UserRole.ADMIN and release.owner_id != user.id and collection.owner_id != user.id:
+    if release.owner_id != user.id and not _can_own_collection(db, collection, user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='User cannot retry this release')
     return job, collection
 

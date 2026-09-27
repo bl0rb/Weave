@@ -1,14 +1,15 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { History, LogOut, Plus, Trash2, X } from 'lucide-react';
+import { History, KeyRound, LogOut, Plus, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { cn } from '@/lib/utils';
 import type { ConversationSummary } from '@/types/weave-api';
 import type { MappedError } from '@/lib/errors';
 import { ErrorBanner } from '@/components/chat/error-banner';
+import { ApiAccessDialog } from '@/components/chat/api-access-dialog';
 import { LanguageSwitch } from '@/i18n/language-switch';
 import { useI18n } from '@/i18n/provider';
 import type { MessageKey } from '@/i18n/messages';
@@ -100,6 +101,8 @@ export function Rail({
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [open, onClose]);
+
+  const [apiAccessOpen, setApiAccessOpen] = useState(false);
 
   async function logout() {
     await fetch('/api/session/logout', { method: 'POST' }).catch(() => {});
@@ -220,6 +223,9 @@ export function Rail({
             <span className="text-xs text-[var(--muted)]">{t('chat.rail.signedIn')}</span>
             <div className="flex items-center gap-1">
               <ThemeToggle />
+              <Button variant="ghost" size="sm" onClick={() => setApiAccessOpen(true)} aria-label={t('chat.rail.apiAccess')} title={t('chat.rail.apiAccess')}>
+                <KeyRound className="h-4 w-4" aria-hidden="true" />
+              </Button>
               <Button variant="ghost" size="sm" onClick={logout} aria-label={t('chat.rail.logout')} title={t('chat.rail.logout')}>
                 <LogOut className="h-4 w-4" aria-hidden="true" />
               </Button>
@@ -228,6 +234,7 @@ export function Rail({
           <LanguageSwitch className="self-start" persist />
         </div>
       </aside>
+      {apiAccessOpen && <ApiAccessDialog onClose={() => setApiAccessOpen(false)} />}
     </>
   );
 }

@@ -17,24 +17,32 @@ export function NewKnowledgeSpace() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [selectedTeams, setSelectedTeams] = useState<string[]>([]);
+  const [purpose, setPurpose] = useState('');
+  const [responsibleTeam, setResponsibleTeam] = useState('');
+  const [memberTeams, setMemberTeams] = useState<string[]>([]);
   const [shareAll, setShareAll] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const load = useCallback(() => apiJson<PortalConfig>('/api/v1/portal/config')
     .then(configuration => {
       setConfig(configuration);
-      setSelectedTeams(configuration.team_names);
+      // Suggest the first own team as responsible and as member team
+      // (ADR 0008); both can be changed or removed before saving.
+      const first = configuration.teams[0]?.id ?? '';
+      setResponsibleTeam(first);
+      setMemberTeams(first ? [first] : []);
       setError('');
     })
     .catch(err => setError(portalError(err, locale))), [locale]);
   useEffect(() => { void load(); }, [load]);
 
-  const hasOwnTeams = Boolean(config?.team_names.length);
-  const canSave = Boolean(name.trim() && config && (shareAll ? confirmed : selectedTeams.length > 0));
+  const canSave = Boolean(name.trim() && purpose.trim() && config && (!shareAll || confirmed));
 
   function toggleTeam(team: string) {
-    setSelectedTeams(current => current.includes(team) ? current.filter(value => value !== team) : [...current, team]);
+    setMemberTeams(current => current.includes(team) ? current.filter(value => value !== team) : [...current, team]);
+  }
+  function chooseResponsibleTeam(team: string) {
+    setResponsibleTeam(team);
+    if (team) setMemberTeams(current => current.includes(team) ? current : [...current, team]);
   }
 
   async function create(event: FormEvent) {
@@ -45,8 +53,10 @@ export function NewKnowledgeSpace() {
     try {
       const space = await apiJson<KnowledgeSpace>('/api/v1/collections', jsonBody({
         name: name.trim(),
-        description: description.trim(),
-        read_teams: shareAll ? [] : selectedTeams,
+        description: purpose.trim(),
+        responsible_team_id: responsibleTeam || null,
+        visibility: shareAll ? 'public' : 'restricted',
+        grants: memberTeams.map(team_id => ({ team_id, role: 'member' })),
       }));
       // Continue the journey with the new area already selected.
       router.replace(`/sources/new?collection=${encodeURIComponent(space.collection_id)}`);
@@ -66,25 +76,32 @@ export function NewKnowledgeSpace() {
       <form onSubmit={create} className="portal-form">
         <label>{t('common.name')}<input required maxLength={255} value={name} disabled={saving}
           onChange={event => setName(event.target.value)} placeholder={t('portal.newSpace.namePlaceholder')} /></label>
-        <label>{t('common.description')} <span className="portal-optional">{t('common.optional')}</span>
-          <textarea rows={3} value={description} disabled={saving} onChange={event => setDescription(event.target.value)}
-            placeholder={t('portal.newSpace.descriptionPlaceholder')} />
+        <label>{t('portal.newSpace.purposeLabel')}
+          <textarea required rows={3} value={purpose} disabled={saving} onChange={event => setPurpose(event.target.value)}
+            placeholder={t('portal.newSpace.purposePlaceholder')} />
         </label>
+        <label>{t('portal.newSpace.responsibleTeam')} <span className="portal-optional">{t('common.optional')}</span>
+          <select value={responsibleTeam} disabled={saving || !config} onChange={event => chooseResponsibleTeam(event.target.value)}>
+            <option value="">{t('portal.newSpace.noResponsibleTeam')}</option>
+            {config?.teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
+          </select>
+        </label>
+        {Boolean(config?.teams.length) && <fieldset disabled={saving}>
+          <legend>{t('portal.newSpace.memberTeamsLegend')}</legend>
+          {config?.teams.map(team => <label className="portal-choice" key={team.id}>
+            <input type="checkbox" checked={memberTeams.includes(team.id)} onChange={() => toggleTeam(team.id)} />
+            {team.name}
+          </label>)}
+          <p className="portal-field-hint">{t('portal.newSpace.memberTeamsHint')}</p>
+        </fieldset>}
         <fieldset disabled={saving || !config}>
           <legend>{t('portal.newSpace.legend')}</legend>
           <label className="portal-choice"><input type="radio" name="readers" checked={!shareAll}
-            onChange={() => { setShareAll(false); setConfirmed(false); }} disabled={!hasOwnTeams} />
+            onChange={() => { setShareAll(false); setConfirmed(false); }} />
             <span>{t('portal.newSpace.teamsOnly')}</span>
           </label>
-          {!shareAll && hasOwnTeams && <div className="ml-6">
-            {config?.team_names.map(team => <label className="portal-choice" key={team}>
-              <input type="checkbox" checked={selectedTeams.includes(team)} onChange={() => toggleTeam(team)} disabled={saving} />
-              {team}
-            </label>)}
-          </div>}
           <label className="portal-choice"><input type="radio" name="readers" checked={shareAll}
             onChange={() => setShareAll(true)} />{t('portal.newSpace.allTeams')}</label>
-          {config && !hasOwnTeams && <p className="portal-field-hint">{t('portal.newSpace.noTeamHint')}</p>}
           {shareAll && <label className="portal-choice portal-access-confirm"><input type="checkbox" checked={confirmed}
             onChange={event => setConfirmed(event.target.checked)} />{t('portal.newSpace.confirmAllTeams')}</label>}
         </fieldset>

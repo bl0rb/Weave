@@ -1300,6 +1300,107 @@
         "title": "Body_upload_document_to_collection_api_v1_collections__collection_id__upload_post",
         "type": "object"
       },
+      "BotGrantInput": {
+        "additionalProperties": false,
+        "description": "One entry of a bot's access list (ADR 0008): exactly one of\n`user_id` (a local or SSO account) or `team_id`. Teams can only be\nusers, never owners.",
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/BotRole"
+          },
+          "team_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Id"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "title": "BotGrantInput",
+        "type": "object"
+      },
+      "BotGrantResponse": {
+        "description": "A resolved bot grant; `name` is the username or team name.",
+        "properties": {
+          "is_active": {
+            "default": true,
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/BotRole"
+          },
+          "team": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team"
+          },
+          "team_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Id"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "role",
+          "name"
+        ],
+        "title": "BotGrantResponse",
+        "type": "object"
+      },
+      "BotRole": {
+        "description": "A role on a managed bot (ADR 0008): owners maintain its content and\nsharing, users may chat with it.",
+        "enum": [
+          "owner",
+          "user"
+        ],
+        "title": "BotRole",
+        "type": "string"
+      },
       "ChatProviderAdminResponse": {
         "properties": {
           "base_url": {
@@ -1584,6 +1685,13 @@
             "title": "Folder",
             "type": "string"
           },
+          "grants": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionGrantInput"
+            },
+            "title": "Grants",
+            "type": "array"
+          },
           "name": {
             "default": "",
             "title": "Name",
@@ -1594,19 +1702,16 @@
             "title": "Password",
             "type": "string"
           },
-          "read_teams": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Read Teams",
-            "type": "array"
-          },
-          "read_users": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Read Users",
-            "type": "array"
+          "responsible_team_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Responsible Team Id"
           },
           "slug": {
             "anyOf": [
@@ -1636,6 +1741,97 @@
           }
         },
         "title": "CollectionCreateRequest",
+        "type": "object"
+      },
+      "CollectionGrantInput": {
+        "description": "One entry of a knowledge space's access list (ADR 0008): exactly one\nof `user_id` (a local or SSO account) or `team_id`, with a role. Teams\ncan be members or readers, never owners.",
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/CollectionRole"
+          },
+          "team_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Id"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "title": "CollectionGrantInput",
+        "type": "object"
+      },
+      "CollectionGrantResponse": {
+        "description": "A resolved grant. `name` is the username or team name; `team` a\nperson's primary team, for display. Never email or any other personal\nfield, same discipline as the directory endpoints.",
+        "properties": {
+          "is_active": {
+            "default": true,
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/CollectionRole"
+          },
+          "team": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team"
+          },
+          "team_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Id"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "role",
+          "name"
+        ],
+        "title": "CollectionGrantResponse",
         "type": "object"
       },
       "CollectionListResponse": {
@@ -1728,6 +1924,16 @@
             "title": "Collection Id",
             "type": "string"
           },
+          "created_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobOwner"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "department": {
             "title": "Department",
             "type": "string"
@@ -1752,6 +1958,13 @@
             "title": "Folder",
             "type": "string"
           },
+          "grants": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionGrantResponse"
+            },
+            "title": "Grants",
+            "type": "array"
+          },
           "job_ids": {
             "items": {
               "type": "string"
@@ -1763,26 +1976,25 @@
             "title": "Name",
             "type": "string"
           },
-          "read_teams": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Read Teams",
-            "type": "array"
+          "responsible_team": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CollectionTeamRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
-          "read_user_details": {
-            "items": {
-              "$ref": "#/components/schemas/ReadUserDetail"
-            },
-            "title": "Read User Details",
-            "type": "array"
-          },
-          "read_users": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Read Users",
-            "type": "array"
+          "role": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CollectionRole"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "slug": {
             "title": "Slug",
@@ -1807,6 +2019,16 @@
         ],
         "title": "CollectionResponse",
         "type": "object"
+      },
+      "CollectionRole": {
+        "description": "A role on a knowledge space (ADR 0008). Ordered: every role includes\nthe rights of the ones below it (owner > member > reader).",
+        "enum": [
+          "owner",
+          "member",
+          "reader"
+        ],
+        "title": "CollectionRole",
+        "type": "string"
       },
       "CollectionStartRequest": {
         "properties": {
@@ -1857,8 +2079,26 @@
         "title": "CollectionStartResponse",
         "type": "object"
       },
+      "CollectionTeamRef": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "CollectionTeamRef",
+        "type": "object"
+      },
       "CollectionUpdateRequest": {
-        "description": "PATCH payload: every field optional and only applied when present\n(None = leave unchanged). `slug` is deliberately not patchable here --\nit is the collection's stable cross-service identity (see Collection's\ndocstring) and already-processed documents carry it in their frontmatter.\n\nUnlike create, `read_teams`/`read_users` here are validated against real\nteam names / user ids (422 on any unknown entry) and de-duplicated --\nsee routes.update_collection.",
+        "description": "PATCH payload: every field optional and only applied when present\n(None = leave unchanged). `slug` is deliberately not patchable here --\nit is the collection's stable cross-service identity (see Collection's\ndocstring) and already-processed documents carry it in their frontmatter.\n\n`grants` replaces the whole access list and must keep at least one\nowner. `responsible_team_id` is cleared with an empty string.",
         "properties": {
           "description": {
             "anyOf": [
@@ -1871,6 +2111,20 @@
             ],
             "title": "Description"
           },
+          "grants": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CollectionGrantInput"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grants"
+          },
           "name": {
             "anyOf": [
               {
@@ -1882,33 +2136,16 @@
             ],
             "title": "Name"
           },
-          "read_teams": {
+          "responsible_team_id": {
             "anyOf": [
               {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Read Teams"
-          },
-          "read_users": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Read Users"
+            "title": "Responsible Team Id"
           },
           "visibility": {
             "anyOf": [
@@ -2004,6 +2241,10 @@
       },
       "DirectoryTeamEntry": {
         "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
           "member_count": {
             "title": "Member Count",
             "type": "integer"
@@ -2014,6 +2255,7 @@
           }
         },
         "required": [
+          "id",
           "name",
           "member_count"
         ],
@@ -3642,6 +3884,13 @@
             "title": "Final K",
             "type": "integer"
           },
+          "grants": {
+            "items": {
+              "$ref": "#/components/schemas/BotGrantResponse"
+            },
+            "title": "Grants",
+            "type": "array"
+          },
           "has_auth_token": {
             "title": "Has Auth Token",
             "type": "boolean"
@@ -3666,6 +3915,11 @@
           "no_context_reply": {
             "title": "No Context Reply",
             "type": "string"
+          },
+          "public": {
+            "default": false,
+            "title": "Public",
+            "type": "boolean"
           },
           "require_sources": {
             "title": "Require Sources",
@@ -3705,13 +3959,6 @@
               }
             ],
             "title": "System Prompt"
-          },
-          "teams": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Teams",
-            "type": "array"
           },
           "temperature": {
             "anyOf": [
@@ -3760,7 +4007,6 @@
           "streaming",
           "has_auth_token",
           "timeout_seconds",
-          "teams",
           "collections",
           "require_sources",
           "no_context_reply",
@@ -3832,6 +4078,14 @@
             "title": "Final K",
             "type": "integer"
           },
+          "grants": {
+            "items": {
+              "$ref": "#/components/schemas/BotGrantInput"
+            },
+            "maxItems": 500,
+            "title": "Grants",
+            "type": "array"
+          },
           "id": {
             "maxLength": 255,
             "minLength": 1,
@@ -3864,6 +4118,11 @@
             "minLength": 1,
             "title": "No Context Reply",
             "type": "string"
+          },
+          "public": {
+            "default": false,
+            "title": "Public",
+            "type": "boolean"
           },
           "require_sources": {
             "default": true,
@@ -3901,14 +4160,6 @@
               }
             ],
             "title": "System Prompt"
-          },
-          "teams": {
-            "items": {
-              "type": "string"
-            },
-            "maxItems": 100,
-            "title": "Teams",
-            "type": "array"
           },
           "temperature": {
             "anyOf": [
@@ -4041,6 +4292,11 @@
             "title": "No Context Reply",
             "type": "string"
           },
+          "public": {
+            "default": false,
+            "title": "Public",
+            "type": "boolean"
+          },
           "require_sources": {
             "title": "Require Sources",
             "type": "boolean"
@@ -4102,6 +4358,13 @@
             "title": "Top K",
             "type": "integer"
           },
+          "users": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Users",
+            "type": "array"
+          },
           "webhook_url": {
             "anyOf": [
               {
@@ -4139,6 +4402,209 @@
           }
         },
         "title": "ManagedBotListResponse",
+        "type": "object"
+      },
+      "ManagedBotOwnerListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ManagedBotOwnerResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "title": "ManagedBotOwnerListResponse",
+        "type": "object"
+      },
+      "ManagedBotOwnerResponse": {
+        "description": "What a bot owner sees and maintains (ADR 0008): the content and the\nsharing, never the technical connection (webhook, secret, timeout).",
+        "properties": {
+          "collections": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Collections",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "grants": {
+            "items": {
+              "$ref": "#/components/schemas/BotGrantResponse"
+            },
+            "title": "Grants",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "no_context_reply": {
+            "title": "No Context Reply",
+            "type": "string"
+          },
+          "public": {
+            "title": "Public",
+            "type": "boolean"
+          },
+          "require_sources": {
+            "title": "Require Sources",
+            "type": "boolean"
+          },
+          "retrieval_enabled": {
+            "default": false,
+            "title": "Retrieval Enabled",
+            "type": "boolean"
+          },
+          "system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Prompt"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "description",
+          "enabled",
+          "collections",
+          "require_sources",
+          "no_context_reply",
+          "public",
+          "updated_at"
+        ],
+        "title": "ManagedBotOwnerResponse",
+        "type": "object"
+      },
+      "ManagedBotOwnerUpdate": {
+        "additionalProperties": false,
+        "description": "Owner PATCH: every field optional (None = unchanged). `grants`\nreplaces the users; owners stay as the administrators set them.",
+        "properties": {
+          "collections": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 500,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collections"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "grants": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/BotGrantInput"
+                },
+                "maxItems": 500,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grants"
+          },
+          "no_context_reply": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "No Context Reply"
+          },
+          "public": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Public"
+          },
+          "require_sources": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Require Sources"
+          },
+          "system_prompt": {
+            "anyOf": [
+              {
+                "maxLength": 12000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Prompt"
+          }
+        },
+        "title": "ManagedBotOwnerUpdate",
         "type": "object"
       },
       "ManagedBotUpdate": {
@@ -4203,6 +4669,14 @@
             "title": "Final K",
             "type": "integer"
           },
+          "grants": {
+            "items": {
+              "$ref": "#/components/schemas/BotGrantInput"
+            },
+            "maxItems": 500,
+            "title": "Grants",
+            "type": "array"
+          },
           "include_uncollected": {
             "default": true,
             "title": "Include Uncollected",
@@ -4229,6 +4703,11 @@
             "minLength": 1,
             "title": "No Context Reply",
             "type": "string"
+          },
+          "public": {
+            "default": false,
+            "title": "Public",
+            "type": "boolean"
           },
           "require_sources": {
             "default": true,
@@ -4266,14 +4745,6 @@
               }
             ],
             "title": "System Prompt"
-          },
-          "teams": {
-            "items": {
-              "type": "string"
-            },
-            "maxItems": 100,
-            "title": "Teams",
-            "type": "array"
           },
           "temperature": {
             "anyOf": [
@@ -4429,6 +4900,29 @@
           "total_bytes"
         ],
         "title": "OrphanedFilesReportResponse",
+        "type": "object"
+      },
+      "OwnedItem": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "sole_owner": {
+            "default": false,
+            "title": "Sole Owner",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "OwnedItem",
         "type": "object"
       },
       "PaddleCapabilitiesResponse": {
@@ -4812,6 +5306,11 @@
             "minItems": 1,
             "title": "Job Ids",
             "type": "array"
+          },
+          "withdraw_released": {
+            "default": false,
+            "title": "Withdraw Released",
+            "type": "boolean"
           }
         },
         "required": [
@@ -4872,6 +5371,16 @@
             "title": "Created At",
             "type": "string"
           },
+          "created_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortalManagementOwner"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "description": {
             "anyOf": [
               {
@@ -4891,34 +5400,35 @@
             "title": "Failed Count",
             "type": "integer"
           },
+          "grants": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CollectionGrantResponse"
+            },
+            "title": "Grants",
+            "type": "array"
+          },
           "name": {
             "title": "Name",
             "type": "string"
-          },
-          "owner": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PortalManagementOwner"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "pending_count": {
             "title": "Pending Count",
             "type": "integer"
           },
-          "read_teams": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Read Teams",
-            "type": "array"
-          },
           "released_count": {
             "title": "Released Count",
             "type": "integer"
+          },
+          "responsible_team": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CollectionTeamRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "review_count": {
             "title": "Review Count",
@@ -4936,13 +5446,16 @@
             "format": "date-time",
             "title": "Updated At",
             "type": "string"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/CollectionVisibility"
           }
         },
         "required": [
           "collection_id",
           "slug",
           "name",
-          "read_teams",
+          "visibility",
           "document_count",
           "pending_count",
           "running_count",
@@ -5027,6 +5540,13 @@
               "type": "string"
             },
             "title": "Team Names",
+            "type": "array"
+          },
+          "teams": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionTeamRef"
+            },
+            "title": "Teams",
             "type": "array"
           }
         },
@@ -6003,47 +6523,6 @@
         "title": "ProvidersPublicResponse",
         "type": "object"
       },
-      "ReadUserDetail": {
-        "description": "One resolved entry of a CollectionResponse's `read_user_details` --\nthe person-picker's own display shape for an id already present in\n`read_users`. Never carries email or any other personal field, same\ndiscipline as the directory endpoints (routes.list_directory_users).",
-        "properties": {
-          "display_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Display Name"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "team": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Team"
-          },
-          "username": {
-            "title": "Username",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "username"
-        ],
-        "title": "ReadUserDetail",
-        "type": "object"
-      },
       "ReindexStartResponse": {
         "properties": {
           "started": {
@@ -6615,6 +7094,73 @@
         "title": "TeamUpdateRequest",
         "type": "object"
       },
+      "TeamUsageItem": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "TeamUsageItem",
+        "type": "object"
+      },
+      "TeamUsageResponse": {
+        "description": "Where a team is used, shown before deleting it: its grants go with\nit, and it stops being the responsible team.",
+        "properties": {
+          "bots": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TeamUsageItem"
+            },
+            "title": "Bots",
+            "type": "array"
+          },
+          "collections": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TeamUsageItem"
+            },
+            "title": "Collections",
+            "type": "array"
+          },
+          "member_count": {
+            "title": "Member Count",
+            "type": "integer"
+          },
+          "responsible_for": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TeamUsageItem"
+            },
+            "title": "Responsible For",
+            "type": "array"
+          }
+        },
+        "required": [
+          "member_count"
+        ],
+        "title": "TeamUsageResponse",
+        "type": "object"
+      },
       "TechnicalIdentityAuditEntry": {
         "properties": {
           "actor": {
@@ -7129,6 +7675,29 @@
           "status"
         ],
         "title": "UploadResponse",
+        "type": "object"
+      },
+      "UserOwnershipResponse": {
+        "description": "What a person owns, shown before deleting them.",
+        "properties": {
+          "bots": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/OwnedItem"
+            },
+            "title": "Bots",
+            "type": "array"
+          },
+          "collections": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/OwnedItem"
+            },
+            "title": "Collections",
+            "type": "array"
+          }
+        },
+        "title": "UserOwnershipResponse",
         "type": "object"
       },
       "UserResponse": {
@@ -9128,6 +9697,48 @@
         ]
       }
     },
+    "/api/v1/auth/admin/teams/{team_id}/usage": {
+      "get": {
+        "operationId": "admin_team_usage_api_v1_auth_admin_teams__team_id__usage_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "team_id",
+            "required": true,
+            "schema": {
+              "title": "Team Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamUsageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin Team Usage",
+        "tags": [
+          "auth-admin"
+        ]
+      }
+    },
     "/api/v1/auth/admin/technical-identities": {
       "get": {
         "operationId": "list_technical_identities_api_v1_auth_admin_technical_identities_get",
@@ -9423,6 +10034,7 @@
     },
     "/api/v1/auth/admin/users/{user_id}": {
       "delete": {
+        "description": "Delete an account. Its grants go with it; where it is the last owner\nof a knowledge space or bot, `successor_id` names the person who takes\nover all of its owner roles (409 without one, ADR 0008).",
         "operationId": "admin_delete_user_api_v1_auth_admin_users__user_id__delete",
         "parameters": [
           {
@@ -9432,6 +10044,22 @@
             "schema": {
               "title": "User Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "successor_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Successor Id"
             }
           }
         ],
@@ -9512,6 +10140,48 @@
           }
         },
         "summary": "Admin Update User",
+        "tags": [
+          "auth-admin"
+        ]
+      }
+    },
+    "/api/v1/auth/admin/users/{user_id}/ownership": {
+      "get": {
+        "operationId": "admin_user_ownership_api_v1_auth_admin_users__user_id__ownership_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserOwnershipResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admin User Ownership",
         "tags": [
           "auth-admin"
         ]
@@ -10733,9 +11403,84 @@
         ]
       }
     },
+    "/api/v1/bots": {
+      "get": {
+        "description": "The managed bots the caller owns. Admins use the admin surface for\nevery bot; here they too only see their own.",
+        "operationId": "list_owned_bots_api_v1_bots_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedBotOwnerListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Owned Bots",
+        "tags": [
+          "managed-bots-owner"
+        ]
+      }
+    },
+    "/api/v1/bots/{bot_id}": {
+      "patch": {
+        "description": "Owners maintain the content and the users of their bot; the\nconnection and the owners themselves stay with the administrators.",
+        "operationId": "update_owned_bot_api_v1_bots__bot_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bot_id",
+            "required": true,
+            "schema": {
+              "title": "Bot Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManagedBotOwnerUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedBotOwnerResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Owned Bot",
+        "tags": [
+          "managed-bots-owner"
+        ]
+      }
+    },
     "/api/v1/collections": {
       "get": {
-        "description": "Same visibility rule as GET /jobs (`_visible_job_filter`): own +\ncurrent-teammates' + (for an admin) every collection. Does not populate\n`job_ids` per item -- see CollectionResponse's docstring -- use GET\n/collections/{id} for a single collection's job membership.",
+        "description": "Every collection the caller may read (ADR 0008 grants, public\nspaces, admins everything). Does not populate `job_ids` per item -- use\nGET /collections/{id} for a single collection's job membership.",
         "operationId": "list_collections_api_v1_collections_get",
         "responses": {
           "200": {
@@ -10790,7 +11535,7 @@
     },
     "/api/v1/collections/registry": {
       "get": {
-        "description": "Sync source for Weave-Knowledge's `collections` registry table (see\nthe Collections contract in README.md) and, transitively, for\nWeave-Retrieval's per-team read authorization -- NOT scoped by the\ncaller's own visibility (unlike GET /collections above): a sync\nconsumer needs the full registry to answer \"which collections can team\nX read\" for every team, not just the collections the syncing token's\nown user happens to own or share a team with.\n\nAdmin-only (`require_admin`, not just `get_current_user`): unlike GET\n/collections/{id} or a single job, this single call hands back every\ncollection's slug + full `read_teams` ACL in one response -- the\ncomplete cross-team access map of the system. Any authenticated user\nbeing able to enumerate that would itself be an information leak (which\nteams can read which collections, system-wide), even though no document\ncontent or job data is ever included. Weave-Knowledge's own sync token\nmust therefore belong to an admin account (see README's Collections\nsection).\n\nDeliberately never returns anything document-shaped: no job_ids, no\nfolder/subfolder/email/department, no document content of any kind --\nonly the ACL/identity fields the contract defines\n(CollectionRegistryEntry): slug/name/description plus `visibility` (the\nsingle authoritative public/restricted flag) and the two additive ACLs,\n`read_teams`/`read_users`.",
+        "description": "Sync source for Weave-Knowledge's `collections` registry table (see\nthe Collections contract in README.md) and, transitively, for\nWeave-Retrieval's per-team read authorization -- NOT scoped by the\ncaller's own visibility (unlike GET /collections above): a sync\nconsumer needs the full registry to answer \"which collections can team\nX read\" for every team, not just the collections the syncing token's\nown user happens to own or share a team with.\n\nAdmin-only (`require_admin`, not just `get_current_user`): unlike GET\n/collections/{id} or a single job, this single call hands back every\ncollection's slug + full `read_teams` ACL in one response -- the\ncomplete cross-team access map of the system. Any authenticated user\nbeing able to enumerate that would itself be an information leak (which\nteams can read which collections, system-wide), even though no document\ncontent or job data is ever included. Weave-Knowledge's own sync token\nmust therefore belong to an admin account (see README's Collections\nsection).\n\nDeliberately never returns anything document-shaped: no job_ids, no\nfolder/subfolder/email/department, no document content of any kind --\nonly the ACL/identity fields the contract defines\n(CollectionRegistryEntry): slug/name/description plus `visibility` (the\nsingle authoritative public/restricted flag) and the two additive ACLs,\n`read_teams`/`read_users`, computed from the grants (ADR 0008).",
         "operationId": "get_collections_registry_api_v1_collections_registry_get",
         "responses": {
           "200": {
@@ -10809,7 +11554,7 @@
     },
     "/api/v1/collections/{collection_id}": {
       "delete": {
-        "description": "Delete an empty collection controlled by the caller.\n\nDocuments are deliberately never cascaded from a collection delete: a\nrelease may already have reached the shared RAG store.  The owner must\nremove documents explicitly first, while pending/running Confluence\nimports also block deletion so they cannot create orphaned jobs after\nthis transaction commits.",
+        "description": "Delete a collection controlled by the caller.\n\nBy default only an empty collection: documents are never cascaded by\naccident, since a release may already have reached the shared RAG\nstore. With `with_content` (and the collection's exact name as\n`confirm_name`) an owner deletes it with every document; released ones\nare withdrawn from Knowledge on the way (ADR 0008). Password-protected\ndocuments still have to be deleted one by one. Pending/running\nConfluence imports block deletion either way so they cannot create\norphaned jobs after this transaction commits, and so does any bot or\nactive technical identity naming the slug -- a later collection with\nthe same slug would otherwise inherit that access.",
         "operationId": "delete_collection_api_v1_collections__collection_id__delete",
         "parameters": [
           {
@@ -10819,6 +11564,32 @@
             "schema": {
               "title": "Collection Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "with_content",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "With Content",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "confirm_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Confirm Name"
             }
           }
         ],
@@ -11035,7 +11806,7 @@
     },
     "/api/v1/directory/teams": {
       "get": {
-        "description": "Team-picker listing for a collection's `read_teams` grant -- same\nauthorization gate as GET /directory/users.",
+        "description": "Team-picker listing for a collection's team grants -- same\nauthorization gate as GET /directory/users.",
         "operationId": "list_directory_teams_api_v1_directory_teams_get",
         "responses": {
           "200": {
@@ -11054,7 +11825,7 @@
     },
     "/api/v1/directory/users": {
       "get": {
-        "description": "Person-picker search for a collection's `read_users` grant (see\nCollectionUpdateRequest's docstring). Case-insensitive substring match\non username or (primary) team name -- there is no per-user display name\nfield on this service's `User` model, so `display_name` is always null\nhere (see DirectoryUserEntry's own docstring). Active users only; never\nreturns email or any other personal field.",
+        "description": "Person-picker search for a collection's person grants (see\nCollectionUpdateRequest's docstring). Case-insensitive substring match\non username or (primary) team name -- there is no per-user display name\nfield on this service's `User` model, so `display_name` is always null\nhere (see DirectoryUserEntry's own docstring). Active users only; never\nreturns email or any other personal field.",
         "operationId": "list_directory_users_api_v1_directory_users_get",
         "parameters": [
           {
@@ -12046,6 +12817,16 @@
                 }
               ],
               "title": "Password"
+            }
+          },
+          {
+            "in": "query",
+            "name": "withdraw",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Withdraw",
+              "type": "boolean"
             }
           }
         ],
