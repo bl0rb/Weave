@@ -36,7 +36,7 @@ def _stub_runtime_bots(monkeypatch):
     # (app.services.runtime_client) -- `from ... import list_bots` already
     # bound the name into app.api.bots's own module namespace by the time
     # this fixture runs, so patching the origin module wouldn't be seen.
-    monkeypatch.setattr('app.api.bots.list_bots', lambda: [])
+    monkeypatch.setattr('app.api.bots.list_bots', lambda *args: [])
 
 
 def test_requests_within_limit_all_succeed(db_session, monkeypatch):

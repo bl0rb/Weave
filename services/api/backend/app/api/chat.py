@@ -41,7 +41,6 @@ from app.models.models import Conversation, MessageRole, User
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.services import conversations as conversations_service
 from app.services import runtime_client
-from app.services.ingest_identity import ingest_subject
 
 router = APIRouter(prefix='/v1', tags=['chat'])
 
@@ -67,10 +66,7 @@ def chat(
 
     history = conversations_service.build_history(conversation, exclude_message_id=user_message.id)
 
-    runtime_user = {'id': str(user.id), 'team': user.team, 'teams': user.effective_teams, 'is_admin': user.is_admin}
-    subject = ingest_subject(user.oidc_subject)
-    if subject is not None:
-        runtime_user['subject'] = subject
+    runtime_user = runtime_client.runtime_user(user)
 
     try:
         result = runtime_client.chat(
@@ -271,10 +267,7 @@ def chat_stream(
     )
     history = conversations_service.build_history(conversation, exclude_message_id=user_message.id)
 
-    runtime_user = {'id': str(user.id), 'team': user.team, 'teams': user.effective_teams, 'is_admin': user.is_admin}
-    subject = ingest_subject(user.oidc_subject)
-    if subject is not None:
-        runtime_user['subject'] = subject
+    runtime_user = runtime_client.runtime_user(user)
 
     try:
         events = runtime_client.chat_stream(

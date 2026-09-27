@@ -120,3 +120,28 @@ def test_chat_denies_a_team_not_permitted_on_the_bot():
     body = {'bot_id': 'legal-support', 'message': 'Hallo!', 'user': {'team': 'sales'}}
     resp = client.post('/internal/chat', json=body, headers=AUTH_HEADERS)
     assert resp.status_code == 403
+
+
+def test_visible_bots_apply_the_chat_permission_check(monkeypatch):
+    from app.api import internal
+    from app.schemas.bot import BotConfig
+
+    def bot(bot_id: str, permissions: dict) -> BotConfig:
+        return BotConfig.model_validate({
+            'id': bot_id, 'name': bot_id, 'model': {'model': 'fake-chat'}, 'system_prompt': 'x', 'permissions': permissions,
+        })
+
+    monkeypatch.setattr(internal, 'list_bots', lambda: [
+        bot('open', {}),
+        bot('legal', {'teams': ['legal']}),
+        bot('personal', {'users': ['ingest-1'], 'public': False}),
+        bot('closed', {'public': False}),
+    ])
+    def visible(user: dict) -> list[str]:
+        response = client.post('/internal/bots/visible', json=user, headers=AUTH_HEADERS)
+        assert response.status_code == 200, response.text
+        return [item['id'] for item in response.json()]
+
+    assert visible({'team': 'sales', 'teams': ['sales']}) == ['open']
+    assert visible({'teams': ['legal'], 'subject': 'ingest-1'}) == ['open', 'legal', 'personal']
+    assert visible({'teams': [], 'is_admin': True}) == ['open', 'legal', 'personal', 'closed']

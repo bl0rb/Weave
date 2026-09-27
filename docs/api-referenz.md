@@ -161,7 +161,7 @@ curl -s -X PUT https://weave.example.com/v1/me/locale \
 
 #### `GET /v1/bots`
 
-Listet die Bot-Registrierung, wie Weave-Runtime sie führt (reiner Durchreich-Proxy, Weave-API verwaltet selbst keine Bot-Konfiguration).
+Listet die Bots, die der Aufrufer nutzen darf: öffentliche Bots, Bots, die für eines seiner Teams oder für ihn persönlich freigegeben sind, und für Administratoren alle. Die Prüfung ist dieselbe wie beim Chat — ein hier gelisteter Bot antwortet nie mit `403`.
 
 ```bash
 curl -s https://weave.example.com/v1/bots \
@@ -195,14 +195,14 @@ print(resp.json())
 
 #### `GET /v1/bots/{bot_id}`
 
-Liefert die vollständige Konfiguration eines einzelnen Bots (nicht nur die Kurzform aus der Liste oben).
+Liefert die vollständige Konfiguration eines Bots, den der Aufrufer nutzen darf (nicht nur die Kurzform aus der Liste oben).
 
 ```bash
 curl -s https://weave.example.com/v1/bots/legal-support \
   -H "Authorization: Bearer $WEAVE_TOKEN"
 ```
 
-> **Wichtig:** Anders als `GET /v1/bots` liefert dieser Endpunkt die komplette Bot-Konfiguration, einschließlich `system_prompt` und Modelleinstellungen — nicht nur die Kurzfassung. Das gilt für jeden authentifizierten Aufrufer, unabhängig davon, ob er den Bot überhaupt nutzen darf; die Freigabeprüfung (Team/Person/öffentlich) greift erst beim eigentlichen Chat-Aufruf (`POST /v1/chat`), nicht beim Lesen der Konfiguration. Ein hinterlegtes Webhook-Secret (bei n8n-Bots) wird dabei nie im Klartext ausgeliefert.
+> **Hinweis:** Die Antwort enthält auch `system_prompt` und die Modelleinstellungen. Ein Bot, den der Aufrufer nicht nutzen darf, liefert `404` — nicht unterscheidbar von einem Bot, den es nicht gibt. Ein hinterlegtes Webhook-Secret (bei n8n-Bots) wird nie im Klartext ausgeliefert.
 
 ### Wissensbereiche
 
@@ -367,6 +367,8 @@ curl -s -X DELETE https://weave.example.com/v1/conversations/3fa85f64-5717-4562-
 Für Werkzeuge, die bereits „OpenAI Chat Completions“ sprechen (z. B. Open WebUI, LangChain-OpenAI-Client). `model` entspricht dabei `bot_id`.
 
 #### `GET /v1/models`
+
+Die Bots, die der Aufrufer nutzen darf, im Format der OpenAI-Modellliste (gleiche Auswahl wie `GET /v1/bots`).
 
 ```bash
 curl -s https://weave.example.com/v1/models \

@@ -42,6 +42,7 @@ from collections.abc import Iterator
 import httpx
 
 from app.core.config import settings
+from app.services.ingest_identity import ingest_subject
 
 
 class RuntimeClientError(Exception):
@@ -153,10 +154,24 @@ def _post(path: str, json_body: dict, *, read_timeout: float | None = None) -> d
     return _parse_json(response, description=description)
 
 
-def list_bots() -> list:
-    """GET /internal/bots -- the full bot registry Weave-Runtime exposes,
-    passed straight through by GET /v1/bots."""
-    return _get('/internal/bots')
+def runtime_user(user) -> dict:
+    """The caller identity Weave-Runtime checks bot permissions and
+    readable collections against (`ChatUser` there)."""
+    payload = {'id': str(user.id), 'team': user.team, 'teams': user.effective_teams, 'is_admin': user.is_admin}
+    subject = ingest_subject(user.oidc_subject)
+    if subject is not None:
+        payload['subject'] = subject
+    return payload
+
+
+def list_bots(user: dict | None = None) -> list:
+    """The bot registry Weave-Runtime exposes. With `user` (a `runtime_user`
+    payload) only the bots that caller may chat with (POST
+    /internal/bots/visible, ADR 0008) -- what every end-user route lists;
+    without it the full registry (GET /internal/bots)."""
+    if user is None:
+        return _get('/internal/bots')
+    return _post('/internal/bots/visible', user)
 
 
 def get_bot(bot_id: str) -> dict:
