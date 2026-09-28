@@ -590,6 +590,28 @@ services:
           The test goes through the SSRF-hardened safe_fetch path, which
           blocks private networks unless the host is listed here; the
           default names the usual local model runners.
+      SYSTEM_STATUS_TARGETS:
+        secret: false
+        value:
+          - "ingest-frontend=http://weave-ingest-frontend:3000"
+          - "knowledge=http://weave-knowledge:8000"
+          - "embeddings=http://weave-embeddings:8000"
+          - "retrieval=http://weave-retrieval:8000"
+          - "reranker=http://weave-reranker:8000"
+          - "runtime=http://weave-runtime:8000"
+          - "api=http://weave-api:8000"
+          - "tools=http://weave-tools-backend:8000"
+          - "tools-mcp=http://weave-tools-mcp:8000"
+          - "chat=http://weave-tools-frontend:3000"
+        type: json_list
+        required: false
+        comment: >
+          Services the system status (portal sidebar, Administration ->
+          Systemstatus) probes, as "component=base URL". A component left
+          out is not part of this installation and not shown. The Knowledge
+          worker is checked through Weave-Knowledge; database, broker and
+          the Ingest worker are always checked. The Helm chart sets this
+          from its enabled components.
       WEBHOOK_PRIVATE_HOST_ALLOWLIST:
         secret: false
         value: ["weave-knowledge"]

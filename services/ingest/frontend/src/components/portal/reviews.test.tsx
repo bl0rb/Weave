@@ -57,6 +57,40 @@ it('requires explicit confirmation and submits exactly the preview hash', async 
   expect(JSON.parse(mutation?.[1]?.body as string)).toEqual({ markdown_sha256: content.markdown_sha256 });
 });
 
+it('shows who uploaded and last edited the document', async () => {
+  mockDocument({ source: { ...content.source, uploaded_by: 'ada', uploaded_at: '2026-09-01T12:00:00Z', edited_by: 'bo', edited_at: '2026-09-20T08:00:00Z' } });
+  render(<ReviewDocument id="doc" />);
+  expect(await screen.findByText(/^Hochgeladen von ada am /)).toBeTruthy();
+  expect(screen.getByText(/^Bearbeitet von bo am /)).toBeTruthy();
+});
+
+it('edits the markdown and releases it; a released document continues on its new version', async () => {
+  mockDocument({ can_edit: true, release: { id: 'r1', created_at: content.created_at, status: 'sent', error_message: null, released_by: 'anna' } });
+  render(<ReviewDocument id="doc" />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Bearbeiten' }));
+  const save = screen.getByRole('button', { name: 'Speichern & freigeben' });
+  expect((save as HTMLButtonElement).disabled).toBe(true);  // nothing changed yet
+  expect(screen.getByText(/bis ein geändertes Dokument – ein neuer Upload oder Sync – freigegeben wird/)).toBeTruthy();
+  fireEvent.change(screen.getByRole('textbox', { name: 'Markdown-Inhalt' }), { target: { value: 'Korrigierter Text' } });
+
+  api.mockRejectedValueOnce(new ApiError(409, 'Explicit confirmation of quality grade C is required'));
+  fireEvent.click(save);
+  const gradeC = await screen.findByRole('checkbox', { name: /nur Qualitätsstufe C/ });
+  expect((save as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(gradeC);
+  api.mockResolvedValueOnce({ document_id: 'doc-v2', document_version: 2, release: { id: 'r2', created_at: content.created_at, status: 'pending', error_message: null, released_by: 'anna' } });
+  fireEvent.click(save);
+  await waitFor(() => expect(push).toHaveBeenCalledWith('/reviews/doc-v2'));
+  const [, init] = api.mock.calls.filter(([path]) => path === '/api/v1/portal/documents/doc/edit').at(-1)!;
+  expect(JSON.parse(init?.body as string)).toEqual({ markdown: 'Korrigierter Text', markdown_sha256: content.markdown_sha256, accept_quality_warning: true });
+});
+
+it('offers no editor without the right to edit', async () => {
+  render(<ReviewDocument id="doc" />);
+  await screen.findByText('Herkunft');
+  expect(screen.queryByRole('button', { name: 'Bearbeiten' })).toBeNull();
+});
+
 it('deletes an unreleased document only after danger confirmation', async () => {
   render(<ReviewDocument id="doc" />);
   fireEvent.click(await screen.findByRole('button', { name: 'Dokument löschen' }));

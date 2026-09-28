@@ -982,6 +982,10 @@ def _to_source(chunk: RetrievedChunk) -> Source:
         score=_score_for(chunk),
         collection=chunk.collection,
         images=_images_for(chunk),
+        source_kind=chunk.source_kind,
+        source_url=chunk.source_url,
+        uploaded_by=chunk.uploaded_by,
+        uploaded_at=chunk.uploaded_at,
     )
 
 

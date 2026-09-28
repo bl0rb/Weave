@@ -31,7 +31,6 @@ from app.models.models import (
     Job,
     KnowledgeWithdrawal,
     JobArtifact,
-    JobMarkdownVersion,
     JobStatus,
     ManagedBot,
     Tag,
@@ -91,7 +90,6 @@ from app.services.collection_access import (
     registry_acl,
     role_at_least,
 )
-from app.services.field_validation import validate_document
 from app.services.paddle_service import (
     effective_pipeline_profile_id,
     get_paddle_capabilities,
@@ -100,7 +98,7 @@ from app.services.paddle_service import (
     resolve_profile_selection,
     update_paddle_settings,
 )
-from app.services.quality_gate import evaluate_document_quality
+from app.services.markdown_edit import record_markdown_version
 from app.services.security import DUMMY_PASSWORD_HASH, enforce_rate_limit, hash_password, verify_password
 from app.services.storage import build_result_path, save_upload
 from app.workers import publication_tasks
@@ -2363,51 +2361,8 @@ def save_markdown(
     if not content.startswith('---\n'):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='Markdown must start with YAML frontmatter')
 
-    # Copy rather than alias job.processing_info: mutating the attribute's own
-    # backing dict in place before reassigning it defeats SQLAlchemy's dirty
-    # check (old and new end up `==`), so the UPDATE for this column would be
-    # silently skipped and the edit lost on the next read.
-    info = dict(job.processing_info) if isinstance(job.processing_info, dict) else {}
-    editor = info.get('editor') if isinstance(info.get('editor'), dict) else {}
-
-    # DB-first: with no shared volume between backend and worker, version
-    # history is truth-sourced from job_markdown_versions rows rather than
-    # from the (possibly stale, e.g. cleared by a job restart) editor
-    # metadata mirrored below. This also sidesteps the (job_id, version)
-    # unique constraint being violated if processing_info ever drifts from
-    # the version rows already on record.
-    highest_version = db.scalar(
-        select(func.max(JobMarkdownVersion.version)).where(JobMarkdownVersion.job_id == job.id)
-    ) or 0
-    version = highest_version + 1
-
     now = datetime.now(timezone.utc)
-    db.add(JobMarkdownVersion(job_id=job.id, version=version, content=payload.markdown, created_at=now))
-
-    # Legacy on-disk '.v{n}.md' files are gone; 'path' keys stay in the JSON
-    # shape for backward compatibility but are now always null.
-    versions = list(editor.get('versions')) if isinstance(editor.get('versions'), list) else []
-    versions.append({'version': version, 'path': None, 'updated_at': now.isoformat()})
-    info['editor'] = {
-        'version': version,
-        'latest_result_path': None,
-        'updated_at': now.isoformat(),
-        'versions': versions,
-    }
-
-    # A manual edit invalidates the OCR-time quality gate (grade/score/signals
-    # all describe the *original* extraction, not the reviewer's rewrite) --
-    # recompute it against the saved markdown so review-UI badges/filters and
-    # the 'Warum Stufe X?' breakdown reflect what was actually released.
-    execution = info.get('execution') if isinstance(info.get('execution'), dict) else None
-    if isinstance(execution, dict) and execution.get('quality_gate'):
-        info['execution'] = {
-            **execution,
-            'quality_gate': evaluate_document_quality(content, field_validation=validate_document(content)),
-        }
-
-    job.processing_info = {**info}
-    job.result_markdown = payload.markdown
+    version = record_markdown_version(db, job, payload.markdown, now)
     db.commit()
 
     return JobSaveResponse(

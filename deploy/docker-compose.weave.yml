@@ -340,6 +340,7 @@ services:
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
       CHAT_LLM_PRIVATE_HOST_ALLOWLIST: '${CHAT_LLM_PRIVATE_HOST_ALLOWLIST:-["host.docker.internal","ollama","vllm","llm"]}'
+      SYSTEM_STATUS_TARGETS: '${SYSTEM_STATUS_TARGETS:-["ingest-frontend=http://weave-ingest-frontend:3000","knowledge=http://weave-knowledge:8000","embeddings=http://weave-embeddings:8000","retrieval=http://weave-retrieval:8000","reranker=http://weave-reranker:8000","runtime=http://weave-runtime:8000","api=http://weave-api:8000","tools=http://weave-tools-backend:8000","tools-mcp=http://weave-tools-mcp:8000","chat=http://weave-tools-frontend:3000"]}'
       WEBHOOK_PRIVATE_HOST_ALLOWLIST: '${WEBHOOK_PRIVATE_HOST_ALLOWLIST:-["weave-knowledge"]}'
     volumes:
       - storage:/app/backend/storage:rw

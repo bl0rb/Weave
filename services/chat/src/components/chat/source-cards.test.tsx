@@ -56,6 +56,22 @@ describe('SourceCards', () => {
     expect(images[0].getAttribute('src')).toBe('/api/portal-artifacts/rel-1/diagram.png');
   });
 
+  it('links a wiki source to its exact page and names the uploader of an upload', () => {
+    render(<SourceCards sources={[
+      makeSource({ chunk_id: 1, source_kind: 'confluence', source_url: 'https://wiki.example/pages/42' }),
+      makeSource({ chunk_id: 2, source: '3f2a.pdf', source_kind: 'upload', uploaded_by: 'ada', uploaded_at: '2026-09-28T10:00:00+00:00' }),
+      makeSource({ chunk_id: 3, source_kind: 'upload', source_url: 'javascript:alert(1)' }),
+    ]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Belege (3)' }));
+    const link = screen.getByRole('link', { name: 'Wiki-Seite öffnen' });
+    expect(link.getAttribute('href')).toBe('https://wiki.example/pages/42');
+    expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(screen.getByText('Hochgeladen von ada am 28.9.2026')).toBeTruthy();
+    // Never a link for anything but http(s); the internal file name is not shown either.
+    expect(screen.getAllByRole('link')).toHaveLength(1);
+    expect(screen.queryByText('Quelle: 3f2a.pdf')).toBeNull();
+  });
+
   it('renders no image strip when no source carries images', () => {
     render(<SourceCards sources={[makeSource({})]} />);
     expect(screen.queryByText('Bilder aus den Quellen')).toBeNull();

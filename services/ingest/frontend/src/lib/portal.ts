@@ -22,7 +22,13 @@ export type KnowledgeSpace = {
   created_by: { id: string; username: string } | null; responsible_team: TeamRef | null;
 };
 export type Publication = { id: string; created_at: string; status: 'pending' | 'sent' | 'failed'; error_message: string | null; released_by: string | null };
-export type PortalSource = { kind: 'upload' | 'confluence' | 'mail' | 'unknown'; label: string; path: string | null; url: string | null };
+export type PortalSource = {
+  kind: 'upload' | 'confluence' | 'mail' | 'unknown'; label: string; path: string | null; url: string | null;
+  /** Uploader (for Confluence: who ran the import) and when; kept by an edited version. */
+  uploaded_by?: string | null; uploaded_at?: string | null;
+  /** Last change made in the portal editor. */
+  edited_by?: string | null; edited_at?: string | null;
+};
 export type PortalDocument = {
   id: string; original_filename: string; status: 'PENDING' | 'RUNNING' | 'FINISHED' | 'FAILED';
   collection_id: string; collection_name: string; created_at: string;
@@ -47,7 +53,10 @@ export type QualityMissingReason = 'not_finished' | 'failed' | 'legacy' | 'impor
 export type DocumentPreview = PortalDocument & {
   markdown: string; markdown_sha256: string; profile_id: string | null; can_reprocess: boolean;
   quality: QualityDetail | null; quality_missing_reason: QualityMissingReason | null;
+  /** The portal editor may change this document (and releases the change). */
+  can_edit?: boolean;
 };
+export type PortalEditResult = { document_id: string; document_version: number; release: Publication };
 export type PortalConfig = { publication_configured: boolean; team_name: string | null; team_names: string[]; teams: TeamRef[] };
 export const jsonBody = (body: unknown): RequestInit => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
@@ -174,6 +183,17 @@ export function skipPortalDocument(jobId: string): Promise<PortalDocument> {
 
 export function unskipPortalDocument(jobId: string): Promise<PortalDocument> {
   return apiJson(`/api/v1/portal/documents/${encodeURIComponent(jobId)}/unskip`, { method: 'POST' });
+}
+
+/**
+ * Save an edited Markdown and release it at once. A released document gets a
+ * new version (``document_id`` differs); the change applies until a changed
+ * source (new upload or sync) is released.
+ */
+export function editPortalDocument(jobId: string, markdown: string, markdownSha256: string, acceptQualityWarning = false): Promise<PortalEditResult> {
+  return apiJson(`/api/v1/portal/documents/${encodeURIComponent(jobId)}/edit`, jsonBody({
+    markdown, markdown_sha256: markdownSha256, ...(acceptQualityWarning ? { accept_quality_warning: true } : {}),
+  }));
 }
 
 export function reindexPortalDocument(jobId: string): Promise<Publication> {

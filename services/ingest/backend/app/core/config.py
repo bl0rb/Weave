@@ -99,6 +99,11 @@ class Settings(BaseSettings):
     bootstrap_admin_password: str = ''
     runtime_bots_base_url: str = 'http://weave-runtime:8000'
     runtime_api_token: str = ''
+    # System status (app/services/system_status.py): one "component=base URL"
+    # entry per Weave service Weave-Ingest probes for the portal sidebar and
+    # the admin page. A component left out is not part of this installation
+    # and not shown; database, broker and the Ingest worker are always checked.
+    system_status_targets: list[str] = []
 
     # Celery worker log capture into worker_log_entries (see
     # app/workers/log_capture.py) -- lets the admin UI tail worker container

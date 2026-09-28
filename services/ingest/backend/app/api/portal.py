@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import logging
 from pathlib import Path
@@ -11,7 +12,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import PlainTextResponse, Response, StreamingResponse
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import defer
 from sqlalchemy.orm.attributes import flag_modified
@@ -62,6 +63,8 @@ from app.schemas.portal import (
     PortalDocumentItem,
     PortalDocumentListResponse,
     PortalDocumentSource,
+    PortalEditRequest,
+    PortalEditResponse,
     PortalQualityDetail,
     PortalReindexCollectionResponse,
     PortalReleaseRequest,
@@ -70,13 +73,16 @@ from app.schemas.portal import (
     PortalReprocessResponse,
 )
 from app.services.backup import requeue_collection_releases_for_reindex
+from app.services.markdown_edit import record_markdown_version
 from app.services.publications import (
     PublicationValidationError,
     _markdown_from_job,
+    _parse_frontmatter,
     build_release_payload,
     canonical_snapshot,
     publication_configured,
     release_endpoint,
+    restore_relative_image_urls,
     rewrite_release_image_urls,
 )
 from app.workers import publication_tasks
@@ -198,7 +204,31 @@ def _confluence_label(title: str | None) -> str:
     return title[:-3] if title.lower().endswith('.md') else title
 
 
-def _source(job: Job, page_state: ImportPageState | None, mail: tuple[str, str] | None) -> PortalDocumentSource:
+def _iso(value) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _provenance(job: Job, uploaded_by: str | None) -> dict:
+    """Uploader and last portal edit. An edited version is a new Job, so the
+    original upload time travels along in processing_info."""
+    info = job.processing_info if isinstance(job.processing_info, dict) else {}
+    edit = info.get('portal_edit') if isinstance(info.get('portal_edit'), dict) else {}
+    return {
+        'uploaded_by': uploaded_by,
+        'uploaded_at': _iso(info.get('source_uploaded_at')) or job.created_at,
+        'edited_by': edit.get('by') if isinstance(edit.get('by'), str) else None,
+        'edited_at': _iso(edit.get('at')),
+    }
+
+
+def _source(
+    job: Job, page_state: ImportPageState | None, mail: tuple[str, str] | None, uploaded_by: str | None = None
+) -> PortalDocumentSource:
     """Resolve where a document came from, for the portal's Herkunft display.
 
     Confluence pages and mail attachments are identified by their Job
@@ -219,10 +249,13 @@ def _source(job: Job, page_state: ImportPageState | None, mail: tuple[str, str] 
                 label=_confluence_label(page_state.title),
                 path=None,
                 url=page_state.url or None,
+                **_provenance(job, uploaded_by),
             )
         import_settings = _settings_for_job(job).get('import')
         fallback_url = import_settings.get('source_url') if isinstance(import_settings, dict) else None
-        return PortalDocumentSource(kind='confluence', label='Confluence-Seite', path=None, url=fallback_url)
+        return PortalDocumentSource(
+            kind='confluence', label='Confluence-Seite', path=None, url=fallback_url, **_provenance(job, uploaded_by)
+        )
     if job.mail_message_id:
         if mail is not None:
             subject, from_address = mail
@@ -232,9 +265,11 @@ def _source(job: Job, page_state: ImportPageState | None, mail: tuple[str, str] 
                 label = f'E-Mail von {from_address}'
             else:
                 label = 'E-Mail-Anhang'
-            return PortalDocumentSource(kind='mail', label=label, path=None, url=None)
+            return PortalDocumentSource(kind='mail', label=label, path=None, url=None, **_provenance(job, uploaded_by))
         return PortalDocumentSource(kind='unknown', label='Unbekannte Herkunft', path=None, url=None)
-    return PortalDocumentSource(kind='upload', label='Hochgeladen', path=_job_folder_path(job), url=None)
+    return PortalDocumentSource(
+        kind='upload', label='Hochgeladen', path=_job_folder_path(job), url=None, **_provenance(job, uploaded_by)
+    )
 
 
 def _can_release_light(db, job: Job, collection: Collection, user: User) -> bool:
@@ -277,6 +312,65 @@ def _can_reprocess_light(
     return _job_is_controlled(db, job, collection, user)
 
 
+def _newer_version_exists(db, job: Job) -> bool:
+    return db.scalar(select(Job.id).where(Job.previous_job_id == job.id).limit(1)) is not None
+
+
+def _can_edit(db, job: Job, collection: Collection, user: User) -> bool:
+    """The portal editor releases what it saves, so the same people and
+    preconditions as a release apply -- and only on the newest version: an
+    edit of an older one would fork the version chain."""
+    if not publication_configured() or job.status != JobStatus.FINISHED or job.password_hash:
+        return False
+    if not _markdown_from_job(job) or db.get(KnowledgeWithdrawal, job.id) is not None:
+        return False
+    if not _import_run_finished(db, job) or _newer_version_exists(db, job):
+        return False
+    return _job_is_controlled(db, job, collection, user)
+
+
+def _new_edit_version(db, job: Job) -> Job:
+    """A released version is immutable, so an edit of it becomes the next
+    version of the same document -- chained like a re-upload, carrying
+    everything that identifies its source (collection, import, mail, upload
+    bytes, artifacts). Knowledge then supersedes the old version."""
+    info = copy.deepcopy(job.processing_info) if isinstance(job.processing_info, dict) else {}
+    info.pop('portal_review', None)
+    info.pop('editor', None)  # the Markdown version history is per job
+    info['source_uploaded_at'] = info.get('source_uploaded_at') or job.created_at.isoformat()
+    edited = Job(
+        id=str(uuid.uuid4()),
+        original_filename=job.original_filename,
+        # Shared with the predecessor on purpose; upload_content is the
+        # authoritative copy (no shared volume between backend and worker).
+        upload_path=job.upload_path,
+        upload_content=job.upload_content,
+        upload_mime_type=job.upload_mime_type,
+        upload_size_bytes=job.upload_size_bytes,
+        status=JobStatus.FINISHED,
+        processing_info=info,
+        owner_id=job.owner_id,
+        import_run_id=job.import_run_id,
+        mail_message_id=job.mail_message_id,
+        content_sha256=job.content_sha256,
+        document_version=job.document_version + 1,
+        previous_job_id=job.id,
+        tags=list(job.tags),
+    )
+    db.add(edited)
+    for artifact in db.scalars(select(JobArtifact).where(JobArtifact.job_id == job.id)):
+        db.add(JobArtifact(
+            job_id=edited.id, kind=artifact.kind, filename=artifact.filename, content_type=artifact.content_type,
+            content=artifact.content, size_bytes=artifact.size_bytes, source_url=artifact.source_url,
+            sha256=artifact.sha256,
+        ))
+    db.flush()  # the page state below references the new row
+    # The next Confluence sync must chain onto the edit (or skip an unchanged
+    # page and keep it), never fork a second version off the original.
+    db.execute(update(ImportPageState).where(ImportPageState.job_id == job.id).values(job_id=edited.id))
+    return edited
+
+
 def _item(
     db,
     job: Job,
@@ -291,6 +385,7 @@ def _item(
     source: PortalDocumentSource | None = None,
     page_state: ImportPageState | None = None,
     mail: tuple[str, str] | None = None,
+    uploaded_by: str | None = None,
 ) -> PortalDocumentItem:
     grade, recommendation = _quality(job)
     return PortalDocumentItem(
@@ -304,7 +399,7 @@ def _item(
         quality_recommendation=(quality_recommendation if quality_recommendation is not None else recommendation),
         can_release=_can_release_light(db, job, collection, user) if can_release is None else can_release,
         release=_summary(release, released_by),
-        source=source if source is not None else _source(job, page_state, mail),
+        source=source if source is not None else _source(job, page_state, mail, uploaded_by),
         review_decision=_review_decision(job),
     )
 
@@ -523,6 +618,7 @@ def list_portal_documents(
     jobs = [row[0] for row in rows]
     releases = [row[2] for row in rows if row[2] is not None]
     owner_ids = {release.owner_id for release in releases if release.owner_id}
+    owner_ids |= {job.owner_id for job in jobs if job.owner_id}
     owner_usernames = {
         owner_id: username
         for owner_id, username in db.execute(select(User.id, User.username).where(User.id.in_(owner_ids))).all()
@@ -556,6 +652,7 @@ def list_portal_documents(
                 released_by=owner_usernames.get(row[2].owner_id) if row[2] is not None else None,
                 page_state=page_states_by_job.get(row[0].id),
                 mail=mail_by_id.get(row[0].mail_message_id),
+                uploaded_by=owner_usernames.get(row[0].owner_id) if row[0].owner_id else None,
             )
             for row in rows
         ],
@@ -582,6 +679,9 @@ def get_portal_document(job_id: str, db=Depends(get_db), user: User = Depends(ge
         ).first()
         mail = tuple(mail_row) if mail_row is not None else None
     quality, quality_missing_reason = _quality_detail(job)
+    uploader = db.get(User, job.owner_id) if job.owner_id else None
+    uploaded_by = uploader.username if uploader is not None else None
+    can_edit = _can_edit(db, job, collection, user)
     if release is not None:
         return PortalDocumentDetail(
             **_item(
@@ -590,6 +690,7 @@ def get_portal_document(job_id: str, db=Depends(get_db), user: User = Depends(ge
                 released_by=released_by,
                 page_state=page_state,
                 mail=mail,
+                uploaded_by=uploaded_by,
             ).model_dump(),
             markdown=release.markdown_snapshot,
             markdown_sha256=release.markdown_sha256,
@@ -597,6 +698,7 @@ def get_portal_document(job_id: str, db=Depends(get_db), user: User = Depends(ge
             can_reprocess=False,
             quality=quality,
             quality_missing_reason=quality_missing_reason,
+            can_edit=can_edit,
         )
     try:
         markdown, digest, _ = canonical_snapshot(db, job, collection)
@@ -609,6 +711,7 @@ def get_portal_document(job_id: str, db=Depends(get_db), user: User = Depends(ge
             released_by=released_by,
             page_state=page_state,
             mail=mail,
+            uploaded_by=uploaded_by,
         ).model_dump(),
         markdown=markdown,
         markdown_sha256=digest,
@@ -616,6 +719,7 @@ def get_portal_document(job_id: str, db=Depends(get_db), user: User = Depends(ge
         can_reprocess=_can_reprocess_light(db, job, collection, user, release),
         quality=quality,
         quality_missing_reason=quality_missing_reason,
+        can_edit=can_edit,
     )
 
 
@@ -934,6 +1038,73 @@ def release_collection_documents(
         except Exception:
             logger.exception('publication queue unavailable for release %s', release.id)
     return PortalCollectionReleaseResponse(released=len(releases), skipped=skipped)
+
+
+@router.post('/documents/{job_id}/edit', response_model=PortalEditResponse, status_code=status.HTTP_202_ACCEPTED)
+def edit_portal_document(
+    job_id: str,
+    payload: PortalEditRequest,
+    db=Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> PortalEditResponse:
+    """Change a document's Markdown and release the change at once.
+
+    The change stays the published version until a changed source -- a new
+    upload or a Confluence sync of a changed page -- brings the next one. An
+    unreleased version is edited in place; a released one becomes a new
+    version (see _new_edit_version). Save and release share one transaction:
+    if the release is refused (quality gate, grade C without confirmation),
+    nothing is stored.
+    """
+    if not publication_configured():
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Portal publication is not configured')
+    job = _load_visible_job(db, job_id, user, for_update=True)
+    collection = _collection_for_job(db, job)
+    if collection is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Job has no known collection')
+    _protected(job)
+    if not _job_is_controlled(db, job, collection, user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='User cannot edit this document')
+    if _newer_version_exists(db, job):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='A newer version of this document exists')
+    if not _can_edit(db, job, collection, user):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Document cannot be edited in its current state')
+    release = db.scalar(select(DocumentRelease).where(DocumentRelease.job_id == job.id))
+    current = release.markdown_sha256 if release is not None else None
+    if current is None:
+        try:
+            current = canonical_snapshot(db, job, collection)[1]
+        except PublicationValidationError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if current != payload.markdown_sha256.lower():
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Markdown changed; refresh the document preview')
+
+    markdown = payload.markdown.replace('\r\n', '\n')
+    if release is not None:
+        markdown = restore_relative_image_urls(markdown, release.id)
+    try:
+        _parse_frontmatter(markdown.strip())
+    except PublicationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    now = datetime.now(timezone.utc)
+    target = _new_edit_version(db, job) if release is not None else job
+    record_markdown_version(db, target, markdown, now)
+    info = dict(target.processing_info) if isinstance(target.processing_info, dict) else {}
+    info['portal_edit'] = {'by': user.username, 'by_id': user.id, 'at': now.isoformat()}
+    target.processing_info = info
+    db.flush()
+    try:
+        digest = canonical_snapshot(db, target, collection)[1]
+    except PublicationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    summary = release_portal_document(
+        target.id,
+        PortalReleaseRequest(markdown_sha256=digest, accept_quality_warning=payload.accept_quality_warning),
+        db,
+        user,
+    )
+    return PortalEditResponse(document_id=target.id, document_version=target.document_version, release=summary)
 
 
 @router.post('/documents/bulk', response_model=PortalBulkActionResponse)

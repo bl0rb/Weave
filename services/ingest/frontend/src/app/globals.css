@@ -168,6 +168,7 @@ body :is(a, button, input, select, textarea):focus-visible {
 .portal-description { margin-top: 14px; max-width: 680px; font-size: 15px; line-height: 1.65; color: var(--muted); }
 .portal-actions { display: flex; flex-wrap: wrap; max-width: 100%; flex-shrink: 0; }
 .portal-panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-card); min-width: 0; overflow: hidden; box-shadow: 0 1px 2px rgb(0 0 0 / 5%); }
+.portal-page > .portal-panel + .portal-panel { margin-top: 10px; }
 .portal-section-heading { padding: 16px 20px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--line); }
 .portal-panel h2, .portal-assurance h2 { font-weight: 600; font-size: 17px; }
 .portal-section-heading .portal-eyebrow { margin-bottom: 5px; }

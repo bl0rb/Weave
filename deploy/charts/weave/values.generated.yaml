@@ -89,6 +89,7 @@ config:
     RERANK_PROVIDER: "none"
     RUNTIME_BOTS_BASE_URL: "http://weave-runtime:8000"
     SERVICE_NAME: "ingest-worker"
+    SYSTEM_STATUS_TARGETS: "[\"ingest-frontend=http://weave-ingest-frontend:3000\",\"knowledge=http://weave-knowledge:8000\",\"embeddings=http://weave-embeddings:8000\",\"retrieval=http://weave-retrieval:8000\",\"reranker=http://weave-reranker:8000\",\"runtime=http://weave-runtime:8000\",\"api=http://weave-api:8000\",\"tools=http://weave-tools-backend:8000\",\"tools-mcp=http://weave-tools-mcp:8000\",\"chat=http://weave-tools-frontend:3000\"]"
     WEAVE_INGEST_PUBLIC_API_URL: ""
     WEAVE_INGEST_TAG: "latest"
     WEBHOOK_PRIVATE_HOST_ALLOWLIST: "[\"weave-knowledge\"]"

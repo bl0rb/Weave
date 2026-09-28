@@ -271,7 +271,7 @@ export default function ImportRunPage() {
               <span className="text-xs text-slate-500">{t('portal.importDetail.entryCount', { count: run.errors.length })}</span>
             </button>
             {errorsOpen && (
-              <ul className="mt-3 space-y-2">
+              <ul className="mt-3 space-y-2.5">
                 {run.errors.map((entry, index) => (
                   <li
                     key={`${entry.page_id}-${index}`}

@@ -81,6 +81,13 @@ export interface Source {
    * see components/chat/source-cards.tsx.
    */
   images?: string[];
+  /** Provenance (Weave-Runtime's Source, contracts/internal-chat.md): where
+   * the document came from, the exact wiki link (http(s) only), who
+   * uploaded it and when. Missing for documents released before. */
+  source_kind?: 'upload' | 'confluence' | 'mail' | string | null;
+  source_url?: string | null;
+  uploaded_by?: string | null;
+  uploaded_at?: string | null;
 }
 
 export interface RetrievalTrace {

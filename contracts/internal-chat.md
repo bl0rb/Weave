@@ -74,6 +74,10 @@ Collections, anschließend eingeschränkt durch Bot- und Anfragefilter.
 | `document_id` | `string` | |
 | `chunk_id` | `int` | |
 | `score` | `float \| null` | `rerank`-Score falls vorhanden, sonst `rrf` — siehe `backend/app/services/chat.py:_score_for`. |
+| `source_kind` | `string \| null` | Herkunft: `upload`, `confluence` oder `mail` (Frontmatter von Weave-Ingest). `null` bei Dokumenten, die vor Einführung der Herkunftsangaben freigegeben wurden. |
+| `source_url` | `string \| null` | Exakter Link auf die Quelle, bei Confluence die Seite. Nur `http(s)`; alles andere wird zu `null` (gilt auch für von n8n gemeldete Quellen). |
+| `uploaded_by` | `string \| null` | Benutzername der Person, die das Dokument hochgeladen bzw. importiert hat. |
+| `uploaded_at` | `string \| null` | Zeitpunkt des ursprünglichen Uploads bzw. Imports (ISO 8601); eine im Portal bearbeitete Version behält ihn. |
 
 `ChatTrace`:
 

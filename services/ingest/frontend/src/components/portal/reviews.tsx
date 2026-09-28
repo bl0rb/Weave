@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Ban, CheckCheck, Download, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
+import { Ban, CheckCheck, Download, Pencil, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { ApiError, apiJson } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -12,6 +12,7 @@ import { MarkdownView } from '@/components/markdown/markdown-view';
 import { bulkPortalAction, dateLabel, documentState, downloadPortalFile, jsonBody, loadDocuments, markdownDownloadName, portalError, reindexPortalDocument, skipPortalDocument, unskipPortalDocument, type DocumentPage, type DocumentPreview, type PortalConfig, type QualityGradeFilter, type Publication, type ReviewStateFilter } from '@/lib/portal';
 import { BulkActionBar, DocumentTable, EmptyState, Notice, Pagination, PortalPage, QualityGradeFilterRow, QualityGradeLegend } from './shared';
 import { ReprocessForm } from './reprocess-form';
+import { MarkdownEditor } from './markdown-editor';
 import { IndexingProgress } from './indexing-progress';
 import { useIndexingStatus } from '@/lib/use-indexing-status';
 import { currentReleaseStatus } from '@/lib/indexing-status';
@@ -94,6 +95,27 @@ export function ReviewInbox() {
   </PortalPage>;
 }
 
+/** "Hochgeladen von … am …" and "Bearbeitet von … am …" for the origin row. */
+function provenance(preview: DocumentPreview, t: (key: MessageKey, vars?: Record<string, string | number>) => string, locale: Locale): string[] {
+  const source = preview.source;
+  if (!source) return [];
+  const lines: string[] = [];
+  const date = source.uploaded_at ? dateLabel(source.uploaded_at, locale) : null;
+  const name = source.uploaded_by;
+  if (source.kind === 'mail') {
+    if (date) lines.push(t('portal.reviews.receivedOn', { date }));
+  } else if (source.kind === 'confluence') {
+    if (name && date) lines.push(t('portal.reviews.importedByOn', { name, date }));
+    else if (date) lines.push(t('portal.reviews.importedOn', { date }));
+  } else if (name && date) {
+    lines.push(t('portal.reviews.uploadedByOn', { name, date }));
+  } else if (date) {
+    lines.push(t('portal.reviews.uploadedOn', { date }));
+  }
+  if (source.edited_by && source.edited_at) lines.push(t('portal.reviews.editedByOn', { name: source.edited_by, date: dateLabel(source.edited_at, locale) }));
+  return lines;
+}
+
 export function ReviewDocument({ id }: { id: string }) {
   return <ReviewDocumentContent key={id} id={id} />;
 }
@@ -113,6 +135,7 @@ function ReviewDocumentContent({ id }: { id: string }) {
   const [downloadingDiagnostics, setDownloadingDiagnostics] = useState(false);
   const [skipping, setSkipping] = useState(false);
   const [confirmReindex, setConfirmReindex] = useState(false);
+  const [editing, setEditing] = useState(false);
   const startedHeading = useRef<HTMLHeadingElement>(null);
   // Latest locale for error text without making it a `load` dependency: a
   // language switch must not reload and reset the confirmation/reprocess form.
@@ -199,9 +222,15 @@ function ReviewDocumentContent({ id }: { id: string }) {
       <div className="portal-form-actions"><Link href="/processing" className={buttonVariants()}>{t('portal.reviews.viewProcessing')}</Link><Link href="/reviews" className={buttonVariants({ variant: 'ghost' })}>{t('portal.reviews.backToReview')}</Link></div>
     </section>}
     {preview && !reprocessStarted && <><div className="portal-context-bar"><Link href={`/knowledge/${preview.collection_id}`}>{preview.collection_name}</Link><span aria-live="polite" className={`portal-badge portal-badge-${state?.tone}`}>{state?.label}</span></div>
-      <div className="portal-review-grid"><article className="portal-panel portal-preview"><h2>{preview.release ? t('portal.reviews.releasedHeading') : t('portal.reviews.processedHeading')}</h2><p className="portal-field-hint">{t('portal.reviews.previewHint')}</p><MarkdownView markdown={preview.markdown} jobId={preview.id} /></article>
+      <div className="portal-review-grid"><article className="portal-panel portal-preview"><div className="flex flex-wrap items-start justify-between gap-3"><h2>{editing ? t('portal.reviews.editHeading') : preview.release ? t('portal.reviews.releasedHeading') : t('portal.reviews.processedHeading')}</h2>{preview.can_edit && !editing && <Button variant="outline" size="sm" onClick={() => { setEditing(true); setError(''); }}><Pencil size={15} />{t('portal.reviews.editAction')}</Button>}</div>
+        {editing ? <MarkdownEditor preview={preview} onCancel={() => setEditing(false)} onSaved={result => {
+          setEditing(false);
+          // A released document gets a new version: continue on that one.
+          if (result.document_id !== preview.id) router.push(`/reviews/${encodeURIComponent(result.document_id)}`);
+          else void load();
+        }} /> : <><p className="portal-field-hint">{t('portal.reviews.previewHint')}</p><MarkdownView markdown={preview.markdown} jobId={preview.id} /></>}</article>
       <aside className="portal-panel portal-release-panel"><ShieldCheck size={27} /><h2>{reprocessOpen ? t('portal.reviews.reprocessHeading') : t('portal.reviews.releaseHeading')}</h2>
-        <dl><dt>{t('portal.reviews.qualityLabel')}</dt><dd>{preview.quality_grade ? t('portal.documents.grade', { grade: preview.quality_grade }) : t('portal.reviews.noAutoRating')}</dd><dt>{t('portal.reviews.originLabel')}</dt><dd>{preview.source?.url ? <a href={preview.source.url} target="_blank" rel="noopener noreferrer">{preview.source.label}</a> : preview.source?.path ? `${preview.source.label}: ${preview.source.path}` : preview.source?.label}</dd><dt>{t('portal.documents.columnAdded')}</dt><dd>{dateLabel(preview.created_at, locale)}</dd></dl>
+        <dl><dt>{t('portal.reviews.qualityLabel')}</dt><dd>{preview.quality_grade ? t('portal.documents.grade', { grade: preview.quality_grade }) : t('portal.reviews.noAutoRating')}</dd><dt>{t('portal.reviews.originLabel')}</dt><dd>{preview.source?.url ? <a href={preview.source.url} target="_blank" rel="noopener noreferrer">{preview.source.label}</a> : preview.source?.path ? `${preview.source.label}: ${preview.source.path}` : preview.source?.label}{provenance(preview, t, locale).map(line => <span key={line} className="block text-[13px] text-[var(--muted)]">{line}</span>)}</dd><dt>{t('portal.documents.columnAdded')}</dt><dd>{dateLabel(preview.created_at, locale)}</dd></dl>
         <details className="portal-quality-reason"><summary>{preview.quality_grade ? t('portal.reviews.whyGrade', { grade: preview.quality_grade }) : t('portal.reviews.whyNoGrade')}</summary>
           {preview.quality ? <>
             <ul>

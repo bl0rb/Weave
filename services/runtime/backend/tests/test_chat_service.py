@@ -479,6 +479,19 @@ def test_images_for_ignores_relative_and_non_http_image_links():
     assert urls == []
 
 
+def test_to_source_carries_provenance_and_keeps_only_web_links():
+    source = _to_source(_chunk(
+        source_kind='confluence', source_url='https://wiki.example/pages/42', uploaded_by='ada',
+        uploaded_at='2026-09-28T10:00:00+00:00',
+    ))
+    assert (source.source_kind, source.source_url, source.uploaded_by, source.uploaded_at) == (
+        'confluence', 'https://wiki.example/pages/42', 'ada', '2026-09-28T10:00:00+00:00',
+    )
+    assert _to_source(_chunk(source_url='javascript:alert(1)')).source_url is None
+    # An n8n flow's own claim goes through the same check.
+    assert Source(source='x', document_id='d', chunk_id=1, source_url='data:text/html,x').source_url is None
+
+
 def test_to_source_propagates_images_from_chunk_text():
     source = _to_source(_chunk(text='![a](https://x.example/a.png)'))
     assert source.images == ['https://x.example/a.png']

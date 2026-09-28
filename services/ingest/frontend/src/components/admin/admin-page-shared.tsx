@@ -106,36 +106,40 @@ export function SectionTabs<T extends string>({
     }
   };
 
+  // Block wrapper: `.portal-page > *` centres children with auto margins,
+  // which an inline-flex tablist ignores -- it would sit left of the column.
   return (
-    <div
-      role="tablist"
-      aria-label={ariaLabel}
-      className="mb-6 inline-flex flex-wrap gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1 shadow-sm"
-    >
-      {tabs.map(({ id, label, icon: Icon }) => {
-        const isActive = active === id;
-        return (
-          <button
-            key={id}
-            ref={(el) => {
-              refs.current[id] = el;
-            }}
-            id={`${idPrefix}-tab-${id}`}
-            role="tab"
-            aria-selected={isActive}
-            aria-controls={`${idPrefix}-panel-${id}`}
-            tabIndex={isActive ? 0 : -1}
-            onClick={() => onChange(id)}
-            onKeyDown={(event) => onKeyDown(event, id)}
-            className={`flex h-10 items-center gap-2 rounded-lg px-4 text-sm font-semibold transition ${
-              isActive ? 'bg-emerald-50 text-emerald-800' : 'text-[var(--ink-2)] hover:bg-[var(--hover)] hover:text-[var(--ink)]'
-            }`}
-          >
-            {Icon && <Icon className={`h-4 w-4 ${isActive ? 'text-emerald-700' : 'text-[var(--muted)]'}`} />}
-            {label}
-          </button>
-        );
-      })}
+    <div className="mb-6">
+      <div
+        role="tablist"
+        aria-label={ariaLabel}
+        className="inline-flex flex-wrap gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1 shadow-sm"
+      >
+        {tabs.map(({ id, label, icon: Icon }) => {
+          const isActive = active === id;
+          return (
+            <button
+              key={id}
+              ref={(el) => {
+                refs.current[id] = el;
+              }}
+              id={`${idPrefix}-tab-${id}`}
+              role="tab"
+              aria-selected={isActive}
+              aria-controls={`${idPrefix}-panel-${id}`}
+              tabIndex={isActive ? 0 : -1}
+              onClick={() => onChange(id)}
+              onKeyDown={(event) => onKeyDown(event, id)}
+              className={`flex h-10 items-center gap-2 rounded-lg px-4 text-sm font-semibold transition ${
+                isActive ? 'bg-emerald-50 text-emerald-800' : 'text-[var(--ink-2)] hover:bg-[var(--hover)] hover:text-[var(--ink)]'
+              }`}
+            >
+              {Icon && <Icon className={`h-4 w-4 ${isActive ? 'text-emerald-700' : 'text-[var(--muted)]'}`} />}
+              {label}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

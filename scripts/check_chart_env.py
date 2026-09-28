@@ -205,6 +205,7 @@ DEVIATIONS: dict[str, dict[str, Deviation]] = {
             "SECRET_KEY",
             "SERVICE_NAME",
             "WEBHOOK_PRIVATE_HOST_ALLOWLIST",
+            "SYSTEM_STATUS_TARGETS",
             # Aus dem chat-Block: die liest die Chat-Oberflaeche selbst.
             "CHAT_APP_BASE_URL",
             "WEAVE_API_INGEST_LOGIN_ENABLED",

@@ -37,6 +37,36 @@ export function formatCollection(source: Source, t: Translator = translateDefaul
   return source.collection ?? t('chat.sources.noCollection');
 }
 
+const isWebLink = (value: string | null | undefined): value is string => typeof value === 'string' && /^https?:\/\//.test(value);
+
+/**
+ * Where a source came from: the exact wiki page as a link, or who uploaded
+ * the document and when. Documents released before provenance existed fall
+ * back to the raw `source` label (a link if it is one).
+ */
+export function SourceOrigin({ source }: { source: Source }) {
+  const { t, locale } = useI18n();
+  const date = source.uploaded_at && !Number.isNaN(Date.parse(source.uploaded_at))
+    ? new Date(source.uploaded_at).toLocaleDateString(locale === 'en' ? 'en-GB' : 'de-DE')
+    : null;
+  const link = isWebLink(source.source_url) ? source.source_url : !source.source_kind && isWebLink(source.source) ? source.source : null;
+  if (link) {
+    return <a href={link} target="_blank" rel="noopener noreferrer" className="font-medium text-[var(--accent)] underline-offset-2 hover:underline">
+      {source.source_kind === 'confluence' || !source.source_kind ? t('chat.sources.openWikiPage') : t('chat.sources.openSource')}
+    </a>;
+  }
+  if (source.source_kind === 'mail') {
+    return <span>{date ? t('chat.sources.mailOn', { date }) : t('chat.sources.mail')}</span>;
+  }
+  if (source.source_kind === 'upload') {
+    const name = source.uploaded_by;
+    return <span>{name && date ? t('chat.sources.uploadedByOn', { name, date })
+      : name ? t('chat.sources.uploadedBy', { name })
+        : date ? t('chat.sources.uploadedOn', { date }) : t('chat.sources.uploaded')}</span>;
+  }
+  return source.source ? <span>{t('chat.sourceCards.sourceLabel', { value: source.source })}</span> : null;
+}
+
 /**
  * Renders the chunks that actually backed one answer, clearly as evidence
  * cards — not folded into the answer's own running text — so a reader
@@ -103,7 +133,7 @@ export function SourceCards({ sources }: { sources: Source[] }) {
               </span>
             </div>
             <div className="mt-0.5 flex flex-wrap gap-x-3 text-[var(--muted)]">
-              {source.source ? <span>{t('chat.sourceCards.sourceLabel', { value: source.source })}</span> : null}
+              <SourceOrigin source={source} />
               <span>{t('chat.sources.collectionLabel', { collection: formatCollection(source, t) })}</span>
             </div>
           </li>

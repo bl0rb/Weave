@@ -85,6 +85,23 @@
       "type": "string",
       "description": "Benutzername des Dokumentuploader"
     },
+    "uploaded_at": {
+      "type": "string",
+      "description": "Zeitpunkt des ursprünglichen Uploads bzw. Imports (ISO 8601); eine im Portal bearbeitete Version behält ihn"
+    },
+    "source_kind": {
+      "type": "string",
+      "enum": [
+        "upload",
+        "confluence",
+        "mail"
+      ],
+      "description": "Herkunft des Dokuments; von Weave-Ingest aus den eigenen Datensätzen gesetzt, nicht aus dem editierbaren YAML"
+    },
+    "source_url": {
+      "type": "string",
+      "description": "Exakter Link auf die Quelle (bei Confluence die Seite); nur http(s)"
+    },
     "team": {
       "type": "string",
       "description": "Name des Teams, dem der Uploader angehört"
