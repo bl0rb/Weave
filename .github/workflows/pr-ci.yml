@@ -37,7 +37,7 @@ permissions:
 jobs:
   changes:
     name: Detect Changed Services
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       ingest: ${{ steps.filter.outputs.ingest }}
       knowledge: ${{ steps.filter.outputs.knowledge }}
@@ -90,7 +90,7 @@ jobs:
     name: Platform configuration
     needs: changes
     if: ${{ inputs.run_all || needs.changes.outputs.platform == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -136,7 +136,7 @@ jobs:
     name: Weave-Ingest
     needs: changes
     if: ${{ inputs.run_all || needs.changes.outputs.ingest == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Check out repository
@@ -249,7 +249,7 @@ jobs:
     name: Weave-Knowledge
     needs: changes
     if: ${{ inputs.run_all || needs.changes.outputs.knowledge == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Check out repository
@@ -272,7 +272,7 @@ jobs:
     name: Weave-Retrieval
     needs: changes
     if: ${{ inputs.run_all || needs.changes.outputs.retrieval == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Check out repository
@@ -295,7 +295,7 @@ jobs:
     name: Weave-Runtime
     needs: changes
     if: ${{ inputs.run_all || needs.changes.outputs.runtime == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Check out repository
@@ -325,7 +325,7 @@ jobs:
     name: Weave-API
     needs: changes
     if: ${{ inputs.run_all || needs.changes.outputs.api == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Check out repository
@@ -348,7 +348,7 @@ jobs:
     name: Weave-Tools
     needs: changes
     if: ${{ inputs.run_all || needs.changes.outputs.tools == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Check out repository
@@ -371,7 +371,7 @@ jobs:
     name: Weave-Chat
     needs: changes
     if: ${{ inputs.run_all || needs.changes.outputs.chat == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Check out repository
@@ -410,7 +410,7 @@ jobs:
     name: Weave-Embeddings
     needs: changes
     if: ${{ inputs.run_all || needs.changes.outputs.embeddings == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Check out repository
@@ -435,7 +435,7 @@ jobs:
     name: Weave-Reranker
     needs: changes
     if: ${{ inputs.run_all || needs.changes.outputs.reranker == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Check out repository
