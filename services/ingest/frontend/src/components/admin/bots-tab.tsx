@@ -444,7 +444,7 @@ function AgentEditor({
       <div className="space-y-2">
         <p className="text-sm font-medium text-slate-700">{t('admin.bots.agent.listTitle')}</p>
         {agent.subagents.length === 0 && <p className="text-sm text-amber-700">{t('admin.bots.agent.noSubagents')}</p>}
-        <ul className="space-y-1" aria-label={t('admin.bots.agent.listTitle')}>
+        <ul className="space-y-2.5" aria-label={t('admin.bots.agent.listTitle')}>
           {agent.subagents.map((item, index) => <li key={index}>
             <button type="button" onClick={() => setSelected(index)} aria-current={index === current ? 'true' : undefined}
               className={`w-full rounded-lg border px-3 py-2 text-left text-sm ${index === current ? 'border-[var(--accent)] bg-[var(--accent-soft)]' : 'border-[var(--line-2)] hover:bg-[var(--hover)]'}`}>
