@@ -94,7 +94,8 @@ spec:
                   "POSTGRES_HOST" (include "weave.postgresHost" $)
                   "POSTGRES_PORT" (include "weave.postgresPort" $)
                   "REDIS_URL" (include "weave.redisUrl" (dict "ctx" $ "db" 0))
-                  "PORTAL_KNOWLEDGE_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "knowledge")) }}
+                  "PORTAL_KNOWLEDGE_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "knowledge"))
+                  "SYSTEM_STATUS_TARGETS" (include "weave.systemStatusTargets" $) }}
             {{- /*
             Dieselbe Adressierung wie fuer knowledge/retrieval: nur wenn
             dieses Release den jeweiligen Modelldienst mitbringt UND die

@@ -933,3 +933,35 @@ Usage: {{- include "weave.validate" . }}
 {{- include "weave.requireRedisMode" . -}}
 {{- include "weave.requireRerankerLimits" . -}}
 {{- end -}}
+
+{{/*
+===========================================================================
+Systemstatus: welche Dienste Weave-Ingest prueft
+===========================================================================
+
+SYSTEM_STATUS_TARGETS nennt in weave.yaml die Compose-Hostnamen. Die gibt
+es im Cluster nicht -- Servicename und Port haengen am Release-Namen, und
+nicht jeder Dienst ist in jedem Release eingeschaltet. Deshalb baut das
+Chart die Liste selbst: ein Eintrag "komponente=Basis-URL" je
+eingeschaltetem Dienst. internalUrls-Overrides gelten wie ueberall.
+*/}}
+{{- define "weave.systemStatusTargets" -}}
+{{- $ctx := . -}}
+{{- $out := list -}}
+{{- if $ctx.Values.ingestFrontend.enabled -}}
+{{- $out = append $out (printf "ingest-frontend=http://%s:%v" (include "weave.componentName" (dict "ctx" $ctx "component" "ingest-frontend")) $ctx.Values.ingestFrontend.service.port) -}}
+{{- end -}}
+{{- range $pair := list (list "knowledge" "knowledge") (list "embeddings" "embeddings") (list "retrieval" "retrieval") (list "reranker" "reranker") (list "runtime" "runtime") (list "api" "api") (list "tools" "toolsBackend") -}}
+{{- $component := index $pair 1 -}}
+{{- if (get $ctx.Values $component).enabled -}}
+{{- $out = append $out (printf "%s=%s" (index $pair 0) (include "weave.internalUrl" (dict "ctx" $ctx "component" $component))) -}}
+{{- end -}}
+{{- end -}}
+{{- if and $ctx.Values.toolsBackend.enabled $ctx.Values.toolsBackend.mcp.enabled -}}
+{{- $out = append $out (printf "tools-mcp=http://%s:%v" (include "weave.componentName" (dict "ctx" $ctx "component" "tools-mcp")) $ctx.Values.toolsBackend.mcp.service.port) -}}
+{{- end -}}
+{{- if $ctx.Values.chat.enabled -}}
+{{- $out = append $out (printf "chat=http://%s:%v" (include "weave.componentName" (dict "ctx" $ctx "component" "chat")) $ctx.Values.chat.service.port) -}}
+{{- end -}}
+{{- toJson $out -}}
+{{- end -}}

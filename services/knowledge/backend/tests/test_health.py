@@ -35,3 +35,17 @@ def test_readiness_reports_database_failure():
         app.dependency_overrides[get_db] = override_get_db
     assert resp.status_code == 503
     assert resp.json()['reason'] == 'database'
+
+
+def test_workers_counts_ping_replies(monkeypatch):
+    from app.workers.celery_app import celery_app
+
+    monkeypatch.setattr(celery_app.control, 'ping', lambda timeout: [{'w1': {'ok': 'pong'}}, {'w2': {'ok': 'pong'}}])
+    resp = client.get('/workers')
+    assert resp.status_code == 200
+    assert resp.json() == {'status': 'ok', 'workers': 2}
+
+    monkeypatch.setattr(celery_app.control, 'ping', lambda timeout: [])
+    resp = client.get('/workers')
+    assert resp.status_code == 503
+    assert resp.json() == {'status': 'unavailable', 'workers': 0}

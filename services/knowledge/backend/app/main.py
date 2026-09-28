@@ -13,6 +13,7 @@ from app.api.routes import router
 from app.core.config import settings
 from app.core.db import get_db
 from app.schemas.health import HealthResponse
+from app.workers.celery_app import celery_app
 
 app = FastAPI(title=settings.app_name)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
@@ -42,6 +43,22 @@ def readiness(db: Session = Depends(get_db)) -> JSONResponse:
         logging.getLogger(__name__).warning('readiness: database unavailable', exc_info=True)
         return JSONResponse(status_code=503, content={'status': 'unavailable', 'reason': 'database'})
     return JSONResponse(status_code=200, content={'status': 'ready'})
+
+
+
+# Worker liveness for Weave-Ingest's system status page: a Celery ping over
+# the broker. Deliberately NOT part of /ready -- a stopped worker must not
+# take this API out of rotation; the queue simply waits for it.
+@app.get('/workers')
+def workers() -> JSONResponse:
+    try:
+        replies = celery_app.control.ping(timeout=1.0) or []
+    except Exception:
+        logging.getLogger(__name__).warning('workers: broker unavailable', exc_info=True)
+        return JSONResponse(status_code=503, content={'status': 'unavailable', 'workers': 0})
+    if not replies:
+        return JSONResponse(status_code=503, content={'status': 'unavailable', 'workers': 0})
+    return JSONResponse(status_code=200, content={'status': 'ok', 'workers': len(replies)})
 
 
 app.include_router(router)

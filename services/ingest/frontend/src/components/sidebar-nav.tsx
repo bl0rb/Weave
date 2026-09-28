@@ -16,8 +16,8 @@ import {
   ArrowUpRight,
   FileText,
   HelpCircle,
+  Activity,
   Inbox,
-  Lock,
   Server,
   ShieldCheck,
   UsersRound,
@@ -32,6 +32,7 @@ import { resolveChatPublicUrl } from '@/lib/api-base';
 import { loadDocuments } from '@/lib/portal';
 import { listOwnedBots } from '@/lib/bots';
 import { loadFailedJobs } from '@/lib/jobs-search';
+import { SystemStatusIndicator } from '@/components/system-status-indicator';
 
 type NavItem = { href: string; label: string; icon: typeof Home; badge?: number };
 type T = (key: MessageKey, vars?: Record<string, string | number>) => string;
@@ -54,6 +55,7 @@ function adminNav(t: T): NavItem[] {
     { href: '/admin/wissen', label: t('portal.nav.admin.knowledge'), icon: FolderOpen },
     { href: '/admin/verarbeitung', label: t('portal.nav.admin.processing'), icon: Inbox },
     { href: '/admin/betrieb', label: t('portal.nav.admin.operations'), icon: Server },
+    { href: '/admin/status', label: t('portal.nav.admin.systemStatus'), icon: Activity },
   ];
 }
 
@@ -199,12 +201,10 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
                   {t('portal.chrome.helpText')}
                 </p>
               )}
-              <p className="flex gap-2 rounded-[10px] bg-[var(--surface-2)] p-2.5 text-xs leading-relaxed text-[var(--muted)]">
-                <Lock className="mt-0.5 h-4 w-4 flex-shrink-0 text-[var(--accent)]" aria-hidden="true" />
-                {t('portal.chrome.onPremNotice')}
-              </p>
             </>
           )}
+
+          {user && <SystemStatusIndicator isAdmin={user.role === 'admin'} onNavigate={() => onOpenChange(false)} />}
 
           {user && (
             <div ref={menuRef} className="relative border-t border-[var(--line)] pt-2.5">
