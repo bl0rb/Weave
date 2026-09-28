@@ -27,6 +27,13 @@ class PortalDocumentSource(BaseModel):
     label: str
     path: str | None = None
     url: str | None = None
+    # Who brought the document in and when: the uploader, for Confluence the
+    # person who ran the import. An edited version keeps the original values.
+    uploaded_by: str | None = None
+    uploaded_at: datetime | None = None
+    # The last change made in the portal editor, if any.
+    edited_by: str | None = None
+    edited_at: datetime | None = None
 
 
 class PortalDocumentItem(BaseModel):
@@ -86,11 +93,27 @@ class PortalDocumentDetail(PortalDocumentItem):
     can_reprocess: bool = False
     quality: PortalQualityDetail | None = None
     quality_missing_reason: QualityMissingReason | None = None
+    # The portal editor may change this document and release the change.
+    can_edit: bool = False
 
 
 class PortalReleaseRequest(BaseModel):
     markdown_sha256: str = Field(pattern=r'^[0-9a-fA-F]{64}$')
     accept_quality_warning: bool = False
+
+
+class PortalEditRequest(BaseModel):
+    markdown: str = Field(min_length=1)
+    # Hash of the preview the edit started from (optimistic concurrency).
+    markdown_sha256: str = Field(pattern=r'^[0-9a-fA-F]{64}$')
+    accept_quality_warning: bool = False
+
+
+class PortalEditResponse(BaseModel):
+    # The released document: a new version when the edited one had already been released.
+    document_id: str
+    document_version: int
+    release: PortalReleaseSummary
 
 
 class PortalCollectionReleaseRequest(BaseModel):

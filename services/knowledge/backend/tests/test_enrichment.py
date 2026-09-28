@@ -179,3 +179,15 @@ def test_embedding_input_confluence_path_takes_priority_over_heading_path():
 def test_embedding_input_no_breadcrumb_available_returns_text_unchanged():
     result = embedding_input(_chunk(text='Just the text.', heading_path=[]), {})
     assert result == 'Just the text.'
+
+
+def test_build_chunk_meta_copies_provenance_for_citations():
+    frontmatter = {
+        'source': 'https://wiki.example/pages/7', 'engine': 'confluence-import', 'source_kind': 'confluence',
+        'source_url': 'https://wiki.example/pages/7', 'uploaded_by': 'ada', 'uploaded_at': '2026-09-28T10:00:00+00:00',
+    }
+    meta = build_chunk_meta(frontmatter, _chunk())
+    assert {key: meta[key] for key in ('source_kind', 'source_url', 'uploaded_by', 'uploaded_at')} == {
+        'source_kind': 'confluence', 'source_url': 'https://wiki.example/pages/7',
+        'uploaded_by': 'ada', 'uploaded_at': '2026-09-28T10:00:00+00:00',
+    }

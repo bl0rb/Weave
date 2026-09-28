@@ -975,6 +975,11 @@ def test_failed_release_delivery_can_be_reconciled_and_download_stays_snapshot(m
         db.close()
 
 
+def _where(source: dict) -> dict:
+    """The origin part of a portal source, without the provenance fields."""
+    return {key: source[key] for key in ('kind', 'label', 'path', 'url')}
+
+
 def test_portal_document_source_reflects_upload_folder(monkeypatch):
     user = create_test_user(
         username=f'portal-source-{uuid.uuid4().hex[:8]}',
@@ -992,7 +997,11 @@ def test_portal_document_source_reflects_upload_folder(monkeypatch):
     authed = login_as(user.username)
 
     detail = authed.get(f'/api/v1/portal/documents/{job.id}').json()
-    assert detail['source'] == {'kind': 'upload', 'label': 'Hochgeladen', 'path': 'Kunden/Vertraege', 'url': None}
+    assert _where(detail['source']) == {'kind': 'upload', 'label': 'Hochgeladen', 'path': 'Kunden/Vertraege', 'url': None}
+    # Provenance: who uploaded it and when; no portal edit yet.
+    assert detail['source']['uploaded_by'] == user.username
+    assert detail['source']['uploaded_at'] is not None
+    assert detail['source']['edited_by'] is None and detail['source']['edited_at'] is None
 
     listing = authed.get('/api/v1/portal/documents', params={'collection_id': collection.id}).json()
     item = next(item for item in listing['items'] if item['id'] == job.id)
@@ -1013,11 +1022,12 @@ def test_portal_document_source_reflects_confluence_page(monkeypatch):
     authed = login_as(user.username)
 
     detail = authed.get(f'/api/v1/portal/documents/{job.id}').json()
-    assert detail['source'] == {'kind': 'confluence', 'label': 'Betriebshandbuch', 'path': None, 'url': page.url}
+    assert _where(detail['source']) == {'kind': 'confluence', 'label': 'Betriebshandbuch', 'path': None, 'url': page.url}
 
     listing = authed.get('/api/v1/portal/documents', params={'collection_id': collection.id}).json()
     item = next(item for item in listing['items'] if item['id'] == job.id)
-    assert item['source'] == {'kind': 'confluence', 'label': 'Betriebshandbuch', 'path': None, 'url': page.url}
+    assert _where(item['source']) == {'kind': 'confluence', 'label': 'Betriebshandbuch', 'path': None, 'url': page.url}
+    assert item['source']['uploaded_by'] == user.username
 
 
 def test_portal_document_source_reflects_mail_attachment(monkeypatch):
@@ -1046,7 +1056,7 @@ def test_portal_document_source_reflects_mail_attachment(monkeypatch):
     authed = login_as(user.username)
 
     detail = authed.get(f'/api/v1/portal/documents/{job.id}').json()
-    assert detail['source'] == {
+    assert _where(detail['source']) == {
         'kind': 'mail',
         'label': 'Rechnung 2026 (buchhaltung@example.com)',
         'path': None,

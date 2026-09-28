@@ -31,6 +31,9 @@ from app.services.chunker import Chunk
 _DOCUMENT_FIELDS = (
     'source', 'original_filename', 'team', 'department', 'document_version', 'engine', 'collection',
     '_weave_release_id', '_weave_markdown_sha256',
+    # Provenance for citations (set by Weave-Ingest from its own rows): where
+    # the document came from, the exact wiki link, who uploaded it and when.
+    'source_kind', 'source_url', 'uploaded_by', 'uploaded_at',
 )
 
 # Confluence-only frontmatter keys (see contracts/frontmatter.schema.json)

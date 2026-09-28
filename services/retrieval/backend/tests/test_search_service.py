@@ -628,6 +628,27 @@ def test_search_pipeline_reports_source_collection_for_scope_verification(db):
     assert collection_by_chunk_id[seeded.legacy_chunk.id] is None
 
 
+def test_search_pipeline_reports_provenance_from_chunk_meta(db):
+    doc = _seed_doc(db, team='Kundenservice', department='Support', status=DocumentStatus.INDEXED)
+    text = 'Die Reisekostenrichtlinie regelt Hotel und Bahn.'
+    wiki = _seed_chunk(db, doc, text, chunk_index=0, meta={
+        'team': doc.team, 'source_kind': 'confluence', 'source_url': 'https://wiki.example/pages/7',
+        'uploaded_by': 'ada', 'uploaded_at': '2026-09-28T10:00:00+00:00',
+    })
+    legacy = _seed_chunk(db, doc, text, chunk_index=1, meta={'team': doc.team, 'source_kind': ''})
+    db.commit()
+
+    results, _trace = search_service.search(db, SearchRequest(query=text, allowed_teams=['Kundenservice'], top_k=10))
+    by_id = {r.chunk_id: r for r in results}
+
+    assert (by_id[wiki.id].source_kind, by_id[wiki.id].source_url, by_id[wiki.id].uploaded_by) == (
+        'confluence', 'https://wiki.example/pages/7', 'ada',
+    )
+    assert by_id[wiki.id].uploaded_at == '2026-09-28T10:00:00+00:00'
+    # Released before provenance existed (or an empty value): no guessing.
+    assert by_id[legacy.id].source_kind is None and by_id[legacy.id].source_url is None
+
+
 def test_cosine_distance_expression_is_typed_as_float():
     """Regression: the Postgres vector leg was broken for every real query.
 

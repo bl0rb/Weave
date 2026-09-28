@@ -523,6 +523,11 @@ def rrf_fuse(
 # --- top-level pipeline ---------------------------------------------------------
 
 
+def _meta_str(meta: dict, key: str) -> str | None:
+    value = meta.get(key)
+    return value if isinstance(value, str) and value else None
+
+
 def _to_search_result(entry: FusedResult, document: Document, rerank_score: float | None) -> SearchResult:
     chunk = entry.chunk
     return SearchResult(
@@ -538,6 +543,10 @@ def _to_search_result(entry: FusedResult, document: Document, rerank_score: floa
         # where this was actually verified); the raw source filename/URL
         # lives in the per-chunk denormalized metadata instead.
         source=chunk.meta.get('source'),
+        source_kind=_meta_str(chunk.meta, 'source_kind'),
+        source_url=_meta_str(chunk.meta, 'source_url'),
+        uploaded_by=_meta_str(chunk.meta, 'uploaded_by'),
+        uploaded_at=_meta_str(chunk.meta, 'uploaded_at'),
         original_filename=document.original_filename,
         team=document.team,
         department=document.department,

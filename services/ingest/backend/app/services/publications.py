@@ -7,7 +7,7 @@ import math
 import re
 from datetime import date, datetime, timezone
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import yaml
 
@@ -72,6 +72,13 @@ def rewrite_release_image_urls(snapshot: str, release_id: str) -> str:
     return _RELATIVE_ARTIFACT_IMAGE_RE.sub(_replace, snapshot)
 
 
+def restore_relative_image_urls(markdown: str, release_id: str) -> str:
+    """Inverse of rewrite_release_image_urls, for editing a released snapshot:
+    the edited version carries its own copies of the artifacts."""
+    base = re.escape(f'{settings.public_api_url.rstrip("/")}/api/v1/portal/releases/{release_id}/artifacts/')
+    return re.sub(rf'!\[([^\]]*)\]\({base}([^)\s]+)\)', lambda m: f'![{m.group(1)}](artifacts/{unquote(m.group(2))})', markdown)
+
+
 def _markdown_from_job(job: Job) -> str | None:
     if job.result_markdown is not None:
         return job.result_markdown
@@ -133,6 +140,26 @@ def canonical_snapshot(db, job: Job, collection: Collection) -> tuple[str, str, 
         frontmatter['previous_job_id'] = job.previous_job_id
     else:
         frontmatter.pop('previous_job_id', None)
+
+    # Provenance for citations (source_kind/source_url/uploaded_at) comes from
+    # the rows, like the identity above -- an edit cannot rewrite where a
+    # document came from.
+    info = job.processing_info if isinstance(job.processing_info, dict) else {}
+    job_settings = info.get('settings') if isinstance(info.get('settings'), dict) else {}
+    import_settings = job_settings.get('import') if isinstance(job_settings.get('import'), dict) else {}
+    source_url = import_settings.get('source_url') if job.import_run_id else None
+    frontmatter['source_kind'] = 'confluence' if job.import_run_id else 'mail' if job.mail_message_id else 'upload'
+    if isinstance(source_url, str) and source_url.startswith(('https://', 'http://')):
+        frontmatter['source_url'] = source_url
+    else:
+        frontmatter.pop('source_url', None)
+    uploaded_at = info.get('source_uploaded_at')
+    if not isinstance(uploaded_at, str) and job.created_at is not None:
+        uploaded_at = job.created_at.isoformat()
+    if isinstance(uploaded_at, str):
+        frontmatter['uploaded_at'] = uploaded_at
+    else:
+        frontmatter.pop('uploaded_at', None)
 
     owner = db.get(User, job.owner_id) if job.owner_id else None
     if owner is not None:

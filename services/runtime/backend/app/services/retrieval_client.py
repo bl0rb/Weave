@@ -128,6 +128,11 @@ class RetrievedChunk:
     heading_path: list[str]
     scores: RetrievedChunkScores
     collection: str | None = None
+    # Provenance, echoed from Weave-Retrieval's SearchResult (see there).
+    source_kind: str | None = None
+    source_url: str | None = None
+    uploaded_by: str | None = None
+    uploaded_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -177,6 +182,10 @@ def _parse_chunk(item: dict) -> RetrievedChunk:
         document_version=item['document_version'],
         heading_path=item.get('heading_path') or [],
         collection=item.get('collection'),
+        source_kind=item.get('source_kind'),
+        source_url=item.get('source_url'),
+        uploaded_by=item.get('uploaded_by'),
+        uploaded_at=item.get('uploaded_at'),
         scores=RetrievedChunkScores(
             vector=scores_raw.get('vector'),
             fulltext=scores_raw.get('fulltext'),

@@ -10,7 +10,7 @@ app/schemas/search.py did for that service's `/api/v1/search` route.
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ChatMessage(BaseModel):
@@ -117,6 +117,21 @@ class Source(BaseModel):
     # release time) -- see app/services/chat.py's `_images_for`. Empty for
     # a chunk with no images, deduplicated, capped at 8.
     images: list[str] = Field(default_factory=list)
+    # Provenance (Weave-Ingest frontmatter via Knowledge/Retrieval): 'upload'
+    # | 'confluence' | 'mail', the exact wiki page link (http(s) only), who
+    # uploaded the document and when (ISO 8601). None for documents released
+    # before provenance existed, and for n8n sources that do not report it.
+    source_kind: str | None = None
+    source_url: str | None = None
+    uploaded_by: str | None = None
+    uploaded_at: str | None = None
+
+    @field_validator('source_url')
+    @classmethod
+    def _web_link_only(cls, value: str | None) -> str | None:
+        # Clients render this as a link; an n8n flow's own claim is not
+        # pre-verified (see `collection` above), so nothing but http(s).
+        return value if isinstance(value, str) and value.startswith(('https://', 'http://')) else None
 
 
 class RetrievalTrace(BaseModel):

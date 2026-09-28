@@ -97,6 +97,13 @@ class SearchResult(BaseModel):
     document_version: int
     source: str | None = None
     original_filename: str | None = None
+    # Provenance from the chunk's denormalized frontmatter (Weave-Ingest):
+    # 'upload' | 'confluence' | 'mail', the exact wiki page link, the
+    # uploader and the upload time. None for documents released before.
+    source_kind: str | None = None
+    source_url: str | None = None
+    uploaded_by: str | None = None
+    uploaded_at: str | None = None
     team: str | None = None
     department: str | None = None
     # `Document.collection_slug`, echoed back verbatim (`None` for a

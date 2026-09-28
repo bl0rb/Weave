@@ -1,7 +1,7 @@
 'use client';
 
 import { Lock } from 'lucide-react';
-import { formatCollection, formatPages, formatVersion } from '@/components/chat/source-cards';
+import { formatCollection, formatPages, formatVersion, SourceOrigin } from '@/components/chat/source-cards';
 import { toProxiedImageUrl } from '@/lib/portal-artifact-url';
 import { useI18n } from '@/i18n/provider';
 import type { Source } from '@/types/weave-api';
@@ -91,7 +91,7 @@ export function SourcesPanel({ sources, scopeLabel }: SourcesPanelProps) {
               </div>
               <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 text-[var(--muted)]">
                 <span>{t('chat.sources.collectionLabel', { collection: formatCollection(source, t) })}</span>
-                {source.source ? <span>{source.source}</span> : null}
+                <SourceOrigin source={source} />
               </div>
             </li>
           ))}
