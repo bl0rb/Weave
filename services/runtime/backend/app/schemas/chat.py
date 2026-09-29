@@ -92,6 +92,10 @@ class Source(BaseModel):
     document_id: str
     chunk_id: int
     score: float | None = None
+    # Which signal `score` above is: 'rerank' (0..1, a percentage is
+    # meaningful) or 'rrf' (a tiny rank-fusion value, NOT a percentage).
+    # None for an n8n-provider source, whose score semantics are unknown.
+    score_kind: Literal['rerank', 'rrf'] | None = None
     # Mirrors Weave-Retrieval's own SearchResult.collection (app/schemas/
     # search.py in that service) -- `None` for a pre-Collections legacy
     # document with no collection at all, exactly like that field. For a

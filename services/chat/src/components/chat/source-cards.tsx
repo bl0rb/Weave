@@ -37,6 +37,21 @@ export function formatCollection(source: Source, t: Translator = translateDefaul
   return source.collection ?? t('chat.sources.noCollection');
 }
 
+/**
+ * A rerank score (0..1, BAAI/bge-reranker-v2-m3's sigmoid output) reads
+ * honestly as a percentage; an RRF rank-fusion score does not (~0.01–0.03,
+ * not "1–3 %") — so this is shown only for `score_kind === 'rerank'`, and
+ * `null` otherwise, including for an n8n source whose score semantics are
+ * unknown (`score_kind` absent). See Source.score_kind's own docstring
+ * (Weave-Runtime backend/app/schemas/chat.py).
+ */
+export function formatScore(source: Source, t: Translator = translateDefault): string | null {
+  if (source.score_kind !== 'rerank' || typeof source.score !== 'number' || !Number.isFinite(source.score) || source.score < 0 || source.score > 1) {
+    return null;
+  }
+  return t('chat.sources.score', { value: Math.round(source.score * 100) });
+}
+
 const isWebLink = (value: string | null | undefined): value is string => typeof value === 'string' && /^https?:\/\//.test(value);
 
 /**
@@ -118,26 +133,29 @@ export function SourceCards({ sources }: { sources: Source[] }) {
         <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} aria-hidden="true" />
       </button>
       {expanded ? <ul className="flex flex-col gap-1.5">
-        {sources.map((source) => (
-          <li
-            key={`${source.document_id}-${source.chunk_id}`}
-            className="rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--surface-2)] p-4 text-xs"
-          >
-            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-              <span className="font-medium text-[var(--ink)]">
-                {source.original_filename ?? t('chat.sources.documentFallback', { id: source.document_id })}
-              </span>
-              <span className="text-[var(--muted)]">
-                {formatPages(source, t)} · {formatVersion(source, t)}
-                {source.score != null ? ` · ${t('chat.sources.score', { value: source.score.toFixed(2) })}` : ''}
-              </span>
-            </div>
-            <div className="mt-0.5 flex flex-wrap gap-x-3 text-[var(--muted)]">
-              <SourceOrigin source={source} />
-              <span>{t('chat.sources.collectionLabel', { collection: formatCollection(source, t) })}</span>
-            </div>
-          </li>
-        ))}
+        {sources.map((source) => {
+          const scoreText = formatScore(source, t);
+          return (
+            <li
+              key={`${source.document_id}-${source.chunk_id}`}
+              className="rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--surface-2)] p-4 text-xs"
+            >
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+                <span className="font-medium text-[var(--ink)]">
+                  {source.original_filename ?? t('chat.sources.documentFallback', { id: source.document_id })}
+                </span>
+                <span className="text-[var(--muted)]">
+                  {formatPages(source, t)} · {formatVersion(source, t)}
+                  {scoreText ? ` · ${scoreText}` : ''}
+                </span>
+              </div>
+              <div className="mt-0.5 flex flex-wrap gap-x-3 text-[var(--muted)]">
+                <SourceOrigin source={source} />
+                <span>{t('chat.sources.collectionLabel', { collection: formatCollection(source, t) })}</span>
+              </div>
+            </li>
+          );
+        })}
       </ul> : null}
     </div>
   );

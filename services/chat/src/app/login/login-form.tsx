@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { AlertCircle, KeyRound, LogIn } from 'lucide-react';
+import { AlertCircle, LogIn } from 'lucide-react';
+import { WeaveLogo } from '@/components/weave-logo';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/i18n/provider';
@@ -104,9 +105,7 @@ export function LoginForm({ weaveLoginUrl, ssoLoginUrl, ssoError }: LoginFormPro
     <main className="flex min-h-screen items-center justify-center bg-[var(--bg)] px-4 py-12 text-[var(--ink)]">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-[var(--radius-card)] bg-[var(--accent-soft)] text-[var(--accent)]">
-            <KeyRound className="h-6 w-6" aria-hidden="true" />
-          </div>
+          <WeaveLogo animation="intro" className="h-14 w-14 drop-shadow-md" />
           <span className="text-lg font-semibold">{t('common.appTitle')}</span>
         </div>
 

@@ -19,6 +19,7 @@ function makeSource(overrides: Partial<Source>): Source {
     document_id: 'doc-1',
     chunk_id: 0,
     score: 0.87,
+    score_kind: 'rerank',
     collection: 'handbuch',
     ...overrides,
   };
@@ -75,5 +76,17 @@ describe('SourceCards', () => {
   it('renders no image strip when no source carries images', () => {
     render(<SourceCards sources={[makeSource({})]} />);
     expect(screen.queryByText('Bilder aus den Quellen')).toBeNull();
+  });
+
+  it('shows a rerank score as a rounded percentage', () => {
+    render(<SourceCards sources={[makeSource({ score: 0.87, score_kind: 'rerank' })]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Belege (1)' }));
+    expect(screen.getByText(/Relevanz 87 %/)).toBeTruthy();
+  });
+
+  it('hides the score for an rrf (non-reranked) source', () => {
+    render(<SourceCards sources={[makeSource({ score: 0.02, score_kind: 'rrf' })]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Belege (1)' }));
+    expect(screen.queryByText(/Relevanz/)).toBeNull();
   });
 });

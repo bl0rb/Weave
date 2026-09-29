@@ -468,3 +468,22 @@ textarea.ui-control { min-height: 96px; padding: 10px 12px; }
 .portal-lang-switch button { min-height: 28px; padding: 0 10px; border: 0; border-radius: calc(var(--radius-control) - 2px); background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; cursor: pointer; }
 .portal-lang-switch button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-ink, var(--accent)); }
 @media (pointer: coarse) { .portal-lang-switch button { min-height: 40px; } }
+
+/* Weave logo animation (weave-ingest-logo.tsx): the weft rows shuttle in,
+   alternating direction like a loom, then the warp crossings settle on top.
+   'intro' runs once, 'loop' is the busy indicator. */
+.weave-logo :is(.weave-weft, .weave-knots) > * { transform-box: fill-box; transform-origin: center; }
+.weave-logo .weave-weft > * { transform-origin: left center; }
+.weave-logo .weave-weft > [data-row='1'] { transform-origin: right center; }
+.weave-logo [data-row='1'] { --weave-row-delay: .18s; }
+.weave-logo [data-row='2'] { --weave-row-delay: .36s; }
+.weave-logo--intro .weave-weft > * { animation: weave-weft-in .5s cubic-bezier(.3, .7, .4, 1) calc(.1s + var(--weave-row-delay, 0s)) both; }
+.weave-logo--intro .weave-knots > * { animation: weave-knot-in .3s ease-out calc(.45s + var(--weave-row-delay, 0s)) both; }
+.weave-logo--loop .weave-weft > * { animation: weave-weft-loop 2.4s ease-in-out var(--weave-row-delay, 0s) infinite both; }
+.weave-logo--loop .weave-knots > * { animation: weave-knot-loop 2.4s ease-in-out var(--weave-row-delay, 0s) infinite both; }
+@keyframes weave-weft-in { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes weave-knot-in { from { opacity: 0; transform: scale(.4); } to { opacity: 1; transform: scale(1); } }
+@keyframes weave-weft-loop { 0% { transform: scaleX(0); } 30%, 75% { transform: scaleX(1); } 100% { transform: scaleX(0); } }
+@keyframes weave-knot-loop { 0%, 25% { opacity: 0; } 40%, 70% { opacity: 1; } 85%, 100% { opacity: 0; } }
+/* The static mark, not a frozen mid-weave frame. */
+@media (prefers-reduced-motion: reduce) { .weave-logo * { animation: none !important; } }

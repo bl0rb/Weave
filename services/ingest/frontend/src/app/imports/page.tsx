@@ -9,6 +9,7 @@ import { ImportSyncButton } from '@/components/portal/import-sync';
 import { ApiError, apiJson } from '@/lib/api';
 import { formatBytes } from '@/components/dashboard/shared';
 import { type ImportRun, type ImportRunListResponse, isRunActive, runStatusChip, runTitle } from '@/lib/imports';
+import { WeaveIngestLogo } from '@/components/weave-ingest-logo';
 import { useI18n } from '@/i18n/provider';
 
 export default function ImportsPage() {
@@ -111,7 +112,10 @@ export default function ImportsPage() {
                       </p>
                     </td>
                     <td className="py-3">
-                      <span className={`rounded px-2 py-1 text-xs ${runStatusChip[run.status]}`}>{run.status}</span>
+                      <span className="inline-flex items-center gap-2">
+                        {isRunActive(run.status) && <WeaveIngestLogo animation="loop" className="h-5 w-5 flex-none" />}
+                        <span className={`rounded px-2 py-1 text-xs ${runStatusChip[run.status]}`}>{run.status}</span>
+                      </span>
                       {!!run.missing_page_count && <Link href={`/imports/${run.id}`} className="mt-2 block text-xs text-amber-800">{t('portal.importsList.missingPages', { count: run.missing_page_count })}</Link>}
                     </td>
                     <td className="py-3 text-slate-700">

@@ -93,7 +93,7 @@ export const chat = {
   // laid out differently — see source-cards.tsx's own docstring).
   'sources.imagesLabel': 'Bilder aus den Quellen',
   'sources.documentFallback': 'Dokument {id}',
-  'sources.score': 'Score {value}',
+  'sources.score': 'Relevanz {value} %',
   'sources.collectionLabel': 'Collection: {collection}',
   'sources.openWikiPage': 'Wiki-Seite öffnen',
   'sources.openSource': 'Quelle öffnen',

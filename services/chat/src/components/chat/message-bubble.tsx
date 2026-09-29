@@ -2,10 +2,11 @@ import type { ImgHTMLAttributes } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
-import { PanelRight, Sparkles } from 'lucide-react';
+import { PanelRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { UiAgentStatus, UiMessage } from '@/lib/chat-types';
 import { SourceCards } from '@/components/chat/source-cards';
+import { WeaveLogo } from '@/components/weave-logo';
 import { TracePanel } from '@/components/chat/trace-panel';
 import { GuardBanner } from '@/components/chat/guard-banner';
 import { ErrorBanner } from '@/components/chat/error-banner';
@@ -69,6 +70,7 @@ export function MessageBubble({
         {!isUser ? (
           <AnswerHead
             assistantName={assistantName ?? t('chat.messageBubble.defaultAssistantName')}
+            working={message.streaming}
             sourceCount={sourceCount}
             guardTriggered={message.trace?.guard?.triggered ?? false}
             onSelectForSourcesPanel={sourceCount > 0 ? onSelectForSourcesPanel : undefined}
@@ -162,12 +164,15 @@ export function MessageBubble({
  */
 function AnswerHead({
   assistantName,
+  working,
   sourceCount,
   guardTriggered,
   onSelectForSourcesPanel,
   isSelectedForSourcesPanel,
 }: {
   assistantName: string;
+  /** Still streaming: the mark keeps weaving, like a "thinking" indicator. */
+  working?: boolean;
   sourceCount: number;
   guardTriggered: boolean;
   onSelectForSourcesPanel?: () => void;
@@ -176,9 +181,7 @@ function AnswerHead({
   const { t } = useI18n();
   return (
     <div className="mb-2 flex flex-wrap items-center gap-2">
-      <span className="inline-grid h-6 w-6 flex-none place-items-center rounded-[var(--radius-control)] bg-[var(--accent)] text-[var(--on-accent)]">
-        <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
-      </span>
+      <WeaveLogo className="h-6 w-6 flex-none" animation={working ? 'loop' : undefined} />
       <span className="text-[13px] font-semibold">{assistantName}</span>
       {sourceCount > 0 ? (
         <span className="rounded-full bg-[var(--ok-bg)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ok)]">

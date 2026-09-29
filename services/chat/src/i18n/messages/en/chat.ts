@@ -91,7 +91,7 @@ export const chat: Record<keyof typeof de, string> = {
   // Shared by source-cards.tsx and sources-panel.tsx
   'sources.imagesLabel': 'Images from the sources',
   'sources.documentFallback': 'Document {id}',
-  'sources.score': 'Score {value}',
+  'sources.score': 'Relevance {value}%',
   'sources.collectionLabel': 'Collection: {collection}',
   'sources.openWikiPage': 'Open wiki page',
   'sources.openSource': 'Open source',
