@@ -4,6 +4,7 @@ import uuid
 import zipfile
 from datetime import datetime, timedelta, timezone
 
+import pytest
 import yaml
 from sqlalchemy import select
 
@@ -27,6 +28,15 @@ from app.models.models import (
 from app.services import security
 from app.workers import publication_tasks
 from tests.conftest import TestingSessionLocal, add_legacy_collection, client, create_test_user, login_as
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    # /auth/login is rate-limited per client host and TestClient always
+    # presents as "testclient" -- reset per test so this module's many logins
+    # never push later modules over the limit (same fixture as test_portal_bulk.py).
+    security.rate_limiter.reset()
+    yield
 
 
 def _db():
