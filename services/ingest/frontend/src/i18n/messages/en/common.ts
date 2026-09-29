@@ -4,6 +4,8 @@ export const common: Record<keyof typeof de, string> = {
   'appTitle': 'Weave · Knowledge Portal',
   'appDescription': 'Weave knowledge portal',
   'language': 'Language',
+  'language.auto': 'Auto',
+  'language.autoHint': 'Use the browser language',
   'language.de': 'Deutsch',
   'language.en': 'English',
   'language.saveFailed': 'Could not save the language to your account.',

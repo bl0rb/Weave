@@ -1,22 +1,25 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { LOCALES, type Locale } from './config';
+import { LOCALES, type LocalePreference } from './config';
 import { useI18n } from './provider';
 import { apiJson } from '@/lib/api';
 
+const OPTIONS: LocalePreference[] = ['auto', ...LOCALES];
+
 /**
- * Two-option segmented control; the choice is stored in the shared
- * `weave_locale` cookie. With `persist` (the signed-in sidebar profile
- * menu, not the login/setup pages) it also saves the choice to the
- * account via PATCH /api/v1/auth/me, optimistically: the new language is
- * applied to this browser immediately regardless of whether that save
- * succeeds — a failure only shows a small inline notice next to the
- * control, it never reverts the choice (see auth-context.tsx's own
+ * Three-option segmented control (Auto follows the browser, plus DE/EN);
+ * the choice is stored in the shared `weave_lang` cookie, or the cookie is
+ * deleted for Auto. With `persist` (the signed-in sidebar profile menu,
+ * not the login/setup pages) it also saves the choice to the account via
+ * PATCH /api/v1/auth/me (`locale: null` for Auto), optimistically: the new
+ * language is applied to this browser immediately regardless of whether
+ * that save succeeds — a failure only shows a small inline notice next to
+ * the control, it never reverts the choice (see auth-context.tsx's own
  * mount-time sync for the read side of this).
  */
 export function LanguageSwitch({ className, persist = false }: { className?: string; persist?: boolean }) {
-  const { locale, setLocale, t } = useI18n();
+  const { preference, setLocale, t } = useI18n();
   const [saveFailed, setSaveFailed] = useState(false);
   // Saves run strictly one after another and a superseded one is skipped,
   // so the account always ends on the last choice (never an older request
@@ -24,8 +27,8 @@ export function LanguageSwitch({ className, persist = false }: { className?: str
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const latestSave = useRef(0);
 
-  function select(option: Locale) {
-    if (option === locale) return;
+  function select(option: LocalePreference) {
+    if (option === preference) return;
     setLocale(option);
     setSaveFailed(false);
     if (!persist) return;
@@ -36,7 +39,7 @@ export function LanguageSwitch({ className, persist = false }: { className?: str
         await apiJson('/api/v1/auth/me', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ locale: option }),
+          body: JSON.stringify({ locale: option === 'auto' ? null : option }),
           skipAuthRedirect: true,
         });
       } catch {
@@ -48,8 +51,15 @@ export function LanguageSwitch({ className, persist = false }: { className?: str
   return (
     <div className="flex flex-col gap-1">
       <div role="group" aria-label={t('common.language')} className={`portal-lang-switch ${className ?? ''}`}>
-        {LOCALES.map((option) => (
-          <button key={option} type="button" lang={option} aria-pressed={locale === option} onClick={() => select(option)}>
+        {OPTIONS.map((option) => (
+          <button
+            key={option}
+            type="button"
+            lang={option === 'auto' ? undefined : option}
+            title={option === 'auto' ? t('common.language.autoHint') : undefined}
+            aria-pressed={preference === option}
+            onClick={() => select(option)}
+          >
             {t(`common.language.${option}`)}
           </button>
         ))}

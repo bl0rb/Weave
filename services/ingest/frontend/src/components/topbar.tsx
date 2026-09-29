@@ -82,10 +82,10 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
         />
       </form>
 
-      <Link href="/sources/new" className={cn(buttonVariants({ size: 'sm' }), 'flex-shrink-0')}>
+      {pathname !== '/' && <Link href="/sources/new" className={cn(buttonVariants({ size: 'sm' }), 'flex-shrink-0')}>
         <FilePlus className="h-4 w-4" aria-hidden="true" />
         <span className="hidden sm:inline">{t('portal.chrome.addSource')}</span>
-      </Link>
+      </Link>}
     </header>
   );
 }

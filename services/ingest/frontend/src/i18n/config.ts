@@ -5,8 +5,16 @@
 export const LOCALES = ['de', 'en'] as const;
 export type Locale = (typeof LOCALES)[number];
 
+/** An explicit locale, or 'auto' to follow the browser (no cookie/account choice stored). */
+export type LocalePreference = Locale | 'auto';
+
 export const DEFAULT_LOCALE: Locale = 'de';
-export const LOCALE_COOKIE = 'weave_locale';
+// Renamed from 'weave_locale': language now follows the browser by default
+// (Auto), with an explicit Auto/DE/EN choice on top (see provider.tsx) —
+// the old cookie's mere presence used to mean an explicit pick, so this
+// rename deliberately resets every browser's stored choice back to Auto
+// once.
+export const LOCALE_COOKIE = 'weave_lang';
 
 /** BCP 47 tags for Intl date/number formatting. */
 export const INTL_LOCALE: Record<Locale, string> = { de: 'de-DE', en: 'en-GB' };

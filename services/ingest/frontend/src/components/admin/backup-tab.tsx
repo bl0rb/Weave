@@ -153,7 +153,7 @@ export function BackupTab() {
   const latestImportRun = runs.find((run) => run.kind === 'import') ?? null;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <SectionCard
         title={t('admin.backup.createTitle')}
         description={t('admin.backup.createDescription')}

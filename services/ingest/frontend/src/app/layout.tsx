@@ -3,7 +3,7 @@ import { Lora, Source_Sans_3 } from 'next/font/google';
 import Script from 'next/script';
 import { AppChrome } from '@/components/app-chrome';
 import { I18nProvider } from '@/i18n/provider';
-import { getLocale, getTranslator } from '@/i18n/server';
+import { getLocale, getLocalePreference, getTranslator } from '@/i18n/server';
 import "./globals.css";
 
 const sourceSans = Source_Sans_3({
@@ -38,7 +38,7 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const locale = await getLocale();
+  const [locale, preference] = await Promise.all([getLocale(), getLocalePreference()]);
   return (
     <html lang={locale} className={`h-full antialiased ${sourceSans.variable} ${lora.variable}`}>
       <head>
@@ -57,7 +57,7 @@ export default async function RootLayout({
         <Script src="/runtime-env.js" strategy="beforeInteractive" />
       </head>
       <body className="min-h-full flex flex-col">
-        <I18nProvider initialLocale={locale}>
+        <I18nProvider initialLocale={locale} initialPreference={preference}>
           <AppChrome>{children}</AppChrome>
         </I18nProvider>
       </body>

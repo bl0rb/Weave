@@ -140,13 +140,14 @@ def _import_page_state(source_id: str, job_id: str, *, title: str = 'Portal Page
         db.close()
 
 
-def _import_run(status: ImportRunStatus) -> ImportRun:
+def _import_run(status: ImportRunStatus, *, scope_type: str = 'page', scope_value: str = 'portal-page', root_page_title: str = '') -> ImportRun:
     db = _db()
     try:
         value = ImportRun(
             kind='confluence',
-            scope_type='page',
-            scope_value='portal-page',
+            scope_type=scope_type,
+            scope_value=scope_value,
+            root_page_title=root_page_title,
             status=status,
             options={},
             state={},
@@ -661,6 +662,89 @@ def test_portal_documents_quality_grade_filter(monkeypatch):
     response = authed.get('/api/v1/portal/documents', params={'quality_grade': 'none'})
     assert response.status_code == 200
     assert {item['id'] for item in response.json()['items']} == {ungraded_job.id}
+
+
+def test_portal_documents_import_scope_filter(monkeypatch):
+    _configure(monkeypatch)
+    user = create_test_user(
+        username=f'portal-scope-{uuid.uuid4().hex[:8]}', email=f'portal-scope-{uuid.uuid4().hex[:8]}@example.com'
+    )
+    collection = _collection(user.id)
+    space_run = _import_run(ImportRunStatus.FINISHED, scope_type='space', scope_value='DOCS', root_page_title='Handbuch')
+    other_space_run = _import_run(ImportRunStatus.FINISHED, scope_type='space', scope_value='HR', root_page_title='HR-Wiki')
+    space_job = _job(user.id, collection, import_run_id=space_run.id)
+    other_space_job = _job(user.id, collection, import_run_id=other_space_run.id)
+    upload_job = _job(user.id, collection)
+    authed = login_as(user.username)
+
+    response = authed.get('/api/v1/portal/documents', params={'import_scope': 'space:DOCS'})
+    assert response.status_code == 200
+    assert {item['id'] for item in response.json()['items']} == {space_job.id}
+
+    response = authed.get('/api/v1/portal/documents', params={'import_scope': 'none'})
+    assert response.status_code == 200
+    assert {item['id'] for item in response.json()['items']} == {upload_job.id}
+
+    response = authed.get('/api/v1/portal/documents')
+    assert response.status_code == 200
+    assert {item['id'] for item in response.json()['items']} == {space_job.id, other_space_job.id, upload_job.id}
+
+    for invalid in ('bogus', 'space:', ':DOCS'):
+        response = authed.get('/api/v1/portal/documents', params={'import_scope': invalid})
+        assert response.status_code == 422, invalid
+
+
+def test_portal_import_scopes_lists_distinct_scopes_and_respects_visibility(monkeypatch):
+    _configure(monkeypatch)
+    suffix = uuid.uuid4().hex[:8]
+    owner = create_test_user(username=f'portal-scopes-owner-{suffix}', email=f'portal-scopes-owner-{suffix}@example.com')
+    outsider = create_test_user(username=f'portal-scopes-outsider-{suffix}', email=f'portal-scopes-outsider-{suffix}@example.com')
+    collection = _collection(owner.id)
+    docs_run = _import_run(ImportRunStatus.FINISHED, scope_type='space', scope_value='DOCS', root_page_title='Handbuch')
+    docs_rerun = _import_run(ImportRunStatus.FINISHED, scope_type='space', scope_value='DOCS', root_page_title='Handbuch')
+    hr_run = _import_run(ImportRunStatus.FINISHED, scope_type='space', scope_value='HR', root_page_title='')
+    _job(owner.id, collection, import_run_id=docs_run.id)
+    _job(owner.id, collection, import_run_id=docs_rerun.id)
+    _job(owner.id, collection, import_run_id=hr_run.id)
+    _job(owner.id, collection)
+
+    authed = login_as(owner.username)
+    response = authed.get(f'/api/v1/portal/collections/{collection.id}/import-scopes')
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body['other_count'] == 1
+    by_value = {item['value']: item for item in body['items']}
+    assert by_value['space:DOCS'] == {'value': 'space:DOCS', 'scope_type': 'space', 'scope_value': 'DOCS', 'label': 'Handbuch', 'count': 2}
+    assert by_value['space:HR'] == {'value': 'space:HR', 'scope_type': 'space', 'scope_value': 'HR', 'label': 'HR', 'count': 1}
+    # sorted by label
+    assert [item['value'] for item in body['items']] == ['space:DOCS', 'space:HR']
+
+    # A caller without visibility into the collection at all gets a 404.
+    other_authed = login_as(outsider.username)
+    assert other_authed.get(f'/api/v1/portal/collections/{collection.id}/import-scopes').status_code == 404
+
+
+def test_portal_import_scopes_hidden_for_reader_without_job_visibility(monkeypatch):
+    _configure(monkeypatch)
+    suffix = uuid.uuid4().hex[:8]
+    team = _team('shared-scopes')
+    owner = create_test_user(username=f'portal-scopes-owner2-{suffix}', email=f'portal-scopes-owner2-{suffix}@example.com')
+    reader = create_test_user(username=f'portal-scopes-reader-{suffix}', email=f'portal-scopes-reader-{suffix}@example.com', team_id=team.id)
+    with _db() as db:
+        from app.models.models import user_teams
+        db.execute(user_teams.insert().values(user_id=reader.id, team_id=team.id, role='reader'))
+        db.commit()
+    collection = _collection(owner.id, read_teams=[team.name])
+    docs_run = _import_run(ImportRunStatus.FINISHED, scope_type='space', scope_value='DOCS', root_page_title='Handbuch')
+    _job(owner.id, collection, import_run_id=docs_run.id)
+
+    reader_authed = login_as(reader.username)
+    # The reader can see the collection itself, but not its documents --
+    # same rule the import-scopes endpoint must honour (ADR 0008).
+    assert reader_authed.get(f'/api/v1/collections/{collection.id}').status_code == 200
+    response = reader_authed.get(f'/api/v1/portal/collections/{collection.id}/import-scopes')
+    assert response.status_code == 200, response.text
+    assert response.json() == {'items': [], 'other_count': 0}
 
 
 def test_portal_document_detail_quality_and_missing_reason(monkeypatch):

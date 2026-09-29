@@ -65,6 +65,8 @@ from app.schemas.portal import (
     PortalDocumentSource,
     PortalEditRequest,
     PortalEditResponse,
+    PortalImportScopeItem,
+    PortalImportScopesResponse,
     PortalQualityDetail,
     PortalReindexCollectionResponse,
     PortalReleaseRequest,
@@ -170,6 +172,25 @@ def _apply_quality_grade_filter(query, quality_grade_expr, value: str | None):
     if normalized in ('a', 'b', 'c'):
         return query.where(func.lower(quality_grade_expr) == normalized)
     return query
+
+
+def _apply_import_scope_filter(query, value: str | None):
+    """Apply the portal document list's 'import_scope' filter: 'none' for
+    uploads/mail (no import run), or '<scope_type>:<scope_value>' (split on
+    the first ':') for one Confluence import scope -- see the
+    /collections/{id}/import-scopes endpoint below, which lists the values
+    this accepts for a given collection."""
+    if value is None:
+        return query
+    if value == 'none':
+        return query.where(Job.import_run_id.is_(None))
+    scope_type, sep, scope_value = value.partition(':')
+    if not sep or not scope_type or not scope_value:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="import_scope must be 'none' or '<scope_type>:<scope_value>'",
+        )
+    return query.where(ImportRun.scope_type == scope_type, ImportRun.scope_value == scope_value)
 
 
 def _job_is_controlled(db, job: Job, collection: Collection, user: User) -> bool:
@@ -516,6 +537,7 @@ def list_portal_documents(
     review_only: bool = Query(False),
     review_state: str | None = Query(None),
     quality_grade: str | None = Query(None),
+    import_scope: str | None = Query(None),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
     db=Depends(get_db),
@@ -586,6 +608,7 @@ def list_portal_documents(
     elif effective_review_state == 'review':
         query = query.where(or_(review_decision_expr.is_(None), func.lower(review_decision_expr) != 'skipped'))
     query = _apply_quality_grade_filter(query, quality_grade_expr, quality_grade)
+    query = _apply_import_scope_filter(query, import_scope)
 
     count_query = (
         select(func.count())
@@ -609,6 +632,7 @@ def list_portal_documents(
     elif effective_review_state == 'review':
         count_query = count_query.where(or_(review_decision_expr.is_(None), func.lower(review_decision_expr) != 'skipped'))
     count_query = _apply_quality_grade_filter(count_query, quality_grade_expr, quality_grade)
+    count_query = _apply_import_scope_filter(count_query, import_scope)
     total = int(db.scalar(count_query) or 0)
     rows = db.execute(query.offset(offset).limit(limit)).all()
 
@@ -844,6 +868,61 @@ def download_collection_markdown(
         media_type='application/zip',
         headers=_download_headers(archive_filename),
     )
+
+
+@router.get('/collections/{collection_id}/import-scopes', response_model=PortalImportScopesResponse)
+def list_portal_import_scopes(
+    collection_id: str, db=Depends(get_db), user: User = Depends(get_current_user)
+) -> PortalImportScopesResponse:
+    """Distinct Confluence import scopes among the caller-visible documents
+    of a collection, for the knowledge space's 'Confluence-Bereich' filter
+    (/api/v1/portal/documents?import_scope=...). A re-run/refresh shares its
+    scope_type/scope_value with the original import (see ImportRun), so
+    every job for a scope is counted together under one entry."""
+    collection = db.get(Collection, collection_id)
+    if collection is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
+    _require_visible_collection(db, collection, user)
+
+    collection_id_expr = Job.processing_info['settings']['collection_id'].as_string()
+    query = (
+        select(ImportRun.scope_type, ImportRun.scope_value, ImportRun.root_page_title)
+        .select_from(Job)
+        .join(ImportRun, ImportRun.id == Job.import_run_id)
+        .where(collection_id_expr == collection.id)
+        .order_by(ImportRun.created_at.asc())
+    )
+    rows = db.execute(_apply_visible_filter(query, user, db=db)).all()
+
+    scopes: dict[tuple[str, str], dict] = {}
+    for scope_type, scope_value, root_page_title in rows:
+        entry = scopes.setdefault((scope_type, scope_value), {'count': 0, 'label': ''})
+        entry['count'] += 1
+        if root_page_title:
+            entry['label'] = root_page_title
+
+    other_count = int(
+        db.scalar(
+            _apply_visible_filter(
+                select(func.count()).select_from(Job).where(collection_id_expr == collection.id, Job.import_run_id.is_(None)),
+                user,
+                db=db,
+            )
+        )
+        or 0
+    )
+    items = [
+        PortalImportScopeItem(
+            value=f'{scope_type}:{scope_value}',
+            scope_type=scope_type,
+            scope_value=scope_value,
+            label=entry['label'] or scope_value,
+            count=entry['count'],
+        )
+        for (scope_type, scope_value), entry in scopes.items()
+    ]
+    items.sort(key=lambda item: item.label.lower())
+    return PortalImportScopesResponse(items=items, other_count=other_count)
 
 
 @router.post(

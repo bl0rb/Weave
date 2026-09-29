@@ -80,7 +80,7 @@ export function TeamsTab() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <SectionCard title={t('admin.teams.createTitle')} description={t('admin.teams.createDescription')}>
         <form onSubmit={createTeam} className="flex flex-wrap items-center gap-3">
           <input

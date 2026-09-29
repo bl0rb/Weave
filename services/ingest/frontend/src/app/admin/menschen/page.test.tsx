@@ -30,9 +30,9 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-it('renders the Menschen & Zugriffe page head and defaults to the Personen section', async () => {
+it('renders the Konten & Zugriffe page head and defaults to the Personen section', async () => {
   render(<AdminMenschenPage />);
-  expect(await screen.findByRole('heading', { name: 'Menschen & Zugriffe' })).toBeTruthy();
+  expect(await screen.findByRole('heading', { name: 'Konten & Zugriffe' })).toBeTruthy();
   expect(await screen.findByText('alice@example.com')).toBeTruthy();
   const personenTab = screen.getByRole('tab', { name: 'Personen' });
   expect(personenTab.getAttribute('aria-selected')).toBe('true');
@@ -52,7 +52,7 @@ it('renders in English inside an I18nProvider set to "en"', async () => {
       <AdminMenschenPage />
     </I18nProvider>,
   );
-  expect(await screen.findByRole('heading', { name: 'People & Access' })).toBeTruthy();
+  expect(await screen.findByRole('heading', { name: 'Accounts & Access' })).toBeTruthy();
   expect(screen.getByRole('tab', { name: 'People' })).toBeTruthy();
   expect(screen.getByRole('tab', { name: 'Sign-in' })).toBeTruthy();
 });

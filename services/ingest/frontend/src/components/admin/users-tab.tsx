@@ -45,7 +45,7 @@ export function UsersTab() {
     role === 'reader' ? t('admin.users.teamRole.reader') : t('admin.users.teamRole.member');
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <SectionCard
         title={t('admin.users.title')}
         description={t('admin.users.description')}

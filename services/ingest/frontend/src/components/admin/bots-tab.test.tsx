@@ -178,12 +178,6 @@ it('sends agent: null when the agent-mode toggle stays off', async () => {
   expect(body.agent).toBeNull();
 });
 
-it('explains that bot scope narrows rather than grants document access', async () => {
-  render(<BotsTab />);
-  expect(await screen.findByText(/Schnittmenge aus Bot-Auswahl und Nutzerrechten/)).toBeTruthy();
-  expect(screen.getByText(/Die Bearer-Weitergabe wird erst/)).toBeTruthy();
-});
-
 it('deletes an existing bot only after confirmation', async () => {
   json.mockImplementation(async path => {
     if (path === '/api/v1/auth/admin/bots') return { items: [savedBot] };

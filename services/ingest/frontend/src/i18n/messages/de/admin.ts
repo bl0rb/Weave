@@ -59,16 +59,16 @@ export const admin = {
   'overview.attention.deliveryFailed.title': '{count} Freigabe bei der Auslieferung fehlgeschlagen|{count} Freigaben bei der Auslieferung fehlgeschlagen',
   'overview.attention.deliveryFailed.detail': 'Den Wissensindex aus den Freigaben neu aufbauen.',
 
-  // --- Menschen & Zugriffe (/admin/menschen) ---
-  'people.pageTitle': 'Menschen & Zugriffe',
+  // --- Konten & Zugriffe (/admin/menschen) ---
+  'people.pageTitle': 'Konten & Zugriffe',
   'people.pageDescription': 'Wer Weave nutzt und für wen welches Wissen im Chat freigegeben ist.',
   'people.tab.people': 'Personen',
   'people.tab.teams': 'Teams',
   'people.tab.signIn': 'Anmeldung',
   'people.tab.access': 'Wissensbereiche & Zugriff',
 
-  // --- Wissen & Assistenten (/admin/wissen) ---
-  'knowledge.pageTitle': 'Wissen & Assistenten',
+  // --- Bots & KI (/admin/wissen) ---
+  'knowledge.pageTitle': 'Bots & KI',
   'knowledge.pageDescription': 'Wie Weave passende Textstellen findet und daraus Antworten formuliert.',
   'knowledge.tab.bots': 'Bots',
   'knowledge.tab.chatLlm': 'Chat & LLM',
@@ -386,14 +386,6 @@ export const admin = {
   'bots.spacesAllAuthorized': 'alle berechtigten',
   'bots.editAria': '{name} bearbeiten',
   'bots.deleteAria': '{name} löschen',
-  'bots.security.title': 'Sicherheitsmodell',
-  'bots.security.description': 'Die Auswahl im Formular erteilt keine zusätzlichen Dokumentrechte.',
-  'bots.security.teamsTitle': 'Besitzer und Nutzer',
-  'bots.security.teamsBody': 'Besitzer pflegen Inhalt und Freigaben ihres Bots. Ohne Freigabe nutzen ihn nur Besitzer und Administration.',
-  'bots.security.spacesTitle': 'Wissensbereiche',
-  'bots.security.spacesBody': 'Der effektive Scope ist immer die Schnittmenge aus Bot-Auswahl und Nutzerrechten.',
-  'bots.security.n8nTitle': 'n8n',
-  'bots.security.n8nBody': 'Die bestehende JSON-Anbindung übermittelt ein kurzlebiges Delegations-Token. Die Bearer-Weitergabe wird erst nach der gesonderten Sicherheitsfreigabe aktiviert.',
   'bots.saved': 'Bot-Konfiguration gespeichert. Sie gilt ab der nächsten Anfrage.',
   'bots.deleted': 'Bot gelöscht.',
   'bots.delete.title': 'Bot löschen',

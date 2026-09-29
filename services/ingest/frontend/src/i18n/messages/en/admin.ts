@@ -60,16 +60,16 @@ export const admin: Record<keyof typeof de, string> = {
   'overview.attention.deliveryFailed.title': '{count} share failed to deliver|{count} shares failed to deliver',
   'overview.attention.deliveryFailed.detail': 'Rebuild the knowledge index from the shares.',
 
-  // --- People & Access (/admin/menschen) ---
-  'people.pageTitle': 'People & Access',
+  // --- Accounts & Access (/admin/menschen) ---
+  'people.pageTitle': 'Accounts & Access',
   'people.pageDescription': 'Who uses Weave, and which knowledge is shared with whom in chat.',
   'people.tab.people': 'People',
   'people.tab.teams': 'Teams',
   'people.tab.signIn': 'Sign-in',
   'people.tab.access': 'Knowledge Spaces & Access',
 
-  // --- Knowledge & Assistants (/admin/wissen) ---
-  'knowledge.pageTitle': 'Knowledge & Assistants',
+  // --- Bots & AI (/admin/wissen) ---
+  'knowledge.pageTitle': 'Bots & AI',
   'knowledge.pageDescription': 'How Weave finds matching passages and turns them into answers.',
   'knowledge.tab.bots': 'Bots',
   'knowledge.tab.chatLlm': 'Chat & LLM',
@@ -387,14 +387,6 @@ export const admin: Record<keyof typeof de, string> = {
   'bots.spacesAllAuthorized': 'all authorized',
   'bots.editAria': 'Edit {name}',
   'bots.deleteAria': 'Delete {name}',
-  'bots.security.title': 'Security Model',
-  'bots.security.description': 'Selections in the form do not grant additional document permissions.',
-  'bots.security.teamsTitle': 'Owners and users',
-  'bots.security.teamsBody': 'Owners maintain the content and sharing of their bot. Without sharing only owners and administrators use it.',
-  'bots.security.spacesTitle': 'Knowledge Spaces',
-  'bots.security.spacesBody': "The effective scope is always the intersection of the bot selection and the user's permissions.",
-  'bots.security.n8nTitle': 'n8n',
-  'bots.security.n8nBody': 'The existing JSON integration sends a short-lived delegation token. Bearer token forwarding will only be enabled after separate security approval.',
   'bots.saved': 'Bot configuration saved. It takes effect on the next request.',
   'bots.deleted': 'Bot deleted.',
   'bots.delete.title': 'Delete Bot',

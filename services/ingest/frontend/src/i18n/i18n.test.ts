@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
-import { resolveLocale } from './config';
+import { LOCALE_COOKIE, resolveLocale } from './config';
 import { translate } from './messages';
 
 describe('resolveLocale', () => {
@@ -9,6 +9,16 @@ describe('resolveLocale', () => {
     expect(resolveLocale('fr', 'en-US,en;q=0.9')).toBe('en');
     expect(resolveLocale(undefined, 'fr-FR,fr;q=0.9')).toBe('de');
     expect(resolveLocale(null, null)).toBe('de');
+  });
+
+  it('falls back the same way for a missing cookie (the Auto preference)', () => {
+    expect(resolveLocale(null, 'en-US,en;q=0.9')).toBe('en');
+  });
+});
+
+describe('LOCALE_COOKIE', () => {
+  it('is named identically to services/chat, so a switch in one app carries over to the other', () => {
+    expect(LOCALE_COOKIE).toBe('weave_lang');
   });
 });
 
@@ -34,5 +44,14 @@ describe('useI18n formatDate', () => {
     expect(result.current.formatDate(undefined)).toBe('–');
     expect(result.current.formatDate('not a date')).toBe('–');
     expect(result.current.formatDate('2026-09-24T10:00:00Z')).toMatch(/2026/);
+  });
+});
+
+describe('useI18n preference', () => {
+  it('defaults to Auto without a provider', async () => {
+    const { renderHook } = await import('@testing-library/react');
+    const { useI18n } = await import('./provider');
+    const { result } = renderHook(() => useI18n());
+    expect(result.current.preference).toBe('auto');
   });
 });

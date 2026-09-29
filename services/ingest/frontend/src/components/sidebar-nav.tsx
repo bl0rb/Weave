@@ -135,14 +135,6 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
           </span>
         </Link>
 
-        <div className="flex items-center gap-2.5 rounded-[10px] border border-[var(--line)] bg-[var(--surface-2)] px-2.5 py-2 text-[var(--muted)]">
-          <span className="grid h-8 w-8 flex-shrink-0 place-items-center rounded-lg bg-[var(--ink)] text-[11.5px] font-bold text-white">WV</span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-[13.5px] font-semibold text-[var(--ink)]">{t('portal.chrome.brandLine')}</span>
-            <span className="block truncate text-xs">{isAdminArea ? t('portal.chrome.adminSubtitle') : user ? t('portal.chrome.loggedInAs', { username: user.username }) : t('portal.chrome.internalKnowledgeSpace')}</span>
-          </span>
-        </div>
-
         {!isAdminArea && chatUrl && (
           <a
             href={chatUrl}
