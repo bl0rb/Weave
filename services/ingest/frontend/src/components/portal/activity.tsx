@@ -235,7 +235,7 @@ export function ProcessingActivity() {
       eyebrow={t('portal.activity.eyebrow')}
       actions={<Link className={buttonVariants()} href="/sources/new">{t('portal.chrome.addSource')} <ArrowRight size={16} /></Link>}
     >
-      <section className="portal-panel mb-6" aria-labelledby="activity-status-title">
+      <section className="portal-panel" aria-labelledby="activity-status-title">
         <div className="portal-section-heading">
           <div>
             <p className="portal-eyebrow">{t('portal.activity.glanceEyebrow')}</p>
@@ -270,42 +270,42 @@ export function ProcessingActivity() {
       {currentError && <Notice error action={() => void load()}>{currentError}</Notice>}
 
       <section className="portal-panel" aria-labelledby="activity-list-title">
-        <div className="portal-section-heading items-end flex-wrap">
+        <div className="portal-section-heading">
           <div>
             <p className="portal-eyebrow">{t('portal.activity.allJobsEyebrow')}</p>
             <h2 id="activity-list-title">{t('portal.activity.trackHeading')}{currentActivity ? ` · ${currentActivity.total}` : ''}</h2>
           </div>
-          <div className="flex w-full flex-wrap gap-4 sm:w-auto sm:items-end">
-            <label className="portal-search m-0 min-w-[min(100%,320px)] flex-1 sm:flex-none">
-              <span className="sr-only">{t('portal.activity.searchJobsAria')}</span>
-              <span className="relative block">
-                <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} aria-hidden="true" />
-                <input className="!mt-0 !pl-9" type="search" value={query} onChange={(event) => { setQuery(event.target.value); setOffset(0); }} placeholder={t('portal.activity.searchPlaceholder')} aria-label={t('portal.activity.searchPlaceholder')} />
-              </span>
-            </label>
-            <label className="min-w-[180px] text-sm font-semibold">
-              {t('common.status')}
-              <select value={status} onChange={(event) => selectStatus(event.target.value as StatusFilter)}>
-                <option value="">{t('portal.activity.allStatuses')}</option>
-                <option value="PENDING">{t('portal.activity.filterPending')}</option>
-                <option value="RUNNING">{t('portal.activity.filterRunning')}</option>
-                <option value="FINISHED">{t('portal.activity.filterFinished')}</option>
-                <option value="FAILED">{t('portal.activity.filterFailed')}</option>
-              </select>
-            </label>
-            <label className="min-w-[180px] text-sm font-semibold">
-              {t('portal.activity.qualityGradeLabel')}
-              <select value={grade} onChange={(event) => selectGrade(event.target.value as GradeFilter)}>
-                <option value="">{t('portal.activity.allGrades')}</option>
-                <option value="A">A</option>
-                <option value="B">B</option>
-                <option value="C">C</option>
-                <option value="none">{t('portal.documents.noGrade')}</option>
-              </select>
-            </label>
-          </div>
         </div>
-        <QualityGradeLegend />
+
+        <div className="flex flex-wrap items-end gap-3 border-b border-[var(--line)] px-5 py-4">
+          <label className="min-w-[200px] flex-1 text-sm font-semibold text-[var(--ink-2)]">
+            {t('portal.activity.searchJobsAria')}
+            <span className="relative block">
+              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} aria-hidden="true" />
+              <input className="!pl-9" type="search" value={query} onChange={(event) => { setQuery(event.target.value); setOffset(0); }} placeholder={t('portal.activity.searchPlaceholder')} />
+            </span>
+          </label>
+          <label className="min-w-[200px] flex-1 text-sm font-semibold text-[var(--ink-2)]">
+            {t('common.status')}
+            <select value={status} onChange={(event) => selectStatus(event.target.value as StatusFilter)}>
+              <option value="">{t('portal.activity.allStatuses')}</option>
+              <option value="PENDING">{t('portal.activity.filterPending')}</option>
+              <option value="RUNNING">{t('portal.activity.filterRunning')}</option>
+              <option value="FINISHED">{t('portal.activity.filterFinished')}</option>
+              <option value="FAILED">{t('portal.activity.filterFailed')}</option>
+            </select>
+          </label>
+          <label className="min-w-[200px] flex-1 text-sm font-semibold text-[var(--ink-2)]">
+            {t('portal.activity.qualityGradeLabel')}
+            <select value={grade} onChange={(event) => selectGrade(event.target.value as GradeFilter)}>
+              <option value="">{t('portal.activity.allGrades')}</option>
+              <option value="A">A</option>
+              <option value="B">B</option>
+              <option value="C">C</option>
+              <option value="none">{t('portal.documents.noGrade')}</option>
+            </select>
+          </label>
+        </div>
 
         {currentActivity === null && !currentError ? (
           <Notice>{t('portal.activity.loadingJobs')}</Notice>
@@ -333,6 +333,8 @@ export function ProcessingActivity() {
             {hasFilters ? t('portal.activity.noMatchBody') : t('portal.activity.emptyBody')}
           </EmptyState>
         ) : null}
+
+        <QualityGradeLegend />
       </section>
     </PortalPage>
   );

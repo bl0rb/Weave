@@ -7,7 +7,7 @@ export const LOCALES = ['de', 'en'] as const;
 export type Locale = (typeof LOCALES)[number];
 
 export const DEFAULT_LOCALE: Locale = 'de';
-export const LOCALE_COOKIE = 'weave_locale';
+export const LOCALE_COOKIE = 'weave_lang';
 
 /** BCP 47 tags for Intl date/number formatting. */
 export const INTL_LOCALE: Record<Locale, string> = { de: 'de-DE', en: 'en-GB' };

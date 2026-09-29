@@ -7,7 +7,7 @@ import { putJson } from '@/lib/api-client';
 
 /**
  * Two-option segmented control; the choice is stored in the shared
- * `weave_locale` cookie. With `persist` (the signed-in rail footer, not
+ * `weave_lang` cookie. With `persist` (the signed-in rail footer, not
  * the login page) it also saves the choice to the account via PUT
  * /api/session/locale, optimistically: the new language is applied to
  * this browser immediately regardless of whether that save succeeds — a

@@ -190,7 +190,8 @@ export function SourceForm({ initialCollection = '' }: { initialCollection?: str
       </div>}
       <h3 className="mt-8 font-semibold">{t('portal.sourceForm.whatNext')}</h3>
       <div className="portal-form-actions">
-        <Link href="/processing" className={buttonVariants()}>{t('portal.reviews.viewProcessing')}<ArrowRight size={16} aria-hidden="true" /></Link>
+        {collectionId && <Link href={`/knowledge/${collectionId}`} className={buttonVariants()}>{t('portal.sourceForm.openSpace')}<ArrowRight size={16} aria-hidden="true" /></Link>}
+        <Link href="/processing" className={buttonVariants({ variant: 'outline' })}>{t('portal.reviews.viewProcessing')}<ArrowRight size={16} aria-hidden="true" /></Link>
         <Button type="button" variant="outline" onClick={addMore}>{t('portal.sourceForm.addMore')}</Button>
       </div>
     </section>}

@@ -78,13 +78,8 @@ export function PortalHome() {
     .sort((a, b) => new Date(b.release?.created_at ?? b.created_at).getTime() - new Date(a.release?.created_at ?? a.created_at).getTime())
     .slice(0, 5), [documents]);
 
-  const summary = documents === null ? t('portal.home.summaryLoading') : counts.review || counts.error
-    ? [counts.review && t('portal.home.summaryReview', { count: counts.review }),
-      counts.error && t('portal.home.summaryError', { count: counts.error })].filter(Boolean).join(' · ')
-    : t('portal.home.summaryAllClear');
-
   return (
-    <PortalPage title={`${greeting(t, hour)}${user ? `, ${user.username}` : ''}.`} description={summary}>
+    <PortalPage title={`${greeting(t, hour)}${user ? `, ${user.username}` : ''}.`}>
       {error && <Notice error action={load}>{error}</Notice>}
       <section aria-labelledby="stand-title">
         <h2 className="sr-only" id="stand-title">{t('portal.home.statusHeading')}</h2>

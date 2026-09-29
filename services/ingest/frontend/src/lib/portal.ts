@@ -36,6 +36,9 @@ export type PortalDocument = {
   source: PortalSource; review_decision: string | null;
 };
 export type DocumentPage = { items: PortalDocument[]; total: number };
+/** One entry of GET /api/v1/portal/collections/{id}/import-scopes -- a distinct Confluence import scope among the space's visible documents. */
+export type ImportScope = { value: string; scope_type: string; scope_value: string; label: string; count: number };
+export type ImportScopesResponse = { items: ImportScope[]; other_count: number };
 export type ReviewStateFilter = 'review' | 'all' | 'skipped';
 export type BulkAction = 'release' | 'skip' | 'unskip' | 'delete';
 export type BulkActionResult = { done: number; errors: { job_id: string; reason: string }[] };
@@ -121,11 +124,17 @@ export function documentState(document: PortalDocument, live?: IndexingItem, loc
 }
 export const documentUrl = (document: PortalDocument) => document.status === 'FINISHED' ? `/reviews/${document.id}` : `/jobs/${document.id}`;
 export const dateLabel = (value: string, locale: Locale = DEFAULT_LOCALE) => new Intl.DateTimeFormat(INTL_LOCALE[locale], { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value));
-export function loadDocuments(collectionId?: string, offset = 0, reviewState: ReviewStateFilter = 'all', qualityGrade?: QualityGradeFilter, limit = 20): Promise<DocumentPage> {
+export function loadDocuments(collectionId?: string, offset = 0, reviewState: ReviewStateFilter = 'all', qualityGrade?: QualityGradeFilter, limit = 20, importScope?: string): Promise<DocumentPage> {
   const params = new URLSearchParams({ offset: String(offset), limit: String(limit), review_state: reviewState });
   if (collectionId) params.set('collection_id', collectionId);
   if (qualityGrade) params.set('quality_grade', qualityGrade);
+  if (importScope) params.set('import_scope', importScope);
   return apiJson(`/api/v1/portal/documents?${params}`);
+}
+
+/** Distinct Confluence import scopes among a space's visible documents -- backs the "Confluence-Bereich" filter on /knowledge/[id]. */
+export function loadImportScopes(collectionId: string): Promise<ImportScopesResponse> {
+  return apiJson(`/api/v1/portal/collections/${encodeURIComponent(collectionId)}/import-scopes`);
 }
 
 /**

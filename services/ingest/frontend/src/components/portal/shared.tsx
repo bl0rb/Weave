@@ -8,9 +8,9 @@ import { useIndexingStatus } from '@/lib/use-indexing-status';
 import { useI18n } from '@/i18n/provider';
 
 export function PortalPage({ title, description, eyebrow = null, actions, children }: {
-  title: string; description: string; eyebrow?: string | null; actions?: React.ReactNode; children: React.ReactNode;
+  title: string; description?: string; eyebrow?: string | null; actions?: React.ReactNode; children: React.ReactNode;
 }) {
-  return <main id="main-content" className="portal-page"><header className="portal-header"><div>{eyebrow && <p className="portal-eyebrow">{eyebrow}</p>}<h1>{title}</h1><p className="portal-description">{description}</p></div>{actions && <div className="portal-actions">{actions}</div>}</header>{children}</main>;
+  return <main id="main-content" className="portal-page"><header className="portal-header"><div>{eyebrow && <p className="portal-eyebrow">{eyebrow}</p>}<h1>{title}</h1>{description && <p className="portal-description">{description}</p>}</div>{actions && <div className="portal-actions">{actions}</div>}</header>{children}</main>;
 }
 export function Notice({ children, error = false, action }: { children: React.ReactNode; error?: boolean; action?: () => void }) {
   const { t } = useI18n();

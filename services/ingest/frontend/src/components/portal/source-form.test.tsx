@@ -39,6 +39,7 @@ it('replaces the upload form with next steps and keeps the selected area for mor
   await screen.findByRole('heading', { name: 'Upload abgeschlossen' });
   expect(container.querySelector('input[type="file"]')).toBeNull();
   expect(screen.getByText(/einige Minuten dauern/)).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Zum Wissensbereich' }).getAttribute('href')).toBe('/knowledge/area');
   expect(screen.getByRole('link', { name: 'Verarbeitung ansehen' }).getAttribute('href')).toBe('/processing');
   const restart = api.mock.calls.find(([path]) => path === '/api/v1/jobs/job/restart');
   expect(JSON.parse(restart?.[1]?.body as string).profile_id).toBe('ppocrv6_tiny_structurev3');

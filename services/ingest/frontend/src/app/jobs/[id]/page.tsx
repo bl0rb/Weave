@@ -14,6 +14,7 @@ import type { JobArtifact } from '@/components/markdown/markdown-view';
 import { WebhookSendDialog } from '@/components/webhook-send-dialog';
 import { apiFetch, redirectIfSessionExpired, type JobVersionEntry, type JobVersionsResponse } from '@/lib/api';
 import { API_BASE_URL } from '@/lib/api-base';
+import { useAuth } from '@/lib/auth-context';
 import { peekCached, setCached } from '@/lib/data-cache';
 import { useI18n } from '@/i18n/provider';
 import { translate, type MessageKey } from '@/i18n/messages';
@@ -133,6 +134,11 @@ function JobDetailsPageInner() {
 
 function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: boolean }) {
   const { t } = useI18n();
+  // Technical/operational details (profile, converter, versions, JSON
+  // export, webhook, rerun controls, …) are admin-only — regular users just
+  // see the outcome. Loading/no-session both read as non-admin.
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   // Job metadata (unlike the markdown preview) isn't gated behind the
   // document password, so it's safe to reuse: re-opening a job you already
   // viewed this session (e.g. the browser back button) paints its header
@@ -490,11 +496,11 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
           )}
         </p>
         <p>{t('portal.jobDetail.createdLabel', { date: new Date(job.created_at).toLocaleString() })}</p>
-        {selectedProfileId && <p>{t('portal.jobDetail.profileLabel', { name: profileIdDisplay(selectedProfileId, settings) })}</p>}
-        {selectedProfileLabel && <p>{t('portal.jobDetail.profileNameLabel', { name: selectedProfileLabel })}</p>}
-        {converter && <p>{t('portal.jobDetail.converterLabel', { name: converter })}</p>}
-        {pageCount !== null && blockCount !== null && <p>{t('portal.jobDetail.structureLabel', { pages: pageCount, blocks: blockCount })}</p>}
-        {usedFallback && (
+        {isAdmin && selectedProfileId && <p>{t('portal.jobDetail.profileLabel', { name: profileIdDisplay(selectedProfileId, settings) })}</p>}
+        {isAdmin && selectedProfileLabel && <p>{t('portal.jobDetail.profileNameLabel', { name: selectedProfileLabel })}</p>}
+        {isAdmin && converter && <p>{t('portal.jobDetail.converterLabel', { name: converter })}</p>}
+        {isAdmin && pageCount !== null && blockCount !== null && <p>{t('portal.jobDetail.structureLabel', { pages: pageCount, blocks: blockCount })}</p>}
+        {isAdmin && usedFallback && (
           <div className="rounded-xl border border-red-300 bg-red-50 p-3 text-red-900">
             <p className="text-sm font-semibold">
               {t('portal.jobDetail.ocrFallbackTitle', { engine: engine ?? 'plain-text' })}
@@ -505,7 +511,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
             {fallbackReason && <p className="mt-1 break-words text-sm">{t('portal.jobDetail.reasonLabel', { reason: fallbackReason })}</p>}
           </div>
         )}
-        {!usedFallback && profileMismatch && (
+        {isAdmin && !usedFallback && profileMismatch && (
           <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-amber-900">
             <p className="text-sm">
               {t('portal.jobDetail.profileMismatch', { requested: selectedProfileId ?? '', resolved: resolvedProfileId ?? '' })}
@@ -517,6 +523,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
             <p className="text-sm">
               {warning || t('portal.jobDetail.processingStoppedManual')}
             </p>
+            {/* Recovery stays available to the owner, not only to admins. */}
             {(suggestedLowerProfile || canRestartWithProfile) && (
               <div className="mt-2 flex flex-wrap gap-2">
                 {suggestedLowerProfile && (
@@ -544,7 +551,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
             <QualityGradeLegend />
           </div>
         )}
-        {versions && versions.length > 1 && (
+        {isAdmin && versions && versions.length > 1 && (
           <section>
             <h2 className="mb-2 text-[17px] font-semibold">{t('portal.jobDetail.versionsHeading')}</h2>
             <div className="overflow-x-auto rounded-xl border border-slate-200">
@@ -595,24 +602,30 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
             <Link href="/sources/new" className={`${buttonVariants({ variant: 'outline' })} mt-3`}>{t('portal.jobDetail.reimportSource')}</Link>
           </section>
         )}
-        <details>
-          <summary className="cursor-pointer font-semibold">{t('portal.jobDetail.technicalDetails')}</summary>
-          <pre className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-4 text-sm text-emerald-800">
-            {JSON.stringify(job.processing_info ?? {}, null, 2)}
-          </pre>
-        </details>
+        {isAdmin && (
+          <details>
+            <summary className="cursor-pointer font-semibold">{t('portal.jobDetail.technicalDetails')}</summary>
+            <pre className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-4 text-sm text-emerald-800">
+              {JSON.stringify(job.processing_info ?? {}, null, 2)}
+            </pre>
+          </details>
+        )}
         {job.status === 'FINISHED' && (
           <div className="flex flex-wrap gap-2">
             <a href={`${API}/api/v1/jobs/${job.id}/download${password ? `?password=${encodeURIComponent(password)}` : ''}`}>
               <Button>{t('portal.jobDetail.downloadMarkdown')}</Button>
             </a>
-            <a href={`${API}/api/v1/jobs/${job.id}/export.json${password ? `?password=${encodeURIComponent(password)}` : ''}`}>
-              <Button variant="outline">{t('portal.jobDetail.downloadJson')}</Button>
-            </a>
-            <Button variant="outline" onClick={() => setWebhookDialogOpen(true)}>
-              <Webhook className="h-4 w-4" />
-              {t('portal.jobs.browser.sendToWebhook')}
-            </Button>
+            {isAdmin && (
+              <a href={`${API}/api/v1/jobs/${job.id}/export.json${password ? `?password=${encodeURIComponent(password)}` : ''}`}>
+                <Button variant="outline">{t('portal.jobDetail.downloadJson')}</Button>
+              </a>
+            )}
+            {isAdmin && (
+              <Button variant="outline" onClick={() => setWebhookDialogOpen(true)}>
+                <Webhook className="h-4 w-4" />
+                {t('portal.jobs.browser.sendToWebhook')}
+              </Button>
+            )}
             <Button
               variant="outline"
               onClick={() => {
@@ -623,7 +636,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
               <Pencil className="h-4 w-4" />
               {t('portal.jobs.browser.editMarkdown')}
             </Button>
-            {canRestartWithProfile && (
+            {isAdmin && canRestartWithProfile && (
               <Button variant="outline" onClick={() => setRestartProfileDialogOpen(true)}>
                 <Settings2 className="h-4 w-4" />
                 {t('portal.jobs.browser.rerunWithProfile')}
@@ -697,7 +710,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
           )}
         </section>
       </div>
-      {webhookDialogOpen && (
+      {isAdmin && webhookDialogOpen && (
         <WebhookSendDialog
           job={{ id: job.id, label: job.original_filename }}
           onClose={() => setWebhookDialogOpen(false)}

@@ -3,6 +3,8 @@ export const common = {
   'appTitle': 'Weave · Wissensportal',
   'appDescription': 'Weave Wissensportal',
   'language': 'Sprache',
+  'language.auto': 'Auto',
+  'language.autoHint': 'Sprache des Browsers verwenden',
   'language.de': 'Deutsch',
   'language.en': 'English',
   'language.saveFailed': 'Sprache konnte nicht im Konto gespeichert werden.',

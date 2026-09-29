@@ -248,14 +248,6 @@ export function BotsTab() {
       </ul>}
     </SectionCard>
 
-    <SectionCard title={t('admin.bots.security.title')} description={t('admin.bots.security.description')}>
-      <div className="grid gap-4 text-sm text-slate-600 md:grid-cols-3">
-        <p><strong className="block text-slate-900">{t('admin.bots.security.teamsTitle')}</strong>{t('admin.bots.security.teamsBody')}</p>
-        <p><strong className="block text-slate-900">{t('admin.bots.security.spacesTitle')}</strong>{t('admin.bots.security.spacesBody')}</p>
-        <p><strong className="block text-slate-900">{t('admin.bots.security.n8nTitle')}</strong>{t('admin.bots.security.n8nBody')}</p>
-      </div>
-    </SectionCard>
-
     {editing && <BotEditor bot={editing === 'new' ? null : editing} teams={teams.items} spaces={spaces.items} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); setNotice(t('admin.bots.saved')); await bots.reload(); }} />}
     {deleting && <ConfirmDialog title={t('admin.bots.delete.title')} body={<p>{deleteBodyBefore}<strong className="text-slate-950">{deleting.name}</strong>{deleteBodyAfter}</p>} confirmLabel={t('admin.bots.delete.title')} onClose={() => setDeleting(null)} onConfirm={async () => { await apiSend(`/api/v1/auth/admin/bots/${encodeURIComponent(deleting.id)}`, { method: 'DELETE' }); setDeleting(null); setNotice(t('admin.bots.deleted')); await bots.reload(); }} />}
   </div>;

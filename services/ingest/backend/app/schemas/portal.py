@@ -58,6 +58,24 @@ class PortalDocumentListResponse(BaseModel):
     total: int
 
 
+class PortalImportScopeItem(BaseModel):
+    """One distinct Confluence import scope among a collection's visible
+    documents -- re-runs/refreshes of the same import share scope_type and
+    scope_value (see ImportRun), and are counted together here."""
+
+    value: str  # '<scope_type>:<scope_value>', the list endpoint's import_scope filter value
+    scope_type: str
+    scope_value: str
+    label: str  # root_page_title, or scope_value when no title was recorded
+    count: int
+
+
+class PortalImportScopesResponse(BaseModel):
+    items: list[PortalImportScopeItem]
+    # Visible documents with no import run (uploads, mail) -- the filter's 'none' bucket.
+    other_count: int
+
+
 class PortalQualitySignals(BaseModel):
     ocr_confidence: float | None = None
     confidence_sample_size: int = 0

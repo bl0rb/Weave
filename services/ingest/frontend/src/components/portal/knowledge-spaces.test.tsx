@@ -68,7 +68,7 @@ it('renames a knowledge space through the existing patch contract', async () => 
   render(<KnowledgeSpaces />);
   fireEvent.click(await screen.findByRole('button', { name: 'Servicewissen umbenennen' }));
   fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Neuer Name' } });
-  fireEvent.change(screen.getByRole('textbox', { name: 'Zweck' }), { target: { value: 'Neue Beschreibung' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Details angeben' }), { target: { value: 'Neue Beschreibung' } });
   fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
 
   await waitFor(() => expect(json.mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(true));
@@ -147,4 +147,62 @@ it('filters a knowledge space\'s documents by quality grade and resets paginatio
     expect(params.get('offset')).toBe('0');
     expect(params.get('collection_id')).toBe('area-1');
   });
+});
+
+it('shows the Confluence-Bereich filter when import scopes exist and filters by the selected scope', async () => {
+  const document = { id: 'd1', original_filename: 'Handbuch.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, release: null, source: { kind: 'confluence', label: 'Confluence', path: null, url: null } };
+  const scopes = { items: [{ value: 'space:DOCS', scope_type: 'space', scope_value: 'DOCS', label: 'Handbuch', count: 3 }], other_count: 2 };
+  json.mockImplementation(async path => {
+    if (typeof path !== 'string') return area;
+    if (path.startsWith('/api/v1/portal/documents')) return { items: [document], total: 1 };
+    if (path === '/api/v1/portal/collections/area-1/import-scopes') return scopes;
+    return area;
+  });
+  render(<KnowledgeDetail id="area-1" />);
+  await screen.findByText('Handbuch.pdf');
+  const select = await screen.findByRole('combobox', { name: 'Confluence-Bereich' });
+  expect(screen.getByRole('option', { name: 'Handbuch · DOCS (3)' })).toBeTruthy();
+  expect(screen.getByRole('option', { name: 'Ohne Confluence (Uploads, Mail)' })).toBeTruthy();
+
+  fireEvent.change(select, { target: { value: 'space:DOCS' } });
+  await waitFor(() => {
+    const call = json.mock.calls.filter(([path]) => typeof path === 'string' && path.startsWith('/api/v1/portal/documents')).at(-1);
+    const params = new URL(call?.[0] as string, 'http://localhost').searchParams;
+    expect(params.get('import_scope')).toBe('space:DOCS');
+    expect(params.get('offset')).toBe('0');
+  });
+});
+
+it('drops a Confluence-Bereich filter whose scope no longer exists', async () => {
+  const document = { id: 'd1', original_filename: 'Handbuch.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, release: null, source: { kind: 'confluence', label: 'Confluence', path: null, url: null } };
+  let scopes = { items: [{ value: 'space:DOCS', scope_type: 'space', scope_value: 'DOCS', label: 'Handbuch', count: 3 }], other_count: 0 };
+  json.mockImplementation(async path => {
+    if (typeof path !== 'string') return area;
+    if (path.startsWith('/api/v1/portal/documents')) return { items: [document], total: 1 };
+    if (path === '/api/v1/portal/collections/area-1/import-scopes') return scopes;
+    return area;
+  });
+  render(<KnowledgeDetail id="area-1" />);
+  const select = await screen.findByRole('combobox', { name: 'Confluence-Bereich' });
+  // The scope's documents are gone by the time the filtered list loads.
+  scopes = { items: [], other_count: 0 };
+  fireEvent.change(select, { target: { value: 'space:DOCS' } });
+  await waitFor(() => {
+    const call = json.mock.calls.filter(([path]) => typeof path === 'string' && path.startsWith('/api/v1/portal/documents')).at(-1);
+    const params = new URL(call?.[0] as string, 'http://localhost').searchParams;
+    expect(params.get('import_scope')).toBeNull();
+  });
+});
+
+it('hides the Confluence-Bereich filter when the space has no import scopes', async () => {
+  const document = { id: 'd1', original_filename: 'Doc.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, release: null, source: { kind: 'upload', label: 'Hochgeladen', path: null, url: null } };
+  json.mockImplementation(async path => {
+    if (typeof path !== 'string') return area;
+    if (path.startsWith('/api/v1/portal/documents')) return { items: [document], total: 1 };
+    if (path === '/api/v1/portal/collections/area-1/import-scopes') return { items: [], other_count: 0 };
+    return area;
+  });
+  render(<KnowledgeDetail id="area-1" />);
+  await screen.findByText('Doc.pdf');
+  expect(screen.queryByRole('combobox', { name: 'Confluence-Bereich' })).toBeNull();
 });

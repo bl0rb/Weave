@@ -26,7 +26,7 @@ it('creates the area with purpose, responsible team and member team, then contin
   await screen.findByRole('checkbox', { name: 'Service' });
   expect((screen.getByRole('combobox', { name: /Zuständiges Team/ }) as HTMLSelectElement).value).toBe('t-service');
   fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: '  Servicewissen  ' } });
-  fireEvent.change(screen.getByRole('textbox', { name: 'Zweck' }), { target: { value: ' Antworten für den Service ' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Details angeben' }), { target: { value: ' Antworten für den Service ' } });
   api.mockResolvedValueOnce(area);
   fireEvent.click(screen.getByRole('button', { name: 'Anlegen und Quelle hinzufügen' }));
   await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('/sources/new?collection=area'));
@@ -46,7 +46,7 @@ it('requires a purpose before the area can be created', async () => {
   fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Bereich' } });
   const save = screen.getByRole('button', { name: 'Anlegen und Quelle hinzufügen' }) as HTMLButtonElement;
   expect(save.disabled).toBe(true);
-  fireEvent.change(screen.getByRole('textbox', { name: 'Zweck' }), { target: { value: 'Wofür' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Details angeben' }), { target: { value: 'Wofür' } });
   expect(save.disabled).toBe(false);
 });
 
@@ -59,7 +59,7 @@ it('lets the member teams be narrowed and adds a newly chosen responsible team',
   fireEvent.change(screen.getByRole('combobox', { name: /Zuständiges Team/ }), { target: { value: 't-sales' } });
   expect((screen.getByRole('checkbox', { name: 'Vertrieb' }) as HTMLInputElement).checked).toBe(true);
   fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Übergreifendes Wissen' } });
-  fireEvent.change(screen.getByRole('textbox', { name: 'Zweck' }), { target: { value: 'Vertriebswissen' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Details angeben' }), { target: { value: 'Vertriebswissen' } });
   api.mockResolvedValueOnce(area);
   fireEvent.click(screen.getByRole('button', { name: 'Anlegen und Quelle hinzufügen' }));
   await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
@@ -73,7 +73,7 @@ it('only opens an area to everyone after an explicit confirmation', async () => 
   render(<NewKnowledgeSpace />);
   await screen.findByRole('radio', { name: 'Alle angemeldeten Nutzer' });
   fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Bereich' } });
-  fireEvent.change(screen.getByRole('textbox', { name: 'Zweck' }), { target: { value: 'Wofür' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Details angeben' }), { target: { value: 'Wofür' } });
   const save = screen.getByRole('button', { name: 'Anlegen und Quelle hinzufügen' }) as HTMLButtonElement;
   expect(save.disabled).toBe(false);
   fireEvent.click(screen.getByRole('radio', { name: 'Alle angemeldeten Nutzer' }));

@@ -11,7 +11,7 @@ import { AccessLine } from './access-line';
 import { accessSummary, ownerSummary } from '@/lib/access-summary';
 import { spaceColorVar, spaceMark } from '@/lib/space-color';
 import { useIndexingStatus } from '@/lib/use-indexing-status';
-import { bulkPortalAction, collectionDownloadName, downloadPortalFile, jsonBody, loadDirectoryTeams, loadDocuments, markdownDownloadName, pipelineStage, portalDownloadError, portalError, reindexKnowledgeSpace, type DirectoryTeam, type DocumentPage, type KnowledgeSpace, type PortalDocument, type QualityGradeFilter } from '@/lib/portal';
+import { bulkPortalAction, collectionDownloadName, downloadPortalFile, jsonBody, loadDirectoryTeams, loadDocuments, loadImportScopes, markdownDownloadName, pipelineStage, portalDownloadError, portalError, reindexKnowledgeSpace, type DirectoryTeam, type DocumentPage, type ImportScopesResponse, type KnowledgeSpace, type PortalDocument, type QualityGradeFilter } from '@/lib/portal';
 import { useI18n } from '@/i18n/provider';
 import { BulkActionBar, DocumentTable, EmptyState, Notice, Pagination, PortalPage, QualityGradeFilterRow, QualityGradeLegend } from './shared';
 
@@ -162,6 +162,8 @@ export function KnowledgeDetail({ id }: { id: string }) {
   const [documents, setDocuments] = useState<DocumentPage | null>(null);
   const [offset, setOffset] = useState(0);
   const [qualityGrade, setQualityGrade] = useState<QualityGradeFilter>('');
+  const [importScope, setImportScope] = useState('');
+  const [importScopes, setImportScopes] = useState<ImportScopesResponse | null>(null);
   const [error, setError] = useState('');
   const [downloadError, setDownloadError] = useState('');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
@@ -175,9 +177,17 @@ export function KnowledgeDetail({ id }: { id: string }) {
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [withdrawReleased, setWithdrawReleased] = useState(false);
   const [reindexing, setReindexing] = useState(false);
-  const load = useCallback(() => Promise.all([apiJson<KnowledgeSpace>(`/api/v1/collections/${encodeURIComponent(id)}`), loadDocuments(id, offset, 'all', qualityGrade || undefined)])
-    .then(([area, docs]) => { setSpace(area); setDocuments(docs); setError(''); })
-    .catch(err => setError(portalError(err, locale))), [id, offset, qualityGrade, locale]);
+  const load = useCallback(() => Promise.all([
+    apiJson<KnowledgeSpace>(`/api/v1/collections/${encodeURIComponent(id)}`),
+    loadDocuments(id, offset, 'all', qualityGrade || undefined, undefined, importScope || undefined),
+    loadImportScopes(id),
+  ])
+    .then(([area, docs, scopes]) => {
+      setSpace(area); setDocuments(docs); setImportScopes(scopes); setError('');
+      // The filtered scope vanished (e.g. its documents were deleted): drop the filter instead of showing an empty list.
+      if (importScope && !(importScope === 'none' ? scopes.other_count > 0 : scopes.items.some(scope => scope.value === importScope))) { setImportScope(''); setOffset(0); }
+    })
+    .catch(err => setError(portalError(err, locale))), [id, offset, qualityGrade, importScope, locale]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
     const timer = setInterval(() => { if (document.visibilityState === 'visible') void load(); }, 15000);
@@ -251,6 +261,16 @@ export function KnowledgeDetail({ id }: { id: string }) {
         onDelete={() => setBulkDeleting(true)}
         onClear={clearSelection}
       />
+      {Boolean(importScopes?.items?.length) && <div className="flex flex-wrap items-end gap-3 border-b border-[var(--line)] px-5 py-4">
+        <label className="min-w-[200px] flex-1 text-sm font-semibold text-[var(--ink-2)]">
+          {t('portal.spaces.importScopeLabel')}
+          <select value={importScope} onChange={event => { setImportScope(event.target.value); setOffset(0); setDocuments(null); clearSelection(); }}>
+            <option value="">{t('portal.spaces.importScopeAll')}</option>
+            {importScopes?.items.map(scope => <option key={scope.value} value={scope.value}>{scope.scope_type === 'space' && scope.label !== scope.scope_value ? `${scope.label} · ${scope.scope_value} (${scope.count})` : `${scope.label} (${scope.count})`}</option>)}
+            {Boolean(importScopes?.other_count) && <option value="none">{t('portal.spaces.importScopeNone')}</option>}
+          </select>
+        </label>
+      </div>}
       {!documents && !error ? <p className="portal-loading" role="status">{t('portal.tasks.documentsLoading')}</p> : documents?.items.length ? <><DocumentTable documents={documents.items} onDownloadMarkdown={document => void downloadDocument(document)} downloadingId={downloadingId} selectedIds={selectedIds} onToggle={docId => setSelectedIds(previous => { const next = new Set(previous); if (next.has(docId)) next.delete(docId); else next.add(docId); return next; })} onToggleAll={checked => setSelectedIds(checked ? new Set(documents.items.map(document => document.id)) : new Set())} /><Pagination offset={offset} total={documents.total} onChange={value => { setDocuments(null); setOffset(value); }} /></> : !error && <EmptyState title={t('portal.spaces.emptyContentTitle')} href={(space?.can_upload ?? space?.can_manage) ? `/sources/new?collection=${encodeURIComponent(id)}` : undefined} action={(space?.can_upload ?? space?.can_manage) ? t('portal.chrome.addSource') : undefined}>{t('portal.spaces.emptyContentBody')}</EmptyState>}
     </section>
     {bulkDeleting && <ConfirmDialog title={t('portal.spaces.deleteDocumentsTitle')} body={<><p>{t('portal.spaces.deleteDocumentsBody', { count: selectedIds.size })}</p><label className="mt-3 flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={withdrawReleased} onChange={event => setWithdrawReleased(event.target.checked)} />{t('portal.spaces.withdrawReleased')}</label></>} confirmLabel={t('portal.spaces.deleteDocumentsTitle')} onClose={() => { setBulkDeleting(false); setWithdrawReleased(false); }} onConfirm={() => runBulk('delete')} />}
