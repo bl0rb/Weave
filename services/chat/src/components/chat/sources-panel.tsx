@@ -1,7 +1,7 @@
 'use client';
 
 import { Lock } from 'lucide-react';
-import { formatCollection, formatPages, formatVersion, SourceOrigin } from '@/components/chat/source-cards';
+import { formatCollection, formatPages, formatScore, formatVersion, SourceOrigin } from '@/components/chat/source-cards';
 import { toProxiedImageUrl } from '@/lib/portal-artifact-url';
 import { useI18n } from '@/i18n/provider';
 import type { Source } from '@/types/weave-api';
@@ -70,31 +70,34 @@ export function SourcesPanel({ sources, scopeLabel }: SourcesPanelProps) {
         </p>
       ) : (
         <ol className="flex flex-col gap-3">
-          {sources.map((source, index) => (
-            <li
-              key={`${source.document_id}-${source.chunk_id}`}
-              className="rounded-[var(--radius-card)] border border-[var(--line)] p-4 text-xs"
-            >
-              <div className="flex items-start gap-2">
-                <span className="mt-0.5 inline-grid h-5 w-5 flex-none place-items-center rounded-[var(--radius-control)] border border-[var(--line)] text-[11px] font-bold text-[var(--accent)]">
-                  {index + 1}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <strong className="block truncate text-[13px] font-semibold text-[var(--ink)]">
-                    {source.original_filename ?? t('chat.sources.documentFallback', { id: source.document_id })}
-                  </strong>
-                  <span className="text-[var(--muted)]">
-                    {formatPages(source, t)} · {formatVersion(source, t)}
-                    {source.score != null ? ` · ${t('chat.sources.score', { value: source.score.toFixed(2) })}` : ''}
+          {sources.map((source, index) => {
+            const scoreText = formatScore(source, t);
+            return (
+              <li
+                key={`${source.document_id}-${source.chunk_id}`}
+                className="rounded-[var(--radius-card)] border border-[var(--line)] p-4 text-xs"
+              >
+                <div className="flex items-start gap-2">
+                  <span className="mt-0.5 inline-grid h-5 w-5 flex-none place-items-center rounded-[var(--radius-control)] border border-[var(--line)] text-[11px] font-bold text-[var(--accent)]">
+                    {index + 1}
                   </span>
+                  <div className="min-w-0 flex-1">
+                    <strong className="block truncate text-[13px] font-semibold text-[var(--ink)]">
+                      {source.original_filename ?? t('chat.sources.documentFallback', { id: source.document_id })}
+                    </strong>
+                    <span className="text-[var(--muted)]">
+                      {formatPages(source, t)} · {formatVersion(source, t)}
+                      {scoreText ? ` · ${scoreText}` : ''}
+                    </span>
+                  </div>
                 </div>
-              </div>
-              <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 text-[var(--muted)]">
-                <span>{t('chat.sources.collectionLabel', { collection: formatCollection(source, t) })}</span>
-                <SourceOrigin source={source} />
-              </div>
-            </li>
-          ))}
+                <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 text-[var(--muted)]">
+                  <span>{t('chat.sources.collectionLabel', { collection: formatCollection(source, t) })}</span>
+                  <SourceOrigin source={source} />
+                </div>
+              </li>
+            );
+          })}
         </ol>
       )}
 

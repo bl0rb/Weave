@@ -445,6 +445,16 @@ def test_score_for_falls_back_to_rrf_when_rerank_is_absent():
     assert _score_for(chunk) == 0.4
 
 
+def test_to_source_sets_score_kind_rerank_when_reranked():
+    source = _to_source(_chunk(scores=RetrievedChunkScores(rrf=0.4, rerank=0.9)))
+    assert source.score_kind == 'rerank'
+
+
+def test_to_source_sets_score_kind_rrf_when_not_reranked():
+    source = _to_source(_chunk(scores=RetrievedChunkScores(rrf=0.4, rerank=None)))
+    assert source.score_kind == 'rrf'
+
+
 def test_to_source_defaults_missing_source_to_empty_string():
     chunk = _chunk(source=None)
     source = _to_source(chunk)

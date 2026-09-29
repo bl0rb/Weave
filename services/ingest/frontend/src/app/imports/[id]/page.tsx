@@ -7,6 +7,7 @@ import { useParams } from 'next/navigation';
 
 import { Button } from '@/components/ui/button';
 import { ImportSyncButton, MissingConfluencePages } from '@/components/portal/import-sync';
+import { WeaveIngestLogo } from '@/components/weave-ingest-logo';
 import { ApiError, apiJson } from '@/lib/api';
 import { formatBytes } from '@/components/dashboard/shared';
 import {
@@ -201,7 +202,8 @@ export default function ImportRunPage() {
 
         <section className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-[0_20px_60px_rgba(15,23,42,0.05)]">
           <div className="flex flex-wrap items-center justify-between gap-4">
-            <p className="text-sm font-semibold text-slate-950">
+            <p className="flex items-center gap-3 text-sm font-semibold text-slate-950">
+              {active && <WeaveIngestLogo animation="loop" className="h-8 w-8 flex-none" />}
               {t('portal.importDetail.pagesImportedSummary', { imported: run.pages_imported, discovered: run.pages_discovered })}
             </p>
             <p className="text-xs font-semibold text-slate-600">{progressPct}%</p>

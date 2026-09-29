@@ -59,6 +59,11 @@ export interface Source {
   chunk_id: number;
   /** Rerank score if available, else the plain retrieval (RRF) score. */
   score: number | null;
+  /** Which signal `score` is: 'rerank' (0..1, safe to show as a percentage)
+   * or 'rrf' (a tiny rank-fusion value, NOT a percentage). `null`/absent
+   * for an n8n-provider source, whose score semantics are unknown — see
+   * Weave-Runtime's Source.score_kind (backend/app/schemas/chat.py). */
+  score_kind?: 'rerank' | 'rrf' | null;
   /**
    * The collection this chunk belongs to; `null` for a pre-Collections
    * legacy document with no collection at all. Security-relevant for an

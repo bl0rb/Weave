@@ -980,6 +980,9 @@ def _to_source(chunk: RetrievedChunk) -> Source:
         document_id=chunk.document_id,
         chunk_id=chunk.chunk_id,
         score=_score_for(chunk),
+        # Same rerank-if-present-else-rrf choice _score_for makes, just
+        # naming which one it picked -- see Source.score_kind's docstring.
+        score_kind='rerank' if chunk.scores.rerank is not None else 'rrf',
         collection=chunk.collection,
         images=_images_for(chunk),
         source_kind=chunk.source_kind,
