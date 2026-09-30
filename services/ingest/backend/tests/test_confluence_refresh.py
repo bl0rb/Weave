@@ -131,7 +131,7 @@ def _make_source(
         db.close()
 
 
-def _make_finished_run(owner_id: str, source_id: str, *, scope_value: str = 'P1') -> str:
+def _make_finished_run(owner_id: str, source_id: str, *, scope_value: str = 'P1', collection_id: str | None = None) -> str:
     """The 'last successful run' _start_refresh_run copies scope/options
     from -- a refresh has nothing to repeat without one (see its
     docstring)."""
@@ -147,6 +147,7 @@ def _make_finished_run(owner_id: str, source_id: str, *, scope_value: str = 'P1'
             options={
                 'max_pages': 50, 'max_depth': 10, 'include_attachments': True, 'ocr_attachments': False,
                 'ocr_profile_id': None, 'folder': '', 'subfolder': '', 'tags': [], 'email': '',
+                'collection_id': collection_id,
             },
             state={'frontier': [], 'visited': {}, 'errors': []},
             finished_at=datetime.now(timezone.utc),
@@ -158,7 +159,7 @@ def _make_finished_run(owner_id: str, source_id: str, *, scope_value: str = 'P1'
         db.close()
 
 
-def _make_refresh_run(owner_id: str, source_id: str, *, scope_value: str) -> str:
+def _make_refresh_run(owner_id: str, source_id: str, *, scope_value: str, collection_id: str | None = None) -> str:
     """A refresh-flagged run already dispatched (mirrors what
     refresh_tasks._start_refresh_run would have created), ready to drive
     import_confluence directly."""
@@ -173,7 +174,7 @@ def _make_refresh_run(owner_id: str, source_id: str, *, scope_value: str) -> str
             options={
                 'max_pages': 50, 'max_depth': 10, 'include_attachments': True, 'ocr_attachments': False,
                 'ocr_profile_id': None, 'folder': '', 'subfolder': '', 'tags': [], 'email': '',
-                'is_refresh': True,
+                'is_refresh': True, 'collection_id': collection_id,
             },
             state={'frontier': [[scope_value, 0]], 'visited': {}, 'errors': []},
         )
@@ -208,7 +209,10 @@ def _make_normal_run(owner_id: str, source_id: str, *, scope_value: str) -> str:
         db.close()
 
 
-def _make_prior_job(owner_id: str, page_id: str, *, version: int, document_version: int = 1, import_run_id: str | None = None) -> str:
+def _make_prior_job(
+    owner_id: str, page_id: str, *, version: int, document_version: int = 1, import_run_id: str | None = None,
+    collection_id: str | None = None,
+) -> str:
     db = _db()
     try:
         job = Job(
@@ -222,6 +226,7 @@ def _make_prior_job(owner_id: str, page_id: str, *, version: int, document_versi
             processing_info={
                 'settings': {
                     'mode': 'import',
+                    'collection_id': collection_id,
                     'import': {'source_page_id': page_id, 'source_page_version': version, 'source_url': f'{BASE_URL}/wiki/x'},
                 },
             },
@@ -234,12 +239,12 @@ def _make_prior_job(owner_id: str, page_id: str, *, version: int, document_versi
         db.close()
 
 
-def _make_page_state(source_id: str, page_id: str, *, version: int, job_id: str) -> None:
+def _make_page_state(source_id: str, page_id: str, *, version: int, job_id: str, collection_id: str | None = None) -> None:
     db = _db()
     try:
         db.add(
             ImportPageState(
-                source_id=source_id, page_id=page_id, page_version=version, job_id=job_id,
+                source_id=source_id, collection_id=collection_id, page_id=page_id, page_version=version, job_id=job_id,
                 title='Old Title', url=f'{BASE_URL}/wiki/x',
             )
         )
@@ -741,3 +746,192 @@ def test_normal_run_writes_page_state_referencing_its_own_new_job(sent, client_h
     # The FK actually resolves -- the referenced job row is really there.
     assert state_row.job_id == new_job_id
     assert _get_job(new_job_id) is not None
+
+
+# --- Knowledge spaces (ADR 0008) -----------------------------------------------
+
+def _space(owner_id: str, *, member_id: str | None = None) -> str:
+    from app.models.models import CollectionGrant, CollectionRole
+    from tests.conftest import add_legacy_collection
+
+    with _db() as db:
+        collection = add_legacy_collection(db, owner_id=owner_id, slug=f'sync-{uuid.uuid4().hex[:8]}', name='Sync space')
+        if member_id is not None:
+            db.add(CollectionGrant(collection_id=collection.id, user_id=member_id, role=CollectionRole.MEMBER))
+        db.commit()
+        return collection.id
+
+
+def _finished_sync(owner_id: str, source_id: str, collection_id: str, missing_job_id: str) -> str:
+    """A finished sync of `collection_id` that reported page 'gone' missing."""
+    with _db() as db:
+        run = ImportRun(
+            source_id=source_id, owner_id=owner_id, kind='confluence', scope_type='page', scope_value='P1',
+            status=ImportRunStatus.FINISHED, options={'is_refresh': True, 'collection_id': collection_id},
+            state={'frontier': [], 'visited': {}, 'errors': [], 'missing_pages': [
+                {'page_id': 'gone', 'title': 'gone.md', 'job_id': missing_job_id, 'url': f'{BASE_URL}/wiki/x'},
+            ]},
+        )
+        db.add(run)
+        db.commit()
+        return run.id
+
+
+def _same_page_in_two_spaces(owner_id: str, source_id: str, space_a: str, space_b: str) -> tuple[str, str]:
+    jobs = []
+    for collection_id in (space_a, space_b):
+        prior = _make_finished_run(owner_id, source_id, collection_id=collection_id)
+        job_id = _make_prior_job(owner_id, 'gone', version=1, import_run_id=prior, collection_id=collection_id)
+        _make_page_state(source_id, 'gone', version=1, job_id=job_id, collection_id=collection_id)
+        jobs.append(job_id)
+    return jobs[0], jobs[1]
+
+
+@pytest.fixture()
+def knowledge_channel(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, 'portal_knowledge_base_url', 'http://knowledge')
+    monkeypatch.setattr(settings, 'portal_knowledge_webhook_secret', 'test-secret')
+    monkeypatch.setattr(celery_app, 'send_task', lambda *args, **kwargs: None)
+
+
+def test_missing_pages_of_another_space_are_not_reported():
+    owner = _make_owner()
+    source_id = _make_source(owner.id, refresh_enabled=False)
+    space_a, space_b = _space(owner.id), _space(owner.id)
+    _make_finished_run(owner.id, source_id, collection_id=space_a)
+    other_prior = _make_finished_run(owner.id, source_id, collection_id=space_b)
+    other_job = _make_prior_job(owner.id, 'only-in-b', version=1, import_run_id=other_prior, collection_id=space_b)
+    _make_page_state(source_id, 'only-in-b', version=1, job_id=other_job, collection_id=space_b)
+    current_id = _make_refresh_run(owner.id, source_id, scope_value='P1', collection_id=space_a)
+    with _db() as db:
+        run = db.get(ImportRun, current_id)
+        state = import_tasks._RunState(run)
+        state.frontier = []
+        state.visited = {'P1': 'existing'}
+        state.discovery_complete = True
+        import_tasks._detect_missing_pages(db, run, state)
+        assert state.missing_pages == []
+
+
+def test_missing_page_withdrawal_only_withdraws_the_synced_space(knowledge_channel):
+    from app.models.models import KnowledgeWithdrawal
+    from tests.conftest import login_as
+
+    owner = _make_owner()
+    source_id = _make_source(owner.id, refresh_enabled=False)
+    space_a, space_b = _space(owner.id), _space(owner.id)
+    job_a, job_b = _same_page_in_two_spaces(owner.id, source_id, space_a, space_b)
+    sync_a = _finished_sync(owner.id, source_id, space_a, job_a)
+
+    response = login_as(owner.username).post(f'/api/v1/import/runs/{sync_a}/missing/gone/withdraw', json={'confirm': True})
+    assert response.status_code == 202, response.text
+    assert response.json()['job_ids'] == [job_a]
+    with _db() as db:
+        assert db.get(KnowledgeWithdrawal, job_b) is None
+        state_b = db.scalar(select(ImportPageState).where(
+            ImportPageState.source_id == source_id, ImportPageState.collection_id == space_b,
+        ))
+        assert state_b.job_id == job_b
+
+
+def test_missing_page_withdrawal_needs_member_rights_at_request_time(knowledge_channel):
+    from app.models.models import CollectionGrant, KnowledgeWithdrawal, UserRole
+    from sqlalchemy import delete
+    from tests.conftest import login_as
+
+    importer, space_owner = _make_owner(), _make_owner()
+    suffix = uuid.uuid4().hex[:8]
+    admin = create_test_user(username=f'sync-admin-{suffix}', email=f'sync-admin-{suffix}@example.com', role=UserRole.ADMIN)
+    source_id = _make_source(importer.id, refresh_enabled=False)
+    space_a = _space(space_owner.id, member_id=importer.id)
+    space_b = _space(space_owner.id, member_id=importer.id)
+    job_a, job_b = _same_page_in_two_spaces(importer.id, source_id, space_a, space_b)
+    sync_a = _finished_sync(importer.id, source_id, space_a, job_a)
+    url = f'/api/v1/import/runs/{sync_a}/missing/gone/withdraw'
+    with _db() as db:
+        db.execute(delete(CollectionGrant).where(CollectionGrant.collection_id == space_a, CollectionGrant.user_id == importer.id))
+        db.commit()
+
+    # The grant is gone: the stale finding no longer lets the importer withdraw.
+    assert login_as(importer.username).post(url, json={'confirm': True}).status_code == 404
+    with _db() as db:
+        assert db.get(KnowledgeWithdrawal, job_a) is None
+    # An admin may, and only for the synced space.
+    response = login_as(admin.username).post(url, json={'confirm': True})
+    assert response.status_code == 202, response.text
+    assert response.json()['job_ids'] == [job_a]
+    with _db() as db:
+        assert db.get(KnowledgeWithdrawal, job_b) is None
+
+
+def test_space_members_may_withdraw_a_sync_finding_readers_may_not(knowledge_channel):
+    from app.models.models import CollectionGrant, CollectionRole, KnowledgeWithdrawal
+    from tests.conftest import login_as
+
+    importer, space_owner, member, reader = (_make_owner() for _ in range(4))
+    source_id = _make_source(importer.id, refresh_enabled=False)
+    space_a = _space(space_owner.id, member_id=importer.id)
+    space_b = _space(space_owner.id, member_id=importer.id)
+    with _db() as db:
+        db.add(CollectionGrant(collection_id=space_a, user_id=member.id, role=CollectionRole.MEMBER))
+        db.add(CollectionGrant(collection_id=space_a, user_id=reader.id, role=CollectionRole.READER))
+        db.commit()
+    job_a, job_b = _same_page_in_two_spaces(importer.id, source_id, space_a, space_b)
+    sync_a = _finished_sync(importer.id, source_id, space_a, job_a)
+    url = f'/api/v1/import/runs/{sync_a}/missing/gone/withdraw'
+
+    # A reader sees neither the run nor its findings.
+    assert login_as(reader.username).post(url, json={'confirm': True}).status_code == 404
+    # Withdrawing documents is a member right (ADR 0008), whoever started the sync.
+    member_client = login_as(member.username)
+    assert member_client.get(f'/api/v1/import/runs/{sync_a}').json()['can_remove_missing'] is True
+    response = member_client.post(url, json={'confirm': True})
+    assert response.status_code == 202, response.text
+    assert response.json()['job_ids'] == [job_a]
+    with _db() as db:
+        assert db.get(KnowledgeWithdrawal, job_b) is None
+
+
+def _deactivate(user_id: str) -> None:
+    from app.models.models import User
+
+    with _db() as db:
+        db.get(User, user_id).is_active = False
+        db.commit()
+
+
+def test_deactivated_owner_gets_no_scheduled_or_manual_refresh(sent) -> None:
+    owner = _make_owner()
+    source_id = _make_source(owner.id, last_refresh_at=datetime.now(timezone.utc) - timedelta(seconds=1000))
+    _make_finished_run(owner.id, source_id)
+    _deactivate(owner.id)
+
+    _dispatch_due_refreshes()
+
+    with _db() as db:
+        runs = db.scalars(select(ImportRun).where(ImportRun.source_id == source_id)).all()
+        assert [run.status for run in runs] == [ImportRunStatus.FINISHED]
+        # Skipped, not failed on every tick: reactivation resumes it as it was.
+        assert db.get(ImportSource, source_id).last_refresh_error is None
+        with pytest.raises(ValueError, match='deactivated'):
+            refresh_tasks._start_refresh_run(db, db.get(ImportSource, source_id))
+
+
+def test_deactivated_owner_stops_an_already_queued_refresh(sent, client_holder) -> None:
+    owner = _make_owner()
+    source_id = _make_source(owner.id)
+    client = FakeClient(_page('P1', 'Root Page', '<p>body</p>', version=2))
+    client_holder['client'] = client
+    run_id = _make_refresh_run(owner.id, source_id, scope_value='P1')
+    _deactivate(owner.id)
+
+    import_confluence(run_id, 0)
+
+    run = _get_run(run_id)
+    assert run.status == ImportRunStatus.FAILED
+    assert 'deactivated' in run.error_message
+    assert client.fetched == []
+    with _db() as db:
+        assert db.scalars(select(Job).where(Job.import_run_id == run_id)).all() == []

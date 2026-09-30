@@ -68,6 +68,7 @@ import logging
 import os
 import tarfile
 import tempfile
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -86,7 +87,9 @@ from app.models.models import (
     BackupRun,
     BotGrant,
     BotRole,
+    Collection,
     DocumentRelease,
+    ImportPageState,
     ImportRun,
     ImportRunStatus,
     Job,
@@ -363,6 +366,70 @@ def _backfill_legacy_bot_grants(db: Session, legacy: dict[str, list[str]]) -> No
         for team_id in dict.fromkeys(team_id_by_name[name] for name in teams if name in team_id_by_name):
             db.add(BotGrant(bot_id=bot_id, team_id=team_id, role=BotRole.USER))
     db.flush()
+
+
+def _job_settings(processing_info) -> dict:
+    info = processing_info if isinstance(processing_info, dict) else {}
+    return info.get('settings') if isinstance(info.get('settings'), dict) else {}
+
+
+def _scope_legacy_page_states(db: Session) -> None:
+    """Restore counterpart of migration 0040: an archive from before it kept
+    one Confluence page state per (source, page). Each row moves to the
+    knowledge space of its job (and goes with a deleted space; it stays
+    without a space only when its job has none), and each space that had
+    lost its row to another space gets one back from its newest still
+    imported page job -- otherwise a sync would chain onto or skip against
+    another space's copy of the page (ADR 0008)."""
+    states = ImportPageState.__table__
+    collection_ids = set(db.scalars(select(Collection.id)).all())
+    jobs = db.execute(
+        select(Job.id, Job.import_run_id, Job.original_filename, Job.processing_info).order_by(Job.created_at.asc())
+    ).all()
+    space_of_job = {}
+    for job in jobs:
+        value = _job_settings(job.processing_info).get('collection_id')
+        space_of_job[job.id] = value if isinstance(value, str) and value else None
+
+    for state_id, job_id in db.execute(select(states.c.id, states.c.job_id).where(states.c.job_id.is_not(None))).all():
+        collection_id = space_of_job.get(job_id)
+        if collection_id is None:
+            continue
+        if collection_id in collection_ids:
+            db.execute(states.update().where(states.c.id == state_id).values(collection_id=collection_id))
+        else:
+            db.execute(states.delete().where(states.c.id == state_id))
+
+    source_by_run = dict(
+        db.execute(select(ImportRun.id, ImportRun.source_id).where(ImportRun.source_id.is_not(None))).all()
+    )
+    withdrawn = set(db.scalars(select(KnowledgeWithdrawal.job_id)).all())
+    latest: dict[tuple, tuple] = {}
+    for job in jobs:
+        job_settings = _job_settings(job.processing_info)
+        import_info = job_settings.get('import') if isinstance(job_settings.get('import'), dict) else {}
+        page_id = import_info.get('source_page_id')
+        source_id = source_by_run.get(job.import_run_id)
+        collection_id = space_of_job[job.id]
+        if (
+            source_id is None or job.id in withdrawn or job_settings.get('mode') != 'import'
+            or not isinstance(page_id, str) or not page_id
+            or not isinstance(import_info.get('source_page_version'), int)
+            or (collection_id is not None and collection_id not in collection_ids)
+        ):
+            continue
+        latest[(source_id, collection_id, page_id)] = (job, import_info)  # ascending created_at: last wins
+
+    tracked = {tuple(row) for row in db.execute(select(states.c.source_id, states.c.collection_id, states.c.page_id))}
+    now = datetime.now(timezone.utc)
+    for (source_id, collection_id, page_id), (job, import_info) in latest.items():
+        if (source_id, collection_id, page_id) in tracked:
+            continue
+        db.execute(states.insert().values(
+            id=str(uuid.uuid4()), source_id=source_id, collection_id=collection_id, page_id=page_id,
+            page_version=import_info['source_page_version'], job_id=job.id, title=job.original_filename,
+            url=str(import_info.get('source_url') or '')[:2048], updated_at=now,
+        ))
 
 
 def _exported_tables() -> list[Table]:
@@ -911,6 +978,9 @@ def import_backup(
         legacy_bot_teams: dict[str, list[str]] | None = (
             {} if 'bot_grants' not in manifest.get('tables', {}) else None
         )
+        # And Confluence page states before 0040_space_scoped_page_states:
+        # rows without `collection_id` are moved into spaces once jobs exist.
+        legacy_page_states = False
 
         # 1. Wipe every included table in reverse dependency order. A no-op
         # set of DELETEs when the target is already fresh, so the force and
@@ -1012,6 +1082,8 @@ def import_backup(
                         # model's fail-closed default for a formerly public row.
                         legacy_acl = (legacy_collection_acl or {}).get(row.get('id')) or {}
                         row['visibility'] = 'restricted' if legacy_acl.get('read_teams') else 'public'
+                    if table.name == 'import_page_states' and 'collection_id' not in row:
+                        legacy_page_states = True
                     for column_name in self_fk_columns:
                         if row.get(column_name) is not None:
                             deferred_updates.append((_pk_values(table, row), {column_name: row[column_name]}))
@@ -1052,6 +1124,8 @@ def import_backup(
             backfill_legacy_grants(db, legacy_collection_acl)
         if legacy_bot_teams:
             _backfill_legacy_bot_grants(db, legacy_bot_teams)
+        if legacy_page_states:
+            _scope_legacy_page_states(db)
 
         # 3. Restore the on-disk upload/result trees.
         report['files_restored'] = _restore_files(tar)

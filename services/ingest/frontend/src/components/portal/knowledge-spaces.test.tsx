@@ -151,7 +151,7 @@ it('filters a knowledge space\'s documents by quality grade and resets paginatio
 
 it('shows the Confluence-Bereich filter when import scopes exist and filters by the selected scope', async () => {
   const document = { id: 'd1', original_filename: 'Handbuch.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, release: null, source: { kind: 'confluence', label: 'Confluence', path: null, url: null } };
-  const scopes = { items: [{ value: 'space:DOCS', scope_type: 'space', scope_value: 'DOCS', label: 'Handbuch', count: 3, latest_run_id: 'run-1', can_edit: true }], other_count: 2 };
+  const scopes = { items: [{ value: 'space:DOCS', scope_type: 'space', scope_value: 'DOCS', label: 'Handbuch', count: 3, latest_run_id: 'run-1', edit_run_id: 'run-1', can_edit: true }], other_count: 2 };
   json.mockImplementation(async path => {
     if (typeof path !== 'string') return area;
     if (path.startsWith('/api/v1/portal/documents')) return { items: [document], total: 1 };
@@ -181,7 +181,7 @@ it('shows the Confluence-Bereich filter when import scopes exist and filters by 
 
 it('offers no edit link for a Confluence-Bereich the user may not edit', async () => {
   const document = { id: 'd1', original_filename: 'Handbuch.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, release: null, source: { kind: 'confluence', label: 'Confluence', path: null, url: null } };
-  const scopes = { items: [{ value: 'space:DOCS', scope_type: 'space', scope_value: 'DOCS', label: 'Handbuch', count: 3, latest_run_id: 'run-1', can_edit: false }], other_count: 0 };
+  const scopes = { items: [{ value: 'space:DOCS', scope_type: 'space', scope_value: 'DOCS', label: 'Handbuch', count: 3, latest_run_id: 'run-1', edit_run_id: null, can_edit: false }], other_count: 0 };
   json.mockImplementation(async path => {
     if (typeof path !== 'string') return area;
     if (path.startsWith('/api/v1/portal/documents')) return { items: [document], total: 1 };
@@ -198,9 +198,28 @@ it('offers no edit link for a Confluence-Bereich the user may not edit', async (
   expect(screen.queryByRole('link', { name: 'Import bearbeiten' })).toBeNull();
 });
 
+it('edits the caller\'s own import of a Confluence-Bereich when someone else imported it later', async () => {
+  const document = { id: 'd1', original_filename: 'Handbuch.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, release: null, source: { kind: 'confluence', label: 'Confluence', path: null, url: null } };
+  const scopes = { items: [{ value: 'space:DOCS', scope_type: 'space', scope_value: 'DOCS', label: 'Handbuch', count: 3, latest_run_id: 'run-other', edit_run_id: 'run-mine', can_edit: true }], other_count: 0 };
+  json.mockImplementation(async path => {
+    if (typeof path !== 'string') return area;
+    if (path.startsWith('/api/v1/portal/documents')) return { items: [document], total: 1 };
+    if (path === '/api/v1/portal/collections/area-1/import-scopes') return scopes;
+    return area;
+  });
+  render(<KnowledgeDetail id="area-1" />);
+  await screen.findByText('Handbuch.pdf');
+  const select = await screen.findByRole('combobox', { name: 'Confluence-Bereich' });
+  expect(screen.getByRole('link', { name: 'Handbuch' }).getAttribute('href')).toBe('/imports/new?from=run-mine');
+
+  fireEvent.change(select, { target: { value: 'space:DOCS' } });
+  expect((await screen.findByRole('link', { name: 'Import ansehen' })).getAttribute('href')).toBe('/imports/run-other');
+  expect(screen.getByRole('link', { name: 'Import bearbeiten' }).getAttribute('href')).toBe('/imports/new?from=run-mine');
+});
+
 it('drops a Confluence-Bereich filter whose scope no longer exists', async () => {
   const document = { id: 'd1', original_filename: 'Handbuch.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, release: null, source: { kind: 'confluence', label: 'Confluence', path: null, url: null } };
-  let scopes = { items: [{ value: 'space:DOCS', scope_type: 'space', scope_value: 'DOCS', label: 'Handbuch', count: 3, latest_run_id: 'run-1', can_edit: true }], other_count: 0 };
+  let scopes = { items: [{ value: 'space:DOCS', scope_type: 'space', scope_value: 'DOCS', label: 'Handbuch', count: 3, latest_run_id: 'run-1', edit_run_id: 'run-1', can_edit: true }], other_count: 0 };
   json.mockImplementation(async path => {
     if (typeof path !== 'string') return area;
     if (path.startsWith('/api/v1/portal/documents')) return { items: [document], total: 1 };

@@ -387,8 +387,16 @@ def _new_edit_version(db, job: Job) -> Job:
         ))
     db.flush()  # the page state below references the new row
     # The next Confluence sync must chain onto the edit (or skip an unchanged
-    # page and keep it), never fork a second version off the original.
-    db.execute(update(ImportPageState).where(ImportPageState.job_id == job.id).values(job_id=edited.id))
+    # page and keep it), never fork a second version off the original. Only
+    # this space's sync state follows the edit (ADR 0008).
+    db.execute(
+        update(ImportPageState)
+        .where(
+            ImportPageState.job_id == job.id,
+            ImportPageState.collection_id == _settings_for_job(job).get('collection_id'),
+        )
+        .values(job_id=edited.id)
+    )
     return edited
 
 
@@ -878,7 +886,9 @@ def list_portal_import_scopes(
     of a collection, for the knowledge space's 'Confluence-Bereich' filter
     (/api/v1/portal/documents?import_scope=...). A re-run/refresh shares its
     scope_type/scope_value with the original import (see ImportRun), so
-    every job for a scope is counted together under one entry."""
+    every job for a scope is counted together under one entry -- also when
+    several people imported it. Editing offers the caller's own newest run
+    of the scope (any run for an admin), never someone else's newer run."""
     collection = db.get(Collection, collection_id)
     if collection is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
@@ -900,9 +910,13 @@ def list_portal_import_scopes(
 
     scopes: dict[tuple[str, str], dict] = {}
     for run in rows:
-        entry = scopes.setdefault((run.scope_type, run.scope_value), {'count': 0, 'label': '', 'run': run})
+        entry = scopes.setdefault(
+            (run.scope_type, run.scope_value), {'count': 0, 'label': '', 'run': run, 'own_run': None}
+        )
         entry['count'] += 1
         entry['run'] = run  # ordered by created_at, so the last one is the newest run of this scope
+        if run.owner_id == user.id or user.role == UserRole.ADMIN:
+            entry['own_run'] = run
         if run.root_page_title:
             entry['label'] = run.root_page_title
 
@@ -916,18 +930,20 @@ def list_portal_import_scopes(
         )
         or 0
     )
-    items = [
-        PortalImportScopeItem(
+    items = []
+    for (scope_type, scope_value), entry in scopes.items():
+        own_run = entry['own_run']
+        edit_run_id = own_run.id if own_run is not None and _can_edit_run(own_run, user) else None
+        items.append(PortalImportScopeItem(
             value=f'{scope_type}:{scope_value}',
             scope_type=scope_type,
             scope_value=scope_value,
             label=entry['label'] or scope_value,
             count=entry['count'],
             latest_run_id=entry['run'].id,
-            can_edit=_can_edit_run(entry['run'], user),
-        )
-        for (scope_type, scope_value), entry in scopes.items()
-    ]
+            edit_run_id=edit_run_id,
+            can_edit=edit_run_id is not None,
+        ))
     items.sort(key=lambda item: item.label.lower())
     return PortalImportScopesResponse(items=items, other_count=other_count)
 

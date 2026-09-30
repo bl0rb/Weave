@@ -906,20 +906,34 @@ class ImportPageState(Base):
     page whose remote `version` still matches `page_version` here is
     unchanged and can be skipped.
 
-    One row per (source_id, page_id) -- upserted by the refresh logic (not
-    built by this change; this table is schema-only here). `job_id` points
-    at the Job row the page was last imported into (SET NULL, not CASCADE:
-    losing the state row must not take an already-useful Job down with it).
+    One row per (source_id, collection_id, page_id) -- upserted by the
+    refresh logic. The same page imported into two knowledge spaces is two
+    documents with their own version chains (ADR 0008), so the state is
+    kept per space; `collection_id` NULL is an import without a space.
+    `job_id` points at the Job row the page was last imported into (SET
+    NULL, not CASCADE: losing the state row must not take an already-useful
+    Job down with it).
     """
 
     __tablename__ = 'import_page_states'
     __table_args__ = (
-        UniqueConstraint('source_id', 'page_id', name='uq_import_page_states_source_id_page_id'),
+        UniqueConstraint(
+            'source_id', 'collection_id', 'page_id', name='uq_import_page_states_source_collection_page'
+        ),
+        # NULLs never collide in a unique constraint; imports without a space
+        # still keep one row per page.
+        Index(
+            'uq_import_page_states_unassigned_page', 'source_id', 'page_id', unique=True,
+            sqlite_where=sql_text('collection_id IS NULL'), postgresql_where=sql_text('collection_id IS NULL'),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     source_id: Mapped[str] = mapped_column(
         String(36), ForeignKey('import_sources.id', ondelete='CASCADE'), nullable=False, index=True
+    )
+    collection_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('collections.id', ondelete='CASCADE'), nullable=True
     )
     page_id: Mapped[str] = mapped_column(String(64), nullable=False)
     page_version: Mapped[int] = mapped_column(Integer, nullable=False)

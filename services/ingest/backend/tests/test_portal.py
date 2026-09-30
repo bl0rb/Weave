@@ -133,8 +133,11 @@ def _import_source(owner_id: str) -> ImportSource:
 def _import_page_state(source_id: str, job_id: str, *, title: str = 'Portal Page', url: str = 'https://portal.example.atlassian.net/wiki/spaces/X/pages/1') -> ImportPageState:
     db = _db()
     try:
+        # Sync state lives in the space of the job it points at (ADR 0008).
+        job_settings = (db.get(Job, job_id).processing_info or {}).get('settings') or {}
         page = ImportPageState(
             source_id=source_id,
+            collection_id=job_settings.get('collection_id'),
             page_id=f'page-{uuid.uuid4().hex[:8]}',
             page_version=1,
             job_id=job_id,
@@ -754,9 +757,9 @@ def test_portal_import_scopes_lists_distinct_scopes_and_respects_visibility(monk
     assert body['other_count'] == 1
     by_value = {item['value']: item for item in body['items']}
     # latest_run_id is the newest run of the scope; can_edit follows _can_edit_run (owner + finished)
-    assert by_value['space:DOCS'] == {'value': 'space:DOCS', 'scope_type': 'space', 'scope_value': 'DOCS', 'label': 'Handbuch', 'count': 2, 'latest_run_id': docs_rerun.id, 'can_edit': True}
+    assert by_value['space:DOCS'] == {'value': 'space:DOCS', 'scope_type': 'space', 'scope_value': 'DOCS', 'label': 'Handbuch', 'count': 2, 'latest_run_id': docs_rerun.id, 'edit_run_id': docs_rerun.id, 'can_edit': True}
     # A legacy run without an owner is not editable by a non-admin.
-    assert by_value['space:HR'] == {'value': 'space:HR', 'scope_type': 'space', 'scope_value': 'HR', 'label': 'HR', 'count': 1, 'latest_run_id': hr_run.id, 'can_edit': False}
+    assert by_value['space:HR'] == {'value': 'space:HR', 'scope_type': 'space', 'scope_value': 'HR', 'label': 'HR', 'count': 1, 'latest_run_id': hr_run.id, 'edit_run_id': None, 'can_edit': False}
     # sorted by label
     assert [item['value'] for item in body['items']] == ['space:DOCS', 'space:HR']
 
@@ -780,6 +783,27 @@ def test_portal_import_scopes_can_edit_follows_latest_run_state(monkeypatch):
     # The newest run is still running, so it cannot be edited/restarted yet.
     assert item['latest_run_id'] == running.id
     assert item['can_edit'] is False
+    assert item['edit_run_id'] is None
+
+
+def test_portal_import_scopes_edit_link_never_points_at_someone_elses_newer_run(monkeypatch):
+    _configure(monkeypatch)
+    suffix = uuid.uuid4().hex[:8]
+    team = _team('scope-editors')
+    anna = create_test_user(username=f'portal-scopes-anna-{suffix}', email=f'portal-scopes-anna-{suffix}@example.com', team_id=team.id)
+    bert = create_test_user(username=f'portal-scopes-bert-{suffix}', email=f'portal-scopes-bert-{suffix}@example.com', team_id=team.id)
+    collection = _collection(anna.id, read_teams=[team.name])
+    anna_run = _import_run(ImportRunStatus.FINISHED, scope_type='space', scope_value='HR', root_page_title='HR', owner_id=anna.id)
+    bert_run = _import_run(ImportRunStatus.FINISHED, scope_type='space', scope_value='HR', root_page_title='HR', owner_id=bert.id)
+    _job(anna.id, collection, import_run_id=anna_run.id)
+    _job(bert.id, collection, import_run_id=bert_run.id)
+
+    (anna_item,) = login_as(anna.username).get(f'/api/v1/portal/collections/{collection.id}/import-scopes').json()['items']
+    # Both imports count under one scope; Anna edits her own import, not Bert's newer one.
+    assert (anna_item['count'], anna_item['latest_run_id']) == (2, bert_run.id)
+    assert (anna_item['edit_run_id'], anna_item['can_edit']) == (anna_run.id, True)
+    (bert_item,) = login_as(bert.username).get(f'/api/v1/portal/collections/{collection.id}/import-scopes').json()['items']
+    assert (bert_item['edit_run_id'], bert_item['can_edit']) == (bert_run.id, True)
 
 
 def test_portal_import_scopes_hidden_for_reader_without_job_visibility(monkeypatch):
