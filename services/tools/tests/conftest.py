@@ -19,7 +19,14 @@ from fastapi.testclient import TestClient
 
 import app.main as main_module
 from app.core.config import settings
+from app.services import scope as _scope_module
 from app.services.scope import _b64url_encode, _canonical_json, issue_delegation_token
+
+# The real registry re-check of a Delegations-Token (see scope.py's
+# `_resolve_delegated_scope`). Stubbed to "nothing revoked" for every test by
+# the autouse fixture below, so the many delegated-path tests need not mock
+# an extra Weave-Retrieval call; tests of the re-check itself restore this.
+REAL_CURRENTLY_DELEGATED_COLLECTIONS = _scope_module._currently_delegated_collections
 
 TOOLS_API_TOKEN = 'test-tools-api-token'
 INTROSPECTION_SERVICE_TOKEN = 'test-introspection-service-token'
@@ -53,6 +60,7 @@ def _configured_settings(monkeypatch):
     from app.services import scope as scope_module
 
     scope_module._technical_scope_cache.clear()
+    monkeypatch.setattr(scope_module, '_currently_delegated_collections', lambda payload: list(payload['collections']))
 
 
 def fake_response(status_code: int, json_body, *, method: str = 'GET', url: str = 'http://upstream.test/') -> httpx.Response:

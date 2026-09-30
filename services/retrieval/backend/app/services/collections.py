@@ -21,7 +21,11 @@ back as `SearchRequest.allowed_collections` on the actual search call.
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.models import Collection
+from app.models.models import Collection, Document
+
+# Weave-Knowledge's own reserved frontmatter key for the release a document
+# row was indexed from (its app/api/events.py `_RELEASE_ID_KEY`).
+_RELEASE_ID_KEY = '_weave_release_id'
 
 
 def readable_collections(
@@ -63,3 +67,13 @@ def readable_collections(
         or memberships.intersection(collection.read_teams or [])
         or (user is not None and user in (collection.read_users or []))
     ]
+
+
+def release_document(db: Session, release_id: str) -> Document | None:
+    """The document row indexed from release `release_id` (Weave-Ingest's
+    DocumentRelease id, canonical lowercase UUID string), or `None` -- also
+    for a release since superseded by a newer one of the same document,
+    whose row now carries the newer id. Callers deny access on `None`."""
+    return db.execute(
+        select(Document).where(Document.frontmatter[_RELEASE_ID_KEY].as_string() == release_id).limit(1)
+    ).scalar_one_or_none()

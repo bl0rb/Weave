@@ -60,6 +60,10 @@ from app.services.delegation import DelegationConfigError, mint_delegation_token
 
 logger = logging.getLogger(__name__)
 
+# Slack on top of `bot.n8n.timeout_seconds` for a blocking flow's delegation
+# token (see `run_flow`): covers clock skew and the last tool call in flight.
+_DELEGATION_TTL_MARGIN_SECONDS = 10
+
 
 class N8nError(Exception):
     """n8n was reached and answered, but the turn itself failed: any 4xx
@@ -222,7 +226,11 @@ def run_flow(
     `_parse_response` above -- see both exceptions' own docstrings for how
     app/api/internal.py treats each.
     """
-    token = mint_delegation_token(user, scope, bot.id)
+    # A blocking call is abandoned after `timeout_seconds`, so a token that
+    # outlives it has no legitimate use -- capping it shortens how long a
+    # deactivated user's or changed team's rights linger in a running flow.
+    ttl_seconds = min(settings.delegation_token_ttl_seconds, bot.n8n.timeout_seconds + _DELEGATION_TTL_MARGIN_SECONDS)
+    token = mint_delegation_token(user, scope, bot.id, ttl_seconds=ttl_seconds)
     payload = {
         'message': message,
         'history': history,

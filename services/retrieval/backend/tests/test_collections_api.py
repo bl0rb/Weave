@@ -6,8 +6,8 @@ own readable_collections() unit tests cover the underlying logic in
 isolation).
 """
 
-from app.models.models import Collection
-from tests.conftest import AUTH_HEADERS, TestingSessionLocal, client, make_collection
+from app.models.models import Collection, Document
+from tests.conftest import AUTH_HEADERS, TestingSessionLocal, client, make_collection, make_document
 
 
 def _seed(*collections: Collection) -> None:
@@ -140,3 +140,26 @@ def test_collections_public_field_reflects_visibility_not_empty_read_teams():
         assert body == [{'slug': 'shared-with-me', 'name': 'Shared With Me', 'description': None, 'public': False}]
     finally:
         _cleanup()
+
+
+# --- release -> collection lookup (Weave-API's portal-artifact read check) --------
+
+
+def test_release_collection_resolves_the_documents_space():
+    release_id = '0b6c1f9e-2a4d-4a7e-9a55-6f0f3c2d1e10'
+    db = TestingSessionLocal()
+    try:
+        db.add(make_document(collection_slug='vorstand', frontmatter={'_weave_release_id': release_id, 'collection': 'vorstand'}))
+        db.add(make_document(collection_slug='other', frontmatter={'_weave_release_id': 'another-release'}))
+        db.commit()
+
+        resp = client.get(f'/api/v1/releases/{release_id}/collection', headers=AUTH_HEADERS)
+        assert resp.status_code == 200
+        assert resp.json() == {'collection': 'vorstand'}
+
+        assert client.get('/api/v1/releases/unknown-release/collection', headers=AUTH_HEADERS).status_code == 404
+        assert client.get(f'/api/v1/releases/{release_id}/collection').status_code == 401
+    finally:
+        db.query(Document).delete()
+        db.commit()
+        db.close()

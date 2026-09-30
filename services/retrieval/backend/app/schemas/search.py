@@ -45,7 +45,10 @@ class SearchRequest(BaseModel):
     # outside its authorized teams merely by omitting the team filter.
     # `None` means the pipeline enforces no team restriction at all (e.g. a
     # service-level caller trusted with full visibility); an empty list
-    # means "no teams authorized", i.e. zero results.
+    # means "no teams authorized", i.e. zero results. When
+    # `allowed_collections` below is a concrete list, this gates ONLY
+    # legacy documents without a collection: documents inside a space are
+    # decided by the grant-derived `allowed_collections` alone (ADR 0008).
     allowed_teams: list[str] | None = None
     # The Collections-contract analogue of allowed_teams above -- a HARD
     # boundary app/services/search.py's apply_filters() enforces in SQL

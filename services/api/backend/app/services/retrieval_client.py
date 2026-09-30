@@ -80,3 +80,27 @@ def list_collections(*, team: str | list[str] | None, user: str | None = None) -
         return response.json()
     except ValueError as exc:
         raise RetrievalClientError('Weave-Retrieval returned a non-JSON response for GET /api/v1/collections') from exc
+
+
+def release_collection(release_id: str) -> str | None:
+    """GET /api/v1/releases/{release_id}/collection -- the space the
+    document released as `release_id` belongs to, per the same index the
+    chat's sources come from. `None` for an unknown (or superseded) release
+    and for a document without a space; callers deny access on `None`."""
+    try:
+        with _client() as client:
+            response = client.get(f'/api/v1/releases/{release_id}/collection')
+    except httpx.RequestError as exc:
+        raise RetrievalClientError(f'Weave-Retrieval unreachable: {exc}') from exc
+
+    if response.status_code == 404:
+        return None
+    if response.status_code >= 400:
+        raise RetrievalClientError(
+            f'Weave-Retrieval returned HTTP {response.status_code} for GET /api/v1/releases/{{id}}/collection'
+        )
+    try:
+        collection = response.json().get('collection')
+    except (ValueError, AttributeError) as exc:
+        raise RetrievalClientError('Weave-Retrieval returned an invalid release lookup response') from exc
+    return collection if isinstance(collection, str) else None

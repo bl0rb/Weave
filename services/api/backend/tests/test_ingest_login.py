@@ -21,7 +21,7 @@ from app.core.security import hash_exchange_code
 from app.models.models import Session as SessionModel
 from app.models.models import SessionExchangeCode, User
 from app.services import ingest_identity
-from tests.conftest import client
+from tests.conftest import auth_headers, client, make_user_with_token
 
 INGEST_LOGIN_URL = 'http://ingest.test/login'
 INGEST_API_URL = 'http://ingest-backend.test'
@@ -224,6 +224,20 @@ def test_existing_session_refreshes_memberships_and_fails_closed(configured, mon
     assert client.get(protected_url).status_code == 503
     _mock_ingest(monkeypatch, status_code=404)
     assert client.get(protected_url).status_code == 401
+
+
+def test_a_direct_oidc_account_is_inactive_next_to_the_ingest_handoff(configured) -> None:
+    """ADR 0006: one login mode or the other. An account a previous direct-
+    OIDC setup provisioned keeps IdP team names that are never refreshed and
+    would match Ingest team grants by name -- its token must stop working."""
+    with _db() as db:
+        _idp_user, idp_token = make_user_with_token(
+            db, username='idp-user', team='rechtsabteilung', oidc_subject='idp-sub-1'
+        )
+        _cli_user, cli_token = make_user_with_token(db, username='cli-user', team='rechtsabteilung')
+
+    assert client.get('/v1/me', headers=auth_headers(idp_token)).status_code == 401
+    assert client.get('/v1/me', headers=auth_headers(cli_token)).status_code == 200
 
 
 # --- step 2: everything that must not work ------------------------------------

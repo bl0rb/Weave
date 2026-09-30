@@ -49,6 +49,23 @@ def test_list_collections_filters_to_allowed_slugs():
     assert kwargs['headers']['Authorization'] == 'Bearer test-retrieval-api-token'
 
 
+def test_list_collections_forwards_subject_for_person_grants():
+    # A space granted to this person alone is in scope; the listing must
+    # ask Weave-Retrieval with the person id too, or it silently drops it.
+    scope = Scope(
+        kind='personal', user_id='u', username='bob', team=None, teams=[], subject='ingest-42',
+        allowed_collections=['hr-richtlinien'],
+    )
+    retrieval_resp = fake_response(200, [{'slug': 'hr-richtlinien', 'name': 'HR', 'description': None}])
+
+    with patch('app.services.tools.httpx.get', return_value=retrieval_resp) as mock_get:
+        result = list_collections_for_scope(scope)
+
+    assert [c.slug for c in result] == ['hr-richtlinien']
+    _, kwargs = mock_get.call_args
+    assert kwargs['params'] == {'teams': [], 'user': 'ingest-42'}
+
+
 def test_list_collections_omits_team_param_when_scope_has_no_team():
     scope = Scope(kind='delegated', user_id='u', username='u', team=None, allowed_collections=['handbuch'])
     retrieval_resp = fake_response(200, [{'slug': 'handbuch', 'name': 'Handbuch', 'description': None, 'public': True}])

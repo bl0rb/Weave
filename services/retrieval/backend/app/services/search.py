@@ -42,7 +42,7 @@ import time
 import httpx
 from dataclasses import dataclass
 
-from sqlalchemy import Float, Select, Text, bindparam, cast, func, literal_column, or_, select
+from sqlalchemy import Float, Select, Text, and_, bindparam, cast, func, literal_column, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import array as pg_array
 from sqlalchemy.orm import Session
@@ -141,11 +141,15 @@ def apply_filters(
       `superseded`, `pending`, and `failed` documents must never surface in
       a search result, independent of anything the caller asked for.
     - `allowed_teams` (from SearchRequest, NOT SearchFilters): the
-      access-control boundary. Applied unconditionally whenever it is not
-      `None`, regardless of whether `filters.team` is also set -- a caller
-      must never be able to see a document outside its authorized teams
-      merely by omitting the team filter (see SearchRequest.allowed_teams's
-      own docstring). An empty list is "no team authorized" and correctly
+      team boundary for rows no collection grant decides. With
+      `allowed_collections=None` it applies to every row; with a concrete
+      `allowed_collections` it applies ONLY to legacy rows without a
+      collection (admitted via NO_COLLECTION_SENTINEL) -- rows inside a
+      space are decided by `allowed_collections` alone (ADR 0008). Applied
+      regardless of whether `filters.team` is also set -- a caller must
+      never be able to see a document outside its authorized teams merely
+      by omitting the team filter (see SearchRequest.allowed_teams's own
+      docstring). An empty list is "no team authorized" and correctly
       yields zero rows via `IN ()`.
     - `allowed_collections` (from SearchRequest, NOT SearchFilters): the
       Collections-contract analogue of `allowed_teams` above, enforced the
@@ -203,15 +207,26 @@ def apply_filters(
     """
     stmt = stmt.where(Document.status == DocumentStatus.INDEXED)
 
-    if allowed_teams is not None:
-        stmt = stmt.where(Document.team.in_(allowed_teams))
-
-    if allowed_collections is not None:
+    if allowed_collections is None:
+        if allowed_teams is not None:
+            stmt = stmt.where(Document.team.in_(allowed_teams))
+    else:
+        # ADR 0008: for a document inside a space, the grant-derived
+        # `allowed_collections` is the ONLY read boundary. `Document.team`
+        # is the uploader's primary team, stamped at release -- AND-ing it
+        # in would re-introduce the abolished owner's-team rule and hide
+        # documents from person grants, other teams' grants and public
+        # spaces. The team gate stays only for legacy rows without a
+        # collection, which have no grants to decide.
+        real_slugs = [slug for slug in allowed_collections if slug != NO_COLLECTION_SENTINEL]
+        in_scope = Document.collection_slug.in_(real_slugs)
         if NO_COLLECTION_SENTINEL in allowed_collections:
-            real_slugs = [slug for slug in allowed_collections if slug != NO_COLLECTION_SENTINEL]
-            stmt = stmt.where(or_(Document.collection_slug.in_(real_slugs), Document.collection_slug.is_(None)))
+            legacy = Document.collection_slug.is_(None)
+            if allowed_teams is not None:
+                legacy = and_(legacy, Document.team.in_(allowed_teams))
+            stmt = stmt.where(or_(in_scope, legacy))
         else:
-            stmt = stmt.where(Document.collection_slug.in_(allowed_collections))
+            stmt = stmt.where(in_scope)
 
     if filters is None:
         return stmt

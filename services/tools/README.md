@@ -207,9 +207,12 @@ token = b64url(json(payload)) + "." + b64url(hmac_sha256(secret, b64url(json(pay
 `b64url` ist urlsafe-Base64 ohne Padding; `json(payload)` ist
 `json.dumps(payload, sort_keys=True, separators=(',', ':'))`, sodass beide
 Seiten den HMAC über byte-identische Eingaben berechnen. Die Payload trägt `v`
-(heute immer `1`), `sub`, `username`, `team`, `collections`, `bot`, `iat` und
-`exp`. Das Token *ist* der Scope: alles Nötige steht in der signierten Payload,
-deshalb macht dieser Pfad überhaupt keinen ausgehenden Aufruf. `bot` und
+(heute immer `1`), `sub`, `username`, `team`, `teams`, `subject` (Weave-Ingest-ID
+der Person), `collections`, `bot`, `iat` und `exp`. Das Token *ist* der Scope:
+alles Nötige steht in der signierten Payload. Nur `collections` wird bei jedem
+Aufruf gegen Weave-Retrievals Registry (mit `teams` und `subject`) geprüft und
+dabei höchstens eingeengt – eine entzogene Freigabe wirkt so sofort, nicht erst
+nach Ablauf der TTL (ADR 0008). `bot` und
 `username` sind Audit-Kontext und werden nie für die Zugriffskontrolle
 herangezogen; `kind` (`'delegated'` vs. `'personal'`) wird ebenso nur zur
 Observability mitgeführt, denn eine Delegation gewährt genau die Rechte des

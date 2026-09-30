@@ -20,11 +20,12 @@ from types import SimpleNamespace
 import pytest
 
 from app.core.config import settings
-from app.models.models import Chunk, Document, DocumentStatus
+from app.models.models import Chunk, Collection, Document, DocumentStatus
 from app.schemas.search import SearchFilters, SearchRequest
 from app.services import search as search_service
+from app.services.collections import readable_collections
 from app.services.embeddings import FakeEmbeddingProvider
-from tests.conftest import TestingSessionLocal, make_chunk, make_document
+from tests.conftest import TestingSessionLocal, make_chunk, make_collection, make_document
 
 _PROVIDER = FakeEmbeddingProvider()
 
@@ -421,40 +422,110 @@ def test_filters_collection_outside_allowed_collections_yields_empty_not_error(d
     assert fulltext_results == []
 
 
-def test_allowed_teams_and_allowed_collections_both_enforced_together(db):
-    """The two hard boundaries are independent AND-ed constraints -- a chunk
-    must satisfy BOTH to surface, satisfying only one is not enough."""
+def test_allowed_collections_decides_space_documents_team_gates_only_legacy(db):
+    """ADR 0008: inside a space, the grant-derived `allowed_collections` is
+    the only read boundary -- `Document.team` (the uploader's primary team,
+    stamped at release) must not be AND-ed in, or person grants, grants to
+    other teams and public spaces return nothing. `allowed_teams` still
+    gates legacy rows without a collection, admitted via the sentinel."""
     text = 'Ihr Vertrag wird automatisch verlaengert, sofern Sie nicht widersprechen.'
-    doc_both_ok = _seed_doc(
-        db, team='Kundenservice', department='Support', status=DocumentStatus.INDEXED, collection_slug='support-docs'
+    doc_in_space = _seed_doc(
+        db, team='Vertrieb', department='Sales', status=DocumentStatus.INDEXED, collection_slug='handbuch'
     )
-    chunk_both_ok = _seed_chunk(db, doc_both_ok, text, chunk_index=0)
+    chunk_in_space = _seed_chunk(db, doc_in_space, text, chunk_index=0)
 
-    # Right team, wrong collection.
-    doc_wrong_collection = _seed_doc(
-        db, team='Kundenservice', department='Support', status=DocumentStatus.INDEXED, collection_slug='eng-docs'
-    )
-    chunk_wrong_collection = _seed_chunk(db, doc_wrong_collection, text, chunk_index=0)
+    # Uploader without a primary team -> Document.team NULL.
+    doc_no_team = _seed_doc(db, team=None, department=None, status=DocumentStatus.INDEXED, collection_slug='handbuch')
+    chunk_no_team = _seed_chunk(db, doc_no_team, text, chunk_index=0)
 
-    # Right collection, wrong team.
-    doc_wrong_team = _seed_doc(
-        db, team='Engineering', department='Platform', status=DocumentStatus.INDEXED, collection_slug='support-docs'
+    doc_foreign_space = _seed_doc(
+        db, team='Technik', department='Platform', status=DocumentStatus.INDEXED, collection_slug='eng-docs'
     )
-    chunk_wrong_team = _seed_chunk(db, doc_wrong_team, text, chunk_index=0)
+    chunk_foreign_space = _seed_chunk(db, doc_foreign_space, text, chunk_index=0)
+
+    doc_legacy_hr = _seed_doc(db, team='HR', department='People', status=DocumentStatus.INDEXED, collection_slug=None)
+    chunk_legacy_hr = _seed_chunk(db, doc_legacy_hr, text, chunk_index=0)
 
     db.commit()
-    for chunk in (chunk_both_ok, chunk_wrong_collection, chunk_wrong_team):
+    for chunk in (chunk_in_space, chunk_no_team, chunk_foreign_space, chunk_legacy_hr):
         db.refresh(chunk)
 
     query_vec = _embed(text)
-    result_ids = set(
-        _ids(
-            search_service.vector_search(
-                db, query_vec, None, ['Kundenservice'], ['support-docs'], limit=50
-            )
-        )
+    allowed = ['handbuch', search_service.NO_COLLECTION_SENTINEL]
+    for teams in (['Technik'], []):
+        vector_ids = set(_ids(search_service.vector_search(db, query_vec, None, teams, allowed, limit=50)))
+        fulltext_ids = set(_ids(search_service.fulltext_search(db, text, None, teams, allowed, limit=50)))
+        for result_ids in (vector_ids, fulltext_ids):
+            assert result_ids == {chunk_in_space.id, chunk_no_team.id}
+
+    # The legacy row stays protected by its team.
+    hr_ids = set(_ids(search_service.vector_search(db, query_vec, None, ['HR'], allowed, limit=50)))
+    assert hr_ids == {chunk_in_space.id, chunk_no_team.id, chunk_legacy_hr.id}
+
+    # Without a concrete collection scope the team gate still covers every row.
+    team_only = set(_ids(search_service.vector_search(db, query_vec, None, ['Technik'], None, limit=50)))
+    assert team_only == {chunk_foreign_space.id}
+
+
+def _seed_grant_scenario(db):
+    """Alice (primary team 'Vertrieb') uploaded into space 'handbuch'; a
+    legacy HR document without a collection sits next to it."""
+    text = 'Reisekosten werden innerhalb von vierzehn Tagen erstattet.'
+    doc = _seed_doc(db, team='Vertrieb', department='Sales', status=DocumentStatus.INDEXED, collection_slug='handbuch')
+    chunk = _seed_chunk(db, doc, text, chunk_index=0)
+    legacy = _seed_doc(db, team='HR', department='People', status=DocumentStatus.INDEXED, collection_slug=None)
+    legacy_chunk = _seed_chunk(db, legacy, text, chunk_index=0)
+    db.commit()
+    db.refresh(chunk)
+    db.refresh(legacy_chunk)
+    return SimpleNamespace(text=text, chunk=chunk, legacy_chunk=legacy_chunk)
+
+
+def _search_as(db, text: str, teams: list[str], user: str | None) -> set[int]:
+    """What Weave-Runtime does for one end-user turn: resolve the readable
+    spaces from the registry, then search with them plus the sentinel."""
+    readable = [c.slug for c in readable_collections(db, teams=teams, user=user)]
+    request = SearchRequest(
+        query=text, allowed_teams=teams, allowed_collections=[*readable, search_service.NO_COLLECTION_SENTINEL], top_k=10
     )
-    assert result_ids == {chunk_both_ok.id}
+    results, _trace = search_service.search(db, request)
+    return {r.chunk_id for r in results}
+
+
+@pytest.mark.parametrize(
+    'collection_overrides, teams, user',
+    [
+        pytest.param({'visibility': 'restricted', 'read_users': ['bob']}, ['Technik'], 'bob', id='person-grant-other-team'),
+        pytest.param({'visibility': 'restricted', 'read_teams': ['Technik']}, ['Technik'], 'bob', id='team-grant-other-team'),
+        pytest.param({'visibility': 'public'}, ['Technik'], 'bob', id='public-space'),
+        pytest.param({'visibility': 'restricted', 'read_users': ['bob']}, [], 'bob', id='user-without-teams'),
+    ],
+)
+def test_search_pipeline_grant_from_outside_the_uploaders_team_finds_document(db, collection_overrides, teams, user):
+    seeded = _seed_grant_scenario(db)
+    db.add(make_collection(slug='handbuch', **collection_overrides))
+    db.commit()
+    try:
+        result_ids = _search_as(db, seeded.text, teams, user)
+        assert seeded.chunk.id in result_ids
+        # Legacy content without a collection stays gated by its team.
+        assert seeded.legacy_chunk.id not in result_ids
+    finally:
+        db.query(Collection).delete()
+        db.commit()
+
+
+def test_search_pipeline_without_grant_finds_nothing_and_legacy_stays_team_gated(db):
+    seeded = _seed_grant_scenario(db)
+    db.add(make_collection(slug='handbuch', visibility='restricted', read_users=['alice'], read_teams=['Vertrieb']))
+    db.commit()
+    try:
+        # Same primary team as the uploader, but no grant: no longer enough.
+        assert seeded.chunk.id not in _search_as(db, seeded.text, ['Technik'], 'bob')
+        assert _search_as(db, seeded.text, ['HR'], 'carl') == {seeded.legacy_chunk.id}
+    finally:
+        db.query(Collection).delete()
+        db.commit()
 
 
 # --- rrf_fuse (pure function -- no DB needed) --------------------------------------
@@ -579,9 +650,8 @@ def test_search_pipeline_keeps_fused_top_k_not_final_k(corpus):
 def test_search_pipeline_enforces_allowed_collections_alongside_allowed_teams(db):
     """End-to-end proof that `SearchRequest.allowed_collections` is actually
     wired into search(), not just into the lower-level leg functions --
-    and that it composes with `allowed_teams` as two independent AND-ed
-    boundaries, exactly like test_allowed_teams_and_allowed_collections_
-    both_enforced_together above proves at the vector_search() level."""
+    and that `allowed_teams` does not widen it (see test_allowed_collections_
+    decides_space_documents_team_gates_only_legacy above)."""
     text = 'Bitte aktualisieren Sie Ihre Rechnungsadresse im Kundenportal.'
 
     doc_both_ok = _seed_doc(

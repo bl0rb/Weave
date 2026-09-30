@@ -26,11 +26,17 @@ def get_bots(user: User = Depends(enforce_rate_limit)) -> list:
 
 @router.get('/bots/{bot_id}')
 def get_bot_by_id(bot_id: str, user: User = Depends(enforce_rate_limit)) -> dict:
-    """The full configuration of a bot the caller may chat with; any other
-    bot is a 404, indistinguishable from one that doesn't exist."""
+    """A bot the caller may chat with; any other bot is a 404,
+    indistinguishable from one that doesn't exist. Only admins get the full
+    configuration -- everyone else the same summary as GET /v1/bots, never
+    the system prompt, filters, n8n connection or the persons granted
+    (ADR 0008: even bot owners do not see the technical connection)."""
     try:
-        if bot_id not in {bot.get('id') for bot in list_bots(runtime_user(user))}:
+        visible = {bot.get('id'): bot for bot in list_bots(runtime_user(user))}
+        if bot_id not in visible:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bot not found')
+        if not user.is_admin:
+            return visible[bot_id]
         return get_bot(bot_id)
     except RuntimeClientError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc

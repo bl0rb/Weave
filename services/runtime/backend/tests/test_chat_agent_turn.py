@@ -169,9 +169,10 @@ def test_agent_turn_searches_then_answers_with_combined_sources_and_trace(tmp_pa
 def test_agent_turn_search_forwards_the_callers_allowed_teams(tmp_path, monkeypatch):
     # Mirrors _run_knowledge_turn's own allowed_teams=_allowed_teams(bot,
     # user) -- a subagent's search_knowledge call must carry the SAME
-    # mandatory team-rights axis as a direct-RAG turn, on top of Collections
-    # scope (chat.py's `_allowed_teams` docstring; services/retrieval's
-    # `apply_filters()` treats `Document.team` as a separate axis).
+    # team axis as a direct-RAG turn, on top of Collections scope (chat.py's
+    # `_allowed_teams` docstring). services/retrieval's `apply_filters()`
+    # applies it only to legacy documents without a collection (ADR 0008),
+    # so it must travel together with the concrete Collections scope.
     _write_bot(tmp_path, monkeypatch)
     _script_fake_llm(monkeypatch, [
         LLMToolResult(content=None, tool_calls=[_TOOL_CALL], model='fake-chat'),
@@ -193,6 +194,7 @@ def test_agent_turn_search_forwards_the_callers_allowed_teams(tmp_path, monkeypa
     # _BODY's user carries team='it' -- _allowed_teams prefers the calling
     # user's own team over the bot's (empty, "every team") permissions.teams.
     assert captured_bodies[0]['allowed_teams'] == ['it']
+    assert captured_bodies[0]['allowed_collections'] is not None
 
 
 def test_agent_turn_deduplicates_sources_by_document_and_chunk_id(tmp_path, monkeypatch):

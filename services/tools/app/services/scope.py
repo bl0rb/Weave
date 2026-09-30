@@ -17,7 +17,9 @@ unauthenticated input to trust):
    reading rights of the human who is currently asking, without handing
    that agent a copy of the human's own long-lived Personal-Token. The
    token IS the scope -- everything resolve_scope needs is embedded in its
-   signed payload, so this path never calls another Weave service at all.
+   signed payload -- except for one re-check against Weave-Retrieval's
+   registry on every call, so a grant revoked while an agent still holds
+   the token stops working at once (see `_resolve_delegated_scope`).
 
 2. A Personal-Token (an end user's own long-lived API token, as issued by
    Weave-API): resolved by asking Weave-API's own introspection endpoint
@@ -67,6 +69,10 @@ by one would fail verification by the other for no security reason at all.
     sub:         str, the human's own Weave-API user id.
     username:    str.
     team:        str | None.
+    subject:     str | None, the human's Weave-Ingest user id --
+                 what the re-check against Weave-Retrieval matches
+                 `read_users` (person grants) with. Null = team/public
+                 grants only (fail closed).
     collections: list[str], the exact set of collection slugs this loan
                  covers -- MAY include NO_COLLECTION_SENTINEL
                  ("__none__", Weave-Retrieval's own sentinel for "documents
@@ -85,8 +91,9 @@ Both `sub`/`username`/`team`/`collections` here are the issuer's (Weave-
 Runtime's) own already-resolved answer to "what may this human read right
 now" -- baking them into the signed payload, rather than a bare user id this
 service would have to re-resolve itself, is exactly what lets this whole
-path skip calling Weave-API and Weave-Retrieval a second time; resolve_scope()
-trusts them exactly as far as the signature does.
+path skip calling Weave-API; resolve_scope() trusts them exactly as far as
+the signature does, and only lets Weave-Retrieval's current registry narrow
+`collections` further (a revoked grant), never widen it.
 
 --- Verification discipline ------------------------------------------------
 
@@ -221,6 +228,10 @@ class Scope:
     allowed_collections: list[str]
     bot_id: str | None = None
     teams: list[str] | None = None
+    # The caller's Weave-Ingest user id, when known -- what Weave-Retrieval's
+    # registry matches `read_users` (person grants, ADR 0008) against. `None`
+    # = team/public grants only (fail closed), never a wildcard.
+    subject: str | None = None
 
     @property
     def effective_teams(self) -> list[str]:
@@ -289,6 +300,7 @@ def issue_delegation_token(
     bot_id: str | None = None,
     ttl_seconds: int | None = None,
     teams: list[str] | None = None,
+    subject: str | None = None,
 ) -> str:
     """Mint a Delegations-Token for `user_id`'s current, already-resolved
     scope. The production issuer of these tokens is Weave-Runtime, not this
@@ -312,6 +324,7 @@ def issue_delegation_token(
         'username': username,
         'team': team,
         'teams': teams if teams is not None else ([team] if team else []),
+        'subject': subject,
         'collections': collections,
         'bot': bot_id,
         'iat': now,
@@ -379,6 +392,9 @@ def _verify_delegation_token(token: str) -> dict[str, Any]:
             raise ScopeError(_GENERIC_AUTH_ERROR)
         if 'teams' in payload:
             _validated_teams(payload['teams'])
+        subject = payload.get('subject')
+        if subject is not None and not isinstance(subject, str):
+            raise ScopeError(_GENERIC_AUTH_ERROR)
         bot_id = payload.get('bot')
         if bot_id is not None and not isinstance(bot_id, str):
             raise ScopeError(_GENERIC_AUTH_ERROR)
@@ -397,16 +413,42 @@ def _verify_delegation_token(token: str) -> dict[str, Any]:
         raise ScopeError(_GENERIC_AUTH_ERROR) from None
 
 
+_NO_COLLECTION_SENTINEL = '__none__'
+
+
+def _currently_delegated_collections(payload: dict[str, Any]) -> list[str]:
+    """The token's `collections`, narrowed to what the delegating human may
+    STILL read right now per Weave-Retrieval's registry (same teams, same
+    person id). The token can only ever narrow: a grant revoked after the
+    token was minted takes effect on the agent's very next call (ADR 0008:
+    "Freigabe entziehen ... wirkt sofort") instead of after the TTL.
+    NO_COLLECTION_SENTINEL is no registry row and is carried through --
+    Weave-Retrieval gates those legacy documents by `allowed_teams`.
+    """
+    teams = payload.get('teams')
+    readable = set(
+        _fetch_readable_collection_slugs(teams if teams is not None else payload.get('team'), user=payload.get('subject'))
+    )
+    return [slug for slug in payload['collections'] if slug == _NO_COLLECTION_SENTINEL or slug in readable]
+
+
 def _resolve_delegated_scope(token: str) -> Scope:
     payload = _verify_delegation_token(token)
+    try:
+        allowed_collections = _currently_delegated_collections(payload)
+    except httpx.HTTPError:
+        # Fail closed, same generic error as every other scope failure.
+        logger.exception('collections re-check against Weave-Retrieval failed')
+        raise ScopeError(_GENERIC_AUTH_ERROR) from None
     return Scope(
         kind='delegated',
         user_id=payload['sub'],
         username=payload['username'],
         team=payload.get('team'),
         teams=payload.get('teams'),
-        allowed_collections=list(payload['collections']),
+        allowed_collections=allowed_collections,
         bot_id=payload.get('bot'),
+        subject=payload.get('subject'),
     )
 
 
@@ -416,16 +458,19 @@ def _validated_teams(value: object) -> list[str]:
     return list(dict.fromkeys(value))
 
 
-def _fetch_readable_collection_slugs(team: str | list[str] | None) -> list[str]:
+def _fetch_readable_collection_slugs(team: str | list[str] | None, *, user: str | None = None) -> list[str]:
     """GET {RETRIEVAL_BASE_URL}/api/v1/collections?team=<team> and return
     just the slugs -- the Personal-Token path's answer to "which collections
     may this team read", per the Collections contract's read-authority split
     (Weave-Retrieval's own app/services/collections.py:readable_collections).
     `team=None` is passed through as NO query parameter at all (see that
     endpoint's own docstring: omitting it entirely, not merely passing an
-    empty string, is what selects "public collections only").
+    empty string, is what selects "public collections only"). `user` (the
+    caller's Weave-Ingest id) adds the spaces granted to that person.
     """
-    params = {'teams': team} if isinstance(team, list) else ({'team': team} if team is not None else {})
+    params: dict[str, Any] = {'teams': team} if isinstance(team, list) else ({'team': team} if team is not None else {})
+    if user is not None:
+        params['user'] = user
     response = httpx.get(
         f'{settings.retrieval_base_url}/api/v1/collections',
         params=params,
@@ -468,7 +513,13 @@ def _resolve_personal_scope(token: str) -> Scope:
 
     team = data.get('team')
     teams = _validated_teams(data['teams']) if 'teams' in data else None
-    allowed_collections = _fetch_readable_collection_slugs(teams if teams is not None else team)
+    # Weave-Ingest user id (only for accounts provisioned via Weave-Ingest):
+    # without it, person grants (`read_users`) would be ignored on this
+    # surface while the chat honours them.
+    subject = data.get('subject')
+    if subject is not None and not isinstance(subject, str):
+        raise ScopeError(_GENERIC_AUTH_ERROR)
+    allowed_collections = _fetch_readable_collection_slugs(teams if teams is not None else team, user=subject)
     return Scope(
         kind='personal',
         user_id=str(data['user_id']),
@@ -476,6 +527,7 @@ def _resolve_personal_scope(token: str) -> Scope:
         team=team,
         teams=teams,
         allowed_collections=allowed_collections,
+        subject=subject,
     )
 
 

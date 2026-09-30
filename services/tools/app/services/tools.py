@@ -68,7 +68,11 @@ def list_collections_for_scope(scope: Scope) -> list[CollectionOut]:
     collection's slug and is simply absent from this listing -- it has no
     name/description to show, only a meaning for search_for_scope below.
     """
-    params = {'teams': scope.teams} if scope.teams is not None else ({'team': scope.team} if scope.team is not None else {})
+    params: dict[str, object] = {'teams': scope.teams} if scope.teams is not None else ({'team': scope.team} if scope.team is not None else {})
+    if scope.subject is not None:
+        # Person grants (`read_users`) -- without it, a space granted to
+        # this person alone would be in scope but missing from the listing.
+        params['user'] = scope.subject
     response = httpx.get(
         f'{settings.retrieval_base_url}/api/v1/collections',
         params=params,
@@ -125,10 +129,12 @@ def search_for_scope(
         effective_collections = list(scope.allowed_collections)
 
     # Weave-Retrieval's own SearchRequest.allowed_teams is `list[str] | None`
-    # (see that service's app/schemas/search.py), and that service's
-    # apply_filters() ANDs allowed_teams with allowed_collections -- an
-    # empty list there means "no team authorized", i.e. zero rows, no
-    # matter what allowed_collections says. For a caller who has a team at
+    # (see that service's app/schemas/search.py). With a concrete
+    # allowed_collections, as always sent here, that service applies it
+    # ONLY to legacy documents without a collection (ADR 0008: documents in
+    # a space are decided by the grant-derived collections alone) -- an
+    # empty list there means "no team authorized" for those legacy rows,
+    # i.e. none of them. For a caller who has a team at
     # all (`scope.team` or `scope.teams` set), that is exactly the
     # enforcement this service must forward: `scope.effective_teams` wraps
     # a single `team` into `[team]`, never `None`, since `None` is Weave-

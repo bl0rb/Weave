@@ -88,6 +88,11 @@ def _aware_utc(value: datetime) -> datetime:
 def _refresh_ingest_identity(db: Session, user: User) -> User | None:
     prefix = 'weave-ingest:'
     if not user.oidc_subject or not user.oidc_subject.startswith(prefix):
+        if user.oidc_subject and settings.ingest_login_url and settings.ingest_api_url:
+            # A direct-OIDC account next to the Ingest handoff (ADR 0006: one
+            # or the other): its IdP team names are never refreshed and would
+            # match Ingest team grants by name, so its credentials fail closed.
+            return None
         return user
     try:
         identity = fetch_identity(user.oidc_subject[len(prefix):])

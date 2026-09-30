@@ -188,6 +188,15 @@ def test_oidc_endpoints_404_when_not_configured():
     assert client.post('/v1/auth/session/exchange', json={'code': 'irrelevant'}).status_code == 404
 
 
+def test_oidc_endpoints_404_when_ingest_handoff_is_configured(oidc_settings, monkeypatch):
+    # ADR 0006: one or the other. IdP group names must not stand in for
+    # Weave-Ingest teams (and their space grants) next to the handoff.
+    monkeypatch.setattr(settings, 'ingest_login_url', 'http://ingest.test/login')
+    monkeypatch.setattr(settings, 'ingest_api_url', 'http://ingest.internal')
+    assert client.get('/v1/auth/oidc/login', follow_redirects=False).status_code == 404
+    assert client.get('/v1/auth/oidc/callback', params={'code': 'x', 'state': 'y'}).status_code == 404
+
+
 # --- happy path ------------------------------------------------------------
 
 
@@ -410,6 +419,32 @@ def test_callback_rejects_login_for_a_disabled_user(db_session, provider, oidc_s
     response = _callback(state=state)
     assert response.status_code == 401
     assert db_session.query(SessionModel).filter(SessionModel.user_id == existing.id).count() == 0
+
+
+def test_callback_rejects_a_sub_in_the_weave_ingest_namespace(db_session, provider, oidc_settings):
+    # Such a sub would resolve to (or provision) an Ingest-backed account and
+    # inherit that person's identity, teams and person grants.
+    key = RSAKey.generate_key(2048, parameters={'kid': 'key-1'}, private=True)
+    victim = User(username='ingest.victim', oidc_subject='weave-ingest:42', disabled=False)
+    db_session.add(victim)
+    db_session.commit()
+
+    nonce_holder: dict[str, str] = {}
+    provider.handle(
+        _make_handler(
+            publish_key=key,
+            id_token_factory=lambda: _sign_id_token(
+                key, kid='key-1', subject='weave-ingest:42', nonce=nonce_holder.get('nonce')
+            ),
+        )
+    )
+    state, nonce = _login_and_extract_state_and_nonce()
+    nonce_holder['nonce'] = nonce
+
+    response = _callback(state=state)
+    assert response.status_code == 502
+    assert SESSION_COOKIE_NAME not in response.cookies
+    assert db_session.query(SessionModel).filter(SessionModel.user_id == victim.id).count() == 0
 
 
 # --- FIX 2: the signed state cookie is cleared on EVERY exit from the
