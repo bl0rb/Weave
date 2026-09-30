@@ -68,6 +68,8 @@ class PortalImportScopeItem(BaseModel):
     scope_value: str
     label: str  # root_page_title, or scope_value when no title was recorded
     count: int
+    latest_run_id: str  # newest ImportRun of this scope among the visible documents (/imports/{id})
+    can_edit: bool  # the caller may edit & restart that run (/imports/new?from={id})
 
 
 class PortalImportScopesResponse(BaseModel):

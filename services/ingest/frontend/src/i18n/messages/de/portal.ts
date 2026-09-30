@@ -153,6 +153,9 @@ export const portal = {
   'spaces.importScopeLabel': 'Confluence-Bereich',
   'spaces.importScopeAll': 'Alle Quellen',
   'spaces.importScopeNone': 'Ohne Confluence (Uploads, Mail)',
+  'spaces.importView': 'Import ansehen',
+  'spaces.importEdit': 'Import bearbeiten',
+  'spaces.importEditHint': 'Imports bearbeiten:',
   'spaces.releasingAll': 'Wird freigegeben …',
   'spaces.confirmReleaseAll': 'Ja, Sammlung freigeben',
   'spaces.releaseCollection': 'Sammlung freigeben',
@@ -175,7 +178,6 @@ export const portal = {
 
   // src/components/portal/documents.tsx
   'documents.statusAction': 'Status',
-  'documents.pageDescription': 'Der Weg jedes Dokuments – von der Quelle bis zur Antwort im Chat.',
   'documents.importsLink': 'Importe',
   'documents.allSpaces': 'Alle Wissensbereiche',
   'documents.searchLabel': 'Suche',
@@ -1221,4 +1223,6 @@ export const portal = {
   'access.public': 'Öffentlich',
   'access.team': 'Team {team}',
   'access.adminsOnly': 'Nur Administration',
+  'access.morePersons': '{count} Person|{count} Personen',
+  'access.moreTeams': '{count} weiteres Team|{count} weitere Teams',
 } as const;

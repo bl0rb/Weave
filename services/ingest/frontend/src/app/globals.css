@@ -243,7 +243,8 @@ body :is(a, button, input, select, textarea):focus-visible {
 .portal-field-hint { font-size: 13px; font-weight: 400; line-height: 1.6; color: var(--muted); margin-top: 8px; }
 .portal-optional { font-weight: 400; color: var(--muted); margin-left: 6px; }
 .portal-form-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 12px; }
-.portal-search { display: block; max-width: 480px; margin: 28px 0; }
+.portal-search { display: block; }
+.portal-search input { max-width: 480px; }
 .portal-space-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 22px; }
 .portal-space-card { padding: 20px; display: flex; flex-direction: column; gap: 14px; align-items: stretch; }
 .portal-space-card h2 { margin-top: 0; }
@@ -377,18 +378,22 @@ a.portal-tile:hover { border-color: var(--line-2); box-shadow: 0 4px 14px rgb(20
 .portal-access-search input { flex: 1; display: block; margin: 0; padding: 11px 0; border: 0; background: none; outline: 0; font-size: 14px; color: var(--ink); }
 .portal-access-results { list-style: none; margin: 0; padding: 0; }
 .portal-access-results:not(:empty) { padding: 4px 6px 6px; border-top: 1px solid var(--line); }
-.portal-access-results button { display: flex; align-items: center; width: 100%; min-height: 36px; padding: 8px; border: 0; border-radius: 8px; background: none; color: var(--ink); text-align: left; font-size: 13.5px; font-weight: 600; }
+.portal-access-results button { display: flex; align-items: center; width: 100%; min-height: 36px; padding: 8px; border: 0; border-radius: 8px; background: none; color: var(--ink); text-align: left; font-size: 14px; font-weight: 600; }
+.portal-access-results button > span { min-width: 0; overflow-wrap: anywhere; }
 .portal-access-results button:hover, .portal-access-results button:focus-visible { background: var(--hover); }
-.portal-access-results small { display: block; font-size: 12px; font-weight: 500; color: var(--muted); }
+.portal-access-results small { display: block; font-size: 12.5px; font-weight: 500; color: var(--muted); }
 .portal-access-no-hit { padding: 10px 8px; font-size: 13px; color: var(--muted); }
 .portal-access-grants { list-style: none; margin: 0 0 8px; padding: 0; }
 .portal-access-grants:empty { display: none; }
-.portal-access-grant-row { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 4px 0; border-bottom: 1px solid var(--line); font-size: 13.5px; }
-.portal-access-grant-row > span, .portal-access-grant-row > label { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+/* Name (never truncated, wraps) left; role + remove right on wide screens, wrapped below the name on narrow ones. */
+.portal-access-grant-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-height: 44px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; color: var(--ink); }
+.portal-access-grant-name, .portal-page label.portal-access-grant-name { flex: 1 1 16rem; min-width: 0; font-size: 14px; font-weight: 600; line-height: 1.4; color: var(--ink); overflow-wrap: anywhere; }
 .portal-access-grant-row > label { display: flex; align-items: center; gap: 10px; cursor: pointer; }
-.portal-access-grant-row small { display: block; font-size: 12px; font-weight: 500; color: var(--muted); }
-select.portal-role-select, .portal-page select.portal-role-select { display: inline-block; width: auto; height: 32px; margin-top: 0; padding: 0 8px; flex-shrink: 0; font-size: 13px; }
-.portal-access-remove { display: grid; place-items: center; width: 28px; height: 28px; flex-shrink: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); }
+.portal-access-grant-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.portal-access-grant-row small { display: block; margin-top: 2px; font-size: 12.5px; font-weight: 500; color: var(--muted); }
+.portal-access-grant-row small.portal-field-error { color: var(--err); }
+select.portal-role-select, .portal-page select.portal-role-select { display: inline-block; width: auto; height: 32px; margin-top: 0; padding: 0 8px; flex-shrink: 0; font-size: 14px; }
+.portal-access-remove { display: grid; place-items: center; width: 32px; height: 32px; flex-shrink: 0; border: 0; border-radius: 50%; background: none; color: var(--ink-2); }
 .portal-access-remove:hover { background: var(--hover); color: var(--ink); }
 .portal-field-error { color: var(--err); }
 .portal-access-summary { margin: 16px 0 0; padding: 10px 12px; border-radius: var(--radius-control); background: var(--surface-2); color: var(--ink-2); font-size: 13px; line-height: 1.5; }
@@ -469,21 +474,20 @@ textarea.ui-control { min-height: 96px; padding: 10px 12px; }
 .portal-lang-switch button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-ink, var(--accent)); }
 @media (pointer: coarse) { .portal-lang-switch button { min-height: 40px; } }
 
-/* Weave logo animation (weave-ingest-logo.tsx): the weft rows shuttle in,
-   alternating direction like a loom, then the warp crossings settle on top.
-   'intro' runs once, 'loop' is the busy indicator. */
+/* Weave logo animation (weave-ingest-logo.tsx): each weft row unweaves and
+   shuttles back in, alternating direction like a loom; every round starts and
+   ends on the full mark. 'loop' runs while something is busy, 'finite' weaves
+   five rounds and rests -- also when the work finishes sooner. Both share one
+   animation (only the iteration count differs), so loop -> finite never restarts it. */
 .weave-logo :is(.weave-weft, .weave-knots) > * { transform-box: fill-box; transform-origin: center; }
 .weave-logo .weave-weft > * { transform-origin: left center; }
 .weave-logo .weave-weft > [data-row='1'] { transform-origin: right center; }
 .weave-logo [data-row='1'] { --weave-row-delay: .18s; }
 .weave-logo [data-row='2'] { --weave-row-delay: .36s; }
-.weave-logo--intro .weave-weft > * { animation: weave-weft-in .5s cubic-bezier(.3, .7, .4, 1) calc(.1s + var(--weave-row-delay, 0s)) both; }
-.weave-logo--intro .weave-knots > * { animation: weave-knot-in .3s ease-out calc(.45s + var(--weave-row-delay, 0s)) both; }
-.weave-logo--loop .weave-weft > * { animation: weave-weft-loop 2.4s ease-in-out var(--weave-row-delay, 0s) infinite both; }
-.weave-logo--loop .weave-knots > * { animation: weave-knot-loop 2.4s ease-in-out var(--weave-row-delay, 0s) infinite both; }
-@keyframes weave-weft-in { from { transform: scaleX(0); } to { transform: scaleX(1); } }
-@keyframes weave-knot-in { from { opacity: 0; transform: scale(.4); } to { opacity: 1; transform: scale(1); } }
-@keyframes weave-weft-loop { 0% { transform: scaleX(0); } 30%, 75% { transform: scaleX(1); } 100% { transform: scaleX(0); } }
-@keyframes weave-knot-loop { 0%, 25% { opacity: 0; } 40%, 70% { opacity: 1; } 85%, 100% { opacity: 0; } }
+.weave-logo:is(.weave-logo--loop, .weave-logo--finite) .weave-weft > * { animation: weave-weft 2s ease-in-out var(--weave-row-delay, 0s) infinite both; }
+.weave-logo:is(.weave-logo--loop, .weave-logo--finite) .weave-knots > * { animation: weave-knot 2s ease-in-out var(--weave-row-delay, 0s) infinite both; }
+.weave-logo.weave-logo--finite :is(.weave-weft, .weave-knots) > * { animation-iteration-count: 5; }
+@keyframes weave-weft { 0%, 12% { transform: scaleX(1); } 42%, 58% { transform: scaleX(0); } 88%, 100% { transform: scaleX(1); } }
+@keyframes weave-knot { 0%, 12% { opacity: 1; } 30%, 70% { opacity: 0; } 90%, 100% { opacity: 1; } }
 /* The static mark, not a frozen mid-weave frame. */
 @media (prefers-reduced-motion: reduce) { .weave-logo * { animation: none !important; } }

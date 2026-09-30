@@ -125,6 +125,14 @@ body {
   outline-offset: 2px;
 }
 
+/* The composer's container already shows focus (border + ring via
+   focus-within) — the global outline above would add a second, green
+   border on the textarea itself, and it beats Tailwind's layered
+   `outline-none`. */
+#chat-composer-input:focus-visible {
+  outline: none;
+}
+
 ::selection {
   background: var(--accent-soft);
 }
@@ -330,9 +338,12 @@ body {
   }
 }
 
-/* Weave logo animation (components/weave-logo.tsx): the weft rows shuttle in,
-   alternating direction like a loom, then the warp crossings settle on top.
-   'intro' runs once, 'loop' is the busy indicator. */
+/* Weave logo animation (components/weave-logo.tsx): each weft row unweaves
+   and shuttles back in, alternating direction like a loom; every round starts
+   and ends on the full mark. 'loop' runs while an answer is being written,
+   'finite' weaves five rounds and rests -- also when the answer finishes
+   sooner. Both share one animation (only the iteration count differs), so
+   loop -> finite never restarts it. */
 .weave-logo :is(.weave-weft, .weave-knots) > * {
   transform-box: fill-box;
   transform-origin: center;
@@ -349,35 +360,24 @@ body {
 .weave-logo [data-row='2'] {
   --weave-row-delay: 0.36s;
 }
-.weave-logo--intro .weave-weft > * {
-  animation: weave-weft-in 0.5s cubic-bezier(0.3, 0.7, 0.4, 1) calc(0.1s + var(--weave-row-delay, 0s)) both;
+.weave-logo:is(.weave-logo--loop, .weave-logo--finite) .weave-weft > * {
+  animation: weave-weft 2s ease-in-out var(--weave-row-delay, 0s) infinite both;
 }
-.weave-logo--intro .weave-knots > * {
-  animation: weave-knot-in 0.3s ease-out calc(0.45s + var(--weave-row-delay, 0s)) both;
+.weave-logo:is(.weave-logo--loop, .weave-logo--finite) .weave-knots > * {
+  animation: weave-knot 2s ease-in-out var(--weave-row-delay, 0s) infinite both;
 }
-.weave-logo--loop .weave-weft > * {
-  animation: weave-weft-loop 2.4s ease-in-out var(--weave-row-delay, 0s) infinite both;
+.weave-logo.weave-logo--finite :is(.weave-weft, .weave-knots) > * {
+  animation-iteration-count: 5;
 }
-.weave-logo--loop .weave-knots > * {
-  animation: weave-knot-loop 2.4s ease-in-out var(--weave-row-delay, 0s) infinite both;
+@keyframes weave-weft {
+  0%, 12% { transform: scaleX(1); }
+  42%, 58% { transform: scaleX(0); }
+  88%, 100% { transform: scaleX(1); }
 }
-@keyframes weave-weft-in {
-  from { transform: scaleX(0); }
-  to { transform: scaleX(1); }
-}
-@keyframes weave-knot-in {
-  from { opacity: 0; transform: scale(0.4); }
-  to { opacity: 1; transform: scale(1); }
-}
-@keyframes weave-weft-loop {
-  0% { transform: scaleX(0); }
-  30%, 75% { transform: scaleX(1); }
-  100% { transform: scaleX(0); }
-}
-@keyframes weave-knot-loop {
-  0%, 25% { opacity: 0; }
-  40%, 70% { opacity: 1; }
-  85%, 100% { opacity: 0; }
+@keyframes weave-knot {
+  0%, 12% { opacity: 1; }
+  30%, 70% { opacity: 0; }
+  90%, 100% { opacity: 1; }
 }
 /* The static mark, not a frozen mid-weave frame. */
 @media (prefers-reduced-motion: reduce) {

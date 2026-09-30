@@ -4,8 +4,6 @@ export const chat: Record<keyof typeof de, string> = {
   // components/chat/chat-app.tsx
   'header.openRail': 'Show conversations',
   'header.noBotSelected': 'No assistant selected',
-  'header.releasedSourcesOnly': 'Released sources only',
-  'header.releasedSourcesOnlyTitle': 'Only released, indexed documents that you are allowed to read',
   'newConversation': 'New conversation',
   'confirm.deleteConversation': 'Permanently delete this conversation and all its messages?',
   'confirm.deleteAllConversations': 'Permanently delete the entire chat history and all its messages?',

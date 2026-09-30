@@ -150,10 +150,11 @@ def _import_page_state(source_id: str, job_id: str, *, title: str = 'Portal Page
         db.close()
 
 
-def _import_run(status: ImportRunStatus, *, scope_type: str = 'page', scope_value: str = 'portal-page', root_page_title: str = '') -> ImportRun:
+def _import_run(status: ImportRunStatus, *, scope_type: str = 'page', scope_value: str = 'portal-page', root_page_title: str = '', owner_id: str | None = None) -> ImportRun:
     db = _db()
     try:
         value = ImportRun(
+            owner_id=owner_id,
             kind='confluence',
             scope_type=scope_type,
             scope_value=scope_value,
@@ -710,8 +711,8 @@ def test_portal_import_scopes_lists_distinct_scopes_and_respects_visibility(monk
     owner = create_test_user(username=f'portal-scopes-owner-{suffix}', email=f'portal-scopes-owner-{suffix}@example.com')
     outsider = create_test_user(username=f'portal-scopes-outsider-{suffix}', email=f'portal-scopes-outsider-{suffix}@example.com')
     collection = _collection(owner.id)
-    docs_run = _import_run(ImportRunStatus.FINISHED, scope_type='space', scope_value='DOCS', root_page_title='Handbuch')
-    docs_rerun = _import_run(ImportRunStatus.FINISHED, scope_type='space', scope_value='DOCS', root_page_title='Handbuch')
+    docs_run = _import_run(ImportRunStatus.FINISHED, scope_type='space', scope_value='DOCS', root_page_title='Handbuch', owner_id=owner.id)
+    docs_rerun = _import_run(ImportRunStatus.FINISHED, scope_type='space', scope_value='DOCS', root_page_title='Handbuch', owner_id=owner.id)
     hr_run = _import_run(ImportRunStatus.FINISHED, scope_type='space', scope_value='HR', root_page_title='')
     _job(owner.id, collection, import_run_id=docs_run.id)
     _job(owner.id, collection, import_run_id=docs_rerun.id)
@@ -724,14 +725,33 @@ def test_portal_import_scopes_lists_distinct_scopes_and_respects_visibility(monk
     body = response.json()
     assert body['other_count'] == 1
     by_value = {item['value']: item for item in body['items']}
-    assert by_value['space:DOCS'] == {'value': 'space:DOCS', 'scope_type': 'space', 'scope_value': 'DOCS', 'label': 'Handbuch', 'count': 2}
-    assert by_value['space:HR'] == {'value': 'space:HR', 'scope_type': 'space', 'scope_value': 'HR', 'label': 'HR', 'count': 1}
+    # latest_run_id is the newest run of the scope; can_edit follows _can_edit_run (owner + finished)
+    assert by_value['space:DOCS'] == {'value': 'space:DOCS', 'scope_type': 'space', 'scope_value': 'DOCS', 'label': 'Handbuch', 'count': 2, 'latest_run_id': docs_rerun.id, 'can_edit': True}
+    # A legacy run without an owner is not editable by a non-admin.
+    assert by_value['space:HR'] == {'value': 'space:HR', 'scope_type': 'space', 'scope_value': 'HR', 'label': 'HR', 'count': 1, 'latest_run_id': hr_run.id, 'can_edit': False}
     # sorted by label
     assert [item['value'] for item in body['items']] == ['space:DOCS', 'space:HR']
 
     # A caller without visibility into the collection at all gets a 404.
     other_authed = login_as(outsider.username)
     assert other_authed.get(f'/api/v1/portal/collections/{collection.id}/import-scopes').status_code == 404
+
+
+def test_portal_import_scopes_can_edit_follows_latest_run_state(monkeypatch):
+    _configure(monkeypatch)
+    suffix = uuid.uuid4().hex[:8]
+    owner = create_test_user(username=f'portal-scopes-edit-{suffix}', email=f'portal-scopes-edit-{suffix}@example.com')
+    collection = _collection(owner.id)
+    finished = _import_run(ImportRunStatus.FINISHED, scope_type='space', scope_value='DOCS', root_page_title='Handbuch', owner_id=owner.id)
+    running = _import_run(ImportRunStatus.RUNNING, scope_type='space', scope_value='DOCS', root_page_title='Handbuch', owner_id=owner.id)
+    _job(owner.id, collection, import_run_id=finished.id)
+    _job(owner.id, collection, import_run_id=running.id)
+
+    authed = login_as(owner.username)
+    (item,) = authed.get(f'/api/v1/portal/collections/{collection.id}/import-scopes').json()['items']
+    # The newest run is still running, so it cannot be edited/restarted yet.
+    assert item['latest_run_id'] == running.id
+    assert item['can_edit'] is False
 
 
 def test_portal_import_scopes_hidden_for_reader_without_job_visibility(monkeypatch):

@@ -227,6 +227,8 @@ export function KnowledgeDetail({ id }: { id: string }) {
     } catch (err) { setError(portalError(err, locale)); }
     finally { setReleasingAll(false); }
   };
+  const selectedScope = importScopes?.items?.find(scope => scope.value === importScope);
+  const editableScopes = importScopes?.items?.filter(scope => scope.can_edit) ?? [];
   const selectedDocuments = documents?.items.filter(document => selectedIds.has(document.id)) ?? [];
   const gradeCCount = selectedDocuments.filter(document => document.quality_grade?.toUpperCase() === 'C').length;
   function clearSelection() { setSelectedIds(new Set()); setAcceptQualityWarnings(false); setReleaseConfirmed(false); }
@@ -270,6 +272,11 @@ export function KnowledgeDetail({ id }: { id: string }) {
             {Boolean(importScopes?.other_count) && <option value="none">{t('portal.spaces.importScopeNone')}</option>}
           </select>
         </label>
+        {selectedScope && <div className="flex flex-wrap items-center gap-4 pb-2 text-sm">
+          <Link className="portal-inline-link" href={`/imports/${encodeURIComponent(selectedScope.latest_run_id)}`}>{t('portal.spaces.importView')}</Link>
+          {selectedScope.can_edit && <Link className="portal-inline-link" href={`/imports/new?from=${encodeURIComponent(selectedScope.latest_run_id)}`}>{t('portal.spaces.importEdit')}</Link>}
+        </div>}
+        {!selectedScope && editableScopes.length > 0 && <p className="basis-full text-xs text-[var(--muted)]">{t('portal.spaces.importEditHint')} {editableScopes.map((scope, index) => <span key={scope.value}>{index > 0 && ' · '}<Link className="portal-inline-link" href={`/imports/new?from=${encodeURIComponent(scope.latest_run_id)}`}>{scope.label}</Link></span>)}</p>}
       </div>}
       {!documents && !error ? <p className="portal-loading" role="status">{t('portal.tasks.documentsLoading')}</p> : documents?.items.length ? <><DocumentTable documents={documents.items} onDownloadMarkdown={document => void downloadDocument(document)} downloadingId={downloadingId} selectedIds={selectedIds} onToggle={docId => setSelectedIds(previous => { const next = new Set(previous); if (next.has(docId)) next.delete(docId); else next.add(docId); return next; })} onToggleAll={checked => setSelectedIds(checked ? new Set(documents.items.map(document => document.id)) : new Set())} /><Pagination offset={offset} total={documents.total} onChange={value => { setDocuments(null); setOffset(value); }} /></> : !error && <EmptyState title={t('portal.spaces.emptyContentTitle')} href={(space?.can_upload ?? space?.can_manage) ? `/sources/new?collection=${encodeURIComponent(id)}` : undefined} action={(space?.can_upload ?? space?.can_manage) ? t('portal.chrome.addSource') : undefined}>{t('portal.spaces.emptyContentBody')}</EmptyState>}
     </section>

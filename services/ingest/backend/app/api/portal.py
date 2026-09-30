@@ -18,6 +18,7 @@ from sqlalchemy.orm import defer
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.deps import aware_utc, get_current_user, get_knowledge_reader
+from app.api.import_routes import _can_edit_run
 from app.api.routes import (
     _ARTIFACT_INLINE_CONTENT_TYPES,
     _active_process_job_ids,
@@ -885,8 +886,12 @@ def list_portal_import_scopes(
     _require_visible_collection(db, collection, user)
 
     collection_id_expr = Job.processing_info['settings']['collection_id'].as_string()
+    # Columns only: one row per document, and ImportRun.state (the crawl map) can be large.
     query = (
-        select(ImportRun.scope_type, ImportRun.scope_value, ImportRun.root_page_title)
+        select(
+            ImportRun.id, ImportRun.owner_id, ImportRun.kind, ImportRun.status,
+            ImportRun.scope_type, ImportRun.scope_value, ImportRun.root_page_title,
+        )
         .select_from(Job)
         .join(ImportRun, ImportRun.id == Job.import_run_id)
         .where(collection_id_expr == collection.id)
@@ -895,11 +900,12 @@ def list_portal_import_scopes(
     rows = db.execute(_apply_visible_filter(query, user, db=db)).all()
 
     scopes: dict[tuple[str, str], dict] = {}
-    for scope_type, scope_value, root_page_title in rows:
-        entry = scopes.setdefault((scope_type, scope_value), {'count': 0, 'label': ''})
+    for run in rows:
+        entry = scopes.setdefault((run.scope_type, run.scope_value), {'count': 0, 'label': '', 'run': run})
         entry['count'] += 1
-        if root_page_title:
-            entry['label'] = root_page_title
+        entry['run'] = run  # ordered by created_at, so the last one is the newest run of this scope
+        if run.root_page_title:
+            entry['label'] = run.root_page_title
 
     other_count = int(
         db.scalar(
@@ -918,6 +924,8 @@ def list_portal_import_scopes(
             scope_value=scope_value,
             label=entry['label'] or scope_value,
             count=entry['count'],
+            latest_run_id=entry['run'].id,
+            can_edit=_can_edit_run(entry['run'], user),
         )
         for (scope_type, scope_value), entry in scopes.items()
     ]

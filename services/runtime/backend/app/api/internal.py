@@ -10,6 +10,7 @@ entrypoint), never a public/versioned API surface an outside client
 integrates against directly.
 """
 
+import re
 from collections.abc import Callable, Iterator
 from typing import TypeVar
 
@@ -40,6 +41,47 @@ class ConversationTitleRequest(BaseModel):
 
 class ConversationTitleResponse(BaseModel):
     title: str
+
+
+# The title names what the USER asked about -- never what the answer said.
+# The answer is only short context (a failed "no data found" answer used to
+# turn into a title about the missing data).
+_TITLE_SYSTEM_PROMPT = (
+    'Du benennst Gespräche. Nenne das THEMA der Nutzerfrage als kurzen Titel mit höchstens sechs Wörtern, '
+    'in der Sprache der Frage. Kein Markdown, keine Anführungszeichen, kein Präfix (kein "Titel:", kein Name) '
+    'und keine Aussage darüber, ob Informationen gefunden wurden oder fehlen. '
+    'Die Antwort dient nur als Kontext; beschreibe sie nicht. Antworte ausschließlich mit dem Titel.'
+)
+_TITLE_ANSWER_CONTEXT_CHARS = 300
+_TITLE_MAX_CHARS = 80
+_TITLE_PREFIX = re.compile(r'^(?:titel|title|thema|topic|claude|assistent|assistant|antwort|answer)\s*:\s*', re.IGNORECASE)
+_TITLE_QUOTES = ' "\'`„“”‚‘’«»'
+
+
+def _title_messages(question: str, answer: str) -> list[dict[str, str]]:
+    context = ' '.join(answer.split())[:_TITLE_ANSWER_CONTEXT_CHARS]
+    return [
+        {'role': 'system', 'content': _TITLE_SYSTEM_PROMPT},
+        {'role': 'user', 'content': f'Frage: {question}\nAntwort (nur Kontext): {context}'},
+    ]
+
+
+def _clean_title(raw: str) -> str:
+    """Model output -> a plain one-line title: no markdown emphasis/heading/
+    code characters, no "Titel:"/"Claude:"-style prefix, no surrounding
+    quotes, whitespace collapsed, length capped. Empty if nothing is left."""
+    text = _strip_quotes(re.sub(r'[*`]+|(?<!\w)#+(?!\w)|(?<!\w)_+|_+(?!\w)', '', raw).strip())
+    lines = _TITLE_PREFIX.sub('', text).strip().splitlines()
+    title = _strip_quotes(' '.join(lines[0].split())) if lines else ''
+    return title[:_TITLE_MAX_CHARS].rstrip()
+
+
+def _strip_quotes(text: str) -> str:
+    """Drop quotes that wrap the whole title, never a quote that belongs to
+    it (`Bedeutung von "Onboarding"` keeps its closing quote)."""
+    while len(text) >= 2 and text[0] in _TITLE_QUOTES and text[-1] in _TITLE_QUOTES:
+        text = text[1:-1].strip()
+    return text
 
 
 def _summary(bot: BotConfig) -> BotSummary:
@@ -116,13 +158,10 @@ def conversation_title(request: ConversationTitleRequest) -> ConversationTitleRe
             model=config.model,
             timeout=min(config.timeout_seconds, 8.0),
             max_attempts=1,
-        ).chat([
-            {'role': 'system', 'content': 'Erzeuge einen kurzen deutschen Titel mit höchstens acht Wörtern. Antworte ausschließlich mit dem Titel.'},
-            {'role': 'user', 'content': f'Frage: {request.question}\nAntwort: {request.answer}'},
-        ], temperature=0.2)
+        ).chat(_title_messages(request.question, request.answer), temperature=0.2)
     except (ChatConfigUnavailable, LLMError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Titel konnte nicht erzeugt werden') from exc
-    title = ' '.join(result.content.strip().strip('"').split())[:80].rstrip()
+    title = _clean_title(result.content)
     if not title:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Titel konnte nicht erzeugt werden')
     return ConversationTitleResponse(title=title)

@@ -145,3 +145,74 @@ def test_visible_bots_apply_the_chat_permission_check(monkeypatch):
     assert visible({'team': 'sales', 'teams': ['sales']}) == ['open']
     assert visible({'teams': ['legal'], 'subject': 'ingest-1'}) == ['open', 'legal', 'personal']
     assert visible({'teams': [], 'is_admin': True}) == ['open', 'legal', 'personal', 'closed']
+
+
+# --- POST /internal/conversation-title ---------------------------------------
+
+
+def test_clean_title_strips_markdown_prefix_quotes_and_whitespace():
+    from app.api.internal import _clean_title
+
+    assert _clean_title('**Claude: Keine Daten in Quellen gefunden**') == 'Keine Daten in Quellen gefunden'
+    assert _clean_title('Titel: "Urlaubsantrag stellen"') == 'Urlaubsantrag stellen'
+    assert _clean_title('## `VPN`  einrichten\n\nDas Thema ist ...') == 'VPN einrichten'
+    assert _clean_title('Title:\n„Remote Work Policy“') == 'Remote Work Policy'
+    assert _clean_title('_Reisekosten_ abrechnen') == 'Reisekosten abrechnen'
+    assert _clean_title('Bedeutung von "Onboarding"') == 'Bedeutung von "Onboarding"'
+    assert _clean_title('snake_case Namen') == 'snake_case Namen'
+    assert _clean_title('C# und F# lernen') == 'C# und F# lernen'
+    assert _clean_title('Kostenstelle #4711 buchen') == 'Kostenstelle #4711 buchen'
+    assert _clean_title('Python: Listen sortieren') == 'Python: Listen sortieren'
+    assert _clean_title('x' * 200) == 'x' * 80
+    assert _clean_title('**  "" ##') == ''
+
+
+def test_title_messages_ask_for_the_question_topic_and_truncate_the_answer():
+    from app.api.internal import _title_messages
+
+    system, user = _title_messages('Wie beantrage ich Urlaub?', 'a' * 1000)
+    assert system['role'] == 'system' and 'THEMA der Nutzerfrage' in system['content']
+    assert 'sechs Wörter' in system['content'] and 'Markdown' in system['content']
+    assert user['content'] == 'Frage: Wie beantrage ich Urlaub?\nAntwort (nur Kontext): ' + 'a' * 300
+
+
+def test_conversation_title_endpoint_sanitizes_the_model_output(monkeypatch):
+    from app.api import internal
+    from app.services.chat_config_client import ChatProviderSnapshot
+    from app.services.llm import LLMResult
+
+    seen = {}
+
+    class FakeTitleLLM:
+        def __init__(self, **kwargs):
+            pass
+
+        def chat(self, messages, **kwargs):
+            seen['messages'] = messages
+            return LLMResult(content='**Claude: Keine Daten in Quellen gefunden**', model='m')
+
+    monkeypatch.setattr(internal, 'fetch_chat_provider', lambda: ChatProviderSnapshot(enabled=True, base_url='http://llm', model='m'))
+    monkeypatch.setattr(internal, 'OpenAICompatibleLLM', FakeTitleLLM)
+    resp = client.post('/internal/conversation-title', json={'question': 'Wie lange dauert die Probezeit?', 'answer': 'z' * 900}, headers=AUTH_HEADERS)
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {'title': 'Keine Daten in Quellen gefunden'}
+    assert seen['messages'][1]['content'].startswith('Frage: Wie lange dauert die Probezeit?')
+    assert len(seen['messages'][1]['content']) < 400
+
+
+def test_conversation_title_is_503_when_nothing_usable_is_left(monkeypatch):
+    from app.api import internal
+    from app.services.chat_config_client import ChatProviderSnapshot
+    from app.services.llm import LLMResult
+
+    class EmptyTitleLLM:
+        def __init__(self, **kwargs):
+            pass
+
+        def chat(self, messages, **kwargs):
+            return LLMResult(content='**""**', model='m')
+
+    monkeypatch.setattr(internal, 'fetch_chat_provider', lambda: ChatProviderSnapshot(enabled=True, base_url='http://llm', model='m'))
+    monkeypatch.setattr(internal, 'OpenAICompatibleLLM', EmptyTitleLLM)
+    resp = client.post('/internal/conversation-title', json={'question': 'Hallo', 'answer': 'Hi'}, headers=AUTH_HEADERS)
+    assert resp.status_code == 503

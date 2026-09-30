@@ -4,11 +4,11 @@ import { cn } from '@/lib/utils';
  * The Weave mark is a small woven swatch. Alternating crossings make the
  * over-under structure readable even at favicon size without forming a figure.
  *
- * `animation` (CSS in globals.css, `.weave-logo`): 'intro' weaves the weft
- * rows in once, 'loop' keeps weaving as a busy indicator. Both fall back to
+ * `animation` (CSS in globals.css, `.weave-logo`): 'loop' keeps weaving as a
+ * busy indicator, 'finite' weaves five rounds and rests. Both fall back to
  * the static mark under prefers-reduced-motion.
  */
-export function WeaveIngestLogo({ className, animation }: { className?: string; animation?: 'intro' | 'loop' }) {
+export function WeaveIngestLogo({ className, animation }: { className?: string; animation?: 'loop' | 'finite' }) {
   return (
     <svg viewBox="0 0 64 64" className={cn('weave-logo', animation && `weave-logo--${animation}`, className)} aria-hidden="true">
       <rect width="64" height="64" rx="15" fill="#0f8a64" />

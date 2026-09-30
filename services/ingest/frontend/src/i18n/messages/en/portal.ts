@@ -154,6 +154,9 @@ export const portal: Record<keyof typeof de, string> = {
   'spaces.importScopeLabel': 'Confluence space',
   'spaces.importScopeAll': 'All sources',
   'spaces.importScopeNone': 'Not from Confluence (uploads, mail)',
+  'spaces.importView': 'View import',
+  'spaces.importEdit': 'Edit import',
+  'spaces.importEditHint': 'Edit imports:',
   'spaces.releasingAll': 'Releasing …',
   'spaces.confirmReleaseAll': 'Yes, release collection',
   'spaces.releaseCollection': 'Release collection',
@@ -176,7 +179,6 @@ export const portal: Record<keyof typeof de, string> = {
 
   // src/components/portal/documents.tsx
   'documents.statusAction': 'Status',
-  'documents.pageDescription': 'Every document’s path — from source to answer in chat.',
   'documents.importsLink': 'Imports',
   'documents.allSpaces': 'All knowledge spaces',
   'documents.searchLabel': 'Search',
@@ -1222,4 +1224,6 @@ export const portal: Record<keyof typeof de, string> = {
   'access.public': 'Public',
   'access.team': 'Team {team}',
   'access.adminsOnly': 'Admins only',
+  'access.morePersons': '{count} person|{count} people',
+  'access.moreTeams': '{count} more team|{count} more teams',
 };

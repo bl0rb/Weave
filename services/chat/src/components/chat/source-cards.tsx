@@ -54,6 +54,13 @@ export function formatScore(source: Source, t: Translator = translateDefault): s
 
 const isWebLink = (value: string | null | undefined): value is string => typeof value === 'string' && /^https?:\/\//.test(value);
 
+/** The exact page a source links to (http(s) only), with its link label, or `null`. */
+export function getSourceLink(source: Source, t: Translator = translateDefault): { href: string; label: string } | null {
+  const href = isWebLink(source.source_url) ? source.source_url : !source.source_kind && isWebLink(source.source) ? source.source : null;
+  if (!href) return null;
+  return { href, label: source.source_kind === 'confluence' || !source.source_kind ? t('chat.sources.openWikiPage') : t('chat.sources.openSource') };
+}
+
 /**
  * Where a source came from: the exact wiki page as a link, or who uploaded
  * the document and when. Documents released before provenance existed fall
@@ -64,10 +71,10 @@ export function SourceOrigin({ source }: { source: Source }) {
   const date = source.uploaded_at && !Number.isNaN(Date.parse(source.uploaded_at))
     ? new Date(source.uploaded_at).toLocaleDateString(locale === 'en' ? 'en-GB' : 'de-DE')
     : null;
-  const link = isWebLink(source.source_url) ? source.source_url : !source.source_kind && isWebLink(source.source) ? source.source : null;
+  const link = getSourceLink(source, t);
   if (link) {
-    return <a href={link} target="_blank" rel="noopener noreferrer" className="font-medium text-[var(--accent)] underline-offset-2 hover:underline">
-      {source.source_kind === 'confluence' || !source.source_kind ? t('chat.sources.openWikiPage') : t('chat.sources.openSource')}
+    return <a href={link.href} target="_blank" rel="noopener noreferrer" className="font-medium text-[var(--accent)] underline-offset-2 hover:underline">
+      {link.label}
     </a>;
   }
   if (source.source_kind === 'mail') {
