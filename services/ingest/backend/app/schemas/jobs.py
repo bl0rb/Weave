@@ -37,8 +37,8 @@ class CollectionCreateRequest(BaseModel):
     slug: str | None = None
     # The space's purpose ("Zweck"); required, see routes.create_collection.
     description: str | None = None
-    # Left unset, create_collection derives it: PUBLIC when `grants` is
-    # empty, RESTRICTED otherwise.
+    # Left unset, create_collection fails closed: RESTRICTED. PUBLIC only
+    # when sent explicitly.
     visibility: CollectionVisibility | None = None
     responsible_team_id: str | None = None
     # Additional grants; the creator always becomes an owner.
@@ -167,6 +167,8 @@ class CollectionStartResponse(BaseModel):
     collection_id: str
     started_jobs: int
     profile_id: str
+    skipped_import_jobs: int = 0
+    skipped_released_jobs: int = 0
 
 
 class JobSaveRequest(BaseModel):

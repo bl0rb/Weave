@@ -737,6 +737,29 @@ class CollectionGrant(Base):
     team: Mapped[Team | None] = relationship(lazy='joined')
 
 
+class CollectionSlugTombstone(Base):
+    """Slug of a deleted knowledge space, never handed out again.
+
+    Knowledge, Retrieval, bots and technical identities all refer to a space
+    by its slug, and withdrawing its documents from Knowledge is
+    asynchronous. A later space with the same slug would otherwise inherit
+    whatever still points at the old one (ADR 0008).
+    """
+
+    __tablename__ = 'collection_slug_tombstones'
+
+    slug: Mapped[str] = mapped_column(String(255), primary_key=True)
+    deleted_by_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True
+    )
+    deleted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
 class ImportAuthType(str, enum.Enum):
     CLOUD_BASIC = 'cloud_basic'  # Confluence Cloud: Basic base64(email:api_token)
     PAT_BEARER = 'pat_bearer'    # Server/DC >= 7.9 personal access token

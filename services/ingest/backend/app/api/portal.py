@@ -24,7 +24,6 @@ from app.api.routes import (
     _active_process_job_ids,
     _apply_visible_filter,
     _can_manage_collection,
-    _can_own_collection,
     _collection_control_job_filter,
     _content_disposition,
     _is_import_page_job,
@@ -1296,7 +1295,9 @@ def _release_control(db, release: DocumentRelease, user: User) -> tuple[Job, Col
     collection = _collection_for_job(db, job)
     if collection is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Document collection not found')
-    if release.owner_id != user.id and not _can_own_collection(db, collection, user):
+    # Members may release (ADR 0008), so they may also retry a delivery --
+    # the same people as a release or a reindex, not only the releaser.
+    if not _job_is_controlled(db, job, collection, user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='User cannot retry this release')
     return job, collection
 

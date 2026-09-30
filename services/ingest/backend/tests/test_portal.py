@@ -590,7 +590,7 @@ def test_collection_upload_and_start_require_collection_control(monkeypatch):
     assert process_calls == [created.json()['job_id']]
 
 
-def test_issued_release_blocks_save_restart_and_collection_start_preflight(monkeypatch):
+def test_issued_release_blocks_save_restart_and_is_skipped_by_collection_start(monkeypatch):
     _configure(monkeypatch)
     user = create_test_user(
         username=f'portal-immutable-{uuid.uuid4().hex[:8]}',
@@ -614,15 +614,43 @@ def test_issued_release_blocks_save_restart_and_collection_start_preflight(monke
     assert saved.status_code == 409, saved.text
     restarted = authed.post(f'/api/v1/jobs/{job.id}/restart', json={})
     assert restarted.status_code == 409, restarted.text
+    with _db() as db:
+        stored = db.get(Job, job.id)
+        stored.processing_info = {**stored.processing_info, 'settings': {
+            **stored.processing_info['settings'], 'profile_id': 'ppocrv6_small',
+        }}
+        db.commit()
+    lower = authed.post(f'/api/v1/jobs/{job.id}/retry-lower-profile')
+    assert lower.status_code == 409, lower.text
 
+    # A collection start skips the released version (and imported pages)
+    # instead of refusing to process newly added files.
+    new_file = _job(user.id, collection)
+    import_page = _job(user.id, collection)
+    with _db() as db:
+        stored = db.get(Job, import_page.id)
+        stored.processing_info = {**stored.processing_info, 'settings': {
+            **stored.processing_info['settings'], 'mode': 'import',
+        }}
+        db.commit()
     process_calls: list[str] = []
     monkeypatch.setattr('app.api.routes.process_job.delay', lambda job_id, *args: process_calls.append(job_id))
     started = authed.post(
         f'/api/v1/collections/{collection.id}/start',
         json={'profile_id': 'ppocrv6_tiny'},
     )
-    assert started.status_code == 409, started.text
-    assert process_calls == []
+    assert started.status_code == 200, started.text
+    assert started.json()['started_jobs'] == 1
+    assert started.json()['skipped_released_jobs'] == 1
+    assert started.json()['skipped_import_jobs'] == 1
+    assert process_calls == [new_file.id]
+    folder = authed.post('/api/v1/folders/inbox/restart')
+    assert folder.status_code == 200, folder.text
+    assert folder.json()['skipped_released_jobs'] == 1
+    assert folder.json()['skipped_import_jobs'] == 1
+    assert job.id not in process_calls[1:]
+    with _db() as db:
+        assert db.get(Job, job.id).result_markdown == job.result_markdown
 
 
 def test_portal_review_only_filters_finished_unreleased_and_paginates(monkeypatch):
@@ -885,6 +913,43 @@ def test_portal_retry_handles_sqlite_naive_lease_timestamp(monkeypatch):
         db.close()
     retried = authed.post(f"/api/v1/portal/releases/{release['id']}/retry")
     assert retried.status_code == 200, retried.text
+
+
+def test_any_space_member_may_retry_a_failed_delivery(monkeypatch):
+    """ADR 0008: members release, so they also retry a failed delivery of a
+    document another member released; readers may not."""
+    from app.models.models import CollectionGrant, CollectionRole
+
+    _configure(monkeypatch)
+    releaser = create_test_user(
+        username=f'portal-retry-a-{uuid.uuid4().hex[:8]}', email=f'portal-retry-a-{uuid.uuid4().hex[:8]}@example.com'
+    )
+    member = create_test_user(
+        username=f'portal-retry-b-{uuid.uuid4().hex[:8]}', email=f'portal-retry-b-{uuid.uuid4().hex[:8]}@example.com'
+    )
+    reader = create_test_user(
+        username=f'portal-retry-r-{uuid.uuid4().hex[:8]}', email=f'portal-retry-r-{uuid.uuid4().hex[:8]}@example.com'
+    )
+    collection = _collection(releaser.id)
+    with _db() as db:
+        db.add(CollectionGrant(collection_id=collection.id, user_id=member.id, role=CollectionRole.MEMBER))
+        db.add(CollectionGrant(collection_id=collection.id, user_id=reader.id, role=CollectionRole.READER))
+        db.commit()
+    job = _job(releaser.id, collection)
+    releaser_client = login_as(releaser.username)
+    preview = releaser_client.get(f'/api/v1/portal/documents/{job.id}').json()
+    monkeypatch.setattr('app.api.portal.publication_tasks.deliver_release.delay', lambda release_id: None)
+    release = releaser_client.post(
+        f'/api/v1/portal/documents/{job.id}/release', json={'markdown_sha256': preview['markdown_sha256']}
+    ).json()
+    with _db() as db:
+        db.get(DocumentRelease, release['id']).status = 'failed'
+        db.commit()
+
+    assert login_as(reader.username).post(f"/api/v1/portal/releases/{release['id']}/retry").status_code in (403, 404)
+    retried = login_as(member.username).post(f"/api/v1/portal/releases/{release['id']}/retry")
+    assert retried.status_code == 200, retried.text
+    assert retried.json()['status'] == 'pending'
 
 
 def test_portal_reindex_document_sets_reindex_flag_and_requeues_sent_release(monkeypatch):

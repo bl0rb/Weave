@@ -51,16 +51,25 @@ def _subjects(body: dict) -> list[tuple]:
 
 # --- create: creator owns, visibility default --------------------------------
 
-def test_create_makes_the_creator_owner_and_defaults_public_without_grants():
-    owner = _user('share-create-public')
-    resp = _create(login_as(owner.username), 'Open Space')
+def test_create_makes_the_creator_owner_and_fails_closed_without_explicit_visibility():
+    owner = _user('share-create-default')
+    resp = _create(login_as(owner.username), 'Closed Space')
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body['visibility'] == 'public'
+    assert body['visibility'] == 'restricted'
+    assert login_as(_user('share-create-default-other').username).get(
+        f"/api/v1/collections/{body['collection_id']}"
+    ).status_code == 404
     assert body['role'] == 'owner'
     assert body['can_manage'] is True
     assert _subjects(body) == [(owner.id, None, 'owner')]
     assert body['created_by'] == {'id': owner.id, 'username': owner.username}
+
+
+def test_create_is_public_only_when_asked_explicitly():
+    resp = _create(login_as(_user('share-create-public').username), 'Open Space', visibility='public')
+    assert resp.status_code == 200, resp.text
+    assert resp.json()['visibility'] == 'public'
 
 
 def test_create_requires_a_purpose():
@@ -161,7 +170,7 @@ def test_second_owner_manages_shares_and_may_hand_over():
 
 
 def test_public_space_makes_every_user_a_reader():
-    created = _create(login_as(_user('share-public-owner').username), 'Everyone')
+    created = _create(login_as(_user('share-public-owner').username), 'Everyone', visibility='public')
     body = login_as(_user('share-public-reader').username).get(f"/api/v1/collections/{created.json()['collection_id']}")
     assert body.status_code == 200
     assert body.json()['role'] == 'reader'

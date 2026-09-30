@@ -3,6 +3,7 @@ for n8n-backed bots."""
 
 import hmac
 import httpx
+import logging
 from datetime import datetime, timezone
 from pydantic import ValidationError
 
@@ -33,6 +34,8 @@ from app.services.security import (
     encrypt_managed_bot_auth_token,
     enforce_rate_limit,
 )
+
+logger = logging.getLogger(__name__)
 
 
 router_admin = APIRouter(
@@ -124,7 +127,10 @@ def _runtime_bots(db: Session | None = None) -> list[ManagedBotAdminResponse]:
             return []
     except (httpx.HTTPError, ValueError, TypeError, ValidationError):
         # Managed n8n bots remain administrable when Runtime is temporarily
-        # unavailable; the next refresh exposes local YAML bots again.
+        # unavailable; the next refresh exposes local YAML bots again. Logged,
+        # because callers such as the space-deletion guard then check only
+        # Ingest's own bots.
+        logger.warning('Runtime bot roster unavailable; only managed bots are known', exc_info=True)
         return []
     # YAML bots name teams. Known ones become ordinary user grants; unknown
     # names are still shown (without an id) so the list doesn't claim the
@@ -214,6 +220,13 @@ def _validate_collections(db: Session, slugs: list[str]) -> None:
         )
 
 
+def _scope_slugs(payload: ManagedBotCreate | ManagedBotUpdate) -> list[str]:
+    """The bot's own spaces plus every subagent's: all must exist, or a
+    later space created under a dangling slug would be searched at once."""
+    subagents = payload.agent.subagents if payload.agent else []
+    return list(dict.fromkeys([*payload.collections, *(slug for sub in subagents for slug in sub.collections)]))
+
+
 def _replace_grants(row: ManagedBot, grants: list[BotGrantInput]) -> None:
     """Replace the access list in place; a subject that stays keeps its row
     and only changes its role (see routes._replace_grants for why)."""
@@ -281,7 +294,7 @@ def create_managed_bot(
     if db.get(ManagedBot, payload.id) is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Diese Bot-ID wird bereits verwendet.')
     grants = _validated_grants(db, payload.grants)
-    _validate_collections(db, payload.collections)
+    _validate_collections(db, _scope_slugs(payload))
     # Re-creating a previously deleted Runtime/YAML bot restores it.
     tombstone = db.get(BotTombstone, payload.id)
     if tombstone is not None:
@@ -319,7 +332,7 @@ def update_managed_bot(
         if tombstone is not None:
             db.delete(tombstone)
     grants = _validated_grants(db, payload.grants)
-    _validate_collections(db, payload.collections)
+    _validate_collections(db, _scope_slugs(payload))
     _apply(row, payload, admin, grants)
     db.commit()
     db.refresh(row)
@@ -464,6 +477,14 @@ def update_owned_bot(
         row.system_prompt = prompt or None
     if payload.collections is not None:
         _validate_collections(db, payload.collections)
+        # An empty list means "every space the asker can read": emptying a
+        # restricted bot widens it past what the owner may assign, so only
+        # an administrator may lift the restriction.
+        if not payload.collections and row.collections and user.role != UserRole.ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail='Nur Admins können die Einschränkung auf Wissensbereiche aufheben.',
+            )
         # An owner may only attach spaces they can read themselves; spaces
         # an administrator attached before may stay.
         added = [slug for slug in payload.collections if slug not in (row.collections or [])]

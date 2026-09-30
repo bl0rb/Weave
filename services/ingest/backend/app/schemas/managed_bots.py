@@ -34,9 +34,8 @@ class AgentSubagentFilters(BaseModel):
 class AgentSubagentModel(BaseModel):
     """Mirrors Weave-Runtime's `ModelConfig` (app/schemas/bot.py) -- a
     subagent's own model override. `supports_tools` only matters for a
-    non-'fake' provider (see Runtime's own `_agent_requires_tool_support`
-    validator); left unvalidated here beyond the type itself, exactly like
-    Runtime leaves 'unknown' (`None`) to mean 'assume no tool support'."""
+    non-'fake' provider; 'unknown' (`None`) means 'assume no tool support',
+    exactly like Runtime -- see AgentConfig.validate_subagent_models_support_tools."""
 
     model_config = ConfigDict(extra='forbid')
 
@@ -138,6 +137,24 @@ class AgentConfig(BaseModel):
         duplicates = sorted({sid for sid in ids if ids.count(sid) > 1})
         if duplicates:
             raise ValueError(f'agent.subagents ids must be unique -- duplicated: {duplicates}')
+        return self
+
+    @model_validator(mode='after')
+    def validate_subagent_models_support_tools(self) -> 'AgentConfig':
+        """Runtime's `BotConfig._agent_mode_is_valid`, for the part Ingest
+        can see: a managed LLM bot's own model is Runtime's tool-capable
+        'fake' default, but a subagent's own model override must declare
+        tool support ('fake', or `supports_tools: true`). Runtime drops a
+        bot it rejects, so this has to fail here, at save time."""
+        if not self.enabled:
+            return self
+        for subagent in self.subagents:
+            model = subagent.model
+            if model is not None and model.provider != 'fake' and not model.supports_tools:
+                raise ValueError(
+                    f"subagent {subagent.id!r}'s own model {model.provider!r}/{model.model!r} does not declare "
+                    'tool-call support -- set supports_tools: true once the model actually supports tool calling'
+                )
         return self
 
 
@@ -269,6 +286,11 @@ class ManagedBotWrite(BaseModel):
             raise ValueError('webhook_url is required for n8n bots')
         if self.kind == 'llm' and (not self.system_prompt or self.webhook_url or self.auth_token or self.streaming or self.clear_auth_token):
             raise ValueError('LLM bots require system_prompt and cannot use n8n fields')
+        # Runtime's `BotConfig._agent_mode_is_valid` rule 1: it drops such a
+        # bot, and for an override of a YAML bot that would reopen the
+        # YAML bot's own access.
+        if self.kind == 'n8n' and self.agent is not None and self.agent.enabled:
+            raise ValueError('agent mode is not available for n8n bots')
         return self
 
 

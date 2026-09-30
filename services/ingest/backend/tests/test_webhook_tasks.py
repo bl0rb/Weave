@@ -29,7 +29,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from app.models.models import Collection, ImportRun, Job, JobStatus, WebhookConnection, WebhookDelivery
+from app.models.models import Collection, ImportRun, Job, JobStatus, User, WebhookConnection, WebhookDelivery
 from app.services import security
 from app.services.webhooks import (
     build_document_processed_payload,
@@ -925,6 +925,40 @@ def test_dispatch_job_event_configured_connection_owned_by_other_user_is_noop(db
 
     mock_send_task.assert_not_called()
     assert db.query(WebhookDelivery).filter(WebhookDelivery.job_id == job.id).count() == 0
+
+
+def test_webhooks_stop_once_the_uploader_loses_the_space_or_is_deactivated(db_session) -> None:
+    """ADR 0008: a lost grant and a deactivation take effect immediately --
+    a restart by another member must not push the document to the former
+    uploader's endpoint, neither at dispatch nor at delivery time."""
+    db = db_session
+    uploader = create_test_user(username='webhook_revoked_uploader', email='webhook_revoked_uploader@example.com')
+    space_owner = create_test_user(username='webhook_revoked_owner', email='webhook_revoked_owner@example.com')
+    connection = _make_connection(db, uploader.id, events=('job.finished',))
+    space = add_legacy_collection(
+        db, id=str(uuid.uuid4()), slug=f'revoked-{uuid.uuid4().hex[:6]}', name='Revoked', owner_id=space_owner.id,
+    )
+    db.commit()
+    job = _make_job(db, uploader.id, webhook_connection_id=connection.id)
+    job.processing_info = {'settings': {**job.processing_info['settings'], 'collection_id': space.id}}
+    db.commit()
+
+    with patch.object(webhook_tasks.celery_app, 'send_task') as mock_send_task:
+        webhook_tasks.dispatch_job_event(db, job, 'job.finished')
+    mock_send_task.assert_not_called()
+    assert db.query(WebhookDelivery).filter(WebhookDelivery.job_id == job.id).count() == 0
+
+    # A delivery queued while the uploader still had access is not sent
+    # once they are deactivated.
+    own_job = _make_job(db, uploader.id, webhook_connection_id=connection.id)
+    delivery = _make_delivery(db, connection, job_id=own_job.id)
+    db.get(User, uploader.id).is_active = False
+    db.commit()
+    with patch.object(webhook_tasks, 'send_webhook_request') as send:
+        deliver_webhook.run(delivery.id)
+    send.assert_not_called()
+    db.expire_all()
+    assert db.get(WebhookDelivery, delivery.id).status == 'failed'
 
 
 def test_dispatch_job_event_noop_when_webhooks_disabled(db_session, monkeypatch) -> None:

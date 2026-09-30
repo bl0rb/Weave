@@ -1132,6 +1132,7 @@ export const portal: Record<keyof typeof de, string> = {
   'bots.systemPrompt': 'System prompt',
   'bots.spaces': 'Knowledge spaces',
   'bots.spacesHint': 'You can only add spaces you may read yourself.',
+  'bots.spacesKeepOne': 'At least one space stays selected: only admins can lift the restriction.',
   'bots.requireSources': 'Only answer with sources',
   'bots.noContextReply': 'Reply without sources',
   'bots.role.owner': 'Owner',

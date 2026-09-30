@@ -56,3 +56,14 @@ it('saves content and users but keeps the owners fixed', async () => {
   expect(body.system_prompt).toBe('Hilf.');
   expect(await screen.findByText('Bot gespeichert.')).toBeTruthy();
 });
+
+it('keeps the last space of a restricted bot selected', async () => {
+  render(<MyBots />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Wissens-Bot bearbeiten' }));
+  await screen.findByRole('checkbox', { name: 'Servicewissen' });
+  const only = screen.getByRole('checkbox', { name: 'admin-bereich' }) as HTMLInputElement;
+  // Emptying the list would widen the bot to every readable space.
+  expect(only.disabled).toBe(true);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Servicewissen' }));
+  expect(only.disabled).toBe(false);
+});

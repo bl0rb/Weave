@@ -1333,3 +1333,61 @@ def test_0036_bot_grants_keep_who_may_use_a_bot(tmp_path, monkeypatch) -> None:
     assert json.loads(teams['open-bot']) == []
     assert json.loads(teams['legal-bot']) == ['legal']
     engine.dispose()
+
+
+def test_0038_collection_slug_tombstones_round_trip(tmp_path, monkeypatch) -> None:
+    db_url = f'sqlite:///{tmp_path / "slug_tombstones.db"}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+    engine = create_engine(db_url, future=True)
+    _build_legacy_metadata().create_all(bind=engine)
+    cfg = _alembic_config()
+    command.stamp(cfg, '0003_job_markdown_versions')
+    command.upgrade(cfg, '0037_locale_auto')
+    assert 'collection_slug_tombstones' not in inspect(engine).get_table_names()
+    command.upgrade(cfg, '0038_collection_slug_tombstones')
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO collection_slug_tombstones (slug) VALUES ('hr-intern')"))
+        row = conn.execute(text('SELECT slug, deleted_by_id, deleted_at FROM collection_slug_tombstones')).one()
+    assert row.slug == 'hr-intern'
+    assert row.deleted_by_id is None
+    assert row.deleted_at is not None
+    command.downgrade(cfg, '0037_locale_auto')
+    assert 'collection_slug_tombstones' not in inspect(engine).get_table_names()
+    engine.dispose()
+
+
+def test_0039_cuts_version_chains_that_cross_spaces(tmp_path, monkeypatch) -> None:
+    db_url = f'sqlite:///{tmp_path / "space_scoped_versions.db"}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+    engine = create_engine(db_url, future=True)
+    _build_legacy_metadata().create_all(bind=engine)
+    cfg = _alembic_config()
+    command.stamp(cfg, '0003_job_markdown_versions')
+    command.upgrade(cfg, '0038_collection_slug_tombstones')
+
+    def space(collection_id):
+        return json.dumps({'settings': {'collection_id': collection_id}} if collection_id else {})
+
+    # (id, predecessor, space): alice-v2 stays in space A, bob and plain
+    # chained across a space boundary, carol only has an info-less predecessor.
+    rows = [
+        ('alice-v1', None, 'space-a'), ('alice-v2', 'alice-v1', 'space-a'),
+        ('bob-v2', 'alice-v1', 'space-b'), ('plain-v2', 'alice-v1', None),
+        ('loose-v1', None, None), ('carol-v2', 'loose-v1', 'space-a'), ('loose-v2', 'loose-v1', None),
+    ]
+    with engine.begin() as conn:
+        for job_id, previous_job_id, collection_id in rows:
+            conn.execute(text(
+                "INSERT INTO jobs (id, original_filename, upload_path, status, created_at, updated_at, "
+                "document_version, previous_job_id, processing_info) "
+                "VALUES (:id, 'doc.pdf', '/tmp/doc.pdf', 'FINISHED', '2026-01-01', '2026-01-01', 1, :prev, :info)"
+            ), {'id': job_id, 'prev': previous_job_id, 'info': space(collection_id)})
+    command.upgrade(cfg, '0039_space_scoped_versions')
+    with engine.connect() as conn:
+        chains = dict(conn.execute(text('SELECT id, previous_job_id FROM jobs')).all())
+    assert chains == {
+        'alice-v1': None, 'alice-v2': 'alice-v1', 'bob-v2': None, 'plain-v2': None,
+        'loose-v1': None, 'carol-v2': None, 'loose-v2': 'loose-v1',
+    }
+    command.downgrade(cfg, '0038_collection_slug_tombstones')
+    engine.dispose()

@@ -16,14 +16,17 @@ from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.orm import Session, aliased, defer, selectinload
 
 from app.api.deps import get_current_user, require_admin, require_knowledge_registry_reader
+from app.api.managed_bots import _runtime_bots
 from app.core.config import settings
 from app.database.session import get_db
 from app.models.models import (
     BotGrant,
     BotRole,
+    BotTombstone,
     Collection,
     CollectionGrant,
     CollectionRole,
+    CollectionSlugTombstone,
     CollectionVisibility,
     DocumentRelease,
     ImportRun,
@@ -235,7 +238,7 @@ def _visible_job_filter(user: User, db: Session | None = None):
     a team). Ownerless rows stay admin-only until claimed via POST
     /auth/admin/jobs/claim-ownerless. Without a database session the
     space roles cannot be resolved, so that legacy personal rule applies
-    to every job (only the version-chain lookup calls it that way).
+    to every job (every current caller passes one).
     """
     if user.role == UserRole.ADMIN:
         return None
@@ -358,6 +361,12 @@ def _require_unreleased_job(db: Session, job: Job) -> None:
         )
 
 
+def _released_job_ids(db: Session, job_ids: list[str]) -> set[str]:
+    if not job_ids:
+        return set()
+    return set(db.scalars(select(DocumentRelease.job_id).where(DocumentRelease.job_id.in_(job_ids))).all())
+
+
 def _lock_jobs(db: Session, job_ids: list[str]) -> list[Job]:
     """Lock a batch in a stable order before release/mutation guards.
 
@@ -390,14 +399,22 @@ def _unique_collection_slug(db: Session, base: str) -> str:
     when the caller doesn't supply one explicitly on POST /collections.
     Collisions get a numeric suffix rather than a 409 -- an auto-derived
     value was never something the caller chose and asserted uniqueness over,
-    unlike an explicit `slug` (see create_collection)."""
+    unlike an explicit `slug` (see create_collection). Slugs of deleted
+    collections count as taken (see CollectionSlugTombstone)."""
     base_slug = _slugify(base) or 'collection'
     candidate = base_slug
     suffix = 2
-    while db.scalar(select(Collection.id).where(Collection.slug == candidate)) is not None:
+    while _collection_slug_taken(db, candidate):
         candidate = f'{base_slug}-{suffix}'
         suffix += 1
     return candidate
+
+
+def _collection_slug_taken(db: Session, slug: str) -> bool:
+    return (
+        db.scalar(select(Collection.id).where(Collection.slug == slug)) is not None
+        or db.get(CollectionSlugTombstone, slug) is not None
+    )
 
 
 def _validated_team_id(db: Session, team_id: str | None) -> str | None:
@@ -866,9 +883,15 @@ def _duplicate_upload_response(predecessor: Job) -> JSONResponse:
     )
 
 
-def _find_predecessor_job(db: Session, user: User, filename: str) -> Job | None:
+def _find_predecessor_job(db: Session, user: User, filename: str, collection_id: str | None = None) -> Job | None:
     """Latest version of a document named `filename` visible to `user`
-    (same row-visibility rule as `_visible_job_filter`) -- the highest
+    (same row-visibility rule as `_visible_job_filter`, space roles
+    included) and in the same place as the new upload: the target knowledge
+    space (`collection_id`), or outside any space for a plain upload. A
+    chain never crosses spaces -- otherwise a release in one space would
+    supersede a same-named document in another in Knowledge, and the 409
+    below would disclose a job id from a space the uploader has no role on
+    (ADR 0008). The highest
     document_version, tie-broken by newest created_at. Used both to compute
     the next version number on upload and to detect an exact re-upload via
     content_sha256 (see DuplicateUploadError). Benchmark-variant children
@@ -879,12 +902,15 @@ def _find_predecessor_job(db: Session, user: User, filename: str) -> Job | None:
     exclusion this is scoped to this lookup only, so mail-attachment jobs
     still appear normally on the browsing surfaces that reuse
     `_apply_visible_filter` (stats, /markdown-files, /folders/*)."""
+    collection_id_expr = Job.processing_info['settings']['collection_id'].as_string()
     query = _apply_visible_filter(
         select(Job)
         .where(Job.original_filename == filename)
         .where(Job.mail_message_id.is_(None))
+        .where(collection_id_expr == collection_id if collection_id else collection_id_expr.is_(None))
         .options(*_JOB_BLOB_DEFER_OPTIONS),
         user,
+        db=db,
     )
     query = query.order_by(Job.document_version.desc(), Job.created_at.desc())
     return db.scalars(query).first()
@@ -966,7 +992,8 @@ def create_job_from_upload(
     content_sha256 = hashlib.sha256(upload_content).hexdigest()
 
     filename = file.filename or 'upload'
-    predecessor = None if benchmark_run_id else _find_predecessor_job(db, user, filename)
+    collection_id = (extra_settings or {}).get('collection_id')
+    predecessor = None if benchmark_run_id else _find_predecessor_job(db, user, filename, collection_id)
 
     if predecessor is not None and predecessor.content_sha256 == content_sha256:
         uploaded_file = Path(upload_path).resolve()
@@ -1088,7 +1115,7 @@ def create_collection(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail='slug must be lowercase letters, digits and hyphens (e.g. "kundenservice-2026")',
             )
-        if db.scalar(select(Collection.id).where(Collection.slug == slug)) is not None:
+        if _collection_slug_taken(db, slug):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Collection slug already exists')
     else:
         slug = _unique_collection_slug(db, name or folder_clean or 'collection')
@@ -1100,12 +1127,9 @@ def create_collection(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='description (purpose) is required')
     responsible_team_id = _validated_team_id(db, payload.responsible_team_id)
     grants = [grant for grant in _validated_grants(db, payload.grants) if grant.user_id != user.id]
-    if payload.visibility is not None:
-        visibility = payload.visibility
-    else:
-        # Backward-compatible default: public unless the caller named
-        # somebody to share the space with.
-        visibility = CollectionVisibility.RESTRICTED if grants else CollectionVisibility.PUBLIC
+    # Fail closed (ADR 0008): public only when explicitly requested; the
+    # creator's owner grant keeps a restricted space usable.
+    visibility = payload.visibility or CollectionVisibility.RESTRICTED
 
     collection = Collection(
         created_by_id=user.id,
@@ -1272,7 +1296,10 @@ def delete_collection(
     Confluence imports block deletion either way so they cannot create
     orphaned jobs after this transaction commits, and so does any bot or
     active technical identity naming the slug -- a later collection with
-    the same slug would otherwise inherit that access.
+    the same slug would otherwise inherit that access. The slug itself is
+    tombstoned and never handed out again: withdrawals reach Knowledge
+    asynchronously, and documents indexed before the release gate may
+    still carry it.
     """
     enforce_rate_limit(request)
     collection = db.get(Collection, collection_id)
@@ -1318,8 +1345,19 @@ def delete_collection(
     # may read". Silently removing this slug from the last-item list would
     # therefore widen the bot rather than merely clean up a reference. Block
     # deletion until an administrator has made that policy change explicit.
-    configured_bot_scopes = db.execute(select(ManagedBot.id, ManagedBot.collections)).all()
-    if any(slug in (bot_collections or []) for _, bot_collections in configured_bot_scopes):
+    # Subagents name their own spaces, and Runtime's local YAML bots (not
+    # overridden or deleted here) count as assignments too; while Runtime is
+    # unreachable only Ingest's own rows can be checked -- the slug
+    # tombstone below still keeps a later space from inheriting them.
+    managed_scopes = db.execute(select(ManagedBot.id, ManagedBot.collections, ManagedBot.agent_config)).all()
+    assigned = any(slug in _bot_collection_slugs(collections, agent) for _, collections, agent in managed_scopes)
+    if not assigned:
+        known_bot_ids = {bot_id for bot_id, _, _ in managed_scopes} | set(db.scalars(select(BotTombstone.id)).all())
+        assigned = any(
+            slug in _bot_collection_slugs(bot.collections, bot.agent)
+            for bot in _runtime_bots(db) if bot.id not in known_bot_ids
+        )
+    if assigned:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail='Der Wissensbereich ist noch einem Bot zugeordnet. Bitte entferne zuerst diese Zuordnung.',
@@ -1335,6 +1373,8 @@ def delete_collection(
 
     withdrawn = [job.id for job in jobs if _withdraw_and_delete_job(db, job)]
     db.delete(collection)
+    if db.get(CollectionSlugTombstone, slug) is None:
+        db.add(CollectionSlugTombstone(slug=slug, deleted_by_id=user.id))
     db.commit()
     dispatch_withdrawals(withdrawn)
     try:
@@ -1343,6 +1383,16 @@ def delete_collection(
     except Exception:  # pragma: no cover - notification must never break deletion
         logger.exception('Knowledge registry notification failed for deleted collection %s', collection_id)
     return {'status': 'deleted'}
+
+
+def _bot_collection_slugs(collections: list[str] | None, agent: dict | None) -> set[str]:
+    """Every space a bot searches: its own list plus its subagents'."""
+    slugs = set(collections or [])
+    subagents = agent.get('subagents') if isinstance(agent, dict) else None
+    for subagent in subagents if isinstance(subagents, list) else []:
+        if isinstance(subagent, dict) and isinstance(subagent.get('collections'), list):
+            slugs.update(value for value in subagent['collections'] if isinstance(value, str))
+    return slugs
 
 
 def _require_directory_access(db: Session, user: User) -> None:
@@ -1500,19 +1550,21 @@ def start_collection_processing(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='No files uploaded to collection')
 
     locked_jobs = _lock_jobs(db, job_ids)
-    released_job_id = db.scalar(
-        select(DocumentRelease.job_id)
-        .where(DocumentRelease.job_id.in_(job_ids))
-        .limit(1)
-    )
-    if released_job_id is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail='Collection contains an issued portal release; a new document version is required',
-        )
+    # Released versions are immutable and imported pages must never be
+    # re-OCRed (see restart_job): both are skipped and reported, so adding
+    # new files to a space that already has released documents still works.
+    released_job_ids = _released_job_ids(db, job_ids)
 
     started = 0
+    skipped_import_jobs = 0
+    skipped_released_jobs = 0
     for job in locked_jobs:
+        if _is_import_page_job(job):
+            skipped_import_jobs += 1
+            continue
+        if job.id in released_job_ids:
+            skipped_released_jobs += 1
+            continue
         info = job.processing_info if isinstance(job.processing_info, dict) else {}
         settings_info = dict(info.get('settings')) if isinstance(info.get('settings'), dict) else {}
         # Clear any stale vl_connection_id/variant_label/webhook_connection_id
@@ -1552,6 +1604,8 @@ def start_collection_processing(
         collection_id=collection_id,
         started_jobs=started,
         profile_id=payload.profile_id,
+        skipped_import_jobs=skipped_import_jobs,
+        skipped_released_jobs=skipped_released_jobs,
     )
 
 
@@ -1960,6 +2014,7 @@ def retry_job_with_lower_profile(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Job not found')
     _require_visible(db, job, user)
     _reject_benchmark_child_job(job)
+    _require_unreleased_job(db, job)
     if _is_import_page_job(job):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Imported pages cannot be restarted')
 
@@ -2039,13 +2094,20 @@ def restart_folder(
         if (fp := _job_folder_path(job)) == normalized or fp.startswith(f'{normalized}/')
     ]
 
+    # A released version is immutable (see restart_job): those are skipped
+    # and reported like imported pages.
+    released_job_ids = _released_job_ids(db, [job.id for job in folder_jobs])
     restarted = 0
     skipped_import_jobs = 0
+    skipped_released_jobs = 0
     for job in folder_jobs:
         # Imported pages are skipped and reported rather than failing the
         # whole folder: restarting them would bulk-wipe converted markdown.
         if _is_import_page_job(job):
             skipped_import_jobs += 1
+            continue
+        if job.id in released_job_ids:
+            skipped_released_jobs += 1
             continue
         if job.status == JobStatus.RUNNING and job.id in active_job_ids:
             continue
@@ -2075,7 +2137,12 @@ def restart_folder(
         restarted += 1
 
     db.commit()
-    return {'path': normalized, 'restarted_jobs': restarted, 'skipped_import_jobs': skipped_import_jobs}
+    return {
+        'path': normalized,
+        'restarted_jobs': restarted,
+        'skipped_import_jobs': skipped_import_jobs,
+        'skipped_released_jobs': skipped_released_jobs,
+    }
 
 
 @router.get('/stats', response_model=DashboardStatsResponse)
@@ -2408,13 +2475,20 @@ def _withdraw_and_delete_job(db: Session, job: Job) -> bool:
     """Delete a job; a released one is withdrawn from Knowledge on the way
     (ADR 0008). Knowledge keeps a tombstone per job id and ignores any later
     release of it, so a release still in flight cannot bring it back.
-    Returns whether a withdrawal was queued -- dispatch it after commit."""
+    Returns whether a withdrawal was queued -- dispatch it after commit.
+
+    A job without a release may have reached Knowledge too: the legacy
+    document.processed workflow indexed jobs before the release gate existed,
+    and a later restart leaves such a job in any status. Every deleted job is
+    withdrawn as well whenever the Knowledge channel is configured; Knowledge
+    treats a withdrawal of an unknown job as a no-op."""
     releases = db.scalars(select(DocumentRelease).where(DocumentRelease.job_id == job.id)).all()
+    may_be_indexed = bool(releases) or publication_tasks.publication_configured()
     queued = False
+    if may_be_indexed and db.get(KnowledgeWithdrawal, job.id) is None:
+        db.add(KnowledgeWithdrawal(job_id=job.id))
+        queued = True
     if releases:
-        if db.get(KnowledgeWithdrawal, job.id) is None:
-            db.add(KnowledgeWithdrawal(job_id=job.id))
-            queued = True
         for release in releases:
             db.delete(release)
         # `document_releases.job_id` is ON DELETE RESTRICT.
@@ -2532,11 +2606,13 @@ def list_markdown_files(db: Session = Depends(get_db), user: User = Depends(get_
     # DB-derived: no shared volume between backend and worker, so the
     # filesystem is never consulted here. Every finished job with markdown
     # on record and visible to the caller is surfaced as a synthetic tree
-    # entry.
+    # entry -- except password-protected ones, whose markdown only the
+    # password unlocks (GET /jobs/{id}/download; the folder ZIP skips them
+    # the same way).
     jobs = db.scalars(
         _apply_visible_filter(
             select(Job)
-            .where(Job.status == JobStatus.FINISHED, Job.result_markdown.isnot(None))
+            .where(Job.status == JobStatus.FINISHED, Job.result_markdown.isnot(None), Job.password_hash.is_(None))
             .options(*_JOB_DEFER_UPLOAD_CONTENT_ONLY),
             user, db=db,
         )
@@ -2560,6 +2636,7 @@ def get_markdown_file(
         job is None
         or job.status != JobStatus.FINISHED
         or job.result_markdown is None
+        or job.password_hash
         or _synthetic_markdown_path(job) != relative_path
         or not _job_visible(db, job, user)
     ):
@@ -2710,13 +2787,18 @@ def delete_folder(
             status_code=status.HTTP_409_CONFLICT,
             detail='Folder contains jobs with issued portal releases and cannot be deleted',
         )
+    # Deleting a protected document needs its password (single and bulk
+    # delete ask for it), which a folder-wide delete cannot supply.
+    if any(job.password_hash for job in folder_jobs):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='Folder contains password-protected jobs; delete them one by one first',
+        )
 
-    deleted_jobs = 0
-    for job in folder_jobs:
-        _delete_job_artifacts(job)
-        db.delete(job)
-        deleted_jobs += 1
+    withdrawn = [job.id for job in folder_jobs if _withdraw_and_delete_job(db, job)]
+    deleted_jobs = len(folder_jobs)
     db.commit()
+    dispatch_withdrawals(withdrawn)
 
     # The physical folder on disk may still hold artifacts for jobs the
     # current caller can't see (other users/teams sharing the same folder

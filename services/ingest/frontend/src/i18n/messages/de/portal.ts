@@ -1131,6 +1131,7 @@ export const portal = {
   'bots.systemPrompt': 'Systemprompt',
   'bots.spaces': 'Wissensbereiche',
   'bots.spacesHint': 'Du kannst nur Bereiche hinzufügen, die du selbst lesen darfst.',
+  'bots.spacesKeepOne': 'Mindestens ein Bereich bleibt ausgewählt: Die Einschränkung aufheben können nur Admins.',
   'bots.requireSources': 'Nur mit Quellen antworten',
   'bots.noContextReply': 'Antwort ohne Quellen',
   'bots.role.owner': 'Besitzer',

@@ -138,6 +138,87 @@ def test_identical_reupload_returns_409_and_creates_no_new_job():
     assert after_count == before_count
 
 
+def _space(client, name: str, **extra) -> str:
+    resp = client.post(
+        '/api/v1/collections', json={'name': name, 'description': 'Test purpose', 'visibility': 'restricted', **extra}
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()['collection_id']
+
+
+def _space_upload(client, collection_id: str, filename: str, content: bytes):
+    return client.post(
+        f'/api/v1/collections/{collection_id}/upload', files={'file': (filename, content, 'application/pdf')}
+    )
+
+
+def _job_row(job_id: str) -> Job:
+    db = TestingSessionLocal()
+    try:
+        return db.get(Job, job_id)
+    finally:
+        db.close()
+
+
+def test_version_chain_never_crosses_knowledge_spaces():
+    """ADR 0008: a same-named document in a space the uploader has no role
+    on is neither a predecessor (Knowledge would supersede it on release)
+    nor a duplicate (the 409 would disclose its job id)."""
+    team_id = _create_team('ver-space-team')
+    create_test_user(username='ver-space-v', email='ver-space-v@example.com', team_id=team_id)
+    create_test_user(username='ver-space-u', email='ver-space-u@example.com', team_id=team_id)
+    owner_client = login_as('ver-space-v')
+    uploader_client = login_as('ver-space-u')
+
+    foreign_space = _space(owner_client, 'Ver Space Foreign')
+    foreign = _space_upload(owner_client, foreign_space, 'Richtlinie.pdf', b'%PDF-foreign')
+    assert foreign.status_code == 200, foreign.text
+    foreign_job = foreign.json()['job_id']
+    assert uploader_client.get(f'/api/v1/jobs/{foreign_job}').status_code == 404
+
+    own_space = _space(uploader_client, 'Ver Space Own')
+    same_bytes = _space_upload(uploader_client, own_space, 'Richtlinie.pdf', b'%PDF-foreign')
+    assert same_bytes.status_code == 200, same_bytes.text
+    assert 'duplicate_of' not in same_bytes.json()
+    same_bytes_row = _job_row(same_bytes.json()['job_id'])
+    assert same_bytes_row.previous_job_id is None
+    assert same_bytes_row.document_version == 1
+
+    # The same person uploading the same name into a second space of theirs.
+    changed = _space_upload(owner_client, _space(owner_client, 'Ver Space Second'), 'Richtlinie.pdf', b'%PDF-changed')
+    assert changed.status_code == 200, changed.text
+    assert _job_row(changed.json()['job_id']).previous_job_id is None
+
+    # A plain upload never chains onto a space document either.
+    plain = owner_client.post(
+        '/api/v1/upload',
+        files={'file': ('Richtlinie.pdf', b'%PDF-plain', 'application/pdf')},
+        data={'profile_id': 'ppocrv6_tiny'},
+    )
+    assert plain.status_code == 200, plain.text
+    assert _job_row(plain.json()['job_id']).previous_job_id is None
+
+
+def test_version_chain_follows_space_roles_not_the_uploaders_team():
+    create_test_user(username='ver-role-owner', email='ver-role-owner@example.com')
+    member = create_test_user(username='ver-role-member', email='ver-role-member@example.com')
+    owner_client = login_as('ver-role-owner')
+    member_client = login_as('ver-role-member')
+    space = _space(owner_client, 'Ver Role Space', grants=[{'user_id': member.id, 'role': 'member'}])
+
+    first = _space_upload(owner_client, space, 'Handbuch.pdf', b'%PDF-v1')
+    assert first.status_code == 200, first.text
+    second = _space_upload(member_client, space, 'Handbuch.pdf', b'%PDF-v2')
+    assert second.status_code == 200, second.text
+    second_row = _job_row(second.json()['job_id'])
+    assert second_row.previous_job_id == first.json()['job_id']
+    assert second_row.document_version == 2
+
+    duplicate = _space_upload(member_client, space, 'Handbuch.pdf', b'%PDF-v2')
+    assert duplicate.status_code == 409
+    assert duplicate.json()['duplicate_of'] == second.json()['job_id']
+
+
 def test_versions_endpoint_shape_newest_first_and_is_current():
     create_test_user(username='ver-shape-user', email='ver-shape-user@example.com')
     client = login_as('ver-shape-user')
