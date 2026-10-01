@@ -667,6 +667,12 @@ Zwei Dinge, die still schiefgehen:
 
 ### 8.2 Alternative: OIDC direkt am Gateway
 
+Entweder das oder die Anmeldung über Weave-Ingest (8.1), nie beides (ADR 0006).
+Ist die Ingest-Anmeldung konfiguriert, bleibt OIDC direkt am Gateway
+abgeschaltet, und bestehende direkt angemeldete Konten sind gesperrt: Ihre
+Teams kämen ungeprüft aus dem IdP und würden sonst gleichnamige Freigaben in
+Ingest erben.
+
 | Variable | Bedeutung |
 |---|---|
 | `OIDC_ISSUER` | Basis-URL des Providers. Zusammen mit der Client-ID schaltet sie OIDC frei |

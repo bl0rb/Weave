@@ -139,6 +139,25 @@ def test_run_flow_delegation_token_embeds_the_same_scope_and_bot_id(monkeypatch)
     assert payload['team'] == 'legal'
 
 
+@pytest.mark.parametrize('timeout_seconds, expected_ttl', [(30, 40), (600, 300)])
+def test_run_flow_delegation_token_does_not_outlive_the_blocking_call(monkeypatch, timeout_seconds, expected_ttl):
+    # A revoked/deactivated user's rights must not linger in the flow for
+    # the full default TTL once Runtime has given up on the call anyway.
+    captured = {}
+
+    def _fake_post(url, content=None, headers=None, timeout=None):
+        captured['body'] = json.loads(content)
+        return _FakeResponse(200, {'answer': 'hi'})
+
+    monkeypatch.setattr('app.services.n8n_client.httpx.post', _fake_post)
+    run_flow(_bot(timeout_seconds=timeout_seconds), 'hi', [], ChatUser(id='u-1', subject='ingest-7'), ['vertraege'])
+
+    payload_b64 = captured['body']['delegation_token'].split('.')[0]
+    payload = json.loads(base64.urlsafe_b64decode(payload_b64 + '=' * (-len(payload_b64) % 4)))
+    assert payload['exp'] - payload['iat'] == expected_ttl
+    assert payload['subject'] == 'ingest-7'
+
+
 def test_run_flow_signature_header_verifies_against_the_exact_body_bytes(monkeypatch):
     captured = {}
 

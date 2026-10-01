@@ -10,9 +10,19 @@ describe('accessSummary', () => {
     expect(accessSummary({ visibility: 'public', grants: [person('jdoe', 'owner'), team('A', 'reader')] })).toBe('Öffentlich');
   });
 
-  it('lists every grant of a restricted space, since every role reads', () => {
+  it('names teams and counts individual people instead of listing them', () => {
     expect(accessSummary({ visibility: 'restricted', grants: [person('jdoe', 'owner'), team('A', 'member'), person('max', 'reader')] }))
-      .toBe('jdoe, Team A, max');
+      .toBe('Team A und 2 Personen');
+    expect(accessSummary({ visibility: 'restricted', grants: [team('A', 'reader'), team('B', 'member'), person('max', 'reader')] }))
+      .toBe('Team A, Team B und 1 Person');
+    expect(accessSummary({ visibility: 'restricted', grants: [person('jdoe', 'owner')] })).toBe('1 Person');
+  });
+
+  it('names at most three teams and counts the rest', () => {
+    const grants = ['A', 'B', 'C', 'D', 'E'].map(name => team(name, 'reader'));
+    expect(accessSummary({ visibility: 'restricted', grants })).toBe('Team A, Team B, Team C und 2 weitere Teams');
+    expect(accessSummary({ visibility: 'restricted', grants: [...grants.slice(0, 4), person('max', 'reader')] }))
+      .toBe('Team A, Team B, Team C, 1 weiteres Team und 1 Person');
   });
 
   it('reports "Nur Administration" for a restricted space without grants', () => {
@@ -21,7 +31,7 @@ describe('accessSummary', () => {
 
   it('translates the summary when an English locale is passed', () => {
     expect(accessSummary({ visibility: 'public', grants: [] }, 'en')).toBe('Public');
-    expect(accessSummary({ visibility: 'restricted', grants: [team('A', 'reader'), team('B', 'member')] }, 'en')).toBe('Team A, Team B');
+    expect(accessSummary({ visibility: 'restricted', grants: [team('A', 'reader'), team('B', 'member'), person('max', 'reader'), person('eva', 'reader')] }, 'en')).toBe('Team A, Team B and 2 people');
     expect(accessSummary({ visibility: 'restricted', grants: [] }, 'en')).toBe('Admins only');
   });
 });

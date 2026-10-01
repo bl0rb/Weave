@@ -105,7 +105,7 @@ export function LoginForm({ weaveLoginUrl, ssoLoginUrl, ssoError }: LoginFormPro
     <main className="flex min-h-screen items-center justify-center bg-[var(--bg)] px-4 py-12 text-[var(--ink)]">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center gap-3">
-          <WeaveLogo animation="intro" className="h-14 w-14 drop-shadow-md" />
+          <WeaveLogo animation="finite" className="h-14 w-14 drop-shadow-md" />
           <span className="text-lg font-semibold">{t('common.appTitle')}</span>
         </div>
 

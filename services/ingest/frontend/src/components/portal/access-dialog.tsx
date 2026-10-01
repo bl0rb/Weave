@@ -161,12 +161,14 @@ export function AccessDialog({ collection, onClose, onSaved }: {
       <label className="portal-access-label" htmlFor="access-search">{t('portal.access.dialog.personsLabel')}</label>
       <ul className="portal-access-grants" aria-label={t('portal.access.dialog.personsLabel')}>
         {persons.map(person => <li className="portal-access-grant-row" key={person.id}>
-          <span>{person.username}{person.team && <small>{person.team}</small>}{person.isActive === false && <small className="portal-field-error">{t('portal.access.inactive')}</small>}</span>
-          <select className="portal-role-select" value={person.role} disabled={saving} onChange={event => setPersonRole(person.id, event.target.value as CollectionRole)}
-            aria-label={t('portal.access.dialog.roleAria', { name: person.username })}>
-            {PERSON_ROLES.map(role => <option key={role} value={role}>{roleLabel(role)}</option>)}
-          </select>
-          <button type="button" className="portal-access-remove" disabled={saving} onClick={() => removePerson(person.id)} aria-label={t('portal.access.dialog.removePerson', { name: person.username })}><X size={14} aria-hidden="true" /></button>
+          <span className="portal-access-grant-name">{person.username}{person.team && <small>{person.team}</small>}{person.isActive === false && <small className="portal-field-error">{t('portal.access.inactive')}</small>}</span>
+          <div className="portal-access-grant-actions">
+            <select className="portal-role-select" value={person.role} disabled={saving} onChange={event => setPersonRole(person.id, event.target.value as CollectionRole)}
+              aria-label={t('portal.access.dialog.roleAria', { name: person.username })}>
+              {PERSON_ROLES.map(role => <option key={role} value={role}>{roleLabel(role)}</option>)}
+            </select>
+            <button type="button" className="portal-access-remove" disabled={saving} onClick={() => removePerson(person.id)} aria-label={t('portal.access.dialog.removePerson', { name: person.username })}><X size={14} aria-hidden="true" /></button>
+          </div>
         </li>)}
       </ul>
       <div className="portal-access-picker">
@@ -191,7 +193,7 @@ export function AccessDialog({ collection, onClose, onSaved }: {
       {teamsError && <p className="portal-field-hint">{teamsError}</p>}
       <ul className="portal-access-grants" aria-labelledby="access-teams-label">
         {teams.map(team => <li className="portal-access-grant-row" key={team.id}>
-          <label>
+          <label className="portal-access-grant-name">
             <input type="checkbox" checked={Boolean(teamRoles[team.id])} disabled={saving} onChange={event => toggleTeam(team.id, event.target.checked)} />
             <span>{team.name}<small>{t('portal.access.dialog.memberCount', { count: team.member_count })}</small></span>
           </label>

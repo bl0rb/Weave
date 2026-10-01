@@ -36,8 +36,8 @@ export type PortalDocument = {
   source: PortalSource; review_decision: string | null;
 };
 export type DocumentPage = { items: PortalDocument[]; total: number };
-/** One entry of GET /api/v1/portal/collections/{id}/import-scopes -- a distinct Confluence import scope among the space's visible documents. */
-export type ImportScope = { value: string; scope_type: string; scope_value: string; label: string; count: number };
+/** One entry of GET /api/v1/portal/collections/{id}/import-scopes -- a distinct Confluence import scope among the space's visible documents. `edit_run_id` is the caller's own newest run of the scope (set only when can_edit), which may differ from the scope's newest run. */
+export type ImportScope = { value: string; scope_type: string; scope_value: string; label: string; count: number; latest_run_id: string; edit_run_id: string | null; can_edit: boolean };
 export type ImportScopesResponse = { items: ImportScope[]; other_count: number };
 export type ReviewStateFilter = 'review' | 'all' | 'skipped';
 export type BulkAction = 'release' | 'skip' | 'unskip' | 'delete';

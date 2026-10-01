@@ -326,6 +326,10 @@ def send_webhook(
     _require_visible(db, job, user)
     if job.status != JobStatus.FINISHED:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Job is not finished')
+    # The payload carries the full markdown, which only the password
+    # unlocks everywhere else (GET /jobs/{id}/download).
+    if job.password_hash:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Password-protected jobs cannot be sent')
 
     # Server-side cap: an unreachable/very slow receiving endpoint must not
     # let one user queue unbounded outbound work.

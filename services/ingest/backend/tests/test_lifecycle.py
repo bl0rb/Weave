@@ -2,6 +2,7 @@
 and whole knowledge spaces."""
 
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
@@ -10,6 +11,7 @@ from app.api import routes
 from app.models.models import (
     BotGrant,
     BotRole,
+    BotTombstone,
     Collection,
     DocumentRelease,
     Job,
@@ -58,11 +60,14 @@ def _space(client, name: str, **extra) -> dict:
     return created.json()
 
 
-def _job(owner_id: str, collection_id: str, *, released: bool = False, password_hash: str | None = None) -> str:
+def _job(
+    owner_id: str, collection_id: str, *, released: bool = False, password_hash: str | None = None,
+    status: JobStatus = JobStatus.FINISHED,
+) -> str:
     with TestingSessionLocal() as db:
         job = Job(
             original_filename=f'{uuid.uuid4().hex[:6]}.pdf', upload_path='/tmp/none.pdf', owner_id=owner_id,
-            status=JobStatus.FINISHED, result_markdown='# Doc\n', password_hash=password_hash,
+            status=status, result_markdown='# Doc\n', password_hash=password_hash,
             processing_info={'settings': {'collection_id': collection_id}},
         )
         db.add(job)
@@ -158,6 +163,77 @@ def test_owner_deletes_a_space_with_all_its_content_after_confirming_its_name(_i
     with TestingSessionLocal() as db:
         assert db.get(Collection, space['collection_id']) is None
         assert db.get(Job, released) is None and db.get(Job, draft) is None
+
+
+def test_deleting_legacy_documents_withdraws_them_from_knowledge(_isolated, monkeypatch):
+    """Jobs indexed by the pre-release document.processed workflow have no
+    DocumentRelease, yet may sit in Knowledge -- deleting them (alone, per
+    folder or with their space) must withdraw them too, also after a restart
+    left them unfinished."""
+    monkeypatch.setattr(routes.publication_tasks, 'publication_configured', lambda: True)
+    owner = _user('lc-legacy-owner')
+    owner_client = login_as(owner.username)
+    space = _space(owner_client, 'Altbestand')
+    single = _job(owner.id, space['collection_id'])
+    assert owner_client.delete(f'/api/v1/jobs/{single}').status_code == 200
+    assert _isolated == [single]
+    restarted = _job(owner.id, space['collection_id'], status=JobStatus.FAILED)
+    assert owner_client.delete(f'/api/v1/jobs/{restarted}').status_code == 200
+    assert _isolated == [single, restarted]
+
+    with_space = _job(owner.id, space['collection_id'], status=JobStatus.PENDING)
+    deleted = owner_client.delete(
+        f"/api/v1/collections/{space['collection_id']}", params={'with_content': True, 'confirm_name': 'Altbestand'}
+    )
+    assert deleted.status_code == 200, deleted.text
+    assert _isolated == [single, restarted, with_space]
+    with TestingSessionLocal() as db:
+        assert db.get(KnowledgeWithdrawal, single).status == 'pending'
+        assert db.get(KnowledgeWithdrawal, restarted).status == 'pending'
+        assert db.get(KnowledgeWithdrawal, with_space).status == 'pending'
+
+
+def test_a_deleted_spaces_slug_is_never_handed_out_again(_isolated):
+    owner_client = login_as(_user('lc-slug-owner').username)
+    first = _space(owner_client, f'HR intern {uuid.uuid4().hex[:6]}')
+    assert owner_client.delete(f"/api/v1/collections/{first['collection_id']}").status_code == 200
+
+    other_client = login_as(_user('lc-slug-other').username)
+    explicit = other_client.post(
+        '/api/v1/collections', json={'name': 'Neu', 'description': 'Test purpose', 'slug': first['slug']}
+    )
+    assert explicit.status_code == 409
+    derived = _space(other_client, first['name'])
+    assert derived['slug'] == f"{first['slug']}-2"
+
+
+def test_space_deletion_counts_subagent_and_runtime_bot_assignments(monkeypatch):
+    owner_client = login_as(_user('lc-botref-owner').username)
+    for_subagent = _space(owner_client, 'Für Subagent')
+    with TestingSessionLocal() as db:
+        db.add(ManagedBot(
+            id=f'agent-{uuid.uuid4().hex[:6]}', name='Agent', kind='llm', collections=[],
+            agent_config={'enabled': True, 'subagents': [{'id': 'vertrag', 'collections': [for_subagent['slug']]}]},
+        ))
+        db.commit()
+    blocked = owner_client.delete(f"/api/v1/collections/{for_subagent['collection_id']}")
+    assert blocked.status_code == 409
+    assert 'Bot' in blocked.json()['detail']
+
+    for_yaml = _space(owner_client, 'Für YAML-Bot')
+    yaml_bot = SimpleNamespace(id=f'yaml-{uuid.uuid4().hex[:6]}', collections=[for_yaml['slug']], agent=None)
+    monkeypatch.setattr(routes, '_runtime_bots', lambda db=None: [yaml_bot])
+    assert owner_client.delete(f"/api/v1/collections/{for_yaml['collection_id']}").status_code == 409
+    # A deleted (tombstoned) YAML bot no longer counts.
+    with TestingSessionLocal() as db:
+        db.add(BotTombstone(id=yaml_bot.id))
+        db.commit()
+    assert owner_client.delete(f"/api/v1/collections/{for_yaml['collection_id']}").status_code == 200
+    with TestingSessionLocal() as db:
+        for row in db.scalars(select(ManagedBot).where(ManagedBot.name == 'Agent')).all():
+            db.delete(row)
+        db.delete(db.get(BotTombstone, yaml_bot.id))
+        db.commit()
 
 
 def test_space_deletion_refuses_password_protected_documents_and_identity_references():

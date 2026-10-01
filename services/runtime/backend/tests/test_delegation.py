@@ -62,8 +62,16 @@ def test_token_is_exactly_two_b64url_segments_joined_by_a_dot():
 def test_payload_contains_exactly_the_documented_field_set():
     token = mint_delegation_token(ChatUser(id='u-1', username='j.schmidt', team='legal'), ['vertraege'], 'legal-agent')
     payload = _decode_payload(token)
-    assert set(payload) == {'v', 'sub', 'username', 'team', 'teams', 'collections', 'bot', 'iat', 'exp'}
+    assert set(payload) == {'v', 'sub', 'username', 'team', 'teams', 'subject', 'collections', 'bot', 'iat', 'exp'}
     assert payload['teams'] == ['legal']
+
+
+def test_payload_carries_the_ingest_subject_for_the_person_grant_recheck():
+    # Weave-Tools re-checks `collections` against the registry on every
+    # call; without the person id, person grants would be dropped there.
+    token = mint_delegation_token(ChatUser(id='u-1', subject='ingest-7'), ['vertraege'], 'legal-agent')
+    assert _decode_payload(token)['subject'] == 'ingest-7'
+    assert _decode_payload(mint_delegation_token(ChatUser(id='u-1'), [], None))['subject'] is None
 
 
 def test_payload_fields_match_the_given_arguments():
@@ -122,6 +130,11 @@ def test_exp_equals_iat_plus_configured_ttl(monkeypatch):
     token = mint_delegation_token(ChatUser(id='u-1'), [], None)
     payload = _decode_payload(token)
     assert payload['exp'] == payload['iat'] + 42
+
+
+def test_explicit_ttl_overrides_the_configured_default():
+    payload = _decode_payload(mint_delegation_token(ChatUser(id='u-1'), [], None, ttl_seconds=17))
+    assert payload['exp'] == payload['iat'] + 17
 
 
 def test_iat_is_the_current_unix_time():

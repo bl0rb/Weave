@@ -18,12 +18,12 @@ from sqlalchemy.orm import defer
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.deps import aware_utc, get_current_user, get_knowledge_reader
+from app.api.import_routes import _can_edit_run
 from app.api.routes import (
     _ARTIFACT_INLINE_CONTENT_TYPES,
     _active_process_job_ids,
     _apply_visible_filter,
     _can_manage_collection,
-    _can_own_collection,
     _collection_control_job_filter,
     _content_disposition,
     _is_import_page_job,
@@ -387,8 +387,16 @@ def _new_edit_version(db, job: Job) -> Job:
         ))
     db.flush()  # the page state below references the new row
     # The next Confluence sync must chain onto the edit (or skip an unchanged
-    # page and keep it), never fork a second version off the original.
-    db.execute(update(ImportPageState).where(ImportPageState.job_id == job.id).values(job_id=edited.id))
+    # page and keep it), never fork a second version off the original. Only
+    # this space's sync state follows the edit (ADR 0008).
+    db.execute(
+        update(ImportPageState)
+        .where(
+            ImportPageState.job_id == job.id,
+            ImportPageState.collection_id == _settings_for_job(job).get('collection_id'),
+        )
+        .values(job_id=edited.id)
+    )
     return edited
 
 
@@ -878,15 +886,21 @@ def list_portal_import_scopes(
     of a collection, for the knowledge space's 'Confluence-Bereich' filter
     (/api/v1/portal/documents?import_scope=...). A re-run/refresh shares its
     scope_type/scope_value with the original import (see ImportRun), so
-    every job for a scope is counted together under one entry."""
+    every job for a scope is counted together under one entry -- also when
+    several people imported it. Editing offers the caller's own newest run
+    of the scope (any run for an admin), never someone else's newer run."""
     collection = db.get(Collection, collection_id)
     if collection is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
     _require_visible_collection(db, collection, user)
 
     collection_id_expr = Job.processing_info['settings']['collection_id'].as_string()
+    # Columns only: one row per document, and ImportRun.state (the crawl map) can be large.
     query = (
-        select(ImportRun.scope_type, ImportRun.scope_value, ImportRun.root_page_title)
+        select(
+            ImportRun.id, ImportRun.owner_id, ImportRun.kind, ImportRun.status,
+            ImportRun.scope_type, ImportRun.scope_value, ImportRun.root_page_title,
+        )
         .select_from(Job)
         .join(ImportRun, ImportRun.id == Job.import_run_id)
         .where(collection_id_expr == collection.id)
@@ -895,11 +909,16 @@ def list_portal_import_scopes(
     rows = db.execute(_apply_visible_filter(query, user, db=db)).all()
 
     scopes: dict[tuple[str, str], dict] = {}
-    for scope_type, scope_value, root_page_title in rows:
-        entry = scopes.setdefault((scope_type, scope_value), {'count': 0, 'label': ''})
+    for run in rows:
+        entry = scopes.setdefault(
+            (run.scope_type, run.scope_value), {'count': 0, 'label': '', 'run': run, 'own_run': None}
+        )
         entry['count'] += 1
-        if root_page_title:
-            entry['label'] = root_page_title
+        entry['run'] = run  # ordered by created_at, so the last one is the newest run of this scope
+        if run.owner_id == user.id or user.role == UserRole.ADMIN:
+            entry['own_run'] = run
+        if run.root_page_title:
+            entry['label'] = run.root_page_title
 
     other_count = int(
         db.scalar(
@@ -911,16 +930,20 @@ def list_portal_import_scopes(
         )
         or 0
     )
-    items = [
-        PortalImportScopeItem(
+    items = []
+    for (scope_type, scope_value), entry in scopes.items():
+        own_run = entry['own_run']
+        edit_run_id = own_run.id if own_run is not None and _can_edit_run(own_run, user) else None
+        items.append(PortalImportScopeItem(
             value=f'{scope_type}:{scope_value}',
             scope_type=scope_type,
             scope_value=scope_value,
             label=entry['label'] or scope_value,
             count=entry['count'],
-        )
-        for (scope_type, scope_value), entry in scopes.items()
-    ]
+            latest_run_id=entry['run'].id,
+            edit_run_id=edit_run_id,
+            can_edit=edit_run_id is not None,
+        ))
     items.sort(key=lambda item: item.label.lower())
     return PortalImportScopesResponse(items=items, other_count=other_count)
 
@@ -1288,7 +1311,9 @@ def _release_control(db, release: DocumentRelease, user: User) -> tuple[Job, Col
     collection = _collection_for_job(db, job)
     if collection is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Document collection not found')
-    if release.owner_id != user.id and not _can_own_collection(db, collection, user):
+    # Members may release (ADR 0008), so they may also retry a delivery --
+    # the same people as a release or a reindex, not only the releaser.
+    if not _job_is_controlled(db, job, collection, user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='User cannot retry this release')
     return job, collection
 

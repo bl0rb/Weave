@@ -11,6 +11,7 @@ import uuid
 import pytest
 
 from app.core.config import settings
+from app.services.ingest_identity import IngestIdentity
 from tests.conftest import auth_headers, client, make_user_with_token
 
 _SERVICE_TOKEN = 'test-introspection-service-token'
@@ -40,6 +41,21 @@ def test_valid_personal_token_returns_active_identity(db_session):
         'teams': ['Support'],
         'is_admin': True,
     }
+
+
+def test_ingest_provisioned_user_token_carries_the_ingest_subject(db_session, monkeypatch):
+    # Weave-Tools needs the Weave-Ingest id to honour person grants
+    # (read_users) for personal API tokens, like the chat does.
+    monkeypatch.setattr(
+        'app.core.auth.fetch_identity',
+        lambda subject: IngestIdentity(subject=subject, username='bob', email='', team=None, is_admin=False),
+    )
+    _user, raw_token = make_user_with_token(db_session, username='intro-bob', oidc_subject='weave-ingest:42')
+
+    response = _introspect(raw_token, headers=auth_headers(_SERVICE_TOKEN))
+
+    assert response.status_code == 200
+    assert response.json()['subject'] == '42'
 
 
 def test_valid_personal_token_without_team_or_admin_reports_both_as_falsy(db_session):

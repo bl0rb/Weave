@@ -28,7 +28,10 @@ Response shape (deliberately a plain dict, not a declared `response_model`
   (JSON has no native UUID type), `team`/`is_admin` straight off the User
   row (`app/models/models.py`; `team` is `None` for a user with none
   assigned yet, `is_admin` defaults `False` until some future
-  admin-management surface can set it).
+  admin-management surface can set it). Plus `"subject"`, the Weave-Ingest
+  user id, only for accounts provisioned via Weave-Ingest -- Weave-Tools
+  forwards it to Weave-Retrieval so person grants (`read_users`, ADR 0008)
+  count on the MCP/REST surface exactly like in the chat.
 """
 
 from fastapi import APIRouter, Depends
@@ -37,6 +40,7 @@ from sqlalchemy.orm import Session
 from app.core.auth import require_introspection_service_token, resolve_api_token
 from app.core.db import get_db
 from app.schemas.introspection import TokenIntrospectionRequest
+from app.services.ingest_identity import ingest_subject
 
 router = APIRouter(prefix='/internal', tags=['internal'], dependencies=[Depends(require_introspection_service_token)])
 
@@ -47,7 +51,7 @@ def introspect_token(body: TokenIntrospectionRequest, db: Session = Depends(get_
     if user is None:
         return {'active': False}
 
-    return {
+    response = {
         'active': True,
         'user_id': str(user.id),
         'username': user.username,
@@ -55,3 +59,7 @@ def introspect_token(body: TokenIntrospectionRequest, db: Session = Depends(get_
         'teams': user.effective_teams,
         'is_admin': user.is_admin,
     }
+    subject = ingest_subject(user.oidc_subject)
+    if subject is not None:
+        response['subject'] = subject
+    return response

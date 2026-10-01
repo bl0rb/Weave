@@ -399,15 +399,29 @@ def _cancel_run(db, run: ImportRun, state: _RunState, claimed_seq: int) -> None:
     _commit_owned(db, run.id, claimed_seq)
 
 
+def _run_collection_id(run: ImportRun) -> str | None:
+    return (run.options if isinstance(run.options, dict) else {}).get('collection_id') or None
+
+
+def _page_state_in_space(collection_id: str | None):
+    """ImportPageState is kept per knowledge space (ADR 0008): the same page
+    imported into two spaces is two documents, and a sync of one space must
+    never chain onto, skip for or report the other space's copy."""
+    if collection_id is None:
+        return ImportPageState.collection_id.is_(None)
+    return ImportPageState.collection_id == collection_id
+
+
 def _detect_missing_pages(db, run: ImportRun, state: _RunState) -> None:
     if not (run.options or {}).get('is_refresh') or not run.source_id:
         return
     complete = not (state.errors or state.frontier or run.pages_failed) and state.discovery_complete
-    previous_runs = db.scalars(select(ImportRun).where(
+    collection_id = _run_collection_id(run)
+    previous_runs = [previous for previous in db.scalars(select(ImportRun).where(
         ImportRun.source_id == run.source_id, ImportRun.id != run.id,
         ImportRun.scope_type == run.scope_type, ImportRun.scope_value == run.scope_value,
         ImportRun.status == ImportRunStatus.FINISHED,
-    )).all()
+    )).all() if _run_collection_id(previous) == collection_id]
     page_ids = set()
     for previous in previous_runs:
         page_ids.update((previous.state or {}).get('visited', {}))
@@ -422,7 +436,8 @@ def _detect_missing_pages(db, run: ImportRun, state: _RunState) -> None:
                 page_ids.add(str(page_id))
     missing_ids = page_ids.difference(state.visited) if complete else page_ids.intersection(state.unavailable_pages)
     tracked = db.scalars(select(ImportPageState).where(
-        ImportPageState.source_id == run.source_id, ImportPageState.page_id.in_(missing_ids),
+        ImportPageState.source_id == run.source_id, _page_state_in_space(collection_id),
+        ImportPageState.page_id.in_(missing_ids),
     )).all()
     state.missing_pages = [
         {'page_id': page.page_id, 'title': page.title, 'job_id': page.job_id, 'url': page.url}
@@ -689,7 +704,8 @@ def _seed_page_states_if_empty(db, run: ImportRun, claimed_seq: int) -> None:
     re-import (duplicating) every page in scope. A no-op once any state row
     already exists for this source, which also covers normal (non-refresh)
     runs having already written rows themselves (see _import_one_page's
-    unconditional upsert) by the time refresh is ever turned on.
+    unconditional upsert) by the time refresh is ever turned on. Both the
+    check and the backfill stay inside the run's knowledge space.
 
     Page-level jobs are identified by processing_info.settings.mode ==
     'import' (excludes attachment-OCR children, which carry a
@@ -699,8 +715,11 @@ def _seed_page_states_if_empty(db, run: ImportRun, claimed_seq: int) -> None:
     """
     if not run.source_id:
         return
+    collection_id = _run_collection_id(run)
     already_seeded = db.scalar(
-        select(ImportPageState.id).where(ImportPageState.source_id == run.source_id).limit(1)
+        select(ImportPageState.id)
+        .where(ImportPageState.source_id == run.source_id, _page_state_in_space(collection_id))
+        .limit(1)
     )
     if already_seeded is not None:
         return
@@ -719,7 +738,7 @@ def _seed_page_states_if_empty(db, run: ImportRun, claimed_seq: int) -> None:
     for job in jobs:
         info = job.processing_info if isinstance(job.processing_info, dict) else {}
         job_settings = info.get('settings') if isinstance(info.get('settings'), dict) else {}
-        if job_settings.get('mode') != 'import':
+        if job_settings.get('mode') != 'import' or (job_settings.get('collection_id') or None) != collection_id:
             continue
         import_info = job_settings.get('import') if isinstance(job_settings.get('import'), dict) else {}
         page_id = import_info.get('source_page_id')
@@ -737,6 +756,7 @@ def _seed_page_states_if_empty(db, run: ImportRun, claimed_seq: int) -> None:
         db.add(
             ImportPageState(
                 source_id=run.source_id,
+                collection_id=collection_id,
                 page_id=page_id,
                 page_version=import_info.get('source_page_version'),
                 job_id=job.id,
@@ -838,13 +858,16 @@ def _import_one_page(
     # a NORMAL run can also land on an already-known page_id (re-importing
     # overlapping scope without ever having enabled refresh), and the
     # upsert below must UPDATE rather than INSERT then, since (source_id,
-    # page_id) is unique. Only a refresh run acts on the comparison itself
-    # (skip unchanged / version-chain changed); normal runs always take the
-    # plain-import path below, unchanged from before this feature.
+    # collection_id, page_id) is unique. Only a refresh run acts on the
+    # comparison itself (skip unchanged / version-chain changed); normal runs
+    # always take the plain-import path below, unchanged from before this
+    # feature. Another space's copy of the page is never looked at.
+    collection_id = options.get('collection_id') or None
     existing_state = (
         db.scalar(
             select(ImportPageState).where(
                 ImportPageState.source_id == run.source_id,
+                _page_state_in_space(collection_id),
                 ImportPageState.page_id == str(page.id),
             )
         )
@@ -984,7 +1007,7 @@ def _import_one_page(
     # and refresh runs, so a later refresh always has real prior state to
     # diff against instead of relying on _seed_page_states_if_empty's
     # historical-jobs backfill. Must UPDATE (not INSERT) when a row already
-    # exists, since (source_id, page_id) is unique.
+    # exists, since (source_id, collection_id, page_id) is unique.
     if run.source_id:
         if existing_state is not None:
             existing_state.page_version = page.version
@@ -995,6 +1018,7 @@ def _import_one_page(
             db.add(
                 ImportPageState(
                     source_id=run.source_id,
+                    collection_id=collection_id,
                     page_id=str(page.id),
                     page_version=page.version,
                     job_id=job_id,
@@ -1114,6 +1138,11 @@ def import_confluence(self, run_id: str, chunk_seq: int) -> None:
             _fail_run(db, run, state, 'import source was deleted; the run cannot continue', claimed_seq)
             return
         try:
+            # Deactivation blocks the person at once (ADR 0008), including
+            # imports that run with their credential and their space rights.
+            source_owner = db.get(User, source.owner_id)
+            if source_owner is not None and not source_owner.is_active:
+                raise ValueError('import source owner is deactivated; refusing the import')
             _resolve_collection(db, source, options)
             # Persist worker-side normalization before any page job is made.
             # This is also what makes a queued refresh use the current

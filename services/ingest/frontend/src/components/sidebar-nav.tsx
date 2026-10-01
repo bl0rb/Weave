@@ -59,6 +59,13 @@ function adminNav(t: T): NavItem[] {
   ];
 }
 
+/** "mathias.werk@example.com" / "mathias_werk" -> "Mathias": long logins
+ * don't fit the sidebar, the first name does (full login in the tooltip). */
+function firstName(username: string): string {
+  const first = username.split('@')[0].split(/[._\-\s]+/).find(Boolean) ?? username;
+  return first.charAt(0).toLocaleUpperCase() + first.slice(1);
+}
+
 function isActive(href: string, pathname: string): boolean {
   return href === '/' || href === '/admin' ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
 }
@@ -236,7 +243,7 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
                   {user.username.slice(0, 2).toUpperCase()}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px] font-semibold text-[var(--ink)]">{user.username}</span>
+                  <span className="block truncate text-[13px] font-semibold text-[var(--ink)]" title={user.username}>{firstName(user.username)}</span>
                   <span className="block text-[11.5px] uppercase tracking-wide text-[var(--muted)]">{user.role === 'admin' ? t('portal.chrome.admin') : t('portal.chrome.member')}</span>
                 </span>
                 <ChevronDown className={`h-4 w-4 flex-shrink-0 text-[var(--muted)] transition-transform ${menuOpen ? 'rotate-180' : ''}`} aria-hidden="true" />

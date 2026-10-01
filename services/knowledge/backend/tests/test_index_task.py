@@ -302,6 +302,36 @@ def test_index_document_supersedes_previous_version_in_same_transaction():
         db.close()
 
 
+def test_index_document_never_supersedes_a_previous_version_in_another_space():
+    db = TestingSessionLocal()
+    try:
+        previous = _make_document(
+            db, source_job_id='job-s2', collection_slug='space-two', frontmatter=SAMPLE_FRONTMATTER,
+            status=DocumentStatus.INDEXED, chunk_count=1, indexed_at=datetime.now(timezone.utc),
+        )
+        db.add(Chunk(document_id=previous.id, chunk_index=0, text='s2 chunk', heading_path=[], char_count=8, meta={}))
+        db.commit()
+        current = _make_document(
+            db, source_job_id='job-s1', previous_job_id='job-s2', collection_slug='space-one',
+            frontmatter=SAMPLE_FRONTMATTER,
+        )
+        previous_id, current_id = previous.id, current.id
+    finally:
+        db.close()
+
+    markdown = _sample_markdown(SAMPLE_FRONTMATTER)
+    with patch('app.workers.tasks.ingest_client.fetch_released_markdown', return_value=markdown):
+        index_document(str(current_id))
+
+    db = TestingSessionLocal()
+    try:
+        assert db.get(Document, current_id).status == DocumentStatus.INDEXED
+        assert db.get(Document, previous_id).status == DocumentStatus.INDEXED
+        assert db.query(Chunk).filter_by(document_id=previous_id).count() == 1
+    finally:
+        db.close()
+
+
 def test_index_document_with_unknown_previous_job_id_is_a_noop_for_supersede():
     db = TestingSessionLocal()
     try:

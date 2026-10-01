@@ -75,6 +75,9 @@ function OwnedBotEditor({ bot, onClose, onSaved }: { bot: OwnedBot; onClose: () 
   // Spaces an administrator attached stay listed even if the owner can't read them.
   const choices = [...spaces.map(space => ({ slug: space.slug, name: space.name })), ...bot.collections
     .filter(slug => !spaces.some(space => space.slug === slug)).map(slug => ({ slug, name: slug }))];
+  // An empty list means "every space the asker can read"; emptying a
+  // restricted bot widens it, which only an administrator may do.
+  const restricted = bot.collections.length > 0;
   const canSave = !saving && (bot.kind !== 'llm' || Boolean(systemPrompt.trim())) && (!requireSources || Boolean(noContextReply.trim()));
 
   async function save(event: FormEvent) {
@@ -101,9 +104,10 @@ function OwnedBotEditor({ bot, onClose, onSaved }: { bot: OwnedBot; onClose: () 
       {bot.kind === 'llm' && <label className="block text-sm font-medium text-[var(--ink-2)]">{t('portal.bots.systemPrompt')}<textarea required rows={5} maxLength={12000} className={inputClass} value={systemPrompt} disabled={saving} onChange={event => setSystemPrompt(event.target.value)} /></label>}
       <fieldset disabled={saving}>
         <legend className="text-sm font-medium text-[var(--ink-2)]">{t('portal.bots.spaces')}</legend>
-        <p className="portal-field-hint">{t('portal.bots.spacesHint')}</p>
+        <p className="portal-field-hint">{t('portal.bots.spacesHint')}{restricted && ` ${t('portal.bots.spacesKeepOne')}`}</p>
         <div className="mt-2 grid max-h-40 gap-2 overflow-y-auto sm:grid-cols-2">
           {choices.map(choice => <label key={choice.slug} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={collections.includes(choice.slug)}
+            disabled={restricted && collections.length === 1 && collections.includes(choice.slug)}
             onChange={event => setCollections(current => event.target.checked ? [...current, choice.slug] : current.filter(slug => slug !== choice.slug))} />{choice.name}</label>)}
         </div>
       </fieldset>

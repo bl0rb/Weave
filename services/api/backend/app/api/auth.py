@@ -187,8 +187,14 @@ def oidc_enabled() -> bool:
     client id are set (app/core/config.py's own docstring on these two
     settings) -- `OIDC_CLIENT_SECRET`/`OIDC_REDIRECT_URL` are validated
     lazily, by the provider itself rejecting a malformed authorize/token
-    request, rather than gating this flag."""
-    return bool(settings.oidc_issuer and settings.oidc_client_id)
+    request, rather than gating this flag.
+
+    Never alongside the Weave-Ingest handoff (ADR 0006: one or the other):
+    direct OIDC takes team names from IdP claims unchecked, and Weave-Ingest
+    grants spaces to its own teams by name (ADR 0008) -- an IdP group named
+    like an Ingest team would otherwise read that team's spaces without any
+    Ingest membership or deactivation check."""
+    return bool(settings.oidc_issuer and settings.oidc_client_id) and not ingest_login_enabled()
 
 
 def ingest_login_enabled() -> bool:
@@ -645,6 +651,10 @@ def oidc_callback(
         subject = claims.get('sub')
         if not subject:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='ID token is missing sub claim')
+        if not isinstance(subject, str) or subject.startswith(INGEST_SUBJECT_PREFIX):
+            # That namespace belongs to accounts provisioned via Weave-Ingest:
+            # such a sub would take over that account's identity and grants.
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='OIDC login failed: invalid sub claim')
 
         user = db.scalar(select(User).where(User.oidc_subject == subject))
         if user is None:

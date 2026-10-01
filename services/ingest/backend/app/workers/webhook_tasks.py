@@ -36,8 +36,9 @@ from sqlalchemy import func, select
 
 from app.core.config import settings
 from app.database.session import SessionLocal
-from app.models.models import Job, WebhookConnection, WebhookDelivery
+from app.models.models import Collection, CollectionRole, Job, User, WebhookConnection, WebhookDelivery
 from app.services import security
+from app.services.collection_access import collection_role, role_at_least
 from app.services.webhooks import (
     build_document_processed_payload,
     build_job_payload,
@@ -76,6 +77,22 @@ def _finish(db, delivery: WebhookDelivery, *, status: str, http_status: int | No
     delivery.error_message = _truncate(error_message, _ERROR_MESSAGE_MAX_CHARS) if error_message else None
     delivery.updated_at = datetime.now(timezone.utc)
     db.commit()
+
+
+def _recipient_allowed(db, owner_id: str | None, job: Job | None) -> bool:
+    """ADR 0008: deactivation and a lost grant take effect immediately. A
+    delivery goes out only while its owner is active and -- for a job in a
+    knowledge space -- still at least a member there; checked when the
+    delivery is created and again when it is sent, since a restart by
+    another member or a retry can come long after the setup."""
+    owner = db.get(User, owner_id) if owner_id else None
+    if owner is None or not owner.is_active:
+        return False
+    info = job.processing_info if job is not None and isinstance(job.processing_info, dict) else {}
+    settings_info = info.get('settings') if isinstance(info.get('settings'), dict) else {}
+    collection_id = settings_info.get('collection_id')
+    collection = db.get(Collection, collection_id) if isinstance(collection_id, str) and collection_id else None
+    return collection is None or role_at_least(collection_role(db, collection, owner), CollectionRole.MEMBER)
 
 
 @celery_app.task(name=DELIVER_TASK_NAME, bind=True, acks_late=True, reject_on_worker_lost=True)
@@ -119,6 +136,12 @@ def deliver_webhook(self, delivery_id: str) -> None:
                     _finish(
                         db, delivery, status='failed', http_status=None,
                         error_message='job was deleted; the delivery cannot continue',
+                    )
+                    return
+                if not _recipient_allowed(db, delivery.owner_id, job):
+                    _finish(
+                        db, delivery, status='failed', http_status=None,
+                        error_message='the delivery owner no longer has access to this job',
                     )
                     return
                 if delivery.event == 'document.processed':
@@ -326,6 +349,8 @@ def dispatch_job_event(db, job: Job, event: str) -> None:
     settings_info = info.get('settings')
     connection_id = settings_info.get('webhook_connection_id') if isinstance(settings_info, dict) else None
     connection_id = connection_id if isinstance(connection_id, str) and connection_id else None
+    if connection_id and not _recipient_allowed(db, job.owner_id, job):
+        return
     _dispatch(db, job.owner_id, event, connection_id=connection_id, job_id=job.id, import_run_id=None)
 
 

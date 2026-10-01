@@ -23,7 +23,9 @@ from app.services.scope import (
     resolve_scope,
     warn_if_delegation_secret_unconfigured,
 )
+from app.services import scope as scope_module
 from tests.conftest import (
+    REAL_CURRENTLY_DELEGATED_COLLECTIONS,
     fake_response,
     forge_delegation_token_with_empty_secret_key,
     make_delegation_token,
@@ -375,6 +377,69 @@ def test_personal_token_with_no_team_omits_team_query_param():
     assert scope.team is None
     _, get_kwargs = mock_get.call_args
     assert get_kwargs['params'] == {}
+
+
+def test_personal_token_forwards_ingest_subject_so_person_grants_count():
+    # A person grant (read_users) on 'hr-richtlinien' must count on the
+    # MCP/REST surface exactly like in the chat: the introspected Weave-Ingest
+    # id goes to Weave-Retrieval as `user`.
+    introspect_resp = fake_response(
+        200,
+        {'active': True, 'user_id': 'user-9', 'username': 'bob', 'team': None, 'teams': [], 'subject': 'ingest-42', 'is_admin': False},
+    )
+    collections_resp = fake_response(200, [{'slug': 'hr-richtlinien', 'name': 'HR', 'description': None}])
+
+    with patch('app.services.scope.httpx.post', return_value=introspect_resp), patch(
+        'app.services.scope.httpx.get', return_value=collections_resp
+    ) as mock_get:
+        scope = resolve_scope('Bearer some-token')
+
+    assert scope.allowed_collections == ['hr-richtlinien']
+    assert scope.subject == 'ingest-42'
+    _, get_kwargs = mock_get.call_args
+    assert get_kwargs['params'] == {'teams': [], 'user': 'ingest-42'}
+
+
+# --- Delegations-Token: registry re-check ---------------------------------------
+
+
+def test_delegated_scope_drops_a_grant_revoked_after_minting(monkeypatch):
+    monkeypatch.setattr(scope_module, '_currently_delegated_collections', REAL_CURRENTLY_DELEGATED_COLLECTIONS)
+    token = issue_delegation_token(
+        user_id='user-1',
+        username='alice',
+        team='support',
+        teams=['support'],
+        subject='ingest-7',
+        collections=['handbuch', 'vorstand', '__none__'],
+    )
+    # 'vorstand' was revoked while the n8n flow still holds the token.
+    collections_resp = fake_response(200, [{'slug': 'handbuch', 'name': 'Handbuch', 'description': None}])
+
+    with patch('app.services.scope.httpx.get', return_value=collections_resp) as mock_get:
+        scope = resolve_scope(f'Bearer {token}')
+
+    assert scope.allowed_collections == ['handbuch', '__none__']
+    assert scope.subject == 'ingest-7'
+    _, get_kwargs = mock_get.call_args
+    assert get_kwargs['params'] == {'teams': ['support'], 'user': 'ingest-7'}
+
+
+def test_delegated_scope_recheck_failure_fails_closed(monkeypatch):
+    monkeypatch.setattr(scope_module, '_currently_delegated_collections', REAL_CURRENTLY_DELEGATED_COLLECTIONS)
+    token = make_delegation_token(collections=['handbuch'])
+
+    with patch('app.services.scope.httpx.get', side_effect=httpx.ConnectError('boom')):
+        with pytest.raises(ScopeError) as excinfo:
+            resolve_scope(f'Bearer {token}')
+    assert str(excinfo.value) == _GENERIC_AUTH_ERROR
+
+
+def test_delegation_token_with_non_string_subject_is_rejected():
+    part1 = tamper_payload(make_delegation_token(), subject=42).split('.')[0]
+    resigned = f'{part1}.{scope_module._b64url_encode(scope_module._sign(part1))}'
+    with pytest.raises(ScopeError):
+        resolve_scope(f'Bearer {resigned}')
 
 
 # --- Personal-Token: inactive -------------------------------------------------

@@ -3,6 +3,7 @@
 import uuid
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from sqlalchemy import delete, select
 
@@ -134,6 +135,23 @@ def test_admin_crud_is_redacted_and_runtime_projection_requires_service_token(mo
     deleted = admin_client.delete(f"/api/v1/auth/admin/bots/{payload['id']}")
     assert deleted.status_code == 200
     assert admin_client.get('/api/v1/auth/admin/bots').json()['items'] == []
+
+
+def test_unreachable_runtime_roster_is_logged(monkeypatch, caplog):
+    """Callers like the space-deletion guard then only know Ingest's own
+    bots; an operator must be able to see that."""
+    from app.api.managed_bots import _runtime_bots
+
+    monkeypatch.setattr(settings, 'runtime_api_token', 'runtime-token')
+    monkeypatch.setattr(settings, 'runtime_bots_base_url', 'http://runtime.test')
+
+    def unreachable(*args, **kwargs):
+        raise httpx.ConnectError('runtime down')
+
+    monkeypatch.setattr('app.api.managed_bots.httpx.get', unreachable)
+    with caplog.at_level('WARNING', logger='app.api.managed_bots'):
+        assert _runtime_bots() == []
+    assert 'Runtime bot roster unavailable' in caplog.text
 
 
 def test_admin_bot_list_projects_nonempty_runtime_roster(monkeypatch):
@@ -368,7 +386,7 @@ def test_agent_config_round_trips_through_admin_and_internal_projections(monkeyp
     agent_config = {
         'enabled': True,
         'subagents': [
-            {'id': 'it-support', 'name': 'IT Support', 'mission': 'Answer IT questions.', 'collections': ['it-docs']}
+            {'id': 'it-support', 'name': 'IT Support', 'mission': 'Answer IT questions.', 'collections': [collection_slug]}
         ],
     }
     # What the API actually stores/echoes -- the minimal input above, with
@@ -453,6 +471,43 @@ def test_agent_config_rejects_duplicate_subagent_ids_with_readable_422():
     response = admin_client.post('/api/v1/auth/admin/bots', json=payload)
     assert response.status_code == 422
     assert 'unique' in response.text.lower()
+
+
+def test_agent_config_rejects_what_runtime_would_drop():
+    """Runtime skips a managed bot its own BotConfig rejects, so a subagent
+    model without declared tool support and a subagent space that does not
+    exist must fail at save time instead."""
+    admin_client = login_as(_identity('bot-agent-runtime-admin', role=UserRole.ADMIN).username)
+    team_name = _team()
+    collection_slug = _scope(admin_client, team_name)
+
+    def agent(**subagent):
+        return {'enabled': True, 'subagents': [{
+            'id': 'vertrag', 'name': 'Vertrag', 'mission': 'Verträge.', 'collections': [collection_slug], **subagent,
+        }]}
+
+    no_tools = _payload(
+        team_name, collection_slug, kind='llm', webhook_url=None, auth_token=None, system_prompt='Recherchiere.',
+        agent=agent(model={'provider': 'openai', 'model': 'gpt-4o'}),
+    )
+    response = admin_client.post('/api/v1/auth/admin/bots', json=no_tools)
+    assert response.status_code == 422
+    assert 'supports_tools' in response.text
+    declared = {**no_tools, 'agent': agent(model={'provider': 'openai', 'model': 'gpt-4o', 'supports_tools': True})}
+    assert admin_client.post('/api/v1/auth/admin/bots', json=declared).status_code == 201
+
+    unknown_space = _payload(
+        team_name, collection_slug, kind='llm', webhook_url=None, auth_token=None, system_prompt='Recherchiere.',
+        agent=agent(collections=['gibt-es-nicht']),
+    )
+    response = admin_client.post('/api/v1/auth/admin/bots', json=unknown_space)
+    assert response.status_code == 422
+    assert 'gibt-es-nicht' in response.text
+
+    n8n_agent = _payload(team_name, collection_slug, kind='n8n', agent=agent())
+    response = admin_client.post('/api/v1/auth/admin/bots', json=n8n_agent)
+    assert response.status_code == 422
+    assert 'n8n' in response.text
 
 
 def test_bot_without_agent_config_projects_none():
@@ -553,3 +608,7 @@ def test_owner_can_only_attach_knowledge_spaces_they_can_read():
     allowed = owner_client.patch(f"/api/v1/bots/{bot['id']}", json={'collections': [attached, own]})
     assert allowed.status_code == 200, allowed.text
     assert allowed.json()['collections'] == [attached, own]
+    # Emptying the list would mean "every space the asker can read".
+    emptied = owner_client.patch(f"/api/v1/bots/{bot['id']}", json={'collections': []})
+    assert emptied.status_code == 403
+    assert owner_client.get('/api/v1/bots').json()['items'][0]['collections'] == [attached, own]

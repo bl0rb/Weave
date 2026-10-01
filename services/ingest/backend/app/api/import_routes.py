@@ -14,18 +14,22 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import delete, or_, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, delete, or_, select, update
+from sqlalchemy.orm import Session, aliased
 
 from app.api.deps import _aware_utc, get_current_user
 from app.api.routes import (
     _JOB_BLOB_DEFER_OPTIONS,
     _can_manage_collection,
+    _collection_control_filter,
+    _job_visible,
     _parse_tags,
     _require_collection_control,
     _require_visible_collection,
     _sanitize_storage_path,
     _validated_webhook_connection,
+    _withdraw_and_delete_job,
+    dispatch_withdrawals,
 )
 from app.core.config import settings
 from app.database.session import get_db
@@ -138,20 +142,24 @@ def _get_owned_source(db: Session, source_id: str, user: User) -> ImportSource:
 
 
 def _visible_run_filter(user: User, db: Session | None = None):
-    # Mirrors routes._visible_job_filter: own + current-teammates + admin-all;
-    # legacy NULL-owner runs stay admin-only.
+    # Mirrors routes._visible_job_filter: a run into a knowledge space follows
+    # only that space's roles (ADR 0008) -- its members see it, whoever
+    # started it; readers and former members see neither the run nor the
+    # titles of the documents it lists. Any other run: own + current-teammates
+    # + admin-all; legacy NULL-owner runs stay admin-only.
     if user.role == UserRole.ADMIN:
         return None
     conditions = [ImportRun.owner_id == user.id]
     if user.team_ids:
         teammate_ids = select(User.id).where(User.team_id.in_(user.team_ids))
         conditions.append(ImportRun.owner_id.in_(teammate_ids))
-    if db is not None:
-        collections = db.scalars(select(Collection)).all()
-        controlled_ids = [collection.id for collection in collections if _can_manage_collection(db, collection, user)]
-        if controlled_ids:
-            conditions.append(ImportRun.options['collection_id'].as_string().in_(controlled_ids))
-    return or_(*conditions)
+    if db is None:
+        return or_(*conditions)
+    collection_id_expr = ImportRun.options['collection_id'].as_string()
+    space = aliased(Collection)
+    outside_any_collection = ~select(space.id).where(space.id == collection_id_expr).correlate_except(space).exists()
+    member_collection_ids = select(Collection.id).where(_collection_control_filter(db, user))
+    return or_(and_(outside_any_collection, or_(*conditions)), collection_id_expr.in_(member_collection_ids))
 
 
 def _get_visible_run(db: Session, run_id: str, user: User) -> ImportRun:
@@ -178,9 +186,31 @@ def _can_sync_run(db: Session, run: ImportRun, user: User) -> bool:
     return source is not None and source.owner_id == run.owner_id
 
 
-def _require_run_control(run: ImportRun, user: User) -> None:
-    # Teammates may read a run but not control it (read != control).
+def _run_collection(db: Session, run: ImportRun) -> Collection | None:
+    collection_id = (run.options if isinstance(run.options, dict) else {}).get('collection_id')
+    return db.get(Collection, collection_id) if isinstance(collection_id, str) and collection_id else None
+
+
+def _can_control_run(db: Session, run: ImportRun, user: User) -> bool:
+    # Teammates may read a run but not control it (read != control). A run
+    # into a knowledge space additionally needs member rights there at
+    # request time (ADR 0008): a revoked grant ends control over its pages.
     if user.role != UserRole.ADMIN and run.owner_id != user.id:
+        return False
+    collection = _run_collection(db, run)
+    return collection is None or _can_manage_collection(db, collection, user)
+
+
+def _can_withdraw_missing(db: Session, run: ImportRun, user: User) -> bool:
+    # Withdrawing documents is a member right on the space (ADR 0008), so
+    # any member of the synced space may act on its findings, not only the
+    # importer; a run outside any space stays with its owner or an admin.
+    collection = _run_collection(db, run)
+    return _can_manage_collection(db, collection, user) if collection is not None else _can_control_run(db, run, user)
+
+
+def _require_run_control(db: Session, run: ImportRun, user: User) -> None:
+    if not _can_control_run(db, run, user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Only the run owner or an admin can do this')
 
 
@@ -672,7 +702,7 @@ def get_import_run(
     return ImportRunDetailResponse(
         **base.model_dump(),
         missing_pages=missing_pages,
-        can_remove_missing=run.owner_id == user.id and run.status == ImportRunStatus.FINISHED,
+        can_remove_missing=_can_withdraw_missing(db, run, user) and run.status == ImportRunStatus.FINISHED,
         source_id=run.source_id,
         # Extra keys in the stored dict (e.g. is_refresh) are ignored here.
         options=ImportRunOptions.model_validate(stored_options),
@@ -694,7 +724,7 @@ def sync_import_run(
 
     enforce_rate_limit(request)
     template = _get_visible_run(db, run_id, user)
-    _require_run_control(template, user)
+    _require_run_control(db, template, user)
     if template.kind != 'confluence' or template.status in (ImportRunStatus.PENDING, ImportRunStatus.RUNNING):
         raise HTTPException(status_code=409, detail='Only completed Confluence runs can be synchronized')
     source = db.get(ImportSource, template.source_id) if template.source_id else None
@@ -721,8 +751,8 @@ def withdraw_missing_page(
 
     enforce_rate_limit(request)
     run = _get_visible_run(db, run_id, user)
-    if run.owner_id != user.id:
-        raise HTTPException(status_code=403, detail='Only the import owner can withdraw missing pages')
+    if not _can_withdraw_missing(db, run, user):
+        raise HTTPException(status_code=403, detail='Only space members, the import owner or an admin can withdraw missing pages')
     if not payload.confirm:
         raise HTTPException(status_code=422, detail='Explicit removal confirmation is required')
     if run.status != ImportRunStatus.FINISHED or not (run.options or {}).get('is_refresh'):
@@ -730,7 +760,7 @@ def withdraw_missing_page(
     if not publication_configured():
         raise HTTPException(status_code=503, detail='Knowledge publication is not configured')
     source = db.scalar(select(ImportSource).where(ImportSource.id == run.source_id).with_for_update())
-    if source is None or source.owner_id != user.id:
+    if source is None or source.owner_id != run.owner_id:
         raise HTTPException(status_code=404, detail='Import source not found')
     if _has_active_run(db, source.id):
         raise HTTPException(status_code=409, detail='Wait for the active synchronization to finish')
@@ -741,15 +771,23 @@ def withdraw_missing_page(
         raise HTTPException(status_code=404, detail='Missing page finding not found')
     if candidate.get('withdrawal_job_ids'):
         return {'status': 'pending', 'job_ids': candidate['withdrawal_job_ids']}
-    tracked = db.scalar(select(ImportPageState).where(ImportPageState.source_id == source.id, ImportPageState.page_id == page_id))
+    # Only the synced space's copy of the page: the same page imported into
+    # another space is another document (ADR 0008).
+    collection_id = (run.options or {}).get('collection_id') or None
+    in_space = ImportPageState.collection_id.is_(None) if collection_id is None else ImportPageState.collection_id == collection_id
+    tracked = db.scalar(select(ImportPageState).where(ImportPageState.source_id == source.id, in_space, ImportPageState.page_id == page_id))
     if tracked is None or tracked.job_id != candidate.get('job_id'):
         raise HTTPException(status_code=409, detail='Page changed since this sync; synchronize again')
     source_runs = db.scalars(select(ImportRun).where(ImportRun.source_id == source.id)).all()
     if any(_aware_utc(item.created_at) > _aware_utc(run.created_at) and page_id in ((item.state or {}).get('visited') or {}) for item in source_runs):
         raise HTTPException(status_code=409, detail='Page was seen by a newer sync; synchronize again')
     jobs = db.scalars(select(Job).where(Job.import_run_id.in_([item.id for item in source_runs])).options(*_JOB_BLOB_DEFER_OPTIONS)).all()
-    matching = [job for job in jobs if str((((job.processing_info or {}).get('settings') or {}).get('import') or {}).get('source_page_id') or '') == page_id]
-    if not matching or any(job.owner_id != user.id for job in matching):
+    matching = [
+        job for job in jobs
+        if str((((job.processing_info or {}).get('settings') or {}).get('import') or {}).get('source_page_id') or '') == page_id
+        and ((((job.processing_info or {}).get('settings') or {}).get('collection_id')) or None) == collection_id
+    ]
+    if not matching or any(job.owner_id != run.owner_id for job in matching):
         raise HTTPException(status_code=409, detail='Page ownership changed; removal refused')
     job_ids = [job.id for job in matching]
     for job in matching:
@@ -777,7 +815,7 @@ def cancel_import_run(
 ) -> ImportRunCancelResponse:
     enforce_rate_limit(request)
     run = _get_visible_run(db, run_id, user)
-    _require_run_control(run, user)
+    _require_run_control(db, run, user)
 
     now = datetime.now(timezone.utc)
     if run.status == ImportRunStatus.PENDING:
@@ -815,25 +853,39 @@ def delete_import_run(
 ) -> ImportRunDeleteResponse:
     enforce_rate_limit(request)
     run = _get_visible_run(db, run_id, user)
-    _require_run_control(run, user)
+    _require_run_control(db, run, user)
     if run.status in (ImportRunStatus.PENDING, ImportRunStatus.RUNNING):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail='Cancel the run before deleting it'
         )
 
     deleted_jobs = 0
+    withdrawn: list[str] = []
     if delete_jobs:
-        # Bulk-delete the artifact rows first so the ORM's delete-orphan
-        # cascade never has to load their BYTEA payloads into memory; the
-        # per-job ORM delete then handles markdown versions and tag links.
-        job_ids = db.scalars(select(Job.id).where(Job.import_run_id == run.id)).all()
-        if job_ids:
-            db.execute(delete(JobArtifact).where(JobArtifact.job_id.in_(job_ids)))
         jobs = db.scalars(
             select(Job).where(Job.import_run_id == run.id).options(*_JOB_BLOB_DEFER_OPTIONS)
         ).all()
+        # The same rules as deleting the documents one by one (ADR 0008):
+        # only documents the caller may operate, a password-protected one
+        # only with its password, and a released one is withdrawn from
+        # Knowledge on the way.
+        if any(not _job_visible(db, job, user) for job in jobs):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail='The run contains documents you cannot delete'
+            )
+        if any(job.password_hash for job in jobs):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail='The run contains password-protected documents; delete them one by one first',
+            )
+        # Bulk-delete the artifact rows first so the ORM's delete-orphan
+        # cascade never has to load their BYTEA payloads into memory; the
+        # per-job ORM delete then handles markdown versions and tag links.
+        if jobs:
+            db.execute(delete(JobArtifact).where(JobArtifact.job_id.in_([job.id for job in jobs])))
         for job in jobs:
-            db.delete(job)
+            if _withdraw_and_delete_job(db, job):
+                withdrawn.append(job.id)
             deleted_jobs += 1
     else:
         # Explicit SQL instead of the DB-level SET NULL cascade: sqlite never
@@ -843,4 +895,5 @@ def delete_import_run(
 
     db.delete(run)
     db.commit()
+    dispatch_withdrawals(withdrawn)
     return ImportRunDeleteResponse(id=run_id, deleted_jobs=deleted_jobs)

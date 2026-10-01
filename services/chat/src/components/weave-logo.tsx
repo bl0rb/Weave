@@ -5,11 +5,11 @@ import { cn } from '@/lib/utils';
  * over-under structure readable even at favicon size without forming a figure.
  *
  * Same mark and animation as the portal's weave-ingest-logo.tsx.
- * `animation` (CSS in app/globals.css, `.weave-logo`): 'intro' weaves the
- * weft rows in once, 'loop' keeps weaving while the assistant is working.
+ * `animation` (CSS in app/globals.css, `.weave-logo`): 'loop' keeps weaving
+ * while the assistant is working, 'finite' weaves five rounds and rests.
  * Both fall back to the static mark under prefers-reduced-motion.
  */
-export function WeaveLogo({ className, animation }: { className?: string; animation?: 'intro' | 'loop' }) {
+export function WeaveLogo({ className, animation }: { className?: string; animation?: 'loop' | 'finite' }) {
   return (
     <svg viewBox="0 0 64 64" className={cn('weave-logo', animation && `weave-logo--${animation}`, className)} aria-hidden="true">
       <rect width="64" height="64" rx="15" fill="#0f8a64" />

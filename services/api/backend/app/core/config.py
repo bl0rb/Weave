@@ -123,7 +123,8 @@ class Settings(BaseSettings):
     # deployment, not a tenant-configurable list.
     #
     # OIDC is considered ENABLED exactly when both `oidc_issuer` and
-    # `oidc_client_id` are non-empty (app/api/auth.py's `oidc_enabled()`).
+    # `oidc_client_id` are non-empty and the Weave-Ingest handoff below is
+    # not configured (app/api/auth.py's `oidc_enabled()`, ADR 0006).
     # When disabled, every `/v1/auth/oidc/*` endpoint and `/v1/auth/logout`
     # behaves as if it were never registered (404) and a Personal-API-Token
     # (app/cli.py) remains the only way for anything -- human or machine --

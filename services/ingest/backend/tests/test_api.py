@@ -801,6 +801,43 @@ def test_markdown_browser_ignores_orphan_disk_files(tmp_path):
     assert file_resp.status_code == 404
 
 
+def test_markdown_browser_and_folder_delete_respect_job_passwords(tmp_path):
+    """Download and single/bulk delete ask for a protected job's password;
+    the markdown browser and the folder-wide delete cannot, so they leave
+    protected jobs alone instead of bypassing it."""
+    from app.core.config import settings
+
+    settings.uploads_dir = tmp_path / 'uploads'
+    settings.results_dir = tmp_path / 'results'
+    db = TestingSessionLocal()
+    db.add(
+        Job(
+            id='job-protected-md',
+            original_filename='secret.pdf',
+            upload_path=str(tmp_path / 'secret.pdf'),
+            status=JobStatus.FINISHED,
+            result_markdown='# secret',
+            password_hash=security.hash_password('pw-secret'),
+            processing_info={'settings': {'folder': 'protected-folder'}},
+        )
+    )
+    db.commit()
+    db.close()
+
+    listing = client.get('/api/v1/markdown-files')
+    assert listing.status_code == 200
+    assert all('job-protected-md' not in item['path'] for item in listing.json()['items'])
+    assert client.get('/api/v1/markdown-files/protected-folder/job-protected-md/job-protected-md.md').status_code == 404
+
+    refused = client.delete('/api/v1/folders/protected-folder')
+    assert refused.status_code == 409
+    db = TestingSessionLocal()
+    try:
+        assert db.get(Job, 'job-protected-md') is not None
+    finally:
+        db.close()
+
+
 def test_search_filters_by_name_and_tag(tmp_path):
     db = TestingSessionLocal()
     job_one = Job(

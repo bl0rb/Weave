@@ -711,8 +711,10 @@ def test_0010_openwebui_migration_upgrade_downgrade_round_trip(tmp_path, monkeyp
     } <= push_indexes
     assert 'ix_import_page_states_source_id' in {ix['name'] for ix in insp.get_indexes('import_page_states')}
 
+    # 0040 keys the state per knowledge space; pages without a space keep
+    # UNIQUE(source_id, page_id) through a partial index (exercised below).
     page_state_uniques = {uc['name'] for uc in insp.get_unique_constraints('import_page_states')}
-    assert 'uq_import_page_states_source_id_page_id' in page_state_uniques
+    assert 'uq_import_page_states_source_collection_page' in page_state_uniques
 
     # The batch_alter_table rebuild of import_sources must not have dropped
     # earlier columns/FKs.
@@ -1332,4 +1334,147 @@ def test_0036_bot_grants_keep_who_may_use_a_bot(tmp_path, monkeypatch) -> None:
         teams = dict(conn.execute(text('SELECT id, teams FROM managed_bots')).all())
     assert json.loads(teams['open-bot']) == []
     assert json.loads(teams['legal-bot']) == ['legal']
+    engine.dispose()
+
+
+def test_0038_collection_slug_tombstones_round_trip(tmp_path, monkeypatch) -> None:
+    db_url = f'sqlite:///{tmp_path / "slug_tombstones.db"}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+    engine = create_engine(db_url, future=True)
+    _build_legacy_metadata().create_all(bind=engine)
+    cfg = _alembic_config()
+    command.stamp(cfg, '0003_job_markdown_versions')
+    command.upgrade(cfg, '0037_locale_auto')
+    assert 'collection_slug_tombstones' not in inspect(engine).get_table_names()
+    command.upgrade(cfg, '0038_collection_slug_tombstones')
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO collection_slug_tombstones (slug) VALUES ('hr-intern')"))
+        row = conn.execute(text('SELECT slug, deleted_by_id, deleted_at FROM collection_slug_tombstones')).one()
+    assert row.slug == 'hr-intern'
+    assert row.deleted_by_id is None
+    assert row.deleted_at is not None
+    command.downgrade(cfg, '0037_locale_auto')
+    assert 'collection_slug_tombstones' not in inspect(engine).get_table_names()
+    engine.dispose()
+
+
+def test_0039_cuts_version_chains_that_cross_spaces(tmp_path, monkeypatch) -> None:
+    db_url = f'sqlite:///{tmp_path / "space_scoped_versions.db"}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+    engine = create_engine(db_url, future=True)
+    _build_legacy_metadata().create_all(bind=engine)
+    cfg = _alembic_config()
+    command.stamp(cfg, '0003_job_markdown_versions')
+    command.upgrade(cfg, '0038_collection_slug_tombstones')
+
+    def space(collection_id):
+        return json.dumps({'settings': {'collection_id': collection_id}} if collection_id else {})
+
+    # (id, predecessor, space): alice-v2 stays in space A, bob and plain
+    # chained across a space boundary, carol only has an info-less predecessor.
+    rows = [
+        ('alice-v1', None, 'space-a'), ('alice-v2', 'alice-v1', 'space-a'),
+        ('bob-v2', 'alice-v1', 'space-b'), ('plain-v2', 'alice-v1', None),
+        ('loose-v1', None, None), ('carol-v2', 'loose-v1', 'space-a'), ('loose-v2', 'loose-v1', None),
+    ]
+    with engine.begin() as conn:
+        for job_id, previous_job_id, collection_id in rows:
+            conn.execute(text(
+                "INSERT INTO jobs (id, original_filename, upload_path, status, created_at, updated_at, "
+                "document_version, previous_job_id, processing_info) "
+                "VALUES (:id, 'doc.pdf', '/tmp/doc.pdf', 'FINISHED', '2026-01-01', '2026-01-01', 1, :prev, :info)"
+            ), {'id': job_id, 'prev': previous_job_id, 'info': space(collection_id)})
+    command.upgrade(cfg, '0039_space_scoped_versions')
+    with engine.connect() as conn:
+        chains = dict(conn.execute(text('SELECT id, previous_job_id FROM jobs')).all())
+    assert chains == {
+        'alice-v1': None, 'alice-v2': 'alice-v1', 'bob-v2': None, 'plain-v2': None,
+        'loose-v1': None, 'carol-v2': None, 'loose-v2': 'loose-v1',
+    }
+    command.downgrade(cfg, '0038_collection_slug_tombstones')
+    engine.dispose()
+
+
+def test_0040_keeps_confluence_page_state_per_space(tmp_path, monkeypatch) -> None:
+    db_url = f'sqlite:///{tmp_path / "space_scoped_page_states.db"}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+    engine = create_engine(db_url, future=True)
+    _build_legacy_metadata().create_all(bind=engine)
+    cfg = _alembic_config()
+    command.stamp(cfg, '0003_job_markdown_versions')
+    command.upgrade(cfg, '0039_space_scoped_versions')
+
+    def page_job(page_id, collection_id, version=1):
+        settings_info = {'mode': 'import', 'import': {'source_page_id': page_id, 'source_page_version': version, 'source_url': 'https://c/x'}}
+        if collection_id:
+            settings_info['collection_id'] = collection_id
+        return json.dumps({'settings': settings_info})
+
+    # Page P went into space A (job ja) and later into B (job jb): the one
+    # state row points at B. Q's state points at a job of a deleted space;
+    # R's state lost its job; W was imported into A but withdrawn there.
+    jobs = [
+        ('ja', 'P', 'space-a', '2026-01-01'), ('jb', 'P', 'space-b', '2026-01-02'),
+        ('jq', 'Q', 'space-gone', '2026-01-03'), ('jw', 'W', 'space-a', '2026-01-04'),
+    ]
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO users (id, username, email, created_at, updated_at) "
+            "VALUES ('u1', 'u1', 'u1@example.com', '2026-01-01', '2026-01-01')"
+        ))
+        conn.execute(text(
+            "INSERT INTO import_sources (id, owner_id, name, base_url, auth_type, credential_encrypted, created_at, updated_at) "
+            "VALUES ('s1', 'u1', 'Confluence', 'https://c', 'pat_bearer', 'enc', '2026-01-01', '2026-01-01')"
+        ))
+        for collection_id in ('space-a', 'space-b'):
+            conn.execute(text(
+                "INSERT INTO collections (id, name, slug, created_at, updated_at) "
+                "VALUES (:id, :id, :id, '2026-01-01', '2026-01-01')"
+            ), {'id': collection_id})
+        conn.execute(text(
+            "INSERT INTO import_runs (id, source_id, owner_id, scope_type, scope_value, options, created_at, updated_at) "
+            "VALUES ('r1', 's1', 'u1', 'page', 'P', '{}', '2026-01-01', '2026-01-01')"
+        ))
+        for job_id, page_id, collection_id, created_at in jobs:
+            conn.execute(text(
+                "INSERT INTO jobs (id, original_filename, upload_path, status, created_at, updated_at, import_run_id, processing_info) "
+                "VALUES (:id, :name, '/tmp/x.html', 'FINISHED', :created, :created, 'r1', :info)"
+            ), {'id': job_id, 'name': f'{job_id}.md', 'created': created_at, 'info': page_job(page_id, collection_id)})
+        conn.execute(text(
+            "INSERT INTO knowledge_withdrawals (job_id, status, attempts, created_at) VALUES ('jw', 'sent', 1, '2026-01-05')"
+        ))
+        for state_id, page_id, job_id in (('st-p', 'P', 'jb'), ('st-q', 'Q', 'jq'), ('st-r', 'R', None)):
+            conn.execute(text(
+                "INSERT INTO import_page_states (id, source_id, page_id, page_version, job_id) VALUES (:id, 's1', :page, 1, :job)"
+            ), {'id': state_id, 'page': page_id, 'job': job_id})
+
+    command.upgrade(cfg, '0040_space_scoped_page_states')
+    with engine.connect() as conn:
+        states = {
+            (row.collection_id, row.page_id): row.job_id
+            for row in conn.execute(text('SELECT collection_id, page_id, job_id FROM import_page_states'))
+        }
+    assert states == {('space-b', 'P'): 'jb', ('space-a', 'P'): 'ja', (None, 'R'): None}
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO import_page_states (id, source_id, collection_id, page_id, page_version) "
+            "VALUES ('st-a-new', 's1', 'space-a', 'NEW', 1)"
+        ))
+        conn.execute(text(
+            "INSERT INTO import_page_states (id, source_id, collection_id, page_id, page_version) "
+            "VALUES ('st-b-new', 's1', 'space-b', 'NEW', 1)"
+        ))
+    for collection_id in ('space-a', None):
+        with pytest.raises(Exception):
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "INSERT INTO import_page_states (id, source_id, collection_id, page_id, page_version) "
+                    "VALUES (:id, 's1', :collection, :page, 1)"
+                ), {'id': f'dup-{collection_id}', 'collection': collection_id, 'page': 'NEW' if collection_id else 'R'})
+
+    command.downgrade(cfg, '0039_space_scoped_versions')
+    with engine.connect() as conn:
+        pages = sorted(row.page_id for row in conn.execute(text('SELECT page_id FROM import_page_states')))
+    assert pages == ['NEW', 'P', 'R']
     engine.dispose()

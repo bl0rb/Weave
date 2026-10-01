@@ -175,6 +175,11 @@ def _supersede_previous_version(db: Session, document: Document) -> None:
     Document this service has ever indexed (an event received before this
     service existed, a previous_job_id typo/bug upstream, or a version
     already superseded by an even-later one).
+
+    Also a no-op when the previous version lives in another knowledge space
+    (different collection_slug): a release in one space must never retire a
+    document other readers rely on in a space the releaser may not even
+    have a role on (ADR 0008).
     """
     if not document.previous_job_id:
         return
@@ -182,6 +187,8 @@ def _supersede_previous_version(db: Session, document: Document) -> None:
         select(Document).where(Document.source_job_id == document.previous_job_id)
     ).scalar_one_or_none()
     if previous is None or previous.id == document.id:
+        return
+    if previous.collection_slug != document.collection_slug:
         return
     db.execute(delete(Chunk).where(Chunk.document_id == previous.id))
     previous.status = DocumentStatus.SUPERSEDED

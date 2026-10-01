@@ -350,13 +350,16 @@ def list_bots() -> list[BotConfig]:
     fails validation (typically a webhook_url outside N8N_ALLOWED_BASE_URLS,
     entered by an administrator in the Ingest UI) is skipped with a warning
     instead: one misconfigured managed bot must not turn GET /internal/bots
-    -- and with it every chat -- into a 500.
+    -- and with it every chat -- into a 500. Skipping fails closed: a
+    rejected override also hides the local YAML bot of the same id, which
+    may be open to more people than the restricted override an admin saved.
     """
     local = [_load_bot_file(path) for path in _bot_files()]
     managed_raw = fetch_managed_bots()
     if managed_raw is None:
         return local
     disabled_ids = {raw['id'] for raw in managed_raw if raw.get('enabled') is False}
+    suppressed_ids = set(disabled_ids)
     managed = []
     for raw in managed_raw:
         if raw.get('enabled') is False or raw.get('id') in disabled_ids:
@@ -365,9 +368,10 @@ def list_bots() -> list[BotConfig]:
             managed.append(_managed_bot(raw))
         except BotConfigError as exc:
             logger.warning('skipping managed bot %r: %s', raw.get('id'), exc)
+            suppressed_ids.add(raw.get('id'))
     merged = {bot.id: bot for bot in local}
     merged.update({bot.id: bot for bot in managed})
-    return [merged[bot_id] for bot_id in sorted(merged) if bot_id not in disabled_ids]
+    return [merged[bot_id] for bot_id in sorted(merged) if bot_id not in suppressed_ids]
 
 
 def list_local_bots() -> list[BotConfig]:

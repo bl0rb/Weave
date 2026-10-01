@@ -211,14 +211,14 @@ print(resp.json())
 
 #### `GET /v1/bots/{bot_id}`
 
-Liefert die vollständige Konfiguration eines Bots, den der Aufrufer nutzen darf (nicht nur die Kurzform aus der Liste oben).
+Liefert einen Bot, den der Aufrufer nutzen darf. Admins bekommen die vollständige Konfiguration, alle anderen dieselbe Kurzform wie in der Liste oben.
 
 ```bash
 curl -s https://weave.example.com/v1/bots/legal-support \
   -H "Authorization: Bearer $WEAVE_TOKEN"
 ```
 
-> **Hinweis:** Die Antwort enthält auch `system_prompt` und die Modelleinstellungen. Ein Bot, den der Aufrufer nicht nutzen darf, liefert `404` — nicht unterscheidbar von einem Bot, den es nicht gibt. Ein hinterlegtes Webhook-Secret (bei n8n-Bots) wird nie im Klartext ausgeliefert.
+> **Hinweis:** Nur für Admins enthält die Antwort auch `system_prompt`, die Modelleinstellungen, die n8n-Anbindung und die Freigaben; Bot-Nutzer sehen davon nichts. Ein Bot, den der Aufrufer nicht nutzen darf, liefert `404` — nicht unterscheidbar von einem Bot, den es nicht gibt. Ein hinterlegtes Webhook-Secret (bei n8n-Bots) wird nie im Klartext ausgeliefert.
 
 ### Wissensbereiche
 
@@ -640,7 +640,7 @@ Legt einen neuen Wissensbereich an. Der Ersteller wird automatisch Owner.
 | `description` | `string` | **ja** (Zweck) | Kurzbeschreibung des Zwecks — leer/fehlend → `422 "description (purpose) is required"` |
 | `name` | `string` | nein | Anzeigename; leer → fällt auf den Slug zurück |
 | `slug` | `string` \| `null` | nein | eigener Kurzname (`a-z0-9-`); fehlt → wird generiert |
-| `visibility` | `"public"` \| `"restricted"` \| `null` | nein | Default: `restricted`, sobald `grants` gesetzt sind, sonst `public` |
+| `visibility` | `"public"` \| `"restricted"` \| `null` | nein | Default: `restricted`; `public` nur, wenn ausdrücklich gesendet |
 | `responsible_team_id` | `string` \| `null` | nein | rein informativ, kein Recht |
 | `grants` | `list[{user_id? , team_id?, role}]` | nein | zusätzliche Freigaben; `role` ∈ `owner`/`member`/`reader` (Teams nie `owner`) |
 | `department`, `email`, `folder`, `subfolder`, `password` | `string` | nein | Verarbeitungsvorgaben bzw. optionaler Dokumentenschutz |

@@ -1,7 +1,7 @@
 'use client';
 
-import { Lock } from 'lucide-react';
-import { formatCollection, formatPages, formatScore, formatVersion, SourceOrigin } from '@/components/chat/source-cards';
+import { ExternalLink, Lock } from 'lucide-react';
+import { formatCollection, formatPages, formatScore, formatVersion, getSourceLink, SourceOrigin } from '@/components/chat/source-cards';
 import { toProxiedImageUrl } from '@/lib/portal-artifact-url';
 import { useI18n } from '@/i18n/provider';
 import type { Source } from '@/types/weave-api';
@@ -69,13 +69,20 @@ export function SourcesPanel({ sources, scopeLabel }: SourcesPanelProps) {
           {t('chat.sourcesPanel.emptyNone')}
         </p>
       ) : (
-        <ol className="flex flex-col gap-3">
+        <ol className="flex flex-col gap-2">
           {sources.map((source, index) => {
             const scoreText = formatScore(source, t);
+            const link = getSourceLink(source, t);
+            // The locator is what a reader needs to find the passage again:
+            // the wiki page link, else the page number(s) — the rest is
+            // secondary and stays small and muted.
+            const meta = [source.document_version != null ? formatVersion(source, t) : null, t('chat.sources.collectionLabel', { collection: formatCollection(source, t) }), scoreText]
+              .filter(Boolean)
+              .join(' · ');
             return (
               <li
                 key={`${source.document_id}-${source.chunk_id}`}
-                className="rounded-[var(--radius-card)] border border-[var(--line)] p-4 text-xs"
+                className="rounded-[var(--radius-card)] border border-[var(--line)] px-3 py-2.5 text-xs"
               >
                 <div className="flex items-start gap-2">
                   <span className="mt-0.5 inline-grid h-5 w-5 flex-none place-items-center rounded-[var(--radius-control)] border border-[var(--line)] text-[11px] font-bold text-[var(--accent)]">
@@ -85,15 +92,24 @@ export function SourcesPanel({ sources, scopeLabel }: SourcesPanelProps) {
                     <strong className="block truncate text-[13px] font-semibold text-[var(--ink)]">
                       {source.original_filename ?? t('chat.sources.documentFallback', { id: source.document_id })}
                     </strong>
-                    <span className="text-[var(--muted)]">
-                      {formatPages(source, t)} · {formatVersion(source, t)}
-                      {scoreText ? ` · ${scoreText}` : ''}
-                    </span>
+                    <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px] text-[var(--muted)]">
+                      {link ? (
+                        <a
+                          href={link.href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--accent)] underline-offset-2 hover:underline"
+                        >
+                          {link.label}
+                          <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                        </a>
+                      ) : source.page_start != null ? (
+                        <span className="text-xs font-semibold text-[var(--ink)]">{formatPages(source, t)}</span>
+                      ) : null}
+                      <span>{meta}</span>
+                      {link ? null : <SourceOrigin source={source} />}
+                    </div>
                   </div>
-                </div>
-                <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 text-[var(--muted)]">
-                  <span>{t('chat.sources.collectionLabel', { collection: formatCollection(source, t) })}</span>
-                  <SourceOrigin source={source} />
                 </div>
               </li>
             );

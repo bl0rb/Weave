@@ -5,8 +5,6 @@ export const chat = {
   // components/chat/chat-app.tsx
   'header.openRail': 'Gespräche anzeigen',
   'header.noBotSelected': 'Kein Bot ausgewählt',
-  'header.releasedSourcesOnly': 'Nur freigegebene Quellen',
-  'header.releasedSourcesOnlyTitle': 'Nur freigegebene, indexierte Dokumente, die du lesen darfst',
   'newConversation': 'Neues Gespräch',
   'confirm.deleteConversation': 'Diese Konversation und alle ihre Nachrichten unwiderruflich löschen?',
   'confirm.deleteAllConversations': 'Den gesamten Chat-Verlauf mit allen Nachrichten unwiderruflich löschen?',

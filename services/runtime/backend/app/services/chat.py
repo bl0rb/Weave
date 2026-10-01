@@ -401,7 +401,12 @@ def _allowed_teams(bot: BotConfig, user: ChatUser) -> list[str] | None:
     query may even see (app/services/retrieval_client.py's docstring;
     that service's SearchRequest.allowed_teams: `None` = unrestricted,
     `[]` = literally zero teams authorized, zero results -- see
-    Weave-Retrieval's app/schemas/search.py).
+    Weave-Retrieval's app/schemas/search.py). Since every end-user turn
+    also sends a concrete `allowed_collections`, Weave-Retrieval applies
+    this ONLY to legacy documents without a collection: documents in a
+    space are decided by the grant-derived Collections scope alone
+    (ADR 0008 -- `Document.team` is the uploader's primary team, not a
+    grant).
 
     Design choice, spelled out here because both inputs are plausible and
     the task deliberately leaves the pick to this stage:

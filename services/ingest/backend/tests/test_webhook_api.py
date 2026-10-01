@@ -205,6 +205,21 @@ def test_webhook_connections_and_send_flow() -> None:
     )
     assert resp.status_code == 409
 
+    # --- send: a password-protected job's markdown never leaves -> 409 ---
+    protected_job_id = _make_finished_job(user.id, 'protected.pdf')
+    db = TestingSessionLocal()
+    try:
+        db.get(Job, protected_job_id).password_hash = 'x'
+        db.commit()
+    finally:
+        db.close()
+    with patch('app.api.webhook_routes.celery_app') as mock_celery:
+        resp = authed.post(
+            '/api/v1/webhooks/send', json={'connection_id': connection_id, 'job_id': protected_job_id}
+        )
+        assert resp.status_code == 409, resp.text
+        mock_celery.send_task.assert_not_called()
+
     # --- send: another user's job is invisible -> 404 ---
     stranger = create_test_user(username='wh_stranger', email='wh_stranger@example.com')
     stranger_job_id = _make_finished_job(stranger.id)

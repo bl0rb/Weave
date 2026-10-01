@@ -169,3 +169,21 @@ def test_get_collections_returns_502_on_a_non_json_response(fake_retrieval, call
 def test_get_collections_requires_authentication():
     response = client.get('/v1/collections')
     assert response.status_code == 401
+
+
+def test_release_collection_lookup_maps_404_to_none_and_errors_to_client_error(fake_retrieval):
+    # Weave-API's portal-artifact read check (app/api/portal_artifacts.py)
+    # denies on None; an unreachable/erroring Retrieval must not look like
+    # "no space" -- it surfaces as RetrievalClientError (502 there).
+    from app.services.retrieval_client import RetrievalClientError, release_collection
+
+    fake = fake_retrieval(lambda path, params: _FakeResponse(200, {'collection': 'vorstand'}))
+    assert release_collection('rel-1') == 'vorstand'
+    assert fake.calls == [('/api/v1/releases/rel-1/collection', None)]
+
+    fake_retrieval(lambda path, params: _FakeResponse(404, {'detail': 'Release not found'}))
+    assert release_collection('rel-1') is None
+
+    fake_retrieval(lambda path, params: _FakeResponse(500, {'detail': 'boom'}))
+    with pytest.raises(RetrievalClientError):
+        release_collection('rel-1')

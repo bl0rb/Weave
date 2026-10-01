@@ -65,12 +65,37 @@ def test_list_bots_returns_only_the_bots_the_caller_may_use(monkeypatch, caller)
     assert {'id', 'team', 'teams', 'is_admin'} <= set(user)
 
 
-def test_get_bot_by_id_returns_the_config_of_a_usable_bot(monkeypatch, caller):
+@pytest.fixture
+def admin_caller(db_session):
+    _, raw_token = make_user_with_token(db_session, username='bots-admin', is_admin=True)
+    return auth_headers(raw_token)
+
+
+def test_get_bot_by_id_gives_a_bot_user_only_the_summary(monkeypatch, caller):
+    # A bot user must not learn the system prompt, the n8n webhook or who
+    # else was granted -- only what GET /v1/bots already shows.
+    summary = {'id': 'faq-bot', 'name': 'FAQ Bot', 'kind': 'n8n', 'public': False}
+    full = {
+        'id': 'faq-bot', 'name': 'FAQ Bot', 'system_prompt': 'Hilf.',
+        'n8n': {'webhook_url': 'https://n8n.example.test/webhook/secret-path'},
+        'permissions': {'teams': [], 'users': ['ingest-1', 'ingest-2']},
+    }
+    fake = _FakeHttpxClient(lambda path: _FakeResponse(200, full), visible=[summary])
+    monkeypatch.setattr('app.services.runtime_client._client', lambda **kwargs: fake)
+
+    response = client.get('/v1/bots/faq-bot', headers=caller)
+    assert response.status_code == 200
+    assert response.json() == summary
+    assert 'secret-path' not in response.text
+    assert 'ingest-1' not in response.text
+
+
+def test_get_bot_by_id_returns_the_full_config_to_an_admin(monkeypatch, admin_caller):
     bot_payload = {'id': 'faq-bot', 'name': 'FAQ Bot', 'system_prompt': 'Hilf.'}
     fake = _FakeHttpxClient(lambda path: _FakeResponse(200, bot_payload), visible=[{'id': 'faq-bot'}])
     monkeypatch.setattr('app.services.runtime_client._client', lambda **kwargs: fake)
 
-    response = client.get('/v1/bots/faq-bot', headers=caller)
+    response = client.get('/v1/bots/faq-bot', headers=admin_caller)
     assert response.status_code == 200
     assert response.json() == bot_payload
 
@@ -107,11 +132,11 @@ def test_list_bots_returns_502_when_runtime_returns_an_error_status(monkeypatch,
     assert '500' in response.json()['detail']
 
 
-def test_get_bot_returns_502_when_runtime_reports_not_found(monkeypatch, caller):
+def test_get_bot_returns_502_when_runtime_reports_not_found(monkeypatch, admin_caller):
     fake = _FakeHttpxClient(lambda path: _FakeResponse(404, {'detail': 'not found'}), visible=[{'id': 'unknown-bot'}])
     monkeypatch.setattr('app.services.runtime_client._client', lambda **kwargs: fake)
 
-    response = client.get('/v1/bots/unknown-bot', headers=caller)
+    response = client.get('/v1/bots/unknown-bot', headers=admin_caller)
     assert response.status_code == 502
 
 

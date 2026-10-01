@@ -25,7 +25,7 @@ export function AuthShell({
       <LanguageSwitch className="!absolute right-4 top-4" />
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center gap-3">
-          <WeaveIngestLogo animation="intro" className="h-14 w-14 drop-shadow-md" />
+          <WeaveIngestLogo animation="finite" className="h-14 w-14 drop-shadow-md" />
           <span className="text-lg font-semibold text-slate-950">{t('common.appTitle')}</span>
         </div>
 

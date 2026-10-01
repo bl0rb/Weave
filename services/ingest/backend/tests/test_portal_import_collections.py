@@ -5,12 +5,13 @@ import hashlib
 from datetime import datetime, timezone
 
 import yaml
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.api import import_routes
 from app.models.models import (
     Collection,
     ImportAuthType,
+    ImportPageState,
     ImportRun,
     ImportRunStatus,
     ImportSource,
@@ -317,3 +318,72 @@ def test_refresh_preserves_collection_and_fails_closed_when_deleted(monkeypatch)
         assert 'refusing an unassigned refresh' in source_row.last_refresh_error
     finally:
         db.close()
+
+
+def _page_job(db, run_id: str) -> Job:
+    return next(
+        job for job in db.scalars(select(Job).where(Job.import_run_id == run_id)).all()
+        if job.processing_info['settings']['mode'] == 'import'
+    )
+
+
+def test_refresh_chains_only_onto_the_copy_of_a_page_in_its_own_space(monkeypatch):
+    # The same page imported into space A and later into space B: a sync of
+    # A must chain onto A's copy, never onto B's (releasing it would
+    # withdraw B's document in Knowledge), and must leave B's state alone.
+    owner = _user('portal-two-spaces')
+    source = _source(owner.id)
+    space_a = _collection(owner.id, slug='space-a', name='A')
+    space_b = _collection(owner.id, slug='space-b', name='B')
+    fake_client = _FakeClient()
+    monkeypatch.setattr(import_tasks, 'SessionLocal', TestingSessionLocal)
+    monkeypatch.setattr(import_tasks, 'create_client', lambda **kwargs: fake_client)
+    monkeypatch.setattr(celery_app, 'send_task', lambda *args, **kwargs: None)
+
+    first_a = _run(owner.id, source.id, space_a)
+    import_confluence(first_a, 0)
+    first_b = _run(owner.id, source.id, space_b)
+    import_confluence(first_b, 0)
+    fake_client.page = Page(**{**fake_client.page.__dict__, 'version': 2, 'html': '<h1>Portal</h1><p>Changed.</p>'})
+    refresh_a = _run(owner.id, source.id, space_a, refresh=True)
+    import_confluence(refresh_a, 0)
+
+    with _db() as db:
+        job_a, job_b, job_a2 = (_page_job(db, run_id) for run_id in (first_a, first_b, refresh_a))
+        assert (job_a2.previous_job_id, job_a2.document_version) == (job_a.id, 2)
+        states = {
+            state.collection_id: state.job_id
+            for state in db.scalars(select(ImportPageState).where(ImportPageState.source_id == source.id))
+        }
+        assert states == {space_a.id: job_a2.id, space_b.id: job_b.id}
+
+
+def test_first_refresh_seeds_only_from_its_own_space(monkeypatch):
+    owner = _user('portal-seed-space')
+    source = _source(owner.id)
+    space_a = _collection(owner.id, slug='seed-a', name='A')
+    space_b = _collection(owner.id, slug='seed-b', name='B')
+    fake_client = _FakeClient()
+    monkeypatch.setattr(import_tasks, 'SessionLocal', TestingSessionLocal)
+    monkeypatch.setattr(import_tasks, 'create_client', lambda **kwargs: fake_client)
+    monkeypatch.setattr(celery_app, 'send_task', lambda *args, **kwargs: None)
+    first_a = _run(owner.id, source.id, space_a)
+    import_confluence(first_a, 0)
+    first_b = _run(owner.id, source.id, space_b)
+    import_confluence(first_b, 0)
+    with _db() as db:
+        # History from before the refresh state existed: only jobs remain.
+        db.execute(delete(ImportPageState).where(ImportPageState.source_id == source.id))
+        db.commit()
+
+    refresh_a = _run(owner.id, source.id, space_a, refresh=True)
+    import_confluence(refresh_a, 0)
+
+    with _db() as db:
+        job_a = _page_job(db, first_a)
+        refreshed = db.get(ImportRun, refresh_a)
+        # Unchanged page: skipped against A's own copy, not B's newer one.
+        assert refreshed.pages_imported == 0
+        assert refreshed.state['visited'][fake_client.page.id] == job_a.id
+        seeded = db.scalars(select(ImportPageState).where(ImportPageState.source_id == source.id)).all()
+        assert [(state.collection_id, state.job_id) for state in seeded] == [(space_a.id, job_a.id)]

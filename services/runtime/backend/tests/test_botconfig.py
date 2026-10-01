@@ -168,6 +168,23 @@ def test_managed_bot_outside_allowlist_is_skipped_not_fatal(bots_dir, monkeypatc
     assert any('unlisted-agent' in record.getMessage() for record in caplog.records)
 
 
+def test_rejected_override_of_a_yaml_bot_hides_the_yaml_twin(bots_dir, monkeypatch, caplog):
+    # The YAML bot is open to everyone; the admin's restricted override is
+    # rejected by Runtime. Falling back to the YAML bot would fail open.
+    (bots_dir / 'minimal.yaml').write_text(_MINIMAL_BOT, encoding='utf-8')
+    monkeypatch.setattr(settings, 'n8n_allowed_base_urls', [])
+    monkeypatch.setattr('app.services.botconfig.fetch_managed_bots', lambda: [{
+        'id': 'minimal', 'name': 'Restricted', 'webhook_url': 'https://n8n.example.test/webhook/x',
+        'teams': ['HR'], 'public': False,
+    }])
+
+    with caplog.at_level('WARNING', logger='app.services.botconfig'):
+        assert list_bots() == []
+    with pytest.raises(BotNotFoundError):
+        load_bot('minimal')
+    assert any('minimal' in record.getMessage() for record in caplog.records)
+
+
 def test_centrally_managed_llm_bot_is_projected_with_retrieval(bots_dir, monkeypatch):
     (bots_dir / 'minimal.yaml').write_text(_MINIMAL_BOT, encoding='utf-8')
     monkeypatch.setattr('app.services.botconfig.fetch_managed_bots', lambda: [{

@@ -133,8 +133,11 @@ def _import_source(owner_id: str) -> ImportSource:
 def _import_page_state(source_id: str, job_id: str, *, title: str = 'Portal Page', url: str = 'https://portal.example.atlassian.net/wiki/spaces/X/pages/1') -> ImportPageState:
     db = _db()
     try:
+        # Sync state lives in the space of the job it points at (ADR 0008).
+        job_settings = (db.get(Job, job_id).processing_info or {}).get('settings') or {}
         page = ImportPageState(
             source_id=source_id,
+            collection_id=job_settings.get('collection_id'),
             page_id=f'page-{uuid.uuid4().hex[:8]}',
             page_version=1,
             job_id=job_id,
@@ -150,10 +153,11 @@ def _import_page_state(source_id: str, job_id: str, *, title: str = 'Portal Page
         db.close()
 
 
-def _import_run(status: ImportRunStatus, *, scope_type: str = 'page', scope_value: str = 'portal-page', root_page_title: str = '') -> ImportRun:
+def _import_run(status: ImportRunStatus, *, scope_type: str = 'page', scope_value: str = 'portal-page', root_page_title: str = '', owner_id: str | None = None) -> ImportRun:
     db = _db()
     try:
         value = ImportRun(
+            owner_id=owner_id,
             kind='confluence',
             scope_type=scope_type,
             scope_value=scope_value,
@@ -589,7 +593,7 @@ def test_collection_upload_and_start_require_collection_control(monkeypatch):
     assert process_calls == [created.json()['job_id']]
 
 
-def test_issued_release_blocks_save_restart_and_collection_start_preflight(monkeypatch):
+def test_issued_release_blocks_save_restart_and_is_skipped_by_collection_start(monkeypatch):
     _configure(monkeypatch)
     user = create_test_user(
         username=f'portal-immutable-{uuid.uuid4().hex[:8]}',
@@ -613,15 +617,43 @@ def test_issued_release_blocks_save_restart_and_collection_start_preflight(monke
     assert saved.status_code == 409, saved.text
     restarted = authed.post(f'/api/v1/jobs/{job.id}/restart', json={})
     assert restarted.status_code == 409, restarted.text
+    with _db() as db:
+        stored = db.get(Job, job.id)
+        stored.processing_info = {**stored.processing_info, 'settings': {
+            **stored.processing_info['settings'], 'profile_id': 'ppocrv6_small',
+        }}
+        db.commit()
+    lower = authed.post(f'/api/v1/jobs/{job.id}/retry-lower-profile')
+    assert lower.status_code == 409, lower.text
 
+    # A collection start skips the released version (and imported pages)
+    # instead of refusing to process newly added files.
+    new_file = _job(user.id, collection)
+    import_page = _job(user.id, collection)
+    with _db() as db:
+        stored = db.get(Job, import_page.id)
+        stored.processing_info = {**stored.processing_info, 'settings': {
+            **stored.processing_info['settings'], 'mode': 'import',
+        }}
+        db.commit()
     process_calls: list[str] = []
     monkeypatch.setattr('app.api.routes.process_job.delay', lambda job_id, *args: process_calls.append(job_id))
     started = authed.post(
         f'/api/v1/collections/{collection.id}/start',
         json={'profile_id': 'ppocrv6_tiny'},
     )
-    assert started.status_code == 409, started.text
-    assert process_calls == []
+    assert started.status_code == 200, started.text
+    assert started.json()['started_jobs'] == 1
+    assert started.json()['skipped_released_jobs'] == 1
+    assert started.json()['skipped_import_jobs'] == 1
+    assert process_calls == [new_file.id]
+    folder = authed.post('/api/v1/folders/inbox/restart')
+    assert folder.status_code == 200, folder.text
+    assert folder.json()['skipped_released_jobs'] == 1
+    assert folder.json()['skipped_import_jobs'] == 1
+    assert job.id not in process_calls[1:]
+    with _db() as db:
+        assert db.get(Job, job.id).result_markdown == job.result_markdown
 
 
 def test_portal_review_only_filters_finished_unreleased_and_paginates(monkeypatch):
@@ -710,8 +742,8 @@ def test_portal_import_scopes_lists_distinct_scopes_and_respects_visibility(monk
     owner = create_test_user(username=f'portal-scopes-owner-{suffix}', email=f'portal-scopes-owner-{suffix}@example.com')
     outsider = create_test_user(username=f'portal-scopes-outsider-{suffix}', email=f'portal-scopes-outsider-{suffix}@example.com')
     collection = _collection(owner.id)
-    docs_run = _import_run(ImportRunStatus.FINISHED, scope_type='space', scope_value='DOCS', root_page_title='Handbuch')
-    docs_rerun = _import_run(ImportRunStatus.FINISHED, scope_type='space', scope_value='DOCS', root_page_title='Handbuch')
+    docs_run = _import_run(ImportRunStatus.FINISHED, scope_type='space', scope_value='DOCS', root_page_title='Handbuch', owner_id=owner.id)
+    docs_rerun = _import_run(ImportRunStatus.FINISHED, scope_type='space', scope_value='DOCS', root_page_title='Handbuch', owner_id=owner.id)
     hr_run = _import_run(ImportRunStatus.FINISHED, scope_type='space', scope_value='HR', root_page_title='')
     _job(owner.id, collection, import_run_id=docs_run.id)
     _job(owner.id, collection, import_run_id=docs_rerun.id)
@@ -724,14 +756,54 @@ def test_portal_import_scopes_lists_distinct_scopes_and_respects_visibility(monk
     body = response.json()
     assert body['other_count'] == 1
     by_value = {item['value']: item for item in body['items']}
-    assert by_value['space:DOCS'] == {'value': 'space:DOCS', 'scope_type': 'space', 'scope_value': 'DOCS', 'label': 'Handbuch', 'count': 2}
-    assert by_value['space:HR'] == {'value': 'space:HR', 'scope_type': 'space', 'scope_value': 'HR', 'label': 'HR', 'count': 1}
+    # latest_run_id is the newest run of the scope; can_edit follows _can_edit_run (owner + finished)
+    assert by_value['space:DOCS'] == {'value': 'space:DOCS', 'scope_type': 'space', 'scope_value': 'DOCS', 'label': 'Handbuch', 'count': 2, 'latest_run_id': docs_rerun.id, 'edit_run_id': docs_rerun.id, 'can_edit': True}
+    # A legacy run without an owner is not editable by a non-admin.
+    assert by_value['space:HR'] == {'value': 'space:HR', 'scope_type': 'space', 'scope_value': 'HR', 'label': 'HR', 'count': 1, 'latest_run_id': hr_run.id, 'edit_run_id': None, 'can_edit': False}
     # sorted by label
     assert [item['value'] for item in body['items']] == ['space:DOCS', 'space:HR']
 
     # A caller without visibility into the collection at all gets a 404.
     other_authed = login_as(outsider.username)
     assert other_authed.get(f'/api/v1/portal/collections/{collection.id}/import-scopes').status_code == 404
+
+
+def test_portal_import_scopes_can_edit_follows_latest_run_state(monkeypatch):
+    _configure(monkeypatch)
+    suffix = uuid.uuid4().hex[:8]
+    owner = create_test_user(username=f'portal-scopes-edit-{suffix}', email=f'portal-scopes-edit-{suffix}@example.com')
+    collection = _collection(owner.id)
+    finished = _import_run(ImportRunStatus.FINISHED, scope_type='space', scope_value='DOCS', root_page_title='Handbuch', owner_id=owner.id)
+    running = _import_run(ImportRunStatus.RUNNING, scope_type='space', scope_value='DOCS', root_page_title='Handbuch', owner_id=owner.id)
+    _job(owner.id, collection, import_run_id=finished.id)
+    _job(owner.id, collection, import_run_id=running.id)
+
+    authed = login_as(owner.username)
+    (item,) = authed.get(f'/api/v1/portal/collections/{collection.id}/import-scopes').json()['items']
+    # The newest run is still running, so it cannot be edited/restarted yet.
+    assert item['latest_run_id'] == running.id
+    assert item['can_edit'] is False
+    assert item['edit_run_id'] is None
+
+
+def test_portal_import_scopes_edit_link_never_points_at_someone_elses_newer_run(monkeypatch):
+    _configure(monkeypatch)
+    suffix = uuid.uuid4().hex[:8]
+    team = _team('scope-editors')
+    anna = create_test_user(username=f'portal-scopes-anna-{suffix}', email=f'portal-scopes-anna-{suffix}@example.com', team_id=team.id)
+    bert = create_test_user(username=f'portal-scopes-bert-{suffix}', email=f'portal-scopes-bert-{suffix}@example.com', team_id=team.id)
+    collection = _collection(anna.id, read_teams=[team.name])
+    anna_run = _import_run(ImportRunStatus.FINISHED, scope_type='space', scope_value='HR', root_page_title='HR', owner_id=anna.id)
+    bert_run = _import_run(ImportRunStatus.FINISHED, scope_type='space', scope_value='HR', root_page_title='HR', owner_id=bert.id)
+    _job(anna.id, collection, import_run_id=anna_run.id)
+    _job(bert.id, collection, import_run_id=bert_run.id)
+
+    (anna_item,) = login_as(anna.username).get(f'/api/v1/portal/collections/{collection.id}/import-scopes').json()['items']
+    # Both imports count under one scope; Anna edits her own import, not Bert's newer one.
+    assert (anna_item['count'], anna_item['latest_run_id']) == (2, bert_run.id)
+    assert (anna_item['edit_run_id'], anna_item['can_edit']) == (anna_run.id, True)
+    (bert_item,) = login_as(bert.username).get(f'/api/v1/portal/collections/{collection.id}/import-scopes').json()['items']
+    assert (bert_item['edit_run_id'], bert_item['can_edit']) == (bert_run.id, True)
 
 
 def test_portal_import_scopes_hidden_for_reader_without_job_visibility(monkeypatch):
@@ -865,6 +937,43 @@ def test_portal_retry_handles_sqlite_naive_lease_timestamp(monkeypatch):
         db.close()
     retried = authed.post(f"/api/v1/portal/releases/{release['id']}/retry")
     assert retried.status_code == 200, retried.text
+
+
+def test_any_space_member_may_retry_a_failed_delivery(monkeypatch):
+    """ADR 0008: members release, so they also retry a failed delivery of a
+    document another member released; readers may not."""
+    from app.models.models import CollectionGrant, CollectionRole
+
+    _configure(monkeypatch)
+    releaser = create_test_user(
+        username=f'portal-retry-a-{uuid.uuid4().hex[:8]}', email=f'portal-retry-a-{uuid.uuid4().hex[:8]}@example.com'
+    )
+    member = create_test_user(
+        username=f'portal-retry-b-{uuid.uuid4().hex[:8]}', email=f'portal-retry-b-{uuid.uuid4().hex[:8]}@example.com'
+    )
+    reader = create_test_user(
+        username=f'portal-retry-r-{uuid.uuid4().hex[:8]}', email=f'portal-retry-r-{uuid.uuid4().hex[:8]}@example.com'
+    )
+    collection = _collection(releaser.id)
+    with _db() as db:
+        db.add(CollectionGrant(collection_id=collection.id, user_id=member.id, role=CollectionRole.MEMBER))
+        db.add(CollectionGrant(collection_id=collection.id, user_id=reader.id, role=CollectionRole.READER))
+        db.commit()
+    job = _job(releaser.id, collection)
+    releaser_client = login_as(releaser.username)
+    preview = releaser_client.get(f'/api/v1/portal/documents/{job.id}').json()
+    monkeypatch.setattr('app.api.portal.publication_tasks.deliver_release.delay', lambda release_id: None)
+    release = releaser_client.post(
+        f'/api/v1/portal/documents/{job.id}/release', json={'markdown_sha256': preview['markdown_sha256']}
+    ).json()
+    with _db() as db:
+        db.get(DocumentRelease, release['id']).status = 'failed'
+        db.commit()
+
+    assert login_as(reader.username).post(f"/api/v1/portal/releases/{release['id']}/retry").status_code in (403, 404)
+    retried = login_as(member.username).post(f"/api/v1/portal/releases/{release['id']}/retry")
+    assert retried.status_code == 200, retried.text
+    assert retried.json()['status'] == 'pending'
 
 
 def test_portal_reindex_document_sets_reindex_flag_and_requeues_sent_release(monkeypatch):

@@ -615,3 +615,79 @@ def test_pre_bot_grants_archive_turns_bot_teams_into_user_grants(monkeypatch, tm
         assert not any('unbekannte Spalte' in warning for warning in report['warnings'])
     finally:
         target_db.close()
+
+
+def test_pre_space_scoped_page_states_archive_keeps_page_state_per_space(monkeypatch, tmp_path):
+    """An archive from before 0040_space_scoped_page_states has no
+    `collection_id` on its page states: restore moves each row to its job's
+    space and gives a space that lost its row to another space one back --
+    the same rules as that migration -- so a sync never chains onto or
+    skips against another space's copy of a page."""
+    from app.models.models import ImportPageState
+
+    def page_job(job_id, run_id, space, page_id, version, created_at):
+        settings = {'mode': 'import', 'import': {'source_page_id': page_id, 'source_page_version': version}}
+        if space:
+            settings['collection_id'] = space
+        return {
+            'id': job_id, 'owner_id': 'u-imp', 'import_run_id': run_id, 'original_filename': f'{page_id}.md',
+            'upload_path': f'{job_id}.md', 'status': 'completed', 'created_at': created_at,
+            'processing_info': {'settings': settings},
+        }
+
+    def page_state(state_id, page_id, version, job_id):
+        return {'id': state_id, 'source_id': 's-1', 'page_id': page_id, 'page_version': version, 'job_id': job_id}
+
+    archive_path = tmp_path / 'pre-0040.weave-backup.tar.gz'
+    _write_minimal_archive(archive_path, 'pw', {
+        'users': [{'id': 'u-imp', 'username': 'importer', 'email': 'importer@example.com', 'password_hash': 'x', 'role': 'user'}],
+        'collections': [
+            {'id': 'space-a', 'slug': 'a', 'name': 'A', 'description': ''},
+            {'id': 'space-b', 'slug': 'b', 'name': 'B', 'description': ''},
+        ],
+        'collection_grants': [],
+        'bot_grants': [],
+        'import_sources': [{
+            'id': 's-1', 'owner_id': 'u-imp', 'name': 'Wiki', 'base_url': 'https://wiki.example.com',
+            'auth_type': 'pat_bearer', 'credential_encrypted': '',
+        }],
+        'import_runs': [
+            {'id': f'r-{space}', 'source_id': 's-1', 'owner_id': 'u-imp', 'kind': 'confluence', 'status': 'finished',
+             'scope_type': 'page', 'scope_value': 'P1', 'options': {'collection_id': f'space-{space}'}, 'state': {}}
+            for space in ('a', 'b', 'gone')
+        ],
+        'jobs': [
+            page_job('job-a-x', 'r-a', 'space-a', 'X', 1, '2026-01-01T00:00:00+00:00'),
+            page_job('job-a-y', 'r-a', 'space-a', 'Y', 1, '2026-01-01T00:00:01+00:00'),
+            page_job('job-b-y', 'r-b', 'space-b', 'Y', 2, '2026-01-02T00:00:00+00:00'),
+            page_job('job-gone-z', 'r-gone', 'space-gone', 'Z', 1, '2026-01-02T00:00:01+00:00'),
+        ],
+        # One row per (source, page): Y points at B's copy, which A lost.
+        'import_page_states': [
+            page_state('st-x', 'X', 1, 'job-a-x'),
+            page_state('st-y', 'Y', 2, 'job-b-y'),
+            page_state('st-z', 'Z', 1, 'job-gone-z'),
+            page_state('st-w', 'W', 1, None),
+        ],
+    })
+
+    target_engine, TargetSession = _new_engine(tmp_path, 'target_pre_0040.db')
+    _use_storage_dirs(monkeypatch, tmp_path, 'target_pre_0040')
+    target_db = TargetSession()
+    try:
+        admin = User(username='bootstrap', email='bootstrap@example.com', password_hash=hash_password('Boots1'), role=UserRole.ADMIN)
+        target_db.add(admin)
+        target_db.commit()
+
+        backup.import_backup(target_db, path=archive_path, passphrase='pw', importing_admin_id=admin.id)
+        target_db.commit()
+
+        states = target_db.scalars(select(ImportPageState)).all()
+        assert sorted((state.collection_id or '', state.page_id, state.job_id or '') for state in states) == [
+            ('', 'W', ''),
+            ('space-a', 'X', 'job-a-x'),
+            ('space-a', 'Y', 'job-a-y'),
+            ('space-b', 'Y', 'job-b-y'),
+        ]
+    finally:
+        target_db.close()

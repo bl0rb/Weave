@@ -1,4 +1,4 @@
-import type { ImgHTMLAttributes } from 'react';
+import { useState, type ImgHTMLAttributes } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
@@ -179,9 +179,13 @@ function AnswerHead({
   isSelectedForSourcesPanel?: boolean;
 }) {
   const { t } = useI18n();
+  // An answer written in this session keeps weaving its five rounds after it
+  // finishes instead of stopping mid-motion; a turn loaded from history
+  // (mounted with working=false) stays static.
+  const [live] = useState(working);
   return (
     <div className="mb-2 flex flex-wrap items-center gap-2">
-      <WeaveLogo className="h-6 w-6 flex-none" animation={working ? 'loop' : undefined} />
+      <WeaveLogo className="h-6 w-6 flex-none" animation={working ? 'loop' : live ? 'finite' : undefined} />
       <span className="text-[13px] font-semibold">{assistantName}</span>
       {sourceCount > 0 ? (
         <span className="rounded-full bg-[var(--ok-bg)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ok)]">

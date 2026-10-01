@@ -29,6 +29,9 @@ never implemented in this repo) to be able to recompute the same MAC.
 `payload` (every key always present, see `mint_delegation_token`):
 
     {"v": 1, "sub": <user id, str>, "username": <str>, "team": <str | null>,
+     "teams": <list[str]>, "subject": <Weave-Ingest user id, str | null --
+     lets Weave-Tools re-check `collections` against the registry's person
+     grants on every call, so a revoked grant stops working at once>,
      "collections": <list[str], may include the "__none__" sentinel --
      app/services/chat.py's NO_COLLECTION_SENTINEL, forwarded unchanged>,
      "bot": <bot id, str | null>, "iat": <int, unix seconds>,
@@ -96,14 +99,17 @@ def _canonical_json_bytes(payload: dict) -> bytes:
     return json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')
 
 
-def mint_delegation_token(user: ChatUser, collections: list[str], bot_id: str | None) -> str:
+def mint_delegation_token(
+    user: ChatUser, collections: list[str], bot_id: str | None, *, ttl_seconds: int | None = None
+) -> str:
     """Issue one delegation token embedding exactly `collections` (already
     resolved by the caller -- app/services/chat.py's `_run_n8n_turn` calls
     the SAME `resolve_collection_scope` every retrieval-backed bot uses,
     BEFORE calling this function; this function itself makes no access-
     control decision, it only signs the one it is handed) as this token's
     read-scope, valid for `settings.delegation_token_ttl_seconds` (default
-    300) from the moment of minting.
+    300) from the moment of minting, or for `ttl_seconds` when the caller
+    knows a shorter useful lifetime (see `n8n_client.run_flow`).
 
     `user.id`/`user.username` both fall back to `''` when unset (an
     anonymous/system-initiated chat, see ChatUser's own docstring in
@@ -137,10 +143,11 @@ def mint_delegation_token(user: ChatUser, collections: list[str], bot_id: str | 
         'username': user.username or user.id or '',
         'team': user.team,
         'teams': user.effective_teams,
+        'subject': user.subject,
         'collections': collections,
         'bot': bot_id,
         'iat': issued_at,
-        'exp': issued_at + settings.delegation_token_ttl_seconds,
+        'exp': issued_at + (ttl_seconds if ttl_seconds is not None else settings.delegation_token_ttl_seconds),
     }
 
     payload_b64 = _b64url_encode(_canonical_json_bytes(payload))

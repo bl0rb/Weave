@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Lock, Menu } from 'lucide-react';
+import { Menu } from 'lucide-react';
 import { Rail } from '@/components/chat/rail';
 import { MessageList } from '@/components/chat/message-list';
 import { Composer } from '@/components/chat/composer';
@@ -523,14 +523,6 @@ export function ChatApp() {
               {selectedBot?.name ?? t('chat.header.noBotSelected')} · {currentScopeLabel}
             </p>
           </div>
-
-          <span
-            className="hidden flex-none items-center gap-1.5 rounded-[var(--radius-pill)] bg-[var(--accent-soft)] px-3 py-1.5 text-xs font-medium text-[var(--accent)] sm:inline-flex"
-            title={t('chat.header.releasedSourcesOnlyTitle')}
-          >
-            <Lock className="h-3.5 w-3.5" aria-hidden="true" />
-            {t('chat.header.releasedSourcesOnly')}
-          </span>
         </header>
 
         {/* Bots failing to load is a hard blocker (the composer has

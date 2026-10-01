@@ -19,6 +19,11 @@ from app.schemas.health import HealthResponse
 
 app = FastAPI(title=settings.app_name)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
+if settings.oidc_issuer and settings.oidc_client_id and settings.ingest_login_url and settings.ingest_api_url:
+    # app/api/auth.py's oidc_enabled(): the Ingest handoff wins (ADR 0006).
+    logging.getLogger(__name__).warning(
+        'OIDC_ISSUER/OIDC_CLIENT_ID are ignored: the Weave-Ingest login handoff is configured'
+    )
 
 
 # Unversioned and unauthenticated on purpose -- a liveness/readiness probe

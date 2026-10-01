@@ -216,12 +216,16 @@ def _start_refresh_run(db, source: ImportSource, template: ImportRun | None = No
         return None
 
     options = dict(last_successful.options) if isinstance(last_successful.options, dict) else {}
+    source_owner = db.get(User, source.owner_id)
+    if source_owner is not None and not source_owner.is_active:
+        # Deactivation blocks the person at once (ADR 0008); reactivating
+        # resumes the refresh without touching any grant.
+        raise ValueError('import source owner is deactivated; refusing the refresh')
     collection_id = options.get('collection_id')
     if collection_id:
         collection = db.get(Collection, str(collection_id))
         if collection is None:
             raise ValueError('assigned collection no longer exists; refusing an unassigned refresh')
-        source_owner = db.get(User, source.owner_id)
         if source_owner is None:
             raise ValueError('import source owner no longer exists; refusing collection assignment')
         if not role_at_least(collection_role(db, collection, source_owner), CollectionRole.MEMBER):
@@ -280,7 +284,12 @@ def _dispatch_due_refreshes() -> None:
     db = SessionLocal()
     try:
         now = datetime.now(timezone.utc)
-        sources = db.scalars(select(ImportSource).where(ImportSource.refresh_enabled.is_(True))).all()
+        # A deactivated owner's sources are skipped, not failed on every tick.
+        sources = db.scalars(
+            select(ImportSource)
+            .join(User, User.id == ImportSource.owner_id)
+            .where(ImportSource.refresh_enabled.is_(True), User.is_active.is_(True))
+        ).all()
         for source in sources:
             if not _is_due(source, now):
                 continue
