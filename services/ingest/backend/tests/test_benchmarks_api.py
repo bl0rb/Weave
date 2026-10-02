@@ -25,7 +25,7 @@ from app.models.models import (
 )
 from app.services import security
 from app.services.security import rate_limiter
-from conftest import TestingSessionLocal, create_test_user, login_as
+from conftest import TestingSessionLocal, create_test_user, login_as, stored_upload
 
 
 @pytest.fixture(autouse=True)
@@ -39,8 +39,7 @@ def _isolated_storage(monkeypatch, tmp_path):
     from app.api import routes
     from app.core.config import settings
 
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
     # Benchmark jobs under test never reach a real worker; process_job.delay
     # is a no-op, so jobs stay PENDING unless a test flips status itself.
     # routes.process_job and benchmarks.process_job are the SAME imported
@@ -418,6 +417,13 @@ def test_benchmark_create_succeeds_with_two_vl_variants():
     assert [v['kind'] for v in body['variants']] == ['vl', 'vl']
     assert [v['label'] for v in body['variants']] == ['Connection One', 'Connection Two']
     assert all(v['status'] == 'PENDING' for v in body['variants'])
+    # Both variants process the same bytes: stored once, referenced twice.
+    db = TestingSessionLocal()
+    try:
+        object_ids = {db.get(Job, v['job_id']).upload_object_id for v in body['variants']}
+    finally:
+        db.close()
+    assert len(object_ids) == 1 and None not in object_ids
 
 
 def test_benchmark_create_mixed_vl_and_ocr_variant_order():
@@ -913,7 +919,7 @@ def _make_pending_job_with_settings(job_id: str, upload_path, settings_extra: di
                 id=job_id,
                 original_filename=f'{job_id}.pdf',
                 upload_path=str(upload_path),
-                upload_content=b'%PDF-1.4 fake upload content',
+                upload_object_id=stored_upload(b'%PDF-1.4 fake upload content'),
                 upload_mime_type='application/pdf',
                 upload_size_bytes=len(b'%PDF-1.4 fake upload content'),
                 status=JobStatus.PENDING,
@@ -930,12 +936,9 @@ def test_process_job_fails_gracefully_when_vl_connection_missing(monkeypatch, tm
     from app.workers import tasks
 
     monkeypatch.setattr(tasks, 'SessionLocal', TestingSessionLocal)
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
 
-    upload_path = settings.uploads_dir / 'benchmarks' / 'run-x' / 'job-vl-missing.pdf'
-    upload_path.parent.mkdir(parents=True, exist_ok=True)
-    upload_path.write_bytes(b'%PDF-1.4 fake upload content')
+    upload_path = 'benchmarks/run-x/job-vl-missing/job-vl-missing.pdf'
 
     _make_pending_job_with_settings('job-vl-missing', upload_path, {
         'storage_folder': 'benchmarks/run-x/job-vl-missing',
@@ -959,14 +962,11 @@ def test_process_job_fails_gracefully_when_vl_connection_disabled(monkeypatch, t
     from app.workers import tasks
 
     monkeypatch.setattr(tasks, 'SessionLocal', TestingSessionLocal)
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
 
     connection = _make_vl_connection(enabled=False)
 
-    upload_path = settings.uploads_dir / 'benchmarks' / 'run-y' / 'job-vl-disabled.pdf'
-    upload_path.parent.mkdir(parents=True, exist_ok=True)
-    upload_path.write_bytes(b'%PDF-1.4 fake upload content')
+    upload_path = 'benchmarks/run-y/job-vl-disabled/job-vl-disabled.pdf'
 
     _make_pending_job_with_settings('job-vl-disabled', upload_path, {
         'storage_folder': 'benchmarks/run-y/job-vl-disabled',

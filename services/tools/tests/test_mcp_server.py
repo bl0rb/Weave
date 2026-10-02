@@ -18,6 +18,7 @@ import pytest
 from httpx2 import ASGITransport, AsyncClient
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+from mcp.server.mcpserver import MCPServer
 
 from app.mcp_server import list_collections, mcp_app, search
 from tests.conftest import fake_response, make_delegation_token
@@ -151,3 +152,41 @@ def test_mcp_server_token_never_appears_in_a_scope_error_message():
         with pytest.raises(ValueError) as excinfo:
             asyncio.run(search(query='x', ctx=_ctx(marker)))
     assert marker not in str(excinfo.value)
+
+
+def test_any_replica_answers_a_call_from_a_session_it_never_saw():
+    """stateless_http: a client that initialized against one replica and is
+    routed to another by the load balancer still gets its answer -- no
+    in-memory session lookup, no 404 "Session not found"."""
+    from app.mcp_server import mcp_server
+
+    manager = mcp_server.session_manager
+    assert manager.stateless is True
+    assert manager.json_response is True
+
+    # The production app's session manager can only run once per process
+    # (the end-to-end test above does); a fresh server with the same flags
+    # stands in for "another replica".
+    replica = MCPServer(name='another replica')
+    replica.add_tool(list_collections)
+    replica.add_tool(search)
+    app = replica.streamable_http_app(stateless_http=True, json_response=True)
+    token = make_delegation_token(team='kundenservice', collections=['handbuch'])
+
+    async def _run():
+        async with app.router.lifespan_context(app):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url='http://localhost:8000') as client:
+                return await client.post(
+                    '/mcp',
+                    json={'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'},
+                    headers={
+                        'authorization': f'Bearer {token}',
+                        'accept': 'application/json, text/event-stream',
+                        'mcp-protocol-version': '2025-06-18',
+                        'mcp-session-id': 'session-from-another-replica',
+                    },
+                )
+
+    response = asyncio.run(_run())
+    assert response.status_code == 200, response.text
+    assert {tool['name'] for tool in response.json()['result']['tools']} == {'list_collections', 'search'}

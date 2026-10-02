@@ -33,7 +33,7 @@ from app.workers import import_tasks
 from app.workers import tasks as worker_tasks
 from app.workers.celery_app import celery_app
 from app.workers.import_tasks import import_confluence
-from conftest import TestingSessionLocal, create_test_user
+from conftest import TestingSessionLocal, create_test_user, stored_bytes, stored_upload
 
 BASE_URL = 'https://acme.example.com'
 
@@ -316,7 +316,7 @@ def test_happy_path_page_tree_imports_all_pages(sent, client_holder) -> None:
         assert job.owner_id == owner.id
         assert job.upload_path.endswith(f'/{job.id}.html')
         assert job.upload_mime_type == 'text/html'
-        assert job.upload_content  # original export_view HTML retained
+        assert stored_bytes(job.upload_object_id)  # original export_view HTML retained
         assert job.result_markdown.startswith('---\n')
         settings_info = job.processing_info['settings']
         assert settings_info['mode'] == 'import'
@@ -687,8 +687,8 @@ def test_ocr_attachment_spawns_child_job(sent, client_holder) -> None:
     child = children[0]
     assert child.status == JobStatus.PENDING
     assert child.original_filename == 'report.pdf'
-    assert child.upload_path.endswith(f'/{child.id}.pdf')  # real extension: _resolve_upload_path needs the suffix
-    assert child.upload_content == PDF_BYTES
+    assert child.upload_path.endswith(f'/{child.id}.pdf')  # real extension: the worker needs the suffix
+    assert stored_bytes(child.upload_object_id) == PDF_BYTES
     assert child.upload_mime_type == 'application/pdf'
     parent_id = child.processing_info['settings']['import']['parent_job_id']
     parent = next(j for j in jobs if j.id == parent_id)
@@ -1188,7 +1188,7 @@ def test_worker_restart_redispatches_stranded_pending_children_of_terminal_run(m
                     id=job_id,
                     original_filename=f'{job_id}.pdf',
                     upload_path=str(tmp_path / f'{job_id}.pdf'),
-                    upload_content=b'x',
+                    upload_object_id=stored_upload(b'x'),
                     upload_mime_type='application/pdf',
                     upload_size_bytes=1,
                     status=JobStatus.PENDING,

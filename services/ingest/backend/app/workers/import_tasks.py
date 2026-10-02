@@ -47,7 +47,7 @@ from app.models.models import (
     Tag,
     User,
 )
-from app.services import security
+from app.services import object_store, security
 from app.services.collection_access import collection_role, role_at_least
 from app.services.confluence import AttachmentMeta, ConfluenceError, Page, PageSource, create_client
 from app.services.confluence_markdown import add_frontmatter_keys, convert_page, rewrite_cross_page_links, sanitize_filename
@@ -427,7 +427,7 @@ def _detect_missing_pages(db, run: ImportRun, state: _RunState) -> None:
         page_ids.update((previous.state or {}).get('visited', {}))
     previous_ids = [previous.id for previous in previous_runs]
     for job in db.scalars(select(Job).where(Job.import_run_id.in_(previous_ids)).options(
-        defer(Job.upload_content), defer(Job.result_markdown),
+        defer(Job.result_markdown),
     )).all():
         job_settings = (job.processing_info or {}).get('settings') or {}
         if job_settings.get('mode') == 'import':
@@ -455,7 +455,6 @@ def _finalize_run(db, run: ImportRun, state: _RunState, claimed_seq: int) -> Non
             select(Job)
             .where(Job.import_run_id == run.id)
             .where(Job.result_markdown.is_not(None))
-            .options(defer(Job.upload_content))
         ).all()
         for job in page_jobs:
             info = job.processing_info if isinstance(job.processing_info, dict) else {}
@@ -634,13 +633,14 @@ def _store_attachments(
                 f'attachment stored as {filename!r}: another attachment on this page already sanitized to '
                 f'{sanitized_name!r}, so inline references to that name show the other file',
             )
+        stored = object_store.put_bytes(db, data, content_type=content_type)
         db.add(
             JobArtifact(
                 job_id=job.id,
                 kind=kind,
                 filename=filename,
                 content_type=content_type,
-                content=data,
+                object_id=stored.id,
                 size_bytes=len(data),
                 source_url=attachment.download_url[:2048],
                 sha256=hashlib.sha256(data).hexdigest(),
@@ -656,11 +656,10 @@ def _store_attachments(
             child = Job(
                 id=child_id,
                 original_filename=filename,
-                # Synthetic relative path: _resolve_upload_path only needs the
-                # suffix (it materializes upload_content next to
-                # storage_folder in the worker's uploads dir).
+                # Logical path: the worker only needs its suffix. The bytes
+                # are the artifact's own stored object.
                 upload_path=f'{child_storage_folder}/{child_id}{extension}',
-                upload_content=data,
+                upload_object_id=stored.id,
                 upload_mime_type=content_type,
                 upload_size_bytes=len(data),
                 content_sha256=hashlib.sha256(data).hexdigest(),
@@ -731,7 +730,7 @@ def _seed_page_states_if_empty(db, run: ImportRun, claimed_seq: int) -> None:
         select(Job)
         .where(Job.import_run_id.in_(source_run_ids))
         .order_by(Job.created_at.asc())
-        .options(defer(Job.upload_content), defer(Job.result_markdown))
+        .options(defer(Job.result_markdown))
     ).all()
 
     latest_by_page: dict[str, Job] = {}
@@ -956,10 +955,10 @@ def _import_one_page(
     job = Job(
         id=job_id,
         original_filename=f'{_slug(page.title)}.md',
-        # .html: upload_content is the original export_view HTML (kept for a
+        # .html: the stored original is the export_view HTML (kept for a
         # future re-convert; restart endpoints 409 on mode='import').
         upload_path=f'{storage_folder}/{job_id}.html',
-        upload_content=html_bytes,
+        upload_object_id=object_store.put_bytes(db, html_bytes, content_type='text/html').id,
         upload_mime_type='text/html',
         upload_size_bytes=len(html_bytes),
         content_sha256=hashlib.sha256(html_bytes).hexdigest(),

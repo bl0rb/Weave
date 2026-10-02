@@ -30,8 +30,7 @@ def _isolated_storage(monkeypatch, tmp_path):
     from app.api import routes
     from app.core.config import settings
 
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
     # Uploads under test never reach a real worker; process_job.delay is a
     # no-op so jobs stay PENDING unless a test flips status itself.
     monkeypatch.setattr(routes.process_job, 'delay', lambda *args, **kwargs: None)

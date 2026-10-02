@@ -16,6 +16,7 @@ from app.models.models import (
     JobArtifact,
     JobMarkdownVersion,
 )
+from app.services import object_store
 from app.workers import publication_tasks
 from tests.conftest import create_test_user, login_as
 from tests.test_portal import _collection, _configure, _db, _import_page_state, _import_run, _import_source, _job
@@ -80,7 +81,8 @@ def test_released_document_becomes_a_new_version_carrying_its_source(monkeypatch
         }
         stored.result_markdown = stored.result_markdown + '\n![Plan](artifacts/plan.png)\n'
         db.add(JobArtifact(
-            job_id=job.id, kind='image', filename='plan.png', content_type='image/png', content=b'png',
+            job_id=job.id, kind='image', filename='plan.png', content_type='image/png',
+            object_id=object_store.put_bytes(db, b'png', content_type='image/png').id,
             size_bytes=3, sha256=hashlib.sha256(b'png').hexdigest(),
         ))
         db.commit()

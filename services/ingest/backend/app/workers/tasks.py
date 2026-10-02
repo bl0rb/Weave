@@ -1,11 +1,15 @@
 from pathlib import Path
 import logging
+import os
+import shutil
+import tempfile
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 
 from celery.signals import worker_process_init, worker_ready
 from redis import Redis
-from sqlalchemy import select, update
+from sqlalchemy import and_, case, func, or_, select, update
 
 from app.core.config import settings
 from app.database.session import SessionLocal, engine
@@ -20,8 +24,7 @@ from app.services.paddle_service import (
 # from-import: matches import_tasks.py's late-binding convention for
 # security.decrypt_import_credential, keeping the helper monkeypatchable in
 # tests.
-from app.services import security
-from app.services.storage import build_result_path, ensure_storage_dirs
+from app.services import object_store, security
 from app.workers import webhook_tasks
 from app.workers.celery_app import celery_app
 
@@ -46,15 +49,12 @@ def _reset_db_pool_after_fork(sender=None, **kwargs) -> None:  # pragma: no cove
 
 
 _RECOVERY_LOCK_KEY = 'worker:recovery:startup-lock'
-_STALE_RUNNING_RETRY_AFTER = timedelta(minutes=2)
-# SH-02: process_job never touches Job.updated_at while running (only at
-# claim time and on terminal status -- no heartbeat), so a genuinely running
-# job's updated_at can be as old as the hard time limit. Startup recovery
-# (unlike process_job's own redelivery reclaim above, which only runs after
-# the broker's visibility_timeout already guarantees the original attempt is
-# dead) has no such guarantee, so it must gate on the hard time limit itself
-# plus a margin for clock skew/DB commit latency, not a short fixed window.
-_JOB_STALE_RUNNING_MARGIN = timedelta(minutes=5)
+# Lost-worker recoveries after which a job on a heavy profile is stopped for
+# a manual retry with a lower profile instead of being retried on the same
+# profile again (the usual cause is the OOM killer). One recovery alone is
+# no evidence: a routine scale-down or rolling update also loses the running
+# task once.
+_PROFILE_DOWNGRADE_AFTER_RECOVERIES = 2
 _LOWER_PROFILE_RETRY_MAP = {
     'ppocrv6_medium_structurev3': 'ppocrv6_small_structurev3',
     'ppocrv6_small_structurev3': 'ppocrv6_tiny_structurev3',
@@ -63,40 +63,127 @@ _LOWER_PROFILE_RETRY_MAP = {
 }
 
 
-def _resolve_upload_path(job: Job, storage_folder: str | None, job_id: str) -> Path:
-    uploads_root = settings.uploads_dir.resolve()
-    configured = Path(job.upload_path).resolve()
-    suffix = configured.suffix or Path(job.original_filename).suffix or '.pdf'
-
-    if configured.is_relative_to(uploads_root):
-        target = configured
-    else:
-        target = (uploads_root / (storage_folder or 'inbox') / f'{job_id}{suffix}').resolve()
-
-    if target.exists():
-        return target
-
-    if job.upload_content is None:
-        raise FileNotFoundError(f'Input file not found: {target}')
-
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(job.upload_content)
-    return target
+def _job_stale_cutoff(now: datetime) -> datetime:
+    """A RUNNING job last seen before this has lost its worker."""
+    return now - timedelta(seconds=settings.job_stale_seconds)
 
 
-def _resolve_result_path(job: Job, storage_folder: str | None, job_id: str) -> Path:
-    results_root = settings.results_dir.resolve()
-    if isinstance(job.result_path, str):
-        configured = Path(job.result_path).resolve()
-        if configured.is_relative_to(results_root):
-            target = configured
-        else:
-            target = build_result_path(storage_folder or 'single', job_id)
-    else:
-        target = build_result_path(storage_folder or 'single', job_id)
+def _job_last_seen():
+    # Rows claimed before heartbeats existed fall back to updated_at.
+    return func.coalesce(Job.heartbeat_at, Job.updated_at)
 
-    target.parent.mkdir(parents=True, exist_ok=True)
-    return target
+
+def active_running_job_ids(db) -> set[str]:
+    """RUNNING jobs whose worker is still heartbeating.
+
+    The database, not `celery inspect`, is the source of truth: inspect
+    misses busy or slow workers in a large pool and returns nothing at all on
+    a broker hiccup, which made a running job look restartable.
+    """
+    cutoff = _job_stale_cutoff(datetime.now(timezone.utc))
+    return set(
+        db.scalars(
+            select(Job.id).where(Job.status == JobStatus.RUNNING).where(_job_last_seen() >= cutoff)
+        ).all()
+    )
+
+
+def _owns_claim(db, job_id: str, token: str) -> bool:
+    """Lock the job row and confirm this attempt still holds its claim.
+
+    Called right before a terminal write: an attempt whose worker was
+    presumed lost and whose job was reclaimed must neither overwrite the
+    newer attempt's result nor fire its webhooks. On PostgreSQL the row lock
+    keeps a concurrent reclaim out until the write has committed.
+    """
+    current = db.execute(
+        select(Job.claim_token).where(Job.id == job_id).with_for_update()
+    ).scalar_one_or_none()
+    return current is not None and current == token
+
+
+class _Heartbeat:
+    """Refreshes jobs.heartbeat_at while process_job runs.
+
+    Runs in a daemon thread with its own short-lived session, so the task's
+    session stays outside any transaction during the conversion. Stops by
+    itself once the claim is gone (the job was reclaimed elsewhere).
+    """
+
+    def __init__(self, job_id: str, token: str) -> None:
+        self._job_id = job_id
+        self._token = token
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name=f'job-heartbeat-{job_id}', daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=5)
+
+    def _run(self) -> None:
+        interval = max(1, int(settings.job_heartbeat_seconds))
+        while not self._stop.wait(interval):
+            db = SessionLocal()
+            try:
+                beat = db.execute(
+                    update(Job)
+                    .where(Job.id == self._job_id, Job.claim_token == self._token)
+                    # A heartbeat is not a content change: keep updated_at.
+                    .values(heartbeat_at=datetime.now(timezone.utc), updated_at=Job.updated_at)
+                )
+                db.commit()
+                if not beat.rowcount:
+                    logger.warning('Job %s was reclaimed elsewhere; stopping its heartbeat', self._job_id)
+                    return
+            except Exception:
+                db.rollback()
+                logger.warning('Heartbeat for job %s failed; retrying', self._job_id, exc_info=True)
+            finally:
+                db.close()
+
+
+# Scratch dirs under settings.worker_tmp_dir are named job-<pid>-<random>:
+# the owning process id tells _purge_orphaned_task_dirs which ones were left
+# behind by a process that died without cleaning up.
+_TASK_DIR_PREFIX = 'job-'
+
+
+def _new_task_dir() -> Path:
+    """A private scratch directory for one task run; removed when it ends."""
+    root = Path(settings.worker_tmp_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix=f'{_TASK_DIR_PREFIX}{os.getpid()}-', dir=root))
+
+
+@worker_process_init.connect
+def _purge_orphaned_task_dirs(sender=None, **kwargs) -> None:  # pragma: no cover
+    """Remove scratch dirs of task processes that died mid-task (hard time
+    limit, OOM killer) and so never ran their cleanup. A dir whose owner pid
+    no longer exists cannot be in use any more."""
+    root = Path(settings.worker_tmp_dir)
+    if not root.is_dir():
+        return
+    for entry in root.iterdir():
+        pid_text = entry.name[len(_TASK_DIR_PREFIX):].split('-', 1)[0]
+        if not entry.name.startswith(_TASK_DIR_PREFIX) or not pid_text.isdigit():
+            continue
+        try:
+            os.kill(int(pid_text), 0)
+        except ProcessLookupError:
+            shutil.rmtree(entry, ignore_errors=True)
+        except PermissionError:
+            continue  # the pid belongs to a live process of another user
+
+
+def _materialize_upload(db, job: Job, task_dir: Path) -> Path:
+    """Copy the job's stored original into the task's scratch directory."""
+    if job.upload_object_id is None:
+        raise FileNotFoundError(f'Job {job.id} has no stored upload')
+    suffix = Path(job.upload_path).suffix or Path(job.original_filename).suffix or '.pdf'
+    return object_store.copy_to_path(db, job.upload_object_id, task_dir / f'{job.id}{suffix}')
 
 
 def _normalize_execution_page_count(details: dict, upload_path: Path) -> dict:
@@ -140,19 +227,100 @@ def _release_recovery_lock(client: Redis | None, token: str | None) -> None:
         pass
 
 
-def requeue_running_jobs_after_restart() -> int:
-    """Requeue jobs that were RUNNING when the worker/container died.
+def reap_stale_running_jobs() -> int:
+    """Requeue RUNNING jobs whose worker stopped heartbeating.
 
-    This makes processing resilient across worker restarts and hard kills.
+    Runs at worker start and on every publication tick (see
+    app/workers/publication_tasks.py), so a job lost to a killed worker, a
+    scale-down or the OOM killer is picked up again within about
+    job_stale_seconds -- not only after the broker's visibility timeout or
+    the next worker restart. Clearing claim_token fences the lost attempt:
+    should its worker still be alive after all, its heartbeat and its result
+    write find the claim gone. After job_max_recoveries lost attempts in a
+    row the job is failed instead of looping forever.
     """
     db = SessionLocal()
     to_restart: list[tuple[str, str | None, str | None, str | None, str | None]] = []
+    failed_jobs: list[Job] = []
+    try:
+        # skip_locked: a concurrent reaper (startup recovery on another
+        # replica) or a terminal write holding the row just skips it.
+        stale_jobs = db.scalars(
+            select(Job)
+            .where(Job.status == JobStatus.RUNNING)
+            .where(_job_last_seen() < _job_stale_cutoff(datetime.now(timezone.utc)))
+            .order_by(Job.updated_at)
+            .limit(100)
+            .with_for_update(skip_locked=True)
+        ).all()
+        for job in stale_jobs:
+            info = job.processing_info if isinstance(job.processing_info, dict) else {}
+            # Named job_settings (not `settings`): shadowing the module-level
+            # settings would make the job_max_recoveries lookup an UnboundLocalError.
+            job_settings = info.get('settings') if isinstance(info.get('settings'), dict) else {}
+            execution = info.get('execution') if isinstance(info.get('execution'), dict) else {}
+            recoveries = job.recovery_count + 1
+            job.claim_token = None
+
+            if recoveries > settings.job_max_recoveries:
+                detail = f'Job was lost by its worker {recoveries} times in a row and has been stopped.'
+                job.status = JobStatus.FAILED
+                job.error_message = detail
+                job.recovery_count = 0
+                job.processing_info = {**info, 'execution': {**execution, 'status': 'failed', 'error': detail}}
+                failed_jobs.append(job)
+                continue
+
+            profile_id = job_settings.get('profile_id') if isinstance(job_settings.get('profile_id'), str) else None
+            mode = job_settings.get('mode') if isinstance(job_settings.get('mode'), str) else None
+            email = job_settings.get('email') if isinstance(job_settings.get('email'), str) else None
+            department = job_settings.get('department') if isinstance(job_settings.get('department'), str) else None
+
+            job.recovery_count = recoveries
+            job.status = JobStatus.PENDING
+            job.error_message = None
+            job.processing_info = {
+                **info,
+                'settings': job_settings,
+                'execution': {
+                    **execution,
+                    'status': 'requeued',
+                    'detail': 'Job was running during worker restart and has been requeued.',
+                },
+            }
+            to_restart.append((job.id, profile_id, mode, email, department))
+
+        db.commit()
+        for job in failed_jobs:
+            logger.warning('Stopping job %s after %s lost attempts', job.id, settings.job_max_recoveries + 1)
+            try:
+                webhook_tasks.dispatch_job_event(db, job, 'job.failed')
+            except Exception:  # pragma: no cover - webhooks must never break recovery
+                logger.exception('webhook dispatch failed for job %s (job.failed)', job.id)
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+    for job_id, profile_id, mode, email, department in to_restart:
+        process_job.delay(job_id, profile_id, mode, email, department)
+        logger.warning('Requeued job %s after its worker stopped heartbeating', job_id)
+
+    return len(to_restart)
+
+
+def requeue_running_jobs_after_restart() -> int:
+    """Startup recovery: lost RUNNING jobs, stale import runs and stranded
+    attachment children.
+
+    This makes processing resilient across worker restarts and hard kills.
+    The lost-job part also runs periodically (reap_stale_running_jobs).
+    """
+    db = SessionLocal()
     runs_to_requeue: list[tuple[str, int]] = []
     stranded_pending_children: list[tuple[str, str | None, str | None, str | None, str | None]] = []
     stale_run_cutoff = datetime.now(timezone.utc) - timedelta(seconds=settings.import_stale_run_seconds)
-    job_stale_cutoff = datetime.now(timezone.utc) - (
-        timedelta(seconds=celery_app.conf.task_time_limit) + _JOB_STALE_RUNNING_MARGIN
-    )
     try:
         # Import runs whose worker died without redelivery (hard-limit kill /
         # lost message): stale 'running' runs are replayed with their previous
@@ -172,41 +340,6 @@ def requeue_running_jobs_after_restart() -> int:
             (run.id, run.chunk_seq if run.status == ImportRunStatus.PENDING else run.chunk_seq - 1)
             for run in stale_runs
         ]
-
-        # SH-02: only reset RUNNING jobs stale enough that they cannot still
-        # be genuinely executing (see _JOB_STALE_RUNNING_MARGIN above) --
-        # otherwise a routine rolling restart resets a job a still-live
-        # worker is mid-OCR on, and a second worker duplicates the work.
-        running_jobs = db.scalars(
-            select(Job)
-            .where(Job.status == JobStatus.RUNNING)
-            .where(Job.updated_at < job_stale_cutoff)
-        ).all()
-        for job in running_jobs:
-            info = job.processing_info if isinstance(job.processing_info, dict) else {}
-            # Named job_settings (not `settings`): shadowing the module-level
-            # settings would make the cutoff computation above an UnboundLocalError.
-            job_settings = info.get('settings') if isinstance(info.get('settings'), dict) else {}
-
-            profile_id = job_settings.get('profile_id') if isinstance(job_settings.get('profile_id'), str) else None
-            mode = job_settings.get('mode') if isinstance(job_settings.get('mode'), str) else None
-            email = job_settings.get('email') if isinstance(job_settings.get('email'), str) else None
-            department = job_settings.get('department') if isinstance(job_settings.get('department'), str) else None
-
-            execution = info.get('execution') if isinstance(info.get('execution'), dict) else {}
-            info['execution'] = {
-                **execution,
-                'status': 'requeued',
-                'detail': 'Job was running during worker restart and has been requeued.',
-            }
-
-            job.processing_info = {
-                **info,
-                'settings': job_settings,
-            }
-            job.status = JobStatus.PENDING
-            job.error_message = None
-            to_restart.append((job.id, profile_id, mode, email, department))
 
         # SH-04: PENDING attachment-OCR children of a run that already
         # finished (FINISHED/FAILED/CANCELLED) -- _finalize_run's backstop
@@ -238,8 +371,7 @@ def requeue_running_jobs_after_restart() -> int:
     finally:
         db.close()
 
-    for job_id, profile_id, mode, email, department in to_restart:
-        process_job.delay(job_id, profile_id, mode, email, department)
+    restarted_jobs = reap_stale_running_jobs()
 
     for job_id, profile_id, mode, email, department in stranded_pending_children:
         # SH-04: still PENDING, so the normal PENDING->RUNNING claim in
@@ -255,7 +387,7 @@ def requeue_running_jobs_after_restart() -> int:
         celery_app.send_task('import_confluence', args=[run_id, replay_seq])
         logger.warning('Requeued stale import run %s at chunk_seq %s', run_id, replay_seq)
 
-    return len(to_restart) + len(runs_to_requeue) + len(stranded_pending_children)
+    return restarted_jobs + len(runs_to_requeue) + len(stranded_pending_children)
 
 
 @worker_ready.connect
@@ -274,6 +406,10 @@ def _recover_jobs_on_worker_ready(sender=None, **kwargs) -> None:  # pragma: no 
         logger.exception('Failed to recover RUNNING jobs after worker restart: %s', exc)
     finally:
         _release_recovery_lock(lock_client, lock_token)
+        # The prefork master needs the database only for this recovery; give
+        # its connection back instead of holding it idle for the pod's
+        # lifetime (every pod counts against max_connections).
+        engine.dispose()
 
     # Kickstart the confluence-refresh self-re-enqueue chain (see
     # app/workers/refresh_tasks.py's module docstring for the full design).
@@ -317,53 +453,55 @@ def process_job(
     email: str | None = None,
     department: str | None = None,
 ) -> None:
-    ensure_storage_dirs()
     db = SessionLocal()
+    token: str | None = None
+    heartbeat: _Heartbeat | None = None
+    task_dir: Path | None = None
     try:
         now = datetime.now(timezone.utc)
-        # Normal claim path: only PENDING jobs should become RUNNING.
+        # Claim a PENDING job, or reclaim a RUNNING one whose worker stopped
+        # heartbeating (lost worker, redelivered message). A live job's fresh
+        # heartbeat turns every duplicate delivery into a no-op. The fresh
+        # claim_token fences any older attempt out of the result write.
+        new_token = str(uuid.uuid4())
         claimed = db.execute(
             update(Job)
             .where(Job.id == job_id)
-            .where(Job.status == JobStatus.PENDING)
+            .where(or_(
+                Job.status == JobStatus.PENDING,
+                and_(Job.status == JobStatus.RUNNING, _job_last_seen() < _job_stale_cutoff(now)),
+            ))
             .values(
                 status=JobStatus.RUNNING,
                 error_message=None,
                 updated_at=now,
+                heartbeat_at=now,
+                claim_token=new_token,
+                recovery_count=case(
+                    (Job.status == JobStatus.RUNNING, Job.recovery_count + 1),
+                    else_=Job.recovery_count,
+                ),
             )
         )
-
-        # Recovery path for acks_late redelivery: if a previous worker died,
-        # the job may still be RUNNING in DB. Only reclaim it when stale.
-        if not claimed.rowcount:
-            stale_cutoff = now - _STALE_RUNNING_RETRY_AFTER
-            claimed = db.execute(
-                update(Job)
-                .where(Job.id == job_id)
-                .where(Job.status == JobStatus.RUNNING)
-                .where(Job.updated_at < stale_cutoff)
-                .values(
-                    status=JobStatus.RUNNING,
-                    error_message=None,
-                    updated_at=now,
-                )
-            )
 
         if not claimed.rowcount:
             return
 
         db.commit()
+        token = new_token
+        heartbeat = _Heartbeat(job_id, token)
+        heartbeat.start()
         job = db.get(Job, job_id)
         if job is None:
             return
 
-        delivery_info = self.request.delivery_info if isinstance(self.request.delivery_info, dict) else {}
-        is_redelivered = bool(delivery_info.get('redelivered'))
         effective_profile_id = profile_id
 
-        # Do not auto-downgrade profile after worker-loss redelivery.
-        # Mark job failed with guidance so users can explicitly retry with a lower profile.
-        if is_redelivered and isinstance(profile_id, str):
+        # Do not auto-downgrade the profile after repeated worker loss (the
+        # usual cause is the OOM killer on a heavy profile). Mark the job
+        # failed with guidance so users can explicitly retry with a lower
+        # profile; a single lost attempt is simply retried.
+        if job.recovery_count >= _PROFILE_DOWNGRADE_AFTER_RECOVERIES and isinstance(profile_id, str):
             suggested = _LOWER_PROFILE_RETRY_MAP.get(profile_id)
             if suggested and suggested != profile_id:
                 warning_detail = (
@@ -391,6 +529,7 @@ def process_job(
                         'profile_id': profile_id,
                     },
                 }
+                job.recovery_count = 0
                 db.commit()
                 logger.warning('Stopping redelivered job %s for manual retry: %s -> %s', job_id, profile_id, suggested)
                 try:
@@ -420,6 +559,7 @@ def process_job(
                     **job.processing_info,
                     'execution': {'status': 'failed', 'error': job.error_message},
                 }
+                job.recovery_count = 0
                 db.commit()
                 try:
                     webhook_tasks.dispatch_job_event(db, job, 'job.failed')
@@ -469,10 +609,8 @@ def process_job(
         }
         db.commit()
 
-        upload_path = _resolve_upload_path(job, existing_settings.get('storage_folder') if isinstance(existing_settings.get('storage_folder'), str) else None, job_id)
-        if str(upload_path) != job.upload_path:
-            job.upload_path = str(upload_path)
-            db.commit()
+        task_dir = _new_task_dir()
+        upload_path = _materialize_upload(db, job, task_dir)
 
         # Enrich the frontmatter metadata with everything the DB already
         # knows about this job -- job identity/version/hash/lineage plus the
@@ -498,41 +636,40 @@ def process_job(
         collection_slug = existing_settings.get('collection_slug')
         collection_name = existing_settings.get('collection_name')
 
+        metadata = {
+            'mode': mode or 'single',
+            'email': email or '',
+            'department': department or '',
+            'job_id': job.id,
+            'original_filename': job.original_filename,
+            'document_version': job.document_version,
+            'content_sha256': job.content_sha256,
+            'previous_job_id': job.previous_job_id,
+            'uploaded_by': owner_username,
+            'team': team_name,
+            'tags': sorted(tag.name for tag in job.tags),
+            'collection_slug': collection_slug if isinstance(collection_slug, str) else None,
+            'collection_name': collection_name if isinstance(collection_name, str) else None,
+        }
+        # End the read transaction the lookups above opened: the conversion
+        # can run for many minutes and must not hold a connection "idle in
+        # transaction" (and its table locks, which would block migrations).
+        db.commit()
+
         markdown, details = convert_to_markdown_with_details(
             str(upload_path),
             profile_id=effective_profile_id,
             vl_override=vl_override,
-            metadata={
-                'mode': mode or 'single',
-                'email': email or '',
-                'department': department or '',
-                'job_id': job.id,
-                'original_filename': job.original_filename,
-                'document_version': job.document_version,
-                'content_sha256': job.content_sha256,
-                'previous_job_id': job.previous_job_id,
-                'uploaded_by': owner_username,
-                'team': team_name,
-                'tags': sorted(tag.name for tag in job.tags),
-                'collection_slug': collection_slug if isinstance(collection_slug, str) else None,
-                'collection_name': collection_name if isinstance(collection_name, str) else None,
-            },
+            metadata=metadata,
         )
         details = _normalize_execution_page_count(details, upload_path)
-        info = job.processing_info if isinstance(job.processing_info, dict) else {}
-        settings = info.get('settings') if isinstance(info.get('settings'), dict) else {}
-        storage_folder = settings.get('storage_folder') if isinstance(settings.get('storage_folder'), str) else None
-        result_path = _resolve_result_path(job, storage_folder, job_id)
-        # On the crash-recovery/requeue path the object may already exist from a
-        # prior attempt. Mountpoint-for-S3 has no rename/append and does not
-        # reliably support overwrite-in-place, so delete-then-create is the
-        # robust pattern regardless of whether the allow-overwrite mount flag is set.
-        result_path.unlink(missing_ok=True)
-        result_path.write_text(markdown, encoding='utf-8')
+        if not _owns_claim(db, job_id, token):
+            db.rollback()
+            logger.warning('Discarding result of job %s: another attempt has taken it over', job_id)
+            return
 
         finished_now = datetime.now(timezone.utc)
         job.status = JobStatus.FINISHED
-        job.result_path = str(result_path)
         job.result_markdown = markdown
         existing = job.processing_info if isinstance(job.processing_info, dict) else {}
         job.processing_info = {
@@ -546,6 +683,7 @@ def process_job(
             },
         }
         job.error_message = None
+        job.recovery_count = 0
         db.commit()
         try:
             webhook_tasks.dispatch_job_event(db, job, 'job.finished')
@@ -560,10 +698,14 @@ def process_job(
         except Exception:  # pragma: no cover - webhooks must never break job completion
             logger.exception('webhook dispatch failed for job %s (document.processed)', job_id)
     except Exception as exc:  # pragma: no cover
-        job = db.get(Job, job_id)
+        db.rollback()
+        # Only the attempt that still holds the claim may fail the job; a
+        # failure before the claim, or after a takeover, leaves it alone.
+        job = db.get(Job, job_id) if token is not None and _owns_claim(db, job_id, token) else None
         if job is not None:
             failed_now = datetime.now(timezone.utc)
             job.status = JobStatus.FAILED
+            job.recovery_count = 0
             job.error_message = str(exc)
             existing = job.processing_info if isinstance(job.processing_info, dict) else {}
             job.processing_info = {
@@ -582,6 +724,10 @@ def process_job(
             except Exception:  # pragma: no cover - webhooks must never break job completion
                 logger.exception('webhook dispatch failed for job %s (job.failed)', job_id)
     finally:
+        if heartbeat is not None:
+            heartbeat.stop()
+        if task_dir is not None:
+            shutil.rmtree(task_dir, ignore_errors=True)
         db.close()
 
 

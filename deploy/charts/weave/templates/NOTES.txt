@@ -84,8 +84,29 @@ Weave {{ .Chart.AppVersion }} -- Release {{ .Release.Name }} im Namespace {{ $ns
 5. Was dieses Chart NICHT tut
    Es rendert keine SecretStore-, ExternalSecret- oder
    NetworkPolicy-Objekte, kennt keine StorageClass und keinen Hostnamen und
-   installiert keinen Operator -- weder CloudNativePG noch den
+   installiert keinen Operator -- weder CloudNativePG noch KEDA noch den
    Prometheus-Operator{{ if eq .Values.postgresql.mode "cnpg" }}. postgresql.mode=cnpg setzt voraus, dass der
    CloudNativePG-Operator schon im Cluster ist; sonst bleibt das
    Cluster-Objekt {{ include "weave.cnpgClusterName" . }} einfach liegen{{ end }}.
    Das ist Sache des Wrapper-Charts, das dieses hier als Dependency zieht.
+
+6. Daten und Skalierung
+   Originale, Ergebnisse und Bilder liegen ausschliesslich in PostgreSQL;
+   es gibt kein gemeinsames Volume zwischen Backend und Worker (die
+   frueheren Werte persistence.* entfallen -- diese Chart-Version ist fuer
+   neue Installationen). Jeder Pod hat nur sein eigenes fluechtiges
+   /scratch.
+
+   Worker-Pools: ingest-worker (OCR, Queue weave.ingest.ocr) und
+   ingest-worker-io (alles andere, weave.ingest.default).
+{{- if and .Values.autoscaling.ingestWorker.enabled (eq (.Values.autoscaling.ingestWorker.engine | default "hpa") "keda") }}
+   Der OCR-Pool skaliert per KEDA nach wartenden und laufenden Auftraegen.
+{{- end }}
+
+   Verbindungsbudget: alle Dienste zusammen sind bei maximaler
+   Replikenzahl auf postgresql.maxConnections={{ .Values.postgresql.maxConnections }}
+   ausgelegt; das Rendern bricht ab, wenn die Summe darueber liegt.
+{{- if eq .Values.postgresql.mode "external" }}
+   postgresql.mode=external: der Server muss diesen Wert auch wirklich
+   zulassen (SHOW max_connections;).
+{{- end }}

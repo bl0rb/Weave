@@ -1,16 +1,14 @@
-import hashlib
 import logging
 import re
 import uuid
 from datetime import date, datetime, time, timezone
 import io
 from pathlib import Path
-import shutil
 from urllib.parse import quote
 import zipfile
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 from redis import Redis
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.orm import Session, aliased, defer, selectinload
@@ -103,10 +101,11 @@ from app.services.paddle_service import (
 )
 from app.services.markdown_edit import record_markdown_version
 from app.services.security import DUMMY_PASSWORD_HASH, enforce_rate_limit, hash_password, verify_password
-from app.services.storage import build_result_path, save_upload
+from app.services import object_store
+from app.services.storage import inspect_upload
 from app.workers import publication_tasks
 from app.workers.celery_app import celery_app
-from app.workers.tasks import process_job
+from app.workers.tasks import active_running_job_ids, process_job
 
 logger = logging.getLogger(__name__)
 
@@ -116,15 +115,10 @@ knowledge_router = APIRouter(prefix='/api/v1')
 UPLOAD_MODE_VALUES = {'single', 'collection'}
 _JOB_LIST_PAGE_LIMIT_MAX = 500
 
-# Job.upload_content and Job.result_markdown are blob-sized columns that most
-# listing/administrative queries never read. Deferring them keeps those
-# queries cheap; call sites that actually need one of the two pass a
-# narrower options tuple instead.
-_JOB_BLOB_DEFER_OPTIONS = (defer(Job.upload_content), defer(Job.result_markdown))
-_JOB_DEFER_UPLOAD_CONTENT_ONLY = (defer(Job.upload_content),)
-# JobArtifact.content is BYTEA-sized; every listing query must defer it --
-# only the single-artifact content endpoint may load the blob.
-_ARTIFACT_BLOB_DEFER_OPTIONS = (defer(JobArtifact.content),)
+# Job.result_markdown can be large and most listing/administrative queries
+# never read it. Deferring it keeps those queries cheap. (Original bytes are
+# not on the row at all: see app/services/object_store.py.)
+_JOB_BLOB_DEFER_OPTIONS = (defer(Job.result_markdown),)
 # Artifact content types allowed to render inline in the browser; everything
 # else (notably SVG, which is never stored as kind='image' anyway) is served
 # as an attachment download.
@@ -137,26 +131,14 @@ _LOWER_PROFILE_RETRY_MAP = {
 }
 
 
-def _active_process_job_ids() -> set[str]:
-    try:
-        inspect = celery_app.control.inspect(timeout=5.0)
-        active = inspect.active() or {}
-    except Exception:
-        return set()
-
-    job_ids: set[str] = set()
-    for tasks in active.values():
-        for task in tasks:
-            if not isinstance(task, dict) or task.get('name') != 'process_job':
-                continue
-            args = task.get('args')
-            if isinstance(args, (list, tuple)) and args and isinstance(args[0], str):
-                job_ids.add(args[0])
-    return job_ids
+def _active_process_job_ids(db: Session) -> set[str]:
+    """RUNNING jobs whose worker is still heartbeating (see
+    app/workers/tasks.py's active_running_job_ids)."""
+    return active_running_job_ids(db)
 
 
-def _count_active_process_jobs() -> int:
-    return len(_active_process_job_ids())
+def _count_active_process_jobs(db: Session) -> int:
+    return len(_active_process_job_ids(db))
 
 
 def _parse_tags(raw_tags: str) -> list[str]:
@@ -657,26 +639,6 @@ def _content_disposition(disposition: str, filename: str) -> str:
     return f'{disposition}; filename="{fallback}"; filename*=UTF-8\'\'{quote(filename, safe="")}'
 
 
-def _resolve_markdown_path(job: Job) -> Path:
-    info = dict(job.processing_info) if isinstance(job.processing_info, dict) else {}
-    editor = dict(info.get('editor')) if isinstance(info.get('editor'), dict) else {}
-    latest = editor.get('latest_result_path') if isinstance(editor, dict) else None
-    if isinstance(latest, str):
-        path = Path(latest).resolve()
-        if path.exists():
-            return path
-
-    edited_dir = (settings.results_dir / 'edited').resolve()
-    if edited_dir.exists():
-        candidates = sorted(edited_dir.glob(f'{job.id}.v*.md'))
-        if candidates:
-            return candidates[-1].resolve()
-
-    if not job.result_path:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Result file not found')
-    return Path(job.result_path).resolve()
-
-
 def _base_processing_info(
     mode: str,
     email: str,
@@ -729,24 +691,9 @@ def _storage_folder(
     return '/'.join(parts)
 
 
-def _cleanup_empty_parents(path: Path, stop_dir: Path) -> None:
-    if not path.is_relative_to(stop_dir):
-        return
-    current = path.parent
-    while current != stop_dir and current.exists():
-        try:
-            current.rmdir()
-        except OSError:
-            break
-        current = current.parent
-
-
 def _synthetic_markdown_path(job: Job) -> str:
-    """Relative path standing in for the on-disk layout `build_result_path`
-    used to produce (`{folder}/{job_id}/{job_id}.md`), now derived purely
-    from the job row since there is no shared volume to read a real file
-    from.
-    """
+    """Relative path of a job's markdown in the browser tree
+    (`{folder}/{job_id}/{job_id}.md`), derived purely from the job row."""
     return f'{_job_folder_path(job)}/{job.id}/{job.id}.md'
 
 
@@ -780,54 +727,10 @@ def _job_folder_path(job: Job) -> str:
     return '/'.join(parts[:-1])
 
 
-def _delete_job_artifacts(job: Job) -> None:
-    for candidate in [job.upload_path, job.result_path]:
-        if candidate:
-            path = Path(candidate).resolve()
-            path.unlink(missing_ok=True)
-            _cleanup_empty_parents(
-                path,
-                settings.uploads_dir.resolve() if path.is_relative_to(settings.uploads_dir.resolve()) else settings.results_dir.resolve(),
-            )
-
-    info = job.processing_info if isinstance(job.processing_info, dict) else {}
-    editor = info.get('editor') if isinstance(info.get('editor'), dict) else {}
-    versions = editor.get('versions') if isinstance(editor.get('versions'), list) else []
-    for version in versions:
-        if isinstance(version, dict) and isinstance(version.get('path'), str):
-            version_path = Path(version['path']).resolve()
-            version_path.unlink(missing_ok=True)
-            _cleanup_empty_parents(
-                version_path,
-                settings.results_dir.resolve(),
-            )
-
-
 def _delete_job_outputs(job: Job) -> None:
-    """Delete generated outputs while keeping original uploads for reprocessing."""
-    if job.result_path:
-        result_file = Path(job.result_path).resolve()
-        result_file.unlink(missing_ok=True)
-        _cleanup_empty_parents(result_file, settings.results_dir.resolve())
-
+    """Clear generated outputs while keeping the original upload for reprocessing."""
     info = job.processing_info if isinstance(job.processing_info, dict) else {}
-    editor = info.get('editor') if isinstance(info.get('editor'), dict) else {}
-
-    latest_path = editor.get('latest_result_path') if isinstance(editor.get('latest_result_path'), str) else None
-    if latest_path:
-        latest_file = Path(latest_path).resolve()
-        latest_file.unlink(missing_ok=True)
-        _cleanup_empty_parents(latest_file, settings.results_dir.resolve())
-
-    versions = editor.get('versions') if isinstance(editor.get('versions'), list) else []
-    for version in versions:
-        if isinstance(version, dict) and isinstance(version.get('path'), str):
-            version_file = Path(version['path']).resolve()
-            version_file.unlink(missing_ok=True)
-            _cleanup_empty_parents(version_file, settings.results_dir.resolve())
-
-    # Clear output-related fields in DB, keep settings/tags/upload for reprocessing.
-    next_info = {**info} if isinstance(info, dict) else {}
+    next_info = {**info}
     if isinstance(next_info.get('editor'), dict):
         next_info.pop('editor', None)
     job.processing_info = next_info
@@ -881,6 +784,22 @@ def _duplicate_upload_response(predecessor: Job) -> JSONResponse:
             'existing_version': predecessor.document_version,
         },
     )
+
+
+def _lock_document_chain(db: Session, filename: str, collection_id: str | None) -> None:
+    """Serialize uploads of the same document name in the same place.
+
+    Without it, two concurrent uploads (e.g. on two API replicas) both read
+    the same latest version, both become version n+1 of the same
+    predecessor, and the duplicate-content check misses the second one.
+    Transaction-scoped: released when the caller commits or rolls back.
+    Keyed coarser than the visibility rule (no owner), which only means
+    unrelated same-named uploads wait a moment for each other.
+    """
+    if db.bind.dialect.name != 'postgresql':
+        return
+    key = f'job-chain:{collection_id or "-"}:{filename}'
+    db.execute(text('SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))'), {'key': key})
 
 
 def _find_predecessor_job(db: Session, user: User, filename: str, collection_id: str | None = None) -> Job | None:
@@ -964,16 +883,20 @@ def create_job_from_upload(
     extra_settings: dict | None = None,
     password_hash: str | None = None,
     benchmark_run_id: str | None = None,
+    upload_object_id: str | None = None,
 ) -> Job:
     """Shared job-creation path for both the single-file (`/upload`) and
     collection (`/collections/{id}/upload`) upload handlers, previously
-    inlined and duplicated in each. `storage_folder` is the full on-disk
-    folder built by `_storage_folder(job_id, folder, subfolder)` -- both
-    callers already compute it before invoking this, and it always ends in
-    the job id, which is what's used for the DB row here so the id on disk
-    and the id in the DB never disagree. Does not commit; the caller commits
-    once it's done with any other work for the same request (e.g. tracking
-    the job against a collection).
+    inlined and duplicated in each. `storage_folder` is the logical folder
+    built by `_storage_folder(job_id, folder, subfolder)` -- both callers
+    already compute it before invoking this, and it always ends in the job
+    id, which is what's used for the DB row here. The upload's bytes go to
+    the object store in the same transaction as the job row. Does not
+    commit; the caller commits once it's done with any other work for the
+    same request (e.g. tracking the job against a collection).
+
+    `upload_object_id` reuses an object stored by an earlier call for the
+    same file (benchmark variants) instead of storing the bytes again.
 
     `benchmark_run_id` (set only by POST /benchmarks, see app/api/
     benchmarks.py) makes this a benchmark-variant child: the predecessor
@@ -982,36 +905,36 @@ def create_job_from_upload(
     variant AND a normal upload) is expected, not an error -- and the job is
     always document_version=1 with no previous_job_id.
 
-    Raises DuplicateUploadError (before any Job row is added) if the content
+    Raises DuplicateUploadError (before anything is stored) if the content
     hash exactly matches the latest version of a same-named document already
-    visible to `user`; the just-written upload file is removed in that case.
-    Never raised when `benchmark_run_id` is set.
+    visible to `user`. Never raised when `benchmark_run_id` is set.
     """
     file_id = storage_folder.rsplit('/', 1)[-1]
-    upload_path, _, upload_content, upload_size = save_upload(file, storage_folder, file_id)
-    content_sha256 = hashlib.sha256(upload_content).hexdigest()
+    upload = inspect_upload(file)
+    content_sha256 = upload.sha256
 
     filename = file.filename or 'upload'
     collection_id = (extra_settings or {}).get('collection_id')
+    if not benchmark_run_id:
+        _lock_document_chain(db, filename, collection_id)
     predecessor = None if benchmark_run_id else _find_predecessor_job(db, user, filename, collection_id)
 
     if predecessor is not None and predecessor.content_sha256 == content_sha256:
-        uploaded_file = Path(upload_path).resolve()
-        uploaded_file.unlink(missing_ok=True)
-        _cleanup_empty_parents(uploaded_file, settings.uploads_dir.resolve())
         raise DuplicateUploadError(predecessor)
 
-    result_path = build_result_path(storage_folder, file_id)
+    if upload_object_id is None:
+        upload_object_id = object_store.put_file(
+            db, upload.file, sha256=upload.sha256, size_bytes=upload.size_bytes, content_type=file.content_type
+        ).id
 
     job = Job(
         id=file_id,
         original_filename=filename,
-        upload_path=upload_path,
-        upload_content=upload_content,
+        upload_path=f'{storage_folder}/{file_id}{upload.suffix}',
+        upload_object_id=upload_object_id,
         upload_mime_type=file.content_type,
-        upload_size_bytes=upload_size,
+        upload_size_bytes=upload.size_bytes,
         status=JobStatus.PENDING,
-        result_path=str(result_path),
         password_hash=password_hash,
         owner_id=user.id,
         content_sha256=content_sha256,
@@ -1813,7 +1736,7 @@ def list_jobs(
 
     # UI normalization: if workers report active process_job IDs, treat any
     # non-active RUNNING entries as queued/pending to avoid stale RUNNING noise.
-    active_job_ids = _active_process_job_ids()
+    active_job_ids = _active_process_job_ids(db)
     if active_job_ids:
         for item in items:
             if item.status == JobStatus.RUNNING and item.id not in active_job_ids:
@@ -1840,7 +1763,7 @@ def search_documents(
     owners = _load_job_owners(db, jobs)
     items = [_job_to_response(job, owner=owners.get(job.owner_id)) for job in jobs]
 
-    active_job_ids = _active_process_job_ids()
+    active_job_ids = _active_process_job_ids(db)
     if active_job_ids:
         for item in items:
             if item.status == JobStatus.RUNNING and item.id not in active_job_ids:
@@ -1859,15 +1782,17 @@ def search_documents(
 def restart_pending_jobs(request: Request, db: Session = Depends(get_db), user: User = Depends(require_admin)) -> dict[str, int]:
     enforce_rate_limit(request)
 
-    # Keep truly active RUNNING tasks and only requeue excess RUNNING jobs.
-    active_process_jobs = _count_active_process_jobs()
+    # Keep RUNNING jobs whose worker is still heartbeating; requeue only the
+    # ones whose worker is gone. By identity, never by count: a count would
+    # reset whichever jobs happen to sort last, live ones included.
+    active_job_ids = _active_process_job_ids(db)
     running_jobs = db.scalars(
         select(Job)
         .where(Job.status == JobStatus.RUNNING)
         .order_by(Job.updated_at.desc())
         .options(*_JOB_BLOB_DEFER_OPTIONS)
     ).all()
-    stuck_running = running_jobs[active_process_jobs:]
+    stuck_running = [job for job in running_jobs if job.id not in active_job_ids]
 
     for job in stuck_running:
         existing = job.processing_info if isinstance(job.processing_info, dict) else {}
@@ -1881,6 +1806,7 @@ def restart_pending_jobs(request: Request, db: Session = Depends(get_db), user: 
             },
         }
         job.status = JobStatus.PENDING
+        job.claim_token = None  # fences out a presumed-lost attempt
     if stuck_running:
         db.commit()
 
@@ -1929,7 +1855,7 @@ def restart_job(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Imported pages cannot be restarted')
 
     # Allow requeue for stale RUNNING records, but block truly active jobs.
-    active_job_ids = _active_process_job_ids()
+    active_job_ids = _active_process_job_ids(db)
     if job.status == JobStatus.RUNNING and job.id in active_job_ids:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Job is currently running')
 
@@ -1991,6 +1917,7 @@ def restart_job(
             },
         }
     job.status = JobStatus.PENDING
+    job.claim_token = None  # fences out a presumed-lost attempt
     job.error_message = None
     db.commit()
 
@@ -2018,7 +1945,7 @@ def retry_job_with_lower_profile(
     if _is_import_page_job(job):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Imported pages cannot be restarted')
 
-    active_job_ids = _active_process_job_ids()
+    active_job_ids = _active_process_job_ids(db)
     if job.status == JobStatus.RUNNING and job.id in active_job_ids:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Job is currently running')
 
@@ -2065,6 +1992,7 @@ def retry_job_with_lower_profile(
         },
     }
     job.status = JobStatus.PENDING
+    job.claim_token = None  # fences out a presumed-lost attempt
     job.error_message = None
     db.commit()
 
@@ -2086,7 +2014,7 @@ def restart_folder(
     if not normalized:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='Folder path required')
 
-    active_job_ids = _active_process_job_ids()
+    active_job_ids = _active_process_job_ids(db)
     jobs = db.scalars(_apply_visible_filter(select(Job).options(*_JOB_BLOB_DEFER_OPTIONS), user, db=db)).all()
     folder_jobs = [
         job
@@ -2132,6 +2060,7 @@ def restart_folder(
             },
         }
         job.status = JobStatus.PENDING
+        job.claim_token = None  # fences out a presumed-lost attempt
         job.error_message = None
         process_job.delay(job.id, effective_pipeline_profile_id(profile_id), mode, email, department)
         restarted += 1
@@ -2200,33 +2129,18 @@ def download_markdown(
 
     filename = f'{job_id}.md'
 
-    # DB-first: with no shared volume between backend and worker, the
-    # database is the source of truth. Disk lookup is a legacy fallback for
-    # rows written before result_markdown existed (NULL column).
-    if job.result_markdown is not None:
-        return Response(
-            content=job.result_markdown,
-            media_type='text/markdown',
-            headers={'Content-Disposition': f'attachment; filename="{filename}"'},
-        )
-
-    result_path = _resolve_markdown_path(job)
-    if not result_path.exists():
+    if job.result_markdown is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Result file not found')
-
-    return FileResponse(result_path, media_type='text/markdown', filename=filename)
+    return Response(
+        content=job.result_markdown,
+        media_type='text/markdown',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
 
 
 def _resolve_markdown_content(job: Job) -> str | None:
-    """DB-first with disk fallback for legacy rows written before
-    result_markdown existed -- shared by /preview and /export.json. Returns
-    None (never raises) if no markdown can be found anywhere."""
-    if job.result_markdown:
-        return job.result_markdown
-    path = _resolve_markdown_path(job)
-    if not path.exists():
-        return None
-    return path.read_text(encoding='utf-8')
+    """The job's markdown, or None -- shared by /preview and /export.json."""
+    return job.result_markdown or None
 
 
 @router.get('/jobs/{job_id}/preview')
@@ -2354,7 +2268,6 @@ def list_job_artifacts(
         select(JobArtifact)
         .where(JobArtifact.job_id == job_id)
         .order_by(JobArtifact.filename)
-        .options(*_ARTIFACT_BLOB_DEFER_OPTIONS)
     ).all()
     return JobArtifactListResponse(items=[JobArtifactResponse.model_validate(artifact) for artifact in artifacts])
 
@@ -2387,7 +2300,7 @@ def get_job_artifact_content(
 
     disposition = 'inline' if artifact.content_type in _ARTIFACT_INLINE_CONTENT_TYPES else 'attachment'
     return Response(
-        content=artifact.content,
+        content=object_store.read_bytes(db, artifact.object_id),
         # Our validated stored classification, never the remote's header.
         media_type=artifact.content_type,
         headers={
@@ -2493,7 +2406,6 @@ def _withdraw_and_delete_job(db: Session, job: Job) -> bool:
             db.delete(release)
         # `document_releases.job_id` is ON DELETE RESTRICT.
         db.flush()
-    _delete_job_artifacts(job)
     db.delete(job)
     return queued
 
@@ -2511,7 +2423,7 @@ def dispatch_withdrawals(job_ids: list[str]) -> None:
 def paddle_status(db: Session = Depends(get_db)) -> PaddleStatusResponse:
     pending_jobs = db.scalar(select(func.count()).select_from(Job).where(Job.status == JobStatus.PENDING)) or 0
     db_running_jobs = db.scalar(select(func.count()).select_from(Job).where(Job.status == JobStatus.RUNNING)) or 0
-    active_process_jobs = _count_active_process_jobs()
+    active_process_jobs = _count_active_process_jobs(db)
     running_jobs = active_process_jobs if active_process_jobs > 0 else int(db_running_jobs)
 
     # If DB has more RUNNING than actual active tasks, treat the delta as queued.
@@ -2583,8 +2495,8 @@ def paddle_status(db: Session = Depends(get_db)) -> PaddleStatusResponse:
 
 
 @router.get('/paddle/settings', response_model=PaddleSettingsResponse)
-def get_paddle_runtime_settings() -> PaddleSettingsResponse:
-    return PaddleSettingsResponse(**get_paddle_settings())
+def get_paddle_runtime_settings(db: Session = Depends(get_db)) -> PaddleSettingsResponse:
+    return PaddleSettingsResponse(**get_paddle_settings(db))
 
 
 @router.get('/paddle/capabilities', response_model=PaddleCapabilitiesResponse)
@@ -2593,12 +2505,15 @@ def get_paddle_capability_options(db: Session = Depends(get_db)) -> PaddleCapabi
 
 
 @router.put('/paddle/settings', response_model=PaddleSettingsResponse)
-def update_paddle_runtime_settings(payload: PaddleSettingsUpdate, user: User = Depends(require_admin)) -> PaddleSettingsResponse:
+def update_paddle_runtime_settings(
+    payload: PaddleSettingsUpdate, db: Session = Depends(get_db), user: User = Depends(require_admin)
+) -> PaddleSettingsResponse:
     update_paddle_settings(
+        db,
         default_profile=payload.default_profile,
         timeout_seconds=payload.timeout_seconds,
     )
-    return PaddleSettingsResponse(**get_paddle_settings())
+    return PaddleSettingsResponse(**get_paddle_settings(db))
 
 
 @router.get('/markdown-files', response_model=MarkdownBrowserResponse)
@@ -2612,8 +2527,7 @@ def list_markdown_files(db: Session = Depends(get_db), user: User = Depends(get_
     jobs = db.scalars(
         _apply_visible_filter(
             select(Job)
-            .where(Job.status == JobStatus.FINISHED, Job.result_markdown.isnot(None), Job.password_hash.is_(None))
-            .options(*_JOB_DEFER_UPLOAD_CONTENT_ONLY),
+            .where(Job.status == JobStatus.FINISHED, Job.result_markdown.isnot(None), Job.password_hash.is_(None)),
             user, db=db,
         )
     ).all()
@@ -2631,7 +2545,7 @@ def get_markdown_file(
     # The synthetic layout always names the file after the job id, so the
     # path stem is a direct, O(1) lookup key rather than a full table scan.
     job_id = Path(relative_path).stem
-    job = db.get(Job, job_id, options=[defer(Job.upload_content)])
+    job = db.get(Job, job_id)
     if (
         job is None
         or job.status != JobStatus.FINISHED
@@ -2644,54 +2558,13 @@ def get_markdown_file(
     return PlainTextResponse(job.result_markdown)
 
 
-@router.get('/admin/backup.zip')
-def download_admin_backup(user: User = Depends(require_admin)) -> StreamingResponse:
-    """Download the raw local storage as one deliberate admin backup.
-
-    There is intentionally no listing or per-file read endpoint here. Symlinks
-    are skipped so the archive cannot escape the two configured storage roots.
-    """
-    archive_buffer = io.BytesIO()
-    exported_files = 0
-    roots = (('uploads', settings.uploads_dir.resolve()), ('results', settings.results_dir.resolve()))
-    with zipfile.ZipFile(archive_buffer, mode='w', compression=zipfile.ZIP_DEFLATED) as archive:
-        for label, root in roots:
-            if not root.exists():
-                continue
-            for path in sorted(root.rglob('*')):
-                if not path.is_file() or path.is_symlink():
-                    continue
-                archive.write(path, arcname=str(Path(label) / path.relative_to(root)))
-                exported_files += 1
-
-    if exported_files == 0:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Keine Dateien für ein Backup vorhanden')
-    archive_buffer.seek(0)
-    return StreamingResponse(
-        archive_buffer,
-        media_type='application/zip',
-        headers={'Content-Disposition': 'attachment; filename="weave-storage-backup.zip"'},
-    )
-
-
 @router.post('/folders', response_model=FolderActionResponse)
 def create_folder(payload: FolderActionRequest) -> FolderActionResponse:
     folder_path = '/'.join(filter(None, [_sanitize_storage_path(payload.folder), _sanitize_storage_path(payload.subfolder)]))
     if not folder_path:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='Folder or subfolder required')
-
-    uploads_folder = settings.uploads_dir.resolve() / folder_path
-    uploads_folder.mkdir(parents=True, exist_ok=True)
-    (settings.results_dir.resolve() / folder_path).mkdir(parents=True, exist_ok=True)
-
-    # On Mountpoint-for-S3, mkdir() is local-only until a file is written inside
-    # it, so an empty folder never becomes a real prefix in S3 and stays
-    # invisible to other pods. Write an empty marker file to force the prefix
-    # to actually exist.
-    marker = uploads_folder / '.keep'
-    if not marker.exists():
-        marker.write_bytes(b'')
-
+    # Folders exist only as the folder/subfolder of their jobs: there is
+    # nothing to create until the first upload names this path.
     return FolderActionResponse(path=folder_path)
 
 
@@ -2705,7 +2578,7 @@ def download_folder_markdown(
 
     jobs = db.scalars(
         _apply_visible_filter(
-            select(Job).where(Job.status == JobStatus.FINISHED).options(*_JOB_DEFER_UPLOAD_CONTENT_ONLY), user, db=db
+            select(Job).where(Job.status == JobStatus.FINISHED), user, db=db
         )
     ).all()
     folder_jobs = [
@@ -2728,20 +2601,9 @@ def download_folder_markdown(
             stem = Path(job.original_filename).stem.strip() or job.id
             archive_name = '/'.join(filter(None, [relative_folder, f'{stem}-{job.id}.md']))
 
-            # DB-first: fall back to disk only for legacy rows with no
-            # result_markdown (written before the column existed).
-            if job.result_markdown is not None:
-                zip_file.writestr(archive_name, job.result_markdown)
-                exported_files += 1
+            if job.result_markdown is None:
                 continue
-
-            try:
-                markdown_path = _resolve_markdown_path(job)
-            except HTTPException:
-                continue
-            if not markdown_path.exists():
-                continue
-            zip_file.write(markdown_path, arcname=archive_name)
+            zip_file.writestr(archive_name, job.result_markdown)
             exported_files += 1
 
     if exported_files == 0:
@@ -2799,15 +2661,5 @@ def delete_folder(
     deleted_jobs = len(folder_jobs)
     db.commit()
     dispatch_withdrawals(withdrawn)
-
-    # The physical folder on disk may still hold artifacts for jobs the
-    # current caller can't see (other users/teams sharing the same folder
-    # path), so only an admin -- who by definition can see everything that
-    # could be in there -- is allowed to actually remove it from disk. A
-    # non-admin's delete only ever removes the DB rows (and files) for jobs
-    # visible to them above.
-    if user.role == UserRole.ADMIN:
-        shutil.rmtree((settings.uploads_dir.resolve() / normalized), ignore_errors=True)
-        shutil.rmtree((settings.results_dir.resolve() / normalized), ignore_errors=True)
 
     return FolderActionResponse(path=normalized, deleted_jobs=deleted_jobs)

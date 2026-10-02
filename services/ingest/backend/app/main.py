@@ -41,7 +41,6 @@ from app.core.config import settings
 from app.database.session import SessionLocal, get_db
 from app.schemas.jobs import HealthResponse
 from app.services.security import _rate_limit_redis
-from app.services.storage import ensure_storage_dirs
 
 app = FastAPI(title=settings.app_name)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
@@ -56,7 +55,6 @@ app.add_middleware(
 
 @app.on_event('startup')
 def startup() -> None:
-    ensure_storage_dirs()
     with SessionLocal() as db:
         bootstrap_admin(db)
 

@@ -71,3 +71,14 @@ def test_task_acks_late_and_reject_on_worker_lost_still_set() -> None:
     conf = celery_app_module.celery_app.conf
     assert conf.task_acks_late is True
     assert conf.task_reject_on_worker_lost is True
+
+
+def test_ocr_runs_on_its_own_queue_everything_else_on_the_default_queue() -> None:
+    # ADR-0001: the OCR pool (-Q weave.ingest.ocr) must only ever receive
+    # process_job, and every other task must reach the I/O pool.
+    celery_app_module = _reload_celery_app()
+    router = celery_app_module.celery_app.amqp.router
+
+    assert router.route({}, 'process_job')['queue'].name == 'weave.ingest.ocr'
+    for name in ('import_confluence', 'deliver_webhook', 'publication_tick', 'deliver_release', 'probe_paddle'):
+        assert router.route({}, name)['queue'].name == 'weave.ingest.default'

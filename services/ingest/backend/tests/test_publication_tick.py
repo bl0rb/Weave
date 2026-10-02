@@ -62,6 +62,7 @@ def test_tick_reclaims_a_lost_lock_and_reenqueues_with_a_new_token(monkeypatch) 
     monkeypatch.setattr(publication_tasks.Redis, 'from_url', lambda *a, **kw: fake)
     reconciled: list[bool] = []
     monkeypatch.setattr(publication_tasks, 'reconcile_due_releases', lambda: reconciled.append(True))
+    monkeypatch.setattr(publication_tasks, '_housekeeping', lambda: None)
     captured: list[tuple[str, list]] = []
     monkeypatch.setattr(celery_app, 'send_task', lambda name, args=None, **kw: captured.append((name, list(args or []))))
 
@@ -80,6 +81,7 @@ def test_tick_stands_down_without_reconciling_when_lock_is_lost_to_another_holde
     monkeypatch.setattr(publication_tasks.Redis, 'from_url', lambda *a, **kw: fake)
     reconciled: list[bool] = []
     monkeypatch.setattr(publication_tasks, 'reconcile_due_releases', lambda: reconciled.append(True))
+    monkeypatch.setattr(publication_tasks, '_housekeeping', lambda: None)
     captured: list[tuple[str, list]] = []
     monkeypatch.setattr(celery_app, 'send_task', lambda name, args=None, **kw: captured.append((name, list(args or []))))
 
@@ -94,6 +96,7 @@ def test_tick_reenqueue_retries_a_transient_send_task_failure_and_succeeds(monke
     instead of ending the chain on the first failure."""
     monkeypatch.setattr(publication_tasks, '_acquire_or_renew', lambda lock_token: 'token-xyz')
     monkeypatch.setattr(publication_tasks, 'reconcile_due_releases', lambda: None)
+    monkeypatch.setattr(publication_tasks, '_housekeeping', lambda: None)
     monkeypatch.setattr(publication_tasks.time, 'sleep', lambda seconds: None)
 
     attempts: list[int] = []

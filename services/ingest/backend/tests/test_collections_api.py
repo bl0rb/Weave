@@ -41,8 +41,7 @@ def _isolated_storage(monkeypatch, tmp_path):
     from app.api import routes
     from app.core.config import settings
 
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
     # Real processing is opted into per-test below; by default /start is a
     # no-op so tests that don't need it stay fast and worker-free.
     monkeypatch.setattr(routes.process_job, 'delay', lambda *args, **kwargs: None)

@@ -278,30 +278,6 @@ class WorkerLogListResponse(BaseModel):
     total: int
 
 
-# --- Admin: orphaned-file audit -------------------------------------------------
-#
-# Read-only report over app/services/storage.find_orphaned_files -- see that
-# function's module-section docstring for exactly what "orphaned" means
-# here. Nothing under GET /auth/admin/storage/orphaned-files ever deletes a
-# file; cleanup (if any) is a manual, human-reviewed follow-up.
-
-class OrphanedFileEntry(BaseModel):
-    kind: str  # 'upload' | 'result'
-    path: str
-    size_bytes: int
-    modified_at: datetime
-    age_seconds: int
-
-
-class OrphanedFilesReportResponse(BaseModel):
-    items: list[OrphanedFileEntry]
-    # Full-scan totals -- independent of `items`, which may be a truncated
-    # page (see `limit`/`offset` on the endpoint): total_count/total_bytes
-    # always describe every orphan found, not just the ones returned.
-    total_count: int
-    total_bytes: int
-
-
 # --- Personal API bearer tokens -----------------------------------------------
 
 class ApiTokenCreateRequest(BaseModel):

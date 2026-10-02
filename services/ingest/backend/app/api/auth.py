@@ -73,8 +73,6 @@ from app.schemas.auth import (
     ClaimOwnerlessResponse,
     LocaleUpdateRequest,
     LoginRequest,
-    OrphanedFileEntry,
-    OrphanedFilesReportResponse,
     ProviderAdminResponse,
     ProviderCreateRequest,
     ProviderListResponse,
@@ -110,6 +108,7 @@ from app.services.oidc import (
     fetch_jwks,
     fetch_userinfo,
     get_discovery_document,
+    token_kid,
     validate_id_token,
 )
 from app.services.security import (
@@ -128,7 +127,6 @@ from app.services.security import (
     verify_password,
 )
 from app.workers import publication_tasks
-from app.services.storage import find_orphaned_files
 
 logger = logging.getLogger(__name__)
 
@@ -819,7 +817,7 @@ def oidc_callback(
         id_token = tokens.get('id_token')
         if not id_token:
             raise OIDCError('token response did not include an id_token')
-        key_set = fetch_jwks(discovery['jwks_uri'])
+        key_set = fetch_jwks(discovery['jwks_uri'], kid=token_kid(id_token))
         claims = validate_id_token(
             id_token,
             key_set=key_set,
@@ -1743,43 +1741,3 @@ def admin_list_worker_logs(
         .offset(offset)
     ).all()
     return WorkerLogListResponse(items=[_worker_log_response(row) for row in rows], total=total)
-
-
-# --- admin: orphaned-file audit -----------------------------------------------
-#
-# Report-only surface over app/services/storage.find_orphaned_files -- lists,
-# never deletes, files under uploads_dir/results_dir that no Job row's
-# upload_path/result_path references any more. See that function's module
-# docstring for the full "orphaned" definition and why editor
-# versions/artifacts (DB-only, no disk footprint) don't factor in.
-
-_ORPHANED_FILES_PAGE_LIMIT_DEFAULT = 200
-_ORPHANED_FILES_PAGE_LIMIT_MAX = 1000
-
-
-@router_admin.get('/storage/orphaned-files', response_model=OrphanedFilesReportResponse)
-def admin_list_orphaned_files(
-    db: Session = Depends(get_db),
-    limit: int = Query(default=_ORPHANED_FILES_PAGE_LIMIT_DEFAULT, ge=1, le=_ORPHANED_FILES_PAGE_LIMIT_MAX),
-    offset: int = Query(default=0, ge=0),
-) -> OrphanedFilesReportResponse:
-    orphans = find_orphaned_files(db)
-    # Biggest offenders first -- the most useful default ordering for a
-    # "where did my disk go" report; total_count/total_bytes below still
-    # cover the full, unpaginated scan.
-    orphans.sort(key=lambda item: item.size_bytes, reverse=True)
-    total_count = len(orphans)
-    total_bytes = sum(item.size_bytes for item in orphans)
-
-    now = datetime.now(timezone.utc)
-    page = [
-        OrphanedFileEntry(
-            kind=item.kind,
-            path=item.path,
-            size_bytes=item.size_bytes,
-            modified_at=item.modified_at,
-            age_seconds=max(int((now - item.modified_at).total_seconds()), 0),
-        )
-        for item in orphans[offset : offset + limit]
-    ]
-    return OrphanedFilesReportResponse(items=page, total_count=total_count, total_bytes=total_bytes)

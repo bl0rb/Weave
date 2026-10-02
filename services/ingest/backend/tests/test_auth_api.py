@@ -665,7 +665,7 @@ def _oidc_login(
     monkeypatch.setattr(
         auth_module, 'exchange_code_for_tokens', lambda token_endpoint, **kw: {'id_token': id_token, 'access_token': 'at'}
     )
-    monkeypatch.setattr(auth_module, 'fetch_jwks', lambda jwks_uri: key_set)
+    monkeypatch.setattr(auth_module, 'fetch_jwks', lambda jwks_uri, **_: key_set)
 
     return client.get(
         f'/api/v1/auth/oidc/{slug}/callback',
@@ -719,7 +719,7 @@ def test_oidc_callback_happy_path_creates_user_and_logs_in(client: TestClient, m
     monkeypatch.setattr(
         auth_module, 'exchange_code_for_tokens', lambda token_endpoint, **kw: {'id_token': id_token, 'access_token': 'at'}
     )
-    monkeypatch.setattr(auth_module, 'fetch_jwks', lambda jwks_uri: key_set)
+    monkeypatch.setattr(auth_module, 'fetch_jwks', lambda jwks_uri, **_: key_set)
 
     callback_resp = client.get(
         '/api/v1/auth/oidc/test-oidc-happy-path/callback',

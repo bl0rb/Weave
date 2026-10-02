@@ -12,7 +12,7 @@ from app.api.technical_identities import _require_tools_introspection_token
 from app.core.config import settings
 from app.database.session import get_db
 from app.models.models import AuthProvider, User
-from app.services.oidc import OIDCError, fetch_jwks, get_discovery_document
+from app.services.oidc import OIDCError, fetch_jwks, get_discovery_document, token_kid
 
 router = APIRouter(
     prefix='/api/v1/internal/mcp-oauth',
@@ -42,7 +42,7 @@ def introspect_access_token(payload: IntrospectionRequest, db: Session = Depends
         discovery = get_discovery_document(provider.issuer_url)
         if discovery.get('issuer') != provider.issuer_url:
             raise OIDCError('issuer mismatch')
-        keys = fetch_jwks(discovery['jwks_uri'])
+        keys = fetch_jwks(discovery['jwks_uri'], kid=token_kid(payload.token))
     except (OIDCError, KeyError, ValueError):
         raise HTTPException(status_code=503, detail='identity provider unavailable') from None
 

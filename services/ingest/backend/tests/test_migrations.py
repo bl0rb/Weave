@@ -285,7 +285,7 @@ def test_0005_import_migration_upgrade_downgrade_round_trip(tmp_path, monkeypatc
     } <= run_columns
     artifact_columns = {c['name'] for c in insp.get_columns('job_artifacts')}
     assert {
-        'id', 'job_id', 'kind', 'filename', 'content_type', 'content', 'size_bytes',
+        'id', 'job_id', 'kind', 'filename', 'content_type', 'object_id', 'size_bytes',
         'source_url', 'sha256', 'created_at',
     } <= artifact_columns
 

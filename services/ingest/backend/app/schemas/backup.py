@@ -3,7 +3,7 @@
 The import request itself is NOT a schema here: `POST .../imports` is a
 multipart upload (file + passphrase + force), read via FastAPI's
 `File`/`Form` params directly in the route, the same way every other
-multipart endpoint in this codebase (e.g. `save_upload` callers in
+multipart endpoint in this codebase (e.g. the upload routes in
 app/api/routes.py) has no dedicated Pydantic request model either.
 """
 

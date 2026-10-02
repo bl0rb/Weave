@@ -12,7 +12,7 @@ from app.main import app
 from app.models.models import Job, JobStatus, User, UserRole, VlConnection
 from app.services import security
 from app.services.security import rate_limiter
-from conftest import TestingSessionLocal, client
+from conftest import TestingSessionLocal, client, stored_upload
 
 # Every module in this suite shares one Redis-backed rate-limit bucket keyed
 # by client id, and TestClient always presents as "testclient" -- without a
@@ -64,7 +64,7 @@ def _make_job(job_id: str, tmp_path, *, mode: str = 'single', profile_id: str = 
         id=job_id,
         original_filename='scan.pdf',
         upload_path=str(tmp_path / f'{job_id}.pdf'),
-        upload_content=b'x',
+        upload_object_id=stored_upload(b'x'),
         upload_mime_type='application/pdf',
         upload_size_bytes=1,
         status=JobStatus.FAILED,

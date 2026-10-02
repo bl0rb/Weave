@@ -61,11 +61,14 @@ spec:
   {{- end }}
   enablePDB: {{ $cnpg.enablePDB }}
   primaryUpdateStrategy: {{ $cnpg.primaryUpdateStrategy }}
-  {{- with $cnpg.pg_hba }}
   postgresql:
+    parameters:
+      # Obergrenze der Budgetpruefung (postgresql.maxConnections).
+      max_connections: {{ .Values.postgresql.maxConnections | quote }}
+    {{- with $cnpg.pg_hba }}
     pg_hba:
       {{- toYaml . | nindent 6 }}
-  {{- end }}
+    {{- end }}
   bootstrap:
     initdb:
       # GENAU EINE Datenbank -- mehr kann initdb nicht. weave_knowledge und

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { AlertTriangle, Archive, Download, HardDriveDownload, RotateCcw, Trash2, Upload } from 'lucide-react';
+import { AlertTriangle, Archive, HardDriveDownload, RotateCcw, Trash2, Upload } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { ApiError, apiFetch, apiJson, loginUrl } from '@/lib/api';
@@ -280,11 +280,31 @@ function ExportForm({ disabled, onStarted }: { disabled: boolean; onStarted: () 
     setStarting(true);
     setError(null);
     try {
-      await apiJson(`${BASE_PATH}/exports`, {
+      // The server streams the archive straight into this response -- it
+      // keeps no copy, so there is nothing to download later.
+      const response = await apiFetch(`${BASE_PATH}/exports`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ passphrase }),
       });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { detail?: unknown } | null;
+        throw new ApiError(
+          response.status,
+          typeof body?.detail === 'string' ? body.detail : t('admin.backup.exportFailed'),
+        );
+      }
+      const blob = await response.blob();
+      const fileName =
+        /filename="([^"]+)"/.exec(response.headers.get('content-disposition') ?? '')?.[1] ?? 'weave-backup.tar.gz';
+      const href = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = href;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(href);
       setPassphrase('');
       setConfirmPassphrase('');
       await onStarted();
@@ -368,30 +388,6 @@ function ExportRunRow({ run, onDelete }: { run: BackupRun; onDelete: () => void 
         )}
       </div>
       <div className="flex gap-1">
-        {run.status === 'finished' && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() =>
-              void (async () => {
-                const response = await apiFetch(`${BASE_PATH}/exports/${encodeURIComponent(run.id)}/download`);
-                if (!response.ok) return;
-                const blob = await response.blob();
-                const href = window.URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                link.href = href;
-                link.download = run.file_name ?? 'weave-backup.tar.gz';
-                document.body.appendChild(link);
-                link.click();
-                link.remove();
-                window.URL.revokeObjectURL(href);
-              })()
-            }
-          >
-            <Download size={15} />
-            {t('common.download')}
-          </Button>
-        )}
         {run.status !== 'queued' && run.status !== 'running' && (
           <Button
             variant="ghost"

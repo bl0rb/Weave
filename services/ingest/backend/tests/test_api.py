@@ -12,9 +12,11 @@ from app.api.deps import get_current_user
 from app.api.routes import _JOB_LIST_PAGE_LIMIT_MAX
 from app.database.session import get_db
 from app.main import app
-from app.models.models import Collection, Job, JobMarkdownVersion, JobStatus, Team, User, UserRole, VlConnection, WebhookConnection
+from app.models.models import (
+    Collection, Job, JobMarkdownVersion, JobStatus, StoredObject, Team, User, UserRole, VlConnection, WebhookConnection,
+)
 from app.services import security
-from conftest import TestingSessionLocal, client, override_get_db
+from conftest import TestingSessionLocal, client, override_get_db, stored_bytes, stored_upload
 
 # These tests predate the Step 2 auth work and exercise business logic that
 # doesn't care about *who* is calling -- Step 3 is what adds per-row
@@ -56,6 +58,11 @@ def _bypass_auth():
     app.dependency_overrides[get_current_user] = lambda: _TEST_ADMIN_USER
     yield
     app.dependency_overrides.pop(get_current_user, None)
+
+
+def _stored_object_count() -> int:
+    with TestingSessionLocal() as db:
+        return db.query(StoredObject).count()
 
 
 def test_healthcheck():
@@ -120,8 +127,7 @@ def test_upload_creates_job(monkeypatch, tmp_path):
     from app.api import routes
     from app.core.config import settings
 
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
 
     called = {}
 
@@ -157,8 +163,8 @@ def test_upload_creates_job(monkeypatch, tmp_path):
     db = TestingSessionLocal()
     job = db.get(Job, payload['job_id'])
     assert job is not None
-    assert '/inbox/' in job.upload_path.replace('\\', '/')
-    assert job.upload_content == b'%PDF-sample'
+    assert job.upload_path.startswith('inbox/')
+    assert stored_bytes(job.upload_object_id) == b'%PDF-sample'
     assert job.upload_mime_type == 'application/pdf'
     assert job.upload_size_bytes == len(b'%PDF-sample')
     assert sorted(tag.name for tag in job.tags) == ['finance', 'invoices']
@@ -189,8 +195,7 @@ def test_upload_with_vl_profile_creates_job_with_vl_settings_and_dispatches_open
     from app.api import routes
     from app.core.config import settings
 
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
     connection = _make_vl_connection(name='Prod Vision')
 
     called = {}
@@ -233,8 +238,8 @@ def test_upload_with_unknown_vl_profile_is_422_and_creates_no_job(monkeypatch, t
     from app.api import routes
     from app.core.config import settings
 
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
+    objects_before = _stored_object_count()
 
     delayed: list[tuple] = []
     monkeypatch.setattr(routes.process_job, 'delay', lambda *args, **kwargs: delayed.append(args))
@@ -247,9 +252,8 @@ def test_upload_with_unknown_vl_profile_is_422_and_creates_no_job(monkeypatch, t
     assert response.status_code == 422
     assert response.json()['detail'] == "Unknown profile 'vl:does-not-exist'"
     assert delayed == []
-    # No partial upload file/Job row left behind for a request rejected
-    # before create_job_from_upload ever runs.
-    assert not (settings.uploads_dir / 'inbox').exists()
+    # Nothing stored for a request rejected before create_job_from_upload runs.
+    assert _stored_object_count() == objects_before
 
 
 def _make_webhook_connection(owner_id: str, *, name: str = 'Upload Webhook', enabled: bool = True) -> WebhookConnection:
@@ -298,8 +302,7 @@ def test_upload_with_webhook_connection_sets_job_setting(monkeypatch, tmp_path):
     from app.api import routes
     from app.core.config import settings
 
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
     connection = _make_webhook_connection(_TEST_ADMIN_USER.id)
 
     monkeypatch.setattr(routes.process_job, 'delay', lambda *args, **kwargs: None)
@@ -324,8 +327,8 @@ def test_upload_with_unknown_webhook_connection_is_422_and_creates_no_job(monkey
     from app.api import routes
     from app.core.config import settings
 
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
+    objects_before = _stored_object_count()
 
     delayed: list[tuple] = []
     monkeypatch.setattr(routes.process_job, 'delay', lambda *args, **kwargs: delayed.append(args))
@@ -338,16 +341,15 @@ def test_upload_with_unknown_webhook_connection_is_422_and_creates_no_job(monkey
     assert response.status_code == 422
     assert response.json()['detail'] == 'Unknown webhook connection'
     assert delayed == []
-    # No partial upload file/Job row left behind, same as the vl: 422 above.
-    assert not (settings.uploads_dir / 'inbox').exists()
+    # Nothing stored, same as the vl: 422 above.
+    assert _stored_object_count() == objects_before
 
 
 def test_upload_with_foreign_webhook_connection_is_422_no_existence_leak(monkeypatch, tmp_path):
     from app.api import routes
     from app.core.config import settings
 
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
     other_owner_id = _make_other_user_id()
     foreign_connection = _make_webhook_connection(other_owner_id, name='Someone else’s')
 
@@ -371,8 +373,7 @@ def test_upload_allows_missing_email(monkeypatch, tmp_path):
     from app.api import routes
     from app.core.config import settings
 
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
 
     called = {}
 
@@ -406,8 +407,7 @@ def test_eml_upload_creates_job_like_normal_document(monkeypatch, tmp_path):
     from app.core.config import settings
     from email.mime.text import MIMEText
 
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
 
     # Create a simple .eml file
     msg = MIMEText('Email body content', 'plain')
@@ -451,8 +451,8 @@ def test_eml_upload_creates_job_like_normal_document(monkeypatch, tmp_path):
     job = db.get(Job, payload['job_id'])
     assert job is not None
     assert job.original_filename == 'message.eml'
-    assert '/inbox/' in job.upload_path.replace('\\', '/')
-    assert job.upload_content == eml_content
+    assert job.upload_path.startswith('inbox/')
+    assert stored_bytes(job.upload_object_id) == eml_content
     assert job.upload_mime_type == 'message/rfc822'
     assert job.upload_size_bytes == len(eml_content)
     assert sorted(tag.name for tag in job.tags) == ['inbox']
@@ -463,8 +463,7 @@ def test_collection_flow(monkeypatch, tmp_path):
     from app.api import routes
     from app.core.config import settings
 
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
 
     delayed: list[dict[str, str | None]] = []
 
@@ -504,7 +503,7 @@ def test_collection_flow(monkeypatch, tmp_path):
     db = TestingSessionLocal()
     collection_job = db.get(Job, job_id)
     assert collection_job is not None
-    assert '/accounts/2026/' in collection_job.upload_path.replace('\\', '/')
+    assert collection_job.upload_path.startswith('accounts/2026/')
     db.close()
 
     upload_resp_2 = client.post(
@@ -533,8 +532,7 @@ def test_collection_start_with_vl_profile_sets_vl_settings_and_dispatches_openai
     from app.api import routes
     from app.core.config import settings
 
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
     connection = _make_vl_connection(name='Collection Vision')
 
     delayed: list[dict[str, str | None]] = []
@@ -580,8 +578,7 @@ def test_collection_start_with_unknown_vl_profile_is_422_and_starts_nothing(monk
     from app.api import routes
     from app.core.config import settings
 
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
 
     delayed: list[tuple] = []
     monkeypatch.setattr(routes.process_job, 'delay', lambda *args, **kwargs: delayed.append(args))
@@ -613,8 +610,7 @@ def test_collection_persists_in_db_across_sessions(tmp_path):
     """
     from app.core.config import settings
 
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
 
     create_resp = client.post(
         '/api/v1/collections',
@@ -722,13 +718,14 @@ def test_markdown_browser_lists_files(tmp_path):
     """
     db = TestingSessionLocal()
     db.query(Job).filter(Job.id.in_(['job-1', 'job-2'])).delete(synchronize_session=False)
+    db.commit()  # release the write lock before stored_upload()
     db.add_all(
         [
             Job(
                 id='job-1',
                 original_filename='single.pdf',
                 upload_path=str(tmp_path / 'single.pdf'),
-                upload_content=b's',
+                upload_object_id=stored_upload(b's'),
                 upload_mime_type='application/pdf',
                 upload_size_bytes=1,
                 status=JobStatus.FINISHED,
@@ -739,7 +736,7 @@ def test_markdown_browser_lists_files(tmp_path):
                 id='job-2',
                 original_filename='collection.pdf',
                 upload_path=str(tmp_path / 'collection.pdf'),
-                upload_content=b'c',
+                upload_object_id=stored_upload(b'c'),
                 upload_mime_type='application/pdf',
                 upload_size_bytes=1,
                 status=JobStatus.FINISHED,
@@ -778,37 +775,13 @@ def test_markdown_browser_lists_files(tmp_path):
     assert nested_resp.text == '# collection'
 
 
-def test_markdown_browser_ignores_orphan_disk_files(tmp_path):
-    """The filesystem is never consulted: a .md file written directly to
-    results_dir with no backing Job row must not appear in the listing and
-    must not be servable via the content endpoint, even if its path happens
-    to line up with the synthetic layout.
-    """
-    from app.core.config import settings
-
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
-
-    orphan = settings.results_dir / 'inbox' / 'orphan-job' / 'orphan-job.md'
-    orphan.parent.mkdir(parents=True, exist_ok=True)
-    orphan.write_text('# orphan', encoding='utf-8')
-
-    list_resp = client.get('/api/v1/markdown-files')
-    assert list_resp.status_code == 200
-    assert all('orphan-job' not in item['path'] for item in list_resp.json()['items'])
-
-    file_resp = client.get('/api/v1/markdown-files/inbox/orphan-job/orphan-job.md')
-    assert file_resp.status_code == 404
-
-
 def test_markdown_browser_and_folder_delete_respect_job_passwords(tmp_path):
     """Download and single/bulk delete ask for a protected job's password;
     the markdown browser and the folder-wide delete cannot, so they leave
     protected jobs alone instead of bypassing it."""
     from app.core.config import settings
 
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
     db = TestingSessionLocal()
     db.add(
         Job(
@@ -844,7 +817,7 @@ def test_search_filters_by_name_and_tag(tmp_path):
         id='search-1',
         original_filename='Invoice_April.pdf',
         upload_path=str(tmp_path / 'invoice.pdf'),
-        upload_content=b'1',
+        upload_object_id=stored_upload(b'1'),
         upload_mime_type='application/pdf',
         upload_size_bytes=1,
         status=JobStatus.FINISHED,
@@ -853,7 +826,7 @@ def test_search_filters_by_name_and_tag(tmp_path):
         id='search-2',
         original_filename='Receipt_May.pdf',
         upload_path=str(tmp_path / 'receipt.pdf'),
-        upload_content=b'2',
+        upload_object_id=stored_upload(b'2'),
         upload_mime_type='application/pdf',
         upload_size_bytes=1,
         status=JobStatus.FINISHED,
@@ -883,7 +856,7 @@ def test_search_filters_by_name_and_tag(tmp_path):
         id='search-3',
         original_filename='Running.pdf',
         upload_path=str(tmp_path / 'running.pdf'),
-        upload_content=b'3',
+        upload_object_id=stored_upload(b'3'),
         upload_mime_type='application/pdf',
         upload_size_bytes=1,
         status=JobStatus.RUNNING,
@@ -905,11 +878,11 @@ def test_dashboard_stats_aggregate(tmp_path, monkeypatch):
     stats_db = tmp_path / 'stats.db'
     stats_db.write_bytes(b'stats')
     monkeypatch.setattr(settings, 'database_url', f'sqlite:///{stats_db}')
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
 
     db = TestingSessionLocal()
     db.query(Job).delete()
+    db.commit()  # release the write lock before stored_upload()
     db.query(Tag).delete()
     db.commit()
 
@@ -917,7 +890,7 @@ def test_dashboard_stats_aggregate(tmp_path, monkeypatch):
         id='stats-finished',
         original_filename='finished.pdf',
         upload_path=str(tmp_path / 'finished.pdf'),
-        upload_content=b'1',
+        upload_object_id=stored_upload(b'1'),
         upload_mime_type='application/pdf',
         upload_size_bytes=1,
         status=JobStatus.FINISHED,
@@ -927,7 +900,7 @@ def test_dashboard_stats_aggregate(tmp_path, monkeypatch):
         id='stats-failed',
         original_filename='failed.pdf',
         upload_path=str(tmp_path / 'failed.pdf'),
-        upload_content=b'2',
+        upload_object_id=stored_upload(b'2'),
         upload_mime_type='application/pdf',
         upload_size_bytes=1,
         status=JobStatus.FAILED,
@@ -953,8 +926,7 @@ def test_save_markdown_creates_new_version(tmp_path):
         id='job-save',
         original_filename='a.pdf',
         upload_path=str(tmp_path / 'a.pdf'),
-        result_path=str(result_file),
-        upload_content=b'x',
+        upload_object_id=stored_upload(b'x'),
         upload_mime_type='application/pdf',
         upload_size_bytes=1,
         status=JobStatus.FINISHED,
@@ -994,8 +966,7 @@ def test_save_markdown_recomputes_stale_quality_gate(tmp_path):
         id='job-save-quality',
         original_filename='a.pdf',
         upload_path=str(tmp_path / 'a.pdf'),
-        result_path=str(result_file),
-        upload_content=b'x',
+        upload_object_id=stored_upload(b'x'),
         upload_mime_type='application/pdf',
         upload_size_bytes=1,
         status=JobStatus.FINISHED,
@@ -1043,15 +1014,14 @@ def test_save_markdown_response_path_is_null_and_no_disk_file_written(tmp_path):
     """
     from app.core.config import settings
 
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
 
     db = TestingSessionLocal()
     job = Job(
         id='job-save-nodisk',
         original_filename='a.pdf',
         upload_path=str(tmp_path / 'a.pdf'),
-        upload_content=b'x',
+        upload_object_id=stored_upload(b'x'),
         upload_mime_type='application/pdf',
         upload_size_bytes=1,
         status=JobStatus.FINISHED,
@@ -1070,9 +1040,7 @@ def test_save_markdown_response_path_is_null_and_no_disk_file_written(tmp_path):
     body = save_resp.json()
     assert body['version'] == 1
     assert body['path'] is None
-
-    disk_files = [p for p in settings.results_dir.rglob('*.md') if p.is_file()]
-    assert disk_files == []
+    assert not list(tmp_path.rglob('*.md'))
 
 
 def test_save_markdown_creates_version_row_per_save(tmp_path):
@@ -1081,7 +1049,7 @@ def test_save_markdown_creates_version_row_per_save(tmp_path):
         id='job-save-versions',
         original_filename='a.pdf',
         upload_path=str(tmp_path / 'a.pdf'),
-        upload_content=b'x',
+        upload_object_id=stored_upload(b'x'),
         upload_mime_type='application/pdf',
         upload_size_bytes=1,
         status=JobStatus.FINISHED,
@@ -1131,7 +1099,7 @@ def test_job_markdown_versions_cascade_delete_with_job(tmp_path):
         id='job-save-cascade',
         original_filename='a.pdf',
         upload_path=str(tmp_path / 'a.pdf'),
-        upload_content=b'x',
+        upload_object_id=stored_upload(b'x'),
         upload_mime_type='application/pdf',
         upload_size_bytes=1,
         status=JobStatus.FINISHED,
@@ -1161,17 +1129,15 @@ def test_job_markdown_versions_cascade_delete_with_job(tmp_path):
 
 def test_list_and_download(tmp_path):
     db = TestingSessionLocal()
-    result_file = tmp_path / 'result.md'
-    result_file.write_text('# done', encoding='utf-8')
     job = Job(
         id='job-1',
         original_filename='a.pdf',
         upload_path=str(tmp_path / 'a.pdf'),
-        result_path=str(result_file),
-        upload_content=b'x',
+        upload_object_id=stored_upload(b'x'),
         upload_mime_type='application/pdf',
         upload_size_bytes=1,
         status=JobStatus.FINISHED,
+        result_markdown='# done',
     )
     db.add(job)
     db.commit()
@@ -1196,7 +1162,7 @@ def test_restart_pending_jobs(monkeypatch, tmp_path):
                 id='job-pending-restart',
                 original_filename='pending.pdf',
                 upload_path=str(tmp_path / 'pending.pdf'),
-                upload_content=b'p',
+                upload_object_id=stored_upload(b'p'),
                 upload_mime_type='application/pdf',
                 upload_size_bytes=1,
                 status=JobStatus.PENDING,
@@ -1206,7 +1172,7 @@ def test_restart_pending_jobs(monkeypatch, tmp_path):
                 id='job-finished-ignore',
                 original_filename='finished.pdf',
                 upload_path=str(tmp_path / 'finished.pdf'),
-                upload_content=b'f',
+                upload_object_id=stored_upload(b'f'),
                 upload_mime_type='application/pdf',
                 upload_size_bytes=1,
                 status=JobStatus.FINISHED,
@@ -1227,18 +1193,60 @@ def test_restart_pending_jobs(monkeypatch, tmp_path):
     assert any(entry[0] == 'job-pending-restart' for entry in delayed)
 
 
+def test_restart_pending_requeues_only_running_jobs_whose_worker_is_gone(monkeypatch, tmp_path):
+    # By identity (heartbeat), never by count: a live job must survive even
+    # when nothing else tells the API which jobs are really running.
+    from datetime import datetime, timedelta, timezone
+
+    from app.api import routes
+    from app.core.config import settings as app_settings
+
+    now = datetime.now(timezone.utc)
+    db = TestingSessionLocal()
+    db.query(Job).filter(Job.status == JobStatus.RUNNING).delete()
+    db.commit()  # release the write lock before stored_upload()
+    for job_id, heartbeat_at in (
+        ('restart-live', now),
+        ('restart-lost', now - timedelta(seconds=app_settings.job_stale_seconds + 10)),
+    ):
+        db.add(Job(
+            id=job_id,
+            original_filename=f'{job_id}.pdf',
+            upload_path=str(tmp_path / f'{job_id}.pdf'),
+            upload_object_id=stored_upload(b'r'),
+            upload_mime_type='application/pdf',
+            upload_size_bytes=1,
+            status=JobStatus.RUNNING,
+            heartbeat_at=heartbeat_at,
+            claim_token=f'{job_id}-token',
+        ))
+    db.commit()
+    db.close()
+
+    delayed: list[tuple] = []
+    monkeypatch.setattr(routes.process_job, 'delay', lambda *args: delayed.append(args))
+
+    response = client.post('/api/v1/jobs/restart-pending')
+
+    assert response.status_code == 200
+    assert response.json()['recovered_running'] == 1
+    assert 'restart-live' not in [entry[0] for entry in delayed]
+    assert 'restart-lost' in [entry[0] for entry in delayed]
+    db = TestingSessionLocal()
+    assert db.get(Job, 'restart-live').status == JobStatus.RUNNING
+    lost = db.get(Job, 'restart-lost')
+    assert lost.status == JobStatus.PENDING
+    assert lost.claim_token is None
+    db.close()
+
+
 def test_delete_job(tmp_path):
     db = TestingSessionLocal()
-    upload = tmp_path / 'u.pdf'
-    result = tmp_path / 'r.md'
-    upload.write_text('x', encoding='utf-8')
-    result.write_text('y', encoding='utf-8')
     job = Job(
         id='job-delete',
         original_filename='x.pdf',
-        upload_path=str(upload),
-        result_path=str(result),
-        upload_content=b'x',
+        upload_path='inbox/job-delete/job-delete.pdf',
+        upload_object_id=stored_upload(b'x'),
         upload_mime_type='application/pdf',
         upload_size_bytes=1,
         status=JobStatus.FINISHED,
@@ -1250,32 +1258,17 @@ def test_delete_job(tmp_path):
     resp = client.delete('/api/v1/jobs/job-delete')
     assert resp.status_code == 200
     assert resp.json()['status'] == 'deleted'
-    assert not upload.exists()
-    assert not result.exists()
+    with TestingSessionLocal() as db:
+        assert db.get(Job, 'job-delete') is None
 
 
-def test_delete_folder_removes_jobs_and_files(tmp_path):
-    from app.core.config import settings
-
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
-    settings.uploads_dir.mkdir(parents=True, exist_ok=True)
-    settings.results_dir.mkdir(parents=True, exist_ok=True)
-
-    folder_upload = settings.uploads_dir / 'finance' / 'q2' / 'job-folder' / 'job-folder.pdf'
-    folder_result = settings.results_dir / 'finance' / 'q2' / 'job-folder' / 'job-folder.md'
-    folder_upload.parent.mkdir(parents=True, exist_ok=True)
-    folder_result.parent.mkdir(parents=True, exist_ok=True)
-    folder_upload.write_bytes(b'pdf')
-    folder_result.write_text('# markdown', encoding='utf-8')
-
+def test_delete_folder_removes_jobs(tmp_path):
     db = TestingSessionLocal()
     job = Job(
         id='job-folder',
         original_filename='q2-report.pdf',
-        upload_path=str(folder_upload),
-        result_path=str(folder_result),
-        upload_content=b'pdf',
+        upload_path='finance/q2/job-folder/job-folder.pdf',
+        upload_object_id=stored_upload(b'pdf'),
         upload_mime_type='application/pdf',
         upload_size_bytes=3,
         status=JobStatus.FINISHED,
@@ -1290,39 +1283,20 @@ def test_delete_folder_removes_jobs_and_files(tmp_path):
     payload = response.json()
     assert payload['path'] == 'finance/q2'
     assert payload['deleted_jobs'] == 1
-    assert not (settings.uploads_dir / 'finance' / 'q2').exists()
-    assert not (settings.results_dir / 'finance' / 'q2').exists()
+    with TestingSessionLocal() as db:
+        assert db.get(Job, 'job-folder') is None
 
 
 def test_download_folder_markdown_zip_recursive_finished_only(tmp_path):
-    from app.core.config import settings
-
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
-    settings.uploads_dir.mkdir(parents=True, exist_ok=True)
-    settings.results_dir.mkdir(parents=True, exist_ok=True)
-
-    result_finished = settings.results_dir / 'finance' / 'q2' / 'job-a' / 'job-a.md'
-    result_finished.parent.mkdir(parents=True, exist_ok=True)
-    result_finished.write_text('# finished a', encoding='utf-8')
-
-    result_nested = settings.results_dir / 'finance' / 'q2' / 'sub' / 'job-b' / 'job-b.md'
-    result_nested.parent.mkdir(parents=True, exist_ok=True)
-    result_nested.write_text('# finished b', encoding='utf-8')
-
-    result_failed = settings.results_dir / 'finance' / 'q2' / 'job-c' / 'job-c.md'
-    result_failed.parent.mkdir(parents=True, exist_ok=True)
-    result_failed.write_text('# failed c', encoding='utf-8')
-
     db = TestingSessionLocal()
     db.add_all(
         [
             Job(
                 id='job-a',
                 original_filename='report-a.pdf',
+                result_markdown='# finished a',
                 upload_path=str(tmp_path / 'a.pdf'),
-                result_path=str(result_finished),
-                upload_content=b'a',
+                upload_object_id=stored_upload(b'a'),
                 upload_mime_type='application/pdf',
                 upload_size_bytes=1,
                 status=JobStatus.FINISHED,
@@ -1331,9 +1305,9 @@ def test_download_folder_markdown_zip_recursive_finished_only(tmp_path):
             Job(
                 id='job-b',
                 original_filename='report-b.pdf',
+                result_markdown='# finished b',
                 upload_path=str(tmp_path / 'b.pdf'),
-                result_path=str(result_nested),
-                upload_content=b'b',
+                upload_object_id=stored_upload(b'b'),
                 upload_mime_type='application/pdf',
                 upload_size_bytes=1,
                 status=JobStatus.FINISHED,
@@ -1342,9 +1316,9 @@ def test_download_folder_markdown_zip_recursive_finished_only(tmp_path):
             Job(
                 id='job-c',
                 original_filename='report-c.pdf',
+                result_markdown='# failed c',
                 upload_path=str(tmp_path / 'c.pdf'),
-                result_path=str(result_failed),
-                upload_content=b'c',
+                upload_object_id=stored_upload(b'c'),
                 upload_mime_type='application/pdf',
                 upload_size_bytes=1,
                 status=JobStatus.FAILED,
@@ -1367,19 +1341,17 @@ def test_download_folder_markdown_zip_recursive_finished_only(tmp_path):
     assert all('job-c' not in name for name in names)
 
 
-def test_download_markdown_serves_from_db_when_disk_missing(tmp_path):
+def test_download_markdown_serves_from_db(tmp_path):
     from app.core.config import settings
 
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
 
     db = TestingSessionLocal()
     job = Job(
         id='job-db-download',
         original_filename='db-only.pdf',
         upload_path=str(tmp_path / 'missing-upload.pdf'),
-        result_path=str(tmp_path / 'missing-result.md'),
-        upload_content=b'x',
+        upload_object_id=stored_upload(b'x'),
         upload_mime_type='application/pdf',
         upload_size_bytes=1,
         status=JobStatus.FINISHED,
@@ -1389,9 +1361,6 @@ def test_download_markdown_serves_from_db_when_disk_missing(tmp_path):
     db.commit()
     db.close()
 
-    # Prove there really is no file backing this job on disk.
-    assert not Path(job.result_path).exists()
-
     response = client.get('/api/v1/jobs/job-db-download/download')
     assert response.status_code == 200
     assert response.headers['content-type'].startswith('text/markdown')
@@ -1399,51 +1368,13 @@ def test_download_markdown_serves_from_db_when_disk_missing(tmp_path):
     assert response.text == '# from database'
 
 
-def test_download_markdown_falls_back_to_disk_for_legacy_null_column(tmp_path):
-    from app.core.config import settings
-
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
-
-    result_file = tmp_path / 'legacy-result.md'
-    result_file.write_text('# legacy disk content', encoding='utf-8')
-
-    db = TestingSessionLocal()
-    job = Job(
-        id='job-legacy-download',
-        original_filename='legacy.pdf',
-        upload_path=str(tmp_path / 'legacy-upload.pdf'),
-        result_path=str(result_file),
-        upload_content=b'x',
-        upload_mime_type='application/pdf',
-        upload_size_bytes=1,
-        status=JobStatus.FINISHED,
-        result_markdown=None,
-    )
-    db.add(job)
-    db.commit()
-    db.close()
-
-    response = client.get('/api/v1/jobs/job-legacy-download/download')
-    assert response.status_code == 200
-    assert response.text == '# legacy disk content'
-
-
-def test_download_folder_markdown_serves_from_db_when_disk_missing(tmp_path):
-    from app.core.config import settings
-
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
-    settings.uploads_dir.mkdir(parents=True, exist_ok=True)
-    settings.results_dir.mkdir(parents=True, exist_ok=True)
-
+def test_download_folder_markdown_serves_from_db(tmp_path):
     db = TestingSessionLocal()
     job = Job(
         id='job-zip-db',
         original_filename='zip-db.pdf',
         upload_path=str(tmp_path / 'missing-upload.pdf'),
-        result_path=str(tmp_path / 'missing-result.md'),
-        upload_content=b'x',
+        upload_object_id=stored_upload(b'x'),
         upload_mime_type='application/pdf',
         upload_size_bytes=1,
         status=JobStatus.FINISHED,
@@ -1459,8 +1390,6 @@ def test_download_folder_markdown_serves_from_db_when_disk_missing(tmp_path):
     db.add(job)
     db.commit()
     db.close()
-
-    assert not Path(job.result_path).exists()
 
     response = client.get('/api/v1/folders/finance/db-only/download')
     assert response.status_code == 200
@@ -1482,7 +1411,7 @@ def test_jobs_pagination_limit_offset(tmp_path):
                 id=f'page-{i}',
                 original_filename=f'page-{i}.pdf',
                 upload_path=str(tmp_path / f'page-{i}.pdf'),
-                upload_content=b'x',
+                upload_object_id=stored_upload(b'x'),
                 upload_mime_type='application/pdf',
                 upload_size_bytes=1,
                 status=JobStatus.FINISHED,
@@ -1529,7 +1458,7 @@ def test_jobs_pagination_limit_offset(tmp_path):
 
 def test_list_jobs_defers_blob_columns(tmp_path):
     """Regression test: GET /jobs (and /search) must not eagerly load the
-    upload_content / result_markdown blob columns for rows it merely lists.
+    result_markdown column for rows it merely lists.
     """
     from sqlalchemy import inspect as sa_inspect
 
@@ -1543,7 +1472,7 @@ def test_list_jobs_defers_blob_columns(tmp_path):
             id='job-defer-check',
             original_filename='defer-check.pdf',
             upload_path=str(tmp_path / 'defer-check.pdf'),
-            upload_content=b'x' * 1000,
+            upload_object_id=stored_upload(b'x' * 1000),
             upload_mime_type='application/pdf',
             upload_size_bytes=1000,
             status=JobStatus.FINISHED,
@@ -1557,7 +1486,6 @@ def test_list_jobs_defers_blob_columns(tmp_path):
     jobs = _job_query(query_db, _TEST_ADMIN_USER)
     target = next(job for job in jobs if job.id == 'job-defer-check')
     unloaded = sa_inspect(target).unloaded
-    assert 'upload_content' in unloaded
     assert 'result_markdown' in unloaded
     query_db.close()
 
@@ -1567,8 +1495,7 @@ def test_deferred_blob_column_raises_after_session_close(tmp_path):
     a column deferred via query .options() has never been loaded into the
     instance's __dict__, so touching it after the owning session is closed
     must fail loudly instead of silently returning None or stale data. Any
-    route that queries with _JOB_BLOB_DEFER_OPTIONS / (defer(upload_content),)
-    and then reads that attribute after its `db` dependency has been torn
+    route that queries with _JOB_BLOB_DEFER_OPTIONS and then reads that attribute after its `db` dependency has been torn
     down would hit exactly this.
     """
     from sqlalchemy import select
@@ -1584,7 +1511,7 @@ def test_deferred_blob_column_raises_after_session_close(tmp_path):
             id='job-detached-check',
             original_filename='detached-check.pdf',
             upload_path=str(tmp_path / 'detached-check.pdf'),
-            upload_content=b'x' * 1000,
+            upload_object_id=stored_upload(b'x' * 1000),
             upload_mime_type='application/pdf',
             upload_size_bytes=1000,
             status=JobStatus.FINISHED,
@@ -1601,12 +1528,9 @@ def test_deferred_blob_column_raises_after_session_close(tmp_path):
     with pytest.raises(DetachedInstanceError):
         job.result_markdown  # noqa: B018 - intentional attribute access to trigger the lazy load
 
-    with pytest.raises(DetachedInstanceError):
-        job.upload_content  # noqa: B018
-
 
 def test_listing_and_admin_endpoints_survive_populated_blob_columns(monkeypatch, tmp_path):
-    """End-to-end regression: with upload_content and result_markdown both
+    """End-to-end regression: with a stored upload and result_markdown both
     populated (the realistic post-migration shape, not NULL legacy rows),
     every endpoint that lists/administers jobs via the deferred-blob query
     options must still return 200 through the full FastAPI dependency
@@ -1617,8 +1541,7 @@ def test_listing_and_admin_endpoints_survive_populated_blob_columns(monkeypatch,
     from app.core.config import settings
     from app.api import routes
 
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
 
     big_markdown = '# heading\n' + ('lorem ipsum ' * 500)
     db = TestingSessionLocal()
@@ -1628,7 +1551,7 @@ def test_listing_and_admin_endpoints_survive_populated_blob_columns(monkeypatch,
         id='job-populated-blobs',
         original_filename='populated-blobs.pdf',
         upload_path=str(tmp_path / 'populated-blobs.pdf'),
-        upload_content=b'\x89PNG' * 500,
+        upload_object_id=stored_upload(b'\x89PNG' * 500),
         upload_mime_type='application/pdf',
         upload_size_bytes=2000,
         status=JobStatus.FINISHED,
@@ -1681,19 +1604,6 @@ def test_listing_and_admin_endpoints_survive_populated_blob_columns(monkeypatch,
 def test_update_paddle_settings(monkeypatch):
     from app.services import paddle_service
 
-    class FakeRedis:
-        def __init__(self):
-            self.store: dict[str, str] = {}
-
-        def hset(self, _key: str, mapping: dict[str, str]):
-            self.store.update(mapping)
-
-        def hgetall(self, _key: str):
-            return dict(self.store)
-
-    fake_redis = FakeRedis()
-
-    monkeypatch.setattr(paddle_service, '_redis_client', lambda: fake_redis)
     monkeypatch.setattr(paddle_service, '_runtime_capability', lambda: {
         'torch_available': True,
         'cuda_available': False,
@@ -1721,7 +1631,7 @@ def test_paddle_status_reports_queue_when_probe_degraded(monkeypatch, tmp_path):
             id='queue-pending',
             original_filename='queued.pdf',
             upload_path=str(tmp_path / 'queued.pdf'),
-            upload_content=b'q',
+            upload_object_id=stored_upload(b'q'),
             upload_mime_type='application/pdf',
             upload_size_bytes=1,
             status=JobStatus.PENDING,
@@ -1763,7 +1673,7 @@ def test_worker_restart_requeues_running_jobs(monkeypatch, tmp_path):
             id='job-running-restart',
             original_filename='restart.pdf',
             upload_path=str(tmp_path / 'restart.pdf'),
-            upload_content=b'r',
+            upload_object_id=stored_upload(b'r'),
             upload_mime_type='application/pdf',
             upload_size_bytes=1,
             status=JobStatus.RUNNING,
@@ -1784,7 +1694,7 @@ def test_worker_restart_requeues_running_jobs(monkeypatch, tmp_path):
             id='job-running-still-live',
             original_filename='live.pdf',
             upload_path=str(tmp_path / 'live.pdf'),
-            upload_content=b'l',
+            upload_object_id=stored_upload(b'l'),
             upload_mime_type='application/pdf',
             upload_size_bytes=1,
             status=JobStatus.RUNNING,
@@ -1833,9 +1743,8 @@ def test_worker_restart_requeues_running_jobs(monkeypatch, tmp_path):
 def test_upload_rejects_oversize_file_without_partial_remnant(monkeypatch, tmp_path):
     from app.core.config import settings
 
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
     monkeypatch.setattr(settings, 'max_upload_bytes', 5)
+    objects_before = _stored_object_count()
 
     response = client.post(
         '/api/v1/upload',
@@ -1843,26 +1752,19 @@ def test_upload_rejects_oversize_file_without_partial_remnant(monkeypatch, tmp_p
         data={'profile_id': 'ppocrv6_tiny', 'email': 'oversize@example.com'},
     )
     assert response.status_code == 413
-
-    leftover_files = [path for path in settings.uploads_dir.rglob('*') if path.is_file()]
-    assert leftover_files == []
+    assert _stored_object_count() == objects_before
 
 
-def test_save_upload_rejects_oversize_after_multiple_chunks_no_partial_remnant(monkeypatch, tmp_path):
-    """The 413 path in save_upload is only interesting once >1 chunk has
-    already been written to disk (the oversize threshold is crossed on a
-    later 1MB read, not the first). This exercises that multi-chunk case
-    directly against save_upload/UploadFile, bypassing HTTP multipart
-    overhead, and checks total_bytes accounting plus full cleanup.
+def test_inspect_upload_rejects_oversize_after_multiple_chunks(monkeypatch, tmp_path):
+    """The 413 in inspect_upload is crossed on a later 1MB read, not the
+    first. Exercised directly against UploadFile, bypassing HTTP multipart
+    overhead; the size check runs before anything is stored.
     """
     from app.core.config import settings
     from app.services import storage
 
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
     chunk_size = 1024 * 1024
-    # Limit sits inside the *second* chunk, so the first chunk is genuinely
-    # written to the open handle before the loop detects the overage.
+    # Limit sits inside the *second* chunk.
     monkeypatch.setattr(settings, 'max_upload_bytes', int(chunk_size * 1.5))
 
     data = b'A' * (chunk_size * 3)
@@ -1870,21 +1772,14 @@ def test_save_upload_rejects_oversize_after_multiple_chunks_no_partial_remnant(m
     upload.headers = {'content-type': 'application/pdf'}
 
     with pytest.raises(HTTPException) as exc_info:
-        storage.save_upload(upload, 'inbox', 'huge-file-id')
+        storage.inspect_upload(upload)
 
     assert exc_info.value.status_code == 413
     assert exc_info.value.detail == 'File too large'
 
-    leftover_files = [path for path in settings.uploads_dir.rglob('*') if path.is_file()]
-    assert leftover_files == []
 
-
-def test_create_folder_writes_keep_marker(tmp_path):
-    from app.core.config import settings
-
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
-
+def test_create_folder_only_validates_the_path(tmp_path):
+    # Folders exist only as the folder/subfolder of their jobs.
     response = client.post(
         '/api/v1/folders',
         json={'folder': 'finance', 'subfolder': 'q3'},
@@ -1892,43 +1787,17 @@ def test_create_folder_writes_keep_marker(tmp_path):
     assert response.status_code == 200
     payload = response.json()
     assert payload['path'] == 'finance/q3'
-
-    marker = settings.uploads_dir / 'finance' / 'q3' / '.keep'
-    assert marker.exists()
-    assert marker.is_file()
-    assert marker.read_bytes() == b''
-
-    # .keep must not surface as a result in the markdown browser listing.
-    listing = client.get('/api/v1/markdown-files')
-    assert listing.status_code == 200
-    assert all('.keep' not in item['path'] for item in listing.json()['items'])
+    assert not list(tmp_path.iterdir())
 
 
-def test_process_job_deletes_stale_result_before_rewriting(monkeypatch, tmp_path):
-    """Regression test for the delete-then-create fix in process_job.
-
-    On Mountpoint-for-S3 there is no reliable overwrite-in-place, so a
-    retried/requeued job must unlink any stale result object before writing
-    the fresh one. This calls the task body directly (not `.delay`) so the
-    real write path executes, and asserts both the call order and that the
-    final content reflects the new run rather than the stale one.
-    """
-    from pathlib import Path
-
+def test_process_job_works_in_a_private_scratch_dir_and_removes_it(monkeypatch, tmp_path):
+    """The worker copies the stored original into a per-task scratch dir,
+    writes the result to the database only, and removes the dir afterwards."""
     from app.core.config import settings
     from app.workers import tasks
 
     monkeypatch.setattr(tasks, 'SessionLocal', TestingSessionLocal)
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
-
-    upload_path = settings.uploads_dir / 'inbox' / 'job-retry.pdf'
-    upload_path.parent.mkdir(parents=True, exist_ok=True)
-    upload_path.write_bytes(b'%PDF-1.4 fake upload content')
-
-    result_path = (settings.results_dir / 'inbox' / 'job-retry.md').resolve()
-    result_path.parent.mkdir(parents=True, exist_ok=True)
-    result_path.write_text('# stale result from a prior attempt', encoding='utf-8')
+    monkeypatch.setattr(settings, 'worker_tmp_dir', tmp_path / 'work')
 
     db = TestingSessionLocal()
     db.query(Job).filter(Job.id == 'job-retry').delete()
@@ -1937,104 +1806,39 @@ def test_process_job_deletes_stale_result_before_rewriting(monkeypatch, tmp_path
         Job(
             id='job-retry',
             original_filename='job-retry.pdf',
-            upload_path=str(upload_path),
-            result_path=str(result_path),
-            upload_content=b'%PDF-1.4 fake upload content',
+            upload_path='inbox/job-retry/job-retry.pdf',
+            upload_object_id=stored_upload(b'%PDF-1.4 fake upload content'),
             upload_mime_type='application/pdf',
             upload_size_bytes=len(b'%PDF-1.4 fake upload content'),
             status=JobStatus.PENDING,
-            processing_info={'settings': {'storage_folder': 'inbox'}},
+            processing_info={'settings': {'storage_folder': 'inbox/job-retry'}},
         )
     )
     db.commit()
     db.close()
 
-    monkeypatch.setattr(
-        tasks,
-        'convert_to_markdown_with_details',
-        lambda *args, **kwargs: ('# fresh result from this run', {'page_count': 1}),
-    )
+    seen: dict = {}
 
-    call_order: list[str] = []
-    original_unlink = Path.unlink
-    original_write_text = Path.write_text
+    def convert(path, *args, **kwargs):
+        seen['path'] = Path(path)
+        seen['bytes'] = Path(path).read_bytes()
+        return '# fresh result from this run', {'page_count': 1}
 
-    def tracking_unlink(self, *args, **kwargs):
-        if self.resolve() == result_path:
-            call_order.append('unlink')
-        return original_unlink(self, *args, **kwargs)
-
-    def tracking_write_text(self, *args, **kwargs):
-        if self.resolve() == result_path:
-            call_order.append('write_text')
-        return original_write_text(self, *args, **kwargs)
-
-    monkeypatch.setattr(Path, 'unlink', tracking_unlink)
-    monkeypatch.setattr(Path, 'write_text', tracking_write_text)
+    monkeypatch.setattr(tasks, 'convert_to_markdown_with_details', convert)
 
     tasks.process_job('job-retry')
 
-    assert call_order == ['unlink', 'write_text']
-    assert result_path.read_text(encoding='utf-8') == '# fresh result from this run'
-
+    assert seen['bytes'] == b'%PDF-1.4 fake upload content'
+    assert seen['path'].suffix == '.pdf'
+    assert seen['path'].parent.parent == tmp_path / 'work'
+    assert not seen['path'].parent.exists()
     db = TestingSessionLocal()
     job = db.get(Job, 'job-retry')
     assert job is not None
     assert job.status == JobStatus.FINISHED
+    assert job.result_markdown == '# fresh result from this run'
     assert job.error_message is None
     db.close()
-
-
-def test_create_folder_keep_marker_survives_job_deletion_cleanup(tmp_path):
-    """Documents a side effect of the .keep marker: _cleanup_empty_parents
-    only rmdir()s directories that are actually empty, so an explicitly
-    created upload folder (which now always contains .keep) is never pruned
-    after its last job is deleted, while the matching results folder (which
-    has no marker) still gets pruned as before.
-    """
-    from app.core.config import settings
-
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
-
-    create_response = client.post(
-        '/api/v1/folders',
-        json={'folder': 'ops', 'subfolder': 'weekly'},
-    )
-    assert create_response.status_code == 200
-
-    upload_file = settings.uploads_dir / 'ops' / 'weekly' / 'keep-job.pdf'
-    result_file = settings.results_dir / 'ops' / 'weekly' / 'keep-job.md'
-    upload_file.write_bytes(b'pdf')
-    result_file.write_text('# markdown', encoding='utf-8')
-
-    db = TestingSessionLocal()
-    db.query(Job).filter(Job.id == 'keep-job').delete()
-    db.commit()
-    db.add(
-        Job(
-            id='keep-job',
-            original_filename='keep-job.pdf',
-            upload_path=str(upload_file),
-            result_path=str(result_file),
-            upload_content=b'pdf',
-            upload_mime_type='application/pdf',
-            upload_size_bytes=3,
-            status=JobStatus.FINISHED,
-            processing_info={'settings': {'folder': 'ops', 'subfolder': 'weekly', 'storage_folder': 'ops/weekly'}},
-        )
-    )
-    db.commit()
-    db.close()
-
-    response = client.delete('/api/v1/jobs/keep-job')
-    assert response.status_code == 200
-
-    # Upload-side folder persists because of .keep (folder created via API).
-    assert (settings.uploads_dir / 'ops' / 'weekly').exists()
-    assert (settings.uploads_dir / 'ops' / 'weekly' / '.keep').exists()
-    # Results-side folder (no marker) is pruned once empty, as before.
-    assert not (settings.results_dir / 'ops' / 'weekly').exists()
 
 
 def test_process_job_with_vl_settings_shape_forwards_vl_override(monkeypatch, tmp_path):
@@ -2050,14 +1854,9 @@ def test_process_job_with_vl_settings_shape_forwards_vl_override(monkeypatch, tm
     from app.workers import tasks
 
     monkeypatch.setattr(tasks, 'SessionLocal', TestingSessionLocal)
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
 
     connection = _make_vl_connection(name='Worker Path Vision')
-
-    upload_path = settings.uploads_dir / 'inbox' / 'job-vl-single.pdf'
-    upload_path.parent.mkdir(parents=True, exist_ok=True)
-    upload_path.write_bytes(b'%PDF-1.4 fake upload content')
 
     db = TestingSessionLocal()
     db.query(Job).filter(Job.id == 'job-vl-single').delete()
@@ -2066,8 +1865,8 @@ def test_process_job_with_vl_settings_shape_forwards_vl_override(monkeypatch, tm
         Job(
             id='job-vl-single',
             original_filename='job-vl-single.pdf',
-            upload_path=str(upload_path),
-            upload_content=b'%PDF-1.4 fake upload content',
+            upload_path='inbox/job-vl-single/job-vl-single.pdf',
+            upload_object_id=stored_upload(b'%PDF-1.4 fake upload content'),
             upload_mime_type='application/pdf',
             upload_size_bytes=len(b'%PDF-1.4 fake upload content'),
             status=JobStatus.PENDING,

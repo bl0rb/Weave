@@ -546,6 +546,21 @@ _TECHNICAL_IDENTITY_PREFIX = 'wti_'
 # caller retrying a bad token in a hot loop doesn't turn into a hot loop of
 # outbound calls to Weave-Ingest either.
 _technical_scope_cache: dict[str, tuple[float, Scope | None]] = {}
+# Bounded: negative entries are keyed by whatever token a caller sends, so
+# without a cap a stream of made-up `wti_...` tokens would grow this dict
+# for the process's whole lifetime.
+_TECHNICAL_SCOPE_CACHE_MAX_ENTRIES = 10_000
+
+
+def _store_technical_scope(cache_key: str, entry: tuple[float, Scope | None]) -> None:
+    if len(_technical_scope_cache) >= _TECHNICAL_SCOPE_CACHE_MAX_ENTRIES:
+        now = time.monotonic()
+        for key in [k for k, (expires_at, _) in _technical_scope_cache.items() if expires_at <= now]:
+            del _technical_scope_cache[key]
+        while len(_technical_scope_cache) >= _TECHNICAL_SCOPE_CACHE_MAX_ENTRIES:
+            # Oldest first: dicts keep insertion order.
+            del _technical_scope_cache[next(iter(_technical_scope_cache))]
+    _technical_scope_cache[cache_key] = entry
 
 
 def _technical_cache_key(token: str) -> str:
@@ -590,9 +605,8 @@ def _resolve_technical_scope(token: str) -> Scope:
         del _technical_scope_cache[cache_key]
 
     def _cache_and_return(scope: Scope | None) -> Scope | None:
-        _technical_scope_cache[cache_key] = (
-            time.monotonic() + settings.technical_identity_cache_seconds,
-            scope,
+        _store_technical_scope(
+            cache_key, (time.monotonic() + settings.technical_identity_cache_seconds, scope)
         )
         return scope
 

@@ -932,6 +932,62 @@ Usage: {{- include "weave.validate" . }}
 {{- include "weave.requirePostgresMode" . -}}
 {{- include "weave.requireRedisMode" . -}}
 {{- include "weave.requireRerankerLimits" . -}}
+{{- include "weave.requireDbBudget" . -}}
+{{- end -}}
+
+{{/*
+===========================================================================
+Verbindungsbudget der Datenbank
+===========================================================================
+
+Ingest, Knowledge, Retrieval und API teilen sich EINEN Datenbankserver, und
+dessen max_connections gilt fuer alle zusammen. Jeder Pod oeffnet hoechstens
+(Prozesse x Pool je Prozess) Verbindungen. Die Summe ueber alle
+eingeschalteten Workloads bei MAXIMALER Replikenzahl (autoscaling.<x>.
+maxReplicas, sonst <x>.replicas) plus postgresql.reservedConnections darf
+postgresql.maxConnections nicht ueberschreiten -- sonst scheitern Pods beim
+Hochskalieren mit "too many clients", und zwar erst unter Last.
+
+Verbindungen je Pod:
+  uvicorn-Dienste   dbPool.size + dbPool.maxOverflow (ein Prozess)
+  Ingest-Worker     Concurrency x (dbPool + 1 Log-Spiegelung) + 1 Log-
+                    Spiegelung im Hauptprozess (WORKER_LOG_DB_POOL_SIZE=1)
+  Knowledge-Worker  Concurrency x dbPool + 1 (Hauptprozess)
+
+Ohne Pooler ist das die harte Grenze; mit PgBouncer & Co. zaehlt der
+Pooler, dann postgresql.maxConnections auf dessen Client-Limit setzen.
+*/}}
+{{- define "weave.requireDbBudget" -}}
+{{- $v := .Values -}}
+{{- $cfg := include "weave.mergedConfig" . | fromYaml -}}
+{{- $ingestCfg := get $cfg "ingest" | default dict -}}
+{{- $knowledgeCfg := get $cfg "knowledge" | default dict -}}
+{{- $ocrConcurrency := int (get $ingestCfg "INGEST_WORKER_CONCURRENCY" | default 1) -}}
+{{- $knowledgeConcurrency := int ($v.knowledgeWorker.concurrency | default (get $knowledgeCfg "CELERY_WORKER_CONCURRENCY") | default 2) -}}
+{{- $logPool := 1 -}}
+{{- $rows := list
+      (dict "key" "ingestBackend"   "perPod" (add $v.ingestBackend.dbPool.size $v.ingestBackend.dbPool.maxOverflow))
+      (dict "key" "ingestWorker"    "perPod" (add (mul $ocrConcurrency (add $v.ingestWorker.dbPool.size $v.ingestWorker.dbPool.maxOverflow $logPool)) $logPool))
+      (dict "key" "ingestWorkerIo"  "perPod" (add (mul (int $v.ingestWorkerIo.concurrency) (add $v.ingestWorkerIo.dbPool.size $v.ingestWorkerIo.dbPool.maxOverflow $logPool)) $logPool))
+      (dict "key" "knowledge"       "perPod" (add $v.knowledge.dbPool.size $v.knowledge.dbPool.maxOverflow))
+      (dict "key" "knowledgeWorker" "perPod" (add (mul $knowledgeConcurrency (add $v.knowledgeWorker.dbPool.size $v.knowledgeWorker.dbPool.maxOverflow)) 1))
+      (dict "key" "retrieval"       "perPod" (add $v.retrieval.dbPool.size $v.retrieval.dbPool.maxOverflow))
+      (dict "key" "api"             "perPod" (add $v.api.dbPool.size $v.api.dbPool.maxOverflow)) -}}
+{{- $total := int $v.postgresql.reservedConnections -}}
+{{- $lines := list (printf "  reserviert: %d" $total) -}}
+{{- range $row := $rows -}}
+{{- $w := get $v $row.key -}}
+{{- if $w.enabled -}}
+{{- $auto := get $v.autoscaling $row.key -}}
+{{- $replicas := ternary $auto.maxReplicas $w.replicas $auto.enabled | int -}}
+{{- $sum := mul $replicas $row.perPod -}}
+{{- $total = add $total $sum -}}
+{{- $lines = append $lines (printf "  %s: %d Repliken x %d = %d" $row.key $replicas (int $row.perPod) $sum) -}}
+{{- end -}}
+{{- end -}}
+{{- if gt $total (int $v.postgresql.maxConnections) -}}
+{{- fail (printf "Verbindungsbudget ueberschritten: %d Verbindungen bei maximaler Replikenzahl, postgresql.maxConnections ist %d.\n%s\nmaxReplicas/replicas senken, dbPool verkleinern oder postgresql.maxConnections erhoehen (bzw. einen Pooler vorschalten)." $total (int $v.postgresql.maxConnections) (join "\n" $lines)) -}}
+{{- end -}}
 {{- end -}}
 
 {{/*

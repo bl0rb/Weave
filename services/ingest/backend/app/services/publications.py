@@ -6,7 +6,6 @@ import hashlib
 import math
 import re
 from datetime import date, datetime, timezone
-from pathlib import Path
 from urllib.parse import quote, unquote
 
 import yaml
@@ -80,25 +79,7 @@ def restore_relative_image_urls(markdown: str, release_id: str) -> str:
 
 
 def _markdown_from_job(job: Job) -> str | None:
-    if job.result_markdown is not None:
-        return job.result_markdown
-
-    info = job.processing_info if isinstance(job.processing_info, dict) else {}
-    editor = info.get('editor') if isinstance(info.get('editor'), dict) else {}
-    latest = editor.get('latest_result_path') if isinstance(editor.get('latest_result_path'), str) else None
-    candidates = [Path(latest)] if latest else []
-    if settings.results_dir.exists():
-        candidates.extend(sorted(settings.results_dir.glob(f'edited/{job.id}.v*.md')))
-    if job.result_path:
-        candidates.append(Path(job.result_path))
-    for path in candidates:
-        try:
-            resolved = path.resolve()
-            if resolved.exists():
-                return resolved.read_text(encoding='utf-8')
-        except (OSError, UnicodeError):
-            continue
-    return None
+    return job.result_markdown
 
 
 def _parse_frontmatter(markdown: str) -> tuple[dict, str]:

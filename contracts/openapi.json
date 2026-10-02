@@ -4989,66 +4989,6 @@
         "title": "MarkdownFileEntry",
         "type": "object"
       },
-      "OrphanedFileEntry": {
-        "properties": {
-          "age_seconds": {
-            "title": "Age Seconds",
-            "type": "integer"
-          },
-          "kind": {
-            "title": "Kind",
-            "type": "string"
-          },
-          "modified_at": {
-            "format": "date-time",
-            "title": "Modified At",
-            "type": "string"
-          },
-          "path": {
-            "title": "Path",
-            "type": "string"
-          },
-          "size_bytes": {
-            "title": "Size Bytes",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "kind",
-          "path",
-          "size_bytes",
-          "modified_at",
-          "age_seconds"
-        ],
-        "title": "OrphanedFileEntry",
-        "type": "object"
-      },
-      "OrphanedFilesReportResponse": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/OrphanedFileEntry"
-            },
-            "title": "Items",
-            "type": "array"
-          },
-          "total_bytes": {
-            "title": "Total Bytes",
-            "type": "integer"
-          },
-          "total_count": {
-            "title": "Total Count",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "items",
-          "total_count",
-          "total_bytes"
-        ],
-        "title": "OrphanedFilesReportResponse",
-        "type": "object"
-      },
       "OwnedItem": {
         "properties": {
           "id": {
@@ -8970,25 +8910,9 @@
   },
   "openapi": "3.1.0",
   "paths": {
-    "/api/v1/admin/backup.zip": {
-      "get": {
-        "description": "Download the raw local storage as one deliberate admin backup.\n\nThere is intentionally no listing or per-file read endpoint here. Symlinks\nare skipped so the archive cannot escape the two configured storage roots.",
-        "operationId": "download_admin_backup_api_v1_admin_backup_zip_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Download Admin Backup"
-      }
-    },
     "/api/v1/admin/backup/exports": {
       "post": {
+        "description": "Stream a new archive straight to the caller (see module docstring).",
         "operationId": "create_export_api_v1_admin_backup_exports_post",
         "requestBody": {
           "content": {
@@ -9001,12 +8925,10 @@
           "required": true
         },
         "responses": {
-          "202": {
+          "200": {
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BackupRunResponse"
-                }
+                "schema": {}
               }
             },
             "description": "Successful Response"
@@ -9065,46 +8987,6 @@
           }
         },
         "summary": "Delete Export",
-        "tags": [
-          "backup-admin"
-        ]
-      }
-    },
-    "/api/v1/admin/backup/exports/{run_id}/download": {
-      "get": {
-        "operationId": "download_export_api_v1_admin_backup_exports__run_id__download_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "run_id",
-            "required": true,
-            "schema": {
-              "title": "Run Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Download Export",
         "tags": [
           "backup-admin"
         ]
@@ -9837,62 +9719,6 @@
           }
         },
         "summary": "Update Retrieval Provider"
-      }
-    },
-    "/api/v1/auth/admin/storage/orphaned-files": {
-      "get": {
-        "operationId": "admin_list_orphaned_files_api_v1_auth_admin_storage_orphaned_files_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 200,
-              "maximum": 1000,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "offset",
-            "required": false,
-            "schema": {
-              "default": 0,
-              "minimum": 0,
-              "title": "Offset",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OrphanedFilesReportResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Admin List Orphaned Files",
-        "tags": [
-          "auth-admin"
-        ]
       }
     },
     "/api/v1/auth/admin/system-status": {

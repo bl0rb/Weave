@@ -1,7 +1,7 @@
 'use client';
 
-import { Suspense, useState } from 'react';
-import { Archive, DatabaseBackup, ShieldCheck, Wrench } from 'lucide-react';
+import { Suspense } from 'react';
+import { DatabaseBackup, ShieldCheck, Wrench } from 'lucide-react';
 
 import {
   AdminPageShell,
@@ -14,9 +14,7 @@ import {
 import { BackupTab } from '@/components/admin/backup-tab';
 import { TechnicalIdentitiesTab } from '@/components/admin/technical-identities-tab';
 import { IndexMaintenanceSection } from '@/components/admin/retrieval-provider-tab';
-import { ConfirmDialog, SectionCard } from '@/components/admin/admin-shared';
-import { Button } from '@/components/ui/button';
-import { apiFetch } from '@/lib/api';
+import { SectionCard } from '@/components/admin/admin-shared';
 import { useI18n } from '@/i18n/provider';
 
 type Bereich = 'sicherung' | 'identitaeten' | 'werkzeuge';
@@ -46,40 +44,11 @@ function AdminBetriebPageInner() {
     { href: '/processing/new', title: t('admin.operations.tools.processNew.title'), description: t('admin.operations.tools.processNew.description') },
   ];
   const [bereich, setBereich] = useBereich<Bereich>(IDS, 'sicherung');
-  const [backupOpen, setBackupOpen] = useState(false);
-  const [backupBusy, setBackupBusy] = useState(false);
-
-  const downloadBackup = async () => {
-    setBackupBusy(true);
-    try {
-      const response = await apiFetch('/api/v1/admin/backup.zip');
-      if (!response.ok) throw new Error(t('admin.operations.backupDialog.error'));
-      const blob = await response.blob();
-      const href = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = href;
-      link.download = 'weave-storage-backup.zip';
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(href);
-      setBackupOpen(false);
-    } finally {
-      setBackupBusy(false);
-    }
-  };
-
   return (
     <AdminPageShell>
       <PageHead
         title={t('admin.operations.pageTitle')}
         description={t('admin.operations.pageDescription')}
-        actions={
-          <Button type="button" variant="outline" onClick={() => setBackupOpen(true)}>
-            <Archive size={16} />
-            {t('admin.operations.downloadBackup')}
-          </Button>
-        }
       />
       <SectionTabs idPrefix="betrieb" ariaLabel={t('admin.nav.section')} tabs={TABS} active={bereich} onChange={setBereich} />
       {bereich === 'sicherung' && (
@@ -108,18 +77,6 @@ function AdminBetriebPageInner() {
             <IndexMaintenanceSection />
           </div>
         </SectionPanel>
-      )}
-
-      {backupOpen && (
-        <ConfirmDialog
-          title={t('admin.operations.backupDialog.title')}
-          body={<p>{t('admin.operations.backupDialog.body')}</p>}
-          confirmLabel={backupBusy ? t('admin.operations.backupDialog.busy') : t('admin.operations.backupDialog.confirm')}
-          onClose={() => {
-            if (!backupBusy) setBackupOpen(false);
-          }}
-          onConfirm={downloadBackup}
-        />
       )}
     </AdminPageShell>
   );

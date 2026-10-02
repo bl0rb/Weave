@@ -1,0 +1,110 @@
+{{/*
+===========================================================================
+KEDA fuer den OCR-Pool (ingest-worker) -- nur mit
+autoscaling.ingestWorker.enabled=true UND autoscaling.ingestWorker.engine=keda.
+
+WARUM NICHT NACH CPU
+Eine CPU-HPA skaliert erst, wenn schon gerechnet wird, und baut beim
+Herunterskalieren beliebige Pods ab -- auch einen, der gerade eine OCR
+macht. KEDA skaliert hier nach Arbeit, mit zwei Triggern (KEDA nimmt den
+groesseren Wert):
+
+  redis       wartende Nachrichten in der Liste weave.ingest.ocr
+              (Celery/Kombu legt je Queue eine Redis-Liste dieses Namens an).
+  postgresql  laufende Auftraege (jobs.status = RUNNING). Die Redis-Liste
+              enthaelt nur WARTENDE Nachrichten -- ohne diesen Trigger saehe
+              KEDA bei leerer Queue keine Arbeit mehr und baute Worker ab,
+              die gerade OCR machen.
+
+PENDING-Jobs in der Datenbank zaehlen bewusst NICHT: manche warten auf einen
+manuellen Start (Uploads in eine Collection) und haben noch keine Nachricht
+in der Queue.
+
+VORAUSSETZUNG
+Der KEDA-Operator mit seinen CRDs (keda.sh/v1alpha1). Fehlt die API im
+Cluster, bricht das Rendern hier ab, statt ein wirkungsloses Objekt
+anzulegen. Mit `helm template` ohne Cluster: --api-versions
+keda.sh/v1alpha1/ScaledObject mitgeben.
+
+Passwoerter kommen ueber TriggerAuthentication aus demselben Secret wie
+bei allen Diensten; im Manifest steht keins.
+===========================================================================
+*/}}
+{{- $auto := .Values.autoscaling.ingestWorker }}
+{{- if and .Values.ingestWorker.enabled $auto.enabled (eq ($auto.engine | default "hpa") "keda") }}
+{{- include "weave.validate" . }}
+{{- if not (.Capabilities.APIVersions.Has "keda.sh/v1alpha1/ScaledObject") }}
+{{- fail "autoscaling.ingestWorker.engine=keda, aber die API keda.sh/v1alpha1 fehlt im Cluster. KEDA zuerst installieren (Helm-Chart kedacore/keda) oder engine auf hpa lassen." }}
+{{- end }}
+{{- if gt (int $auto.minReplicas) (int $auto.maxReplicas) }}
+{{- fail (printf "autoscaling.ingestWorker: minReplicas (%v) ist groesser als maxReplicas (%v)." $auto.minReplicas $auto.maxReplicas) }}
+{{- end }}
+{{- $name := include "weave.componentName" (dict "ctx" $ "component" "ingest-worker") }}
+{{- $secret := include "weave.secretName" . }}
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ printf "%s-redis" $name | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "ingest-worker") | nindent 4 }}
+spec:
+  secretTargetRef:
+    - parameter: password
+      name: {{ $secret | quote }}
+      key: REDIS_PASSWORD
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ printf "%s-postgres" $name | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "ingest-worker") | nindent 4 }}
+spec:
+  secretTargetRef:
+    - parameter: password
+      name: {{ $secret | quote }}
+      key: POSTGRES_PASSWORD
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "ingest-worker") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $ "extra" $auto.annotations) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  scaleTargetRef:
+    name: {{ $name }}
+  minReplicaCount: {{ $auto.minReplicas }}
+  maxReplicaCount: {{ $auto.maxReplicas }}
+  pollingInterval: {{ $auto.keda.pollingInterval }}
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: {{ $auto.keda.scaleDownStabilizationSeconds }}
+  triggers:
+    - type: redis
+      metadata:
+        address: {{ printf "%s:%v" (include "weave.redisHost" .) (include "weave.redisPort" .) | quote }}
+        databaseIndex: "0"
+        listName: weave.ingest.ocr
+        listLength: {{ $auto.keda.jobsPerReplica | quote }}
+      authenticationRef:
+        name: {{ printf "%s-redis" $name | trunc 63 | trimSuffix "-" }}
+    - type: postgresql
+      metadata:
+        host: {{ include "weave.postgresHost" . | quote }}
+        port: {{ include "weave.postgresPort" . | quote }}
+        userName: {{ include "weave.postgresUser" . | quote }}
+        dbName: {{ include "weave.postgresIngestDatabase" . | quote }}
+        sslmode: {{ $auto.keda.postgresSslMode | quote }}
+        query: "SELECT count(*) FROM jobs WHERE status = 'RUNNING'"
+        targetQueryValue: {{ $auto.keda.jobsPerReplica | quote }}
+      authenticationRef:
+        name: {{ printf "%s-postgres" $name | trunc 63 | trimSuffix "-" }}
+{{- end }}

@@ -1,7 +1,7 @@
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, pool, text
 
 from app.core.config import settings
 from app.database.base import Base
@@ -31,6 +31,12 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+# Serializes concurrent `alembic upgrade` runs, e.g. several replicas
+# starting at once. Session-level on purpose: it spans every migration
+# transaction and is released when the connection closes.
+_MIGRATION_LOCK_KEY = 7302000001
+
+
 def run_migrations_online() -> None:
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
@@ -39,6 +45,9 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        if connection.dialect.name == 'postgresql':
+            connection.execute(text('SELECT pg_advisory_lock(:key)'), {'key': _MIGRATION_LOCK_KEY})
+            connection.commit()
         context.configure(
             connection=connection, target_metadata=target_metadata,
             compare_type=True, transaction_per_migration=True,

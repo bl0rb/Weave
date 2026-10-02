@@ -46,6 +46,58 @@ user_teams = Table(
 )
 
 
+class StoredObject(Base):
+    """Immutable binary object (an original upload, an imported image or
+    attachment), stored in PostgreSQL as fixed-size chunks so no pod ever
+    holds a whole file in memory and no pod needs a shared volume.
+
+    Rows are referenced (jobs.upload_object_id, job_artifacts.object_id)
+    and never updated; copies of a document share one object. Unreferenced
+    objects are removed by the garbage collection in
+    app/services/object_store.py. `backend` and `storage_key` let a later
+    object-storage backend (S3) take new objects without migrating old ones.
+    """
+
+    __tablename__ = 'stored_objects'
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    content_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    backend: Mapped[str] = mapped_column(String(8), default='db', server_default='db', nullable=False)
+    storage_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    chunk_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+
+
+class RuntimeSetting(Base):
+    """Instance-wide settings an admin changes at runtime (e.g. the default
+    OCR profile, app/services/paddle_service.py), shared by every API and
+    worker process. Kept here rather than in Redis so the broker holds no
+    configuration that a Redis restart could lose."""
+
+    __tablename__ = 'runtime_settings'
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc), nullable=False,
+    )
+
+
+class StoredObjectChunk(Base):
+    __tablename__ = 'stored_object_chunks'
+
+    object_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey('stored_objects.id', ondelete='CASCADE'), primary_key=True
+    )
+    seq: Mapped[int] = mapped_column(Integer, primary_key=True)
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+
+
 class JobStatus(str, enum.Enum):
     PENDING = 'PENDING'
     RUNNING = 'RUNNING'
@@ -58,13 +110,25 @@ class Job(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Logical name of the original ({storage_folder}/{job_id}{suffix}); only
+    # its suffix and folder are used, nothing is stored under this path.
     upload_path: Mapped[str] = mapped_column(String(1024), nullable=False)
-    upload_content: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    # The original's bytes (app/services/object_store.py).
+    upload_object_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('stored_objects.id'), nullable=True, index=True
+    )
     upload_mime_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
     upload_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    result_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     result_markdown: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[JobStatus] = mapped_column(Enum(JobStatus), default=JobStatus.PENDING, nullable=False)
+    # Ownership of a RUNNING job (app/workers/tasks.py's process_job): each
+    # claim stamps a fresh claim_token, the worker refreshes heartbeat_at
+    # while it runs, and only the current token holder may write the result.
+    # recovery_count counts consecutive reclaims after a lost worker and is
+    # reset by every terminal result.
+    claim_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    recovery_count: Mapped[int] = mapped_column(Integer, default=0, server_default='0', nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     processing_info: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -885,7 +949,7 @@ class ImportRun(Base):
     attachments_saved: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     # job_artifacts payload bytes for this run.
     artifact_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
-    # Page export_view HTML stored in jobs.upload_content for this run.
+    # Page export_view HTML stored as the page jobs' upload objects for this run.
     content_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     current_page_title: Mapped[str] = mapped_column(String(512), default='', nullable=False)
     # {'frontier': [[page_id, depth], ...], 'visited': {page_id: job_id|None},
@@ -1096,12 +1160,8 @@ class MailMessage(Base):
 
 class JobArtifact(Base):
     """Binary payload (inline image or attachment) captured for an imported
-    page's Job. Stored in the DB (BYTEA on postgres) because there is no
-    shared filesystem between backend and worker pods.
-
-    `content` must be deferred/excluded from every listing query (mirror the
-    `_JOB_BLOB_DEFER_OPTIONS` pattern in routes.py); only the single-artifact
-    content endpoint selects the blob.
+    page's Job. The bytes are a StoredObject (app/services/object_store.py);
+    only the content endpoints read them.
     """
 
     __tablename__ = 'job_artifacts'
@@ -1119,7 +1179,7 @@ class JobArtifact(Base):
     # Our validated classification (extension + magic bytes), never the
     # remote server's header.
     content_type: Mapped[str] = mapped_column(String(128), nullable=False)
-    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    object_id: Mapped[str] = mapped_column(String(36), ForeignKey('stored_objects.id'), nullable=False, index=True)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     # Original Confluence download URL (provenance only, never re-fetched).
     source_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)

@@ -301,9 +301,12 @@ Ein unbekannter Profilname wird kommentarlos auf die Voreinstellung
 zurückgesetzt. Nach einer Änderung die `profile`-Angabe im erzeugten
 Frontmatter kontrollieren.
 
-**`UPLOADS_DIR` / `RESULTS_DIR` — der Worker findet die Datei nicht.**
-API-Container und OCR-Worker müssen dasselbe Volume an denselben Pfad mounten.
-Ohne persistentes Volume sind Uploads nach einem Neustart weg.
+**`WORKER_TMP_DIR` — Platz für laufende Aufträge.**
+Originale, Ergebnisse und Bilder liegen ausschließlich in PostgreSQL. Ein
+Worker kopiert das Original pro Auftrag in ein eigenes Verzeichnis unter
+`WORKER_TMP_DIR` und löscht es danach wieder; ein gemeinsames Volume zwischen
+API und Worker gibt es nicht. Das Verzeichnis braucht pro gleichzeitigem
+Auftrag etwa das Dreifache der Uploadgröße.
 
 ---
 
@@ -869,14 +872,31 @@ ausdrücklich).
 ### Regelmäßige Sicherung
 
 In Admin → „Sicherung & Wiederherstellung" → Export eine Passphrase (zweimal,
-mindestens 12 Zeichen) vergeben und „Sicherung erstellen" klicken. Das
-Archiv landet unter `<uploads_dir>/../backups/` im Speicher-Volume des
-Ingest-Backends und lässt sich von dort herunterladen. **Die Passphrase wird
+mindestens 12 Zeichen) vergeben und „Sicherung erstellen" klicken. Der Browser
+lädt das Archiv direkt herunter: Der Server erzeugt es während des Downloads
+aus einem einheitlichen Datenbankstand und bewahrt **keine** Kopie auf — die
+Liste darunter ist nur noch der Verlauf. **Die Passphrase wird
 nirgends auf dem Server gespeichert** — sie getrennt vom Archiv selbst
 aufbewahren (Passwort-Manager, Tresor), sonst ist das Archiv im Notfall
 wertlos. Die 12-Zeichen-Mindestlänge wird nur von der Web-Oberfläche
 durchgesetzt; über `python -m app.cli backup export` lässt sich auch eine
 kürzere Passphrase setzen — auch dort eine mindestens ebenso starke wählen.
+
+Über die Oberfläche lassen sich Archive bis `BACKUP_MAX_UPLOAD_BYTES`
+(Standard 2 GiB) wiederherstellen. Größere Archive — typisch beim Umzug
+zwischen Installationen — direkt im Backend-Container importieren:
+
+```bash
+kubectl cp weave.weave-backup.tar.gz <namespace>/<ingest-backend-pod>:/scratch/
+kubectl exec -it -n <namespace> <ingest-backend-pod> -- sh -c 'read -rs WEAVE_BACKUP_PASSPHRASE && export WEAVE_BACKUP_PASSPHRASE && python -m app.cli backup import --file /scratch/weave.weave-backup.tar.gz --admin-username <admin>'
+```
+
+Der zweite Befehl wartet auf die Passphrase (Eingabe unsichtbar); sie landet
+so weder in der Shell-Historie noch in einer Prozessliste.
+
+Ein Sicherungs- oder Wiederherstellungslauf, dessen Pod unterwegs beendet
+wurde, gilt nach `BACKUP_RUN_STALE_SECONDS` (Standard 6 h) als abgebrochen und
+blockiert danach keine neuen Läufe mehr.
 
 ### Notfall: Neuinstallation und Wiederherstellung
 
@@ -925,3 +945,37 @@ Passphrase verloren, ist das Archiv nicht mehr entschlüsselbar — dann bleibt
 nur, alle darin enthaltenen Zugangsdaten (siehe obige Liste) auf den
 jeweiligen Gegenstellen neu auszustellen und in der frischen Installation
 erneut einzutragen.
+
+---
+
+## 13. Skalierung im Cluster (Helm)
+
+Diese Chart-Version ist für **neue Installationen**: Es gibt kein
+gemeinsames Dateivolume mehr (die früheren Werte `persistence.*` und das
+PVC `ingest-storage` entfallen). Originale, Ergebnisse und Bilder liegen in
+PostgreSQL; jeder Pod hat nur ein flüchtiges `/scratch` (`emptyDir`).
+
+| Stellschraube | Wirkung |
+|---|---|
+| `ingestWorker` | OCR-Pool, bedient nur die Queue `weave.ingest.ocr`. `scratch.sizeLimit` ≈ Concurrency × 3 × Uploadgröße + 1 GiB. |
+| `ingestWorkerIo` | Alles andere (Confluence-Import, Webhooks, Freigaben, Ticks) auf `weave.ingest.default`, `concurrency` 4. |
+| `autoscaling.<workload>` | HPA nach CPU (braucht `resources.requests.cpu`). |
+| `autoscaling.ingestWorker.engine: keda` | KEDA statt HPA für den OCR-Pool: skaliert nach wartenden (Redis) und laufenden (PostgreSQL) Aufträgen. Setzt den KEDA-Operator voraus; ohne ihn bricht das Rendern ab. |
+| `autoscaling.toolsMcp` | HPA für den MCP-Server; er läuft zustandslos, jede Replik beantwortet jeden Aufruf. |
+| `<workload>.dbPool` | Verbindungen je Prozess. |
+| `postgresql.maxConnections` | Standard 200; im Modus `bundled`/`cnpg` am Server gesetzt, bei `external` nur geprüft. |
+
+Beim Rendern rechnet das Chart das **Verbindungsbudget** nach: Summe über
+alle Datenbank-Workloads aus maximaler Replikenzahl × Verbindungen je Pod
+plus `postgresql.reservedConnections`. Liegt die Summe über
+`postgresql.maxConnections`, bricht `helm template`/`helm upgrade` mit einer
+Aufstellung je Workload ab. Die Vorgaben passen in 200 Verbindungen; mehr
+Repliken erfordern ein höheres `maxConnections` (etwa 5–10 MB RAM je
+Verbindung am Datenbankserver) oder einen Pooler.
+
+Mehrere Repliken von Backend, Knowledge und API dürfen gleichzeitig starten:
+Alembic nimmt vor dem Migrieren eine Advisory-Sperre, die übrigen warten.
+Mehrere Ingest-Worker sind sicher, weil jeder Auftrag ein Übernahme-Token
+mit Heartbeat trägt; ein beim Herunterskalieren abgebrochener Auftrag wird
+nach etwa zwei Minuten neu eingestellt (`terminationGracePeriodSeconds`
+des OCR-Pools: 120 s).

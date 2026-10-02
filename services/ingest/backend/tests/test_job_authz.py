@@ -352,8 +352,7 @@ def test_upload_stamps_owner_id_and_hides_from_other_users(monkeypatch, tmp_path
     from app.api import routes
     from app.core.config import settings
 
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
     monkeypatch.setattr(routes.process_job, 'delay', lambda *a, **k: None)
 
     uploader = create_test_user(username='authz-uploader', email='authz-uploader@example.com')

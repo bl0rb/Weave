@@ -1,8 +1,8 @@
 """Tests for the disaster-recovery export/import engine (app/services/backup.py).
 
 Round-trips a rich source dataset into a SECOND, independent SQLite database
-under a DIFFERENT SECRET_KEY and a different uploads_dir/results_dir, the
-way a real "fresh install, then restore" disaster-recovery flow works.
+under a DIFFERENT SECRET_KEY and a different backup_dir, the way a real
+"fresh install, then restore" disaster-recovery flow works.
 
 Both the source and target databases here are dedicated per-test SQLite
 files (via `_new_engine`), deliberately NOT the shared conftest.py
@@ -41,7 +41,7 @@ from app.models.models import (
     UserRole,
     WebhookConnection,
 )
-from app.services import backup
+from app.services import backup, object_store
 from app.services.security import (
     encrypt_client_secret,
     encrypt_import_credential,
@@ -52,27 +52,30 @@ from app.services.security import (
 )
 
 
+# Larger than one 64 KiB test chunk (see _build_source_data).
+UPLOAD_BYTES = b'%PDF-1.4 ' + bytes(range(256)) * 400
+
+
 def _new_engine(tmp_path: Path, name: str):
     engine = create_engine(f'sqlite:///{tmp_path / name}', future=True)
     Base.metadata.create_all(bind=engine)
     return engine, sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
 
-def _use_storage_dirs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, label: str) -> None:
-    monkeypatch.setattr(config_module.settings, 'uploads_dir', tmp_path / label / 'uploads')
-    monkeypatch.setattr(config_module.settings, 'results_dir', tmp_path / label / 'results')
+def _use_backup_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, label: str) -> None:
+    monkeypatch.setattr(config_module.settings, 'backup_dir', tmp_path / label / 'backups')
 
 
 def _build_source_data(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, SourceSession) -> dict:
     """Populate a dedicated source DB with one row touching every mechanism
-    the engine needs to prove: an encrypted column, a large-blob column, a
-    normalized upload/result path pair backed by a real file, a
-    self-referential job chain, a delivered and a withdrawn DocumentRelease,
-    and one excluded-table row."""
+    the engine needs to prove: an encrypted column, stored objects (chunked
+    blobs) referenced by a job and an artifact, a self-referential job
+    chain, a delivered and a withdrawn DocumentRelease, and one
+    excluded-table row."""
     monkeypatch.setattr(config_module.settings, 'secret_key', 'source-instance-secret-key')
-    _use_storage_dirs(monkeypatch, tmp_path, 'source')
-    config_module.settings.uploads_dir.mkdir(parents=True, exist_ok=True)
-    config_module.settings.results_dir.mkdir(parents=True, exist_ok=True)
+    _use_backup_dir(monkeypatch, tmp_path, 'source')
+    # Two chunks per upload, so the round trip covers multi-chunk objects.
+    monkeypatch.setattr(config_module.settings, 'object_chunk_bytes', 64 * 1024)
 
     unique = uuid.uuid4().hex[:8]
 
@@ -109,33 +112,25 @@ def _build_source_data(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, SourceSe
         db.add_all([auth_provider, import_source, managed_bot, webhook_connection, collection])
         db.flush()
 
-        upload_dir = config_module.settings.uploads_dir / 'folder1'
-        upload_dir.mkdir(parents=True, exist_ok=True)
-        upload_file = upload_dir / 'job1.pdf'
-        upload_file.write_bytes(b'pdf bytes on disk')
-        result_dir = config_module.settings.results_dir / 'folder1'
-        result_dir.mkdir(parents=True, exist_ok=True)
-        result_file = result_dir / 'job1.md'
-        result_file.write_text('# Result', encoding='utf-8')
-
+        upload = object_store.put_bytes(db, UPLOAD_BYTES, content_type='application/pdf')
         job1 = Job(
-            original_filename='job1.pdf', upload_path=str(upload_file.resolve()),
-            upload_content=b'pdf blob content', result_path=str(result_file.resolve()),
+            original_filename='job1.pdf', upload_path='folder1/job1/job1.pdf', upload_object_id=upload.id,
             result_markdown='# Result', status=JobStatus.FINISHED, owner_id=owner.id,
         )
         db.add(job1)
         db.flush()
 
         job2 = Job(
-            original_filename='job1.pdf', upload_path=str(upload_file.resolve()), status=JobStatus.FINISHED,
-            owner_id=owner.id, previous_job_id=job1.id, document_version=2,
+            original_filename='job1.pdf', upload_path='folder1/job2/job2.pdf', upload_object_id=upload.id,
+            status=JobStatus.FINISHED, owner_id=owner.id, previous_job_id=job1.id, document_version=2,
         )
         db.add(job2)
         db.flush()
 
+        artifact_object = object_store.put_bytes(db, b'artifact bytes', content_type='image/png')
         artifact = JobArtifact(
             job_id=job1.id, kind='attachment', filename='img.png', content_type='image/png',
-            content=b'artifact bytes', size_bytes=13, sha256=hashlib.sha256(b'artifact bytes').hexdigest(),
+            object_id=artifact_object.id, size_bytes=13, sha256=hashlib.sha256(b'artifact bytes').hexdigest(),
         )
         db.add(artifact)
 
@@ -168,7 +163,6 @@ def _build_source_data(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, SourceSe
             'artifact_id': artifact.id, 'auth_provider_id': auth_provider.id,
             'import_source_id': import_source.id, 'managed_bot_id': managed_bot.id,
             'webhook_connection_id': webhook_connection.id, 'collection_id': collection.id,
-            'upload_file': upload_file, 'result_file': result_file,
         }
     finally:
         db.close()
@@ -191,7 +185,7 @@ def test_round_trip_preserves_data_ids_files_blobs_and_reencrypts(monkeypatch, t
     # SECRET_KEY and a different storage layout.
     target_engine, TargetSession = _new_engine(tmp_path, 'target.db')
     monkeypatch.setattr(config_module.settings, 'secret_key', 'target-instance-secret-key')
-    _use_storage_dirs(monkeypatch, tmp_path, 'target')
+    _use_backup_dir(monkeypatch, tmp_path, 'target')
 
     target_db = TargetSession()
     try:
@@ -207,7 +201,7 @@ def test_round_trip_preserves_data_ids_files_blobs_and_reencrypts(monkeypatch, t
         target_db.commit()
 
         assert report['tables']['jobs'] == 2
-        assert report['files_restored'] >= 2
+        assert report['files_restored'] == 0
         assert report['requires_relogin'] is True
 
         job1 = target_db.get(Job, ids['job1_id'])
@@ -215,15 +209,12 @@ def test_round_trip_preserves_data_ids_files_blobs_and_reencrypts(monkeypatch, t
         assert job1 is not None and job2 is not None
         # ids preserved, self-referential FK fixed up by the deferred pass.
         assert job2.previous_job_id == job1.id
-        # blob restored
-        assert job1.upload_content == b'pdf blob content'
+        # stored objects restored, shared by both job versions
+        assert object_store.read_bytes(target_db, job1.upload_object_id) == UPLOAD_BYTES
+        assert job2.upload_object_id == job1.upload_object_id
         artifact = target_db.get(JobArtifact, ids['artifact_id'])
-        assert artifact.content == b'artifact bytes'
-        # files restored, re-anchored under the TARGET's own uploads/results roots
-        assert Path(job1.upload_path).is_file()
-        assert Path(job1.upload_path).read_bytes() == b'pdf bytes on disk'
-        assert str(config_module.settings.uploads_dir.resolve()) in job1.upload_path
-        assert Path(job1.result_path).read_text(encoding='utf-8') == '# Result'
+        assert object_store.read_bytes(target_db, artifact.object_id) == b'artifact bytes'
+        assert job1.result_markdown == '# Result'
 
         # every *_encrypted column decrypts correctly under the TARGET's key
         from app.services.security import (
@@ -316,7 +307,7 @@ def test_non_fresh_target_refused_then_wiped_with_force(monkeypatch, tmp_path):
 
     target_engine, TargetSession = _new_engine(tmp_path, 'target_nonfresh.db')
     monkeypatch.setattr(config_module.settings, 'secret_key', 'target-secret')
-    _use_storage_dirs(monkeypatch, tmp_path, 'target_nonfresh')
+    _use_backup_dir(monkeypatch, tmp_path, 'target_nonfresh')
     target_db = TargetSession()
     try:
         admin = User(username='bootstrap', email='bootstrap@example.com', password_hash=hash_password('Boots1'), role=UserRole.ADMIN)
@@ -359,7 +350,7 @@ def test_admin_merge_matched_username_keeps_login(monkeypatch, tmp_path):
 
     target_engine, TargetSession = _new_engine(tmp_path, 'target_merge.db')
     monkeypatch.setattr(config_module.settings, 'secret_key', 'target-secret')
-    _use_storage_dirs(monkeypatch, tmp_path, 'target_merge')
+    _use_backup_dir(monkeypatch, tmp_path, 'target_merge')
     target_db = TargetSession()
     try:
         # The importing admin happens to share the exported source owner's
@@ -401,7 +392,7 @@ def test_admin_merge_no_match_keeps_additional_admin(monkeypatch, tmp_path):
 
     target_engine, TargetSession = _new_engine(tmp_path, 'target_nomerge.db')
     monkeypatch.setattr(config_module.settings, 'secret_key', 'target-secret')
-    _use_storage_dirs(monkeypatch, tmp_path, 'target_nomerge')
+    _use_backup_dir(monkeypatch, tmp_path, 'target_nomerge')
     target_db = TargetSession()
     try:
         admin = User(username='new-admin', email='new-admin@example.com', password_hash=hash_password('Boots1'), role=UserRole.ADMIN)
@@ -435,7 +426,7 @@ def test_admin_merge_resets_lockout_and_deactivation(monkeypatch, tmp_path):
 
     source_engine, SourceSession = _new_engine(tmp_path, 'source_lockout.db')
     monkeypatch.setattr(config_module.settings, 'secret_key', 'source-instance-secret-key')
-    _use_storage_dirs(monkeypatch, tmp_path, 'source_lockout')
+    _use_backup_dir(monkeypatch, tmp_path, 'source_lockout')
 
     unique = uuid.uuid4().hex[:8]
     owner_username = f'locked-admin-{unique}'
@@ -461,7 +452,7 @@ def test_admin_merge_resets_lockout_and_deactivation(monkeypatch, tmp_path):
 
     target_engine, TargetSession = _new_engine(tmp_path, 'target_lockout.db')
     monkeypatch.setattr(config_module.settings, 'secret_key', 'target-secret')
-    _use_storage_dirs(monkeypatch, tmp_path, 'target_lockout')
+    _use_backup_dir(monkeypatch, tmp_path, 'target_lockout')
     target_db = TargetSession()
     try:
         new_hash = hash_password('CurrentLoginPw1')
@@ -526,7 +517,7 @@ def test_unknown_column_tolerated_missing_column_defaulted(monkeypatch, tmp_path
     })
 
     target_engine, TargetSession = _new_engine(tmp_path, 'target_unknown_col.db')
-    _use_storage_dirs(monkeypatch, tmp_path, 'target_unknown_col')
+    _use_backup_dir(monkeypatch, tmp_path, 'target_unknown_col')
     target_db = TargetSession()
     try:
         admin = User(username='bootstrap', email='bootstrap@example.com', password_hash=hash_password('Boots1'), role=UserRole.ADMIN)
@@ -564,7 +555,7 @@ def test_pre_visibility_archive_keeps_team_restricted_collections_restricted(mon
     })
 
     target_engine, TargetSession = _new_engine(tmp_path, 'target_pre_0032.db')
-    _use_storage_dirs(monkeypatch, tmp_path, 'target_pre_0032')
+    _use_backup_dir(monkeypatch, tmp_path, 'target_pre_0032')
     target_db = TargetSession()
     try:
         admin = User(username='bootstrap', email='bootstrap@example.com', password_hash=hash_password('Boots1'), role=UserRole.ADMIN)
@@ -598,7 +589,7 @@ def test_pre_bot_grants_archive_turns_bot_teams_into_user_grants(monkeypatch, tm
     })
 
     target_engine, TargetSession = _new_engine(tmp_path, 'target_pre_0036.db')
-    _use_storage_dirs(monkeypatch, tmp_path, 'target_pre_0036')
+    _use_backup_dir(monkeypatch, tmp_path, 'target_pre_0036')
     target_db = TargetSession()
     try:
         admin = User(username='bootstrap', email='bootstrap@example.com', password_hash=hash_password('Boots1'), role=UserRole.ADMIN)
@@ -672,7 +663,7 @@ def test_pre_space_scoped_page_states_archive_keeps_page_state_per_space(monkeyp
     })
 
     target_engine, TargetSession = _new_engine(tmp_path, 'target_pre_0040.db')
-    _use_storage_dirs(monkeypatch, tmp_path, 'target_pre_0040')
+    _use_backup_dir(monkeypatch, tmp_path, 'target_pre_0040')
     target_db = TargetSession()
     try:
         admin = User(username='bootstrap', email='bootstrap@example.com', password_hash=hash_password('Boots1'), role=UserRole.ADMIN)

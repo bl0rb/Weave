@@ -77,6 +77,7 @@ GENERATED_VALUES = CHART_PATH / "values.generated.yaml"
 CONTAINERS: dict[str, tuple[str, ...]] = {
     "ingest-backend": ("ingest",),
     "ingest-worker": ("ingest",),
+    "ingest-worker-io": ("ingest",),
     "ingest-frontend": ("ingest", "chat"),
     "knowledge": ("knowledge",),
     "knowledge-worker": ("knowledge",),
@@ -109,6 +110,7 @@ RENAMES: dict[str, dict[str, str]] = {
 }
 RENAMES["knowledge-worker"] = RENAMES["knowledge"]
 RENAMES["ingest-worker"] = RENAMES["ingest"]
+RENAMES["ingest-worker-io"] = RENAMES["ingest"]
 
 
 @dataclass(frozen=True)
@@ -126,6 +128,17 @@ class Deviation:
 
 # Gilt fuer JEDEN Container. Der Schluessel ist der Name im Manifest.
 GLOBAL: dict[str, Deviation] = {}
+
+# Verbindungspool je Prozess, nur bei den Workloads mit Datenbank.
+DB_POOL: dict[str, Deviation] = {
+    var: Deviation(
+        "chart",
+        "Verbindungspool je Prozess (<workload>.dbPool). Eine Eigenschaft "
+        "des Deployments: zusammen mit der Replikenzahl muss er in "
+        "postgresql.maxConnections passen (weave.requireDbBudget).",
+    )
+    for var in ("DB_POOL_SIZE", "DB_MAX_OVERFLOW")
+}
 
 # Je Container. Der Schluessel ist der Name im Manifest ("chart") bzw. der
 # Name in weave.yaml ("dropped").
@@ -148,6 +161,17 @@ DEVIATIONS: dict[str, dict[str, Deviation]] = {
             "Ob dieses Deployment beim Start migriert, ist eine Eigenschaft "
             "des Deployments, nicht der Plattform. Kein weave.yaml-Wert.",
         ),
+        "TMPDIR": Deviation(
+            "chart",
+            "Zeigt auf das fluechtige /scratch des Pods (emptyDir), in dem "
+            "Starlette Uploads puffert. Ein Mountpunkt des Charts.",
+        ),
+        "BACKUP_DIR": Deviation(
+            "chart",
+            "Hochgeladene Wiederherstellungs-Archive auf /scratch. Ein "
+            "Mountpunkt des Charts; in Compose liegt der Pfad auf einem "
+            "eigenen Volume.",
+        ),
     },
     "ingest-worker": {
         "POSTGRES_HOST": Deviation("chart", "wie ingest-backend"),
@@ -156,6 +180,18 @@ DEVIATIONS: dict[str, dict[str, Deviation]] = {
             "chart",
             "PaddleOCR laedt seine Gewichte nach $HOME. Der Modell-Cache "
             "haengt daran (ingestWorker.modelCache), nicht an weave.yaml.",
+        ),
+        "CELERY_QUEUES": Deviation(
+            "chart",
+            "Welche Queue ein Worker-Pool bedient (ADR-0001), ist die "
+            "Aufteilung des Charts in ingest-worker und ingest-worker-io. "
+            "Compose laesst einen Worker beide bedienen (Image-Vorgabe).",
+        ),
+        "TMPDIR": Deviation("chart", "wie ingest-backend"),
+        "WORKER_TMP_DIR": Deviation(
+            "chart",
+            "Ein Verzeichnis je laufendem Auftrag auf dem fluechtigen "
+            "/scratch des Pods. Ein Mountpunkt des Charts.",
         ),
     },
     "ingest-frontend": {
@@ -338,6 +374,16 @@ DEVIATIONS: dict[str, dict[str, Deviation]] = {
         ),
     },
 }
+# Der I/O-Pool ist derselbe Worker mit anderer Queue -- dieselben Gruende,
+# nur ohne Modell-Cache (kein HOME).
+DEVIATIONS["ingest-worker-io"] = {
+    k: v for k, v in DEVIATIONS["ingest-worker"].items() if k != "HOME"
+}
+for _container in (
+    "ingest-backend", "ingest-worker", "ingest-worker-io",
+    "knowledge", "knowledge-worker", "retrieval", "api",
+):
+    DEVIATIONS.setdefault(_container, {}).update(DB_POOL)
 
 
 # ---------------------------------------------------------------------------

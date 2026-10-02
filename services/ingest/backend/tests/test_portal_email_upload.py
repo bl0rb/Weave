@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.models.models import Job, JobStatus
 from app.services.security import rate_limiter
 from app.workers import tasks
-from conftest import TestingSessionLocal, create_test_user, login_as
+from conftest import TestingSessionLocal, create_test_user, login_as, stored_bytes
 
 
 def _db():
@@ -56,8 +56,7 @@ def test_eml_collection_upload_waits_for_manual_restart_and_portal_release(monke
     from app.services import paddle_service
 
     rate_limiter.reset()
-    monkeypatch.setattr(settings, 'uploads_dir', tmp_path / 'uploads')
-    monkeypatch.setattr(settings, 'results_dir', tmp_path / 'results')
+    monkeypatch.setattr(settings, 'worker_tmp_dir', tmp_path / 'work')
     monkeypatch.setattr(config.settings, 'portal_knowledge_base_url', 'https://knowledge.example')
     monkeypatch.setattr(config.settings, 'portal_knowledge_webhook_secret', 'test-secret')
 
@@ -104,7 +103,7 @@ def test_eml_collection_upload_waits_for_manual_restart_and_portal_release(monke
         assert job is not None
         assert job.status == JobStatus.PENDING
         assert job.original_filename == 'incoming.eml'
-        assert job.upload_content == raw_eml
+        assert stored_bytes(job.upload_object_id) == raw_eml
         assert job.processing_info['settings']['mode'] == 'collection'
         assert job.processing_info['settings']['collection_id'] == collection['collection_id']
     finally:

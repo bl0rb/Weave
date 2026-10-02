@@ -178,11 +178,26 @@ ingestBackend:
   service:
     type: ClusterIP
     port: 8000
-  # Alembic laeuft beim Start des Backends (entrypoint.sh). Bei mehr als
-  # einer Replik startet die Migration mehrfach parallel -- fuer ein Upgrade
-  # entweder auf 1 Replik gehen oder hier abschalten und die Migration
-  # separat fahren.
+  # Alembic laeuft beim Start des Backends (entrypoint.sh). Mehrere Repliken
+  # duerfen gleichzeitig starten: alembic/env.py nimmt vorher eine
+  # Advisory-Sperre in PostgreSQL, die zweite Replik wartet und findet das
+  # Schema danach aktuell vor.
   runAlembicOnStartup: true
+  # Verbindungen je Pod (ein uvicorn-Prozess): pool + maxOverflow. Zaehlt
+  # gegen postgresql.maxConnections -- siehe die Budgetpruefung bei
+  # autoscaling.
+  dbPool:
+    size: 4
+    maxOverflow: 3
+  # Fluechtiger Platz je Pod (emptyDir unter /scratch, TMPDIR): Starlette
+  # puffert dort hochgeladene Dateien, bevor sie in PostgreSQL landen, und
+  # eine Wiederherstellung ueber die Oberflaeche legt das hochgeladene
+  # Archiv dort ab (bis BACKUP_MAX_UPLOAD_BYTES, Standard 2 GiB, beim
+  # Hochladen kurz doppelt). Exporte werden gestreamt und nie gespeichert.
+  # Dauerhafte Daten liegen ausschliesslich in PostgreSQL. Leer = kein
+  # sizeLimit.
+  scratch:
+    sizeLimit: ""
   resources: {}
   podAnnotations: {}
   podLabels: {}
@@ -218,6 +233,11 @@ ingestBackend:
       timeoutSeconds: 3
       failureThreshold: 3
 
+# Zwei Worker-Pools aus demselben Image (ADR-0001): ingestWorker
+# verarbeitet nur die OCR-Queue weave.ingest.ocr -- ein Auftrag belegt einen
+# Platz minutenlang --, ingestWorkerIo alles andere (Confluence-Import,
+# Webhooks, Freigaben, die Tick-Ketten) auf weave.ingest.default. So
+# blockiert keine OCR die kurzen Auftraege, und beide skalieren getrennt.
 ingestWorker:
   enabled: true
   image:
@@ -225,6 +245,22 @@ ingestWorker:
     tag: ""
     pullPolicy: ""
   replicas: 1
+  # Wie lange Kubernetes beim Herunterskalieren/Update auf den Abschluss
+  # eines laufenden Auftrags wartet. Was danach noch laeuft, wird beendet
+  # und vom Reaper (Heartbeat in der Datenbank) binnen ca. zwei Minuten
+  # neu eingestellt -- laenger zu warten verzoegert nur das Rollout.
+  terminationGracePeriodSeconds: 120
+  # Verbindungen je Celery-Kindprozess: Hauptsitzung + Heartbeat. Dazu je
+  # Prozess eine Verbindung der Log-Spiegelung (WORKER_LOG_DB_POOL_SIZE).
+  dbPool:
+    size: 2
+    maxOverflow: 0
+  # Fluechtiger Platz je Pod (emptyDir unter /scratch): ein Verzeichnis je
+  # laufendem Auftrag fuer das Original und die PDF-Zwischendateien, nach
+  # dem Auftrag geloescht. Faustregel: Concurrency x 3 x Uploadgroesse +
+  # 1 GiB.
+  scratch:
+    sizeLimit: 2Gi
   resources: {}
   podAnnotations: {}
   podLabels: {}
@@ -271,6 +307,41 @@ ingestWorker:
       size: 10Gi
       storageClassName: ""
       existingClaim: ""
+
+ingestWorkerIo:
+  enabled: true
+  # Leer = dasselbe Image wie ingestWorker.
+  image:
+    repository: ""
+    tag: ""
+    pullPolicy: ""
+  replicas: 1
+  # Celery-Concurrency dieses Pools. Kurze, meist I/O-gebundene Auftraege.
+  concurrency: 4
+  terminationGracePeriodSeconds: 60
+  dbPool:
+    size: 2
+    maxOverflow: 0
+  scratch:
+    sizeLimit: 1Gi
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
 
 ingestFrontend:
   enabled: true
@@ -329,6 +400,9 @@ knowledge:
   # Dieser Dienst besitzt das Schema in weave_knowledge und faehrt als
   # einziger Alembic dagegen -- siehe contracts/chunk-store.md.
   runAlembicOnStartup: true
+  dbPool:
+    size: 3
+    maxOverflow: 2
   resources: {}
   podAnnotations: {}
   podLabels: {}
@@ -384,6 +458,10 @@ knowledgeWorker:
   # service 'ingest') so the two cannot collide once docker-compose.weave.yml
   # resolves deploy/.env's shared variable pool.
   concurrency: ""
+  # Je Kindprozess: Indexierung + Fehlerpfad.
+  dbPool:
+    size: 2
+    maxOverflow: 0
   resources: {}
   podAnnotations: {}
   podLabels: {}
@@ -425,6 +503,11 @@ retrieval:
   service:
     type: ClusterIP
     port: 8000
+  # Liest weave_knowledge ueber die Read-only-Rolle; zaehlt trotzdem gegen
+  # postgresql.maxConnections desselben Servers.
+  dbPool:
+    size: 3
+    maxOverflow: 3
   resources: {}
   podAnnotations: {}
   podLabels: {}
@@ -526,6 +609,9 @@ api:
   # Dieser Dienst besitzt das Schema in weave_api und faehrt Alembic beim
   # Start (ADR-0004).
   runAlembicOnStartup: true
+  dbPool:
+    size: 3
+    maxOverflow: 2
   resources: {}
   podAnnotations: {}
   podLabels: {}
@@ -800,18 +886,9 @@ reranker:
     storageClassName: ""
     existingClaim: ""
 
-# Der Dateiablage-Bereich, den ingestBackend und ingestWorker BEIDE unter
-# /app/backend/storage mounten -- das Backend nimmt Uploads entgegen, der
-# Worker liest sie. Deshalb ein Volume fuer zwei Workloads und deshalb
-# ReadWriteMany: mit ReadWriteOnce landen Backend und Worker auf demselben
-# Knoten oder gar nicht.
-persistence:
-  enabled: true
-  accessModes:
-    - ReadWriteMany
-  size: 20Gi
-  storageClassName: ""
-  existingClaim: ""
+# Kein gemeinsames Dateivolume: Originale, Ergebnisse und Bilder liegen
+# ausschliesslich in PostgreSQL (docs/plan-skalierung-datenbank.md). Jeder
+# Pod hat nur sein eigenes fluechtiges /scratch (<workload>.scratch).
 
 # ---------------------------------------------------------------------------
 # PostgreSQL
@@ -830,6 +907,18 @@ postgresql:
   #   bundled  Ein einfaches Deployment plus PVC. Siehe den Kommentar bei
   #            postgresql.bundled: Evaluierungspfad, kein HA-Setup.
   mode: bundled
+
+  # max_connections des Datenbankservers. In den Modi bundled und cnpg setzt
+  # das Chart diesen Wert am Server (grob 5-10 MB RAM je Verbindung
+  # einplanen); im Modus external muss er dem Wert des Servers entsprechen
+  # (SHOW max_connections;). In allen Modi die Obergrenze der Budgetpruefung:
+  # Summe ueber alle Workloads (maximale Replikenzahl x Verbindungen je Pod)
+  # plus reservedConnections darf ihn nicht ueberschreiten, sonst bricht
+  # das Rendern ab. Mehr Repliken: Wert erhoehen oder einen Pooler
+  # vorschalten (PgBouncer, CNPG-Pooler, RDS Proxy).
+  maxConnections: 200
+  # Superuser-Reserve (3), Migrationen, Monitoring, Admin-Zugriffe, KEDA.
+  reservedConnections: 15
 
   # Die Rolle, unter der Ingest, Knowledge und API schreiben, kommt aus
   # weave.yaml (config.postgres.POSTGRES_USER); ihr Passwort aus dem Secret
@@ -1074,8 +1163,8 @@ redis:
 # ---------------------------------------------------------------------------
 
 # Je Workload eine HPA. Alle per Vorgabe aus. ingestBackend, knowledge und
-# api fahren beim Start Alembic -- eine HPA darauf heisst mehrere gleich-
-# zeitige Migrationslaeufe beim Hochskalieren waehrend eines Upgrades.
+# api fahren beim Start Alembic; mehrere gleichzeitig startende Repliken
+# warten dabei auf die Advisory-Sperre in alembic/env.py.
 #
 # targetCPUUtilizationPercentage bezieht sich auf resources.requests.cpu des
 # jeweiligen Workloads. Der ist per Vorgabe nicht gesetzt (resources: {}) --
@@ -1083,22 +1172,53 @@ redis:
 # und skaliert nie. Wer hier einschaltet, setzt also auch
 # <workload>.resources.requests.cpu.
 #
+# maxReplicas zaehlt fuer die Verbindungsbudget-Pruefung (siehe
+# postgresql.maxConnections): die Vorgaben unten passen zusammen in 200
+# Verbindungen. Wer hier erhoeht, rechnet nach -- das Rendern bricht sonst
+# mit der Aufstellung ab.
+#
 # `annotations` je Block: zusaetzliche Annotationen fuer genau diese HPA,
 # etwa eine ArgoCD-Sync-Wave. global.commonAnnotations kommen ohnehin dazu.
 #
 # Welche Workloads hier bewusst fehlen (postgres, redis, embeddings,
-# reranker, der MCP-Server), steht in templates/hpa.yaml.
+# reranker), steht in templates/hpa.yaml.
 autoscaling:
   ingestBackend:
     enabled: false
     minReplicas: 1
-    maxReplicas: 5
+    maxReplicas: 4
     targetCPUUtilizationPercentage: 70
     annotations: {}
+  # Der OCR-Pool. engine waehlt, wer skaliert:
+  #   hpa   die eingebaute HorizontalPodAutoscaler nach CPU (Vorgabe).
+  #   keda  ein KEDA-ScaledObject (templates/keda-scaledobject.yaml) nach
+  #         Arbeit statt CPU: wartende Nachrichten in der Redis-Queue
+  #         weave.ingest.ocr UND laufende Auftraege in der Datenbank. Die
+  #         laufenden zaehlen mit, damit KEDA keinen Worker abbaut, der
+  #         gerade OCR macht. SETZT VORAUS, dass KEDA im Cluster
+  #         installiert ist (CRD keda.sh/v1alpha1); sonst bricht das
+  #         Rendern ab.
   ingestWorker:
     enabled: false
+    engine: hpa
     minReplicas: 1
     maxReplicas: 10
+    targetCPUUtilizationPercentage: 75
+    annotations: {}
+    keda:
+      # Auftraege je Replik -- passend zur Concurrency des OCR-Pools.
+      jobsPerReplica: 1
+      pollingInterval: 30
+      # So lange muss die Last unten bleiben, bevor KEDA abbaut.
+      scaleDownStabilizationSeconds: 600
+      # sslmode der Datenbankverbindung, mit der KEDA laufende Auftraege
+      # zaehlt: disable fuer die Modi bundled/cnpg im Cluster, require fuer
+      # einen externen Server, der TLS erzwingt.
+      postgresSslMode: disable
+  ingestWorkerIo:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 2
     targetCPUUtilizationPercentage: 75
     annotations: {}
   ingestFrontend:
@@ -1110,19 +1230,19 @@ autoscaling:
   knowledge:
     enabled: false
     minReplicas: 1
-    maxReplicas: 5
+    maxReplicas: 2
     targetCPUUtilizationPercentage: 70
     annotations: {}
   knowledgeWorker:
     enabled: false
     minReplicas: 1
-    maxReplicas: 10
+    maxReplicas: 4
     targetCPUUtilizationPercentage: 75
     annotations: {}
   retrieval:
     enabled: false
     minReplicas: 1
-    maxReplicas: 5
+    maxReplicas: 4
     targetCPUUtilizationPercentage: 70
     annotations: {}
   runtime:
@@ -1134,10 +1254,19 @@ autoscaling:
   api:
     enabled: false
     minReplicas: 1
-    maxReplicas: 5
+    maxReplicas: 3
     targetCPUUtilizationPercentage: 70
     annotations: {}
   toolsBackend:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+    annotations: {}
+  # Der MCP-Server (toolsBackend.mcp). Er laeuft zustandslos (stateless_http
+  # in services/tools/app/mcp_server.py): keine Sitzung im Speicher, jede
+  # Replik beantwortet jeden Aufruf -- auch ohne Sticky Sessions.
+  toolsMcp:
     enabled: false
     minReplicas: 1
     maxReplicas: 5

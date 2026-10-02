@@ -17,6 +17,7 @@ from urllib.parse import urlencode
 
 from joserfc import jwt as joserfc_jwt
 from joserfc.jwk import KeySet
+from joserfc.jws import extract_compact
 
 from app.services.safe_fetch import SafeFetchError, safe_fetch
 
@@ -26,6 +27,15 @@ from app.services.safe_fetch import SafeFetchError, safe_fetch
 # multiple replicas -- worst case each pod re-fetches independently.
 _DISCOVERY_CACHE_TTL_SECONDS = 15 * 60
 _discovery_cache: dict[str, tuple[float, dict]] = {}
+
+# JWKS change only on key rotation, but were fetched on every login and on
+# every MCP OAuth call. Cached per process for 10 min; a token whose kid is
+# missing from the cached set triggers one refetch -- at most once a minute
+# per URI, so tokens with made-up kids cannot turn into a request storm
+# against the identity provider.
+_JWKS_CACHE_TTL_SECONDS = 10 * 60
+_JWKS_FORCED_REFRESH_MIN_SECONDS = 60
+_jwks_cache: dict[str, tuple[float, KeySet]] = {}
 
 _SUPPORTED_ID_TOKEN_ALGORITHMS = ['RS256', 'ES256']
 
@@ -79,7 +89,35 @@ def exchange_code_for_tokens(token_endpoint: str, **form_params: str) -> dict:
         raise OIDCError('token endpoint response is not valid JSON') from exc
 
 
-def fetch_jwks(jwks_uri: str) -> KeySet:
+def token_kid(token: str) -> str | None:
+    """The `kid` header of a compact JWT, or None if absent or unparsable.
+    Only selects which cached key set to trust -- never validates anything."""
+    try:
+        kid = extract_compact(token.encode('ascii')).headers().get('kid')
+    except Exception:  # malformed token: the signature check rejects it later
+        return None
+    return kid if isinstance(kid, str) else None
+
+
+def fetch_jwks(jwks_uri: str, *, kid: str | None = None) -> KeySet:
+    """The provider's signing keys, cached (see _JWKS_CACHE_TTL_SECONDS).
+    Pass the token's `kid` so a rotated key is fetched right away instead
+    of after the cache expires."""
+    now = time.time()
+    cached = _jwks_cache.get(jwks_uri)
+    if cached is not None:
+        fetched_at, key_set = cached
+        age = now - fetched_at
+        if age < _JWKS_CACHE_TTL_SECONDS and (
+            kid is None or any(key.kid == kid for key in key_set.keys) or age < _JWKS_FORCED_REFRESH_MIN_SECONDS
+        ):
+            return key_set
+    key_set = _download_jwks(jwks_uri)
+    _jwks_cache[jwks_uri] = (now, key_set)
+    return key_set
+
+
+def _download_jwks(jwks_uri: str) -> KeySet:
     try:
         response = safe_fetch(jwks_uri)
     except SafeFetchError as exc:

@@ -1,22 +1,61 @@
 {{/*
-Weave-Ingest, Celery-Worker -- extrahiert, konvertiert und indiziert die
-Dokumente, die das Backend entgegengenommen hat. Kein Service: dieser
-Workload lauscht auf keinem Port, er holt seine Auftraege aus Redis
-(logische Datenbank 0, ADR-0001).
+Weave-Ingest, Celery-Worker -- zwei Pools aus demselben Image (ADR-0001):
+
+  ingest-worker     nur die OCR-Queue weave.ingest.ocr (process_job). Ein
+                    Auftrag belegt einen Platz minutenlang; GPU, Modell-
+                    Cache und das Skalieren nach Arbeit (KEDA) gehoeren hier hin.
+  ingest-worker-io  die Queue weave.ingest.default: Confluence-Import,
+                    Webhooks, Freigaben, die Tick-Ketten. Kurze Auftraege,
+                    die nie hinter einer OCR warten sollen.
+
+Kein Service: diese Workloads lauschen auf keinem Port, sie holen ihre
+Auftraege aus Redis (logische Datenbank 0, ADR-0001).
 
 Das command kommt aus dem Image (worker.Dockerfile, CMD celery -A
 app.workers.tasks worker ...) und wird hier deshalb nicht wiederholt; die
-Stellschrauben darin -- CELERY_WORKER_CONCURRENCY,
+Stellschrauben darin -- CELERY_QUEUES, CELERY_WORKER_CONCURRENCY,
 CELERY_PREFETCH_MULTIPLIER, CELERY_MAX_TASKS_PER_CHILD -- kommen als
-Umgebungsvariablen aus weave.yaml.
+Umgebungsvariablen.
+
+Kein gemeinsames Volume mit dem Backend: der Worker liest das Original aus
+PostgreSQL in ein eigenes Verzeichnis unter /scratch und loescht es nach dem
+Auftrag (app/workers/tasks.py).
 */}}
-{{- if .Values.ingestWorker.enabled }}
-{{- include "weave.validate" . }}
-{{- $w := .Values.ingestWorker }}
-{{- $hpa := .Values.autoscaling.ingestWorker }}
-{{- $component := "ingest-worker" }}
-{{- $storageClaim := .Values.persistence.existingClaim | default (include "weave.componentName" (dict "ctx" $ "component" "ingest-storage")) }}
-{{- $cacheClaim := $w.modelCache.persistence.existingClaim | default (include "weave.componentName" (dict "ctx" $ "component" "ingest-worker-model-cache")) }}
+{{- $pools := list
+      (dict "key" "ingestWorker"   "component" "ingest-worker"    "queues" "weave.ingest.ocr"     "ocr" true)
+      (dict "key" "ingestWorkerIo" "component" "ingest-worker-io" "queues" "weave.ingest.default" "ocr" false) }}
+{{- range $pool := $pools }}
+{{- $w := get $.Values $pool.key }}
+{{- if $w.enabled }}
+{{- include "weave.validate" $ }}
+{{- $hpa := get $.Values.autoscaling $pool.key }}
+{{- $component := $pool.component }}
+{{- $image := $w.image }}
+{{- if not $image.repository }}
+{{- $image = $.Values.ingestWorker.image }}
+{{- end }}
+{{- $cache := dict "enabled" false }}
+{{- if $pool.ocr }}
+{{- $cache = $w.modelCache }}
+{{- end }}
+{{- $cacheClaim := "" }}
+{{- if $cache.enabled }}
+{{- $cacheClaim = $cache.persistence.existingClaim | default (include "weave.componentName" (dict "ctx" $ "component" "ingest-worker-model-cache")) }}
+{{- end }}
+{{- $ov := dict
+      "POSTGRES_HOST" (include "weave.postgresHost" $)
+      "POSTGRES_PORT" (include "weave.postgresPort" $)
+      "REDIS_URL" (include "weave.redisUrl" (dict "ctx" $ "db" 0))
+      "PORTAL_KNOWLEDGE_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "knowledge"))
+      "CELERY_QUEUES" $pool.queues
+      "DB_POOL_SIZE" (toString $w.dbPool.size)
+      "DB_MAX_OVERFLOW" (toString $w.dbPool.maxOverflow)
+      "TMPDIR" "/scratch"
+      "WORKER_TMP_DIR" "/scratch/tasks" }}
+{{- if not $pool.ocr }}
+{{- $_ := set $ov "INGEST_WORKER_CONCURRENCY" (toString $w.concurrency) }}
+{{- end }}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -30,12 +69,12 @@ metadata:
   {{- end }}
 spec:
   {{- if $hpa.enabled }}
-  # replicas bleibt weg, solange die HPA laeuft -- Begruendung siehe
-  # ingest-backend-deployment.yaml.
+  # replicas bleibt weg, solange HPA oder KEDA skalieren -- Begruendung
+  # siehe ingest-backend-deployment.yaml.
   {{- else }}
   replicas: {{ $w.replicas }}
   {{- end }}
-  {{- if and $w.modelCache.enabled $w.modelCache.persistence.enabled (not (has "ReadWriteMany" $w.modelCache.persistence.accessModes)) }}
+  {{- if and $cache.enabled $cache.persistence.enabled (not (has "ReadWriteMany" $cache.persistence.accessModes)) }}
   strategy:
     # Der Modell-Cache haengt an einem Volume, das nur EIN Knoten gleichzeitig
     # anhaengen kann. Ein RollingUpdate startet den neuen Pod, bevor der alte
@@ -57,14 +96,20 @@ spec:
         {{- . | nindent 8 }}
       {{- end }}
     spec:
-      serviceAccountName: {{ include "weave.serviceAccountName" . }}
+      serviceAccountName: {{ include "weave.serviceAccountName" $ }}
+      # Celery beendet bei SIGTERM erst die laufenden Auftraege. Was nach
+      # dieser Frist noch laeuft, stellt der Reaper neu ein (Heartbeat in
+      # der Datenbank, app/workers/tasks.py).
+      terminationGracePeriodSeconds: {{ $w.terminationGracePeriodSeconds }}
+      {{- if $pool.ocr }}
       {{- with $w.runtimeClassName }}
       # Nur noetig, wo der NVIDIA-Runtime als eigene RuntimeClass exponiert ist
       # (siehe values.yaml) -- die OCR-Pfade dieses Workers nutzen die GPU,
       # wenn eine da ist.
       runtimeClassName: {{ . | quote }}
       {{- end }}
-      {{- with (include "weave.imagePullSecrets" .) }}
+      {{- end }}
+      {{- with (include "weave.imagePullSecrets" $) }}
       imagePullSecrets:
         {{- . | nindent 8 }}
       {{- end }}
@@ -85,9 +130,9 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
-        - name: ingest-worker
-          image: {{ include "weave.image" (dict "ctx" $ "image" $w.image) | quote }}
-          imagePullPolicy: {{ include "weave.imagePullPolicy" (dict "ctx" $ "image" $w.image) }}
+        - name: {{ $component }}
+          image: {{ include "weave.image" (dict "ctx" $ "image" $image) | quote }}
+          imagePullPolicy: {{ include "weave.imagePullPolicy" (dict "ctx" $ "image" $image) }}
           {{- with $w.securityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
@@ -108,16 +153,12 @@ spec:
                  shared variable pool), but worker.Dockerfile's CMD still
                  reads the container env var literally named
                  CELERY_WORKER_CONCURRENCY -- renamed back here, same
-                 pattern as the secretEnv rename table above. */}}
+                 pattern as the secretEnv rename table above. The IO pool
+                 overrides the value with ingestWorkerIo.concurrency. */}}
             {{- include "weave.env" (dict "ctx" $ "service" "ingest" "rename" (dict
                   "INGEST_WORKER_CONCURRENCY" "CELERY_WORKER_CONCURRENCY"
-                ) "overrides" (dict
-                  "POSTGRES_HOST" (include "weave.postgresHost" $)
-                  "POSTGRES_PORT" (include "weave.postgresPort" $)
-                  "REDIS_URL" (include "weave.redisUrl" (dict "ctx" $ "db" 0))
-                  "PORTAL_KNOWLEDGE_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "knowledge"))
-                )) | nindent 12 }}
-            {{- if $w.modelCache.enabled }}
+                ) "overrides" $ov) | nindent 12 }}
+            {{- if $cache.enabled }}
             # Derselbe Wert, den worker.Dockerfile schon als ENV HOME setzt,
             # hier wiederholt, damit Mountpunkt und HOME in EINER Datei
             # nebeneinander stehen: PaddleOCR laedt seine Gewichte zur Laufzeit
@@ -135,36 +176,35 @@ spec:
                  eine httpGet-Probe laufen koennte. ingestWorker.probes steht in
                  values.yaml aus genau diesem Grund auf enabled: false. */}}
           volumeMounts:
-            - name: shared-storage
-              mountPath: /app/backend/storage
-            {{- if $w.modelCache.enabled }}
+            - name: scratch
+              mountPath: /scratch
+            {{- if $cache.enabled }}
             - name: model-cache
               mountPath: /home/weave-ingest
             {{- end }}
       volumes:
-        # Dieselbe Ablage, die auch das Backend mountet -- es schreibt die
-        # hochgeladene Datei, dieser Worker liest sie.
-        - name: shared-storage
-          {{- if .Values.persistence.enabled }}
-          persistentVolumeClaim:
-            claimName: {{ $storageClaim | quote }}
-          {{- else }}
-          # ACHTUNG: ohne Persistenz sieht dieser Pod ein eigenes, leeres
-          # Verzeichnis und findet keine einzige vom Backend abgelegte Datei.
-          emptyDir: {}
-          {{- end }}
-        {{- if $w.modelCache.enabled }}
+        # Fluechtig und je Pod: ein Verzeichnis je laufendem Auftrag
+        # (WORKER_TMP_DIR) plus die Zwischendateien der Konvertierung (TMPDIR).
+        - name: scratch
+          emptyDir:
+            {{- if $w.scratch.sizeLimit }}
+            sizeLimit: {{ $w.scratch.sizeLimit | quote }}
+            {{- else }}
+            {}
+            {{- end }}
+        {{- if $cache.enabled }}
         - name: model-cache
-          {{- if $w.modelCache.persistence.enabled }}
+          {{- if $cache.persistence.enabled }}
           persistentVolumeClaim:
             claimName: {{ $cacheClaim | quote }}
           {{- else }}
           emptyDir:
-            {{- if $w.modelCache.sizeLimit }}
-            sizeLimit: {{ $w.modelCache.sizeLimit | quote }}
+            {{- if $cache.sizeLimit }}
+            sizeLimit: {{ $cache.sizeLimit | quote }}
             {{- else }}
             {}
             {{- end }}
           {{- end }}
         {{- end }}
+{{- end }}
 {{- end }}

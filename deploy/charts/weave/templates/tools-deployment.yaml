@@ -157,9 +157,9 @@ metadata:
     {{- . | nindent 4 }}
   {{- end }}
 spec:
-  # Keine HPA: values.yaml fuehrt autoscaling nur fuer die zehn Workloads,
-  # die im Normalbetrieb laufen.
-  replicas: {{ $c.mcp.replicas }}
+  # Startwert minReplicas, wenn autoscaling.toolsMcp eingeschaltet ist --
+  # dieselbe Regel wie beim REST-Deployment oben.
+  replicas: {{ ternary $.Values.autoscaling.toolsMcp.minReplicas $c.mcp.replicas $.Values.autoscaling.toolsMcp.enabled }}
   selector:
     matchLabels:
       {{- include "weave.selectorLabels" (dict "ctx" $ "component" "tools-mcp") | nindent 6 }}

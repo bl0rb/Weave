@@ -1,3 +1,4 @@
+import tempfile
 from pathlib import Path
 from typing import Literal
 from urllib.parse import quote_plus
@@ -35,8 +36,15 @@ class Settings(BaseSettings):
     # the right of the comma-separated chain, not the leftmost (client-
     # supplied, spoofable) entry.
     trusted_proxy_hops: int = 1
-    uploads_dir: Path = Path('backend/storage/uploads')
-    results_dir: Path = Path('backend/storage/results')
+    # Per-pod scratch space for running tasks: one subdirectory per task,
+    # removed when the task ends (app/workers/tasks.py). Durable data lives
+    # in PostgreSQL only (app/services/object_store.py); in Kubernetes this
+    # is an emptyDir.
+    worker_tmp_dir: Path = Path(tempfile.gettempdir()) / 'weave-ingest-tasks'
+    # Chunk size for binary objects (uploads, artifacts) in PostgreSQL.
+    object_chunk_bytes: int = 4 * 1024 * 1024
+    # Where backup archives are written (app/services/backup.py).
+    backup_dir: Path = Path('backend/storage/backups')
     paddle_default_profile: str = 'ppocrv6_tiny'
     paddle_timeout_seconds: int = 300
     worker_concurrency: int = 1
@@ -56,6 +64,15 @@ class Settings(BaseSettings):
     # processed a second time before the first attempt's hard limit even
     # fires. celery_app.py also clamps this defensively at startup.
     celery_broker_visibility_timeout_seconds: int = 1800
+    # Job ownership across workers (app/workers/tasks.py): a running
+    # process_job refreshes jobs.heartbeat_at every job_heartbeat_seconds; a
+    # RUNNING job whose heartbeat is older than job_stale_seconds counts as
+    # lost and may be reclaimed. Keep job_stale_seconds >= 3x the heartbeat.
+    job_heartbeat_seconds: int = 30
+    job_stale_seconds: int = 120
+    # Consecutive lost-worker recoveries before the reaper fails a job
+    # instead of requeueing it again (poison documents, OOM loops).
+    job_max_recoveries: int = 3
     openai_api_base_url: str = ''
     openai_api_bearer_token: str = ''
     # Hostnames ('host' or 'host:port') of private-network VL endpoints
@@ -128,6 +145,11 @@ class Settings(BaseSettings):
     # itself on write (there is no beat/cron worker in this deployment to
     # run a scheduled prune job).
     worker_log_retention_max_rows: int = 20000
+    # Connection pool of the log mirror's own engine, per worker process
+    # (the main process included): small on purpose -- every pod counts
+    # against the database's max_connections.
+    worker_log_db_pool_size: int = 1
+    worker_log_db_max_overflow: int = 0
 
     # Session-cookie signing, OIDC state HMAC, and the key material Fernet
     # client-secret encryption is derived from (see app/services/security.py).
@@ -269,10 +291,14 @@ class Settings(BaseSettings):
     db_pool_timeout_seconds: int = 10
 
     # --- Disaster recovery (app/services/backup.py, app/api/backup.py).
-    # A full-instance archive (every table + the on-disk upload/result
-    # trees) is routinely far larger than a single document upload, so it
-    # gets its own cap rather than reusing max_upload_bytes -- default 10GiB.
-    backup_max_upload_bytes: int = 10 * 1024 * 1024 * 1024
+    # Upload cap for an import through the admin UI. The archive is spooled
+    # to the pod's scratch space first, so this also bounds what that
+    # emptyDir must hold. Larger archives (migrations between installations)
+    # go through the CLI instead (python -m app.cli backup import).
+    backup_max_upload_bytes: int = 2 * 1024 * 1024 * 1024
+    # A backup run still QUEUED/RUNNING after this long is taken as lost
+    # (its pod died) and marked failed, so it stops blocking new runs.
+    backup_run_stale_seconds: int = 6 * 3600
 
 
 def _build_database_url(settings: Settings) -> str:
