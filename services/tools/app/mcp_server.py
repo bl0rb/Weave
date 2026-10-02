@@ -53,6 +53,7 @@ from typing import Any
 from mcp.server.mcpserver import Context, MCPServer
 
 from app.core.config import settings
+from app.mcp_auth import MCPOAuthMiddleware, oauth_transport_security
 from app.services.scope import (
     Scope,
     ScopeConfigurationError,
@@ -92,6 +93,12 @@ def _authorization_from_context(ctx: Context[Any, Any] | None) -> str | None:
 
 
 def _resolve_scope(ctx: Context[Any, Any] | None) -> Scope:
+    if ctx is not None:
+        request_context = getattr(ctx, 'request_context', None)
+        request = getattr(request_context, 'request', None)
+        resolved = getattr(getattr(request, 'state', None), 'weave_scope', None)
+        if isinstance(resolved, Scope):
+            return resolved
     try:
         return resolve_scope(_authorization_from_context(ctx))
     except (ScopeConfigurationError, ScopeError) as exc:
@@ -149,4 +156,5 @@ async def search(
 
 # The standalone ASGI app -- see this module's own docstring for why it is
 # run directly by uvicorn rather than mounted inside app/main.py's app.
-mcp_app = mcp_server.streamable_http_app()
+mcp_app = mcp_server.streamable_http_app(transport_security=oauth_transport_security())
+mcp_app.add_middleware(MCPOAuthMiddleware)

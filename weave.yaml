@@ -473,6 +473,27 @@ services:
 
   ingest:
     settings:
+      MCP_OAUTH_PROVIDER_SLUG:
+        secret: false
+        value: ""
+        type: string
+        required: false
+      MCP_OAUTH_AUDIENCE:
+        secret: false
+        value: ""
+        type: string
+        required: false
+      MCP_OAUTH_SUBJECT_CLAIM:
+        secret: false
+        value: sub
+        type: string
+        required: false
+        comment: "Keycloak: sub. Entra: oid (captured at the next portal SSO login)."
+      MCP_OAUTH_REQUIRED_SCOPES:
+        secret: false
+        value: [mcp.read]
+        type: json_list
+        required: false
       SERVICE_NAME:
         secret: false
         value: ingest-worker
@@ -1014,6 +1035,21 @@ services:
 
   tools:
     settings:
+      MCP_OAUTH_ISSUER:
+        secret: false
+        value: ""
+        type: string
+        required: false
+      MCP_OAUTH_RESOURCE_URL:
+        secret: false
+        value: ""
+        type: string
+        required: false
+      MCP_OAUTH_SCOPES:
+        secret: false
+        value: [mcp.read]
+        type: json_list
+        required: false
       TOOLS_API_TOKEN:
         secret: true
         env_var: TOOLS_API_TOKEN

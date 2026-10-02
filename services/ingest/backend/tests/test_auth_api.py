@@ -682,6 +682,23 @@ _DISCOVERY_DOCUMENT = {
 }
 
 
+@pytest.mark.parametrize('verified_oid', [None, '067f9b13-fef6-49dd-88a1-4dd040af6196'])
+def test_oidc_callback_stores_object_identity_only_from_signed_id_token(client, monkeypatch, verified_oid):
+    suffix = 'signed' if verified_oid else 'userinfo'
+    slug = f'mcp-object-{suffix}'
+    _make_oidc_provider(slug)
+    response = _oidc_login(
+        client, monkeypatch, slug,
+        sub=f'mcp-object-sub-{suffix}', email=None, preferred_username=None, oid=verified_oid,
+        discovery_extra={'userinfo_endpoint': 'https://idp.example.com/userinfo'},
+        userinfo_response={'email': f'mcp-object-{suffix}@example.com', 'oid': 'b7ace33b-02f0-4eb8-9a11-b8a61222a043'},
+    )
+    assert response.status_code == 302
+    with _db() as db:
+        user = db.scalar(select(User).where(User.oidc_subject == f'mcp-object-sub-{suffix}'))
+        assert user.oidc_object_id == verified_oid
+
+
 def test_oidc_callback_happy_path_creates_user_and_logs_in(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     _make_oidc_provider('test-oidc-happy-path')
     signing_key, key_set = _rsa_keypair_and_jwks()

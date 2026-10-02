@@ -27,6 +27,7 @@ from app.api.retrieval_provider import router_internal as retrieval_provider_int
 from app.api.retrieval_provider import router_maintenance as retrieval_provider_maintenance_router
 from app.api.technical_identities import router_admin as technical_identities_admin_router
 from app.api.technical_identities import router_internal as technical_identities_internal_router
+from app.api.mcp_oauth import router as mcp_oauth_router
 from app.api.deps import get_current_user, origin_guard
 from app.api.import_routes import router as import_router
 from app.api.portal import router as portal_router
@@ -111,6 +112,7 @@ app.include_router(retrieval_provider_maintenance_router)
 app.include_router(knowledge_maintenance_router)
 app.include_router(technical_identities_admin_router)
 app.include_router(technical_identities_internal_router)
+app.include_router(mcp_oauth_router)
 app.include_router(backup_admin_router)
 app.include_router(knowledge_registry_router)
 app.include_router(knowledge_release_router)
