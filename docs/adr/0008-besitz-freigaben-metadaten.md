@@ -110,3 +110,13 @@ Weave-Knowledge und Weave-Retrieval brauchen nur die Leserechte. Der Registry-Ve
 - **Rolle nur an der Teammitgliedschaft (Ist-Zustand):** kein neues Datenmodell, aber keine Rollen pro Bereich und keine Mitglied-Rechte für einzelne Personen.
 - **Teams als Besitzer:** verwässert die Verantwortung; bei Personalwechseln bleibt offen, wer zuständig ist. Den fachlichen Bezug deckt das zuständige Team ab.
 - **Zuständiges Team verleiht automatisch Rechte:** vermischt Auskunft und Berechtigung. Verworfen zugunsten einer vorgeschlagenen, sichtbaren Mitglied-Freigabe.
+
+## Nachtrag 2026-10-03: Altbestand ohne Wissensbereich (Audit F41)
+
+Dokumente in Weave-Knowledge ohne `collection_slug` – indiziert, bevor es Wissensbereiche gab, oder über den alten `document.processed`-Weg – haben keine Freigaben. Ein Bot mit `include_uncollected` (bisher Voreinstellung) fand sie, begrenzt nur durch `Document.team`: das Hauptteam des Hochladenden zum Zeitpunkt der Freigabe, also genau die Regel, die diese Entscheidung für Wissensbereiche abschafft.
+
+- **Job gehört zu einem Bereich** (`processing_info.settings.collection_id` in Weave-Ingest): `python -m app.cli reconcile-collections` in Weave-Knowledge übernimmt diesen Bereich. Danach entscheiden allein seine Freigaben. Inhalt und Index bleiben unverändert, es entsteht keine neue, ungeprüfte Freigabe. Der Befehl ist idempotent und ändert nur Zeilen ohne Bereich.
+- **Job ohne Bereich:** Ohne Freigaben gibt es kein Leserecht – ausgeschlossen ist der Normalfall, wie bei Bereichen ohne Besitzer. Neue Bots starten mit `include_uncollected = false`.
+- **Bestehende Bots** behalten ihre gespeicherte Einstellung, YAML-Bots ohne eigene Angabe den Runtime-Standard (`true`), damit nach dem Update keine Antworten stillschweigend wegfallen. Solange ein Bot den Altbestand einbezieht, gilt dafür weiter `Document.team` – als Übergang, nicht als Rechtemodell. Admins schalten es je Bot ab, sobald der verbleibende Altbestand nicht mehr gebraucht wird (Betriebshandbuch, Abschnitt 3.2).
+
+Verworfen: die Team-Regel für den Altbestand dauerhaft festschreiben. Sie hielte neben den Freigaben eine zweite Rechtequelle am Leben, die vom Hauptteam einer anderen Person abhängt.

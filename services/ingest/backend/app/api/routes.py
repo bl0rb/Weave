@@ -63,6 +63,8 @@ from app.schemas.jobs import (
     DirectoryUsersResponse,
     FolderActionRequest,
     FolderActionResponse,
+    JobCollectionEntry,
+    JobCollectionResponse,
     JobVersionEntry,
     JobVersionsResponse,
     MarkdownBrowserResponse,
@@ -1141,6 +1143,45 @@ def get_collections_registry(
             read_users=read_users,
         ))
     return CollectionRegistryResponse(items=items)
+
+
+_JOB_COLLECTION_LOOKUP_MAX = 100
+
+
+@knowledge_router.get('/collections/registry/jobs', response_model=JobCollectionResponse)
+def get_job_collections(
+    job_id: list[str] = Query(default=[]),
+    db: Session = Depends(get_db),
+    user: User | None = Depends(require_knowledge_registry_reader),
+) -> JobCollectionResponse:
+    """Which space each of the given jobs belongs to -- the source for
+    Weave-Knowledge's `reconcile-collections` (audit finding F41): legacy
+    Knowledge rows without `collection_slug` whose job has since been put
+    into a space get that space's slug, so its grants decide access instead
+    of the uploader's team (ADR 0008).
+
+    Same reader as the registry above. Answers only for the job ids the
+    caller already holds, and only slug/name -- jobs without a space or with
+    a deleted one are simply absent from the response.
+    """
+    if len(job_id) > _JOB_COLLECTION_LOOKUP_MAX:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f'at most {_JOB_COLLECTION_LOOKUP_MAX} job_id values per request',
+        )
+    if not job_id:
+        return JobCollectionResponse()
+    collection_id_expr = Job.processing_info['settings']['collection_id'].as_string()
+    rows = db.execute(
+        select(Job.id, Collection.slug, Collection.name)
+        .join(Collection, Collection.id == collection_id_expr)
+        .where(Job.id.in_(job_id))
+        .order_by(Job.id)
+    ).all()
+    return JobCollectionResponse(items=[
+        JobCollectionEntry(job_id=row_job_id, collection=slug, collection_name=name)
+        for row_job_id, slug, name in rows
+    ])
 
 
 @router.get('/collections/{collection_id}', response_model=CollectionResponse)

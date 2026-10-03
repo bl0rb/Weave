@@ -17,7 +17,7 @@ import pytest
 
 from app.core.config import settings
 from app.models.models import Collection
-from app.services.collection_sync import CollectionSyncError, sync_collections
+from app.services.collection_sync import CollectionSyncError, fetch_job_collections, sync_collections
 from tests.conftest import TestingSessionLocal
 
 
@@ -420,3 +420,41 @@ def test_sync_raises_collection_sync_error_on_entry_missing_slug(monkeypatch):
                 sync_collections(db)
         finally:
             db.close()
+
+
+# --- fetch_job_collections (reconcile-collections, F41) ---------------------------
+
+
+def test_fetch_job_collections_requests_fixed_path_with_job_ids_as_params(monkeypatch):
+    monkeypatch.setattr(settings, 'weave_ingest_base_url', 'https://weave.local/')
+    monkeypatch.setattr(settings, 'weave_ingest_api_token', 'svc-token')
+    body = {'items': [{'job_id': 'job-1', 'collection': 'handbuch', 'collection_name': 'Handbuch'}]}
+
+    with patch('app.services.collection_sync.httpx.get', return_value=_FakeResponse(200, body)) as mock_get:
+        result = fetch_job_collections(['job-1', 'job-2'])
+
+    assert result == {'job-1': ('handbuch', 'Handbuch')}
+    args, kwargs = mock_get.call_args
+    assert args[0] == 'https://weave.local/api/v1/collections/registry/jobs'
+    assert kwargs['params'] == {'job_id': ['job-1', 'job-2']}
+    assert kwargs['headers']['Authorization'] == 'Bearer svc-token'
+    assert kwargs['follow_redirects'] is False
+
+
+def test_fetch_job_collections_ignores_job_ids_that_were_not_requested(monkeypatch):
+    monkeypatch.setattr(settings, 'weave_ingest_base_url', 'https://weave.local')
+    body = {'items': [{'job_id': 'other', 'collection': 'handbuch', 'collection_name': 'Handbuch'}]}
+    with patch('app.services.collection_sync.httpx.get', return_value=_FakeResponse(200, body)):
+        assert fetch_job_collections(['job-1']) == {}
+
+
+@pytest.mark.parametrize('response', [
+    _FakeResponse(503, {}),
+    _FakeResponse(200, ValueError('not json')),
+    _FakeResponse(200, {'items': [{'job_id': 'job-1'}]}),
+])
+def test_fetch_job_collections_raises_collection_sync_error(monkeypatch, response):
+    monkeypatch.setattr(settings, 'weave_ingest_base_url', 'https://weave.local')
+    with patch('app.services.collection_sync.httpx.get', return_value=response):
+        with pytest.raises(CollectionSyncError):
+            fetch_job_collections(['job-1'])

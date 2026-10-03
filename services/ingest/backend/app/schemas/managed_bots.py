@@ -204,7 +204,8 @@ class ManagedBotWrite(BaseModel):
     top_k: int = Field(default=20, ge=1, le=100)
     final_k: int = Field(default=5, ge=1, le=100)
     rerank: bool = True
-    include_uncollected: bool = True
+    # Fail closed for legacy documents without a space (ADR 0008 addendum).
+    include_uncollected: bool = False
     streaming: bool = False
     auth_token: str | None = Field(default=None, max_length=8192)
     clear_auth_token: bool = False

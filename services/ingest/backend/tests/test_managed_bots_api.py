@@ -522,6 +522,33 @@ def test_bot_without_agent_config_projects_none():
     assert created.json()['agent'] is None
 
 
+
+def test_new_bot_leaves_out_documents_without_a_space_unless_asked(monkeypatch):
+    """ADR 0008 addendum (F41): legacy documents without a space have no
+    grants, so a new bot leaves them out by default; an admin can still opt
+    in explicitly, and the stored choice reaches Runtime unchanged."""
+    monkeypatch.setattr(settings, 'chat_config_service_token', 'runtime-control-token')
+    admin = _identity('bot-uncollected-admin', role=UserRole.ADMIN)
+    admin_client = login_as(admin.username)
+    team_name = _team()
+    collection_slug = _scope(admin_client, team_name)
+
+    llm = dict(kind='llm', webhook_url=None, auth_token=None, system_prompt='Nur mit belegten Quellen antworten.')
+    default_bot = admin_client.post('/api/v1/auth/admin/bots', json=_payload(team_name, collection_slug, **llm))
+    opted_in = admin_client.post(
+        '/api/v1/auth/admin/bots', json=_payload(team_name, collection_slug, include_uncollected=True, **llm),
+    )
+    assert default_bot.status_code == 201, default_bot.text
+    assert opted_in.status_code == 201, opted_in.text
+    assert default_bot.json()['include_uncollected'] is False
+    assert opted_in.json()['include_uncollected'] is True
+
+    internal = admin_client.get('/api/v1/internal/bots', headers={'Authorization': 'Bearer runtime-control-token'})
+    items = {item['id']: item for item in internal.json()['items']}
+    assert items[default_bot.json()['id']]['include_uncollected'] is False
+    assert items[opted_in.json()['id']]['include_uncollected'] is True
+
+
 # --- Owners and users (ADR 0008) ----------------------------------------------
 
 def _owned_bot(admin_client, owner, collection_slug: str, **overrides) -> dict:

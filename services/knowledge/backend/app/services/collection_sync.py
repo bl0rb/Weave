@@ -163,3 +163,36 @@ def sync_collections(db: Session, *, timeout: float = _DEFAULT_TIMEOUT_SECONDS) 
     db.commit()
     logger.info('collection sync: upserted %d collection(s), removed %d stale row(s)', len(seen_slugs), len(stale))
     return len(seen_slugs)
+
+
+_JOB_COLLECTIONS_PATH = '/api/v1/collections/registry/jobs'
+
+
+def fetch_job_collections(job_ids: list[str], *, timeout: float = _DEFAULT_TIMEOUT_SECONDS) -> dict[str, tuple[str, str]]:
+    """Ask Weave-Ingest which space each of `job_ids` (at most 100, its
+    per-request limit) belongs to: `{job_id: (slug, name)}`, jobs without
+    a space absent. Used by `python -m app.cli reconcile-collections`.
+    Same token and fixed path as sync_collections(); the job ids are this
+    service's own `source_job_id`s and only travel as query parameters.
+    Raises CollectionSyncError on any failure."""
+    url = f"{settings.weave_ingest_base_url.rstrip('/')}{_JOB_COLLECTIONS_PATH}"
+    headers = {'Authorization': f'Bearer {settings.weave_ingest_api_token}'}
+    try:
+        response = httpx.get(url, params={'job_id': job_ids}, headers=headers, timeout=timeout, follow_redirects=False)
+    except httpx.HTTPError as exc:
+        raise CollectionSyncError(f'fetching {url!r} failed: {exc}') from exc
+    if response.status_code != 200:
+        raise CollectionSyncError(f'fetching {url!r} returned HTTP {response.status_code}')
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise CollectionSyncError(f'{url!r} returned a non-JSON body: {exc}') from exc
+
+    requested = set(job_ids)
+    result: dict[str, tuple[str, str]] = {}
+    for entry in _extract_registry_items(payload, url):
+        if not isinstance(entry, dict) or not all(isinstance(entry.get(key), str) for key in ('job_id', 'collection')):
+            raise CollectionSyncError(f'{url!r} returned a malformed entry: {entry!r}')
+        if entry['job_id'] in requested and entry['collection']:
+            result[entry['job_id']] = (entry['collection'], entry.get('collection_name') or entry['collection'])
+    return result

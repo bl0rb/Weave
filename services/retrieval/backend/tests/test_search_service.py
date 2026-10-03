@@ -528,6 +528,28 @@ def test_search_pipeline_without_grant_finds_nothing_and_legacy_stays_team_gated
         db.commit()
 
 
+
+def test_reconciled_legacy_document_follows_the_space_grants_not_the_team(db):
+    """F41: once Weave-Knowledge's `reconcile-collections` has given a
+    legacy row the space its job belongs to, the space's grants decide --
+    the uploader's team alone no longer reads it, a granted person does."""
+    seeded = _seed_grant_scenario(db)
+    db.add(make_collection(slug='hr-wissen', visibility='restricted', read_users=['bob']))
+    db.commit()
+    try:
+        assert _search_as(db, seeded.text, ['HR'], 'carl') == {seeded.legacy_chunk.id}
+        assert seeded.legacy_chunk.id not in _search_as(db, seeded.text, ['Technik'], 'bob')
+
+        db.get(Document, seeded.legacy_chunk.document_id).collection_slug = 'hr-wissen'
+        db.commit()
+
+        assert seeded.legacy_chunk.id not in _search_as(db, seeded.text, ['HR'], 'carl')
+        assert seeded.legacy_chunk.id in _search_as(db, seeded.text, ['Technik'], 'bob')
+    finally:
+        db.query(Collection).delete()
+        db.commit()
+
+
 # --- rrf_fuse (pure function -- no DB needed) --------------------------------------
 
 
