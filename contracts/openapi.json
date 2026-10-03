@@ -3929,6 +3929,134 @@
         "title": "JobVersionsResponse",
         "type": "object"
       },
+      "KnowledgeOrphanCleanupRequest": {
+        "description": "`dry_run` defaults to true. Applying requires the orphan count of the\ndry run the admin reviewed, so nothing is withdrawn that was not shown.",
+        "properties": {
+          "dry_run": {
+            "default": true,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "expected_orphans": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Orphans"
+          }
+        },
+        "title": "KnowledgeOrphanCleanupRequest",
+        "type": "object"
+      },
+      "KnowledgeOrphanCleanupResponse": {
+        "properties": {
+          "already_pending": {
+            "title": "Already Pending",
+            "type": "integer"
+          },
+          "by_reason": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Reason",
+            "type": "object"
+          },
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeOrphanItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "orphans": {
+            "title": "Orphans",
+            "type": "integer"
+          },
+          "queued": {
+            "title": "Queued",
+            "type": "integer"
+          },
+          "scanned": {
+            "title": "Scanned",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "worker_required": {
+            "default": true,
+            "title": "Worker Required",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "dry_run",
+          "scanned",
+          "orphans",
+          "by_reason",
+          "already_pending",
+          "queued",
+          "items",
+          "truncated"
+        ],
+        "title": "KnowledgeOrphanCleanupResponse",
+        "type": "object"
+      },
+      "KnowledgeOrphanItem": {
+        "properties": {
+          "collection_slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection Slug"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "job_missing",
+              "collection_deleted",
+              "collection_unknown",
+              "withdrawn"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "withdrawal": {
+            "title": "Withdrawal",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "status",
+          "reason",
+          "withdrawal"
+        ],
+        "title": "KnowledgeOrphanItem",
+        "type": "object"
+      },
       "KnowledgeRebuildResponse": {
         "properties": {
           "requeued": {
@@ -9172,6 +9300,44 @@
         "tags": [
           "backup-admin"
         ]
+      }
+    },
+    "/api/v1/admin/knowledge/orphans": {
+      "post": {
+        "operationId": "withdraw_knowledge_orphans_api_v1_admin_knowledge_orphans_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeOrphanCleanupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeOrphanCleanupResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Withdraw Knowledge Orphans"
       }
     },
     "/api/v1/admin/knowledge/rebuild": {

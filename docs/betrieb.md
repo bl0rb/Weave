@@ -206,6 +206,52 @@ einbeziehen“ je Bot abschalten bzw. in der YAML `include_uncollected: false`
 setzen. Wer ein solches Dokument weiter braucht, lädt es in einen Bereich hoch
 und gibt es dort frei.
 
+### 3.3 Verwaiste Dokumente aus dem Wissensindex zurückziehen
+
+Seit ADR 0008 zieht Ingest jeden gelöschten Job aus Knowledge zurück, und ein
+gelöschter Wissensbereich hinterlässt eine Slug-Sperre. Was vorher gelöscht
+wurde (Altbestand vor dem Freigabe-Gate, Jobs gelöschter Bereiche), kann noch
+im Index liegen. `POST /api/v1/admin/knowledge/orphans` gleicht den
+Dokumentbestand von Knowledge mit Ingest ab und meldet als verwaist:
+
+| Grund | Bedeutung |
+|---|---|
+| `job_missing` | Der Job existiert in Ingest nicht mehr |
+| `collection_deleted` | Der Slug ist gesperrt, der Bereich wurde gelöscht |
+| `collection_unknown` | Der Slug gehört zu keinem Bereich in Ingest |
+| `withdrawn` | Für den Job ist schon ein Rückzug vermerkt, das Dokument liegt aber noch vor |
+
+Erst Probelauf, dann Anwenden — als Admin mit persönlichem API-Token (`pd_…`):
+
+```bash
+# 1. Probelauf (Standard): zählt nur, ändert nichts
+curl -s -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{}' "$INGEST_URL/api/v1/admin/knowledge/orphans"
+# 2. Anwenden: `orphans` aus dem geprüften Probelauf als expected_orphans
+curl -s -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"dry_run": false, "expected_orphans": 42}' "$INGEST_URL/api/v1/admin/knowledge/orphans"
+```
+
+- Die Antwort nennt `scanned`, `orphans`, `by_reason`, `already_pending`,
+  `queued` und die ersten 100 Treffer in `items`. Weicht die Zahl beim
+  Anwenden vom Probelauf ab, kommt `409` mit der neuen Zahl — Probelauf
+  wiederholen.
+- Anwenden legt je Treffer einen Rückzug in `knowledge_withdrawals` an; ein
+  schon zugestellter wird erneut eingereiht, ein ausstehender nur gezählt.
+  Zugestellt wird über den Publikations-Tick des Ingest-Workers (bis 100
+  Rückzüge je Tick). Fortschritt: Probelauf wiederholen — `orphans` sinkt
+  auf 0. Beliebig oft wiederholbar.
+- Ein zurückgezogener Job lässt sich nicht erneut freigeben: Knowledge sperrt
+  seine Job-ID dauerhaft. Darum vor dem Anwenden `items` prüfen, besonders
+  `collection_unknown`.
+- `409` während einer Wiederherstellung (mitten im Import sähe jedes Dokument
+  verwaist aus), `503`, wenn der Wissensdienst nicht konfiguriert ist oder
+  sein Bestand nicht vollständig gelesen werden konnte — dann wird nichts
+  zurückgezogen.
+- Knowledges eigener Registry-Abgleich löscht bewusst keine Dokumente: Eine
+  leere oder unvollständige Registry-Antwort würde sonst den Index
+  unwiderruflich leeren. Zurückgezogen wird nur über Ingest.
+
 ## 4. Pflichtwerte
 
 Ohne diese startet der Dienst nicht oder verweigert fail-closed die Arbeit.
