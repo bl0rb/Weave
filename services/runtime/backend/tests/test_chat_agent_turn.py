@@ -374,7 +374,7 @@ def test_central_provider_override_without_tool_support_falls_back_to_direct_rag
     _write_bot(tmp_path, monkeypatch)
     monkeypatch.setattr(
         'app.services.chat.fetch_chat_provider',
-        lambda: ChatProviderSnapshot(
+        lambda *_: ChatProviderSnapshot(
             enabled=True, base_url='https://central.example/v1', model='central-model',
             api_key='central-key', timeout_seconds=33, temperature=0.1,
         ),
@@ -426,7 +426,7 @@ def test_central_provider_override_with_same_label_model_swap_falls_back_to_dire
     _write_bot(tmp_path, monkeypatch, bot_yaml)
     monkeypatch.setattr(
         'app.services.chat.fetch_chat_provider',
-        lambda: ChatProviderSnapshot(
+        lambda *_: ChatProviderSnapshot(
             enabled=True, base_url='https://central.example/v1', model='central-model',
             api_key='central-key', timeout_seconds=33, temperature=0.1,
         ),
@@ -471,7 +471,7 @@ def test_central_provider_override_with_declared_tool_support_runs_agent_mode(tm
     _write_bot(tmp_path, monkeypatch, bot_yaml)
     monkeypatch.setattr(
         'app.services.chat.fetch_chat_provider',
-        lambda: ChatProviderSnapshot(
+        lambda *_: ChatProviderSnapshot(
             enabled=True, base_url='https://central.example/v1', model='central-model',
             api_key='central-key', timeout_seconds=33, temperature=0.1, supports_tools=True,
         ),

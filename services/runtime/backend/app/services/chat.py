@@ -218,7 +218,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 
 from app.core.config import settings
-from app.schemas.bot import BotConfig, SubagentConfig
+from app.schemas.bot import BotConfig, ModelConfig, SubagentConfig
 from app.schemas.chat import (
     AgentTrace,
     ChatRequest,
@@ -241,7 +241,12 @@ from app.schemas.chat import (
 from app.services import agent_graph as agent_graph_service
 from app.services import agents as agents_service
 from app.services import llm as llm_service
-from app.services.chat_config_client import fetch_chat_provider
+from app.services.chat_config_client import (
+    DEFAULT_ENDPOINT,
+    ChatConfigUnavailable,
+    ChatProviderSnapshot,
+    fetch_chat_provider,
+)
 from app.services import n8n_client
 from app.services import retrieval_client
 from app.services import router as router_service
@@ -319,6 +324,57 @@ class BotPermissionDenied(Exception):
         super().__init__(message)
         self.bot_id = bot_id
         self.user_team = user_team
+
+
+class LlmEndpointNotAllowed(BotPermissionDenied):
+    """The request named an LLM endpoint this bot does not offer."""
+
+
+def _resolve_llm_endpoint(bot: BotConfig, requested: str | None) -> str:
+    """The central endpoint id for this turn: the bot's own, or a user's
+    choice among the bot's `model.endpoints` ('*' = any enabled one)."""
+    own = bot.model.endpoint or DEFAULT_ENDPOINT
+    if not requested or requested == own:
+        return own
+    if requested in bot.model.endpoints or '*' in bot.model.endpoints:
+        return requested
+    raise LlmEndpointNotAllowed(
+        f'LLM-Endpunkt {requested!r} ist für diesen Bot nicht freigegeben.', bot_id=bot.id, user_team=None
+    )
+
+
+def _central_llm(snapshot: ChatProviderSnapshot) -> llm_service.LLMProvider:
+    return llm_service.OpenAICompatibleLLM(
+        base_url=snapshot.base_url,
+        api_key=snapshot.api_key,
+        model=snapshot.model,
+        timeout=snapshot.timeout_seconds,
+    )
+
+
+def _subagent_endpoint_llm(
+    subagent: SubagentConfig, bot: BotConfig
+) -> tuple[SubagentConfig, llm_service.LLMProvider | None]:
+    """A subagent with its own central `endpoint`: rewritten to that
+    endpoint's model plus a fresh provider for it. `(subagent, None)` when it
+    names none or the control plane is not configured (standalone keeps
+    `subagent.model`/`bot.model`). Agent mode needs tool calls, so an
+    endpoint not declaring them fails closed."""
+    if not subagent.endpoint:
+        return subagent, None
+    snapshot = fetch_chat_provider(subagent.endpoint)
+    if snapshot is None:
+        return subagent, None
+    if not snapshot.supports_tools:
+        raise ChatConfigUnavailable(f'LLM-Endpunkt {subagent.endpoint!r} unterstützt keine Tool-Aufrufe.')
+    fallback_temperature = (subagent.model or bot.model).temperature
+    model = ModelConfig(
+        provider='openai',
+        model=snapshot.model,
+        temperature=snapshot.temperature if snapshot.temperature is not None else fallback_temperature,
+        supports_tools=True,
+    )
+    return subagent.model_copy(update={'model': model}), _central_llm(snapshot)
 
 
 # The three intents this pipeline does not act on yet -- see this module's
@@ -1815,7 +1871,7 @@ def _prepare_turn(request: ChatRequest, *, defer_n8n: bool = False) -> _Prepared
     # completely different generation mechanism this module has to
     # special-case BEFORE ever reaching that factory).
     is_n8n_bot = bot.model.provider == 'n8n'
-    central_provider = None if is_n8n_bot else fetch_chat_provider()
+    central_provider = None if is_n8n_bot else fetch_chat_provider(_resolve_llm_endpoint(bot, request.llm_endpoint))
     if central_provider is not None and central_provider.enabled:
         resolved_temperature = (
             central_provider.temperature
@@ -1835,14 +1891,16 @@ def _prepare_turn(request: ChatRequest, *, defer_n8n: bool = False) -> _Prepared
                 'supports_tools': central_provider.supports_tools,
             })
         })
-        llm_provider = llm_service.OpenAICompatibleLLM(
-            base_url=central_provider.base_url,
-            api_key=central_provider.api_key,
-            model=central_provider.model,
-            timeout=central_provider.timeout_seconds,
-        )
+
+        def main_llm_factory() -> llm_service.LLMProvider:
+            return _central_llm(central_provider)
     else:
-        llm_provider = None if is_n8n_bot else llm_service.get_llm(bot.model.provider)
+        def main_llm_factory() -> llm_service.LLMProvider:
+            return llm_service.get_llm(bot.model.provider)
+    # A fresh instance per call -- a subagent inheriting the main model
+    # must reach the same (possibly central) endpoint, never the env-
+    # configured `get_llm('openai')` default.
+    llm_provider = None if is_n8n_bot else main_llm_factory()
 
     router_start = time.perf_counter()
     # `llm_call` stays None whenever there is no real LLMProvider to build
@@ -1915,17 +1973,21 @@ def _prepare_turn(request: ChatRequest, *, defer_n8n: bool = False) -> _Prepared
             # app/services/agent_graph.py's `_plan`).
             allowed_teams = _allowed_teams(bot, request.user)
             available = _available_agents_for_graph(bot, request.user, request.collections, allowed_teams)
-            subagents_by_id = {
-                subagent.id: subagent
+            resolved_subagents = {
+                subagent.id: _subagent_endpoint_llm(subagent, bot)
                 for subagent in bot.agent.subagents
                 if subagent.id in {agent['agent_id'] for agent in available}
             }
+            subagents_by_id = {subagent_id: resolved[0] for subagent_id, resolved in resolved_subagents.items()}
             # See `_DeferredMultiAgentTurn`'s own docstring for why every
             # subagent gets its OWN provider instance here, always, even one
             # with no `model` override of its own.
             subagent_llm_providers = {
-                subagent_id: llm_service.get_llm((subagents_by_id[subagent_id].model or bot.model).provider)
-                for subagent_id in subagents_by_id
+                subagent_id: (
+                    endpoint_llm
+                    or (llm_service.get_llm(subagent.model.provider) if subagent.model is not None else main_llm_factory())
+                )
+                for subagent_id, (subagent, endpoint_llm) in resolved_subagents.items()
             }
             deferred_multi_agent = _DeferredMultiAgentTurn(
                 bot=bot, message=request.message, history=history, available=available,
@@ -1940,10 +2002,10 @@ def _prepare_turn(request: ChatRequest, *, defer_n8n: bool = False) -> _Prepared
                 )
             return _run_multi_agent_turn_blocking(deferred_multi_agent, decision, timings_ms, total_start)
 
-        subagent = _select_subagent(bot, request.user)
+        subagent, endpoint_llm = _subagent_endpoint_llm(_select_subagent(bot, request.user), bot)
         agent_scope = _resolve_agent_scope(bot, subagent, request.user, request.collections)
         subagent_model = subagent.model
-        subagent_llm_provider = (
+        subagent_llm_provider = endpoint_llm or (
             llm_provider
             if subagent_model is None or subagent_model.provider == bot.model.provider
             else llm_service.get_llm(subagent_model.provider)

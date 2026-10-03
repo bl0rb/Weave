@@ -19,12 +19,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.core.auth import require_service_token
-from app.schemas.bot import BotConfig, BotRetrievalSummary, BotSummary
+from app.schemas.bot import BotConfig, BotRetrievalSummary, BotSummary, LlmEndpointSummary
 from app.schemas.chat import ChatRequest, ChatResponse, ChatStreamEvent, ChatUser
 from app.services import chat as chat_service
 from app.services.botconfig import BotNotFoundError, list_bots
 from app.services.chat_config_client import ChatConfigUnavailable
-from app.services.chat_config_client import fetch_chat_provider
+from app.services.chat_config_client import DEFAULT_ENDPOINT, fetch_chat_endpoints, fetch_chat_provider
 from app.services.llm import LLMError, OpenAICompatibleLLM
 from app.services.n8n_client import N8nUnavailable
 from app.services.retrieval_client import RetrievalUnavailable
@@ -84,7 +84,30 @@ def _strip_quotes(text: str) -> str:
     return text
 
 
-def _summary(bot: BotConfig) -> BotSummary:
+def _endpoint_catalog(bots: list[BotConfig]) -> list[dict]:
+    """Enabled central LLM endpoints, fetched only when a bot offers a
+    choice. A failing catalog hides the picker instead of the roster."""
+    if not any(bot.model.endpoints for bot in bots):
+        return []
+    try:
+        return fetch_chat_endpoints() or []
+    except ChatConfigUnavailable:
+        return []
+
+
+def _llm_endpoints(bot: BotConfig, catalog: list[dict]) -> list[LlmEndpointSummary]:
+    """The endpoints a user may pick for `bot`, its own first; empty
+    unless there is an actual choice."""
+    if not bot.model.endpoints or bot.model.provider == 'n8n':
+        return []
+    by_id = {item['id']: item for item in catalog}
+    offered = list(by_id) if '*' in bot.model.endpoints else bot.model.endpoints
+    ids = dict.fromkeys([bot.model.endpoint or DEFAULT_ENDPOINT, *offered])
+    choices = [LlmEndpointSummary.model_validate(by_id[endpoint_id]) for endpoint_id in ids if endpoint_id in by_id]
+    return choices if len(choices) > 1 else []
+
+
+def _summary(bot: BotConfig, catalog: list[dict] | None = None) -> BotSummary:
     return BotSummary(
         id=bot.id,
         name=bot.name,
@@ -94,6 +117,7 @@ def _summary(bot: BotConfig) -> BotSummary:
         teams=list(bot.permissions.teams),
         public=bot.permissions.is_public,
         collections=list(bot.retrieval.collections),
+        llm_endpoints=_llm_endpoints(bot, catalog or []),
     )
 
 
@@ -106,7 +130,9 @@ def _bots_or_503() -> list[BotConfig]:
 
 @router.get('/bots', response_model=list[BotSummary])
 def list_bots_endpoint() -> list[BotSummary]:
-    return [_summary(bot) for bot in _bots_or_503()]
+    bots = _bots_or_503()
+    catalog = _endpoint_catalog(bots)
+    return [_summary(bot, catalog) for bot in bots]
 
 
 @router.post('/bots/visible', response_model=list[BotSummary])
@@ -119,8 +145,9 @@ def list_visible_bots_endpoint(user: ChatUser) -> list[BotSummary]:
             chat_service._check_permissions(bot, user)
         except chat_service.BotPermissionDenied:
             continue
-        visible.append(_summary(bot))
-    return visible
+        visible.append(bot)
+    catalog = _endpoint_catalog(visible)
+    return [_summary(bot, catalog) for bot in visible]
 
 
 @router.get('/bot-configs', response_model=list[BotConfig])

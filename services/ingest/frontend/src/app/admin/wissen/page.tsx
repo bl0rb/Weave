@@ -11,7 +11,7 @@ import {
   useBereich,
 } from '@/components/admin/admin-page-shared';
 import { BotsTab } from '@/components/admin/bots-tab';
-import { ChatProviderTab } from '@/components/admin/chat-provider-tab';
+import { ChatEndpointsSection, ChatProviderTab } from '@/components/admin/chat-provider-tab';
 import { RetrievalProviderTab } from '@/components/admin/retrieval-provider-tab';
 import { useI18n } from '@/i18n/provider';
 
@@ -47,6 +47,7 @@ function AdminWissenPageInner() {
       {bereich === 'chat-llm' && (
         <SectionPanel idPrefix="wissen" id="chat-llm">
           <ChatProviderTab />
+          <ChatEndpointsSection />
         </SectionPanel>
       )}
       {bereich === 'suche-modelle' && (

@@ -4,6 +4,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ChatProviderAdminResponse(BaseModel):
+    id: str = 'default'
+    name: str = ''
     configured: bool
     enabled: bool
     base_url: str
@@ -18,6 +20,7 @@ class ChatProviderAdminResponse(BaseModel):
 class ChatProviderUpdateRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
+    name: str = Field(default='', max_length=255)
     enabled: bool = False
     base_url: str = Field(default='', max_length=1024)
     model: str = Field(default='', max_length=255)
@@ -36,6 +39,10 @@ class ChatProviderUpdateRequest(BaseModel):
         return self
 
 
+class ChatProviderListResponse(BaseModel):
+    items: list[ChatProviderAdminResponse] = Field(default_factory=list)
+
+
 class ChatProviderTestResponse(BaseModel):
     ok: bool
     detail: str
@@ -52,3 +59,16 @@ class ChatProviderInternalResponse(BaseModel):
     temperature: float | None = None
     supports_tools: bool = False
     updated_at: datetime | None = None
+
+
+class ChatEndpointSummary(BaseModel):
+    """Key-free catalog entry Runtime shows to chat users."""
+
+    id: str
+    name: str
+    model: str
+    supports_tools: bool = False
+
+
+class ChatEndpointCatalogResponse(BaseModel):
+    items: list[ChatEndpointSummary] = Field(default_factory=list)

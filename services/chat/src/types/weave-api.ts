@@ -23,6 +23,17 @@ export interface Bot {
   name: string;
   description: string | null;
   retrieval: { enabled: boolean };
+  /** LLM endpoints the user may pick for this bot, its own first; empty
+   * (or absent on an older backend) when the bot offers no choice. */
+  llm_endpoints?: LlmEndpoint[];
+}
+
+/** Weave-Runtime's `LlmEndpointSummary` (no credentials). */
+export interface LlmEndpoint {
+  id: string;
+  name: string;
+  model: string;
+  supports_tools?: boolean;
 }
 
 /** GET /v1/me — this user's own account summary. `locale` is `null` until
@@ -256,6 +267,8 @@ export interface ChatRequestBody {
   message: string;
   conversation_id?: string;
   collections?: string[];
+  /** The user's LLM endpoint choice; omitted = the bot's own endpoint. */
+  llm_endpoint?: string;
 }
 
 /** One row of Weave-API's GET /v1/conversations (`ConversationSummary`,

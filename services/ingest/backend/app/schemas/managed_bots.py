@@ -76,6 +76,9 @@ class AgentSubagent(BaseModel):
     include_uncollected: bool = False
     tools: list[str] = Field(default_factory=lambda: ['search_knowledge'])
     model: AgentSubagentModel | None = None
+    # Central LLM endpoint for this subagent (Runtime's `SubagentConfig.endpoint`);
+    # existence and tool support are checked against the database on save.
+    endpoint: str | None = Field(default=None, max_length=36)
     limits: AgentSubagentLimits = Field(default_factory=AgentSubagentLimits)
 
     @field_validator('id')
@@ -225,6 +228,22 @@ class ManagedBotWrite(BaseModel):
     # rather than only surfacing as a Runtime-side bot-load failure the
     # next time this bot's turn runs.
     agent: AgentConfig | None = Field(default=None)
+    # LLM endpoint (Admin > Chat-Provider) this bot answers with; None = the
+    # central 'default'. `llm_endpoints` are further endpoints users may
+    # pick per chat ('*' = all enabled ones).
+    llm_endpoint: str | None = Field(default=None, max_length=36)
+    llm_endpoints: list[str] = Field(default_factory=list, max_length=50)
+
+    @field_validator('llm_endpoint')
+    @classmethod
+    def normalize_llm_endpoint(cls, value: str | None) -> str | None:
+        cleaned = value.strip() if value else ''
+        return cleaned or None
+
+    @field_validator('llm_endpoints')
+    @classmethod
+    def normalize_llm_endpoints(cls, values: list[str]) -> list[str]:
+        return list(dict.fromkeys(value.strip() for value in values if value.strip()))
 
     @field_validator('name', 'no_context_reply')
     @classmethod
@@ -292,6 +311,8 @@ class ManagedBotWrite(BaseModel):
         # YAML bot's own access.
         if self.kind == 'n8n' and self.agent is not None and self.agent.enabled:
             raise ValueError('agent mode is not available for n8n bots')
+        if self.kind == 'n8n' and (self.llm_endpoint or self.llm_endpoints):
+            raise ValueError('n8n bots cannot use LLM endpoints')
         return self
 
 
@@ -335,6 +356,8 @@ class ManagedBotAdminResponse(BaseModel):
     require_sources: bool
     no_context_reply: str
     agent: dict | None = None
+    llm_endpoint: str | None = None
+    llm_endpoints: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
     source: str = 'managed'
@@ -372,6 +395,8 @@ class ManagedBotInternalResponse(BaseModel):
     require_sources: bool
     no_context_reply: str
     agent: dict | None = None
+    llm_endpoint: str | None = None
+    llm_endpoints: list[str] = Field(default_factory=list)
 
 
 class ManagedBotInternalListResponse(BaseModel):

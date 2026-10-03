@@ -96,3 +96,42 @@ def test_enabled_configuration_requires_endpoint_and_model():
     admin, _ = _admin('chat-config-validation-admin')
     response = admin.put('/api/v1/auth/admin/chat-provider', json={'enabled': True})
     assert response.status_code == 422
+
+
+def test_named_endpoints_are_listed_projected_by_id_and_cataloged_without_keys(monkeypatch):
+    _clear()
+    admin, _ = _admin('chat-endpoints-admin')
+    monkeypatch.setattr(settings, 'chat_config_service_token', 'runtime-secret')
+    auth = {'Authorization': 'Bearer runtime-secret'}
+    assert admin.put('/api/v1/auth/admin/chat-provider', json={
+        'enabled': True, 'base_url': 'https://central.example/v1', 'model': 'central-chat',
+    }).status_code == 200
+    saved = admin.put('/api/v1/auth/admin/chat-provider/endpoints/tools-llm', json={
+        'name': 'Tool-Modell', 'enabled': True, 'base_url': 'https://tools.example/v1', 'model': 'tool-chat',
+        'api_key': 'tools-secret', 'supports_tools': True,
+    })
+    assert saved.status_code == 200, saved.text
+    assert saved.json()['id'] == 'tools-llm'
+    assert 'tools-secret' not in saved.text
+    assert admin.put('/api/v1/auth/admin/chat-provider/endpoints/Bad_Id', json={}).status_code == 422
+
+    listed = admin.get('/api/v1/auth/admin/chat-provider/endpoints').json()['items']
+    assert [item['id'] for item in listed] == ['default', 'tools-llm']
+
+    internal = admin.get('/api/v1/internal/chat-provider', params={'endpoint': 'tools-llm'}, headers=auth).json()
+    assert internal['model'] == 'tool-chat'
+    assert internal['api_key'] == 'tools-secret'
+    assert admin.get('/api/v1/internal/chat-provider', headers=auth).json()['model'] == 'central-chat'
+    assert admin.get('/api/v1/internal/chat-provider', params={'endpoint': 'missing'}, headers=auth).json()['configured'] is False
+
+    catalog = admin.get('/api/v1/internal/chat-provider/endpoints', headers=auth)
+    assert catalog.status_code == 200
+    assert 'tools-secret' not in catalog.text
+    assert catalog.json()['items'] == [
+        {'id': 'default', 'name': 'central-chat', 'model': 'central-chat', 'supports_tools': False},
+        {'id': 'tools-llm', 'name': 'Tool-Modell', 'model': 'tool-chat', 'supports_tools': True},
+    ]
+
+    assert admin.delete('/api/v1/auth/admin/chat-provider/endpoints/default').status_code == 409
+    assert admin.delete('/api/v1/auth/admin/chat-provider/endpoints/tools-llm').status_code == 204
+    assert admin.get('/api/v1/internal/chat-provider', params={'endpoint': 'tools-llm'}, headers=auth).json()['configured'] is False

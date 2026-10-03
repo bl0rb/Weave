@@ -65,7 +65,7 @@ def test_list_bots_response_does_not_leak_system_prompt():
     resp = client.get('/internal/bots', headers=AUTH_HEADERS)
     body = resp.json()
     for bot in body:
-        assert set(bot) == {'id', 'name', 'description', 'retrieval', 'kind', 'teams', 'public', 'collections'}
+        assert set(bot) == {'id', 'name', 'description', 'retrieval', 'kind', 'teams', 'public', 'collections', 'llm_endpoints'}
 
 
 # --- POST /internal/chat --------------------------------------------------
@@ -191,7 +191,7 @@ def test_conversation_title_endpoint_sanitizes_the_model_output(monkeypatch):
             seen['messages'] = messages
             return LLMResult(content='**Claude: Keine Daten in Quellen gefunden**', model='m')
 
-    monkeypatch.setattr(internal, 'fetch_chat_provider', lambda: ChatProviderSnapshot(enabled=True, base_url='http://llm', model='m'))
+    monkeypatch.setattr(internal, 'fetch_chat_provider', lambda *_: ChatProviderSnapshot(enabled=True, base_url='http://llm', model='m'))
     monkeypatch.setattr(internal, 'OpenAICompatibleLLM', FakeTitleLLM)
     resp = client.post('/internal/conversation-title', json={'question': 'Wie lange dauert die Probezeit?', 'answer': 'z' * 900}, headers=AUTH_HEADERS)
     assert resp.status_code == 200, resp.text
@@ -212,7 +212,7 @@ def test_conversation_title_is_503_when_nothing_usable_is_left(monkeypatch):
         def chat(self, messages, **kwargs):
             return LLMResult(content='**""**', model='m')
 
-    monkeypatch.setattr(internal, 'fetch_chat_provider', lambda: ChatProviderSnapshot(enabled=True, base_url='http://llm', model='m'))
+    monkeypatch.setattr(internal, 'fetch_chat_provider', lambda *_: ChatProviderSnapshot(enabled=True, base_url='http://llm', model='m'))
     monkeypatch.setattr(internal, 'OpenAICompatibleLLM', EmptyTitleLLM)
     resp = client.post('/internal/conversation-title', json={'question': 'Hallo', 'answer': 'Hi'}, headers=AUTH_HEADERS)
     assert resp.status_code == 503

@@ -354,7 +354,11 @@ class ChatProviderConfig(Base):
 
     __tablename__ = 'chat_provider_config'
 
+    # 'default' is the central endpoint every bot uses unless it names
+    # another row (Runtime's `ModelConfig.endpoint`); further rows are
+    # additional named endpoints a bot can use or offer to its users.
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default='default')
+    name: Mapped[str] = mapped_column(String(255), default='', server_default='', nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0', nullable=False)
     base_url: Mapped[str] = mapped_column(String(1024), default='', server_default='', nullable=False)
     model: Mapped[str] = mapped_column(String(255), default='', server_default='', nullable=False)
@@ -463,6 +467,11 @@ class ManagedBot(Base):
     # persist one at all. `None` (the default) means "agent mode off",
     # matching Runtime's own `agent: AgentConfig | None = None` default.
     agent_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # LLM endpoint (chat_provider_config.id) for an LLM bot; None = 'default'.
+    # `llm_endpoints` are further endpoint ids the user may pick in the chat
+    # ('*' = every enabled endpoint).
+    llm_endpoint: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    llm_endpoints: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     no_context_reply: Mapped[str] = mapped_column(
         Text,
         default='Ich habe dazu keine belegten Informationen gefunden.',

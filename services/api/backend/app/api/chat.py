@@ -75,6 +75,7 @@ def chat(
             history=history,
             user=runtime_user,
             collections=body.collections,
+            llm_endpoint=body.llm_endpoint,
         )
     except runtime_client.RuntimeUnavailable as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
@@ -276,6 +277,7 @@ def chat_stream(
             history=history,
             user=runtime_user,
             collections=body.collections,
+            llm_endpoint=body.llm_endpoint,
         )
     except runtime_client.RuntimeUnavailable as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc

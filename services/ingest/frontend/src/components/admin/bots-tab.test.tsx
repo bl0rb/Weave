@@ -39,6 +39,7 @@ beforeEach(() => {
     if (path === '/api/v1/auth/admin/bots') return { items: [] };
     if (path === '/api/v1/auth/admin/teams') return { items: [{ id: 'team-1', name: 'Service', created_at: '2026-09-04T08:00:00Z' }] };
     if (path === '/api/v1/collections') return { items: [{ collection_id: 'area-1', slug: 'servicewissen', name: 'Servicewissen', description: null, visibility: 'restricted', grants: [], can_manage: true }] };
+    if (path === '/api/v1/auth/admin/chat-provider/endpoints') return { items: [{ id: 'default', name: '', model: 'central', enabled: true }, { id: 'tools-llm', name: 'Tool-Modell', model: 'tool-chat', enabled: true, supports_tools: true }] };
     throw new Error(`unexpected request: ${path}`);
   });
   fetcher.mockResolvedValue({ ok: true } as Response);
@@ -143,6 +144,7 @@ it('blocks saving an enabled agent mode with no subagent, then allows it once on
   fireEvent.change(screen.getByRole('textbox', { name: 'Fachlicher Auftrag' }), { target: { value: 'Beantwortet IT-Fragen.' } });
   fireEvent.click(screen.getByRole('checkbox', { name: 'Servicewissen' }));
   expect(screen.queryByRole('alert')).toBeNull();
+  fireEvent.change(await screen.findByRole('combobox', { name: /^LLM-Endpunkt des Subagenten/ }), { target: { value: 'tools-llm' } });
 
   step(/Überprüfen/);
   expect((screen.getByRole('button', { name: 'Bot speichern' }) as HTMLButtonElement).disabled).toBe(false);
@@ -154,7 +156,7 @@ it('blocks saving an enabled agent mode with no subagent, then allows it once on
     enabled: true,
     subagents: [{
       id: 'it-support', name: 'IT Support', description: null, mission: 'Beantwortet IT-Fragen.',
-      collections: ['servicewissen'], filters: {}, include_uncollected: false, model: null,
+      collections: ['servicewissen'], filters: {}, include_uncollected: false, model: null, endpoint: 'tools-llm',
       limits: { max_searches: 3, max_results: 5, timeout_seconds: 60 },
     }],
     limits: { max_parallel: 3, max_followups: 1, budget_searches: 9, timeout_seconds: 120 },
@@ -177,6 +179,24 @@ it('sends agent: null and leaves out documents without a space for a new bot', a
   const body = JSON.parse(mutation?.[1]?.body as string);
   expect(body.agent).toBeNull();
   expect(body.include_uncollected).toBe(false);
+});
+
+it('sends the chosen LLM endpoint and the endpoints offered in the chat', async () => {
+  render(<BotsTab />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Bot hinzufügen' }));
+
+  fireEvent.change(screen.getByRole('textbox', { name: /^Bot-ID/ }), { target: { value: 'tool-bot' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Anzeigename' }), { target: { value: 'Tool Bot' } });
+  step(/Verhalten/);
+  fireEvent.change(screen.getByRole('textbox', { name: 'System-Prompt' }), { target: { value: 'Antworte normal.' } });
+  fireEvent.change(await screen.findByRole('combobox', { name: /^LLM-Endpunkt/ }), { target: { value: 'tools-llm' } });
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Zentraler Endpunkt' }));
+  step(/Überprüfen/);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Bot speichern' }));
+  await waitFor(() => expect(json.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true));
+  const body = JSON.parse(json.mock.calls.find(([, init]) => init?.method === 'POST')?.[1]?.body as string);
+  expect(body).toMatchObject({ llm_endpoint: 'tools-llm', llm_endpoints: ['default'] });
 });
 
 it('deletes an existing bot only after confirmation', async () => {

@@ -16,6 +16,13 @@ describe('buildChatRequestBody', () => {
     expect(body).not.toHaveProperty('collections');
   });
 
+  it('sends the chosen LLM endpoint only when one is selected', () => {
+    const base = { botId: 'general-assistant', message: 'Hallo', conversationId: null, selectedCollections: [] };
+
+    expect(buildChatRequestBody({ ...base, llmEndpoint: 'tools-llm' }).llm_endpoint).toBe('tools-llm');
+    expect(buildChatRequestBody({ ...base, llmEndpoint: null })).not.toHaveProperty('llm_endpoint');
+  });
+
   it('sends the selected collections as the request filter when the sidebar selection is non-empty', () => {
     const body = buildChatRequestBody({
       botId: 'legal-support',
