@@ -32,7 +32,7 @@ evaluated before any data or budget leaves the building.
 does not decide anything. It answers questions from documents that someone
 deliberately published, and it shows its work.
 
-The current release is **v0.7.0** — nine services, running and tested end to
+The current release is **v0.7.1** — nine services, running and tested end to
 end, and each one can run as several replicas. The [wiki](https://github.com/bl0rb/Weave/wiki) is the place to
 start reading; this README covers the repository itself.
 
@@ -62,6 +62,31 @@ another.
 The [knowledge portal guide](docs/wissensportal.md) explains the separation
 between processing and publication. Under the normal workflow, only content
 that a user explicitly releases is indexed.
+
+### New in v0.7.1
+
+**LLM endpoints per bot.** Under *Administration › Chat & LLM*, admins add
+further named, OpenAI-compatible endpoints next to the central one, for
+example a model with native tool calls. Each bot answers with the central
+endpoint or one of these and can offer users a choice per chat; the chat
+composer then shows a model picker. An agent-mode subagent can run on its own
+endpoint, which must support tool calls. YAML bots set `model.endpoint` and
+`model.endpoints` (`['*']` offers every enabled endpoint). An endpoint a bot
+still uses cannot be deleted, and n8n bots keep the model of their flow.
+
+**Documents without a knowledge space.** Documents that Knowledge indexed
+before knowledge spaces existed carry no space and therefore no grants. New
+bots now leave them out by default (`include_uncollected`); existing bots and
+YAML bots without the setting keep them. After the update, run
+`python -m app.cli reconcile-collections` in Weave-Knowledge once to move them
+into their space ([docs/betrieb.md](docs/betrieb.md) section 3.2).
+
+**Withdrawing orphaned documents.** `POST /api/v1/admin/knowledge/orphans`
+compares the Knowledge index with Ingest and withdraws documents whose job or
+knowledge space no longer exists: a dry run by default, then apply
+([docs/betrieb.md](docs/betrieb.md) section 3.3).
+
+Both web interfaces now lint with ESLint 10 and type-check with TypeScript 7.
 
 ### New in v0.7
 
@@ -365,6 +390,8 @@ python -m venv .venv
 
 # services/chat and services/ingest/frontend
 npm install
+npm run lint
+npm run typecheck   # TypeScript 7; `next build` and ESLint use the 6.0 API
 npm test
 
 # Configuration renderer and validator
