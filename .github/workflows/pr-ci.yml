@@ -164,6 +164,12 @@ jobs:
         run: npm run lint
         working-directory: services/ingest/frontend
 
+      # TypeScript 7 (native tsc). `next build` and typescript-eslint still
+      # type-check through the 6.0 API that the `typescript` alias provides.
+      - name: Type-check frontend
+        run: npm run typecheck
+        working-directory: services/ingest/frontend
+
       - name: Test frontend
         run: npm test
         working-directory: services/ingest/frontend
@@ -397,6 +403,12 @@ jobs:
 
       - name: Lint
         run: npm run lint
+        working-directory: services/chat
+
+      # Same split as the Ingest frontend: TypeScript 7 here, the 6.0 API for
+      # `next build` and typescript-eslint.
+      - name: Type-check
+        run: npm run typecheck
         working-directory: services/chat
 
       - name: Test
