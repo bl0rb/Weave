@@ -174,6 +174,38 @@ Runtime und Tools koordiniert rotieren. Neue Turns erhalten aktuelle Rechte.
 Beim Upgrade zuerst Migrationen und die empfangenden Services Ingest,
 Retrieval und Tools ausrollen, danach Gateway und Runtime.
 
+### 3.2 Altbestand ohne Wissensbereich
+
+Dokumente, die Knowledge vor den Wissensbereichen oder über den alten
+`document.processed`-Weg indiziert hat, tragen kein `collection_slug`. Sie
+haben keine Freigaben; ein Bot mit `include_uncollected` findet sie, begrenzt
+nur durch das Hauptteam des Hochladenden (ADR 0008, Nachtrag F41). Einmal nach
+dem Update, Ingest und Knowledge müssen laufen:
+
+```bash
+# Zuerst ansehen: wie viele, welchem Bereich würden sie zugeordnet?
+docker compose -f docker-compose.weave.yml exec weave-knowledge \
+  python -m app.cli reconcile-collections --dry-run
+# Dann zuordnen -- gefahrlos wiederholbar, fasst nur Zeilen ohne Bereich an:
+docker compose -f docker-compose.weave.yml exec weave-knowledge \
+  python -m app.cli reconcile-collections
+```
+
+Der Befehl fragt Ingest (`GET /api/v1/collections/registry/jobs`, derselbe
+Token wie der Registry-Abgleich), zu welchem Bereich der Job jedes Dokuments
+gehört, und setzt `collection_slug` direkt. Inhalt und Vektoren bleiben, eine
+neue Freigabe entsteht nicht; ab sofort gelten die Freigaben des Bereichs.
+Exit-Code `!= 0`, wenn Ingest nicht erreichbar war — einfach erneut starten.
+
+Die letzte Zeile nennt, wie viele Dokumente ohne Bereich bleiben. Diese sind
+für **neue** Bots standardmäßig ausgeschlossen (`include_uncollected = false`).
+Bestehende Bots und YAML-Bots ohne eigene Angabe beziehen sie weiter ein,
+damit nach dem Update keine Antworten wegfallen. Werden sie nicht mehr
+gebraucht, unter *Administration › Bots* „Dokumente ohne Wissensbereich
+einbeziehen“ je Bot abschalten bzw. in der YAML `include_uncollected: false`
+setzen. Wer ein solches Dokument weiter braucht, lädt es in einen Bereich hoch
+und gibt es dort frei.
+
 ## 4. Pflichtwerte
 
 Ohne diese startet der Dienst nicht oder verweigert fail-closed die Arbeit.

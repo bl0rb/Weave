@@ -441,7 +441,10 @@ class ManagedBot(Base):
     top_k: Mapped[int] = mapped_column(Integer, default=20, server_default='20', nullable=False)
     final_k: Mapped[int] = mapped_column(Integer, default=5, server_default='5', nullable=False)
     rerank: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1', nullable=False)
-    include_uncollected: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1', nullable=False)
+    # Legacy documents without a space (ADR 0008 addendum, F41): new bots
+    # leave them out. server_default stays '1' -- existing rows keep their
+    # stored value, and every insert goes through the ORM default.
+    include_uncollected: Mapped[bool] = mapped_column(Boolean, default=False, server_default='1', nullable=False)
     streaming: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0', nullable=False)
     auth_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=120, server_default='120', nullable=False)

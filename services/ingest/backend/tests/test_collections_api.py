@@ -360,6 +360,52 @@ def test_collections_registry_lists_every_collection_unfiltered_by_visibility():
     assert set(entry.keys()) == {'slug', 'name', 'description', 'visibility', 'read_teams', 'read_users'}
 
 
+
+def test_collections_registry_jobs_names_the_space_of_each_job(monkeypatch):
+    """GET /collections/registry/jobs feeds Weave-Knowledge's
+    reconcile-collections (F41): for the job ids the caller sends it names
+    the space each job belongs to; jobs without a space, with a deleted
+    space or unknown ids are absent. Same reader as the registry: the
+    Knowledge service token or an admin, nobody else."""
+    from app.core.config import settings
+    from conftest import client as anonymous_client
+
+    owner = _user('registry-jobs-owner')
+    admin = _user('registry-jobs-admin', role=UserRole.ADMIN)
+    owner_client = login_as(owner.username)
+    created = owner_client.post('/api/v1/collections', json={'description': 'Test purpose', 'name': 'Altbestand Bereich'})
+    assert created.status_code == 200, created.text
+    collection_id, slug = created.json()['collection_id'], created.json()['slug']
+
+    def _job(settings_info: dict) -> str:
+        with TestingSessionLocal() as db:
+            job = Job(original_filename='alt.pdf', upload_path='/tmp/alt.pdf', owner_id=owner.id,
+                      processing_info={'settings': settings_info})
+            db.add(job)
+            db.commit()
+            return job.id
+
+    in_space = _job({'collection_id': collection_id})
+    without_space = _job({})
+    deleted_space = _job({'collection_id': str(uuid.uuid4())})
+    params = [('job_id', job_id) for job_id in (in_space, without_space, deleted_space, str(uuid.uuid4()))]
+
+    response = login_as(admin.username).get('/api/v1/collections/registry/jobs', params=params)
+    assert response.status_code == 200, response.text
+    assert response.json() == {'items': [{'job_id': in_space, 'collection': slug, 'collection_name': 'Altbestand Bereich'}]}
+
+    monkeypatch.setattr(settings, 'knowledge_ingest_api_token', 'knowledge-test-credential')
+    service_response = anonymous_client.get(
+        '/api/v1/collections/registry/jobs', params=params,
+        headers={'Authorization': 'Bearer knowledge-test-credential'},
+    )
+    assert service_response.json() == response.json()
+
+    assert owner_client.get('/api/v1/collections/registry/jobs', params=params).status_code == 403
+    too_many = [('job_id', str(uuid.uuid4())) for _ in range(101)]
+    assert login_as(admin.username).get('/api/v1/collections/registry/jobs', params=too_many).status_code == 422
+
+
 def test_collections_registry_rejects_non_admin():
     """FIX (information leak): GET /collections/registry hands back every
     collection's slug + full read_teams ACL in one call -- the complete

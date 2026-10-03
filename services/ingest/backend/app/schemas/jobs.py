@@ -129,6 +129,20 @@ class CollectionRegistryResponse(BaseModel):
     items: list[CollectionRegistryEntry] = Field(default_factory=list)
 
 
+class JobCollectionEntry(BaseModel):
+    """One row of GET /collections/registry/jobs: the space a job belongs
+    to, for Weave-Knowledge's `reconcile-collections` (legacy rows without
+    `collection_slug`)."""
+
+    job_id: str
+    collection: str
+    collection_name: str
+
+
+class JobCollectionResponse(BaseModel):
+    items: list[JobCollectionEntry] = Field(default_factory=list)
+
+
 class DirectoryUserEntry(BaseModel):
     """One row of GET /directory/users -- the person-picker's search result
     shape. Deliberately never email or any other personal field beyond

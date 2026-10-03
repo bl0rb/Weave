@@ -161,7 +161,7 @@ it('blocks saving an enabled agent mode with no subagent, then allows it once on
   });
 });
 
-it('sends agent: null when the agent-mode toggle stays off', async () => {
+it('sends agent: null and leaves out documents without a space for a new bot', async () => {
   render(<BotsTab />);
   fireEvent.click(await screen.findByRole('button', { name: 'Bot hinzufügen' }));
 
@@ -176,6 +176,7 @@ it('sends agent: null when the agent-mode toggle stays off', async () => {
   const mutation = json.mock.calls.find(([, init]) => init?.method === 'POST');
   const body = JSON.parse(mutation?.[1]?.body as string);
   expect(body.agent).toBeNull();
+  expect(body.include_uncollected).toBe(false);
 });
 
 it('deletes an existing bot only after confirmation', async () => {
