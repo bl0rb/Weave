@@ -36,7 +36,8 @@ claude.ai werden aus genau diesen Dateien neu veröffentlicht.
   davon in **diesem** Repository umgesetzt ist: M1 (alle Actions in
   `.github/workflows/pr-ci.yml` auf Commit-SHA gepinnt, Helm-Tarball per
   `sha256sum` geprüft), M4 (der Frontend-Build scheitert an einem
-  `npm audit`-Fund) und M5 (`.github/dependabot.yml` deckt alle neun Dienste
+  `npm audit`-Fund in einer ausgelieferten Abhängigkeit; devDependencies
+  prüft der Audit nicht) und M5 (`.github/dependabot.yml` deckt alle neun Dienste
   ab). M3 nur teilweise — hash-gelockt sind bislang allein
   `services/ingest/backend/requirements.txt` und `requirements-worker.txt`;
   die übrigen sieben sind auf exakte Versionen gepinnt, aber ohne Prüfsummen.
@@ -52,11 +53,17 @@ claude.ai werden aus genau diesen Dateien neu veröffentlicht.
   neun Dienste und wer wen aufruft; `document-journey` zeigt den Weg vom
   Upload über Freigabe und Indizierung bis zur zitierten Antwort samt
   Widerruf; `agent-mode` zeigt einen Chat-Turn durch den LangGraph-Orchestrator
-  mit parallelen Recherche-Subagenten; `external-access` zeigt die vier
+  mit parallelen Recherche-Subagenten; `external-access` zeigt die fünf
   Zugriffswege auf die Wissenssuche und ihre gemeinsame Rechteschnittmenge.
 - **[integrations/mail-ingestion.md](integrations/mail-ingestion.md)** — wie
   Dokumente per Mail hereinkommen und warum die frühere separate Mail-API
   entfernt wurde.
+- **[integrations/vscode-mcp-sso.md](integrations/vscode-mcp-sso.md)** — VS Code
+  per SSO (Entra ID oder Keycloak, OAuth mit PKCE) mit Weave-MCP verbinden.
+- **[plan-skalierung-datenbank.md](plan-skalierung-datenbank.md)** — wie Weave
+  über PostgreSQL horizontal skaliert (v0.7.0): Objektspeicher, Auftrags-
+  Übernahme mit Heartbeat, zwei Worker-Pools, Verbindungsbudget, KEDA-Schalter;
+  S3 und Datenbankoptimierung bleiben für später.
 - **[integrations/jira-mcp.md](integrations/jira-mcp.md)** — Entwurf für einen
   Helpdesk-Bot mit Jira Data Center: MCP über n8n, native Erweiterungsoption,
   Ticket-/JSM-Werkzeuge und getrennte Benutzerrechte.

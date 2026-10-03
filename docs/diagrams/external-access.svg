@@ -1,10 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg viewBox="0 0 800 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="external-access-title external-access-desc">
-<title id="external-access-title">Four ways in, one scope rule</title>
-<desc id="external-access-desc">A person's personal token, an application's short-lived delegation token, a standalone integration's technical identity over REST, and an external AI agent's technical identity over MCP all reach Weave-Tools, which resolves each one's collection scope fresh on every call — introspecting personal tokens at Weave-API and technical identities at Weave-Ingest — before Weave-Retrieval ever runs a search bounded to that scope.</desc>
+<svg viewBox="0 0 960 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="external-access-title external-access-desc">
+<title id="external-access-title">Five ways in, one scope rule</title>
+<desc id="external-access-desc">A person's personal token, an application's short-lived delegation token, a standalone integration's technical identity over REST, an external AI agent's technical identity over MCP, and an MCP client's OAuth access token from the organisation's Entra ID or Keycloak all reach Weave-Tools, which resolves each one's collection scope fresh on every call — introspecting personal tokens at Weave-API, technical identities and OAuth access tokens at Weave-Ingest — before Weave-Retrieval ever runs a search bounded to that scope.</desc>
 
 <defs>
-  <style>@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Inter:wght@400;500;600&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap');</style>
   <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
     <polygon points="0 0, 8 3, 0 6" fill="#475569"/>
   </marker>
@@ -15,31 +14,34 @@
 <!-- ============ ARROWS (before boxes) ============ -->
 
 <!-- a1 Person -> Weave-Tools (left edge) -->
-<path d="M 120,168 V 252 Q 120,260 128,260 H 300" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 120,168 V 252 Q 120,260 128,260 H 380" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
 
 <!-- a2 Application -> Weave-Tools (top edge) -->
-<path d="M 304,168 V 208 Q 304,216 312,216 H 342 Q 350,216 350,224 V 232" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 300,168 V 208 Q 300,216 308,216 H 422 Q 430,216 430,224 V 232" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
 
 <!-- a3 Standalone integration -> Weave-Tools (top edge) -->
-<path d="M 488,168 V 208 Q 488,216 480,216 H 458 Q 450,216 450,224 V 232" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 480,168 V 232" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
 
-<!-- a4 External AI agent -> Weave-Tools (right edge) -->
-<path d="M 672,168 V 240 Q 672,248 664,248 H 500" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<!-- a4 External AI agent -> Weave-Tools (top edge) -->
+<path d="M 660,168 V 208 Q 660,216 652,216 H 538 Q 530,216 530,224 V 232" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
 
-<!-- a5 Weave-Tools -> Weave-API (introspect personal tokens) -->
-<path d="M 300,296 H 162 Q 154,296 154,304 V 384" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
-<rect x="196" y="278" width="70" height="12" rx="2" fill="#f8fafc"/>
-<text x="231" y="287" fill="#64748b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.04em">INTROSPECT</text>
+<!-- a5 SSO MCP client -> Weave-Tools (right edge) -->
+<path d="M 840,168 V 240 Q 840,248 832,248 H 580" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
 
-<!-- a6 Weave-Tools -> Weave-Ingest (introspect technical identities) -->
-<path d="M 500,280 H 638 Q 646,280 646,288 V 384" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
-<rect x="534" y="262" width="70" height="12" rx="2" fill="#f8fafc"/>
-<text x="569" y="271" fill="#64748b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.04em">INTROSPECT</text>
+<!-- a6 Weave-Tools -> Weave-API (introspect personal tokens) -->
+<path d="M 380,296 H 242 Q 234,296 234,304 V 384" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="276" y="278" width="70" height="12" rx="2" fill="#f8fafc"/>
+<text x="311" y="287" fill="#64748b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.04em">INTROSPECT</text>
 
-<!-- a7 Weave-Tools -> Weave-Retrieval (scoped search) -->
-<path d="M 400,320 V 384" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
-<rect x="408" y="344" width="60" height="12" rx="2" fill="#f8fafc"/>
-<text x="438" y="353" fill="#64748b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SCOPED</text>
+<!-- a7 Weave-Tools -> Weave-Ingest (introspect technical identities and OAuth access tokens) -->
+<path d="M 580,280 H 718 Q 726,280 726,288 V 384" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="614" y="262" width="70" height="12" rx="2" fill="#f8fafc"/>
+<text x="649" y="271" fill="#64748b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.04em">INTROSPECT</text>
+
+<!-- a8 Weave-Tools -> Weave-Retrieval (scoped search) -->
+<path d="M 480,320 V 384" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="488" y="344" width="60" height="12" rx="2" fill="#f8fafc"/>
+<text x="518" y="353" fill="#64748b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SCOPED</text>
 
 <!-- ============ NODES ============ -->
 
@@ -53,70 +55,79 @@
 <text x="120" y="152" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">long-lived, own account</text>
 
 <!-- Application -->
-<rect x="224" y="80" width="160" height="88" rx="6" fill="#f8fafc"/>
-<rect x="224" y="80" width="160" height="88" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1" stroke-dasharray="4,3"/>
-<rect x="232" y="88" width="24" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
-<text x="244" y="97" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">APP</text>
-<text x="304" y="124" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Application</text>
-<text x="304" y="140" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Bearer delegation token</text>
-<text x="304" y="152" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">5 min · asker's own scope</text>
+<rect x="220" y="80" width="160" height="88" rx="6" fill="#f8fafc"/>
+<rect x="220" y="80" width="160" height="88" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1" stroke-dasharray="4,3"/>
+<rect x="228" y="88" width="24" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="240" y="97" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">APP</text>
+<text x="300" y="124" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Application</text>
+<text x="300" y="140" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Bearer delegation token</text>
+<text x="300" y="152" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">5 min · asker's own scope</text>
 
 <!-- Standalone integration -->
-<rect x="408" y="80" width="160" height="88" rx="6" fill="#f8fafc"/>
-<rect x="408" y="80" width="160" height="88" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
-<rect x="416" y="88" width="80" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
-<text x="456" y="97" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">INTEGRATION</text>
-<text x="488" y="124" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Standalone</text>
-<text x="488" y="140" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Bearer wti_… · REST</text>
-<text x="488" y="152" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">granted collections only</text>
+<rect x="400" y="80" width="160" height="88" rx="6" fill="#f8fafc"/>
+<rect x="400" y="80" width="160" height="88" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="408" y="88" width="80" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="448" y="97" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">INTEGRATION</text>
+<text x="480" y="124" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Standalone</text>
+<text x="480" y="140" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Bearer wti_… · REST</text>
+<text x="480" y="152" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">granted collections only</text>
 
 <!-- External AI agent -->
-<rect x="592" y="80" width="160" height="88" rx="6" fill="#f8fafc"/>
-<rect x="592" y="80" width="160" height="88" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
-<rect x="600" y="88" width="56" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
-<text x="628" y="97" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">AI AGENT</text>
-<text x="672" y="124" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">External Agent</text>
-<text x="672" y="140" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Bearer wti_… · MCP</text>
-<text x="672" y="152" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">granted collections only</text>
+<rect x="580" y="80" width="160" height="88" rx="6" fill="#f8fafc"/>
+<rect x="580" y="80" width="160" height="88" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="588" y="88" width="56" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="616" y="97" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">AI AGENT</text>
+<text x="660" y="124" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">External Agent</text>
+<text x="660" y="140" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Bearer wti_… · MCP</text>
+<text x="660" y="152" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">granted collections only</text>
+
+<!-- MCP client signed in through SSO -->
+<rect x="760" y="80" width="160" height="88" rx="6" fill="#f8fafc"/>
+<rect x="760" y="80" width="160" height="88" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="768" y="88" width="28" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="782" y="97" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">SSO</text>
+<text x="840" y="124" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">SSO Client</text>
+<text x="840" y="140" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Bearer OAuth JWT · MCP</text>
+<text x="840" y="152" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Entra/Keycloak · own teams</text>
 
 <!-- Weave-Tools (FOCAL) -->
-<rect x="300" y="232" width="200" height="88" rx="6" fill="#f8fafc"/>
-<rect x="300" y="232" width="200" height="88" rx="6" fill="rgba(79,70,229,0.08)" stroke="#4f46e5" stroke-width="1"/>
-<rect x="308" y="240" width="40" height="12" rx="2" fill="transparent" stroke="rgba(79,70,229,0.40)" stroke-width="0.8"/>
-<text x="328" y="249" fill="#4f46e5" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">TOOLS</text>
-<text x="400" y="276" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Tools</text>
-<text x="400" y="292" fill="#4f46e5" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">resolve_scope() · every call</text>
-<text x="400" y="304" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">narrows scope, never widens</text>
+<rect x="380" y="232" width="200" height="88" rx="6" fill="#f8fafc"/>
+<rect x="380" y="232" width="200" height="88" rx="6" fill="rgba(79,70,229,0.08)" stroke="#4f46e5" stroke-width="1"/>
+<rect x="388" y="240" width="40" height="12" rx="2" fill="transparent" stroke="rgba(79,70,229,0.40)" stroke-width="0.8"/>
+<text x="408" y="249" fill="#4f46e5" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">TOOLS</text>
+<text x="480" y="276" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Tools</text>
+<text x="480" y="292" fill="#4f46e5" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">resolve_scope() · every call</text>
+<text x="480" y="304" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">narrows scope, never widens</text>
 
 <!-- Weave-API -->
-<rect x="64" y="384" width="180" height="88" rx="6" fill="#f8fafc"/>
-<rect x="64" y="384" width="180" height="88" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
-<rect x="72" y="392" width="52" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
-<text x="98" y="401" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">GATEWAY</text>
-<text x="154" y="428" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-API</text>
-<text x="154" y="444" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">introspects pd_…</text>
-<text x="154" y="456" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">team → readable collections</text>
+<rect x="144" y="384" width="180" height="88" rx="6" fill="#f8fafc"/>
+<rect x="144" y="384" width="180" height="88" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="152" y="392" width="52" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="178" y="401" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">GATEWAY</text>
+<text x="234" y="428" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-API</text>
+<text x="234" y="444" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">introspects pd_…</text>
+<text x="234" y="456" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">team → readable collections</text>
 
 <!-- Weave-Retrieval -->
-<rect x="310" y="384" width="180" height="88" rx="6" fill="#f8fafc"/>
-<rect x="310" y="384" width="180" height="88" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
-<rect x="318" y="392" width="52" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
-<text x="344" y="401" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">SEARCH</text>
-<text x="400" y="428" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Retrieval</text>
-<text x="400" y="444" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">runs inside that scope</text>
-<text x="400" y="456" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">never told what it can't see</text>
+<rect x="390" y="384" width="180" height="88" rx="6" fill="#f8fafc"/>
+<rect x="390" y="384" width="180" height="88" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="398" y="392" width="52" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="424" y="401" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">SEARCH</text>
+<text x="480" y="428" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Retrieval</text>
+<text x="480" y="444" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">runs inside that scope</text>
+<text x="480" y="456" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">never told what it can't see</text>
 
 <!-- Weave-Ingest -->
-<rect x="556" y="384" width="180" height="88" rx="6" fill="#f8fafc"/>
-<rect x="556" y="384" width="180" height="88" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
-<rect x="564" y="392" width="52" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
-<text x="590" y="401" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">INGEST</text>
-<text x="646" y="428" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Ingest</text>
-<text x="646" y="444" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">introspects wti_…</text>
-<text x="646" y="456" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">admin-granted collections</text>
+<rect x="636" y="384" width="180" height="88" rx="6" fill="#f8fafc"/>
+<rect x="636" y="384" width="180" height="88" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="644" y="392" width="52" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="670" y="401" fill="#0f172a" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">INGEST</text>
+<text x="726" y="428" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Ingest</text>
+<text x="726" y="444" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">introspects wti_… · OAuth JWT</text>
+<text x="726" y="456" fill="#64748b" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">grants, or the user's teams</text>
 
 <!-- ============ LEGEND ============ -->
-<line x1="40" y1="520" x2="760" y2="520" stroke="rgba(15,23,42,0.10)" stroke-width="0.8"/>
+<line x1="40" y1="520" x2="920" y2="520" stroke="rgba(15,23,42,0.10)" stroke-width="0.8"/>
 <text x="40" y="536" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
 
 <rect x="120" y="528" width="14" height="10" rx="2" fill="rgba(79,70,229,0.08)" stroke="#4f46e5" stroke-width="1"/>

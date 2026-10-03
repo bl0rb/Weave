@@ -32,8 +32,8 @@ evaluated before any data or budget leaves the building.
 does not decide anything. It answers questions from documents that someone
 deliberately published, and it shows its work.
 
-The current release is **v0.5.6** — nine services, running and tested end to
-end. The [wiki](https://github.com/bl0rb/Weave/wiki) is the place to
+The current release is **v0.7.0** — nine services, running and tested end to
+end, and each one can run as several replicas. The [wiki](https://github.com/bl0rb/Weave/wiki) is the place to
 start reading; this README covers the repository itself.
 
 ## The services
@@ -50,7 +50,7 @@ another.
 | `services/retrieval` | Hybrid search using pgvector, tsvector, RRF fusion, and cross-encoder reranking. Reads the Knowledge chunk store through a read-only database role (ADR-0005). |
 | `services/runtime` | LLM executor: intent routing, YAML-defined bots, Retrieval calls, and delegated n8n turns. The central chat-provider configuration comes from Ingest (ADR-0007). |
 | `services/api` | Gateway for API tokens, sessions, and conversations. Identities originate in Ingest and are mirrored here. |
-| `services/tools` | MCP server and REST mirror for permission-bound `list_collections` and `search` tools. |
+| `services/tools` | Stateless MCP server and REST mirror for permission-bound `list_collections` and `search` tools; MCP clients can sign in through the organisation's SSO. |
 | `services/chat` | Next.js chat interface. It talks only to `services/api` and signs users in through **Sign in with Weave**. |
 | `services/embeddings` | Optional OpenAI-compatible CPU embedding service using `intfloat/multilingual-e5-small` and ONNX Runtime at `/v1/embeddings`. |
 | `services/reranker` | Optional Cohere/Jina-compatible CPU reranking service using `BAAI/bge-reranker-v2-m3` at `/rerank`. |
@@ -62,6 +62,36 @@ another.
 The [knowledge portal guide](docs/wissensportal.md) explains the separation
 between processing and publication. Under the normal workflow, only content
 that a user explicitly releases is indexed.
+
+### New in v0.7
+
+**Horizontal scaling.** Every API service, both worker kinds and the MCP
+server can run as several replicas. Ingest keeps originals, results and
+images in PostgreSQL instead of on a shared file volume, so backend and
+worker pods share no files; the Helm chart no longer creates the
+`ingest-storage` PVC. In the chart, OCR runs in its own worker pool on the
+queue `weave.ingest.ocr`; imports, webhooks and releases run in a second pool on
+`weave.ingest.default` and never wait behind an OCR job. Each job carries a
+claim token with a heartbeat, so a job interrupted by a crash or a scale-down
+is requeued automatically. Pools scale through an HPA or, as a Helm switch,
+through KEDA by queue length. The chart computes the PostgreSQL connection
+budget at render time and refuses to deploy when the replicas would exceed
+`postgresql.maxConnections` (default 200). Rate limits, runtime settings and
+migration locks live in the database, so no replica holds state of its own
+([docs/betrieb.md](docs/betrieb.md) section 13). This chart version is meant
+for new installations: files stored on disk by earlier versions are not
+migrated.
+
+**SSO for MCP clients.** An MCP client such as VS Code can sign in through
+Entra ID or Keycloak with OAuth (authorization code with PKCE). Weave-MCP
+publishes OAuth protected-resource metadata, and Ingest verifies the access
+token and maps it to an existing, active user — no account is created and no
+team membership is taken from token claims
+([docs/integrations/vscode-mcp-sso.md](docs/integrations/vscode-mcp-sso.md)).
+
+The backup export is now streamed straight to the browser as an encrypted
+archive from one consistent database snapshot; the separate ZIP download of
+the `uploads/` and `results/` folders is gone, because those folders are.
 
 ### What has shipped since v0.2
 
@@ -93,8 +123,8 @@ Confluence page — which the chat then renders inline next to the answer.
 ### Administration and retrieval controls
 
 The Ingest administration UI supports persistent overrides for bundled Runtime
-bots and confirmed ZIP backups of local `uploads/` and `results/` storage. No
-admin file browser or unrestricted individual-file read endpoint is exposed.
+bots. No admin file browser or unrestricted individual-file read endpoint is
+exposed.
 The **Suche & Modelle** screen configures embedding providers and optional
 reranking, including an explicit **Aus** mode (`RERANK_PROVIDER=none`) and a
 slider between lexical full-text and semantic vector search. Embedding model
@@ -222,6 +252,7 @@ Only PostgreSQL and Redis have no host port at all.
 | Runtime | n8n | Delegate a whole turn | `X-Weave-Signature` (HMAC over the exact body) and a target that must match `N8N_ALLOWED_BASE_URLS` |
 | Tools | Retrieval | Search on the caller's behalf | `RETRIEVAL_API_TOKEN` |
 | Tools | Weave-API | Resolve who owns a personal token | `INTROSPECTION_SERVICE_TOKEN` |
+| Tools | Ingest | Resolve a technical identity or an MCP OAuth access token to a user and scope | `TOOLS_INTROSPECTION_TOKEN` |
 | Ingest | Knowledge | `document.released` (the only regular indexing trigger), `collection.updated`, indexing status | HMAC-SHA256 over the raw body, `X-Weave-Ingest-Signature` |
 | Knowledge | Ingest | Fetch the released Markdown snapshot and the collection registry | `WEAVE_INGEST_API_TOKEN` — must belong to an Ingest **administrator** |
 | n8n | Tools | Search as the person who asked | Two headers: `X-Tools-Service-Token` *and* a short-lived delegation token |
@@ -241,6 +272,13 @@ boundary, not a privilege boundary. The single real privilege boundary is
 `SELECT`-only role, because pgvector similarity and tsvector ranking have to run
 as SQL *inside* the database (ADR-0005). The schema is therefore a contract —
 [contracts/chunk-store.md](contracts/chunk-store.md).
+
+Ingest stores uploaded originals, conversion results and extracted images in
+`weave_ingest` itself, split into 4 MiB chunks; unreferenced objects are
+garbage-collected. No service needs a shared file volume, and a worker copies
+a job's original into a per-task temporary directory that it deletes
+afterwards. The only Ingest volume left in Compose holds backup archives
+uploaded for a restore.
 
 Redis is split by logical database only: `0` for Ingest, `1` for Knowledge
 (ADR-0001), both behind one shared password. Retrieval, Runtime, Tools, and
@@ -280,7 +318,10 @@ code (ADR-0006).
 
 Teams grant access to knowledge spaces. Runtime intersects the user's readable
 collections with the bot configuration and any request filter before search.
-n8n and MCP receive short-lived delegated scopes and cannot widen them. Shared
+n8n and MCP receive short-lived delegated scopes and cannot widen them. An
+MCP client can also sign in with an OAuth access token from the configured
+Entra ID or Keycloak provider; it resolves to an existing user, whose teams
+come from Weave, not from the token. Shared
 service credentials remain server-side and are checked fail-closed. Run
 `python scripts/weave_config.py check` after every secret or endpoint change.
 
@@ -333,7 +374,7 @@ services/tools/.venv/bin/python -m pytest scripts/tests -q
 Pull-request CI runs only the service suites affected by a path change —
 `.github/workflows/pr-ci.yml` has one job per service, gated on a path filter —
 and fails a frontend build when `npm audit` reports a known high-severity
-issue. The two model services skip their real-weight tests there
+issue in a dependency that ships (devDependencies are not audited). The two model services skip their real-weight tests there
 (`RUN_REAL_MODEL_TESTS`, `RERANKER_SKIP_MODEL_TESTS`) rather than download
 several gigabytes per commit.
 
@@ -347,6 +388,8 @@ several gigabytes per commit.
 | [docs/bauplan.html](docs/bauplan.html) | Transformation plan and implementation status |
 | [docs/glossar.html](docs/glossar.html) | Technical terms and their role in Weave |
 | [docs/wissensportal.md](docs/wissensportal.md) | Knowledge spaces, release workflow, and indexing status |
+| [docs/integrations/vscode-mcp-sso.md](docs/integrations/vscode-mcp-sso.md) | Connecting VS Code to Weave-MCP through Entra ID or Keycloak SSO |
+| [docs/plan-skalierung-datenbank.md](docs/plan-skalierung-datenbank.md) | Scaling over PostgreSQL: decisions, connection budget, and what is left for later |
 | [docs/diagrams/](docs/diagrams/) | Standalone platform, document-journey, agent-mode, and external-access diagrams |
 | [docs/screenshots/user-wiki/](docs/screenshots/user-wiki/) | Sanitized screenshots covering the user and administrator interfaces |
 | [docs/adr/](docs/adr/) | Architecture decision records |
