@@ -20,6 +20,7 @@ import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode, urlsplit
+from uuid import UUID
 
 from authlib.common.security import generate_token
 from authlib.oauth2.rfc7636 import create_s256_code_challenge
@@ -829,6 +830,7 @@ def oidc_callback(
     except (OIDCError, KeyError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f'OIDC login failed: {exc}') from exc
 
+    verified_object_id = claims.get('oid')
     subject = claims.get('sub')
     if not subject:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='ID token is missing sub claim')
@@ -968,6 +970,22 @@ def oidc_callback(
         else:
             _log_auth_event(db, 'INFO', f'created user {user.username} (provider {slug})')
             db.commit()
+
+    # Capture Entra's cross-client identity only from the signature-checked
+    # ID token, before userinfo was merged. Never link accounts by email.
+    if isinstance(verified_object_id, str):
+        try:
+            object_id = str(UUID(verified_object_id))
+        except ValueError:
+            raise HTTPException(status_code=401, detail='Invalid OIDC object identity') from None
+        if user.oidc_object_id is not None and user.oidc_object_id != object_id:
+            raise HTTPException(status_code=401, detail='OIDC object identity changed')
+        user.oidc_object_id = object_id
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=409, detail='OIDC object identity already assigned') from None
 
     _log_auth_event(db, 'INFO', f'oidc login succeeded: provider={slug} user={user.username} {login_diagnostic}')
 

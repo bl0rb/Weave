@@ -1,3 +1,6 @@
+from urllib.parse import urlsplit
+
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -84,6 +87,34 @@ class Settings(BaseSettings):
     # instantly. Kept short (30-60s) so that latency stays a deliberate,
     # bounded trade-off rather than a de facto "never revoked".
     technical_identity_cache_seconds: int = 45
+
+    # Optional OAuth resource-server discovery for native MCP clients.
+    # The external IdP issues access tokens; Ingest validates them and
+    # resolves existing users. Neither value comes from request headers.
+    mcp_oauth_issuer: str = ''
+    mcp_oauth_resource_url: str = ''
+    mcp_oauth_scopes: list[str] = ['mcp.read']
+
+    @field_validator('mcp_oauth_issuer', 'mcp_oauth_resource_url')
+    @classmethod
+    def validate_oauth_url(cls, value: str, info) -> str:
+        if not value:
+            return value
+        url = urlsplit(value)
+        local_http = info.field_name == 'mcp_oauth_resource_url' and url.hostname in ('localhost', '127.0.0.1', '::1')
+        if (not url.hostname or url.username or url.password or url.query or url.fragment
+                or not (url.scheme == 'https' or (url.scheme == 'http' and local_http))):
+            raise ValueError('OAuth URLs require HTTPS (HTTP allowed only for a loopback MCP resource)')
+        if info.field_name == 'mcp_oauth_resource_url' and not url.path.endswith('/mcp'):
+            raise ValueError('MCP resource URL must end in /mcp')
+        return value
+
+    @field_validator('mcp_oauth_scopes')
+    @classmethod
+    def validate_oauth_scopes(cls, scopes: list[str]) -> list[str]:
+        if not scopes or any(not scope or any(ord(c) < 33 or ord(c) > 126 or c in '"\\' for c in scope) for scope in scopes):
+            raise ValueError('OAuth scopes must be nonempty scope tokens')
+        return scopes
 
 
 settings = Settings()

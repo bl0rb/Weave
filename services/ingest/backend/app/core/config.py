@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 from urllib.parse import quote_plus
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -94,6 +95,12 @@ class Settings(BaseSettings):
     # Same fail-closed discipline as knowledge_ingest_api_token above -- left
     # empty, the endpoint answers 503 rather than accepting an empty match.
     tools_introspection_token: str = ''
+    # Optional MCP OAuth access-token validation against an existing,
+    # enabled AuthProvider. No account provisioning or IdP group grants.
+    mcp_oauth_provider_slug: str = ''
+    mcp_oauth_audience: str = ''
+    mcp_oauth_required_scopes: list[str] = ['mcp.read']
+    mcp_oauth_subject_claim: Literal['sub', 'oid'] = 'sub'
     bootstrap_admin_username: str = ''
     bootstrap_admin_email: str = ''
     bootstrap_admin_password: str = ''

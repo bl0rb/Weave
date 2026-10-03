@@ -1,0 +1,18 @@
+{
+  "servers": {
+    "weave": {
+      "type": "http",
+      "url": "http://localhost:8008/mcp",
+      "oauth": {
+        "clientId": "${input:weave-client-id}"
+      }
+    }
+  },
+  "inputs": [
+    {
+      "id": "weave-client-id",
+      "type": "promptString",
+      "description": "Öffentliche OAuth-Client-ID für VS Code (vom SSO-Administrator)"
+    }
+  ]
+}

@@ -164,6 +164,10 @@ class ScopeError(Exception):
     """
 
 
+class ScopeInsufficientScopeError(ScopeError):
+    """A valid OAuth token needs an additional delegated scope."""
+
+
 # The one and only message every ScopeConfigurationError carries -- deliberately
 # distinct from _GENERIC_AUTH_ERROR (never mentions the secret itself, but is
 # free to say "misconfigured" since, unlike a rejected token, there is no
@@ -209,7 +213,7 @@ class Scope:
     trusted with. An empty list correctly means "reads nothing" and must
     still be passed through as such, never treated as "unset".
 
-    `kind` is 'personal', 'delegated', or 'technical' -- carried for
+    `kind` is 'personal', 'delegated', 'technical', or 'oauth' -- carried for
     logging/observability only (e.g. telling apart "a human is asking
     directly" from "an agent is asking on a human's behalf" from "a
     standalone integration is asking under its own grant" in an audit
@@ -629,6 +633,40 @@ def _resolve_technical_scope(token: str) -> Scope:
     return scope
 
 
+def _resolve_oauth_scope(token: str) -> Scope:
+    """Validate an IdP JWT via Ingest; resolve current grants on every call."""
+    if not settings.tools_introspection_token:
+        raise ScopeConfigurationError(_SERVICE_MISCONFIGURED_ERROR)
+    try:
+        response = httpx.post(
+            f'{settings.ingest_base_url}/api/v1/internal/mcp-oauth/introspect',
+            json={'token': token, 'issuer': settings.mcp_oauth_issuer},
+            headers={'Authorization': f'Bearer {settings.tools_introspection_token}'},
+            timeout=settings.ingest_timeout_seconds,
+        )
+        if response.status_code != 200:
+            raise ScopeConfigurationError(_SERVICE_MISCONFIGURED_ERROR)
+        data = response.json()
+    except (httpx.HTTPError, ValueError):
+        raise ScopeConfigurationError(_SERVICE_MISCONFIGURED_ERROR) from None
+    if isinstance(data, dict) and data.get('error') == 'insufficient_scope':
+        raise ScopeInsufficientScopeError(_GENERIC_AUTH_ERROR)
+    if not isinstance(data, dict) or data.get('active') is not True:
+        raise ScopeError(_GENERIC_AUTH_ERROR)
+    for name in ('user_id', 'username', 'subject'):
+        if not isinstance(data.get(name), str) or not data[name]:
+            raise ScopeError(_GENERIC_AUTH_ERROR)
+    teams = _validated_teams(data.get('teams'))
+    try:
+        collections = _fetch_readable_collection_slugs(teams, user=data['subject'])
+    except httpx.HTTPError:
+        raise ScopeConfigurationError(_SERVICE_MISCONFIGURED_ERROR) from None
+    return Scope(
+        kind='oauth', user_id=data['user_id'], username=data['username'],
+        team=None, teams=teams, subject=data['subject'], allowed_collections=collections,
+    )
+
+
 def resolve_scope(authorization: str | None) -> Scope:
     """Resolve one request's `Authorization` header to a Scope -- the ONLY
     entry point into this module every tool is expected to call, and it is
@@ -645,7 +683,10 @@ def resolve_scope(authorization: str | None) -> Scope:
     app/api/technical_identities.py there); neither a Personal-Token (an
     opaque string from Weave-API) nor a Delegations-Token is ever expected
     to start with that literal prefix. Anything else goes through the
-    Personal-Token/introspection path. A malformed one-dot or `wti_`-shaped
+    Personal-Token/introspection path, except three-part JWTs when MCP OAuth
+    is enabled: those are signature/issuer/audience/scope-checked by Ingest.
+    The shape only selects the verifier and never establishes identity.
+    A malformed one-dot or `wti_`-shaped
     string that isn't actually valid still ends up at the exact same
     generic ScopeError as any other invalid token, never a different one
     merely for guessing the wrong shape.
@@ -665,4 +706,6 @@ def resolve_scope(authorization: str | None) -> Scope:
         return _resolve_delegated_scope(token)
     if token.startswith(_TECHNICAL_IDENTITY_PREFIX):
         return _resolve_technical_scope(token)
+    if settings.mcp_oauth_issuer and token.count('.') == 2:
+        return _resolve_oauth_scope(token)
     return _resolve_personal_scope(token)

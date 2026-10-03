@@ -53,6 +53,11 @@ handelt.
 
 ## Schnittstellen
 
+Optionaler nativer VS-Code-Login über Entra/Keycloak: siehe
+[MCP-SSO einrichten](../../docs/integrations/vscode-mcp-sso.md).
+Mit `MCP_OAUTH_ISSUER` prüft der MCP-Transport jeden HTTP-Aufruf und liefert
+OAuth-Discovery/401-Challenges; bestehende Token-Arten bleiben gültig.
+
 **Input:**
 
 | Surface | Endpunkt | Auth |

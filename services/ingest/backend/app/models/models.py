@@ -484,6 +484,7 @@ class User(Base):
     __tablename__ = 'users'
     __table_args__ = (
         UniqueConstraint('oidc_provider_id', 'oidc_subject', name='uq_users_oidc_provider_subject'),
+        UniqueConstraint('oidc_provider_id', 'oidc_object_id', name='uq_users_oidc_provider_object'),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -518,6 +519,9 @@ class User(Base):
         String(36), ForeignKey('auth_providers.id', ondelete='SET NULL'), nullable=True
     )
     oidc_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Entra's stable object id, captured only from a verified ID token.
+    # Its pairwise sub can differ for portal and native MCP clients.
+    oidc_object_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     # UI language preference ('de' | 'en'); NULL = no explicit choice (client
     # falls back to browser/Accept-Language). Plain string + application-
     # level validation (UserResponse / PATCH /auth/me), not a DB enum -- see
