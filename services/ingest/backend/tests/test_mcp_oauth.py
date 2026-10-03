@@ -148,13 +148,15 @@ def test_object_identity_migration_preserves_existing_users_and_rolls_back():
     spec.loader.exec_module(migration)
     engine = create_engine('sqlite://')
     with engine.begin() as connection:
-        connection.execute(text('CREATE TABLE users (id TEXT PRIMARY KEY, oidc_provider_id TEXT)'))
-        connection.execute(text("INSERT INTO users VALUES ('existing-user', 'provider')"))
+        connection.execute(text('CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT, oidc_provider_id TEXT)'))
+        connection.execute(text("INSERT INTO users VALUES ('existing-user', 'user@example.org', 'provider')"))
         with Operations.context(MigrationContext.configure(connection)):
             migration.upgrade()
             assert 'oidc_object_id' in {column['name'] for column in inspect(connection).get_columns('users')}
             assert connection.execute(text('SELECT id, oidc_object_id FROM users')).one() == ('existing-user', None)
             assert any(c['name'] == 'uq_users_oidc_provider_object' for c in inspect(connection).get_unique_constraints('users'))
+            # The sqlite batch rebuild must not lose 0004_auth's lower(email) index.
+            assert connection.execute(text("SELECT 1 FROM sqlite_master WHERE type='index' AND name='ix_users_email_lower'")).scalar() == 1
             migration.downgrade()
             assert 'oidc_object_id' not in {column['name'] for column in inspect(connection).get_columns('users')}
             assert connection.execute(text('SELECT id FROM users')).scalar() == 'existing-user'
