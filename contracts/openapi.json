@@ -3509,6 +3509,26 @@
         "title": "ImportWithdrawalRequest",
         "type": "object"
       },
+      "IntrospectionRequest": {
+        "properties": {
+          "issuer": {
+            "title": "Issuer",
+            "type": "string"
+          },
+          "token": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "issuer"
+        ],
+        "title": "IntrospectionRequest",
+        "type": "object"
+      },
       "JobArtifactListResponse": {
         "properties": {
           "items": {
@@ -12863,6 +12883,49 @@
         "summary": "Internal Chat Provider",
         "tags": [
           "chat-provider-internal"
+        ]
+      }
+    },
+    "/api/v1/internal/mcp-oauth/introspect": {
+      "post": {
+        "operationId": "introspect_access_token_api_v1_internal_mcp_oauth_introspect_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntrospectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Introspect Access Token Api V1 Internal Mcp Oauth Introspect Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Introspect Access Token",
+        "tags": [
+          "mcp-oauth-internal"
         ]
       }
     },
