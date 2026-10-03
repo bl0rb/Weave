@@ -154,9 +154,10 @@ jobs:
         working-directory: services/ingest/frontend
 
       # Fails the build on a known-vulnerable dependency instead of leaving it
-      # to whoever happens to run `npm audit` by hand.
+      # to whoever happens to run `npm audit` by hand. Only what ships counts:
+      # devDependencies (linters, test tooling) never reach the image.
       - name: Audit frontend dependencies
-        run: npm audit --audit-level=high
+        run: npm audit --omit=dev --audit-level=high
         working-directory: services/ingest/frontend
 
       - name: Lint frontend
@@ -391,7 +392,7 @@ jobs:
       # Same gate as the Ingest frontend above: a known-vulnerable dependency
       # fails the build instead of waiting for someone to run `npm audit`.
       - name: Audit dependencies
-        run: npm audit --audit-level=high
+        run: npm audit --omit=dev --audit-level=high
         working-directory: services/chat
 
       - name: Lint
