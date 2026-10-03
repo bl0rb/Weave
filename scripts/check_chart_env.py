@@ -214,6 +214,12 @@ DEVIATIONS: dict[str, dict[str, Deviation]] = {
             "INGEST_WORKER_CONCURRENCY",
             "CHAT_CONFIG_SERVICE_TOKEN",
             "TOOLS_INTROSPECTION_TOKEN",
+            # MCP-OAuth-Pruefung: liest nur das Backend
+            # (POST /api/v1/internal/mcp-oauth/introspect).
+            "MCP_OAUTH_PROVIDER_SLUG",
+            "MCP_OAUTH_AUDIENCE",
+            "MCP_OAUTH_REQUIRED_SCOPES",
+            "MCP_OAUTH_SUBJECT_CLAIM",
             "CHAT_LLM_PRIVATE_HOST_ALLOWLIST",
             "EMBEDDING_API_KEY",
             "EMBEDDING_BASE_URL",
