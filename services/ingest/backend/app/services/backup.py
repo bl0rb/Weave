@@ -4,10 +4,11 @@ Produces and consumes a single `.weave-backup.tar.gz` archive: every table
 in `app.models.models.Base.metadata` except a short, named exclusion list of
 transient state (see `EXCLUDED_TABLES`), every `*_encrypted` column
 re-encrypted under a passphrase-derived key instead of the server's own
-`SECRET_KEY` (see `ENCRYPTED_COLUMNS`), every large binary column as its own
-`blobs/<table>/<pk>.bin` archive entry (see `LargeBinary` handling below),
-and the on-disk upload/result trees under `files/uploads/...` and
-`files/results/...`.
+`SECRET_KEY` (see `ENCRYPTED_COLUMNS`), and every large binary column as
+its own `blobs/<table>/<pk>.bin` archive entry (see `LargeBinary` handling
+below) -- which includes every original upload and artifact, stored as
+`stored_object_chunks` rows. There is no file tree to export: Ingest keeps
+no data on disk.
 
 Deliberately NOT exported: the knowledge/retrieval index itself (there is
 nothing to export -- Knowledge is a separate service with its own storage);
@@ -16,18 +17,6 @@ the existing publication outbox so Knowledge re-indexes everything on its
 own once a worker is running, and best-effort dispatches
 `notify_collection_registry_changed` for every affected collection (see
 `_requeue_releases_for_index_rebuild`).
-
-Two deliberate deviations from an earlier draft of this feature's design
-that assumed a single `settings.storage_dir` setting:
-
-1. `app/core/config.py` has no `storage_dir` -- it has two independently
-   configurable roots, `uploads_dir` and `results_dir`. This engine treats
-   them as two separate trees (`files/uploads/...`, `files/results/...`)
-   rather than inventing a new settings field for a "smallest change" fix.
-2. The archive's own storage directory (`backups_dir()`) is a *sibling* of
-   both roots (`uploads_dir.parent / 'backups'`), not nested inside either
-   -- so it never needs to be explicitly excluded while walking the trees,
-   unlike a single-storage_dir layout would require.
 
 Admin identity policy (see `_is_admin_identity_match` and
 `import_backup`): every exported user (including former admins) is restored
@@ -71,6 +60,7 @@ import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Iterator
 from typing import Callable
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -200,32 +190,9 @@ ENCRYPTED_COLUMNS: dict[str, dict[str, tuple[Callable[[str], str], Callable[[str
     },
 }
 
-# jobs.upload_path/result_path are always written absolute (see
-# save_upload()/build_result_path() in app/services/storage.py) -- exported
-# as relative-to-root so a restore onto a target with a different
-# uploads_dir/results_dir still resolves. table -> {column: settings attr}.
-PATH_COLUMNS: dict[str, dict[str, str]] = {
-    'jobs': {'upload_path': 'uploads_dir', 'result_path': 'results_dir'},
-}
-
-# NOT normalized (documented limitation, not a silent gap): processing_info
-# JSON may contain an absolute editor.latest_result_path string (see
-# app/services/publications._markdown_from_job) -- it round-trips verbatim.
-# A job restored onto a target with a different results_dir falls back to
-# result_path/result_markdown for that one field, which is always correct;
-# only the editor's "jump to latest edited version" convenience link can go
-# stale, and only when uploads_dir/results_dir change between export and
-# import.
-
-
 def backups_dir() -> Path:
-    """Where export archives (and incoming import uploads) belong.
-
-    A sibling of `uploads_dir`/`results_dir` (see module docstring) rather
-    than nested inside either -- so `_iter_storage_files` never has to
-    special-case excluding it.
-    """
-    return settings.uploads_dir.parent / 'backups'
+    """Where export archives (and incoming import uploads) belong."""
+    return settings.backup_dir
 
 
 # --- Passphrase-derived encryption ---------------------------------------
@@ -456,34 +423,6 @@ def _add_bytes(tar: tarfile.TarFile, arcname: str, data: bytes) -> None:
     tar.addfile(info, io.BytesIO(data))
 
 
-# --- Path normalization ------------------------------------------------------
-
-def _normalize_path(raw: str, root: Path) -> str:
-    """Absolute on-disk path -> path relative to `root`, for storage in the
-    archive. Falls back to the raw value (kept absolute) if it can't be made
-    relative -- `_reanchor_path` on the way back in handles that fallback
-    explicitly rather than silently mis-resolving it."""
-    try:
-        root_resolved = root.resolve()
-        candidate = Path(raw)
-        resolved = candidate.resolve() if candidate.is_absolute() else (root_resolved / candidate).resolve()
-        return str(resolved.relative_to(root_resolved))
-    except (OSError, ValueError):
-        return raw
-
-
-def _reanchor_path(value: str, root: Path) -> str:
-    """Inverse of `_normalize_path`, on the target's own root."""
-    candidate = Path(value)
-    if candidate.is_absolute():
-        # Normalization couldn't make it relative at export time (e.g. it
-        # pointed outside uploads_dir/results_dir) -- keep it as-is; it will
-        # not resolve on this target either, but that was already true of
-        # the source archive and is surfaced as a warning by the caller.
-        return value
-    return str((root / candidate).resolve())
-
-
 # --- Row <-> JSONL encoding ---------------------------------------------------
 
 def _encode_row(table: Table, mapping, tar: tarfile.TarFile, export_fernet: Fernet) -> dict:
@@ -514,10 +453,6 @@ def _encode_row(table: Table, mapping, tar: tarfile.TarFile, export_fernet: Fern
                     'werden -- Export abgebrochen.'
                 ) from exc
             data[column_name] = export_fernet.encrypt(plaintext.encode('utf-8')).decode('utf-8')
-
-    for column_name, root_attr in PATH_COLUMNS.get(table.name, {}).items():
-        if data.get(column_name):
-            data[column_name] = _normalize_path(data[column_name], getattr(settings, root_attr))
 
     return data
 
@@ -570,84 +505,76 @@ def _decode_row(
                 ) from exc
             row[column_name] = encrypt_fn(plaintext)
 
-    for column_name, root_attr in PATH_COLUMNS.get(table.name, {}).items():
-        if row.get(column_name):
-            row[column_name] = _reanchor_path(row[column_name], getattr(settings, root_attr))
-
     return row
-
-
-# --- On-disk file tree -------------------------------------------------------
-
-def _iter_storage_files() -> list[tuple[Path, str]]:
-    backups = backups_dir().resolve()
-    pairs: list[tuple[Path, str]] = []
-    for root, prefix in ((settings.uploads_dir, 'uploads'), (settings.results_dir, 'results')):
-        if not root.exists():
-            continue
-        root_resolved = root.resolve()
-        for entry in sorted(root_resolved.rglob('*')):
-            if not entry.is_file():
-                continue
-            if entry == backups or backups in entry.parents:
-                continue
-            pairs.append((entry, f'files/{prefix}/{entry.relative_to(root_resolved).as_posix()}'))
-    return pairs
-
-
-def _restore_files(tar: tarfile.TarFile) -> int:
-    settings.uploads_dir.mkdir(parents=True, exist_ok=True)
-    settings.results_dir.mkdir(parents=True, exist_ok=True)
-    roots = {'uploads': settings.uploads_dir.resolve(), 'results': settings.results_dir.resolve()}
-    restored = 0
-    for member in tar.getmembers():
-        if not member.isfile() or not member.name.startswith('files/'):
-            continue
-        parts = member.name.split('/', 2)
-        if len(parts) != 3 or parts[1] not in roots:
-            continue
-        root = roots[parts[1]]
-        target = (root / parts[2]).resolve()
-        # Defense in depth against a path-traversal archive member: this
-        # engine only ever writes members it built itself in export_backup,
-        # but an admin-uploaded .tar.gz is untrusted input at the API
-        # boundary and this function has no way to tell the two apart.
-        if target != root and root not in target.parents:
-            continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        extracted = tar.extractfile(member)
-        if extracted is None:
-            continue
-        with target.open('wb') as handle:
-            handle.write(extracted.read())
-        restored += 1
-    return restored
 
 
 # --- Export -------------------------------------------------------------
 
-def export_backup(
+class _ChunkSink:
+    """Write target of a streaming tarfile: collects what tarfile writes so
+    the export generator can hand it out piece by piece."""
+
+    def __init__(self) -> None:
+        self._buffer = bytearray()
+
+    def write(self, data: bytes) -> int:
+        self._buffer += data
+        return len(data)
+
+    def take(self) -> bytes:
+        data = bytes(self._buffer)
+        self._buffer.clear()
+        return data
+
+    # Not __len__: an empty sink would be falsy, and tarfile.open() treats a
+    # falsy fileobj as "nothing to open".
+    @property
+    def size(self) -> int:
+        return len(self._buffer)
+
+
+# Yield to the caller (HTTP response, file) whenever this much compressed
+# output has piled up.
+_STREAM_CHUNK_BYTES = 1024 * 1024
+
+
+def _begin_consistent_snapshot(db: Session) -> None:
+    """Read every table from ONE point in time. On PostgreSQL the export
+    runs in a REPEATABLE READ, READ ONLY transaction: without it each table
+    would be read at its own moment, and a document uploaded meanwhile could
+    land in the archive with its job row but without its stored object --
+    the import would then fail on the foreign key. Must run before the
+    session's first query. SQLite (tests, local development) has a single
+    writer anyway."""
+    if db.get_bind().dialect.name != 'postgresql':
+        return
+    db.connection(execution_options={'isolation_level': 'REPEATABLE READ'})
+    db.execute(text('SET TRANSACTION READ ONLY'))
+
+
+def iter_export_backup(
     db: Session,
     *,
     passphrase: str,
-    out_path: Path,
     progress_cb: Callable[[str, int], None] | None = None,
-) -> dict:
-    """Stream every included table + the on-disk upload/result trees into a
-    single encrypted archive at `out_path`. Returns the manifest that was
-    written into it.
+    manifest_out: dict | None = None,
+) -> Iterator[bytes]:
+    """Generate an encrypted archive of every included table, piece by
+    piece, from one consistent snapshot (see _begin_consistent_snapshot).
+    Nothing is stored: the caller streams the pieces to an HTTP response or
+    a file. `manifest_out`, if given, receives the manifest written into the
+    archive.
 
     Table rows are fetched from the database in batches (`yield_per`, see
     `_ROW_BATCH_SIZE`) rather than loaded all at once; each table's JSONL is
     staged to a temp file and then streamed into the tar via `tarfile.add`
     (which reads it back in chunks), so no single table's serialized text
-    needs to be held in memory as one block, and file-tree entries are added
-    directly from disk. The one bounded exception is a large-blob column's
-    bytes (`jobs.upload_content`, `job_artifacts.content`,
-    `mail_messages.raw_content`): one row's blob is held in memory for the
-    duration of writing its own archive entry, which is what SQLAlchemy
-    already handed back as a single `bytes` value for that row.
+    needs to be held in memory as one block. The one bounded exception is a
+    large-blob column's bytes (`stored_object_chunks.data`, at most one
+    object chunk; `mail_messages.raw_content`): one row's blob is held in
+    memory for the duration of writing its own archive entry.
     """
+    _begin_consistent_snapshot(db)
     progress_cb = progress_cb or (lambda table, rows_done: None)
     tables = _exported_tables()
 
@@ -671,12 +598,13 @@ def export_backup(
         },
         'passphrase_check': passphrase_check,
     }
+    if manifest_out is not None:
+        manifest_out.update(manifest)
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_out = out_path.with_name(out_path.name + '.part')
+    sink = _ChunkSink()
     with tempfile.TemporaryDirectory(prefix='weave-backup-export-') as stage_dir:
         stage = Path(stage_dir)
-        with tarfile.open(tmp_out, 'w:gz') as tar:
+        with tarfile.open(fileobj=sink, mode='w|gz') as tar:
             _add_bytes(tar, 'manifest.json', json.dumps(manifest, indent=2).encode('utf-8'))
 
             for table in tables:
@@ -691,16 +619,33 @@ def export_backup(
                         rows_done += 1
                         if rows_done % _ROW_BATCH_SIZE == 0:
                             progress_cb(table.name, rows_done)
+                        if sink.size >= _STREAM_CHUNK_BYTES:
+                            yield sink.take()
                 tar.add(str(jsonl_path), arcname=f'tables/{table.name}.jsonl')
                 jsonl_path.unlink(missing_ok=True)
                 progress_cb(table.name, rows_done)
+                if sink.size >= _STREAM_CHUNK_BYTES:
+                    yield sink.take()
+    # Closing the tar above flushed the last blocks and the gzip trailer.
+    if sink.size:
+        yield sink.take()
 
-            files_written = 0
-            for absolute, arcname in _iter_storage_files():
-                tar.add(str(absolute), arcname=arcname)
-                files_written += 1
-            progress_cb('files', files_written)
 
+def export_backup(
+    db: Session,
+    *,
+    passphrase: str,
+    out_path: Path,
+    progress_cb: Callable[[str, int], None] | None = None,
+) -> dict:
+    """Write the archive of iter_export_backup to `out_path` (the CLI's
+    path). Returns the manifest that was written into it."""
+    manifest: dict = {}
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_out = out_path.with_name(out_path.name + '.part')
+    with tmp_out.open('wb') as handle:
+        for chunk in iter_export_backup(db, passphrase=passphrase, progress_cb=progress_cb, manifest_out=manifest):
+            handle.write(chunk)
     tmp_out.replace(out_path)
     return manifest
 
@@ -935,6 +880,8 @@ def import_backup(
 
         report: dict = {
             'tables': {},
+            # Archives carry no file tree any more (everything is in the
+            # tables); the key stays for the API/CLI report shape.
             'files_restored': 0,
             'warnings': [],
             'skipped': [],
@@ -1128,7 +1075,6 @@ def import_backup(
             _scope_legacy_page_states(db)
 
         # 3. Restore the on-disk upload/result trees.
-        report['files_restored'] = _restore_files(tar)
 
     # 4. Reset transient/lease state that must not resume unattended,
     # re-attribute any backup_runs rows the users wipe just orphaned, and

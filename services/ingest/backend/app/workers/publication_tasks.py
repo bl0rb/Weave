@@ -18,6 +18,7 @@ from app.services.publications import (
     publication_configured,
     release_endpoint,
 )
+from app.services import object_store
 from app.services.webhooks import send_webhook_request
 from app.workers.celery_app import celery_app
 
@@ -279,5 +280,25 @@ def publication_tick(self, lock_token: str | None = None) -> None:
         return
     try:
         reconcile_due_releases()
+        _housekeeping()
     finally:
         _reenqueue_tick(self, token)
+
+
+def _housekeeping() -> None:
+    """Piggybacks on this tick's single-leader chain: requeue jobs whose
+    worker died (within seconds rather than at the next worker restart) and
+    delete stored objects nothing references any more. A failure here must
+    never end the tick chain."""
+    # Imported lazily: app.workers.tasks imports this module at load time.
+    from app.workers.tasks import reap_stale_running_jobs
+
+    try:
+        reap_stale_running_jobs()
+    except Exception:
+        logger.exception('stale job reaper failed; retrying next tick')
+    try:
+        with SessionLocal() as db:
+            object_store.collect_garbage(db)
+    except Exception:
+        logger.exception('stored object garbage collection failed; retrying next tick')

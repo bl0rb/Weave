@@ -35,7 +35,7 @@ def oauth(monkeypatch):
     monkeypatch.setattr(settings, 'mcp_oauth_required_scopes', ['mcp.read'])
     monkeypatch.setattr(settings, 'mcp_oauth_subject_claim', 'sub')
     monkeypatch.setattr('app.api.mcp_oauth.get_discovery_document', lambda _: {'issuer': ISSUER, 'jwks_uri': ISSUER + '/keys'})
-    monkeypatch.setattr('app.api.mcp_oauth.fetch_jwks', lambda _: keys)
+    monkeypatch.setattr('app.api.mcp_oauth.fetch_jwks', lambda _, **__: keys)
     with TestingSessionLocal() as db:
         provider = AuthProvider(
             slug=suffix, display_name='SSO', issuer_url=ISSUER,
@@ -138,7 +138,7 @@ def test_internal_endpoint_requires_service_credential(oauth, monkeypatch):
 def test_provider_failure_is_not_an_invalid_token(oauth, monkeypatch):
     from app.services.oidc import OIDCError
 
-    def fail(_):
+    def fail(_, **__):
         raise OIDCError('offline')
     monkeypatch.setattr('app.api.mcp_oauth.fetch_jwks', fail)
     assert introspect(oauth, token(oauth)).status_code == 503

@@ -11,6 +11,14 @@ _hard_time_limit = max(_soft_time_limit, int(settings.celery_task_time_limit_sec
 # limit even has a chance to kill the original attempt, duplicating OCR work.
 _visibility_timeout = max(_hard_time_limit, int(settings.celery_broker_visibility_timeout_seconds))
 
+# ADR-0001: named queues. OCR holds a worker slot for minutes, so it gets its
+# own queue and its own worker pool; everything else (Confluence import,
+# webhooks, release delivery, the tick chains) stays responsive on the
+# default queue. A worker picks its queues with -Q (CELERY_QUEUES in
+# worker.Dockerfile); a single worker consuming both keeps working as before.
+OCR_QUEUE = 'weave.ingest.ocr'
+DEFAULT_QUEUE = 'weave.ingest.default'
+
 celery_app.conf.update(
 	task_serializer='json',
 	result_serializer='json',
@@ -22,6 +30,8 @@ celery_app.conf.update(
 	task_track_started=True,
 	task_soft_time_limit=_soft_time_limit,
 	task_time_limit=_hard_time_limit,
+	task_default_queue=DEFAULT_QUEUE,
+	task_routes={'process_job': {'queue': OCR_QUEUE}},
 	broker_transport_options={
 		# Ensure lost worker messages are re-delivered in a predictable
 		# window, and stay >= task_time_limit (see _visibility_timeout above)

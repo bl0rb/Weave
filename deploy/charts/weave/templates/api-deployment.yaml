@@ -101,6 +101,8 @@ spec:
                     "RUNTIME_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "runtime"))
                     "RETRIEVAL_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "retrieval"))
                     "INGEST_API_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "ingestBackend"))
+                    "DB_POOL_SIZE" (toString $c.dbPool.size)
+                    "DB_MAX_OVERFLOW" (toString $c.dbPool.maxOverflow)
                   )) | nindent 12 }}
             # Kein Wert aus weave.yaml: ob migriert wird, ist eine
             # Eigenschaft dieses Deployments, nicht der Plattform. Das

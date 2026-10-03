@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     DateTime,
     Enum,
@@ -278,3 +279,17 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     conversation: Mapped[Conversation] = relationship(back_populates='messages')
+
+
+class RateLimitWindow(Base):
+    """One fixed-window request counter per rate-limit key (a user id) and
+    window (app/core/ratelimit.py). Kept in the database rather than in
+    process memory so every Weave-API replica charges the same budget.
+    Rows older than an hour are pruned opportunistically."""
+
+    __tablename__ = 'rate_limit_windows'
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # Unix seconds of the window's start, floored to the window length.
+    window_start: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    count: Mapped[int] = mapped_column(Integer, nullable=False)

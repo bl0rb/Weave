@@ -127,6 +127,9 @@ spec:
             {{- with (include "weave.embeddingBaseUrl" (dict "ctx" $ "service" "knowledge")) }}
             {{- $_ := set $ov "EMBEDDING_BASE_URL" . }}
             {{- end }}
+            {{- /* Verbindungen je Prozess: zaehlen gegen postgresql.maxConnections. */}}
+            {{- $_ := set $ov "DB_POOL_SIZE" (toString $k.dbPool.size) }}
+            {{- $_ := set $ov "DB_MAX_OVERFLOW" (toString $k.dbPool.maxOverflow) }}
             {{- include "weave.env" (dict "ctx" $ "service" "knowledge"
                   "except" (list "POSTGRES_USER" "POSTGRES_PORT")
                   "overrides" $ov) | nindent 12 }}

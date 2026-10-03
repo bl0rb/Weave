@@ -92,3 +92,27 @@ def test_budget_is_tracked_per_user_not_globally(db_session, monkeypatch):
     assert client.get('/v1/bots', headers=auth_headers(token_a)).status_code == 429
     # ...but dave has his own, untouched budget.
     assert client.get('/v1/bots', headers=auth_headers(token_b)).status_code == 200
+
+
+def test_database_limiter_shares_one_budget_across_replicas(db_session, monkeypatch):
+    """Two limiter instances stand in for two Weave-API replicas: the
+    budget lives in the database, so together they still allow only
+    `limit` calls per window."""
+    from fastapi import HTTPException
+
+    from app.core.ratelimit import DatabaseRateLimiter
+
+    clock = lambda: 1_000_040.0  # noqa: E731 - 20 s into the window starting at 1_000_020
+    replica_a = DatabaseRateLimiter(limit=3, clock=clock)
+    replica_b = DatabaseRateLimiter(limit=3, clock=clock)
+    replica_a.reset()
+
+    replica_a.check('user-1')
+    replica_b.check('user-1')
+    replica_a.check('user-1')
+    with pytest.raises(HTTPException) as exc_info:
+        replica_b.check('user-1')
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.headers['Retry-After'] == '41'
+    # Another user has their own budget.
+    replica_b.check('user-2')

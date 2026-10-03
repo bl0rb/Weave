@@ -197,7 +197,7 @@ See `postgres-init/01-create-databases.sh` for the exact SQL.
 
 - **pgdata** – PostgreSQL data directory (all three databases)
 - **redisdata** – Redis append-only file (RDB snapshots)
-- **storage** – Shared document storage (Weave-Ingest backend + worker)
+- **backups** – Admin backup archives of the Weave-Ingest backend (`BACKUP_DIR`). Uploads, results and images live in PostgreSQL; backend and worker share no files, and `weave-ingest-worker` / `weave-knowledge-worker` can be scaled with `docker compose up --scale`.
 - **paddlex_models** – PaddleOCR model cache (Weave-Ingest worker)
 - **runtime_bots** – Weave-Runtime's bot configuration directory (`BOTS_DIR`). Docker seeds a fresh volume from the image's own bundled example bots on first mount — edit/add YAML files here (`docker compose exec weave-runtime sh`, or bind-mount your own directory instead) for a real bot roster; no restart needed, it's re-read per request.
 
@@ -225,8 +225,12 @@ tatsächlich gemessen wurden — AV-01 im Review nennt das explizit. Für
 Compose ist AOF im Redis-Command jetzt fest aktiv; im Helm-Pfad greift es
 nur, wenn `redis.bundled.persistence.enabled=true` gesetzt ist (Default:
 false, dann emptyDir und kein AOF/RDB-Erhalt über einen Pod-Ersatz hinaus).
-`ingestWorker.replicas > 1` setzt außerdem voraus, dass die Startup-Recovery gemäß SH-02 tatsächlich
-staleness-gated läuft — vor mehr Repliken dort prüfen, nicht danach.
+Mehrere Ingest-Worker sind sicher: jeder Auftrag trägt ein Übernahme-Token
+mit Heartbeat in der Datenbank, und ein verlorener Auftrag wird nach etwa
+zwei Minuten neu eingestellt. Im Helm-Pfad gibt es zwei Worker-Pools
+(`ingestWorker` für OCR, `ingestWorkerIo` für alles andere), optional mit
+KEDA (`autoscaling.ingestWorker.engine: keda`); die Summe aller Repliken muss
+in `postgresql.maxConnections` passen, sonst bricht `helm template` ab.
 
 **AV-02 Migrationswarnung (existierende Redis-Instanz):** Auf einem bereits
 laufenden Redis mit befülltem Volume (bisher nur RDB, `--save 60 1`, nie

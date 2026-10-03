@@ -66,4 +66,4 @@ USER weave-ingest
 # this user) and every model download would fail.
 ENV HOME=/home/weave-ingest
 
-CMD ["sh", "-c", "celery -A app.workers.tasks worker --loglevel=${CELERY_LOG_LEVEL:-info} --pool=${CELERY_WORKER_POOL:-prefork} --concurrency=${CELERY_WORKER_CONCURRENCY:-1} --prefetch-multiplier=${CELERY_PREFETCH_MULTIPLIER:-1} -Ofair --max-tasks-per-child=${CELERY_MAX_TASKS_PER_CHILD:-5}"]
+CMD ["sh", "-c", "celery -A app.workers.tasks worker --loglevel=${CELERY_LOG_LEVEL:-info} --pool=${CELERY_WORKER_POOL:-prefork} --queues=${CELERY_QUEUES:-weave.ingest.ocr,weave.ingest.default} --concurrency=${CELERY_WORKER_CONCURRENCY:-1} --prefetch-multiplier=${CELERY_PREFETCH_MULTIPLIER:-1} -Ofair --max-tasks-per-child=${CELERY_MAX_TASKS_PER_CHILD:-5}"]

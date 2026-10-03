@@ -49,7 +49,13 @@ _EXC_TEXT_MAX_CHARS = 8000
 # it on every single insert.
 _PRUNE_PROBABILITY = 1 / 200
 
-_engine = create_engine(settings.database_url, future=True, pool_size=2, max_overflow=2, pool_pre_ping=True)
+_engine = create_engine(
+    settings.database_url,
+    future=True,
+    pool_size=settings.worker_log_db_pool_size,
+    max_overflow=settings.worker_log_db_max_overflow,
+    pool_pre_ping=True,
+)
 _SessionLocal = sessionmaker(bind=_engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
 if hasattr(os, 'register_at_fork'):  # not available on Windows; worker only ever runs on Linux containers

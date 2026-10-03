@@ -27,6 +27,7 @@ from app.database.session import get_db
 from app.main import app
 from app.models.models import Base, Collection, User, UserRole
 from app.services.collection_access import backfill_legacy_grants
+from app.services import object_store
 from app.services import security as security_module
 from app.services.security import hash_password
 
@@ -162,6 +163,23 @@ client = TestClient(app, headers=BROWSER_HEADERS)
 # users to exercise that path rather than a stand-in object.
 
 DEFAULT_TEST_PASSWORD = 'TestPassw0rd1'
+
+
+def stored_upload(data: bytes = b'%PDF-1.4 test upload') -> str:
+    """Store `data` in the object store and return the object id -- the
+    test-side stand-in for an upload (`Job(upload_object_id=...)`)."""
+    with TestingSessionLocal() as db:
+        stored = object_store.put_bytes(db, data)
+        db.commit()
+        return stored.id
+
+
+def stored_bytes(object_id: str | None) -> bytes | None:
+    """Read an object back (None for a job without a stored upload)."""
+    if object_id is None:
+        return None
+    with TestingSessionLocal() as db:
+        return object_store.read_bytes(db, object_id)
 
 
 def create_test_user(

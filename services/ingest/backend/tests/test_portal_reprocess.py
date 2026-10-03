@@ -13,8 +13,8 @@ from tests.test_portal import _collection, _configure, _db, _import_run, _job, _
 @pytest.fixture(autouse=True)
 def _reset_rate_limiter(monkeypatch):
     rate_limiter.reset()
-    monkeypatch.setattr('app.api.portal._active_process_job_ids', lambda: set())
-    monkeypatch.setattr('app.api.routes._active_process_job_ids', lambda: set())
+    monkeypatch.setattr('app.api.portal._active_process_job_ids', lambda db: set())
+    monkeypatch.setattr('app.api.routes._active_process_job_ids', lambda db: set())
     yield
 
 
@@ -55,8 +55,6 @@ def _job_state(job_id: str) -> tuple[JobStatus, str | None, dict]:
 
 def test_portal_reprocess_queues_selected_profile_and_clears_previous_result(monkeypatch, tmp_path):
     _configure(monkeypatch)
-    result_file = tmp_path / 'draft.md'
-    result_file.write_text('Old draft')
     user = _user('portal-reprocess-owner')
     collection = _collection(user.id)
     job = _job(user.id, collection)
@@ -72,7 +70,7 @@ def test_portal_reprocess_queues_selected_profile_and_clears_previous_result(mon
                 'folder': 'kept-folder',
             },
             'execution': {'quality_gate': {'grade': 'A', 'recommendation': 'allow'}},
-            'editor': {'latest_result_path': str(result_file)},
+            'editor': {'versions': [{'version': 1, 'path': None}]},
         },
     )
     client = login_as(user.username)
@@ -97,7 +95,7 @@ def test_portal_reprocess_queues_selected_profile_and_clears_previous_result(mon
     assert processing_info['settings']['folder'] == 'kept-folder'
     assert processing_info['settings']['profile_id'] == 'ppocrv6_medium_structurev3'
     assert db_release(job.id) is None
-    assert not result_file.exists()
+    assert 'editor' not in processing_info
     monkeypatch.setattr('app.api.portal.publication_tasks.deliver_release.delay', lambda *_: None)
     release_url = f'/api/v1/portal/documents/{job.id}/release'
     assert client.post(release_url, json={'markdown_sha256': preview['markdown_sha256']}).status_code == 409
@@ -236,7 +234,7 @@ def test_portal_reprocess_gates_preserve_result_and_do_not_dispatch(monkeypatch,
     dispatched: list[tuple] = []
     monkeypatch.setattr('app.api.routes.process_job.delay', lambda *args: dispatched.append(args))
     if case == 'active':
-        monkeypatch.setattr('app.api.portal._active_process_job_ids', lambda: {job.id})
+        monkeypatch.setattr('app.api.portal._active_process_job_ids', lambda db: {job.id})
     supplied_hash = '0' * 64 if case == 'stale_hash' else preview['markdown_sha256']
     profile_id = 'not-a-real-profile' if case == 'invalid_profile' else 'ppocrv6_medium_structurev3'
 

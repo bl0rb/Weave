@@ -3,6 +3,7 @@ import uuid
 
 from app.core.config import settings
 from app.models.models import JobArtifact
+from app.services import object_store
 from app.workers import publication_tasks
 from tests.conftest import TestingSessionLocal, client, create_test_user, login_as
 from tests.test_portal import _collection, _configure, _db, _job
@@ -16,7 +17,7 @@ def _artifact(job_id: str, *, filename: str = 'diagram.png', content: bytes = b'
             kind='image',
             filename=filename,
             content_type='image/png',
-            content=content,
+            object_id=object_store.put_bytes(db, content, content_type='image/png').id,
             size_bytes=len(content),
             sha256=hashlib.sha256(content).hexdigest(),
         )

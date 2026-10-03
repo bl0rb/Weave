@@ -1,12 +1,11 @@
-"""In-process fixed-window rate limiting, keyed per authenticated user.
+"""Fixed-window rate limiting, keyed per authenticated user.
 
-Single-instance limiting: all state lives in a plain dict in THIS process's
-memory. That limits traffic hitting one replica only -- a real
-multi-replica deployment needs a shared store (Redis INCR + EXPIRE is the
-usual choice) to enforce one global budget across replicas; swap in a
-Redis-backed implementation behind the same `enforce_rate_limit` dependency
-once Weave-API actually runs more than one instance. Fine for this
-skeleton, whose whole premise (per the task) is no Celery/Redis yet.
+The counters live in Weave-API's own database (`rate_limit_windows`, see
+DatabaseRateLimiter), so every replica charges the same per-user budget --
+an in-process counter would hand out one full budget per replica. One
+short upsert per rate-limited request; this service has no Redis.
+FixedWindowRateLimiter keeps the same logic in process memory for tests
+that need an injectable clock.
 
 Fixed-window, not sliding-window/token-bucket: the simplest implementation
 that satisfies "at most N requests per rolling wall-clock minute" well
@@ -25,16 +24,21 @@ tests can advance time deterministically without a real sleep -- see
 tests/test_ratelimit.py.
 """
 
+import random
 import time
 from dataclasses import dataclass
 from threading import Lock
 from typing import Callable
 
 from fastapi import Depends, HTTPException, status
+from sqlalchemy import delete
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from app.core import db as db_module
 from app.core.auth import get_current_user
 from app.core.config import settings
-from app.models.models import User
+from app.models.models import RateLimitWindow, User
 
 _WINDOW_SECONDS = 60.0
 
@@ -91,12 +95,68 @@ class FixedWindowRateLimiter:
             self._state.clear()
 
 
+def _too_many_requests(retry_after: float) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail='Rate limit exceeded',
+        headers={'Retry-After': str(max(0, int(retry_after)) + 1)},
+    )
+
+
+class DatabaseRateLimiter:
+    """Fixed-window counter per key in the `rate_limit_windows` table,
+    shared by all replicas. Windows are aligned to wall-clock time (not a
+    per-process monotonic clock) so every replica agrees on them."""
+
+    # Old windows are pruned on roughly one call in this many.
+    _PRUNE_PROBABILITY = 0.01
+    _KEEP_SECONDS = 3600
+
+    def __init__(
+        self,
+        *,
+        limit: int | None = None,
+        window_seconds: float = _WINDOW_SECONDS,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
+        self._limit = limit if limit is not None else settings.rate_limit_per_minute
+        self._window_seconds = window_seconds
+        self._clock = clock
+
+    def check(self, key: str) -> None:
+        now = self._clock()
+        window_start = int(now // self._window_seconds * self._window_seconds)
+        with db_module.SessionLocal() as db:
+            dialect = db.get_bind().dialect.name
+            insert = postgresql_insert if dialect == 'postgresql' else sqlite_insert
+            statement = (
+                insert(RateLimitWindow)
+                .values(key=key, window_start=window_start, count=1)
+                .on_conflict_do_update(
+                    index_elements=['key', 'window_start'],
+                    set_={'count': RateLimitWindow.count + 1},
+                )
+                .returning(RateLimitWindow.count)
+            )
+            count = db.execute(statement).scalar_one()
+            if random.random() < self._PRUNE_PROBABILITY:
+                db.execute(delete(RateLimitWindow).where(RateLimitWindow.window_start < window_start - self._KEEP_SECONDS))
+            db.commit()
+        if count > self._limit:
+            raise _too_many_requests(window_start + self._window_seconds - now)
+
+    def reset(self) -> None:
+        with db_module.SessionLocal() as db:
+            db.execute(delete(RateLimitWindow))
+            db.commit()
+
+
 # Module-level singleton every route dependency below shares. Tests swap
 # this attribute out (`monkeypatch.setattr(ratelimit, 'rate_limiter', ...)`)
 # with an instance built with an injected clock and/or a tighter limit --
 # `enforce_rate_limit` below looks the name up in this module's namespace on
 # every call, so it always sees whichever instance currently sits here.
-rate_limiter = FixedWindowRateLimiter()
+rate_limiter: FixedWindowRateLimiter | DatabaseRateLimiter = DatabaseRateLimiter()
 
 
 def enforce_rate_limit(user: User = Depends(get_current_user)) -> User:

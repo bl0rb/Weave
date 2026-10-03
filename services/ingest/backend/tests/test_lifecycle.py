@@ -32,8 +32,7 @@ def _isolated(monkeypatch, tmp_path):
     rate_limiter.reset()
     from app.core.config import settings
 
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
     dispatched: list[str] = []
     monkeypatch.setattr(routes, 'dispatch_withdrawals', dispatched.extend)
     monkeypatch.setattr('app.api.portal.dispatch_withdrawals', dispatched.extend)

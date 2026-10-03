@@ -156,5 +156,16 @@ async def search(
 
 # The standalone ASGI app -- see this module's own docstring for why it is
 # run directly by uvicorn rather than mounted inside app/main.py's app.
-mcp_app = mcp_server.streamable_http_app(transport_security=oauth_transport_security())
+#
+# stateless_http: no MCP session lives in this process, so any replica
+# behind a load balancer can answer any call (the 2025-xx handshake
+# protocol versions otherwise keep sessions in memory and answer 404
+# "Session not found" on another replica). Nothing is lost: both tools are
+# plain request/response, and identity is resolved per call anyway.
+# json_response: answer each POST with a JSON body instead of an SSE stream.
+mcp_app = mcp_server.streamable_http_app(
+    stateless_http=True,
+    json_response=True,
+    transport_security=oauth_transport_security(),
+)
 mcp_app.add_middleware(MCPOAuthMiddleware)

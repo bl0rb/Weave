@@ -1,14 +1,14 @@
-import uuid
+"""Upload validation. The bytes themselves go to app/services/object_store.py;
+nothing is written to a local or shared filesystem."""
+
+import hashlib
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
+from typing import BinaryIO
 
 from fastapi import HTTPException, UploadFile, status
-from sqlalchemy import select
-from sqlalchemy.orm import Session as OrmSession
 
 from app.core.config import settings
-from app.models.models import Job
 
 ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.pptx', '.xlsx', '.xls', '.png', '.jpg', '.jpeg', '.eml'}
 ALLOWED_MIME_TYPES = {
@@ -35,16 +35,6 @@ _EXTENSION_TO_MIME_TYPES: dict[str, set[str]] = {
 }
 
 _GENERIC_MIME_TYPES = {'', 'application/octet-stream', 'binary/octet-stream'}
-
-
-def ensure_storage_dirs() -> None:
-    settings.uploads_dir.mkdir(parents=True, exist_ok=True)
-    settings.results_dir.mkdir(parents=True, exist_ok=True)
-
-
-def ensure_folder(path: Path) -> Path:
-    path.mkdir(parents=True, exist_ok=True)
-    return path
 
 
 def _safe_suffix(filename: str) -> str:
@@ -87,143 +77,29 @@ def _validate_mime(file: UploadFile, suffix: str) -> None:
     )
 
 
-def save_upload(file: UploadFile, storage_folder: str, file_id: str) -> tuple[str, str, bytes, int]:
-    ensure_storage_dirs()
+@dataclass
+class InspectedUpload:
+    file: BinaryIO
+    suffix: str
+    size_bytes: int
+    sha256: str
+
+
+def inspect_upload(file: UploadFile) -> InspectedUpload:
+    """Validate an upload (extension, declared MIME type, size limit) and
+    hash it in one streaming pass over the body Starlette has already
+    spooled to the pod's temp directory -- the bytes are never all in
+    memory. Leaves the file rewound for object_store.put_file."""
     suffix = _safe_suffix(file.filename or '')
     _validate_mime(file, suffix)
 
-    folder_path = ensure_folder((settings.uploads_dir / storage_folder).resolve())
-    target_path = folder_path / f'{file_id}{suffix}'
-
+    digest = hashlib.sha256()
     total_bytes = 0
-    payload = bytearray()
-    oversized = False
-    try:
-        with target_path.open('wb') as handle:
-            while chunk := file.file.read(1024 * 1024):
-                total_bytes += len(chunk)
-                if total_bytes > settings.max_upload_bytes:
-                    oversized = True
-                    break
-                handle.write(chunk)
-                payload.extend(chunk)
-    except Exception:
-        # e.g. client disconnect mid-stream: the closed handle has already
-        # committed a partial object (on Mountpoint-for-S3, close() commits),
-        # so remove it before propagating.
-        target_path.unlink(missing_ok=True)
-        raise
-
-    # On Mountpoint-for-S3, close() is what commits the object, so the handle
-    # must be closed (via the `with` block above) before we unlink the target.
-    # Unlinking while the handle is still open would race the close, either
-    # raising on the unlink or leaving a partial object behind after close.
-    if oversized:
-        target_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail='File too large')
-
-    return str(target_path.resolve()), file_id, bytes(payload), total_bytes
-
-
-def build_result_path(storage_folder: str, file_id: str) -> Path:
-    folder_path = ensure_folder((settings.results_dir / storage_folder).resolve())
-    return (folder_path / f'{file_id}.md').resolve()
-
-
-def build_edited_result_path(storage_folder: str, file_id: str, version: int) -> Path:
-    edited_dir = ensure_folder((settings.results_dir / storage_folder / 'edited').resolve())
-    return (edited_dir / f'{file_id}.v{version}.md').resolve()
-
-
-# --- Orphaned-file audit (GET /auth/admin/storage/orphaned-files) ------------
-#
-# Report-only: this section only ever reads the filesystem/DB, never deletes
-# or moves anything. Disk under uploads_dir/results_dir is a best-effort
-# cache the worker rehydrates from the DB on demand (see
-# app/workers/tasks.py's _resolve_upload_path/_resolve_result_path) -- the DB
-# row (Job.upload_path/result_path) is the source of truth for what SHOULD
-# exist, so "orphaned" here means exactly "on disk, but no Job row points at
-# it any more" (e.g. a job whose upload_path/result_path was later
-# reassigned, or a row that was deleted outright while its file survived).
-#
-# JobMarkdownVersion (editor save history) and JobArtifact (imported inline
-# images/attachments) are deliberately NOT consulted below: both replaced an
-# earlier on-disk representation and now live entirely in the DB as a
-# text/blob column (see their class docstrings in app/models/models.py) --
-# there is no disk path to protect for either any more. Any leftover file
-# still sitting under the old on-disk layout those replaced (e.g.
-# build_edited_result_path's `*.v{n}.md` files, unused since that migration)
-# is correctly flagged as orphaned by this scan rather than silently
-# skipped.
-
-
-@dataclass
-class OrphanedFile:
-    kind: str  # 'upload' | 'result'
-    # Relative to the storage root it was found under (uploads_dir /
-    # results_dir) -- never the absolute host path, which is an
-    # implementation detail the admin UI has no use for.
-    path: str
-    size_bytes: int
-    modified_at: datetime  # aware, UTC (from the file's mtime)
-
-
-def _referenced_paths(db: OrmSession) -> set[Path]:
-    """Every on-disk path a Job row still points at, resolved
-    (symlink-free, absolute) the same way a directory-walk entry is below --
-    so the two can be compared by identity regardless of how either path was
-    originally spelled (relative, trailing slash, ...)."""
-    referenced: set[Path] = set()
-    rows = db.execute(select(Job.upload_path, Job.result_path)).all()
-    for upload_path, result_path in rows:
-        for raw in (upload_path, result_path):
-            if not raw:
-                continue
-            try:
-                referenced.add(Path(raw).resolve())
-            except OSError:
-                # A malformed path column value can't match a real
-                # directory-walk entry either way; skip rather than fail the
-                # whole report over one bad row.
-                continue
-    return referenced
-
-
-def _walk_storage_root(root: Path, kind: str, referenced: set[Path]) -> list[OrphanedFile]:
-    if not root.exists():
-        return []
-    resolved_root = root.resolve()
-    orphans: list[OrphanedFile] = []
-    for entry in resolved_root.rglob('*'):
-        if not entry.is_file():
-            continue
-        if entry in referenced:
-            continue
-        try:
-            stat = entry.stat()
-        except OSError:
-            # Removed between the rglob listing and this stat -- nothing to
-            # report.
-            continue
-        orphans.append(
-            OrphanedFile(
-                kind=kind,
-                path=str(entry.relative_to(resolved_root)),
-                size_bytes=stat.st_size,
-                modified_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
-            )
-        )
-    return orphans
-
-
-def find_orphaned_files(db: OrmSession) -> list[OrphanedFile]:
-    """Every file under settings.uploads_dir/results_dir that no Job row's
-    upload_path or result_path references. See the section docstring above
-    for what "orphaned" means here; app/api/auth.py's
-    GET /auth/admin/storage/orphaned-files is the only caller.
-    """
-    referenced = _referenced_paths(db)
-    return [
-        *_walk_storage_root(settings.uploads_dir, 'upload', referenced),
-        *_walk_storage_root(settings.results_dir, 'result', referenced),
-    ]
+    file.file.seek(0)
+    while chunk := file.file.read(1024 * 1024):
+        total_bytes += len(chunk)
+        if total_bytes > settings.max_upload_bytes:
+            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail='File too large')
+        digest.update(chunk)
+    file.file.seek(0)
+    return InspectedUpload(file=file.file, suffix=suffix, size_bytes=total_bytes, sha256=digest.hexdigest())

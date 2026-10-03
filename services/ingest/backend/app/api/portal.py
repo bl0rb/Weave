@@ -74,6 +74,7 @@ from app.schemas.portal import (
     PortalReprocessRequest,
     PortalReprocessResponse,
 )
+from app.services import object_store
 from app.services.backup import requeue_collection_releases_for_reindex
 from app.services.markdown_edit import record_markdown_version
 from app.services.publications import (
@@ -362,10 +363,10 @@ def _new_edit_version(db, job: Job) -> Job:
     edited = Job(
         id=str(uuid.uuid4()),
         original_filename=job.original_filename,
-        # Shared with the predecessor on purpose; upload_content is the
-        # authoritative copy (no shared volume between backend and worker).
+        # Shared with the predecessor on purpose: the stored original is
+        # immutable, so the new version references the same object.
         upload_path=job.upload_path,
-        upload_content=job.upload_content,
+        upload_object_id=job.upload_object_id,
         upload_mime_type=job.upload_mime_type,
         upload_size_bytes=job.upload_size_bytes,
         status=JobStatus.FINISHED,
@@ -382,7 +383,7 @@ def _new_edit_version(db, job: Job) -> Job:
     for artifact in db.scalars(select(JobArtifact).where(JobArtifact.job_id == job.id)):
         db.add(JobArtifact(
             job_id=edited.id, kind=artifact.kind, filename=artifact.filename, content_type=artifact.content_type,
-            content=artifact.content, size_bytes=artifact.size_bytes, source_url=artifact.source_url,
+            object_id=artifact.object_id, size_bytes=artifact.size_bytes, source_url=artifact.source_url,
             sha256=artifact.sha256,
         ))
     db.flush()  # the page state below references the new row
@@ -566,16 +567,7 @@ def list_portal_documents(
     can_release_expr = and_(
         ~select(KnowledgeWithdrawal.job_id).where(KnowledgeWithdrawal.job_id == Job.id).exists(),
         Job.status == JobStatus.FINISHED,
-        or_(
-            func.length(func.coalesce(Job.result_markdown, '')) > 0,
-            and_(
-                Job.result_markdown.is_(None),
-                or_(
-                    func.length(func.coalesce(Job.result_path, '')) > 0,
-                    func.length(func.coalesce(Job.processing_info['editor']['latest_result_path'].as_string(), '')) > 0,
-                ),
-            ),
-        ),
+        func.length(func.coalesce(Job.result_markdown, '')) > 0,
         Job.password_hash.is_(None),
         control_expr,
         or_(Job.import_run_id.is_(None), ImportRun.status == ImportRunStatus.FINISHED),
@@ -595,7 +587,6 @@ def list_portal_documents(
         .outerjoin(ImportRun, ImportRun.id == Job.import_run_id)
         .outerjoin(DocumentRelease, DocumentRelease.job_id == Job.id)
         .options(
-            defer(Job.upload_content),
             defer(Job.result_markdown),
             defer(DocumentRelease.markdown_snapshot),
             defer(DocumentRelease.payload),
@@ -838,7 +829,7 @@ def download_collection_markdown(
             Job.password_hash.is_(None),
             or_(Job.import_run_id.is_(None), ImportRun.status == ImportRunStatus.FINISHED),
         )
-        .options(defer(Job.upload_content), defer(DocumentRelease.payload))
+        .options(defer(DocumentRelease.payload))
         .order_by(Job.created_at.asc(), Job.id.asc())
     )
     rows = db.execute(_apply_visible_filter(query, user, db=db)).all()
@@ -978,7 +969,7 @@ def reprocess_portal_document(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Imported pages cannot be restarted')
     if not _import_run_finished(db, job):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Import run is not finished')
-    if job.id in _active_process_job_ids():
+    if job.id in _active_process_job_ids(db):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Job is currently running')
 
     try:
@@ -1362,7 +1353,7 @@ def download_release_artifact(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Artifact not found')
     disposition = 'inline' if artifact.content_type in _ARTIFACT_INLINE_CONTENT_TYPES else 'attachment'
     return Response(
-        content=artifact.content,
+        content=object_store.read_bytes(db, artifact.object_id),
         media_type=artifact.content_type,
         headers={
             'Content-Disposition': _content_disposition(disposition, artifact.filename),

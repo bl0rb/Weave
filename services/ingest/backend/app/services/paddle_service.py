@@ -16,12 +16,12 @@ from typing import cast
 from celery.exceptions import TimeoutError as CeleryTimeoutError
 from fastapi import HTTPException, status
 from pypdf import PdfReader, PdfWriter
-from redis import Redis
 from sqlalchemy.orm import Session
 import yaml
 
 from app.core.config import settings
-from app.models.models import VlConnection
+from app.database import session as db_session
+from app.models.models import RuntimeSetting, VlConnection
 from app.services import safe_fetch as safe_fetch_module
 from app.services.quality_gate import evaluate_document_quality
 from app.services.form_latex import normalize_form_latex
@@ -34,7 +34,10 @@ from app.services.mail_ingest import (
 
 logger = logging.getLogger(__name__)
 
-_RUNTIME_SETTINGS_KEY = 'paddle:runtime_settings'
+# Row in runtime_settings (app/models/models.py) holding the admin's choices.
+_RUNTIME_SETTINGS_KEY = 'paddle'
+_RUNTIME_SETTINGS_CACHE_SECONDS = 10
+_runtime_settings_cache: tuple[float, dict] | None = None
 _DEFAULT_PROFILE_ID = 'ppocrv6_tiny'
 _PDF_CHUNK_PAGE_SIZE = 6
 _PADDLE_VL_PIPELINES: dict[tuple[str, str], object] = {}
@@ -143,8 +146,9 @@ def _default_runtime_settings() -> dict[str, str | int]:
     }
 
 
-def _redis_client() -> Redis:
-    return Redis.from_url(settings.redis_url, decode_responses=True)
+def _load_runtime_settings(db: Session) -> dict:
+    row = db.get(RuntimeSetting, _RUNTIME_SETTINGS_KEY)
+    return dict(row.value) if row is not None and isinstance(row.value, dict) else {}
 
 
 def _runtime_platform_label() -> str:
@@ -1481,12 +1485,30 @@ def get_paddle_status() -> tuple[str, str | None, dict | None]:
         return 'failed', str(exc), None
 
 
-def get_paddle_settings() -> dict[str, str | int]:
+def get_paddle_settings(db: Session | None = None) -> dict[str, str | int]:
+    """The admin-chosen runtime settings over the configured defaults.
+
+    With `db` (the settings endpoints) the row is read fresh; without it
+    (the worker, every conversion) a per-process copy younger than
+    _RUNTIME_SETTINGS_CACHE_SECONDS is reused, so a change reaches every
+    replica within that many seconds. An unreadable table falls back to
+    the defaults rather than failing a conversion."""
+    global _runtime_settings_cache
     defaults = _default_runtime_settings()
-    try:
-        payload = _redis_client().hgetall(_RUNTIME_SETTINGS_KEY)
-    except Exception:
-        payload = {}
+    now = time.monotonic()
+    cached = _runtime_settings_cache
+    if db is None and cached is not None and now - cached[0] < _RUNTIME_SETTINGS_CACHE_SECONDS:
+        payload = cached[1]
+    else:
+        try:
+            if db is not None:
+                payload = _load_runtime_settings(db)
+            else:
+                with db_session.SessionLocal() as own_db:
+                    payload = _load_runtime_settings(own_db)
+        except Exception:
+            payload = {}
+        _runtime_settings_cache = (now, payload)
 
     if not payload:
         return defaults
@@ -1503,17 +1525,20 @@ def get_paddle_settings() -> dict[str, str | int]:
     return runtime
 
 
-def update_paddle_settings(*, default_profile: str, timeout_seconds: int) -> None:
+def update_paddle_settings(db: Session, *, default_profile: str, timeout_seconds: int) -> None:
+    global _runtime_settings_cache
     selected_profile = default_profile.strip() if default_profile.strip() in _PADDLE_PROFILES else _DEFAULT_PROFILE_ID
     payload = {
         'default_profile': selected_profile,
         'timeout_seconds': str(timeout_seconds),
     }
-    try:
-        _redis_client().hset(_RUNTIME_SETTINGS_KEY, mapping=payload)
-    except Exception:
-        settings.paddle_default_profile = payload['default_profile']
-        settings.paddle_timeout_seconds = timeout_seconds
+    row = db.get(RuntimeSetting, _RUNTIME_SETTINGS_KEY)
+    if row is None:
+        db.add(RuntimeSetting(key=_RUNTIME_SETTINGS_KEY, value=payload))
+    else:
+        row.value = payload
+    db.commit()
+    _runtime_settings_cache = None
 
 
 def get_paddle_capabilities(
@@ -1526,8 +1551,7 @@ def get_paddle_capabilities(
     resolve_profile_selection).
 
     Takes already-loaded connections rather than a db session/query itself:
-    this module has never had a DB dependency (Redis for runtime settings,
-    nothing else), and callers (routes.py's /paddle/capabilities endpoint
+    this module touches the database only for its runtime settings, and callers (routes.py's /paddle/capabilities endpoint
     and its restart-time profile validator) already need a Session for
     other things, so loading the enabled-connections list is cheapest done
     once there and handed in -- see routes.py's _enabled_vl_connections.

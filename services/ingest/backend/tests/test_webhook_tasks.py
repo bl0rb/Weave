@@ -39,7 +39,7 @@ from app.services.webhooks import (
 )
 from app.workers import webhook_tasks
 from app.workers.webhook_tasks import deliver_webhook
-from tests.conftest import TestingSessionLocal, add_legacy_collection, create_test_user
+from tests.conftest import TestingSessionLocal, add_legacy_collection, create_test_user, stored_upload
 
 
 @pytest.fixture()
@@ -1042,12 +1042,9 @@ def test_process_job_completion_hook_swallows_webhook_dispatch_errors(monkeypatc
         lambda *args, **kwargs: ('# hook-test result', {'page_count': 1}),
     )
     monkeypatch.setattr(tasks.webhook_tasks, 'dispatch_job_event', lambda *a, **k: (_ for _ in ()).throw(RuntimeError('boom')))
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
 
-    upload_path = settings.uploads_dir / 'inbox' / 'hook-job.pdf'
-    upload_path.parent.mkdir(parents=True, exist_ok=True)
-    upload_path.write_bytes(b'%PDF-1.4 fake upload content')
+    upload_path = 'inbox/hook-job/hook-job.pdf'
 
     db = TestingSessionLocal()
     user = create_test_user(username='webhook_hook_user4', email='webhook_hook_user4@example.com')
@@ -1055,6 +1052,7 @@ def test_process_job_completion_hook_swallows_webhook_dispatch_errors(monkeypatc
         id='hook-job',
         original_filename='hook-job.pdf',
         upload_path=str(upload_path),
+        upload_object_id=stored_upload(b'%PDF-1.4 fake upload content'),
         status=JobStatus.PENDING,
         owner_id=user.id,
         processing_info={'settings': {'storage_folder': 'inbox'}},
@@ -1092,12 +1090,9 @@ def test_process_job_completion_dispatches_document_processed_alongside_job_fini
         tasks.webhook_tasks, 'dispatch_job_event',
         lambda db, job, event: dispatched_events.append(event),
     )
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
 
-    upload_path = settings.uploads_dir / 'inbox' / 'both-events-job.pdf'
-    upload_path.parent.mkdir(parents=True, exist_ok=True)
-    upload_path.write_bytes(b'%PDF-1.4 fake upload content')
+    upload_path = 'inbox/both-events-job/both-events-job.pdf'
 
     db = TestingSessionLocal()
     user = create_test_user(username='webhook_hook_user_both', email='webhook_hook_user_both@example.com')
@@ -1105,6 +1100,7 @@ def test_process_job_completion_dispatches_document_processed_alongside_job_fini
         id='both-events-job',
         original_filename='both-events-job.pdf',
         upload_path=str(upload_path),
+        upload_object_id=stored_upload(b'%PDF-1.4 fake upload content'),
         status=JobStatus.PENDING,
         owner_id=user.id,
         processing_info={'settings': {'storage_folder': 'inbox'}},
@@ -1136,12 +1132,9 @@ def test_process_job_completion_swallows_document_processed_dispatch_error_only(
             raise RuntimeError('document.processed dispatch boom')
 
     monkeypatch.setattr(tasks.webhook_tasks, 'dispatch_job_event', _dispatch)
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
 
-    upload_path = settings.uploads_dir / 'inbox' / 'docproc-only-fail-job.pdf'
-    upload_path.parent.mkdir(parents=True, exist_ok=True)
-    upload_path.write_bytes(b'%PDF-1.4 fake upload content')
+    upload_path = 'inbox/docproc-only-fail-job/docproc-only-fail-job.pdf'
 
     db = TestingSessionLocal()
     user = create_test_user(
@@ -1151,6 +1144,7 @@ def test_process_job_completion_swallows_document_processed_dispatch_error_only(
         id='docproc-only-fail-job',
         original_filename='docproc-only-fail-job.pdf',
         upload_path=str(upload_path),
+        upload_object_id=stored_upload(b'%PDF-1.4 fake upload content'),
         status=JobStatus.PENDING,
         owner_id=user.id,
         processing_info={'settings': {'storage_folder': 'inbox'}},
@@ -1183,12 +1177,9 @@ def test_process_job_failed_path_swallows_webhook_dispatch_errors(monkeypatch, t
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError('conversion exploded')),
     )
     monkeypatch.setattr(tasks.webhook_tasks, 'dispatch_job_event', lambda *a, **k: (_ for _ in ()).throw(RuntimeError('webhook boom')))
-    settings.uploads_dir = tmp_path / 'uploads'
-    settings.results_dir = tmp_path / 'results'
+    settings.worker_tmp_dir = tmp_path / 'work'
 
-    upload_path = settings.uploads_dir / 'inbox' / 'hook-fail-job.pdf'
-    upload_path.parent.mkdir(parents=True, exist_ok=True)
-    upload_path.write_bytes(b'%PDF-1.4 fake upload content')
+    upload_path = 'inbox/hook-fail-job/hook-fail-job.pdf'
 
     db = TestingSessionLocal()
     user = create_test_user(username='webhook_hook_user5', email='webhook_hook_user5@example.com')
@@ -1196,6 +1187,7 @@ def test_process_job_failed_path_swallows_webhook_dispatch_errors(monkeypatch, t
         id='hook-fail-job',
         original_filename='hook-fail-job.pdf',
         upload_path=str(upload_path),
+        upload_object_id=stored_upload(b'%PDF-1.4 fake upload content'),
         status=JobStatus.PENDING,
         owner_id=user.id,
         processing_info={'settings': {'storage_folder': 'inbox'}},

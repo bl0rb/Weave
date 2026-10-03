@@ -123,6 +123,11 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          # Ohne Angabe nimmt Postgres 100 Verbindungen an -- zu wenig fuer
+          # mehrere Repliken. Siehe postgresql.maxConnections.
+          args:
+            - "-c"
+            - {{ printf "max_connections=%v" .Values.postgresql.maxConnections | quote }}
           ports:
             - name: postgres
               containerPort: 5432

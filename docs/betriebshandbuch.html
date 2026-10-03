@@ -564,9 +564,9 @@
   </div>
 
   <div class="trap">
-    <div class="sym"><span class="var">UPLOADS_DIR</span> <span class="var">RESULTS_DIR</span>Der Worker findet die Datei nicht</div>
-    <div class="why">API-Container und OCR-Worker müssen auf dasselbe Volume zeigen — einer schreibt, der andere liest. Unterschiedliche Pfade führen zu Datei-nicht-gefunden im Worker statt zu einem Konfigurationsfehler. Ohne persistentes Volume sind Uploads nach einem Neustart weg.</div>
-    <div class="fix"><b>Prüfen</b>Beide Container müssen dasselbe Volume an denselben Pfad mounten.</div>
+    <div class="sym"><span class="var">WORKER_TMP_DIR</span>Platz für laufende Aufträge</div>
+    <div class="why">Originale, Ergebnisse und Bilder liegen ausschließlich in PostgreSQL. Der Worker kopiert das Original pro Auftrag in ein eigenes Verzeichnis und löscht es danach; ein gemeinsames Volume zwischen API und Worker gibt es nicht.</div>
+    <div class="fix"><b>Prüfen</b>Pro gleichzeitigem Auftrag etwa das Dreifache der Uploadgröße an freiem Platz unter <code>WORKER_TMP_DIR</code> vorsehen.</div>
   </div>
 </section>
 

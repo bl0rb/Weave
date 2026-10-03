@@ -321,8 +321,7 @@ Common endpoints:
 - `POST /api/v1/portal/documents/bulk` — release, skip/unskip or delete several review-portal documents in one call
 - `POST /api/v1/portal/documents/{job_id}/reindex`, `POST /api/v1/portal/collections/{collection_id}/reindex` — re-deliver an already-released document, or every release in a knowledge space, for re-indexing without reprocessing
 - `GET` / `POST /api/v1/auth/admin/technical-identities`, `PUT` / `POST .../rotate` / `POST .../revoke`, `GET .../audit` — manage technical identities for MCP/REST integrations (admin; the raw `wti_...` token is shown once, on create or rotate)
-- `GET /api/v1/admin/backup.zip` — confirmed admin-only ZIP of local `uploads/` and `results/` storage; no file listing is exposed
-- `python -m app.cli backup export|import` — passphrase-encrypted disaster-recovery export/import of users, knowledge spaces, connections and files (see `docs/betrieb.md` section 12; also reachable from **Backup & Restore** in the admin console)
+- `python -m app.cli backup export|import` — passphrase-encrypted disaster-recovery export/import of users, knowledge spaces, connections and stored documents (see `docs/betrieb.md` section 12; also reachable from **Backup & Restore** in the admin console)
 - `GET /api/v1/stats`, `GET /api/v1/health`, `GET /api/v1/paddle/status`, `GET /api/v1/paddle/capabilities`
 
 ## Collections

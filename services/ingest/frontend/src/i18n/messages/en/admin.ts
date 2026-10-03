@@ -122,7 +122,6 @@ export const admin: Record<keyof typeof de, string> = {
   'system.component.tools': 'Weave-Tools',
   'system.component.tools-mcp': 'Weave-Tools MCP',
   'system.component.chat': 'Weave-Chat',
-  'operations.downloadBackup': 'Download Backup',
   'operations.tab.backup': 'Backup & Restore',
   'operations.tab.identities': 'Technical Identities',
   'operations.tab.tools': 'Tools',
@@ -138,11 +137,6 @@ export const admin: Record<keyof typeof de, string> = {
   'operations.tools.imports.description': 'Import progress, sources, and errors in detail.',
   'operations.tools.processNew.title': 'Test Processing',
   'operations.tools.processNew.description': 'Process files with advanced OCR settings.',
-  'operations.backupDialog.title': 'Download Storage Backup',
-  'operations.backupDialog.body': 'The ZIP contains all local upload and result files. The download may contain confidential content. Continue?',
-  'operations.backupDialog.confirm': 'Download Backup',
-  'operations.backupDialog.busy': 'Creating…',
-  'operations.backupDialog.error': 'The backup could not be created.',
 
   // === AGENT B: people & access tabs — users, teams, providers, identities ===
   // --- Users (users-tab.tsx) ---
@@ -642,6 +636,7 @@ export const admin: Record<keyof typeof de, string> = {
   'backup.passphraseConfirmLabel': 'Repeat passphrase',
   'backup.passphraseMismatch': 'Does not match.',
   'backup.starting': 'Starting…',
+  'backup.exportFailed': 'The backup could not be created.',
   'backup.runActive': 'An operation is already running…',
   'backup.unnamedBackup': 'Backup {id}',
   'backup.rowsInTables': '{rows} rows in {tables} tables',

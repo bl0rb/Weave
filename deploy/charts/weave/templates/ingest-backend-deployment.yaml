@@ -3,15 +3,16 @@ Weave-Ingest, Backend -- nimmt Uploads entgegen, legt Jobs an, bedient die
 Verwaltungsoberflaeche und ist zugleich der Identitaetsanbieter, von dem
 Weave-API seine Benutzer borgt (ADR-0004).
 
-Der zugehoerige Service steht in ingest-backend-service.yaml, das gemeinsam
-mit dem Worker benutzte Ablage-PVC in ingest-storage-pvc.yaml.
+Der zugehoerige Service steht in ingest-backend-service.yaml. Ein gemeinsames
+Ablage-Volume mit dem Worker gibt es nicht: Originale, Ergebnisse und Bilder
+liegen in PostgreSQL (app/services/object_store.py); der Pod hat nur sein
+eigenes fluechtiges /scratch.
 */}}
 {{- if .Values.ingestBackend.enabled }}
 {{- include "weave.validate" . }}
 {{- $w := .Values.ingestBackend }}
 {{- $hpa := .Values.autoscaling.ingestBackend }}
 {{- $component := "ingest-backend" }}
-{{- $storageClaim := .Values.persistence.existingClaim | default (include "weave.componentName" (dict "ctx" $ "component" "ingest-storage")) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -95,7 +96,11 @@ spec:
                   "POSTGRES_PORT" (include "weave.postgresPort" $)
                   "REDIS_URL" (include "weave.redisUrl" (dict "ctx" $ "db" 0))
                   "PORTAL_KNOWLEDGE_BASE_URL" (include "weave.internalUrl" (dict "ctx" $ "component" "knowledge"))
-                  "SYSTEM_STATUS_TARGETS" (include "weave.systemStatusTargets" $) }}
+                  "SYSTEM_STATUS_TARGETS" (include "weave.systemStatusTargets" $)
+                  "DB_POOL_SIZE" (toString $w.dbPool.size)
+                  "DB_MAX_OVERFLOW" (toString $w.dbPool.maxOverflow)
+                  "TMPDIR" "/scratch"
+                  "BACKUP_DIR" "/scratch/backups" }}
             {{- /*
             Dieselbe Adressierung wie fuer knowledge/retrieval: nur wenn
             dieses Release den jeweiligen Modelldienst mitbringt UND die
@@ -113,9 +118,8 @@ spec:
             {{- include "weave.env" (dict "ctx" $ "service" "ingest" "overrides" $ov) | nindent 12 }}
             # Kein Wert aus weave.yaml, sondern eine Entscheidung dieser
             # Installation: entrypoint.sh faehrt Alembic beim Start, sofern
-            # RUN_ALEMBIC_ON_STARTUP nicht "false" ist. Bei mehr als einer
-            # Replik migrieren sonst mehrere Pods gleichzeitig dieselbe
-            # Datenbank.
+            # RUN_ALEMBIC_ON_STARTUP nicht "false" ist. Mehrere Repliken
+            # serialisieren sich ueber die Advisory-Sperre in alembic/env.py.
             - name: RUN_ALEMBIC_ON_STARTUP
               value: {{ $w.runAlembicOnStartup | quote }}
           {{- if $w.probes.liveness.enabled }}
@@ -143,22 +147,17 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           volumeMounts:
-            - name: shared-storage
-              mountPath: /app/backend/storage
+            - name: scratch
+              mountPath: /scratch
       volumes:
-        # Immer gemountet, auch ohne Persistenz: das Backend legt hier die
-        # hochgeladene Datei ab, der Worker liest sie von dort wieder --
-        # dasselbe Verzeichnis in zwei Pods (im Compose-Stack das Volume
-        # "storage" in beiden Diensten).
-        - name: shared-storage
-          {{- if .Values.persistence.enabled }}
-          persistentVolumeClaim:
-            claimName: {{ $storageClaim | quote }}
-          {{- else }}
-          # ACHTUNG: ohne Persistenz bekommt JEDER Pod sein eigenes leeres
-          # Verzeichnis. Backend und Worker sehen dann verschiedene Dateien und
-          # jeder Job scheitert daran, dass seine Datei nicht auffindbar ist.
-          # Nur brauchbar, solange ingestWorker.enabled=false ist.
-          emptyDir: {}
-          {{- end }}
+        # Fluechtig und je Pod: gepufferte Uploads (TMPDIR) und hochgeladene
+        # Archive einer Wiederherstellung (BACKUP_DIR). Nichts davon muss einen
+        # Neustart ueberleben -- die Daten selbst liegen in PostgreSQL.
+        - name: scratch
+          emptyDir:
+            {{- if $w.scratch.sizeLimit }}
+            sizeLimit: {{ $w.scratch.sizeLimit | quote }}
+            {{- else }}
+            {}
+            {{- end }}
 {{- end }}

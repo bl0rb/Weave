@@ -21,9 +21,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.api.routes import (
     _JOB_BLOB_DEFER_OPTIONS,
-    _JOB_DEFER_UPLOAD_CONTENT_ONLY,
     _content_disposition,
-    _delete_job_artifacts,
     _owner_visible,
     _storage_folder,
     create_job_from_upload,
@@ -304,11 +302,10 @@ def create_benchmark(
     db.add(run)
 
     created_jobs: list[tuple[Job, str]] = []
+    # Every variant processes the same bytes: store them once and let the
+    # later variants reference the first one's object.
+    shared_upload_object_id: str | None = None
     for spec in variant_specs:
-        # The shared UploadFile's underlying SpooledTemporaryFile is fully
-        # drained by save_upload on each read; every variant after the
-        # first would otherwise silently get zero bytes.
-        file.file.seek(0)
         # A fresh id per variant/job -- never the VL connection's or
         # profile's own id, which would collide (as a Job primary key)
         # across separate benchmark runs reusing the same connection/profile.
@@ -337,7 +334,9 @@ def create_benchmark(
             extra_settings=extra_settings,
             password_hash=None,
             benchmark_run_id=run.id,
+            upload_object_id=shared_upload_object_id,
         )
+        shared_upload_object_id = job.upload_object_id
         created_jobs.append((job, str(spec['profile_id'])))
 
     run.content_sha256 = created_jobs[0][0].content_sha256
@@ -408,7 +407,6 @@ def get_benchmark_report(
         select(Job)
         .where(Job.benchmark_run_id == run.id)
         .order_by(Job.created_at.asc())
-        .options(*_JOB_DEFER_UPLOAD_CONTENT_ONLY)
     ).all()
     return _build_benchmark_report(run, jobs)
 
@@ -424,7 +422,6 @@ def export_benchmark_json(
         select(Job)
         .where(Job.benchmark_run_id == run.id)
         .order_by(Job.created_at.asc())
-        .options(*_JOB_DEFER_UPLOAD_CONTENT_ONLY)
     ).all()
 
     report = _build_benchmark_report(run, jobs)
@@ -479,7 +476,6 @@ def delete_benchmark(
         # endpoint -- process_job's existing `job is None: return` guard
         # already makes deleting a RUNNING variant's row safe if the Celery
         # task completes afterward.
-        _delete_job_artifacts(job)
         db.delete(job)
         deleted_jobs += 1
     db.delete(run)

@@ -610,3 +610,16 @@ def test_technical_identity_transport_failure_is_never_cached():
             resolve_scope('Bearer wti_transient')
 
     assert mock_post.call_count == 2
+
+
+def test_technical_scope_cache_is_bounded(monkeypatch):
+    """Negative entries are keyed by caller-supplied tokens; the cache must
+    not grow without limit under a stream of made-up tokens."""
+    from app.services import scope as scope_module
+
+    monkeypatch.setattr(scope_module, '_TECHNICAL_SCOPE_CACHE_MAX_ENTRIES', 3)
+    monkeypatch.setattr(scope_module, '_technical_scope_cache', {})
+    far_future = scope_module.time.monotonic() + 3600
+    for index in range(10):
+        scope_module._store_technical_scope(f'key-{index}', (far_future, None))
+    assert list(scope_module._technical_scope_cache) == ['key-7', 'key-8', 'key-9']

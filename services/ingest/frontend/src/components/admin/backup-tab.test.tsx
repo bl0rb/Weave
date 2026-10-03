@@ -69,23 +69,45 @@ it('rejects mismatched passphrases', async () => {
   expect(screen.getByText('Stimmt nicht überein.')).toBeTruthy();
 });
 
-it('starts an export with a matching, long-enough passphrase', async () => {
-  json.mockImplementation(async (path, init) => {
-    if (path === '/api/v1/admin/backup/exports' && init?.method === 'POST') return { ...finishedExportRun, status: 'queued' };
-    if (path === '/api/v1/admin/backup/runs') return { runs: [] };
-    if (path === '/api/v1/admin/backup/target-state') return freshState;
-    throw new Error(`unexpected request: ${path}`);
-  });
+it('downloads the streamed export with a matching, long-enough passphrase', async () => {
+  const blob = new Blob(['archive']);
+  fetcher.mockResolvedValue({
+    ok: true,
+    status: 200,
+    blob: async () => blob,
+    headers: new Headers({ 'content-disposition': 'attachment; filename="20261002T000000Z-abcd1234.weave-backup.tar.gz"' }),
+  } as unknown as Response);
+  const createObjectURL = vi.fn(() => 'blob:archive');
+  const revokeObjectURL = vi.fn();
+  Object.assign(window.URL, { createObjectURL, revokeObjectURL });
+  const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
   render(<BackupTab />);
   const passphraseInput = await screen.findByLabelText(/^Passphrase für die Sicherung/);
   fireEvent.change(passphraseInput, { target: { value: 'a-long-enough-passphrase' } });
   fireEvent.change(screen.getByLabelText('Passphrase wiederholen'), { target: { value: 'a-long-enough-passphrase' } });
   fireEvent.click(screen.getByRole('button', { name: 'Sicherung erstellen' }));
 
-  await waitFor(() => expect(json.mock.calls.some(([path, init]) => path === '/api/v1/admin/backup/exports' && init?.method === 'POST')).toBe(true));
-  const call = json.mock.calls.find(([path, init]) => path === '/api/v1/admin/backup/exports' && (init as { method?: string })?.method === 'POST');
+  await waitFor(() => expect(click).toHaveBeenCalled());
+  const call = fetcher.mock.calls.find(([path, init]) => path === '/api/v1/admin/backup/exports' && (init as { method?: string })?.method === 'POST');
   const body = JSON.parse((call?.[1] as { body?: string })?.body ?? '{}');
   expect(body.passphrase).toBe('a-long-enough-passphrase');
+  expect(createObjectURL).toHaveBeenCalledWith(blob);
+  click.mockRestore();
+});
+
+it('shows the server message when the export is refused', async () => {
+  fetcher.mockResolvedValue({
+    ok: false,
+    status: 409,
+    json: async () => ({ detail: 'Es läuft bereits eine Sicherung oder Wiederherstellung.' }),
+  } as unknown as Response);
+  render(<BackupTab />);
+  const passphraseInput = await screen.findByLabelText(/^Passphrase für die Sicherung/);
+  fireEvent.change(passphraseInput, { target: { value: 'a-long-enough-passphrase' } });
+  fireEvent.change(screen.getByLabelText('Passphrase wiederholen'), { target: { value: 'a-long-enough-passphrase' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Sicherung erstellen' }));
+  expect(await screen.findByText('Es läuft bereits eine Sicherung oder Wiederherstellung.')).toBeTruthy();
 });
 
 it('lists a finished export and allows deleting it after confirmation', async () => {

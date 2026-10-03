@@ -27,7 +27,7 @@ from app.models.models import (
     VlConnection,
     WebhookConnection,
 )
-from app.services import security
+from app.services import object_store, security
 from app.services.confluence import ConfluenceError
 from app.services.security import hash_password, rate_limiter
 from conftest import TestingSessionLocal, create_test_user, login_as
@@ -200,7 +200,7 @@ def _make_artifact(
             kind=kind,
             filename=filename,
             content_type=content_type,
-            content=content,
+            object_id=object_store.put_bytes(db, content, content_type=content_type).id,
             size_bytes=len(content),
             sha256='0' * 64,
         )

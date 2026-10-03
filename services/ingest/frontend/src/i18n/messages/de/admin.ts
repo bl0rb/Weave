@@ -121,7 +121,6 @@ export const admin = {
   'system.component.tools': 'Weave-Tools',
   'system.component.tools-mcp': 'Weave-Tools MCP',
   'system.component.chat': 'Weave-Chat',
-  'operations.downloadBackup': 'Sicherung herunterladen',
   'operations.tab.backup': 'Sicherung & Wiederherstellung',
   'operations.tab.identities': 'Technische Identitäten',
   'operations.tab.tools': 'Werkzeuge',
@@ -137,11 +136,6 @@ export const admin = {
   'operations.tools.imports.description': 'Importfortschritt, Quellen und Fehler im Detail.',
   'operations.tools.processNew.title': 'Verarbeitung testen',
   'operations.tools.processNew.description': 'Dateien mit erweiterten OCR-Einstellungen verarbeiten.',
-  'operations.backupDialog.title': 'Storage-Sicherung herunterladen',
-  'operations.backupDialog.body': 'Das ZIP enthält alle lokalen Upload- und Ergebnisdateien. Der Download kann vertrauliche Inhalte enthalten. Fortfahren?',
-  'operations.backupDialog.confirm': 'Sicherung herunterladen',
-  'operations.backupDialog.busy': 'Wird erstellt…',
-  'operations.backupDialog.error': 'Sicherung konnte nicht erstellt werden.',
 
   // === AGENT B: people & access tabs — users, teams, providers, identities ===
   // --- Nutzer (users-tab.tsx) ---
@@ -641,6 +635,7 @@ export const admin = {
   'backup.passphraseConfirmLabel': 'Passphrase wiederholen',
   'backup.passphraseMismatch': 'Stimmt nicht überein.',
   'backup.starting': 'Wird gestartet…',
+  'backup.exportFailed': 'Die Sicherung konnte nicht erstellt werden.',
   'backup.runActive': 'Es läuft bereits ein Vorgang…',
   'backup.unnamedBackup': 'Sicherung {id}',
   'backup.rowsInTables': '{rows} Zeilen in {tables} Tabellen',

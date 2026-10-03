@@ -18,6 +18,7 @@ cookie the polling client would otherwise be using.
 
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -33,12 +34,10 @@ import app.api.backup as backup_api
 @pytest.fixture(autouse=True)
 def _use_test_db(monkeypatch, tmp_path):
     monkeypatch.setattr(backup_api, 'SessionLocal', TestingSessionLocal)
-    # Isolated, disposable storage roots per test -- backups_dir() (see
-    # app/services/backup.py) is uploads_dir.parent / 'backups', so this
-    # covers both the on-disk upload/result trees and the export/incoming
-    # archive locations in one assignment.
-    monkeypatch.setattr(settings, 'uploads_dir', tmp_path / 'uploads')
-    monkeypatch.setattr(settings, 'results_dir', tmp_path / 'results')
+    # Isolated, disposable archive location per test -- backups_dir() (see
+    # app/services/backup.py) is settings.backup_dir, covering both the
+    # export and the incoming-import archives.
+    monkeypatch.setattr(settings, 'backup_dir', tmp_path / 'backups')
 
 
 def _admin(prefix: str):
@@ -81,37 +80,55 @@ def test_non_admin_cannot_start_export():
     assert resp.status_code == 403, resp.text
 
 
-def test_export_runs_lists_and_downloads(tmp_path):
+def test_export_streams_the_archive_and_records_the_run(tmp_path):
     admin, _ = _admin('backup-export')
 
     resp = admin.post('/api/v1/admin/backup/exports', json={'passphrase': 'a-decent-passphrase-1234'})
-    assert resp.status_code == 202, resp.text
-    run_id = resp.json()['id']
-    assert resp.json()['kind'] == 'export'
-    assert resp.json()['status'] == 'queued'
+    assert resp.status_code == 200, resp.text
+    assert resp.headers['cache-control'] == 'no-store'
+    assert resp.headers['content-disposition'].startswith('attachment; filename="')
+    assert resp.content[:2] == b'\x1f\x8b'  # gzip magic bytes
 
-    finished = _wait_for_run(run_id)
-    assert finished['status'] == BackupRunStatus.FINISHED, finished
-    assert finished['file_name']
+    # The streamed archive is a complete, importable backup.
+    archive = tmp_path / 'streamed.weave-backup.tar.gz'
+    archive.write_bytes(resp.content)
+    manifest = backup_engine.inspect_backup(archive, 'a-decent-passphrase-1234')
+    assert manifest['tables']['jobs'] >= 0
 
     listed = admin.get('/api/v1/admin/backup/runs')
     assert listed.status_code == 200, listed.text
-    assert run_id in {row['id'] for row in listed.json()['runs']}
+    run = next(row for row in listed.json()['runs'] if row['kind'] == 'export' and row['size_bytes'] == len(resp.content))
+    assert run['status'] == 'finished'
+    assert 'jobs' in run['report']['tables']
 
-    fetched = admin.get(f'/api/v1/admin/backup/runs/{run_id}')
+    fetched = admin.get(f"/api/v1/admin/backup/runs/{run['id']}")
     assert fetched.status_code == 200, fetched.text
-    assert fetched.json()['status'] == 'finished'
 
-    downloaded = admin.get(f'/api/v1/admin/backup/exports/{run_id}/download')
-    assert downloaded.status_code == 200, downloaded.text
-    assert downloaded.headers['cache-control'] == 'no-store'
-    assert downloaded.content[:2] == b'\x1f\x8b'  # gzip magic bytes
-
-    deleted = admin.delete(f'/api/v1/admin/backup/exports/{run_id}')
+    # Nothing was kept on the pod: the old download route is gone, delete
+    # only removes the history entry.
+    assert admin.get(f"/api/v1/admin/backup/exports/{run['id']}/download").status_code in (404, 405)
+    deleted = admin.delete(f"/api/v1/admin/backup/exports/{run['id']}")
     assert deleted.status_code == 200, deleted.text
+    assert not list((settings.backup_dir).rglob('*.tar.gz')) if settings.backup_dir.exists() else True
 
-    gone = admin.get(f'/api/v1/admin/backup/exports/{run_id}/download')
-    assert gone.status_code == 404, gone.text
+
+def test_a_run_whose_pod_died_stops_blocking_new_runs():
+    admin, _ = _admin('backup-stale')
+    with TestingSessionLocal() as db:
+        lost = BackupRun(
+            kind='export', status=BackupRunStatus.RUNNING,
+            created_at=datetime.now(timezone.utc) - timedelta(seconds=settings.backup_run_stale_seconds + 60),
+        )
+        db.add(lost)
+        db.commit()
+        lost_id = lost.id
+
+    resp = admin.post('/api/v1/admin/backup/exports', json={'passphrase': 'a-decent-passphrase-1234'})
+    assert resp.status_code == 200, resp.text
+    with TestingSessionLocal() as db:
+        lost = db.get(BackupRun, lost_id)
+        assert lost.status == BackupRunStatus.FAILED
+        assert 'nicht abgeschlossen' in lost.error_message
 
 
 def test_second_concurrent_run_is_refused():
@@ -152,7 +169,7 @@ def test_import_wrong_passphrase_rejected_before_any_write(tmp_path):
     runs_after = admin.get('/api/v1/admin/backup/runs').json()['runs']
     assert len(runs_after) == len(runs_before)
 
-    incoming_dir = settings.uploads_dir.parent / 'backups' / 'incoming'
+    incoming_dir = settings.backup_dir / 'incoming'
     assert not incoming_dir.exists() or not list(incoming_dir.iterdir())
 
 

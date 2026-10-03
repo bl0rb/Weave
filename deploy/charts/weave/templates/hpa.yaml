@@ -22,9 +22,6 @@ WELCHE WORKLOADS FEHLEN, UND WARUM
   postgres/redis  Zustandsbehaftet. Zwei Postgres-Prozesse auf einem
                   Datenverzeichnis beschaedigen es; ein zweiter Redis ist
                   ein zweiter, leerer Broker.
-  toolsBackend.mcp Eigenes Deployment, aber kein eigener autoscaling-Block:
-                  wer den MCP-Server ueberhaupt braucht, betreibt ihn
-                  typischerweise mit einer festen, kleinen Replikenzahl.
   embeddings/     Ihr Start laedt hunderte MB bis GB Modellgewichte nach.
   reranker        Eine CPU-getriebene HPA skaliert genau dann hoch, wenn
                   ohnehin schon Last anliegt, und der neue Pod ist erst
@@ -32,13 +29,21 @@ WELCHE WORKLOADS FEHLEN, UND WARUM
                   laenge oder gar nicht gesteuert, nicht ueber CPU.
 
 Zu ingestBackend, knowledge und api gehoert der Hinweis aus values.yaml:
-diese drei fahren beim Start Alembic. Mehrere gleichzeitig hochskalierende
-Repliken migrieren gleichzeitig gegen dieselbe Datenbank.
+diese drei fahren beim Start Alembic; gleichzeitig startende Repliken
+serialisieren sich ueber die Advisory-Sperre in alembic/env.py.
+
+autoscaling.ingestWorker.engine=keda: dann rendert keda-scaledobject.yaml
+ein ScaledObject, und HIER entsteht fuer den OCR-Pool keine HPA -- KEDA legt
+seine eigene an, zwei Autoscaler auf einem Deployment ueberschrieben sich.
+
+toolsMcp: der MCP-Server liegt in values.yaml unter toolsBackend.mcp, nicht
+auf oberster Ebene; daher der Eintrag "values" in der Liste unten.
 ===========================================================================
 */}}
 {{- $workloads := list
       (dict "key" "ingestBackend"   "component" "ingest-backend")
       (dict "key" "ingestWorker"    "component" "ingest-worker")
+      (dict "key" "ingestWorkerIo"  "component" "ingest-worker-io")
       (dict "key" "ingestFrontend"  "component" "ingest-frontend")
       (dict "key" "knowledge"       "component" "knowledge")
       (dict "key" "knowledgeWorker" "component" "knowledge-worker")
@@ -46,11 +51,12 @@ Repliken migrieren gleichzeitig gegen dieselbe Datenbank.
       (dict "key" "runtime"         "component" "runtime")
       (dict "key" "api"             "component" "api")
       (dict "key" "toolsBackend"    "component" "tools-backend")
+      (dict "key" "toolsMcp"        "component" "tools-mcp" "values" .Values.toolsBackend.mcp)
       (dict "key" "chat"            "component" "chat") }}
 {{- range $w := $workloads }}
 {{- $auto := get $.Values.autoscaling $w.key }}
-{{- $c := get $.Values $w.key }}
-{{- if $auto.enabled }}
+{{- $c := $w.values | default (get $.Values $w.key) }}
+{{- if and $auto.enabled (ne ($auto.engine | default "hpa") "keda") }}
 {{- include "weave.validate" $ }}
 {{- if not $c.enabled }}
 {{- fail (printf "autoscaling.%s.enabled=true, aber %s.enabled=false. Eine HPA ohne Deployment meldet dauerhaft 'failed to get scale subresource'." $w.key $w.key) }}
