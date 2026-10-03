@@ -140,7 +140,7 @@ const emptyDraft = (noContextReply: string): BotDraft => ({
   top_k: 20,
   final_k: 5,
   rerank: true,
-  include_uncollected: true,
+  include_uncollected: false,
   agent: null,
 });
 

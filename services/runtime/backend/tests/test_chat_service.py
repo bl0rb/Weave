@@ -292,6 +292,26 @@ def test_resolve_collection_scope_omits_the_sentinel_when_include_uncollected_is
     assert scope == ['vertraege']
 
 
+
+def test_new_managed_bot_default_keeps_legacy_documents_out_of_scope_yaml_default_unchanged():
+    # ADR 0008 addendum (F41): Weave-Ingest now stores include_uncollected
+    # = False for a new bot; the projected bot then never sends the
+    # sentinel, so legacy rows without a space are not searched. A YAML
+    # bot that sets nothing keeps Runtime's own default (True) -- existing
+    # bots are not changed silently.
+    from app.schemas.bot import RetrievalConfig
+    from app.services.botconfig import _managed_bot
+
+    bot = _managed_bot({
+        'id': 'new-bot', 'name': 'New Bot', 'kind': 'llm', 'system_prompt': 'Answer.',
+        'retrieval_enabled': True, 'include_uncollected': False, 'teams': [], 'collections': ['vertraege'],
+        'require_sources': True, 'no_context_reply': 'Nichts.',
+    })
+    with patch('app.services.chat.retrieval_client.list_collections', return_value=[_collection('vertraege')]):
+        assert resolve_collection_scope(bot, ChatUser(team='legal')) == ['vertraege']
+    assert RetrievalConfig().include_uncollected is True
+
+
 # --- resolve_collection_scope: per-request Collections filter ------------------
 #
 # "Collection-Filter pro Anfrage": `requested_collections` (`ChatRequest.

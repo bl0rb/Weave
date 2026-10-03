@@ -3,8 +3,9 @@
 Run from `backend/` as:
 
     python -m app.cli reindex [--document-id UUID] [--only-model MODEL_ID]
+    python -m app.cli reconcile-collections [--dry-run]
 
-Today this has exactly one subcommand, `reindex`: re-embed the chunks of
+`reindex` re-embeds the chunks of
 already-indexed documents with the currently configured embedding provider
 (settings.embedding_provider), without re-chunking -- see
 app/services/embeddings.py's embed_chunks(). This is what a provider/model
@@ -13,8 +14,13 @@ provider to a real 'openai'-compatible one) is expected to be followed by:
 existing chunk text/structure is left untouched, only `chunk.embedding` /
 `chunk.embedding_model` / `document.embedding_model` are refreshed.
 
-Exits non-zero if any targeted document failed to re-embed, so this is safe
-to wire into a deploy step or cron job that should alert on failure.
+`reconcile-collections` (audit finding F41, ADR 0008 addendum) gives legacy
+documents without `collection_slug` the space their Weave-Ingest job has
+since been put into, so that space's grants decide who reads them instead
+of the uploader's team. See reconcile_collections() below.
+
+Both exit non-zero on failure, so they are safe to wire into a deploy step
+or cron job that should alert on failure.
 """
 
 import argparse
@@ -27,12 +33,15 @@ from sqlalchemy.orm import Session
 
 from app.core.db import SessionLocal
 from app.models.models import Chunk, Document, DocumentStatus
+from app.services.collection_sync import CollectionSyncError, fetch_job_collections
 from app.services.embeddings import EmbeddingProvider, embed_chunks, get_provider
 
 logger = logging.getLogger(__name__)
 
 # How often reindex() logs a "processed N/total" progress line, in documents.
 _PROGRESS_LOG_EVERY = 10
+# Job ids per Weave-Ingest lookup (its GET /collections/registry/jobs limit).
+_RECONCILE_BATCH_SIZE = 100
 
 
 def _target_documents(db: Session, *, document_id: uuid.UUID | None, only_model: str | None) -> list[Document]:
@@ -104,6 +113,62 @@ def reindex(
     return failed
 
 
+def reconcile_collections(*, dry_run: bool = False, batch_size: int = _RECONCILE_BATCH_SIZE) -> int:
+    """Patch `collection_slug` on legacy documents (any status) whose job
+    Weave-Ingest now places in a space. Only `collection_slug`, the
+    frontmatter's `collection`/`collection_name` and each chunk's
+    `meta['collection']` change -- no re-chunking, no re-embedding, no new
+    release: the indexed content stays exactly what was approved.
+
+    Idempotent: only rows still without a slug are touched (re-checked
+    under a row lock, so a concurrent `document.released` wins), and a
+    second run finds nothing left to do. Rows whose job has no space stay
+    as they are; their count is logged for the `include_uncollected`
+    decision (docs/betrieb.md). Returns 1 if Weave-Ingest could not be
+    asked (the batches committed before stay applied), else 0.
+    """
+    db = SessionLocal()
+    reconciled = 0
+    try:
+        job_ids = list(db.execute(
+            select(Document.source_job_id).where(Document.collection_slug.is_(None)).order_by(Document.created_at)
+        ).scalars())
+        logger.info('reconcile-collections: %d legacy document(s) without a space', len(job_ids))
+        for start in range(0, len(job_ids), batch_size):
+            try:
+                assignments = fetch_job_collections(job_ids[start:start + batch_size])
+            except CollectionSyncError:
+                logger.exception('reconcile-collections: Weave-Ingest lookup failed, %d reconciled so far', reconciled)
+                return 1
+            for job_id, (slug, name) in assignments.items():
+                document = db.execute(
+                    select(Document)
+                    .where(Document.source_job_id == job_id, Document.collection_slug.is_(None))
+                    .with_for_update()
+                ).scalar_one_or_none()
+                if document is None:
+                    continue
+                document.collection_slug = slug
+                document.frontmatter = {**(document.frontmatter or {}), 'collection': slug, 'collection_name': name}
+                for chunk in db.execute(select(Chunk).where(Chunk.document_id == document.id)).scalars():
+                    chunk.meta = {**(chunk.meta or {}), 'collection': slug}
+                reconciled += 1
+                logger.info('reconcile-collections: document %s (job %s) -> %s', document.id, job_id, slug)
+            if dry_run:
+                db.rollback()
+            else:
+                db.commit()
+    finally:
+        db.close()
+
+    logger.info(
+        'reconcile-collections: %s %d document(s), %d remain without a space%s',
+        'would assign' if dry_run else 'assigned', reconciled, len(job_ids) - reconciled,
+        ' (dry run, nothing written)' if dry_run else '',
+    )
+    return 0
+
+
 def _parse_document_id(raw: str) -> uuid.UUID:
     try:
         return uuid.UUID(raw)
@@ -128,6 +193,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help='Only reindex documents whose stored embedding_model equals this value exactly',
     )
 
+    reconcile_parser = subparsers.add_parser(
+        'reconcile-collections',
+        help='Assign legacy documents without a space to the space their Weave-Ingest job belongs to',
+    )
+    reconcile_parser.add_argument(
+        '--dry-run', action='store_true',
+        help='Only log what would change; write nothing',
+    )
+
     return parser
 
 
@@ -139,6 +213,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == 'reindex':
         failed = reindex(document_id=args.document_id, only_model=args.only_model)
         return 1 if failed else 0
+    if args.command == 'reconcile-collections':
+        return reconcile_collections(dry_run=args.dry_run)
 
     parser.error(f'unknown command {args.command!r}')  # argparse exits itself here
     return 2  # pragma: no cover -- unreachable, parser.error() calls sys.exit

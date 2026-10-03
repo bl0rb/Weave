@@ -3509,6 +3509,26 @@
         "title": "ImportWithdrawalRequest",
         "type": "object"
       },
+      "IntrospectionRequest": {
+        "properties": {
+          "issuer": {
+            "title": "Issuer",
+            "type": "string"
+          },
+          "token": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "issuer"
+        ],
+        "title": "IntrospectionRequest",
+        "type": "object"
+      },
       "JobArtifactListResponse": {
         "properties": {
           "items": {
@@ -3556,6 +3576,43 @@
           "size_bytes"
         ],
         "title": "JobArtifactResponse",
+        "type": "object"
+      },
+      "JobCollectionEntry": {
+        "description": "One row of GET /collections/registry/jobs: the space a job belongs\nto, for Weave-Knowledge's `reconcile-collections` (legacy rows without\n`collection_slug`).",
+        "properties": {
+          "collection": {
+            "title": "Collection",
+            "type": "string"
+          },
+          "collection_name": {
+            "title": "Collection Name",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "collection",
+          "collection_name"
+        ],
+        "title": "JobCollectionEntry",
+        "type": "object"
+      },
+      "JobCollectionResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/JobCollectionEntry"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "title": "JobCollectionResponse",
         "type": "object"
       },
       "JobListResponse": {
@@ -4368,7 +4425,7 @@
             "type": "string"
           },
           "include_uncollected": {
-            "default": true,
+            "default": false,
             "title": "Include Uncollected",
             "type": "boolean"
           },
@@ -4953,7 +5010,7 @@
             "type": "array"
           },
           "include_uncollected": {
-            "default": true,
+            "default": false,
             "title": "Include Uncollected",
             "type": "boolean"
           },
@@ -11942,6 +11999,50 @@
         "summary": "Get Collections Registry"
       }
     },
+    "/api/v1/collections/registry/jobs": {
+      "get": {
+        "description": "Which space each of the given jobs belongs to -- the source for\nWeave-Knowledge's `reconcile-collections` (audit finding F41): legacy\nKnowledge rows without `collection_slug` whose job has since been put\ninto a space get that space's slug, so its grants decide access instead\nof the uploader's team (ADR 0008).\n\nSame reader as the registry above. Answers only for the job ids the\ncaller already holds, and only slug/name -- jobs without a space or with\na deleted one are simply absent from the response.",
+        "operationId": "get_job_collections_api_v1_collections_registry_jobs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "job_id",
+            "required": false,
+            "schema": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "title": "Job Id",
+              "type": "array"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobCollectionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Job Collections"
+      }
+    },
     "/api/v1/collections/{collection_id}": {
       "delete": {
         "description": "Delete a collection controlled by the caller.\n\nBy default only an empty collection: documents are never cascaded by\naccident, since a release may already have reached the shared RAG\nstore. With `with_content` (and the collection's exact name as\n`confirm_name`) an owner deletes it with every document; released ones\nare withdrawn from Knowledge on the way (ADR 0008). Password-protected\ndocuments still have to be deleted one by one. Pending/running\nConfluence imports block deletion either way so they cannot create\norphaned jobs after this transaction commits, and so does any bot or\nactive technical identity naming the slug -- a later collection with\nthe same slug would otherwise inherit that access. The slug itself is\ntombstoned and never handed out again: withdrawals reach Knowledge\nasynchronously, and documents indexed before the release gate may\nstill carry it.",
@@ -12948,6 +13049,49 @@
         "summary": "Internal Chat Provider",
         "tags": [
           "chat-provider-internal"
+        ]
+      }
+    },
+    "/api/v1/internal/mcp-oauth/introspect": {
+      "post": {
+        "operationId": "introspect_access_token_api_v1_internal_mcp_oauth_introspect_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntrospectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Introspect Access Token Api V1 Internal Mcp Oauth Introspect Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Introspect Access Token",
+        "tags": [
+          "mcp-oauth-internal"
         ]
       }
     },
