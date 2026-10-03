@@ -78,10 +78,13 @@ def test_keycloak_resolves_db_identity_and_ignores_claimed_groups(oauth):
 
 @pytest.mark.parametrize('claims', [
     {'aud': 'portal-client'}, {'aud': 'other-resource'}, {'iss': 'https://attacker.example'},
-    {'exp': int(time.time()) - 60}, {'exp': None}, {'nbf': int(time.time()) + 300},
+    {'exp': -60}, {'exp': None}, {'nbf': 300},
     {'sub': 'unknown'}, {'sub': None},
 ])
 def test_invalid_token_claims_never_resolve_a_user(oauth, claims):
+    # exp/nbf are offsets from now, resolved here: the suite collects these
+    # parameters minutes before this test runs.
+    claims = {k: int(time.time()) + v if k in ('exp', 'nbf') and v is not None else v for k, v in claims.items()}
     result = introspect(oauth, token(oauth, **claims))
     assert result.status_code == 200
     assert result.json() == {'active': False}
