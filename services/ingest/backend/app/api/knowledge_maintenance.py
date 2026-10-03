@@ -10,9 +10,16 @@ flight.
 Refuses with 409 while a backup import is RUNNING: an import's own wipe/
 restore of `document_releases` would otherwise race a concurrent requeue of
 the very rows it is about to overwrite.
+
+'Verwaiste Dokumente zurückziehen' (POST /orphans) withdraws Knowledge
+documents whose job or space is gone (app/services/knowledge_orphans.py) --
+a dry run by default; applying needs the reviewed dry-run count. Refused
+during an import too: mid-restore, every document would look orphaned.
 """
 
 from __future__ import annotations
+
+from collections import Counter
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select
@@ -21,12 +28,21 @@ from sqlalchemy.orm import Session
 from app.api.deps import origin_guard, require_admin
 from app.database.session import get_db
 from app.models.models import BackupRun, BackupRunKind, BackupRunStatus, DocumentRelease, KnowledgeWithdrawal, User
-from app.schemas.knowledge_maintenance import KnowledgeRebuildResponse, KnowledgeRebuildStatusResponse
+from app.schemas.knowledge_maintenance import (
+    KnowledgeOrphanCleanupRequest,
+    KnowledgeOrphanCleanupResponse,
+    KnowledgeOrphanItem,
+    KnowledgeRebuildResponse,
+    KnowledgeRebuildStatusResponse,
+)
 from app.services.backup import requeue_releases_for_index_rebuild
+from app.services.knowledge_orphans import KnowledgeInventoryError, find_orphans, queue_withdrawals
 from app.services.publications import publication_configured
 from app.services.security import enforce_rate_limit
 
 router = APIRouter(prefix='/api/v1/admin/knowledge', dependencies=[Depends(require_admin), Depends(origin_guard)])
+
+_ORPHAN_SAMPLE_LIMIT = 100
 
 
 def _active_import_run(db: Session) -> BackupRun | None:
@@ -67,4 +83,48 @@ def rebuild_knowledge_index_status(request: Request, db: Session = Depends(get_d
     return KnowledgeRebuildStatusResponse(
         total_releases=total_releases, withdrawn=withdrawn, pending=pending, sent=sent, failed=failed,
         last_sent_at=last_sent_at,
+    )
+
+
+@router.post('/orphans', response_model=KnowledgeOrphanCleanupResponse)
+def withdraw_knowledge_orphans(
+    payload: KnowledgeOrphanCleanupRequest, request: Request, db: Session = Depends(get_db),
+) -> KnowledgeOrphanCleanupResponse:
+    enforce_rate_limit(request)
+    if not publication_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail='Die Veröffentlichung an den Wissensdienst ist nicht konfiguriert.',
+        )
+    if _active_import_run(db) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='Es läuft gerade eine Wiederherstellung. Bitte warten Sie, bis diese abgeschlossen ist.',
+        )
+    try:
+        scan = find_orphans(db)
+    except KnowledgeInventoryError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail='Der Dokumentbestand des Wissensdienstes konnte nicht vollständig gelesen werden.',
+        ) from exc
+    queued = 0
+    if not payload.dry_run:
+        if payload.expected_orphans != len(scan.orphans):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f'Der Bestand hat sich seit dem Probelauf geändert: jetzt {len(scan.orphans)} verwaiste '
+                'Dokumente. Bitte den Probelauf erneut prüfen.',
+            )
+        queued = queue_withdrawals(db, scan)
+        db.commit()
+    return KnowledgeOrphanCleanupResponse(
+        dry_run=payload.dry_run,
+        scanned=scan.scanned,
+        orphans=len(scan.orphans),
+        by_reason=dict(Counter(orphan.reason for orphan in scan.orphans)),
+        already_pending=sum(1 for orphan in scan.orphans if orphan.withdrawal == 'pending'),
+        queued=queued,
+        items=[KnowledgeOrphanItem(**vars(orphan)) for orphan in scan.orphans[:_ORPHAN_SAMPLE_LIMIT]],
+        truncated=len(scan.orphans) > _ORPHAN_SAMPLE_LIMIT,
     )

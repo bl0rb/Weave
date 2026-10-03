@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.api.events import router as events_router
 from app.api.indexing import router as indexing_router
+from app.api.inventory import router as inventory_router
 from app.api.reindex import router as reindex_router
 from app.api.routes import router
 from app.core.config import settings
@@ -65,3 +66,4 @@ app.include_router(router)
 app.include_router(events_router)
 app.include_router(indexing_router)
 app.include_router(reindex_router)
+app.include_router(inventory_router)
