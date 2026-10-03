@@ -7,6 +7,9 @@ model:
   provider: fake
   model: fake-chat
   temperature: 0.7
+  # Nutzer duerfen im Chat zwischen allen aktiven LLM-Endpunkten
+  # (Admin > Chat-Provider) waehlen; ohne zentrale Konfiguration wirkungslos.
+  endpoints: ['*']
 
 system_prompt: |
   Du bist ein freundlicher, hilfsbereiter Assistent der Weave-Plattform.

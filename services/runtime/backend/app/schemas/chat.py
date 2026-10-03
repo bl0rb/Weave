@@ -74,6 +74,10 @@ class ChatRequest(BaseModel):
     # distinct filter of its own -- "match nothing" -- not the same as
     # omitting the field entirely.
     collections: list[str] | None = None
+    # A user's per-chat LLM endpoint choice; must be the bot's own
+    # endpoint or one of its `model.endpoints` (app/services/chat.py's
+    # `_resolve_llm_endpoint`). None = the bot's own endpoint.
+    llm_endpoint: str | None = None
 
 
 class Source(BaseModel):

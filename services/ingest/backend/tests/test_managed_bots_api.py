@@ -549,6 +549,75 @@ def test_new_bot_leaves_out_documents_without_a_space_unless_asked(monkeypatch):
     assert items[opted_in.json()['id']]['include_uncollected'] is True
 
 
+def test_llm_bot_endpoints_are_validated_and_projected(monkeypatch):
+    from app.models.models import ChatProviderConfig
+
+    admin = _identity('bot-endpoint-admin', role=UserRole.ADMIN)
+    admin_client = login_as(admin.username)
+    team_name = _team()
+    collection_slug = _scope(admin_client, team_name)
+    with TestingSessionLocal() as db:
+        if db.get(ChatProviderConfig, 'tools-llm') is None:
+            db.add(ChatProviderConfig(id='tools-llm', enabled=True, base_url='https://tools.example', model='tool-chat'))
+            db.commit()
+    llm = dict(kind='llm', webhook_url=None, auth_token=None, system_prompt='Antworte knapp.')
+
+    unknown = admin_client.post('/api/v1/auth/admin/bots', json=_payload(
+        team_name, collection_slug, **llm, llm_endpoint='missing-llm',
+    ))
+    assert unknown.status_code == 422
+    assert 'missing-llm' in unknown.text
+    n8n = admin_client.post('/api/v1/auth/admin/bots', json=_payload(team_name, collection_slug, llm_endpoint='tools-llm'))
+    assert n8n.status_code == 422
+
+    created = admin_client.post('/api/v1/auth/admin/bots', json=_payload(
+        team_name, collection_slug, **llm, llm_endpoint='tools-llm', llm_endpoints=['default', '*', ' default '],
+    ))
+    assert created.status_code == 201, created.text
+    assert created.json()['llm_endpoint'] == 'tools-llm'
+    assert created.json()['llm_endpoints'] == ['default', '*']
+
+    monkeypatch.setattr(settings, 'chat_config_service_token', 'runtime-secret')
+    internal = admin_client.get('/api/v1/internal/bots', headers={'Authorization': 'Bearer runtime-secret'})
+    projected = next(item for item in internal.json()['items'] if item['id'] == created.json()['id'])
+    assert projected['llm_endpoint'] == 'tools-llm'
+    assert projected['llm_endpoints'] == ['default', '*']
+    assert admin_client.delete('/api/v1/auth/admin/chat-provider/endpoints/tools-llm').status_code == 409
+
+
+
+def test_subagent_endpoint_must_exist_and_support_tools(monkeypatch):
+    from app.models.models import ChatProviderConfig
+
+    admin = _identity('bot-subagent-endpoint-admin', role=UserRole.ADMIN)
+    admin_client = login_as(admin.username)
+    team_name = _team()
+    collection_slug = _scope(admin_client, team_name)
+    with TestingSessionLocal() as db:
+        for endpoint_id, tools in (('agent-llm', True), ('plain-llm', False)):
+            if db.get(ChatProviderConfig, endpoint_id) is None:
+                db.add(ChatProviderConfig(
+                    id=endpoint_id, enabled=True, base_url='https://llm.example', model='m', supports_tools=tools,
+                ))
+        db.commit()
+
+    def agent(endpoint):
+        return {'enabled': True, 'subagents': [{
+            'id': 'research', 'name': 'Research', 'mission': 'Recherchiere.', 'collections': [collection_slug],
+            'endpoint': endpoint,
+        }]}
+
+    llm = dict(kind='llm', webhook_url=None, auth_token=None, system_prompt='Antworte knapp.')
+    plain = admin_client.post('/api/v1/auth/admin/bots', json=_payload(team_name, collection_slug, **llm, agent=agent('plain-llm')))
+    assert plain.status_code == 422
+    assert 'plain-llm' in plain.text
+    missing = admin_client.post('/api/v1/auth/admin/bots', json=_payload(team_name, collection_slug, **llm, agent=agent('missing-llm')))
+    assert missing.status_code == 422
+    created = admin_client.post('/api/v1/auth/admin/bots', json=_payload(team_name, collection_slug, **llm, agent=agent('agent-llm')))
+    assert created.status_code == 201, created.text
+    assert created.json()['agent']['subagents'][0]['endpoint'] == 'agent-llm'
+
+
 # --- Owners and users (ADR 0008) ----------------------------------------------
 
 def _owned_bot(admin_client, owner, collection_slug: str, **overrides) -> dict:

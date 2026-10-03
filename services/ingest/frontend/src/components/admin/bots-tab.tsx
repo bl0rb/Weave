@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Bot, KeyRound, Pencil, Plus, Trash2, Workflow } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -64,6 +64,7 @@ type AgentSubagent = {
   filters: AgentSubagentFilters;
   include_uncollected: boolean;
   model?: AgentSubagentModel | null;
+  endpoint?: string | null;
   limits: AgentSubagentLimits;
 };
 
@@ -104,6 +105,8 @@ type ManagedBot = {
   rerank?: boolean;
   include_uncollected?: boolean;
   agent?: AgentConfig | null;
+  llm_endpoint?: string | null;
+  llm_endpoints?: string[];
   created_at: string;
   updated_at: string;
   source?: 'managed' | 'runtime';
@@ -142,7 +145,11 @@ const emptyDraft = (noContextReply: string): BotDraft => ({
   rerank: true,
   include_uncollected: false,
   agent: null,
+  llm_endpoint: null,
+  llm_endpoints: [],
 });
+
+type LlmEndpointOption = { id: string; name: string; model: string; enabled: boolean; supports_tools?: boolean };
 
 type BotStep = 'basics' | 'behavior' | 'knowledge' | 'agents' | 'sharing' | 'review';
 
@@ -260,6 +267,20 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<BotStep>('basics');
   const set = <K extends keyof BotDraft>(key: K, value: BotDraft[K]) => setDraft(current => ({ ...current, [key]: value }));
+  // Admin > Chat & LLM endpoints; a failed load only hides the choice.
+  const [endpoints, setEndpoints] = useState<LlmEndpointOption[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    apiJson<{ items: LlmEndpointOption[] }>('/api/v1/auth/admin/chat-provider/endpoints')
+      .then(result => { if (!cancelled) setEndpoints(result.items); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
+  const ownEndpointOptions = [
+    ...endpoints.filter(endpoint => endpoint.id !== 'default'),
+    ...(draft.llm_endpoint && !endpoints.some(endpoint => endpoint.id === draft.llm_endpoint)
+      ? [{ id: draft.llm_endpoint, name: draft.llm_endpoint, model: '', enabled: false }] : []),
+  ];
   const toggleValue = (key: 'collections', value: string) => set(key, draft[key].includes(value) ? draft[key].filter(item => item !== value) : [...draft[key], value]);
   const agentErrors = draft.kind === 'llm' ? validateAgent(draft.agent ?? null, t) : [];
   const canSave = Boolean(
@@ -296,6 +317,8 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
       require_sources: draft.require_sources,
       no_context_reply: draft.no_context_reply,
       agent: draft.kind === 'llm' && draft.agent?.enabled ? draft.agent : null,
+      llm_endpoint: draft.kind === 'llm' ? draft.llm_endpoint || null : null,
+      llm_endpoints: draft.kind === 'llm' ? draft.llm_endpoints ?? [] : [],
       ...(!bot ? { id: draft.id } : {}),
     };
     try {
@@ -365,6 +388,22 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
         </> : <>
           <Field label={t('admin.bots.field.systemPrompt.label')}><textarea className={inputClass} rows={12} required value={draft.system_prompt || ''} onChange={event => set('system_prompt', event.target.value)} placeholder={t('admin.bots.field.systemPrompt.placeholder')} /></Field>
           <Field label={t('admin.bots.field.temperature')}><input className={inputClass} type="number" min={0} max={2} step={0.1} value={draft.temperature ?? 0.2} onChange={event => set('temperature', Number(event.target.value))} /></Field>
+          <Field label={t('admin.bots.field.llmEndpoint.label')} hint={t('admin.bots.field.llmEndpoint.hint')}>
+            <select className={inputClass} value={draft.llm_endpoint ?? ''} onChange={event => set('llm_endpoint', event.target.value || null)}>
+              <option value="">{t('admin.bots.field.llmEndpoint.central')}</option>
+              {ownEndpointOptions.map(endpoint => <option key={endpoint.id} value={endpoint.id}>{endpoint.name || endpoint.id}{endpoint.model ? ` · ${endpoint.model}` : ''}{endpoint.enabled ? '' : ` (${t('admin.chatProvider.endpoints.disabled')})`}</option>)}
+            </select>
+          </Field>
+          <ScopeChoices
+            title={t('admin.bots.field.llmEndpoints.label')}
+            emptyLabel={t('admin.bots.field.llmEndpoints.hint')}
+            items={[
+              { value: '*', label: t('admin.bots.field.llmEndpoints.all') },
+              ...endpoints.map(endpoint => ({ value: endpoint.id, label: endpoint.id === 'default' ? t('admin.bots.field.llmEndpoint.central') : endpoint.name || endpoint.id })),
+            ]}
+            selected={draft.llm_endpoints ?? []}
+            onToggle={value => set('llm_endpoints', (draft.llm_endpoints ?? []).includes(value) ? (draft.llm_endpoints ?? []).filter(item => item !== value) : [...(draft.llm_endpoints ?? []), value])}
+          />
         </>}
       </section>}
 
@@ -384,7 +423,7 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
           label={t('admin.bots.toggle.agentMode')}
         />
         {draft.agent?.enabled
-          ? <AgentEditor agent={draft.agent} spaces={spaces} onChange={next => set('agent', next)} errors={agentErrors} />
+          ? <AgentEditor agent={draft.agent} spaces={spaces} endpoints={endpoints} onChange={next => set('agent', next)} errors={agentErrors} />
           : <p className="text-sm text-[var(--muted)]">{t('admin.bots.agent.offHint')}</p>}
       </section>}
 
@@ -413,8 +452,8 @@ function ScopeChoices({ title, emptyLabel, items, selected, onToggle }: { title:
 }
 
 function AgentEditor({
-  agent, spaces, onChange, errors,
-}: { agent: AgentConfig; spaces: KnowledgeSpace[]; onChange: (next: AgentConfig) => void; errors: string[] }) {
+  agent, spaces, endpoints, onChange, errors,
+}: { agent: AgentConfig; spaces: KnowledgeSpace[]; endpoints: LlmEndpointOption[]; onChange: (next: AgentConfig) => void; errors: string[] }) {
   const { t } = useI18n();
   const setLimits = (limits: Partial<AgentLimits>) => onChange({ ...agent, limits: { ...agent.limits, ...limits } });
   const setSubagent = (index: number, next: AgentSubagent) =>
@@ -449,7 +488,7 @@ function AgentEditor({
       </div>
       <div className="min-w-0">
         {subagent
-          ? <SubagentEditor key={current} subagent={subagent} spaces={spaces} onChange={next => setSubagent(current, next)} onRemove={() => { removeSubagent(current); setSelected(Math.max(0, current - 1)); }} />
+          ? <SubagentEditor key={current} subagent={subagent} spaces={spaces} endpoints={endpoints} onChange={next => setSubagent(current, next)} onRemove={() => { removeSubagent(current); setSelected(Math.max(0, current - 1)); }} />
           : <p className="rounded-xl border border-dashed border-[var(--line-2)] p-6 text-sm text-[var(--muted)]">{t('admin.bots.agent.selectHint')}</p>}
       </div>
     </div>
@@ -467,8 +506,8 @@ function AgentEditor({
 }
 
 function SubagentEditor({
-  subagent, spaces, onChange, onRemove,
-}: { subagent: AgentSubagent; spaces: KnowledgeSpace[]; onChange: (next: AgentSubagent) => void; onRemove: () => void }) {
+  subagent, spaces, endpoints, onChange, onRemove,
+}: { subagent: AgentSubagent; spaces: KnowledgeSpace[]; endpoints: LlmEndpointOption[]; onChange: (next: AgentSubagent) => void; onRemove: () => void }) {
   const { t } = useI18n();
   // Auto-derives the id from the name until the id has been edited by hand
   // (tracked locally, never sent to the backend) -- mirrors how the
@@ -549,6 +588,14 @@ function SubagentEditor({
         <Field label={t('admin.bots.subagent.field.timeout')}><input className={inputClass} type="number" min={1} max={3600} value={subagent.limits.timeout_seconds} onChange={event => setLimits({ timeout_seconds: Number(event.target.value) || 60 })} /></Field>
       </div>
     </fieldset>
+    {/* Only tool-capable endpoints: a subagent researches via tool calls. */}
+    <Field label={t('admin.bots.subagent.field.endpoint.label')} hint={t('admin.bots.subagent.field.endpoint.hint')}>
+      <select className={inputClass} value={subagent.endpoint ?? ''} onChange={event => onChange({ ...subagent, endpoint: event.target.value || null })}>
+        <option value="">{t('admin.bots.subagent.field.endpoint.inherit')}</option>
+        {endpoints.filter(endpoint => endpoint.supports_tools || endpoint.id === subagent.endpoint).map(endpoint => <option key={endpoint.id} value={endpoint.id}>{endpoint.id === 'default' ? t('admin.bots.field.llmEndpoint.central') : endpoint.name || endpoint.id}{endpoint.model ? ` · ${endpoint.model}` : ''}</option>)}
+        {subagent.endpoint && !endpoints.some(endpoint => endpoint.id === subagent.endpoint) && <option value={subagent.endpoint}>{subagent.endpoint}</option>}
+      </select>
+    </Field>
     <details className="rounded-xl border border-slate-200 p-3">
       <summary className="cursor-pointer text-sm font-medium text-slate-700">{t('admin.bots.subagent.modelOverride.summary')}</summary>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">

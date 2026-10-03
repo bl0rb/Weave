@@ -40,10 +40,12 @@ class _RecordingChat:
         self._error = error
 
     def __call__(
-        self, *, bot_id: str, message: str, history: list[dict], user: dict, collections: list[str] | None = None
+        self, *, bot_id: str, message: str, history: list[dict], user: dict, collections: list[str] | None = None,
+        llm_endpoint: str | None = None,
     ) -> dict:
         self.calls.append(
-            {'bot_id': bot_id, 'message': message, 'history': history, 'user': user, 'collections': collections}
+            {'bot_id': bot_id, 'message': message, 'history': history, 'user': user, 'collections': collections,
+             'llm_endpoint': llm_endpoint}
         )
         if self._error is not None:
             raise self._error
@@ -200,6 +202,19 @@ def test_chat_forwards_a_collections_filter_to_runtime(db_session, monkeypatch):
     assert len(recorder.calls) == 1
     assert recorder.calls[0]['collections'] == ['handbuch', 'hr-policies']
 
+
+
+def test_chat_forwards_the_users_llm_endpoint_choice(db_session, monkeypatch):
+    _, raw_token = make_user_with_token(db_session, username='chat-with-endpoint')
+    db_session.commit()
+    recorder = _RecordingChat(result={'answer': 'ok', 'sources': None, 'trace': None})
+    monkeypatch.setattr('app.services.runtime_client.chat', recorder)
+
+    response = client.post(
+        '/v1/chat', json={'bot_id': 'faq-bot', 'message': 'Hallo', 'llm_endpoint': 'tools-llm'}, headers=auth_headers(raw_token),
+    )
+    assert response.status_code == 200
+    assert recorder.calls[0]['llm_endpoint'] == 'tools-llm'
 
 def test_chat_forwards_an_empty_collections_filter_distinctly_from_no_filter(db_session, monkeypatch):
     """`[]` ("match nothing") must reach runtime_client.chat() as `[]`, not

@@ -62,6 +62,7 @@ export const chat: Record<keyof typeof de, string> = {
   'composer.questionLabel': 'Your question',
   'composer.assistantLabel': 'Assistant',
   'composer.noBotAvailable': 'No assistant available',
+  'composer.modelLabel': 'Language model',
   'composer.send': 'Send message',
   'composer.sendHint': 'Enter to send · Shift+Enter for a new line',
 

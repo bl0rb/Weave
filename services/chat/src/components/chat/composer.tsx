@@ -1,12 +1,12 @@
 'use client';
 
 import { useRef } from 'react';
-import { Bot as BotIcon, Send } from 'lucide-react';
+import { Bot as BotIcon, Cpu, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScopePicker } from '@/components/chat/scope-picker';
 import { useI18n } from '@/i18n/provider';
 import type { MappedError } from '@/lib/errors';
-import type { Bot, Collection } from '@/types/weave-api';
+import type { Bot, Collection, LlmEndpoint } from '@/types/weave-api';
 
 interface ComposerProps {
   value: string;
@@ -16,6 +16,9 @@ interface ComposerProps {
   bots: Bot[] | null;
   selectedBotId: string | null;
   onSelectBot: (botId: string) => void;
+  llmEndpoints?: LlmEndpoint[];
+  selectedEndpointId?: string | null;
+  onSelectEndpoint?: (endpointId: string) => void;
   collections: Collection[] | null;
   collectionsError?: MappedError | null;
   selectedCollections: string[];
@@ -34,6 +37,9 @@ export function Composer({
   bots,
   selectedBotId,
   onSelectBot,
+  llmEndpoints = [],
+  selectedEndpointId = null,
+  onSelectEndpoint,
   collections,
   collectionsError,
   selectedCollections,
@@ -89,6 +95,24 @@ export function Composer({
               ))}
             </select>
           </div>
+
+          {llmEndpoints.length > 1 ? (
+            <div className="relative inline-flex h-9 min-h-[40px] items-center gap-1.5 rounded-[var(--radius-pill)] border border-[var(--line-2)] bg-[var(--surface-2)] pl-2.5 pr-1.5 text-xs font-medium text-[var(--muted)] focus-within:border-[var(--accent)] focus-within:ring-[3px] focus-within:ring-[var(--accent-soft)] sm:min-h-0">
+              <Cpu className="h-3.5 w-3.5 text-[var(--accent)]" aria-hidden="true" />
+              <select
+                aria-label={t('chat.composer.modelLabel')}
+                value={selectedEndpointId ?? llmEndpoints[0].id}
+                onChange={(e) => onSelectEndpoint?.(e.target.value)}
+                className="max-w-[9rem] appearance-none truncate bg-transparent pr-3 font-semibold text-[var(--ink)] outline-none"
+              >
+                {llmEndpoints.map((endpoint) => (
+                  <option key={endpoint.id} value={endpoint.id} title={endpoint.model}>
+                    {endpoint.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
 
           <ScopePicker
             collections={collections}

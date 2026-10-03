@@ -303,3 +303,124 @@ def test_multi_agent_turn_stream_emits_status_events_and_streams_several_deltas(
             blob = json.dumps(event)
             assert _QUESTION not in blob
             assert 'system_prompt' not in blob.lower()
+
+
+def test_multi_agent_subagents_without_own_model_use_the_central_endpoint(tmp_path, monkeypatch):
+    """A subagent inheriting the main model must reach the same central
+    endpoint as the main bot, never `get_llm('openai')`'s env default."""
+    from app.services.chat_config_client import ChatProviderSnapshot
+
+    _write_bot(tmp_path, monkeypatch)
+    monkeypatch.setattr('app.services.chat.fetch_chat_provider', lambda *_: ChatProviderSnapshot(
+        enabled=True, base_url='https://central.example/v1', model='central-model', api_key='k', supports_tools=True,
+    ))
+    scripts = [
+        [LLMToolResult(content=None, tool_calls=_RESEARCH_AREA_PLAN, model='central-model')],
+        [
+            LLMToolResult(content=None, tool_calls=[ToolCall(id='s1', name='search_knowledge', arguments={'query': 'kündigung'})], model='central-model'),
+            LLMToolResult(content=_final_answer_json('Kündigungsfrist beträgt 4 Wochen.', 'doc-it', 1), tool_calls=None, model='central-model'),
+        ],
+        [
+            LLMToolResult(content=None, tool_calls=[ToolCall(id='s2', name='search_knowledge', arguments={'query': 'urlaub'})], model='central-model'),
+            LLMToolResult(content=_final_answer_json('Urlaubsanspruch 30 Tage.', 'doc-hr', 2), tool_calls=None, model='central-model'),
+        ],
+    ]
+    endpoints = []
+
+    def _central(**kwargs):
+        endpoints.append(kwargs['base_url'])
+        return FakeLLM(tool_responses=scripts.pop(0))
+
+    def _no_env_provider(provider_name=None):
+        raise AssertionError(f'get_llm({provider_name!r}) must not be used for inheriting subagents')
+
+    monkeypatch.setattr('app.services.llm.OpenAICompatibleLLM', _central)
+    monkeypatch.setattr('app.services.llm.get_llm', _no_env_provider)
+    monkeypatch.setattr(
+        'app.services.retrieval_client.httpx.get',
+        _readable_collections(_collection('it-docs', 'IT Docs'), _collection('hr-docs', 'HR Docs')),
+    )
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _search_by_collection({
+        'it-docs': _search_response(_chunk('doc-it', 1, 'it-docs', 'IT content')),
+        'hr-docs': _search_response(_chunk('doc-hr', 2, 'hr-docs', 'HR content')),
+    }))
+
+    response = client.post('/internal/chat', json=_BODY, headers=AUTH_HEADERS)
+
+    assert response.status_code == 200, response.text
+    assert response.json()['trace']['agent']['mode'] == 'graph'
+    assert endpoints == ['https://central.example/v1'] * 3
+
+
+def _bot_with_subagent_endpoint(endpoint: str) -> dict:
+    bot_yaml = json.loads(json.dumps(_MULTI_AGENT_BOT_YAML))
+    bot_yaml['agent']['subagents'][0]['endpoint'] = endpoint
+    return bot_yaml
+
+
+def _endpoints(**snapshots):
+    from app.services.chat_config_client import ChatProviderSnapshot
+
+    def _fetch(endpoint='default'):
+        return snapshots.get(endpoint, ChatProviderSnapshot(enabled=False))
+
+    return _fetch
+
+
+def test_subagent_with_own_endpoint_researches_there(tmp_path, monkeypatch):
+    from app.services.chat_config_client import ChatProviderSnapshot
+
+    _write_bot(tmp_path, monkeypatch, _bot_with_subagent_endpoint('tools-llm'))
+    monkeypatch.setattr('app.services.chat.fetch_chat_provider', _endpoints(**{'tools-llm': ChatProviderSnapshot(
+        enabled=True, base_url='https://tools.example/v1', model='tool-chat', supports_tools=True,
+    )}))
+    _script_get_llm_calls(monkeypatch, [
+        [LLMToolResult(content=None, tool_calls=_RESEARCH_AREA_PLAN, model='fake-chat')],  # main bot
+        [
+            LLMToolResult(content=None, tool_calls=[ToolCall(id='s2', name='search_knowledge', arguments={'query': 'urlaub'})], model='fake-chat'),
+            LLMToolResult(content=_final_answer_json('Urlaubsanspruch 30 Tage.', 'doc-hr', 2), tool_calls=None, model='fake-chat'),
+        ],  # hr-support (no endpoint)
+    ])
+    endpoint_calls = []
+
+    def _central(**kwargs):
+        endpoint_calls.append((kwargs['base_url'], kwargs['model']))
+        return FakeLLM(tool_responses=[
+            LLMToolResult(content=None, tool_calls=[ToolCall(id='s1', name='search_knowledge', arguments={'query': 'kündigung'})], model='tool-chat'),
+            LLMToolResult(content=_final_answer_json('Kündigungsfrist beträgt 4 Wochen.', 'doc-it', 1), tool_calls=None, model='tool-chat'),
+        ])
+
+    monkeypatch.setattr('app.services.llm.OpenAICompatibleLLM', _central)
+    monkeypatch.setattr(
+        'app.services.retrieval_client.httpx.get',
+        _readable_collections(_collection('it-docs', 'IT Docs'), _collection('hr-docs', 'HR Docs')),
+    )
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _search_by_collection({
+        'it-docs': _search_response(_chunk('doc-it', 1, 'it-docs', 'IT content')),
+        'hr-docs': _search_response(_chunk('doc-hr', 2, 'hr-docs', 'HR content')),
+    }))
+
+    response = client.post('/internal/chat', json=_BODY, headers=AUTH_HEADERS)
+
+    assert response.status_code == 200, response.text
+    assert endpoint_calls == [('https://tools.example/v1', 'tool-chat')]
+    assert all(trace['status'] == 'complete' for trace in response.json()['trace']['agent']['subagents'])
+
+
+def test_subagent_endpoint_without_tool_support_fails_closed(tmp_path, monkeypatch):
+    from app.services.chat_config_client import ChatProviderSnapshot
+
+    _write_bot(tmp_path, monkeypatch, _bot_with_subagent_endpoint('plain-llm'))
+    monkeypatch.setattr('app.services.chat.fetch_chat_provider', _endpoints(**{'plain-llm': ChatProviderSnapshot(
+        enabled=True, base_url='https://plain.example/v1', model='plain-chat', supports_tools=False,
+    )}))
+    _script_get_llm_calls(monkeypatch, [[], []])
+    monkeypatch.setattr(
+        'app.services.retrieval_client.httpx.get',
+        _readable_collections(_collection('it-docs', 'IT Docs'), _collection('hr-docs', 'HR Docs')),
+    )
+
+    response = client.post('/internal/chat', json=_BODY, headers=AUTH_HEADERS)
+
+    assert response.status_code == 503
+    assert 'plain-llm' in response.json()['detail']

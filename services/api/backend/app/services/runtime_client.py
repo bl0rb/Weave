@@ -187,7 +187,10 @@ def conversation_title(*, question: str, answer: str) -> str:
     return result['title']
 
 
-def _chat_payload(*, bot_id: str, message: str, history: list[dict], user: dict, collections: list[str] | None) -> dict:
+def _chat_payload(
+    *, bot_id: str, message: str, history: list[dict], user: dict, collections: list[str] | None,
+    llm_endpoint: str | None = None,
+) -> dict:
     """Shared request-body assembly for chat() and chat_stream() below.
     `collections` is only added to the payload when it isn't `None` -- the
     key is omitted entirely rather than sent as an explicit `null`, so a
@@ -202,11 +205,14 @@ def _chat_payload(*, bot_id: str, message: str, history: list[dict], user: dict,
     payload = {'bot_id': bot_id, 'message': message, 'history': history, 'user': user}
     if collections is not None:
         payload['collections'] = collections
+    if llm_endpoint:
+        payload['llm_endpoint'] = llm_endpoint
     return payload
 
 
 def chat(
-    *, bot_id: str, message: str, history: list[dict], user: dict, collections: list[str] | None = None
+    *, bot_id: str, message: str, history: list[dict], user: dict, collections: list[str] | None = None,
+    llm_endpoint: str | None = None,
 ) -> dict:
     """POST /internal/chat -- one turn of a conversation, called by both
     POST /v1/chat (app/api/chat.py, stateful/persisted) and
@@ -245,12 +251,15 @@ def chat(
     omits the key entirely from the outgoing body, see `_chat_payload`'s own
     docstring for exactly why that distinction matters.
     """
-    payload = _chat_payload(bot_id=bot_id, message=message, history=history, user=user, collections=collections)
+    payload = _chat_payload(
+        bot_id=bot_id, message=message, history=history, user=user, collections=collections, llm_endpoint=llm_endpoint,
+    )
     return _post('/internal/chat', payload, read_timeout=settings.chat_read_timeout_seconds)
 
 
 def chat_stream(
-    *, bot_id: str, message: str, history: list[dict], user: dict, collections: list[str] | None = None
+    *, bot_id: str, message: str, history: list[dict], user: dict, collections: list[str] | None = None,
+    llm_endpoint: str | None = None,
 ) -> Iterator[dict]:
     """POST /internal/chat/stream -- the SSE counterpart to chat() above.
     Same request body/field mapping as chat() (see that function's own
@@ -293,7 +302,9 @@ def chat_stream(
     *return value*, produced by the separate generator function
     `_iter_chat_stream_events` below -- is lazy.
     """
-    payload = _chat_payload(bot_id=bot_id, message=message, history=history, user=user, collections=collections)
+    payload = _chat_payload(
+        bot_id=bot_id, message=message, history=history, user=user, collections=collections, llm_endpoint=llm_endpoint,
+    )
     client = _client()
     request = client.build_request('POST', '/internal/chat/stream', json=payload)
     try:

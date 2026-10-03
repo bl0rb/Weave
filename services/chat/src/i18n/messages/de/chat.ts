@@ -63,6 +63,7 @@ export const chat = {
   'composer.questionLabel': 'Deine Frage',
   'composer.assistantLabel': 'Assistent',
   'composer.noBotAvailable': 'Kein Bot verfügbar',
+  'composer.modelLabel': 'Sprachmodell',
   'composer.send': 'Nachricht senden',
   'composer.sendHint': 'Enter zum Senden · Shift+Enter für einen Zeilenumbruch',
 

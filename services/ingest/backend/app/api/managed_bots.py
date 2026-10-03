@@ -14,7 +14,9 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, origin_guard, require_admin
 from app.core.config import settings
 from app.database.session import get_db
-from app.models.models import BotGrant, BotRole, BotTombstone, Collection, ManagedBot, Team, User, UserRole
+from app.models.models import (
+    BotGrant, BotRole, BotTombstone, ChatProviderConfig, Collection, ManagedBot, Team, User, UserRole,
+)
 from app.schemas.managed_bots import (
     BotGrantInput,
     BotGrantResponse,
@@ -86,6 +88,8 @@ def _admin_response(row: ManagedBot) -> ManagedBotAdminResponse:
         require_sources=row.require_sources,
         no_context_reply=row.no_context_reply,
         agent=dict(row.agent_config) if row.agent_config else None,
+        llm_endpoint=row.llm_endpoint,
+        llm_endpoints=list(row.llm_endpoints or []),
         created_at=row.created_at,
         updated_at=row.updated_at,
         source='managed',
@@ -169,6 +173,7 @@ def _runtime_bots(db: Session | None = None) -> list[ManagedBotAdminResponse]:
             collections=list(retrieval.get('collections') or []),
             require_sources=bool(guard.get('require_sources', True)), no_context_reply=guard.get('no_context_reply', ''),
             agent=config.get('agent'),
+            llm_endpoint=model.get('endpoint'), llm_endpoints=list(model.get('endpoints') or []),
             created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc), source='runtime', editable=True,
         ))
     return result
@@ -220,6 +225,33 @@ def _validate_collections(db: Session, slugs: list[str]) -> None:
         )
 
 
+def _validate_llm_endpoints(db: Session, payload: ManagedBotCreate | ManagedBotUpdate) -> None:
+    agent_on = payload.agent is not None and payload.agent.enabled
+    subagent_endpoints = {sub.endpoint for sub in payload.agent.subagents if sub.endpoint} if agent_on else set()
+    wanted = ({payload.llm_endpoint, *payload.llm_endpoints} | subagent_endpoints) - {None, '*'}
+    if not wanted:
+        return
+    rows = {
+        row.id: row
+        for row in db.scalars(select(ChatProviderConfig).where(ChatProviderConfig.id.in_(wanted))).all()
+    }
+    unknown = sorted(wanted - set(rows) - {'default'})
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f'Unbekannte LLM-Endpoints: {", ".join(unknown)}',
+        )
+    # Runtime refuses a subagent endpoint without tool calls per turn; say so at save time.
+    without_tools = sorted(
+        endpoint for endpoint in subagent_endpoints if not getattr(rows.get(endpoint), 'supports_tools', False)
+    )
+    if without_tools:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f'LLM-Endpoints ohne Tool-Aufrufe können nicht für Subagenten genutzt werden: {", ".join(without_tools)}',
+        )
+
+
 def _scope_slugs(payload: ManagedBotCreate | ManagedBotUpdate) -> list[str]:
     """The bot's own spaces plus every subagent's: all must exist, or a
     later space created under a dangling slug would be searched at once."""
@@ -265,6 +297,8 @@ def _apply(row: ManagedBot, payload: ManagedBotCreate | ManagedBotUpdate, admin:
     row.require_sources = payload.require_sources
     row.no_context_reply = payload.no_context_reply
     row.agent_config = payload.agent.model_dump() if payload.agent else None
+    row.llm_endpoint = payload.llm_endpoint
+    row.llm_endpoints = list(payload.llm_endpoints)
     row.updated_by_id = admin.id
     if payload.auth_token:
         row.auth_token_encrypted = encrypt_managed_bot_auth_token(payload.auth_token.strip())
@@ -295,6 +329,7 @@ def create_managed_bot(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Diese Bot-ID wird bereits verwendet.')
     grants = _validated_grants(db, payload.grants)
     _validate_collections(db, _scope_slugs(payload))
+    _validate_llm_endpoints(db, payload)
     # Re-creating a previously deleted Runtime/YAML bot restores it.
     tombstone = db.get(BotTombstone, payload.id)
     if tombstone is not None:
@@ -333,6 +368,7 @@ def update_managed_bot(
             db.delete(tombstone)
     grants = _validated_grants(db, payload.grants)
     _validate_collections(db, _scope_slugs(payload))
+    _validate_llm_endpoints(db, payload)
     _apply(row, payload, admin, grants)
     db.commit()
     db.refresh(row)
@@ -404,6 +440,8 @@ def internal_managed_bots(response: Response, db: Session = Depends(get_db)) -> 
             require_sources=row.require_sources,
             no_context_reply=row.no_context_reply,
             agent=dict(row.agent_config) if row.agent_config else None,
+            llm_endpoint=row.llm_endpoint,
+            llm_endpoints=list(row.llm_endpoints or []),
         ))
     return ManagedBotInternalListResponse(items=items, disabled_ids=sorted(disabled_ids))
 

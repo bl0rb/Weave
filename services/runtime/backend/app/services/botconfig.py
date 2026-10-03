@@ -287,7 +287,10 @@ def _managed_bot(raw: dict) -> BotConfig:
             'id': raw['id'],
             'name': raw['name'],
             'description': raw.get('description'),
-            'model': {'provider': 'fake', 'model': 'fake-chat', 'temperature': raw.get('temperature')} if is_llm else {'provider': 'n8n', 'model': 'n8n-agent-flow'},
+            'model': {
+                'provider': 'fake', 'model': 'fake-chat', 'temperature': raw.get('temperature'),
+                'endpoint': raw.get('llm_endpoint'), 'endpoints': raw.get('llm_endpoints') or [],
+            } if is_llm else {'provider': 'n8n', 'model': 'n8n-agent-flow'},
             'system_prompt': raw.get('system_prompt') if is_llm else 'Du führst Anfragen über den konfigurierten n8n-Workflow aus.',
             'retrieval': {
                 'enabled': bool(raw.get('retrieval_enabled', False)) if is_llm else False,

@@ -44,6 +44,7 @@ export function ChatApp() {
   const [selectedCollections, setSelectedCollections] = useState<string[]>([]);
 
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
+  const [selectedEndpointId, setSelectedEndpointId] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [draft, setDraft] = useState('');
@@ -160,6 +161,7 @@ export function ChatApp() {
     activeTurnRef.current = null;
     setSending(false);
     setSelectedBotId(botId);
+    setSelectedEndpointId(null);
     setConversationId(null);
     setMessages([]);
     setSelectedSourceMessageId(null);
@@ -328,6 +330,14 @@ export function ChatApp() {
   // racing `setSelectedCollections`'s own async state update — React
   // batches that setState, so reading `selectedCollections` again in the
   // same tick would still see the OLD selection, not the just-cleared one.
+  // The LLM endpoints the selected bot offers (own first). A choice the
+  // current bot does not offer falls back to its first entry, so what the
+  // picker shows is always what is sent.
+  const botEndpoints = bots?.find((bot) => bot.id === selectedBotId)?.llm_endpoints ?? [];
+  const effectiveEndpointId = botEndpoints.some((endpoint) => endpoint.id === selectedEndpointId)
+    ? selectedEndpointId
+    : (botEndpoints[0]?.id ?? null);
+
   const sendTurn = useCallback(
     async (text: string, collectionsForRequest: string[]) => {
       const trimmed = text.trim();
@@ -347,6 +357,7 @@ export function ChatApp() {
         message: trimmed,
         conversationId,
         selectedCollections: collectionsForRequest,
+        llmEndpoint: effectiveEndpointId,
       });
 
       try {
@@ -364,7 +375,7 @@ export function ChatApp() {
         void refreshConversations();
       }
     },
-    [selectedBotId, conversationId, sending, runTurn, refreshConversations]
+    [selectedBotId, effectiveEndpointId, conversationId, sending, runTurn, refreshConversations]
   );
 
   async function handleSend() {
@@ -552,6 +563,9 @@ export function ChatApp() {
           bots={bots}
           selectedBotId={selectedBotId}
           onSelectBot={handleSelectBot}
+          llmEndpoints={botEndpoints}
+          selectedEndpointId={effectiveEndpointId}
+          onSelectEndpoint={setSelectedEndpointId}
           collections={collections}
           collectionsError={collectionsError}
           selectedCollections={selectedCollections}

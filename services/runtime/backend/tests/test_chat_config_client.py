@@ -94,7 +94,7 @@ def test_central_config_fails_closed(monkeypatch, failure):
 def test_direct_chat_turn_uses_central_model_and_endpoint(monkeypatch):
     monkeypatch.setattr(
         'app.services.chat.fetch_chat_provider',
-        lambda: ChatProviderSnapshot(
+        lambda *_: ChatProviderSnapshot(
             enabled=True,
             base_url='https://central.example/v1',
             model='central-model',
@@ -120,3 +120,58 @@ def test_direct_chat_turn_uses_central_model_and_endpoint(monkeypatch):
     assert post.call_args.args[0] == 'https://central.example/v1/chat/completions'
     assert post.call_args.kwargs['headers']['Authorization'] == 'Bearer central-key'
     assert post.call_args.kwargs['json']['temperature'] == 0.1
+
+
+def test_named_endpoint_is_requested_by_id_and_fails_closed_when_disabled(monkeypatch):
+    monkeypatch.setattr(settings, 'chat_config_base_url', 'http://ingest:8000')
+    monkeypatch.setattr(settings, 'chat_config_service_token', 'shared-token')
+    response = Mock(status_code=200)
+    response.json.return_value = {'configured': True, 'enabled': True, 'base_url': 'https://t.example', 'model': 'tool-chat'}
+    with patch('app.services.chat_config_client.httpx.get', return_value=response) as get:
+        assert fetch_chat_provider('tools-llm').model == 'tool-chat'
+        assert get.call_args.kwargs['params'] == {'endpoint': 'tools-llm'}
+        fetch_chat_provider()
+        assert 'params' not in get.call_args.kwargs
+    response.json.return_value = {'configured': False, 'enabled': False}
+    with patch('app.services.chat_config_client.httpx.get', return_value=response):
+        assert fetch_chat_provider().enabled is False
+        with pytest.raises(ChatConfigUnavailable):
+            fetch_chat_provider('tools-llm')
+
+
+def test_user_endpoint_choice_is_limited_to_the_bots_offer(monkeypatch):
+    requested = []
+
+    def fake_fetch(endpoint='default'):
+        requested.append(endpoint)
+        return ChatProviderSnapshot(enabled=True, base_url='https://central.example/v1', model=f'{endpoint}-model')
+
+    monkeypatch.setattr('app.services.chat.fetch_chat_provider', fake_fetch)
+    response = Mock(status_code=200, text='')
+    response.json.return_value = {'choices': [{'message': {'content': 'ok'}}], 'model': 'tools-llm-model'}
+    with patch('app.services.llm.httpx.post', return_value=response) as post:
+        # general-assistant offers every endpoint ('*').
+        chosen = client.post('/internal/chat', headers=AUTH_HEADERS, json={
+            'bot_id': 'general-assistant', 'message': 'Hallo', 'llm_endpoint': 'tools-llm',
+        })
+        assert chosen.status_code == 200, chosen.text
+        assert post.call_args.kwargs['json']['model'] == 'tools-llm-model'
+        # legal-support offers no choice beyond its own endpoint.
+        refused = client.post('/internal/chat', headers=AUTH_HEADERS, json={
+            'bot_id': 'legal-support', 'message': 'Hallo', 'llm_endpoint': 'tools-llm', 'user': {'team': 'legal'},
+        })
+    assert refused.status_code == 403
+    assert 'LLM-Endpunkt' in refused.json()['detail']
+    assert requested == ['tools-llm']
+
+
+def test_bot_roster_lists_selectable_endpoints_own_first(monkeypatch):
+    from app.api import internal
+
+    monkeypatch.setattr(internal, 'fetch_chat_endpoints', lambda: [
+        {'id': 'default', 'name': 'Zentral', 'model': 'central'},
+        {'id': 'tools-llm', 'name': 'Tools', 'model': 'tool-chat', 'supports_tools': True},
+    ])
+    bots = {bot['id']: bot for bot in client.get('/internal/bots', headers=AUTH_HEADERS).json()}
+    assert [item['id'] for item in bots['general-assistant']['llm_endpoints']] == ['default', 'tools-llm']
+    assert bots['legal-support']['llm_endpoints'] == []

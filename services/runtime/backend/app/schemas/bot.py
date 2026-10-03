@@ -52,6 +52,16 @@ class ModelConfig(BaseModel):
     # consulted for it -- see that validator's own docstring.
     supports_tools: bool | None = None
 
+    # Central LLM endpoint (Weave-Ingest Admin > Chat-Provider, its id)
+    # this bot answers with; None = the central 'default' endpoint. Only
+    # consulted when the control plane is configured (see app/services/
+    # chat.py's central-provider override); standalone keeps `provider`/
+    # `model` above.
+    endpoint: str | None = None
+    # Further endpoint ids a chat user may pick per request
+    # (ChatRequest.llm_endpoint); '*' offers every enabled endpoint.
+    endpoints: list[str] = Field(default_factory=list)
+
 
 class N8nConfig(BaseModel):
     """Configuration for the 'n8n' bot provider (see app/services/chat.py's
@@ -255,6 +265,11 @@ class SubagentConfig(BaseModel):
     # leaves open without requiring every subagent to repeat the main
     # bot's model configuration verbatim.
     model: ModelConfig | None = None
+    # Central LLM endpoint id (Weave-Ingest Admin > Chat & LLM) for this
+    # subagent's research loop -- takes precedence over `model` whenever
+    # the control plane is configured; its tool-call support is checked per
+    # turn (app/services/chat.py's `_subagent_endpoint_llm`).
+    endpoint: str | None = None
     limits: SubagentLimits = Field(default_factory=SubagentLimits)
 
     @field_validator('id')
@@ -493,6 +508,15 @@ class BotRetrievalSummary(BaseModel):
     enabled: bool
 
 
+class LlmEndpointSummary(BaseModel):
+    """One LLM endpoint a chat user may choose for a bot (no credentials)."""
+
+    id: str
+    name: str
+    model: str
+    supports_tools: bool = False
+
+
 class BotSummary(BaseModel):
     """The response shape for GET /internal/bots (see
     app/api/internal.py) -- deliberately NOT the full BotConfig: a bot's
@@ -510,3 +534,6 @@ class BotSummary(BaseModel):
     # every signed-in chat user, who must not learn who else was granted.
     public: bool = True
     collections: list[str] = Field(default_factory=list)
+    # Selectable LLM endpoints, the bot's own first; empty when the bot
+    # offers no choice.
+    llm_endpoints: list[LlmEndpointSummary] = Field(default_factory=list)

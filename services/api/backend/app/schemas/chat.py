@@ -32,6 +32,10 @@ class ChatRequest(BaseModel):
     # app/api/openai_compat.py's OpenAI-compatible shim -- see that
     # module's own comment on `chat_completions` for why.
     collections: list[str] | None = None
+    # The user's LLM endpoint choice for this turn (Weave-Runtime's
+    # `ChatRequest.llm_endpoint`), forwarded only when set; Runtime checks
+    # it against the bot's offered endpoints.
+    llm_endpoint: str | None = Field(default=None, max_length=36)
 
 
 class ChatResponse(BaseModel):

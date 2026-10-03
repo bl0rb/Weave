@@ -125,13 +125,15 @@ export function buildChatRequestBody(params: {
   message: string;
   conversationId: string | null;
   selectedCollections: string[];
+  llmEndpoint?: string | null;
 }): ChatRequestBody {
-  const { botId, message, conversationId, selectedCollections } = params;
+  const { botId, message, conversationId, selectedCollections, llmEndpoint } = params;
   return {
     bot_id: botId,
     message,
     ...(conversationId ? { conversation_id: conversationId } : {}),
     ...(selectedCollections.length > 0 ? { collections: selectedCollections } : {}),
+    ...(llmEndpoint ? { llm_endpoint: llmEndpoint } : {}),
   };
 }
 

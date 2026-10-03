@@ -34,7 +34,13 @@ class ChatProviderSnapshot:
     supports_tools: bool = False
 
 
-def fetch_chat_provider() -> ChatProviderSnapshot | None:
+DEFAULT_ENDPOINT = 'default'
+
+
+def fetch_chat_provider(endpoint: str = DEFAULT_ENDPOINT) -> ChatProviderSnapshot | None:
+    """Snapshot of one central LLM endpoint ('default' unless a bot or user
+    picked another). A named endpoint that is unknown or disabled fails
+    closed instead of silently answering with a different model."""
     base_url = settings.chat_config_base_url.rstrip('/')
     token = settings.chat_config_service_token
     if not base_url and not token:
@@ -47,6 +53,7 @@ def fetch_chat_provider() -> ChatProviderSnapshot | None:
             f'{base_url}/api/v1/internal/chat-provider',
             headers={'Authorization': f'Bearer {token}'},
             timeout=settings.chat_config_timeout_seconds,
+            **({'params': {'endpoint': endpoint}} if endpoint != DEFAULT_ENDPOINT else {}),
         )
     except httpx.HTTPError as exc:
         raise ChatConfigUnavailable('Zentrale Chat-Konfiguration ist vorübergehend nicht erreichbar.') from exc
@@ -69,7 +76,35 @@ def fetch_chat_provider() -> ChatProviderSnapshot | None:
         raise ChatConfigUnavailable('Zentrale Chat-Konfiguration hat ungültige Daten geliefert.') from exc
     if snapshot.enabled and (not snapshot.base_url or not snapshot.model):
         raise ChatConfigUnavailable('Zentrale Chat-Konfiguration ist unvollständig.')
+    if endpoint != DEFAULT_ENDPOINT and not snapshot.enabled:
+        raise ChatConfigUnavailable(f'LLM-Endpunkt {endpoint!r} ist nicht verfügbar.')
     return snapshot
+
+
+def fetch_chat_endpoints() -> list[dict] | None:
+    """Enabled central LLM endpoints (id/name/model, never credentials)
+    for the bot roster's endpoint picker. ``None`` in standalone mode."""
+    base_url = settings.chat_config_base_url.rstrip('/')
+    token = settings.chat_config_service_token
+    if not base_url or not token:
+        return None
+    try:
+        response = httpx.get(
+            f'{base_url}/api/v1/internal/chat-provider/endpoints',
+            headers={'Authorization': f'Bearer {token}'},
+            timeout=settings.chat_config_timeout_seconds,
+        )
+    except httpx.HTTPError as exc:
+        raise ChatConfigUnavailable('LLM-Endpunkte sind vorübergehend nicht erreichbar.') from exc
+    if response.status_code != 200:
+        raise ChatConfigUnavailable('LLM-Endpunkte sind vorübergehend nicht verfügbar.')
+    try:
+        items = response.json()['items']
+        if not isinstance(items, list) or not all(isinstance(item, dict) and item.get('id') for item in items):
+            raise TypeError
+        return items
+    except (ValueError, TypeError, KeyError) as exc:
+        raise ChatConfigUnavailable('LLM-Endpunkte haben ungültige Daten geliefert.') from exc
 
 
 def fetch_managed_bots() -> list[dict] | None:
