@@ -29,7 +29,7 @@
 # through to `graph.invoke()`) and is pinned directly here rather than left
 # implicit, so a future `langgraph` upgrade can't silently drift it.
 langgraph==1.2.12
-langchain-core==1.6.4
+langchain-core==1.6.6
 fastapi==0.141.1
 uvicorn[standard]==0.53.0
 pydantic==2.13.5
