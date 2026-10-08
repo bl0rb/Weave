@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import {
   Bot,
   ChevronDown,
+  Cloud,
   FolderOpen,
   Home,
   KeyRound,
@@ -23,6 +24,7 @@ import {
   UsersRound,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
+import { firstName } from '@/lib/utils';
 import { WeaveIngestLogo } from '@/components/weave-ingest-logo';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { LanguageSwitch } from '@/i18n/language-switch';
@@ -57,13 +59,6 @@ function adminNav(t: T): NavItem[] {
     { href: '/admin/betrieb', label: t('portal.nav.admin.operations'), icon: Server },
     { href: '/admin/status', label: t('portal.nav.admin.systemStatus'), icon: Activity },
   ];
-}
-
-/** "mathias.werk@example.com" / "mathias_werk" -> "Mathias": long logins
- * don't fit the sidebar, the first name does (full login in the tooltip). */
-function firstName(username: string): string {
-  const first = username.split('@')[0].split(/[._\-\s]+/).find(Boolean) ?? username;
-  return first.charAt(0).toLocaleUpperCase() + first.slice(1);
 }
 
 function isActive(href: string, pathname: string): boolean {
@@ -209,6 +204,10 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
             <div ref={menuRef} className="relative border-t border-[var(--line)] pt-2.5">
               {menuOpen && (
                 <div role="menu" className="shell-profile-menu">
+                  <Link role="menuitem" href="/connections" onClick={() => { setMenuOpen(false); onOpenChange(false); }} className="flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)] no-underline hover:bg-[var(--hover)] hover:text-[var(--ink)]">
+                    <Cloud className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
+                    {t('portal.chrome.breadcrumb.connections')}
+                  </Link>
                   <Link role="menuitem" href="/settings" onClick={() => { setMenuOpen(false); onOpenChange(false); }} className="flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)] no-underline hover:bg-[var(--hover)] hover:text-[var(--ink)]">
                     <KeyRound className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
                     {t('portal.chrome.apiTokens')}

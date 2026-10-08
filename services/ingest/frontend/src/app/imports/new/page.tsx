@@ -94,7 +94,8 @@ function NewImportPageInner() {
 
   const [newName, setNewName] = useState('');
   const [newBaseUrl, setNewBaseUrl] = useState('');
-  const [newAuthType, setNewAuthType] = useState<ImportAuthType>('cloud_basic');
+  // Server / Data Center (PAT) is the common on-premises case, so it is preselected.
+  const [newAuthType, setNewAuthType] = useState<ImportAuthType>('pat_bearer');
   const [newEmail, setNewEmail] = useState('');
   // Write-only secrets: only ever hold what the user is typing right now;
   // stored credentials are never fetched or displayed.
@@ -613,22 +614,12 @@ function NewImportPageInner() {
                               value={newBaseUrl}
                               onChange={(event) => setNewBaseUrl(event.target.value)}
                               className="mt-1 w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950"
-                              placeholder="https://acme.atlassian.net"
+                              placeholder={newAuthType === 'cloud_basic' ? 'https://acme.atlassian.net' : 'https://confluence.example.com'}
                             />
                           </label>
                           <div className="md:col-span-2">
                             <p className="text-sm text-slate-600">{t('portal.importWizard.authenticationLabel')}</p>
                             <div className="mt-1 grid gap-3 md:grid-cols-2">
-                              <button
-                                type="button"
-                                onClick={() => selectAuthType('cloud_basic')}
-                                className={`rounded-xl border p-3 text-left ${
-                                  newAuthType === 'cloud_basic' ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white'
-                                }`}
-                              >
-                                <p className="text-sm font-semibold text-slate-950">{t('portal.importWizard.authCloudTitle')}</p>
-                                <p className="mt-1 text-xs text-slate-600">{t('portal.importWizard.authCloudHint')}</p>
-                              </button>
                               <button
                                 type="button"
                                 onClick={() => selectAuthType('pat_bearer')}
@@ -638,6 +629,16 @@ function NewImportPageInner() {
                               >
                                 <p className="text-sm font-semibold text-slate-950">{t('portal.importWizard.authServerTitle')}</p>
                                 <p className="mt-1 text-xs text-slate-600">{t('portal.importWizard.authServerHint')}</p>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => selectAuthType('cloud_basic')}
+                                className={`rounded-xl border p-3 text-left ${
+                                  newAuthType === 'cloud_basic' ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white'
+                                }`}
+                              >
+                                <p className="text-sm font-semibold text-slate-950">{t('portal.importWizard.authCloudTitle')}</p>
+                                <p className="mt-1 text-xs text-slate-600">{t('portal.importWizard.authCloudHint')}</p>
                               </button>
                             </div>
                           </div>

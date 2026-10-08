@@ -646,15 +646,16 @@ def test_collection_persists_in_db_across_sessions(tmp_path):
 def test_create_collection_generates_unique_slug_from_name():
     """POST /collections without an explicit slug derives one from `name`
     (lowercased, non-alnum runs collapsed to hyphens) and de-duplicates a
-    second collection with the same name via a numeric suffix rather than
-    failing outright -- see routes._unique_collection_slug."""
+    second collection whose name yields the same slug via a numeric suffix
+    rather than failing outright -- see routes._unique_collection_slug (an
+    identical name is a 409 instead, see the duplicate-name check)."""
     resp1 = client.post('/api/v1/collections', json={'description': 'Test purpose', 'name': 'Kundenservice 2026!'})
     assert resp1.status_code == 200
     body1 = resp1.json()
     assert body1['slug'] == 'kundenservice-2026'
     assert body1['name'] == 'Kundenservice 2026!'
 
-    resp2 = client.post('/api/v1/collections', json={'description': 'Test purpose', 'name': 'Kundenservice 2026!'})
+    resp2 = client.post('/api/v1/collections', json={'description': 'Test purpose', 'name': 'Kundenservice 2026?'})
     assert resp2.status_code == 200
     assert resp2.json()['slug'] == 'kundenservice-2026-2'
 

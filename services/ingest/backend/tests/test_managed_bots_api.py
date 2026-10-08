@@ -692,9 +692,9 @@ def test_owner_can_only_attach_knowledge_spaces_they_can_read():
     attached = _scope(admin_client, team_name)
     bot = _owned_bot(admin_client, owner, attached)
     foreign = admin_client.post('/api/v1/collections', json={
-        'name': 'Fremd', 'description': 'Test purpose', 'visibility': 'restricted',
+        'name': f'Fremd {uuid.uuid4().hex[:8]}', 'description': 'Test purpose', 'visibility': 'restricted',
     }).json()['slug']
-    own = login_as(owner.username).post('/api/v1/collections', json={'name': 'Eigen', 'description': 'Test purpose'}).json()['slug']
+    own = login_as(owner.username).post('/api/v1/collections', json={'name': f'Eigen {uuid.uuid4().hex[:8]}', 'description': 'Test purpose'}).json()['slug']
 
     owner_client = login_as(owner.username)
     denied = owner_client.patch(f"/api/v1/bots/{bot['id']}", json={'collections': [attached, foreign]})

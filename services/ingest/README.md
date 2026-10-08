@@ -319,7 +319,7 @@ Common endpoints:
 - `POST /api/v1/admin/retrieval-provider/reindex`, `GET .../reindex-status` — admin index maintenance: recompute vectors for every chunk, and poll progress
 - `POST /api/v1/admin/knowledge/rebuild`, `GET .../rebuild-status` — admin index maintenance: rebuild the whole index from stored releases, and poll progress
 - `POST /api/v1/admin/knowledge/orphans` — admin index maintenance: dry-run, then withdraw Knowledge documents whose job or space no longer exists (see `docs/betrieb.md` §3.2)
-- `POST /api/v1/portal/documents/bulk` — release, skip/unskip or delete several review-portal documents in one call
+- `POST /api/v1/portal/documents/bulk` — release, skip, park, unskip or delete several review-portal documents in one call
 - `POST /api/v1/portal/documents/{job_id}/reindex`, `POST /api/v1/portal/collections/{collection_id}/reindex` — re-deliver an already-released document, or every release in a knowledge space, for re-indexing without reprocessing
 - `GET` / `POST /api/v1/auth/admin/technical-identities`, `PUT` / `POST .../rotate` / `POST .../revoke`, `GET .../audit` — manage technical identities for MCP/REST integrations (admin; the raw `wti_...` token is shown once, on create or rotate)
 - `python -m app.cli backup export|import` — passphrase-encrypted disaster-recovery export/import of users, knowledge spaces, connections and stored documents (see `docs/betrieb.md` section 12; also reachable from **Backup & Restore** in the admin console)

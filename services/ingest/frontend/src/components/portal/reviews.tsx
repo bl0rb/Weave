@@ -3,14 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Ban, CheckCheck, Download, Pencil, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
+import { Ban, CheckCheck, Download, PauseCircle, Pencil, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { ApiError, apiJson } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { ConfirmDialog, apiSend } from '@/components/admin/admin-shared';
-import { MarkdownView } from '@/components/markdown/markdown-view';
-import { bulkPortalAction, dateLabel, documentState, downloadPortalFile, jsonBody, loadDocuments, markdownDownloadName, portalError, reindexPortalDocument, skipPortalDocument, unskipPortalDocument, type DocumentPage, type DocumentPreview, type PortalConfig, type QualityGradeFilter, type Publication, type ReviewStateFilter } from '@/lib/portal';
-import { BulkActionBar, DocumentTable, EmptyState, Notice, Pagination, PortalPage, QualityGradeFilterRow, QualityGradeLegend } from './shared';
+import { MarkdownView, type JobArtifact } from '@/components/markdown/markdown-view';
+import { dateLabel, documentState, downloadPortalFile, jsonBody, loadDocuments, markdownDownloadName, parkPortalDocument, portalError, reindexPortalDocument, skipPortalDocument, unskipPortalDocument, type DocumentPage, type DocumentPreview, type PortalConfig, type QualityGradeFilter, type Publication, type ReviewStateFilter } from '@/lib/portal';
+import { BulkActionBar, DocumentTable, EmptyState, Notice, Pagination, PortalPage, QualityGradeFilterRow, QualityGradeLegend, useBulkSelection } from './shared';
 import { ReprocessForm } from './reprocess-form';
 import { MarkdownEditor } from './markdown-editor';
 import { IndexingProgress } from './indexing-progress';
@@ -19,6 +19,22 @@ import { currentReleaseStatus } from '@/lib/indexing-status';
 import { useI18n } from '@/i18n/provider';
 import { translate, type MessageKey } from '@/i18n/messages';
 import type { Locale } from '@/i18n/config';
+
+/** How many open review documents the detail page's previous/next navigation pages through. */
+const REVIEW_QUEUE_LIMIT = 200;
+/** The queue is reused this long, so stepping through documents with "Nächstes" doesn't refetch it on every page. */
+const REVIEW_QUEUE_TTL_MS = 60_000;
+type ReviewQueue = { ids: string[]; total: number; fetchedAt: number };
+let reviewQueueCache: ReviewQueue | null = null;
+/** For tests only: forget the cached review queue. */
+export function resetReviewQueueCache() { reviewQueueCache = null; }
+function loadReviewQueue(): Promise<ReviewQueue> {
+  if (reviewQueueCache && Date.now() - reviewQueueCache.fetchedAt < REVIEW_QUEUE_TTL_MS) return Promise.resolve(reviewQueueCache);
+  return loadDocuments(undefined, 0, 'review', undefined, REVIEW_QUEUE_LIMIT).then(page => {
+    const ids = (page.items ?? []).map(document => document.id);
+    return reviewQueueCache = { ids, total: page.total ?? ids.length, fetchedAt: Date.now() };
+  });
+}
 
 const qualityMissingReasonKeys: Record<string, MessageKey> = {
   not_finished: 'portal.reviews.quality.reason.notFinished',
@@ -36,6 +52,7 @@ function reviewStateChips(t: (key: MessageKey) => string): Array<{ value: Review
   return [
     { value: 'review', label: t('portal.reviews.stateReview') },
     { value: 'all', label: t('portal.reviews.stateAll') },
+    { value: 'parked', label: t('portal.documents.state.parked') },
     { value: 'skipped', label: t('portal.documents.state.skipped') },
   ];
 }
@@ -47,51 +64,21 @@ export function ReviewInbox() {
   const [reviewState, setReviewState] = useState<ReviewStateFilter>('review');
   const [qualityGrade, setQualityGrade] = useState<QualityGradeFilter>('');
   const [error, setError] = useState('');
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [acceptQualityWarnings, setAcceptQualityWarnings] = useState(false);
-  const [releaseConfirmed, setReleaseConfirmed] = useState(false);
-  const [bulkBusy, setBulkBusy] = useState(false);
-  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [notice, setNotice] = useState('');
   const load = useCallback(() => loadDocuments(undefined, offset, reviewState, qualityGrade || undefined)
     .then(docs => { setDocuments(docs); setError(''); })
     .catch(err => setError(portalError(err, locale))), [offset, reviewState, qualityGrade, locale]);
   useEffect(() => { void load(); }, [load]);
-  const selectedDocuments = documents?.items.filter(document => selectedIds.has(document.id)) ?? [];
-  const gradeCCount = selectedDocuments.filter(document => document.quality_grade?.toUpperCase() === 'C').length;
-  function clearSelection() { setSelectedIds(new Set()); setAcceptQualityWarnings(false); setReleaseConfirmed(false); }
-  async function runBulk(action: 'release' | 'skip' | 'delete') {
-    if (bulkBusy || selectedIds.size === 0) return;
-    setBulkBusy(true); setNotice('');
-    try {
-      const result = await bulkPortalAction([...selectedIds], action, acceptQualityWarnings);
-      setNotice(`${t('portal.spaces.bulkDoneNotice', { count: result.done })}${result.errors.length ? t('portal.spaces.bulkErrorSuffix', { count: result.errors.length }) : ''}.`);
-      clearSelection();
-      setDocuments(null);
-      await load();
-    } catch (err) { setError(portalError(err, locale)); } finally { setBulkBusy(false); setBulkDeleting(false); }
-  }
+  const bulk = useBulkSelection({ documents: documents?.items ?? [], acrossPages: true, onNotice: setNotice, onError: setError, onDone: () => { setDocuments(null); return load(); } });
   return <PortalPage title={t('portal.reviews.title')} description={t('portal.reviews.description')} actions={<Button variant="outline" onClick={load}>{t('common.refresh')}</Button>}>
-    <div className="portal-filter-row" role="group" aria-label={t('portal.reviews.selectionAria')}>{reviewStateChips(t).map(chip => <button key={chip.value} aria-pressed={chip.value === reviewState} onClick={() => { setReviewState(chip.value); setOffset(0); setDocuments(null); clearSelection(); }}>{chip.label}</button>)}</div>
+    <div className="portal-filter-row" role="group" aria-label={t('portal.reviews.selectionAria')}>{reviewStateChips(t).map(chip => <button key={chip.value} aria-pressed={chip.value === reviewState} onClick={() => { setReviewState(chip.value); setOffset(0); setDocuments(null); bulk.clear(); }}>{chip.label}</button>)}</div>
     <QualityGradeFilterRow value={qualityGrade} onChange={value => { setQualityGrade(value); setOffset(0); setDocuments(null); }} />
     <QualityGradeLegend />
     {error && <Notice error action={load}>{error}</Notice>}
     {notice && <Notice>{notice}</Notice>}
-    <BulkActionBar
-      count={selectedIds.size}
-      gradeCCount={gradeCCount}
-      acceptQualityWarnings={acceptQualityWarnings}
-      onAcceptQualityWarningsChange={setAcceptQualityWarnings}
-      releaseConfirmed={releaseConfirmed}
-      onReleaseConfirmedChange={setReleaseConfirmed}
-      busy={bulkBusy}
-      onRelease={() => void runBulk('release')}
-      onSkip={() => void runBulk('skip')}
-      onDelete={() => setBulkDeleting(true)}
-      onClear={clearSelection}
-    />
-    <section className="portal-panel">{!documents && !error ? <p role="status" className="portal-loading">{t('portal.tasks.documentsLoading')}</p> : documents?.items.length ? <><DocumentTable documents={documents.items} selectedIds={selectedIds} onToggle={id => setSelectedIds(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; })} onToggleAll={checked => setSelectedIds(checked ? new Set(documents.items.map(document => document.id)) : new Set())} /><Pagination offset={offset} total={documents.total} onChange={value => { setDocuments(null); setOffset(value); }} /></> : !error && <EmptyState title={reviewState === 'review' ? t('portal.reviews.emptyReviewTitle') : reviewState === 'skipped' ? t('portal.reviews.emptySkippedTitle') : t('portal.reviews.emptyUnassignedTitle')} href="/sources/new" action={t('portal.chrome.addSource')}>{reviewState === 'review' ? t('portal.reviews.emptyReviewBody') : t('portal.reviews.emptyOtherBody')}</EmptyState>}</section>
-    {bulkDeleting && <ConfirmDialog title={t('portal.spaces.deleteDocumentsTitle')} body={<p>{t('portal.spaces.deleteDocumentsBody', { count: selectedIds.size })}</p>} confirmLabel={t('portal.spaces.deleteDocumentsTitle')} onClose={() => setBulkDeleting(false)} onConfirm={() => runBulk('delete')} />}
+    <BulkActionBar {...bulk.barProps} />
+    <section className="portal-panel">{!documents && !error ? <p role="status" className="portal-loading">{t('portal.tasks.documentsLoading')}</p> : documents?.items.length ? <><DocumentTable documents={documents.items} selectedIds={bulk.selectedIds} onToggle={bulk.toggle} onToggleAll={checked => bulk.selectAll(documents.items.map(document => document.id), checked)} /><Pagination offset={offset} total={documents.total} onChange={value => { setDocuments(null); setOffset(value); }} /></> : !error && <EmptyState title={reviewState === 'review' ? t('portal.reviews.emptyReviewTitle') : reviewState === 'skipped' ? t('portal.reviews.emptySkippedTitle') : reviewState === 'parked' ? t('portal.reviews.emptyParkedTitle') : t('portal.reviews.emptyUnassignedTitle')} href="/sources/new" action={t('portal.chrome.addSource')}>{reviewState === 'review' ? t('portal.reviews.emptyReviewBody') : t('portal.reviews.emptyOtherBody')}</EmptyState>}</section>
+    {bulk.bulkDeleting && <ConfirmDialog title={t('portal.spaces.deleteDocumentsTitle')} body={<p>{t('portal.spaces.deleteDocumentsBody', { count: bulk.count })}</p>} confirmLabel={t('portal.spaces.deleteDocumentsTitle')} onClose={bulk.closeDelete} onConfirm={() => bulk.runBulk('delete')} />}
   </PortalPage>;
 }
 
@@ -133,9 +120,11 @@ function ReviewDocumentContent({ id }: { id: string }) {
   const [reprocessStarted, setReprocessStarted] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [downloadingDiagnostics, setDownloadingDiagnostics] = useState(false);
-  const [skipping, setSkipping] = useState(false);
+  const [deciding, setDeciding] = useState<'skip' | 'park' | 'unskip' | null>(null);
   const [confirmReindex, setConfirmReindex] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [artifacts, setArtifacts] = useState<JobArtifact[] | null>(null);
+  const [queue, setQueue] = useState<{ ids: string[]; total: number } | null>(null);
   const startedHeading = useRef<HTMLHeadingElement>(null);
   // Latest locale for error text without making it a `load` dependency: a
   // language switch must not reload and reset the confirmation/reprocess form.
@@ -145,9 +134,21 @@ function ReviewDocumentContent({ id }: { id: string }) {
     .then(([content, configuration]) => { setPreview(content); setConfig(configuration); setError(''); setConfirmed(false); setReprocessOpen(false); })
     .catch(err => { setPreview(null); setError(portalError(err, localeRef.current)); }), [id]);
   useEffect(() => { void load(); }, [load]);
+  // Opened from a scrolled list (or via previous/next): start at the top of the document.
+  useEffect(() => { document.documentElement.scrollTop = 0; }, []);
+  // Images (artifacts/…) and the open review queue for previous/next; both are optional extras.
+  useEffect(() => {
+    // A password-protected job answers 401 here: that must not log the (valid) session out.
+    apiJson<{ items?: JobArtifact[] }>(`/api/v1/jobs/${encodeURIComponent(id)}/artifacts`, { skipAuthRedirect: true })
+      .then(page => setArtifacts(page.items ?? []))
+      .catch(() => setArtifacts([]));
+    loadReviewQueue()
+      .then(setQueue)
+      .catch(() => setQueue({ ids: [], total: 0 }));
+  }, [id]);
   useEffect(() => { if (reprocessStarted) startedHeading.current?.focus(); }, [reprocessStarted]);
   async function release() {
-    if (saving || reprocessOpen || reprocessStarted || !preview || !confirmed || !preview.can_release || !config?.publication_configured) return;
+    if (saving || deciding || reprocessOpen || reprocessStarted || !preview || !confirmed || !preview.can_release || !config?.publication_configured) return;
     setSaving(true); setError('');
     try {
       const publication = await apiJson<Publication>(`/api/v1/portal/documents/${encodeURIComponent(id)}/release`, jsonBody({ markdown_sha256: preview.markdown_sha256, ...(preview.quality_grade?.toUpperCase() === 'C' ? { accept_quality_warning: true } : {}) }));
@@ -169,17 +170,13 @@ function ReviewDocumentContent({ id }: { id: string }) {
       setConfirmReindex(false);
     } catch (err) { setError(portalError(err, locale)); } finally { setSaving(false); }
   }
-  async function skip() {
-    if (skipping || !preview) return;
-    setSkipping(true); setError('');
-    try { const updated = await skipPortalDocument(id); setPreview({ ...preview, review_decision: updated.review_decision }); }
-    catch (err) { setError(portalError(err, locale)); } finally { setSkipping(false); }
-  }
-  async function unskip() {
-    if (skipping || !preview) return;
-    setSkipping(true); setError('');
-    try { const updated = await unskipPortalDocument(id); setPreview({ ...preview, review_decision: updated.review_decision }); }
-    catch (err) { setError(portalError(err, locale)); } finally { setSkipping(false); }
+  async function decide(action: 'skip' | 'park' | 'unskip') {
+    if (saving || deciding || !preview) return;
+    setDeciding(action); setError('');
+    try {
+      const updated = await { skip: skipPortalDocument, park: parkPortalDocument, unskip: unskipPortalDocument }[action](id);
+      setPreview({ ...preview, review_decision: updated.review_decision });
+    } catch (err) { setError(portalError(err, locale)); } finally { setDeciding(null); }
   }
   async function downloadDiagnostics() {
     if (downloadingDiagnostics || !preview?.release || user?.role !== 'admin') return;
@@ -210,8 +207,21 @@ function ReviewDocumentContent({ id }: { id: string }) {
   const releaseStatus = preview?.release ? currentReleaseStatus(preview.release, live) : null;
   const delivery = releaseStatus?.delivery ?? null;
   const indexingFailed = releaseStatus?.indexing?.state === 'failed';
+  const queueIds = queue?.ids ?? null;
+  const position = queueIds ? queueIds.indexOf(id) : -1;
+  const previousId = queueIds && position > 0 ? queueIds[position - 1] : null;
+  // Outside the queue (already decided, or opened from "all"): continue with the first open document.
+  const nextId = queueIds ? (position >= 0 ? queueIds[position + 1] : queueIds[0]) ?? null : null;
+  const decided = Boolean(preview?.release) || preview?.review_decision === 'skipped' || preview?.review_decision === 'parked';
   return <PortalPage title={preview?.original_filename || t('portal.reviews.detailTitleFallback')} description={t('portal.reviews.detailDescription')} eyebrow={t('portal.reviews.detailEyebrow')} actions={!reprocessStarted && <Button variant="outline" disabled={saving} onClick={load}>{t('portal.reviews.reloadAction')}</Button>}>
-    <Link className="portal-back" href="/reviews">{t('portal.reviews.backLink')}</Link>
+    <div className="portal-review-nav">
+      <Link className="portal-back" href="/reviews">{t('portal.reviews.backLink')}</Link>
+      {Boolean(queueIds?.length) && <nav aria-label={t('portal.reviews.queueAria')}>
+        {position >= 0 && <span>{t('portal.reviews.queuePosition', { current: position + 1, total: queue!.total })}</span>}
+        {previousId && <Link className={buttonVariants({ variant: 'outline', size: 'sm' })} href={`/reviews/${encodeURIComponent(previousId)}`}>{t('portal.reviews.previous')}</Link>}
+        {nextId && nextId !== id && <Link className={buttonVariants({ variant: 'outline', size: 'sm' })} href={`/reviews/${encodeURIComponent(nextId)}`}>{t('portal.reviews.next')}</Link>}
+      </nav>}
+    </div>
     {error && <Notice error action={load}>{error}</Notice>}
     {!preview && !error && <Notice>{t('portal.reviews.loadingDetail')}</Notice>}
     {reprocessStarted && <section className="portal-panel portal-form-panel" aria-labelledby="reprocess-started-title">
@@ -219,17 +229,18 @@ function ReviewDocumentContent({ id }: { id: string }) {
       <h2 id="reprocess-started-title" tabIndex={-1} ref={startedHeading}>{t('portal.reviews.reprocessStartedHeading')}</h2>
       <p className="mt-4">{t('portal.reviews.reprocessStartedBody1')}</p>
       <p className="mt-3">{t('portal.reviews.reprocessStartedBody2')}</p>
-      <div className="portal-form-actions"><Link href="/processing" className={buttonVariants()}>{t('portal.reviews.viewProcessing')}</Link><Link href="/reviews" className={buttonVariants({ variant: 'ghost' })}>{t('portal.reviews.backToReview')}</Link></div>
+      <div className="portal-form-actions"><Link href="/documents?stand=processing" className={buttonVariants()}>{t('portal.reviews.viewProcessing')}</Link><Link href="/reviews" className={buttonVariants({ variant: 'ghost' })}>{t('portal.reviews.backToReview')}</Link></div>
     </section>}
     {preview && !reprocessStarted && <><div className="portal-context-bar"><Link href={`/knowledge/${preview.collection_id}`}>{preview.collection_name}</Link><span aria-live="polite" className={`portal-badge portal-badge-${state?.tone}`}>{state?.label}</span></div>
       <div className="portal-review-grid"><article className="portal-panel portal-preview"><div className="flex flex-wrap items-start justify-between gap-3"><h2>{editing ? t('portal.reviews.editHeading') : preview.release ? t('portal.reviews.releasedHeading') : t('portal.reviews.processedHeading')}</h2>{preview.can_edit && !editing && <Button variant="outline" size="sm" onClick={() => { setEditing(true); setError(''); }}><Pencil size={15} />{t('portal.reviews.editAction')}</Button>}</div>
-        {editing ? <MarkdownEditor preview={preview} onCancel={() => setEditing(false)} onSaved={result => {
+        {editing ? <MarkdownEditor preview={preview} artifacts={artifacts} onCancel={() => setEditing(false)} onSaved={result => {
           setEditing(false);
           // A released document gets a new version: continue on that one.
           if (result.document_id !== preview.id) router.push(`/reviews/${encodeURIComponent(result.document_id)}`);
           else void load();
-        }} /> : <><p className="portal-field-hint">{t('portal.reviews.previewHint')}</p><MarkdownView markdown={preview.markdown} jobId={preview.id} /></>}</article>
+        }} /> : <><p className="portal-field-hint">{t('portal.reviews.previewHint')}</p><MarkdownView markdown={preview.markdown} jobId={preview.id} artifacts={artifacts} /></>}</article>
       <aside className="portal-panel portal-release-panel"><ShieldCheck size={27} /><h2>{reprocessOpen ? t('portal.reviews.reprocessHeading') : t('portal.reviews.releaseHeading')}</h2>
+        {decided && nextId && nextId !== id && <Link className={buttonVariants({ className: 'mb-5 w-full' })} href={`/reviews/${encodeURIComponent(nextId)}`}>{t('portal.reviews.nextAfterDecision')}</Link>}
         <dl><dt>{t('portal.reviews.qualityLabel')}</dt><dd>{preview.quality_grade ? t('portal.documents.grade', { grade: preview.quality_grade }) : t('portal.reviews.noAutoRating')}</dd><dt>{t('portal.reviews.originLabel')}</dt><dd>{preview.source?.url ? <a href={preview.source.url} target="_blank" rel="noopener noreferrer">{preview.source.label}</a> : preview.source?.path ? `${preview.source.label}: ${preview.source.path}` : preview.source?.label}{provenance(preview, t, locale).map(line => <span key={line} className="block text-[13px] text-[var(--muted)]">{line}</span>)}</dd><dt>{t('portal.documents.columnAdded')}</dt><dd>{dateLabel(preview.created_at, locale)}</dd></dl>
         <details className="portal-quality-reason"><summary>{preview.quality_grade ? t('portal.reviews.whyGrade', { grade: preview.quality_grade }) : t('portal.reviews.whyNoGrade')}</summary>
           {preview.quality ? <>
@@ -248,16 +259,23 @@ function ReviewDocumentContent({ id }: { id: string }) {
         {(!preview.quality_recommendation || preview.quality_recommendation.trim().toLowerCase() === 'warn') && <Notice>{t('portal.reviews.noticeWarn')}</Notice>}
         {preview.release ? <><div className="portal-release-receipt"><CheckCheck size={23} /><strong>{t('portal.reviews.releaseSaved')}</strong><span>{dateLabel(preview.release.created_at, locale)}</span>{preview.release.released_by && <span>{t('portal.documents.releasedBy', { name: preview.release.released_by })}</span>}</div><p>{t('portal.reviews.releaseImmutable')}</p>{delivery === 'failed' && <><Notice error>{t('portal.reviews.deliveryFailedNotice')}</Notice>{preview.can_release && <Button disabled={saving} onClick={retry}>{t('portal.reviews.retryDelivery')}</Button>}</>}<IndexingProgress release={preview.release} live={live} />{preview.can_release && (confirmReindex ? <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={saving} onClick={() => setConfirmReindex(false)}>{t('common.cancel')}</Button><Button variant={indexingFailed ? 'default' : 'outline'} disabled={saving} onClick={() => void reindex()}><RefreshCw size={16} />{saving ? t('portal.reviews.reindexTriggering') : t('portal.reviews.reindexConfirmYes')}</Button></div> : <Button className="w-full" variant={indexingFailed ? 'default' : 'outline'} disabled={saving} onClick={() => setConfirmReindex(true)}><RefreshCw size={16} />{t('portal.spaces.reindexConfirm')}</Button>)}{user?.role === 'admin' && <Button className="w-full whitespace-normal h-auto py-3" variant="outline" disabled={downloadingDiagnostics} onClick={() => void downloadDiagnostics()}><Download size={16} />{downloadingDiagnostics ? t('portal.reviews.diagnosticsDownloading') : t('portal.reviews.diagnosticsDownload')}</Button>}</> : preview.review_decision === 'skipped' ? <>
           <p className="portal-field-hint">{t('portal.reviews.skippedHint')}</p>
-          <Button className="w-full" variant="outline" disabled={skipping} onClick={() => void unskip()}>{skipping ? t('portal.reviews.unskipping') : t('portal.reviews.unskip')}</Button>
+          <Button className="w-full" variant="outline" disabled={saving || Boolean(deciding)} onClick={() => void decide('unskip')}>{deciding === 'unskip' ? t('portal.reviews.unskipping') : t('portal.reviews.unskip')}</Button>
         </> : reprocessOpen ? <ReprocessForm currentProfileId={preview.profile_id} busy={saving} onSubmit={reprocess} onCancel={() => { setReprocessOpen(false); setError(''); }} /> : <>
-          {preview.can_reprocess && <Button className="w-full whitespace-normal h-auto py-3" variant="outline" disabled={saving} onClick={() => { setReprocessOpen(true); setConfirmed(false); setError(''); }}>{t('portal.reviews.reprocessTrigger')}</Button>}
-          {!preview.release && preview.can_release && <Button className="w-full" variant="outline" disabled={skipping} onClick={() => void skip()}><Ban size={16} />{skipping ? t('portal.reviews.skipping') : t('portal.reviews.skipAction')}</Button>}
-          {!deleting && <Button className="w-full" variant="outline" disabled={saving} onClick={() => setDeleting(true)}><Trash2 size={16} />{t('portal.reviews.deleteDocument')}</Button>}
+          {preview.review_decision === 'parked' && <p className="portal-field-hint">{t('portal.reviews.parkedHint')}</p>}
           {!config?.publication_configured && <Notice>{t('portal.reviews.publicationNotConfigured')}</Notice>}
           {!preview.can_release && preview.quality_recommendation !== 'block' && <p className="portal-field-hint">{t('portal.reviews.releasePermissionHint')}</p>}
+          {/* The three decisions, in this order: release, park, don't release. */}
           <label className="portal-choice portal-approval"><input type="checkbox" checked={confirmed} disabled={saving || !preview.can_release || !config?.publication_configured} onChange={event => setConfirmed(event.target.checked)} />{preview.quality_grade?.toUpperCase() === 'C' ? t('portal.reviews.confirmGradeC') : t('portal.reviews.confirmDefault')}</label>
-          <Button className="w-full" disabled={saving || !confirmed || !preview.can_release || !config?.publication_configured} onClick={release}>{saving ? t('portal.reviews.releasing') : t('portal.reviews.releaseAction')}</Button>
-          <Link href="/reviews" className="portal-defer">{t('portal.reviews.reviewLater')}</Link>
+          <Button className="w-full" disabled={saving || Boolean(deciding) || !confirmed || !preview.can_release || !config?.publication_configured} onClick={release}>{saving ? t('portal.reviews.releasing') : t('portal.reviews.releaseAction')}</Button>
+          {preview.can_release && (preview.review_decision === 'parked'
+            ? <Button className="w-full" variant="outline" disabled={saving || Boolean(deciding)} onClick={() => void decide('unskip')}>{deciding === 'unskip' ? t('portal.reviews.unskipping') : t('portal.reviews.unskip')}</Button>
+            : <Button className="w-full" variant="outline" disabled={saving || Boolean(deciding)} onClick={() => void decide('park')}><PauseCircle size={16} />{deciding === 'park' ? t('portal.reviews.parking') : t('portal.reviews.parkAction')}</Button>)}
+          {preview.can_release && <Button className="w-full" variant="outline" disabled={saving || Boolean(deciding)} onClick={() => void decide('skip')}><Ban size={16} />{deciding === 'skip' ? t('portal.reviews.skipping') : t('portal.reviews.skipAction')}</Button>}
+          {/* Tools, visually apart from the three decisions above. */}
+          {(preview.can_reprocess || !deleting) && <div className="mt-4 grid gap-2 border-t border-[var(--line)] pt-4">
+            {preview.can_reprocess && <Button className="w-full" variant="outline" disabled={saving} onClick={() => { setReprocessOpen(true); setConfirmed(false); setError(''); }}><RefreshCw size={16} />{t('portal.reviews.reprocessTrigger')}</Button>}
+            {!deleting && <Button className="w-full" variant="ghost" disabled={saving} onClick={() => setDeleting(true)}><Trash2 size={16} />{t('portal.reviews.deleteDocument')}</Button>}
+          </div>}
         </>}
       </aside></div></>}
     {deleting && preview && <ConfirmDialog title={t('portal.reviews.deleteDocument')} body={<p>{t('portal.reviews.deleteDialogBodyPrefix')} <strong className="text-slate-950">{preview.original_filename}</strong> {t('portal.reviews.deleteDialogBodySuffix')}</p>} confirmLabel={t('portal.reviews.deleteDocument')} onClose={() => setDeleting(false)} onConfirm={async () => { await apiSend(`/api/v1/jobs/${encodeURIComponent(id)}`, { method: 'DELETE' }); router.push('/reviews'); router.refresh(); }} />}

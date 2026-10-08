@@ -5,10 +5,11 @@ import Link from 'next/link';
 import { AlertTriangle, CheckCheck, Clock3, FileText, RefreshCw } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { buttonVariants } from '@/components/ui/button';
-import { loadDocuments, portalError, type PortalDocument } from '@/lib/portal';
+import { ConfirmDialog } from '@/components/admin/admin-shared';
+import { loadDocuments, portalError, type PortalDocument, type ReviewStateFilter } from '@/lib/portal';
 import { loadFailedJobs, type FailedJob } from '@/lib/jobs-search';
 import { useI18n } from '@/i18n/provider';
-import { Notice, PortalPage } from './shared';
+import { BulkActionBar, Notice, PortalPage, useBulkSelection } from './shared';
 
 /** How many "released by me" candidates to scan for a match — see the component doc comment below. */
 const RELEASED_BY_ME_SCAN_LIMIT = 100;
@@ -37,10 +38,13 @@ export function Aufgaben() {
   const { user } = useAuth();
   const { t, locale } = useI18n();
   const [state, setState] = useState<State>({ review: null, failed: null, releasedByMe: null });
+  // Parked and skipped documents live here too, so nobody needs the /reviews inbox to find them again.
+  const [reviewState, setReviewState] = useState<Extract<ReviewStateFilter, 'review' | 'parked' | 'skipped'>>('review');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
 
   const load = useCallback(() => Promise.all([
-    loadDocuments(undefined, 0, 'review', undefined, 20),
+    loadDocuments(undefined, 0, reviewState, undefined, 20),
     loadFailedJobs(20),
     loadDocuments(undefined, 0, 'all', undefined, RELEASED_BY_ME_SCAN_LIMIT),
   ]).then(([review, failed, all]) => {
@@ -50,26 +54,39 @@ export function Aufgaben() {
       .slice(0, RELEASED_BY_ME_SHOWN);
     setState({ review: review.items, failed: failed.items, releasedByMe });
     setError('');
-  }).catch((err) => setError(portalError(err, locale))), [user, locale]);
+  }).catch((err) => setError(portalError(err, locale))), [user, locale, reviewState]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Several review documents at once, same bulk actions as /reviews and /documents.
+  const bulk = useBulkSelection({ documents: state.review ?? [], onNotice: setNotice, onError: setError, onDone: load });
+  const allSelected = Boolean(state.review?.length) && state.review!.every((document) => bulk.selectedIds.has(document.id));
 
   return (
     <PortalPage title={t('portal.nav.tasks')} description={t('portal.tasks.description')} actions={<button type="button" onClick={() => void load()} className={buttonVariants({ variant: 'outline' })}><RefreshCw size={15} aria-hidden="true" />{t('common.refresh')}</button>}>
       {error && <Notice error action={load}>{error}</Notice>}
+      {notice && <Notice>{notice}</Notice>}
 
       <section className="portal-panel portal-tasks-card" aria-labelledby="review-title">
         <header className="portal-section-heading">
-          <h2 id="review-title">{t('portal.home.tile.review.label')}</h2>
+          {Boolean(state.review?.length) && <input type="checkbox" aria-label={t('portal.documents.selectAllFiltered', { count: state.review!.length })} checked={allSelected} onChange={(event) => bulk.selectAll(state.review!.map((document) => document.id), event.target.checked)} />}
+          <h2 id="review-title">{t(reviewState === 'review' ? 'portal.home.tile.review.label' : reviewState === 'parked' ? 'portal.documents.state.parked' : 'portal.documents.state.skipped')}</h2>
           {Boolean(state.review?.length) && <span className="portal-pill">{state.review!.length}</span>}
           <span className="ml-auto text-xs text-[var(--muted)]">{t('portal.tasks.reviewHint')}</span>
         </header>
+        <div className="portal-filter-row" role="group" aria-label={t('portal.reviews.selectionAria')}>
+          {([['review', 'portal.reviews.stateReview'], ['parked', 'portal.documents.state.parked'], ['skipped', 'portal.documents.state.skipped']] as const).map(([value, key]) => (
+            <button key={value} type="button" aria-pressed={reviewState === value} onClick={() => { if (reviewState === value) return; setReviewState(value); setState((current) => ({ ...current, review: null })); bulk.clear(); }}>{t(key)}</button>
+          ))}
+        </div>
+        <BulkActionBar {...bulk.barProps} />
         {state.review === null ? (
           <p role="status" className="portal-loading">{t('portal.tasks.documentsLoading')}</p>
         ) : state.review.length ? (
           <ul className="portal-task-list" aria-live="polite">
             {state.review.map((document) => (
-              <li className="portal-task" key={document.id}>
+              <li className="portal-task portal-task-selectable" key={document.id}>
+                <input type="checkbox" aria-label={t('portal.documents.selectRow', { filename: document.original_filename })} checked={bulk.selectedIds.has(document.id)} onChange={() => bulk.toggle(document.id)} />
                 <span className="portal-task-icon"><FileText size={18} aria-hidden="true" /></span>
                 <span className="portal-task-text">
                   <strong>{document.original_filename}</strong>
@@ -80,7 +97,7 @@ export function Aufgaben() {
             ))}
           </ul>
         ) : (
-          <div className="portal-task-empty"><CheckCheck size={26} aria-hidden="true" /><span>{t('portal.tasks.reviewEmpty')}</span></div>
+          <div className="portal-task-empty"><CheckCheck size={26} aria-hidden="true" /><span>{t(reviewState === 'review' ? 'portal.tasks.reviewEmpty' : reviewState === 'parked' ? 'portal.reviews.emptyParkedTitle' : 'portal.reviews.emptySkippedTitle')}</span></div>
         )}
       </section>
 
@@ -133,6 +150,7 @@ export function Aufgaben() {
           <div className="portal-task-empty"><Clock3 size={26} aria-hidden="true" /><span>{t('portal.tasks.releasedByMeEmpty')}</span></div>
         )}
       </section>
+      {bulk.bulkDeleting && <ConfirmDialog title={t('portal.spaces.deleteDocumentsTitle')} body={<p>{t('portal.spaces.deleteDocumentsBody', { count: bulk.count })}</p>} confirmLabel={t('portal.spaces.deleteDocumentsTitle')} onClose={bulk.closeDelete} onConfirm={() => bulk.runBulk('delete')} />}
     </PortalPage>
   );
 }

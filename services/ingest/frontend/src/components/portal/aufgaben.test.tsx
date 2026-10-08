@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { apiJson } from '@/lib/api';
 import { Aufgaben } from './aufgaben';
@@ -18,11 +18,13 @@ const releasedByOther = { id: 'd2', original_filename: 'Roadmap.xlsx', status: '
 function mockData({ review = [reviewDoc], failed = [failedJob], all = [releasedByMe, releasedByOther] } = {}) {
   api.mockImplementation(async (path) => {
     if (typeof path !== 'string') throw new Error('unexpected non-string path');
+    if (path === '/api/v1/portal/documents/bulk') return { done: 2, errors: [] };
     if (path.startsWith('/api/v1/portal/documents')) {
       const reviewState = new URL(path, 'http://localhost').searchParams.get('review_state');
       return reviewState === 'review' ? { items: review, total: review.length } : { items: all, total: all.length };
     }
     if (path.startsWith('/api/v1/search')) return { items: failed, total: failed.length };
+    if (path === '/api/v1/portal/documents/bulk') return { done: 2, errors: [] };
     throw new Error(`unexpected path ${path}`);
   });
 }
@@ -40,7 +42,16 @@ it('lists failed jobs under Braucht Hilfe with a link to the job', async () => {
   render(<Aufgaben />);
   expect(await screen.findByText('Vertrag.pdf')).toBeTruthy();
   expect(screen.getByText('Seite nicht erreichbar (404)')).toBeTruthy();
-  expect(screen.getByRole('link', { name: 'Auftrag ansehen' }).getAttribute('href')).toBe('/jobs/j1');
+  expect(screen.getByRole('link', { name: 'Fehler ansehen' }).getAttribute('href')).toBe('/jobs/j1');
+});
+
+it('lists parked and skipped documents here too, without the separate review inbox', async () => {
+  render(<Aufgaben />);
+  await screen.findByText('Handbuch.pdf');
+  fireEvent.click(screen.getByRole('button', { name: 'Geparkt' }));
+  await waitFor(() => expect(api.mock.calls.some(([path]) => typeof path === 'string' && path.includes('review_state=parked'))).toBe(true));
+  expect(await screen.findByRole('heading', { name: 'Geparkt' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Geparkt' }).getAttribute('aria-pressed')).toBe('true');
 });
 
 it('shows only documents released by the signed-in user under "Von dir freigegeben"', async () => {
@@ -55,4 +66,18 @@ it('shows empty states when nothing needs attention', async () => {
   expect(await screen.findByText(/Nichts zu prüfen/)).toBeTruthy();
   expect(screen.getByText(/Keine Fehler/)).toBeTruthy();
   expect(screen.getByText(/noch nichts freigegeben/)).toBeTruthy();
+});
+
+it('selects several review documents at once and parks them in one bulk action', async () => {
+  const second = { ...reviewDoc, id: 'r2', original_filename: 'Richtlinie.pdf' };
+  mockData({ review: [reviewDoc, second] });
+  render(<Aufgaben />);
+  await screen.findByText('Richtlinie.pdf');
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Alle 2 Dokumente auswählen' }));
+  expect(screen.getByText('2 ausgewählt')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Parken' }));
+  await waitFor(() => {
+    const call = api.mock.calls.find(([path]) => path === '/api/v1/portal/documents/bulk');
+    expect(JSON.parse(call?.[1]?.body as string)).toMatchObject({ job_ids: ['r1', 'r2'], action: 'park' });
+  });
 });

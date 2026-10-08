@@ -9,15 +9,18 @@ import { jsonBody, portalError, type KnowledgeSpace } from '@/lib/portal';
 import { accessSummary } from '@/lib/access-summary';
 import type { ImportSource, ImportRun } from '@/lib/imports';
 import { portalProfiles, type PortalProfile, type ProcessingProfile } from '@/lib/portal-profiles';
+import { ConfluenceSetupDialog } from '@/components/connections/confluence-setup-dialog';
 import { useI18n } from '@/i18n/provider';
-import { EmptyState, Notice, PortalPage } from './shared';
+import { EmptyState, Notice, PortalPage, RequiredMark } from './shared';
 
 type UploadResult = { name: string; id?: string; ok: boolean; message: string };
 
 const SOURCE_DRAFT_KEY = 'weave-source-form-draft';
 type SourceDraft = { collectionId: string; kind: 'files' | 'confluence'; sourceId: string; pageUrl: string; automatic: boolean; confirmedAccess: boolean; profileId: string };
 
-export function SourceForm({ initialCollection = '' }: { initialCollection?: string }) {
+/** `initialKind`/`initialSourceId` come from /sources/new?kind=confluence&source=… (e.g. right after the
+ * Confluence setup in the new knowledge space flow) and win over a saved draft. */
+export function SourceForm({ initialCollection = '', initialKind, initialSourceId }: { initialCollection?: string; initialKind?: 'files' | 'confluence'; initialSourceId?: string }) {
   const { t, locale } = useI18n();
   const [spaces, setSpaces] = useState<KnowledgeSpace[] | null>(null);
   const [sources, setSources] = useState<ImportSource[]>([]);
@@ -27,12 +30,14 @@ export function SourceForm({ initialCollection = '' }: { initialCollection?: str
     catch { return initialCollection; }
   });
   const [kind, setKind] = useState<'files' | 'confluence'>(() => {
+    if (initialKind) return initialKind;
     if (typeof window === 'undefined') return 'files';
     try { return (JSON.parse(sessionStorage.getItem(SOURCE_DRAFT_KEY) || 'null') as SourceDraft | null)?.kind || 'files'; }
     catch { return 'files'; }
   });
   const [files, setFiles] = useState<File[]>([]);
   const [sourceId, setSourceId] = useState(() => {
+    if (initialSourceId) return initialSourceId;
     if (typeof window === 'undefined') return '';
     try { return (JSON.parse(sessionStorage.getItem(SOURCE_DRAFT_KEY) || 'null') as SourceDraft | null)?.sourceId || ''; }
     catch { return ''; }
@@ -64,6 +69,10 @@ export function SourceForm({ initialCollection = '' }: { initialCollection?: str
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
   const [sourceError, setSourceError] = useState('');
+  const [sourcesLoaded, setSourcesLoaded] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(false);
+  // Someone choosing Confluence without a connection gets the setup right away -- once, not after every reload.
+  const setupOffered = useRef(false);
   const [results, setResults] = useState<UploadResult[]>([]);
   const [run, setRun] = useState<ImportRun | null>(null);
   const completed = !saving && (results.length > 0 || run !== null);
@@ -84,7 +93,11 @@ export function SourceForm({ initialCollection = '' }: { initialCollection?: str
   }, [locale]);
   const loadSources = useCallback(async () => {
     setSourceError('');
-    try { const data = await apiJson<{ items: ImportSource[] }>('/api/v1/import/sources'); setSources(data.items); }
+    try {
+      const data = await apiJson<{ items: ImportSource[] }>('/api/v1/import/sources');
+      setSources(data.items); setSourcesLoaded(true);
+      if (!data.items.length && !setupOffered.current) { setupOffered.current = true; setSetupOpen(true); }
+    }
     catch (err) { setSourceError(portalError(err, locale)); }
   }, [locale]);
   const loadProfiles = useCallback(async () => {
@@ -139,19 +152,21 @@ export function SourceForm({ initialCollection = '' }: { initialCollection?: str
     } catch (err) { setError(portalError(err, locale)); }
     finally { setSaving(false); setProgress(''); }
   }
-  return <PortalPage title={t('portal.sourceForm.title')} description={t('portal.sourceForm.description')} eyebrow={t('portal.sourceForm.step')}>
+  return <PortalPage title={t('portal.sourceForm.title')} description={t('portal.sourceForm.description')} eyebrow={null}>
     {error && <Notice error>{error}</Notice>}
     {spaces === null && !error && <Notice>{t('portal.spaces.loading')}</Notice>}
     {spaces?.length === 0 && <EmptyState title={t('portal.sourceForm.emptySpacesTitle')} href="/knowledge/new" action={t('portal.chrome.breadcrumb.knowledgeNew')}>{t('portal.sourceForm.emptySpacesBody')}</EmptyState>}
     {Boolean(spaces?.length) && !completed && <form className="portal-panel portal-source-form" onSubmit={submit}>
-      <fieldset disabled={saving || Boolean(run)}><legend><span className="portal-step">01</span> {t('portal.sourceForm.step1Legend')}</legend><label>{t('portal.sourceForm.spaceSelectLabel')}<select required value={collectionId} onChange={event => setCollectionId(event.target.value)}><option value="">{t('portal.sourceForm.pleaseSelect')}</option>{spaces?.map(space => <option key={space.collection_id} value={space.collection_id}>{space.name}</option>)}</select></label><Link className="portal-inline-link" href="/knowledge/new"><Plus size={14} />{t('portal.sourceForm.newSpaceLink')}</Link>
+      <fieldset disabled={saving || Boolean(run)}><legend><span className="portal-step">01</span> {t('portal.sourceForm.step1Legend')}</legend><label>{t('portal.sourceForm.spaceSelectLabel')}<RequiredMark /><select required value={collectionId} onChange={event => setCollectionId(event.target.value)}><option value="">{t('portal.sourceForm.pleaseSelect')}</option>{spaces?.map(space => <option key={space.collection_id} value={space.collection_id}>{space.name}</option>)}</select></label><Link className="portal-inline-link" href="/knowledge/new"><Plus size={14} />{t('portal.sourceForm.newSpaceLink')}</Link>
         {selected && <p className="portal-field-hint">{t('portal.spaces.authorizedLabel')} {accessSummary(selected, locale)}.</p>}
       </fieldset>
       <fieldset disabled={saving || Boolean(run)}><legend><span className="portal-step">02</span> {t('portal.sourceForm.step2Legend')}</legend><div className="portal-source-types"><label className={kind === 'files' ? 'selected' : ''}><input type="radio" name="kind" value="files" checked={kind === 'files'} onChange={() => setKind('files')} /><FileUp size={23} /><span><strong>{t('portal.sourceForm.filesOption')}</strong><small>{t('portal.sourceForm.filesHint')}</small></span></label><label className={kind === 'confluence' ? 'selected' : ''}><input type="radio" name="kind" value="confluence" checked={kind === 'confluence'} onChange={() => setKind('confluence')} /><Globe size={23} /><span><strong>{t('portal.sourceForm.confluenceOption')}</strong><small>{t('portal.sourceForm.confluenceHint')}</small></span></label></div>
-        {kind === 'files' ? <label className="portal-upload">{t('portal.sourceForm.chooseFiles')}<input type="file" multiple required accept=".pdf,.docx,.pptx,.xlsx,.xls,.png,.jpg,.jpeg,.eml" onChange={event => setFiles(Array.from(event.target.files || []))} /><span>{files.length ? t('portal.sourceForm.filesSelectedCount', { count: files.length }) : t('portal.sourceForm.filesPlaceholder')}</span><span>{t('portal.sourceForm.emailAttachmentsHint')}</span></label> : <div className="portal-form">
+        {kind === 'files' ? <label className="portal-upload">{t('portal.sourceForm.chooseFiles')}<RequiredMark /><input type="file" multiple required accept=".pdf,.docx,.pptx,.xlsx,.xls,.png,.jpg,.jpeg,.eml" onChange={event => setFiles(Array.from(event.target.files || []))} /><span>{files.length ? t('portal.sourceForm.filesSelectedCount', { count: files.length }) : t('portal.sourceForm.filesPlaceholder')}</span><span>{t('portal.sourceForm.emailAttachmentsHint')}</span></label> : <div className="portal-form">
           {sourceError && <Notice error action={loadSources}>{sourceError}</Notice>}
-          <label>{t('portal.sourceForm.connectionLabel')}<select required value={sourceId} onChange={event => { setSourceId(event.target.value); setAutomatic(false); }}><option value="">{t('portal.sourceForm.chooseConnection')}</option>{sources.map(source => <option key={source.id} value={source.id}>{source.name}</option>)}</select></label><Link className="portal-inline-link" href="/connections">{t('portal.sourceForm.setupConnectionLink')} <ArrowRight size={14} /></Link>
-          <label>{t('portal.sourceForm.pageLabel')}<input required type="url" value={pageUrl} onChange={event => setPageUrl(event.target.value)} placeholder="https://confluence.example.com/..." /></label><p className="portal-field-hint">{t('portal.sourceForm.subpagesHint')}</p>
+          {sourcesLoaded && !sources.length && <p className="portal-field-hint">{t('portal.sourceForm.noConnectionHint')}</p>}
+          <label>{t('portal.sourceForm.connectionLabel')}<RequiredMark /><select required value={sourceId} onChange={event => { setSourceId(event.target.value); setAutomatic(false); }}><option value="">{t('portal.sourceForm.chooseConnection')}</option>{sources.map(source => <option key={source.id} value={source.id}>{source.name}</option>)}</select></label>
+          <div className="flex flex-wrap gap-x-6"><button type="button" className="portal-inline-link" onClick={() => setSetupOpen(true)}><Plus size={14} />{t('portal.sourceForm.setupConnectionButton')}</button><Link className="portal-inline-link" href="/connections">{t('portal.sourceForm.setupConnectionLink')} <ArrowRight size={14} /></Link></div>
+          <label>{t('portal.sourceForm.pageLabel')}<RequiredMark /><input required type="url" value={pageUrl} onChange={event => setPageUrl(event.target.value)} placeholder="https://confluence.example.com/..." /></label><p className="portal-field-hint">{t('portal.sourceForm.subpagesHint')}</p>
           <label className="portal-choice"><input type="checkbox" checked={automatic} onChange={event => setAutomatic(event.target.checked)} />{t('portal.sourceForm.autoRefreshLabel')}</label><p className="portal-field-hint">{t('portal.sourceForm.autoRefreshHint')}</p>
           <label className="portal-choice portal-access-confirm"><input required type="checkbox" checked={confirmedAccess} onChange={event => setConfirmedAccess(event.target.checked)} />{t('portal.sourceForm.confirmAccessLabel')}</label>
         </div>}
@@ -161,8 +176,9 @@ export function SourceForm({ initialCollection = '' }: { initialCollection?: str
         {profileError && <Notice error action={loadProfiles}>{profileError}</Notice>}
         {!profiles && !profileError && <Notice>{t('portal.reprocess.loading')}</Notice>}
         {profiles?.length === 0 && <Notice error>{t('portal.sourceForm.noProfile')}</Notice>}
-        {Boolean(profiles?.length) && <>
-          <label>{t('portal.sourceForm.profileSelectLabel')}
+        {/* The default profile is preselected; the choice is folded away so step 03 stays a one-liner for most people. */}
+        {Boolean(profiles?.length) && <details className="portal-quality-legend"><summary>{t('portal.sourceForm.profileSummary', { label: selectedProfile?.label ?? '' })}</summary>
+          <label>{t('portal.sourceForm.profileSelectLabel')}<RequiredMark />
             <select required value={profileId} onChange={event => setProfileId(event.target.value)} aria-describedby="profile-description profile-scope">
               {profiles?.some(profile => profile.kind === 'ocr') && <optgroup label={t('portal.reprocess.ocrGroup')}>{profiles.filter(profile => profile.kind === 'ocr').map(profile => <option key={profile.value} value={profile.value}>{profile.label}</option>)}</optgroup>}
               {profiles?.some(profile => profile.kind === 'vl') && <optgroup label={t('portal.reprocess.vlGroup')}>{profiles.filter(profile => profile.kind === 'vl').map(profile => <option key={profile.value} value={profile.value}>{profile.label}</option>)}</optgroup>}
@@ -170,10 +186,15 @@ export function SourceForm({ initialCollection = '' }: { initialCollection?: str
           </label>
           <p id="profile-description" className="portal-field-hint">{selectedProfile?.description}</p>
           <p id="profile-scope" className="portal-field-hint">{kind === 'confluence' ? t('portal.sourceForm.profileScopeConfluence') : t('portal.sourceForm.profileScopeFiles')}</p>
-        </>}
+        </details>}
       </fieldset>
-      <div className="portal-source-summary"><ShieldNotice /><div className="portal-form-actions"><Button type="submit" disabled={saving || !selected || !selectedProfile || Boolean(run) || (kind === 'files' ? files.length === 0 : !sourceId || !pageUrl.trim() || !confirmedAccess)}>{saving ? t('common.starting') : kind === 'files' ? t('portal.sourceForm.uploadSubmit') : t('portal.sourceForm.importSubmit')}</Button><Link href="/knowledge" className={buttonVariants({ variant: 'ghost' })}>{t('common.cancel')}</Link></div></div>
+      <div className="portal-source-summary"><ShieldNotice /><div className="portal-form-actions"><Button type="submit" disabled={saving || !selected || !selectedProfile || Boolean(run) || (kind === 'files' ? files.length === 0 : !sourceId || !pageUrl.trim() || !confirmedAccess)}>{saving ? t('common.starting') : kind === 'files' ? t('portal.sourceForm.uploadSubmit') : t('portal.sourceForm.importSubmit')}</Button><Link href={initialCollection ? `/knowledge/${encodeURIComponent(initialCollection)}` : '/knowledge'} className={buttonVariants({ variant: 'ghost' })}>{t('common.cancel')}</Link></div></div>
     </form>}
+    {/* Outside the form above: the dialog has a form of its own. */}
+    {setupOpen && <ConfluenceSetupDialog onClose={() => setSetupOpen(false)} onCreated={source => {
+      setSources(current => [...current, source]); setSourcesLoaded(true);
+      setSourceId(source.id); setAutomatic(false); setSetupOpen(false);
+    }} />}
     {progress && <Notice>{progress}</Notice>}
     {completed && <section className="portal-panel portal-form-panel max-w-[900px]" aria-labelledby="source-completed-title">
       <CheckCheck size={28} className="mb-4 text-emerald-700" aria-hidden="true" />
@@ -191,7 +212,7 @@ export function SourceForm({ initialCollection = '' }: { initialCollection?: str
       <h3 className="mt-8 font-semibold">{t('portal.sourceForm.whatNext')}</h3>
       <div className="portal-form-actions">
         {collectionId && <Link href={`/knowledge/${collectionId}`} className={buttonVariants()}>{t('portal.sourceForm.openSpace')}<ArrowRight size={16} aria-hidden="true" /></Link>}
-        <Link href="/processing" className={buttonVariants({ variant: 'outline' })}>{t('portal.reviews.viewProcessing')}<ArrowRight size={16} aria-hidden="true" /></Link>
+        <Link href="/documents?stand=processing" className={buttonVariants({ variant: 'outline' })}>{t('portal.reviews.viewProcessing')}<ArrowRight size={16} aria-hidden="true" /></Link>
         <Button type="button" variant="outline" onClick={addMore}>{t('portal.sourceForm.addMore')}</Button>
       </div>
     </section>}

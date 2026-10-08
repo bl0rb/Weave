@@ -297,15 +297,15 @@ function ArtifactLink({
 }
 
 const CONTAINER_CLASS = [
-  'space-y-4 text-sm leading-relaxed text-slate-800 break-words',
-  '[&_h1]:font-serif [&_h1]:text-2xl [&_h1]:font-semibold [&_h1]:text-slate-950 [&_h1]:mt-6 [&_h1]:first:mt-0',
-  '[&_h2]:text-xl [&_h2]:font-semibold [&_h2]:text-slate-950 [&_h2]:mt-6 [&_h2]:first:mt-0',
-  '[&_h3]:text-lg [&_h3]:font-semibold [&_h3]:text-slate-950 [&_h3]:mt-4',
-  '[&_h4]:text-base [&_h4]:font-semibold [&_h4]:text-slate-950 [&_h4]:mt-4',
-  '[&_h5]:text-sm [&_h5]:font-semibold [&_h5]:text-slate-950 [&_h6]:text-sm [&_h6]:font-semibold',
+  'space-y-4 text-sm leading-relaxed text-[var(--ink-2)] break-words',
+  '[&_h1]:font-serif [&_h1]:text-2xl [&_h1]:font-semibold [&_h1]:text-[var(--ink)] [&_h1]:mt-6 [&_h1]:first:mt-0',
+  '[&_h2]:text-xl [&_h2]:font-semibold [&_h2]:text-[var(--ink)] [&_h2]:mt-6 [&_h2]:first:mt-0',
+  '[&_h3]:text-lg [&_h3]:font-semibold [&_h3]:text-[var(--ink)] [&_h3]:mt-4',
+  '[&_h4]:text-base [&_h4]:font-semibold [&_h4]:text-[var(--ink)] [&_h4]:mt-4',
+  '[&_h5]:text-sm [&_h5]:font-semibold [&_h5]:text-[var(--ink)] [&_h6]:text-sm [&_h6]:font-semibold',
   '[&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:my-1',
-  '[&_blockquote]:border-l-4 [&_blockquote]:border-slate-200 [&_blockquote]:pl-4 [&_blockquote]:text-slate-600',
-  '[&_hr]:my-6 [&_hr]:border-slate-200',
+  '[&_blockquote]:border-l-4 [&_blockquote]:border-[var(--line-2)] [&_blockquote]:pl-4 [&_blockquote]:text-[var(--muted)]',
+  '[&_hr]:my-6 [&_hr]:border-[var(--line)]',
 ].join(' ');
 
 /** Leading YAML frontmatter block (`---\n…\n---`) emitted by the importer. */
@@ -402,7 +402,7 @@ export function MarkdownView({ markdown, jobId, password, artifacts = [], classN
       ),
       table: ({ children }) => (
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left text-sm [&_td]:border [&_td]:border-slate-200 [&_td]:px-3 [&_td]:py-2 [&_th]:border [&_th]:border-slate-200 [&_th]:bg-slate-50 [&_th]:px-3 [&_th]:py-2 [&_th]:font-semibold">
+          <table className="w-full border-collapse text-left text-sm [&_td]:border [&_td]:border-[var(--line-2)] [&_td]:px-3 [&_td]:py-2 [&_th]:border [&_th]:border-[var(--line-2)] [&_th]:bg-[var(--surface-2)] [&_th]:px-3 [&_th]:py-2 [&_th]:font-semibold">
             {children}
           </table>
         </div>

@@ -39,8 +39,8 @@ export type DocumentPage = { items: PortalDocument[]; total: number };
 /** One entry of GET /api/v1/portal/collections/{id}/import-scopes -- a distinct Confluence import scope among the space's visible documents. `edit_run_id` is the caller's own newest run of the scope (set only when can_edit), which may differ from the scope's newest run. */
 export type ImportScope = { value: string; scope_type: string; scope_value: string; label: string; count: number; latest_run_id: string; edit_run_id: string | null; can_edit: boolean };
 export type ImportScopesResponse = { items: ImportScope[]; other_count: number };
-export type ReviewStateFilter = 'review' | 'all' | 'skipped';
-export type BulkAction = 'release' | 'skip' | 'unskip' | 'delete';
+export type ReviewStateFilter = 'review' | 'all' | 'skipped' | 'parked';
+export type BulkAction = 'release' | 'skip' | 'park' | 'unskip' | 'delete';
 export type BulkActionResult = { done: number; errors: { job_id: string; reason: string }[] };
 export type QualityGradeFilter = '' | 'A' | 'B' | 'C' | 'none';
 export type QualitySignals = {
@@ -115,6 +115,7 @@ export function documentState(document: PortalDocument, live?: IndexingItem, loc
     return publicationState(delivery, indexing, locale);
   }
   if (document.review_decision === 'skipped') return { label: translate(locale, 'portal.documents.state.skipped'), tone: 'neutral' };
+  if (document.review_decision === 'parked') return { label: translate(locale, 'portal.documents.state.parked'), tone: 'neutral' };
   if (document.status === 'FAILED') return { label: translate(locale, 'portal.documents.state.failed'), tone: 'error' };
   if (document.status === 'RUNNING') return { label: translate(locale, 'portal.documents.state.running'), tone: 'working' };
   if (document.status === 'PENDING') return { label: translate(locale, 'portal.documents.state.pending'), tone: 'neutral' };
@@ -144,10 +145,10 @@ export function loadImportScopes(collectionId: string): Promise<ImportScopesResp
  * numbered pipeline: 1 Verarbeitung -> 2 Prüfung -> 3 Indexierung -> 4 Im
  * Chat, with Fehler called out separately rather than as a fifth step.
  */
-export type PipelineStage = 'processing' | 'review' | 'indexing' | 'ready' | 'error';
+export type PipelineStage = 'processing' | 'review' | 'indexing' | 'ready' | 'error' | 'decided';
 
-/** Numbered steps only — 'error' is shown as a separate, unnumbered chip (see the design reference above). */
-export function pipelineSteps(locale: Locale = DEFAULT_LOCALE): { value: Exclude<PipelineStage, 'error'>; step: number; label: string; hint: string }[] {
+/** Numbered steps only — 'error' is shown as a separate, unnumbered chip (see the design reference above); 'decided' (parked/skipped) is in no step. */
+export function pipelineSteps(locale: Locale = DEFAULT_LOCALE): { value: Exclude<PipelineStage, 'error' | 'decided'>; step: number; label: string; hint: string }[] {
   const automatic = translate(locale, 'portal.pipeline.hint.automatic');
   return [
     { value: 'processing', step: 1, label: translate(locale, 'portal.pipeline.processing.label'), hint: automatic },
@@ -163,11 +164,13 @@ export function pipelineSteps(locale: Locale = DEFAULT_LOCALE): { value: Exclude
  * Without a `live` indexing snapshot a released document can only be
  * placed in 'indexing' (not 'ready') — the caller can pass one from
  * {@link useIndexingStatus} for an accurate 'ready' vs 'indexing' split.
+ * An unreleased document the reviewer parked or skipped is 'decided': it no
+ * longer waits for a review.
  */
 export function pipelineStage(document: PortalDocument, live?: IndexingItem): PipelineStage {
   if (document.status === 'PENDING' || document.status === 'RUNNING') return 'processing';
   if (document.status === 'FAILED') return 'error';
-  if (!document.release) return 'review';
+  if (!document.release) return document.review_decision === 'skipped' || document.review_decision === 'parked' ? 'decided' : 'review';
   const { delivery, indexing } = currentReleaseStatus(document.release, live);
   if (isIndexReady(indexing)) return 'ready';
   if (delivery === 'failed' || indexing?.state === 'failed' || indexing?.state === 'blocked' || indexing?.state === 'incomplete' || indexing?.state === 'mismatch') return 'error';
@@ -176,20 +179,41 @@ export function pipelineStage(document: PortalDocument, live?: IndexingItem): Pi
 
 /** Tallies documents per {@link PipelineStage} — shared by the Übersicht stat tiles, the Wissensbereiche cards and the Dokumente filter bar. */
 export function summarizePipeline(documents: PortalDocument[], live: Record<string, IndexingItem> = {}): Record<PipelineStage, number> {
-  const counts: Record<PipelineStage, number> = { processing: 0, review: 0, indexing: 0, ready: 0, error: 0 };
+  const counts: Record<PipelineStage, number> = { processing: 0, review: 0, indexing: 0, ready: 0, error: 0, decided: 0 };
   for (const document of documents) counts[pipelineStage(document, live[document.id])] += 1;
   return counts;
 }
 
-/** `withdrawReleased` (delete only): released documents are withdrawn from the knowledge index and deleted too. */
-export function bulkPortalAction(jobIds: string[], action: BulkAction, acceptQualityWarnings = false, withdrawReleased = false): Promise<BulkActionResult> {
-  return apiJson('/api/v1/portal/documents/bulk', jsonBody({ job_ids: jobIds, action, accept_quality_warnings: acceptQualityWarnings, withdraw_released: withdrawReleased }));
+/** The bulk endpoint takes at most this many job ids per request. */
+const BULK_CHUNK_SIZE = 100;
+
+/** `withdrawReleased` (delete only): released documents are withdrawn from the knowledge index and deleted too. Larger selections go out in sequential chunks; the results are summed. A chunk failing after earlier ones succeeded returns the partial result, with every id of the failed and the remaining chunks as errors, so callers still reload; a failing first chunk throws. */
+export async function bulkPortalAction(jobIds: string[], action: BulkAction, acceptQualityWarnings = false, withdrawReleased = false): Promise<BulkActionResult> {
+  const total: BulkActionResult = { done: 0, errors: [] };
+  for (let start = 0; start < jobIds.length; start += BULK_CHUNK_SIZE) {
+    try {
+      const result = await apiJson<BulkActionResult>('/api/v1/portal/documents/bulk', jsonBody({ job_ids: jobIds.slice(start, start + BULK_CHUNK_SIZE), action, accept_quality_warnings: acceptQualityWarnings, withdraw_released: withdrawReleased }));
+      total.done += result.done;
+      total.errors.push(...result.errors);
+    } catch (err) {
+      if (start === 0) throw err;
+      const reason = err instanceof Error ? err.message : String(err);
+      total.errors.push(...jobIds.slice(start).map(job_id => ({ job_id, reason })));
+      break;
+    }
+  }
+  return total;
 }
 
 export function skipPortalDocument(jobId: string): Promise<PortalDocument> {
   return apiJson(`/api/v1/portal/documents/${encodeURIComponent(jobId)}/skip`, { method: 'POST' });
 }
 
+export function parkPortalDocument(jobId: string): Promise<PortalDocument> {
+  return apiJson(`/api/v1/portal/documents/${encodeURIComponent(jobId)}/park`, { method: 'POST' });
+}
+
+/** Clears either review decision (skipped or parked). */
 export function unskipPortalDocument(jobId: string): Promise<PortalDocument> {
   return apiJson(`/api/v1/portal/documents/${encodeURIComponent(jobId)}/unskip`, { method: 'POST' });
 }

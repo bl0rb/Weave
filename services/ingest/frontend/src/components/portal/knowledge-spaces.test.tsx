@@ -38,13 +38,31 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-it('offers two "Wissensbereich anlegen" entry points, both pointing to /knowledge/new', async () => {
+it('offers "Wissensbereich anlegen" once, on the card after the spaces', async () => {
   render(<KnowledgeSpaces />);
   await screen.findByRole('heading', { name: 'Servicewissen' });
   expect(screen.getByText('Besitzer: Ada · Zuständig: Team Service')).toBeTruthy();
   const startLinks = screen.getAllByRole('link', { name: /Wissensbereich anlegen/ });
-  expect(startLinks.length).toBe(2);
-  startLinks.forEach(link => expect(link.getAttribute('href')).toBe('/knowledge/new'));
+  expect(startLinks.length).toBe(1);
+  expect(startLinks[0].getAttribute('href')).toBe('/knowledge/new');
+});
+
+it('links a space\'s "zu prüfen" chip to its filtered document list', async () => {
+  json.mockImplementation(async path => typeof path === 'string' && path.startsWith('/api/v1/portal/documents')
+    ? { items: [{ id: 'd1', original_filename: 'a.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', release: null }], total: 1 }
+    : { items: [area] });
+  render(<KnowledgeSpaces />);
+  const chip = await screen.findByRole('link', { name: '1 zu prüfen' });
+  expect(chip.getAttribute('href')).toBe('/documents?bereich=servicewissen&stand=review');
+});
+
+it('tells a reader that the space is for chat only instead of showing empty counts and document links', async () => {
+  json.mockImplementation(async () => ({ items: [{ ...area, role: 'reader', can_manage: false, can_upload: false }] }));
+  render(<KnowledgeSpaces />);
+  await screen.findByRole('heading', { name: 'Servicewissen' });
+  expect(screen.getByText(/Nur Lesezugriff/)).toBeTruthy();
+  expect(screen.queryByText(/Im Chat verfügbar/)).toBeNull();
+  expect(screen.queryByRole('link', { name: 'Dokumente ansehen' })).toBeNull();
 });
 
 it('removes the eyebrow and offers rename and delete only to managers', async () => {

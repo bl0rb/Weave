@@ -64,6 +64,13 @@ def test_release_rewrites_relative_artifact_image_links_but_keeps_digest_of_orig
     assert '](artifacts/diagram.png)' not in downloaded.text
     assert hashlib.sha256(preview['markdown'].encode()).hexdigest() == preview['markdown_sha256']
 
+    # The released document's preview hands the editor relative links again, matching the digest.
+    released_preview = authed.get(f'/api/v1/portal/documents/{job.id}').json()
+    assert '](artifacts/diagram.png)' in released_preview['markdown']
+    assert '/api/v1/portal/releases/' not in released_preview['markdown']
+    assert released_preview['markdown'] == preview['markdown']
+    assert hashlib.sha256(released_preview['markdown'].encode()).hexdigest() == released_preview['markdown_sha256']
+
 
 def test_release_event_payload_digest_matches_downloaded_markdown_bytes(monkeypatch):
     # Regression: Knowledge's fetch_released_markdown() verifies the downloaded

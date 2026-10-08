@@ -108,8 +108,13 @@ def _collection_for_job(db, job: Job) -> Collection | None:
     return db.get(Collection, collection_id) if isinstance(collection_id, str) else None
 
 
+# Reviewer decisions that take a document out of the "Zur Prüfung" queue:
+# 'skipped' = not released, 'parked' = set aside to decide later.
+_DECIDED_REVIEW_STATES = ('skipped', 'parked')
+
+
 def _review_decision(job: Job) -> str | None:
-    """Reviewer's skip/unskip decision, mirroring _quality()'s JSON reader."""
+    """Reviewer's skip/park decision, mirroring _quality()'s JSON reader."""
     info = job.processing_info if isinstance(job.processing_info, dict) else {}
     review = info.get('portal_review') if isinstance(info.get('portal_review'), dict) else {}
     decision = review.get('decision') if isinstance(review.get('decision'), str) else None
@@ -553,8 +558,8 @@ def list_portal_documents(
     user: User = Depends(get_current_user),
 ) -> PortalDocumentListResponse:
     # review_state: 'review' (default when review_only=true) excludes skipped
-    # documents from the pending-review view; 'skipped' shows only skipped
-    # documents; 'all' (default otherwise) shows everything.
+    # and parked documents from the pending-review view; 'skipped' / 'parked'
+    # show only those; 'all' (default otherwise) shows everything.
     effective_review_state = review_state or ('review' if review_only else 'all')
     collection_id_expr = Job.processing_info['settings']['collection_id'].as_string()
     quality_grade_expr = Job.processing_info['execution']['quality_gate']['grade'].as_string()
@@ -602,10 +607,10 @@ def list_portal_documents(
             DocumentRelease.id.is_(None),
             or_(ImportRun.id.is_(None), ImportRun.status == ImportRunStatus.FINISHED),
         )
-    if effective_review_state == 'skipped':
-        query = query.where(func.lower(review_decision_expr) == 'skipped', DocumentRelease.id.is_(None))
+    if effective_review_state in _DECIDED_REVIEW_STATES:
+        query = query.where(func.lower(review_decision_expr) == effective_review_state, DocumentRelease.id.is_(None))
     elif effective_review_state == 'review':
-        query = query.where(or_(review_decision_expr.is_(None), func.lower(review_decision_expr) != 'skipped'))
+        query = query.where(or_(review_decision_expr.is_(None), func.lower(review_decision_expr).not_in(_DECIDED_REVIEW_STATES)))
     query = _apply_quality_grade_filter(query, quality_grade_expr, quality_grade)
     query = _apply_import_scope_filter(query, import_scope)
 
@@ -624,12 +629,12 @@ def list_portal_documents(
             DocumentRelease.id.is_(None),
             or_(ImportRun.id.is_(None), ImportRun.status == ImportRunStatus.FINISHED),
         )
-    if effective_review_state == 'skipped':
+    if effective_review_state in _DECIDED_REVIEW_STATES:
         count_query = count_query.outerjoin(DocumentRelease, DocumentRelease.job_id == Job.id).where(
-            func.lower(review_decision_expr) == 'skipped', DocumentRelease.id.is_(None)
+            func.lower(review_decision_expr) == effective_review_state, DocumentRelease.id.is_(None)
         )
     elif effective_review_state == 'review':
-        count_query = count_query.where(or_(review_decision_expr.is_(None), func.lower(review_decision_expr) != 'skipped'))
+        count_query = count_query.where(or_(review_decision_expr.is_(None), func.lower(review_decision_expr).not_in(_DECIDED_REVIEW_STATES)))
     count_query = _apply_quality_grade_filter(count_query, quality_grade_expr, quality_grade)
     count_query = _apply_import_scope_filter(count_query, import_scope)
     total = int(db.scalar(count_query) or 0)
@@ -715,7 +720,7 @@ def get_portal_document(job_id: str, db=Depends(get_db), user: User = Depends(ge
                 mail=mail,
                 uploaded_by=uploaded_by,
             ).model_dump(),
-            markdown=release.markdown_snapshot,
+            markdown=restore_relative_image_urls(release.markdown_snapshot, release.id),
             markdown_sha256=release.markdown_sha256,
             profile_id=_profile_id(job),
             can_reprocess=False,
@@ -755,7 +760,7 @@ def _set_review_decision(job: Job, decision: str | None, user: User) -> None:
     job.processing_info = info
 
 
-def _skip_or_unskip(job_id: str, decision: str | None, db, user: User) -> PortalDocumentItem:
+def _set_review_decision_for(job_id: str, decision: str | None, db, user: User) -> PortalDocumentItem:
     job = _load_visible_job(db, job_id, user, for_update=True)
     collection = _collection_for_job(db, job)
     if collection is None:
@@ -772,12 +777,18 @@ def _skip_or_unskip(job_id: str, decision: str | None, db, user: User) -> Portal
 
 @router.post('/documents/{job_id}/skip', response_model=PortalDocumentItem)
 def skip_portal_document(job_id: str, db=Depends(get_db), user: User = Depends(get_current_user)) -> PortalDocumentItem:
-    return _skip_or_unskip(job_id, 'skipped', db, user)
+    return _set_review_decision_for(job_id, 'skipped', db, user)
 
 
+@router.post('/documents/{job_id}/park', response_model=PortalDocumentItem)
+def park_portal_document(job_id: str, db=Depends(get_db), user: User = Depends(get_current_user)) -> PortalDocumentItem:
+    return _set_review_decision_for(job_id, 'parked', db, user)
+
+
+# Clears either decision (skipped or parked): the document is back in review.
 @router.post('/documents/{job_id}/unskip', response_model=PortalDocumentItem)
 def unskip_portal_document(job_id: str, db=Depends(get_db), user: User = Depends(get_current_user)) -> PortalDocumentItem:
-    return _skip_or_unskip(job_id, None, db, user)
+    return _set_review_decision_for(job_id, None, db, user)
 
 
 @router.get('/documents/{job_id}/markdown')
@@ -1086,7 +1097,8 @@ def release_collection_documents(
     pending: list[tuple[Job, str, str, dict]] = []
     skipped = 0
     for job in jobs:
-        if not _can_release_light(db, job, collection, user):
+        # A reviewer's "nicht freigeben" or "parken" must survive a bulk release.
+        if (_review_decision(job) or '').lower() in _DECIDED_REVIEW_STATES or not _can_release_light(db, job, collection, user):
             skipped += 1
             continue
         try:
@@ -1258,7 +1270,7 @@ def bulk_portal_documents(
                 db.add(release)
                 releases.append(release)
                 done += 1
-            elif payload.action in ('skip', 'unskip'):
+            elif payload.action in ('skip', 'park', 'unskip'):
                 _protected(job)
                 if not _can_release_light(db, job, collection, user):
                     errors.append(PortalBulkErrorItem(job_id=job_id, reason='Keine Berechtigung'))
@@ -1266,7 +1278,7 @@ def bulk_portal_documents(
                 if db.scalar(select(DocumentRelease.id).where(DocumentRelease.job_id == job.id)) is not None:
                     errors.append(PortalBulkErrorItem(job_id=job_id, reason='Bereits freigegeben'))
                     continue
-                _set_review_decision(job, 'skipped' if payload.action == 'skip' else None, user)
+                _set_review_decision(job, {'skip': 'skipped', 'park': 'parked'}.get(payload.action), user)
                 done += 1
             elif payload.action == 'delete':
                 # Permission already checked by _require_visible above (same

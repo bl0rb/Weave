@@ -48,8 +48,9 @@ class PortalDocumentItem(BaseModel):
     can_release: bool
     release: PortalReleaseSummary | None = None
     source: PortalDocumentSource
-    # 'skipped' when a reviewer decided not to release this document (see
-    # app/api/portal.py's _review_decision()); None otherwise.
+    # 'skipped' when a reviewer decided not to release this document,
+    # 'parked' when it was set aside to decide later (see app/api/portal.py's
+    # _review_decision()); None otherwise.
     review_decision: str | None = None
 
 
@@ -163,7 +164,7 @@ class PortalReprocessResponse(BaseModel):
 
 class PortalBulkActionRequest(BaseModel):
     job_ids: list[str] = Field(min_length=1, max_length=100)
-    action: Literal['release', 'skip', 'unskip', 'delete']
+    action: Literal['release', 'skip', 'park', 'unskip', 'delete']
     accept_quality_warnings: bool = False
     # `delete` only: also delete released documents, withdrawing them from
     # Knowledge first (ADR 0008). Without it they are reported as errors.
