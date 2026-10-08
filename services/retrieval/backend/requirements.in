@@ -13,7 +13,7 @@
 # has no worker queue (search is synchronous, see README) and owns no
 # schema of its own to migrate (it is the read-only side of the shared
 # chunk-store contract, never the writer).
-fastapi==0.141.1
+fastapi==0.142.2
 uvicorn[standard]==0.53.0
 pydantic==2.13.5
 pydantic-settings==2.15.0
