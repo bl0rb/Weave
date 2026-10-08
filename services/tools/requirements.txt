@@ -13,7 +13,7 @@ certifi==2026.7.22
 cffi==2.1.1
 click==8.5.0
 cryptography==50.0.1
-fastapi==0.141.1
+fastapi==0.142.2
 h11==0.16.0
 httpcore==1.0.9
 httpcore2==2.12.0
@@ -46,7 +46,7 @@ starlette==1.6.0
 truststore==0.10.4
 typing-extensions==4.16.0
 typing-inspection==0.4.4
-uvicorn[standard]==0.53.0
+uvicorn[standard]==0.54.0
 uvloop==0.22.1
 watchfiles==1.2.0
 websockets==17.1

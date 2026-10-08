@@ -18,8 +18,8 @@
 # for a library this service doesn't call would be dead weight in the
 # image. onnxruntime + tokenizers + huggingface_hub below are used
 # directly instead.
-fastapi==0.141.1
-uvicorn[standard]==0.53.0
+fastapi==0.142.2
+uvicorn[standard]==0.54.0
 pydantic==2.13.5
 pydantic-settings==2.15.0
 pytest==9.1.1
@@ -35,5 +35,5 @@ httpx==0.28.1
 # numpy: mean-pooling/normalization math over the model's raw output.
 onnxruntime==1.30.0
 tokenizers==0.23.2
-huggingface_hub==1.32.0
+huggingface_hub==1.33.0
 numpy==2.5.3

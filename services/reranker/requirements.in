@@ -21,11 +21,11 @@
 #
 #   pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
 #
-fastapi==0.141.1
-uvicorn[standard]==0.53.0
+fastapi==0.142.2
+uvicorn[standard]==0.54.0
 pydantic==2.13.5
 pydantic-settings==2.15.0
 httpx==0.28.1
 pytest==9.1.1
 sentence-transformers==6.1.0
-torch==2.14.0
+torch==2.14.1

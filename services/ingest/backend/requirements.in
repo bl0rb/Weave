@@ -9,7 +9,7 @@
 #
 # Version pins stay here; the lock adds the transitive tree and the artifact
 # hashes that make `pip install --require-hashes` refuse a swapped package.
-fastapi==0.141.1
+fastapi==0.142.2
 uvicorn[standard]==0.53.0
 pydantic==2.13.5
 pydantic-settings==2.15.0
@@ -24,7 +24,7 @@ httpx==0.28.1
 pypdf==6.19.0
 xlrd==2.0.2
 bcrypt==5.0.0
-cryptography==50.0.1
+cryptography==50.0.2
 authlib==1.8.0
 joserfc==1.7.5
 email-validator==2.3.0
