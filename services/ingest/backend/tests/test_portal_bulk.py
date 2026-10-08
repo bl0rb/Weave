@@ -198,3 +198,60 @@ def test_bulk_job_ids_over_limit_rejected():
         'action': 'delete',
     })
     assert response.status_code == 422
+
+
+def test_park_moves_document_out_of_review_and_back():
+    user = create_test_user(username=f'park-{uuid.uuid4().hex[:8]}', email=f'park-{uuid.uuid4().hex[:8]}@example.com')
+    collection = _collection(user.id)
+    job = _job(user.id, collection)
+    authed = login_as(user.username)
+
+    parked = authed.post(f'/api/v1/portal/documents/{job.id}/park')
+    assert parked.status_code == 200, parked.text
+    assert parked.json()['review_decision'] == 'parked'
+
+    review = authed.get('/api/v1/portal/documents', params={'review_state': 'review'}).json()
+    assert job.id not in [item['id'] for item in review['items']]
+    parked_listing = authed.get('/api/v1/portal/documents', params={'review_state': 'parked'}).json()
+    assert job.id in [item['id'] for item in parked_listing['items']]
+    skipped_listing = authed.get('/api/v1/portal/documents', params={'review_state': 'skipped'}).json()
+    assert job.id not in [item['id'] for item in skipped_listing['items']]
+
+    resumed = authed.post(f'/api/v1/portal/documents/{job.id}/unskip')
+    assert resumed.status_code == 200
+    assert resumed.json()['review_decision'] is None
+
+
+def test_bulk_park_sets_decision():
+    user = create_test_user(username=f'bpark-{uuid.uuid4().hex[:8]}', email=f'bpark-{uuid.uuid4().hex[:8]}@example.com')
+    collection = _collection(user.id)
+    job = _job(user.id, collection)
+    authed = login_as(user.username)
+
+    response = authed.post('/api/v1/portal/documents/bulk', json={'job_ids': [job.id], 'action': 'park'})
+    assert response.status_code == 200, response.text
+    assert response.json()['done'] == 1
+    assert authed.get(f'/api/v1/portal/documents/{job.id}').json()['review_decision'] == 'parked'
+
+
+def test_release_all_leaves_skipped_and_parked_documents_alone(monkeypatch):
+    _configure(monkeypatch)
+    monkeypatch.setattr(publication_tasks.deliver_release, 'delay', lambda *args: None)
+    user = create_test_user(username=f'relall-{uuid.uuid4().hex[:8]}', email=f'relall-{uuid.uuid4().hex[:8]}@example.com')
+    collection = _collection(user.id)
+    open_job = _job(user.id, collection)
+    skipped_job = _job(user.id, collection)
+    parked_job = _job(user.id, collection)
+    authed = login_as(user.username)
+    assert authed.post(f'/api/v1/portal/documents/{skipped_job.id}/skip').status_code == 200
+    assert authed.post(f'/api/v1/portal/documents/{parked_job.id}/park').status_code == 200
+
+    released = authed.post(f'/api/v1/portal/collections/{collection.id}/release-all', json={})
+    assert released.status_code == 202, released.text
+    assert (released.json()['released'], released.json()['skipped']) == (1, 2)
+    db = _db()
+    try:
+        released_ids = {row.job_id for row in db.query(DocumentRelease).filter(DocumentRelease.job_id.in_([open_job.id, skipped_job.id, parked_job.id]))}
+    finally:
+        db.close()
+    assert released_ids == {open_job.id}

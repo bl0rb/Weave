@@ -4,11 +4,11 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowRight } from 'lucide-react';
-import { apiJson } from '@/lib/api';
+import { ApiError, apiJson } from '@/lib/api';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { jsonBody, portalError, type KnowledgeSpace, type PortalConfig } from '@/lib/portal';
 import { useI18n } from '@/i18n/provider';
-import { Notice, PortalPage } from './shared';
+import { Notice, PortalPage, RequiredMark } from './shared';
 
 export function NewKnowledgeSpace() {
   const router = useRouter();
@@ -61,7 +61,8 @@ export function NewKnowledgeSpace() {
       // Continue the journey with the new area already selected.
       router.replace(`/sources/new?collection=${encodeURIComponent(space.collection_id)}`);
     } catch (err) {
-      setError(portalError(err, locale));
+      // The only conflict here: a space the user can see already has this name.
+      setError(err instanceof ApiError && err.status === 409 ? t('portal.spaces.nameTaken') : portalError(err, locale));
       setSaving(false);
     }
   }
@@ -74,9 +75,9 @@ export function NewKnowledgeSpace() {
     <section className="portal-panel portal-form-panel" aria-labelledby="new-space-title">
       <h2 id="new-space-title">{t('portal.newSpace.sectionTitle')}</h2>
       <form onSubmit={create} className="portal-form">
-        <label>{t('common.name')}<input required maxLength={255} value={name} disabled={saving}
+        <label>{t('common.name')}<RequiredMark /><input required maxLength={255} value={name} disabled={saving}
           onChange={event => setName(event.target.value)} placeholder={t('portal.newSpace.namePlaceholder')} /></label>
-        <label>{t('portal.newSpace.purposeLabel')}
+        <label>{t('portal.newSpace.purposeLabel')}<RequiredMark />
           <textarea required rows={3} value={purpose} disabled={saving} onChange={event => setPurpose(event.target.value)}
             placeholder={t('portal.newSpace.purposePlaceholder')} />
         </label>

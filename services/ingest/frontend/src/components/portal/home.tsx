@@ -4,8 +4,9 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type C
 import Link from 'next/link';
 import { AlertTriangle, ArrowRight, CheckCheck, Clock3, FileText } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
+import { firstName } from '@/lib/utils';
 import { buttonVariants } from '@/components/ui/button';
-import { dateLabel, loadDocuments, pipelineStage, portalError, type PipelineStage, type PortalDocument } from '@/lib/portal';
+import { dateLabel, documentState, loadDocuments, pipelineStage, portalError, type PipelineStage, type PortalDocument } from '@/lib/portal';
 import { useIndexingStatus } from '@/lib/use-indexing-status';
 import { useI18n } from '@/i18n/provider';
 import type { MessageKey } from '@/i18n/messages';
@@ -34,7 +35,8 @@ function cssVar(color: string): CSSProperties {
   return { '--c': color } as CSSProperties;
 }
 
-const ACTIVITY_LABEL: Record<PipelineStage, MessageKey> = {
+// 'decided' (parked/skipped) is labelled via documentState.
+const ACTIVITY_LABEL: Record<Exclude<PipelineStage, 'decided'>, MessageKey> = {
   processing: 'portal.home.activity.processing',
   review: 'portal.documents.state.readyForReview',
   indexing: 'portal.indexing.released.label',
@@ -47,6 +49,7 @@ const ACTIVITY_COLOR: Record<PipelineStage, string> = {
   indexing: 'var(--idx)',
   ready: 'var(--ok)',
   error: 'var(--err)',
+  decided: 'var(--muted)',
 };
 
 export function PortalHome() {
@@ -65,7 +68,7 @@ export function PortalHome() {
   const stageOf = useCallback((document: PortalDocument) => pipelineStage(document, live[document.id]), [live]);
 
   const counts = useMemo(() => {
-    const totals: Record<PipelineStage, number> = { processing: 0, review: 0, indexing: 0, ready: 0, error: 0 };
+    const totals: Record<PipelineStage, number> = { processing: 0, review: 0, indexing: 0, ready: 0, error: 0, decided: 0 };
     for (const document of documents ?? []) totals[stageOf(document)] += 1;
     return totals;
   }, [documents, stageOf]);
@@ -79,7 +82,7 @@ export function PortalHome() {
     .slice(0, 5), [documents]);
 
   return (
-    <PortalPage title={`${greeting(t, hour)}${user ? `, ${user.username}` : ''}.`}>
+    <PortalPage title={`${greeting(t, hour)}${user ? `, ${firstName(user.username)}` : ''}.`}>
       {error && <Notice error action={load}>{error}</Notice>}
       <section aria-labelledby="stand-title">
         <h2 className="sr-only" id="stand-title">{t('portal.home.statusHeading')}</h2>
@@ -135,7 +138,7 @@ export function PortalHome() {
             {recentActivity.map(document => {
               const stage = stageOf(document);
               return <li key={document.id} style={cssVar(ACTIVITY_COLOR[stage])}>
-                <strong>{t(ACTIVITY_LABEL[stage])}</strong> · {document.original_filename}
+                <strong>{stage === 'decided' ? documentState(document, undefined, locale).label : t(ACTIVITY_LABEL[stage])}</strong> · {document.original_filename}
                 <time>{dateLabel(document.release?.created_at ?? document.created_at, locale)}</time>
               </li>;
             })}

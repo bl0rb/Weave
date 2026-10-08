@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from './api';
 import type { IndexingItem } from './indexing-status';
-import { collectionDownloadName, documentState, loadDocuments, markdownDownloadName, pipelineStage, portalDownloadError, portalError, summarizePipeline, type PortalDocument } from './portal';
+import { bulkPortalAction, collectionDownloadName, documentState, loadDocuments, markdownDownloadName, pipelineStage, portalDownloadError, portalError, summarizePipeline, type PortalDocument } from './portal';
 
 const document: PortalDocument = { id: 'a', original_filename: 'Wissen.pdf', status: 'FINISHED', collection_id: 'c', collection_name: 'Service', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, release: null, source: { kind: 'upload', label: 'Hochgeladen', path: 'inbox', url: null }, review_decision: null };
 describe('publication state', () => {
@@ -76,6 +76,12 @@ describe('pipelineStage', () => {
     expect(pipelineStage({ ...document, quality_grade: 'C' })).toBe('review');
   });
 
+  it('buckets a parked or skipped, unreleased document as decided rather than review', () => {
+    expect(pipelineStage({ ...document, review_decision: 'parked' })).toBe('decided');
+    expect(pipelineStage({ ...document, review_decision: 'skipped' })).toBe('decided');
+    expect(pipelineStage({ ...document, status: 'FAILED', review_decision: 'parked' })).toBe('error');
+  });
+
   it('buckets a released document without a live indexing snapshot as indexing', () => {
     expect(pipelineStage({ ...document, release: released })).toBe('indexing');
   });
@@ -101,7 +107,30 @@ describe('summarizePipeline', () => {
       { ...document, id: '1', status: 'RUNNING' },
       { ...document, id: '2', status: 'FAILED' },
       { ...document, id: '3' },
+      { ...document, id: '4', review_decision: 'parked' },
     ]);
-    expect(counts).toEqual({ processing: 1, review: 1, indexing: 0, ready: 0, error: 1 });
+    expect(counts).toEqual({ processing: 1, review: 1, indexing: 0, ready: 0, error: 1, decided: 1 });
+  });
+});
+
+describe('bulkPortalAction', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+  const ids = Array.from({ length: 150 }, (_, index) => `job-${index}`);
+
+  it('returns the earlier chunks\' result and flags the failed chunk\'s ids when a later chunk throws', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ done: 100, errors: [] }) })
+      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({ detail: 'Boom' }) });
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await bulkPortalAction(ids, 'park');
+    expect(result.done).toBe(100);
+    expect(result.errors).toHaveLength(50);
+    expect(result.errors[0]).toEqual({ job_id: 'job-100', reason: 'Boom' });
+    expect(result.errors.at(-1)?.job_id).toBe('job-149');
+  });
+
+  it('throws when the first chunk fails', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({ detail: 'Boom' }) }));
+    await expect(bulkPortalAction(ids, 'park')).rejects.toThrow('Boom');
   });
 });

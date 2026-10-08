@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { MarkdownView } from '@/components/markdown/markdown-view';
+import { MarkdownView, type JobArtifact } from '@/components/markdown/markdown-view';
 import { editPortalDocument, portalError, type DocumentPreview, type PortalEditResult } from '@/lib/portal';
 import { useI18n } from '@/i18n/provider';
 import { Notice } from './shared';
@@ -13,8 +13,8 @@ import { Notice } from './shared';
  * Mitglieder, like a release). The change applies until a changed source --
  * a new upload or a Confluence sync -- is released.
  */
-export function MarkdownEditor({ preview, onSaved, onCancel }: {
-  preview: DocumentPreview; onSaved: (result: PortalEditResult) => void; onCancel: () => void;
+export function MarkdownEditor({ preview, artifacts, onSaved, onCancel }: {
+  preview: DocumentPreview; artifacts?: JobArtifact[] | null; onSaved: (result: PortalEditResult) => void; onCancel: () => void;
 }) {
   const { t, locale } = useI18n();
   const [draft, setDraft] = useState(preview.markdown);
@@ -51,7 +51,7 @@ export function MarkdownEditor({ preview, onSaved, onCancel }: {
       ? <textarea aria-label={t('portal.reviews.editLabel')} value={draft} spellCheck={false} disabled={saving}
         onChange={event => { setDraft(event.target.value); setNeedsGradeC(false); setGradeCAccepted(false); }}
         className="!min-h-[480px] font-mono !text-[13px] leading-relaxed" />
-      : <MarkdownView markdown={draft} jobId={preview.id} />}
+      : <MarkdownView markdown={draft} jobId={preview.id} artifacts={artifacts} />}
     <p className="portal-field-hint">{t('portal.reviews.editHint')}</p>
     {error && <Notice error>{error}</Notice>}
     {needsGradeC && <label className="portal-choice portal-approval">

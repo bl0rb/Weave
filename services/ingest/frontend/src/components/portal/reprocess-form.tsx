@@ -6,7 +6,7 @@ import { portalError } from '@/lib/portal';
 import { portalProfiles, type PortalProfile, type ProcessingProfile } from '@/lib/portal-profiles';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/i18n/provider';
-import { Notice } from './shared';
+import { Notice, RequiredMark } from './shared';
 
 export function ReprocessForm({ currentProfileId, busy, onSubmit, onCancel }: {
   currentProfileId: string | null;
@@ -39,7 +39,7 @@ export function ReprocessForm({ currentProfileId, busy, onSubmit, onCancel }: {
     {!profiles && !error && <Notice>{t('portal.reprocess.loading')}</Notice>}
     {profiles?.length === 0 && <Notice>{t('portal.reprocess.empty')}</Notice>}
     {Boolean(profiles?.length) && <>
-      <label>{t('portal.reprocess.selectLabel')}
+      <label>{t('portal.reprocess.selectLabel')}<RequiredMark />
         <select ref={selectRef} required disabled={busy} value={profileId} onChange={event => setProfileId(event.target.value)} aria-describedby="reprocess-description reprocess-effect">
           <option value="">{t('portal.reprocess.selectPlaceholder')}</option>
           {profiles?.some(profile => profile.kind === 'ocr') && <optgroup label={t('portal.reprocess.ocrGroup')}>{profiles.filter(profile => profile.kind === 'ocr').map(profile => <option key={profile.value} value={profile.value}>{profile.label}</option>)}</optgroup>}

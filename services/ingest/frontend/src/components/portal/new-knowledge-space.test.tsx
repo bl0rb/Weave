@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { apiJson } from '@/lib/api';
+import { ApiError, apiJson } from '@/lib/api';
 import { NewKnowledgeSpace } from './new-knowledge-space';
 import { KnowledgeDetail } from './knowledge';
 import { PortalHome } from './home';
@@ -37,6 +37,18 @@ it('creates the area with purpose, responsible team and member team, then contin
     visibility: 'restricted',
     grants: [{ team_id: 't-service', role: 'member' }],
   });
+});
+
+it('explains a name that is already taken and marks the required fields', async () => {
+  api.mockResolvedValueOnce(serviceConfig);
+  const { container } = render(<NewKnowledgeSpace />);
+  await screen.findByRole('checkbox', { name: 'Service' });
+  expect(container.querySelectorAll('.portal-required')).toHaveLength(2);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Servicewissen' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Details angeben' }), { target: { value: 'Wofür' } });
+  api.mockRejectedValueOnce(new ApiError(409, 'A knowledge space with this name already exists'));
+  fireEvent.click(screen.getByRole('button', { name: 'Anlegen und Quelle hinzufügen' }));
+  expect(await screen.findByText(/Es gibt bereits einen Wissensbereich mit diesem Namen/)).toBeTruthy();
 });
 
 it('requires a purpose before the area can be created', async () => {
@@ -118,7 +130,7 @@ it('uses the upload capability for entitled existing team members', async () => 
     total: 1,
   });
   render(<KnowledgeDetail id="area" />);
-  expect(await screen.findByRole('button', { name: 'Sammlung freigeben' })).toBeTruthy();
+  expect(await screen.findByRole('button', { name: 'Dokumente freigeben' })).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Quelle hinzufügen' })).toBeTruthy();
 });
 
@@ -128,7 +140,7 @@ it('keeps bulk release available when eligible documents are on another page', a
     total: 21,
   });
   render(<KnowledgeDetail id="area" />);
-  expect(await screen.findByRole('button', { name: 'Sammlung freigeben' })).toBeTruthy();
+  expect(await screen.findByRole('button', { name: 'Dokumente freigeben' })).toBeTruthy();
 });
 
 it('keeps explicit readers from uploading or releasing a collection', async () => {
@@ -137,6 +149,6 @@ it('keeps explicit readers from uploading or releasing a collection', async () =
     : { items: [], total: 1 });
   render(<KnowledgeDetail id="area" />);
   await screen.findByRole('heading', { name: 'Servicewissen' });
-  expect(screen.queryByRole('button', { name: 'Sammlung freigeben' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Dokumente freigeben' })).toBeNull();
   expect(screen.queryByRole('link', { name: 'Quelle hinzufügen' })).toBeNull();
 });

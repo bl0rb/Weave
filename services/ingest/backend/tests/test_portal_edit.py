@@ -94,8 +94,8 @@ def test_released_document_becomes_a_new_version_carrying_its_source(monkeypatch
 
     released = client.get(f'/api/v1/portal/documents/{job.id}').json()
     assert released['can_edit'] is True
-    # The released snapshot links images absolutely; the edit gets them back relative.
-    assert '/artifacts/plan.png' in released['markdown'] and '](artifacts/plan.png)' not in released['markdown']
+    # The stored snapshot links images absolutely; the preview/editor gets them back relative.
+    assert '](artifacts/plan.png)' in released['markdown'] and '/api/v1/portal/releases/' not in released['markdown']
     edited = released['markdown'].replace('# Guide', '# Reisekosten')
     response = _edit(client, job.id, edited, released['markdown_sha256'])
     assert response.status_code == 202, response.text

@@ -394,6 +394,23 @@ def _unique_collection_slug(db: Session, base: str) -> str:
     return candidate
 
 
+_COLLECTION_NAME_TAKEN = 'A knowledge space with this name already exists'
+
+
+def _visible_collection_name_taken(db: Session, user: User, name: str, exclude_id: str | None = None) -> bool:
+    """Whether a knowledge space the caller can see already has this name
+    (case-insensitive). Spaces the caller cannot see never count: a 409 for
+    them would reveal that a restricted space exists (ADR 0008)."""
+    query = select(Collection).where(func.lower(Collection.name) == func.lower(name))
+    if exclude_id is not None:
+        query = query.where(Collection.id != exclude_id)
+    matches = db.scalars(query).all()
+    if not matches:
+        return False
+    team_roles = user_team_roles(db, user)
+    return any(_collection_to_response(db, match, user, team_roles=team_roles).role is not None for match in matches)
+
+
 def _collection_slug_taken(db: Session, slug: str) -> bool:
     return (
         db.scalar(select(Collection.id).where(Collection.slug == slug)) is not None
@@ -1046,6 +1063,8 @@ def create_collection(
         slug = _unique_collection_slug(db, name or folder_clean or 'collection')
     if not name:
         name = slug
+    if _visible_collection_name_taken(db, user, name):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_COLLECTION_NAME_TAKEN)
 
     description = (payload.description or '').strip()
     if not description:
@@ -1212,6 +1231,11 @@ def update_collection(
         name = payload.name.strip()
         if not name:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='name cannot be empty')
+        # Only a real rename can collide: legacy spaces that already share a name stay editable.
+        if name.lower() != collection.name.lower() and _visible_collection_name_taken(
+            db, user, name, exclude_id=collection.id
+        ):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_COLLECTION_NAME_TAKEN)
         collection.name = name
     if payload.description is not None:
         description = payload.description.strip()

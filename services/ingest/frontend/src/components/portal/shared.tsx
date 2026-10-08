@@ -1,9 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { ArrowRight, Download, FileText, RefreshCw } from 'lucide-react';
 import { Button, buttonVariants } from '@/components/ui/button';
-import { dateLabel, documentState, documentUrl, type PortalDocument } from '@/lib/portal';
+import { bulkPortalAction, dateLabel, documentState, documentUrl, portalError, type PortalDocument } from '@/lib/portal';
 import { useIndexingStatus } from '@/lib/use-indexing-status';
 import { useI18n } from '@/i18n/provider';
 
@@ -36,9 +37,10 @@ export function DocumentTable({ documents, onDownloadMarkdown, downloadingId, se
   })}</tbody></table></div>;
 }
 
-export function BulkActionBar({ count, onRelease, onSkip, onDelete, onClear, gradeCCount, acceptQualityWarnings, onAcceptQualityWarningsChange, releaseConfirmed, onReleaseConfirmedChange, busy }: {
+export function BulkActionBar({ count, onRelease, onPark, onSkip, onDelete, onClear, gradeCCount, acceptQualityWarnings, onAcceptQualityWarningsChange, releaseConfirmed, onReleaseConfirmedChange, busy }: {
   count: number;
   onRelease: () => void;
+  onPark?: () => void;
   onSkip: () => void;
   onDelete: () => void;
   onClear: () => void;
@@ -56,15 +58,72 @@ export function BulkActionBar({ count, onRelease, onSkip, onDelete, onClear, gra
     <label className="portal-choice portal-approval"><input type="checkbox" checked={releaseConfirmed} onChange={event => onReleaseConfirmedChange(event.target.checked)} />{t('portal.documents.bulk.confirmReview')}</label>
     {gradeCCount > 0 && <label className="portal-choice"><input type="checkbox" checked={acceptQualityWarnings} onChange={event => onAcceptQualityWarningsChange(event.target.checked)} />{t('portal.documents.bulk.acceptQualityC', { count: gradeCCount })}</label>}
     <Button variant="outline" size="sm" disabled={busy || !releaseConfirmed} onClick={onRelease}>{t('portal.documents.bulk.release')}</Button>
+    {onPark && <Button variant="outline" size="sm" disabled={busy} onClick={onPark}>{t('portal.documents.bulk.park')}</Button>}
     <Button variant="outline" size="sm" disabled={busy} onClick={onSkip}>{t('portal.documents.bulk.skip')}</Button>
     <Button variant="outline" size="sm" disabled={busy} onClick={onDelete}>{t('common.delete')}</Button>
     <Button variant="ghost" size="sm" disabled={busy} onClick={onClear}>{t('portal.documents.bulk.clearSelection')}</Button>
   </div>;
 }
-export function Pagination({ offset, total, onChange }: { offset: number; total: number; onChange: (offset: number) => void }) {
+/**
+ * Selection + bulk-action state shared by the pages that show a BulkActionBar.
+ * `documents` is what the selection is resolved against (grade-C count, and the ids/count
+ * unless `acrossPages`: then every selected id counts, even one that is no longer listed --
+ * the pages that keep their selection while paging). `onDone` reloads after a batch.
+ * Spread `barProps` into <BulkActionBar>; `withdrawReleased` only matters for the delete dialog.
+ */
+export function useBulkSelection({ documents, acrossPages = false, onNotice, onError, onDone }: {
+  documents: PortalDocument[];
+  acrossPages?: boolean;
+  onNotice: (message: string) => void;
+  onError: (message: string) => void;
+  onDone: () => void | Promise<unknown>;
+}) {
+  const { t, locale } = useI18n();
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [acceptQualityWarnings, setAcceptQualityWarnings] = useState(false);
+  const [releaseConfirmed, setReleaseConfirmed] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [withdrawReleased, setWithdrawReleased] = useState(false);
+  const selectedDocuments = documents.filter(document => selectedIds.has(document.id));
+  const ids = acrossPages ? [...selectedIds] : selectedDocuments.map(document => document.id);
+  const gradeCCount = selectedDocuments.filter(document => document.quality_grade?.toUpperCase() === 'C').length;
+  function clear() { setSelectedIds(new Set()); setAcceptQualityWarnings(false); setReleaseConfirmed(false); }
+  function toggle(id: string) { setSelectedIds(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; }); }
+  function deselect(id: string) { setSelectedIds(previous => { const next = new Set(previous); next.delete(id); return next; }); }
+  function selectAll(allIds: string[], checked: boolean) { setSelectedIds(checked ? new Set(allIds) : new Set()); }
+  function closeDelete() { setBulkDeleting(false); setWithdrawReleased(false); }
+  async function runBulk(action: 'release' | 'park' | 'skip' | 'delete') {
+    if (bulkBusy || ids.length === 0) return;
+    setBulkBusy(true); onNotice('');
+    try {
+      const result = await bulkPortalAction(ids, action, acceptQualityWarnings, action === 'delete' && withdrawReleased);
+      onNotice(`${t('portal.spaces.bulkDoneNotice', { count: result.done })}${result.errors.length ? t('portal.spaces.bulkErrorSuffix', { count: result.errors.length }) : ''}.`);
+      clear();
+      await onDone();
+    } catch (err) { onError(portalError(err, locale)); } finally { setBulkBusy(false); closeDelete(); }
+  }
+  return {
+    selectedIds, count: ids.length, toggle, deselect, selectAll, clear,
+    bulkDeleting, closeDelete, runBulk, withdrawReleased, setWithdrawReleased,
+    barProps: {
+      count: ids.length, gradeCCount, acceptQualityWarnings, onAcceptQualityWarningsChange: setAcceptQualityWarnings,
+      releaseConfirmed, onReleaseConfirmedChange: setReleaseConfirmed, busy: bulkBusy,
+      onRelease: () => void runBulk('release'), onPark: () => void runBulk('park'), onSkip: () => void runBulk('skip'),
+      onDelete: () => setBulkDeleting(true), onClear: clear,
+    },
+  };
+}
+export function Pagination({ offset, total, onChange, pageSize = 20 }: { offset: number; total: number; onChange: (offset: number) => void; pageSize?: number }) {
   const { t } = useI18n();
-  if (total <= 20) return null;
-  return <nav className="portal-pagination" aria-label={t('portal.documents.pagination.ariaLabel')}><span>{t('portal.documents.pagination.range', { from: offset + 1, to: Math.min(offset + 20, total), total })}</span><Button variant="outline" size="sm" disabled={!offset} onClick={() => onChange(Math.max(0, offset - 20))}>{t('common.back')}</Button><Button variant="outline" size="sm" disabled={offset + 20 >= total} onClick={() => onChange(offset + 20)}>{t('common.next')}</Button></nav>;
+  if (total <= pageSize) return null;
+  return <nav className="portal-pagination" aria-label={t('portal.documents.pagination.ariaLabel')}><span>{t('portal.documents.pagination.range', { from: offset + 1, to: Math.min(offset + pageSize, total), total })}</span><Button variant="outline" size="sm" disabled={!offset} onClick={() => onChange(Math.max(0, offset - pageSize))}>{t('common.back')}</Button><Button variant="outline" size="sm" disabled={offset + pageSize >= total} onClick={() => onChange(offset + pageSize)}>{t('common.next')}</Button></nav>;
+}
+
+/** Visual marker for a required field; the control's own `required` attribute is what assistive technology announces. */
+export function RequiredMark() {
+  const { t } = useI18n();
+  return <span className="portal-required" aria-hidden="true" title={t('common.required')}>*</span>;
 }
 
 export function QualityGradeFilterRow({ value, onChange }: { value: '' | 'A' | 'B' | 'C' | 'none'; onChange: (value: '' | 'A' | 'B' | 'C' | 'none') => void }) {

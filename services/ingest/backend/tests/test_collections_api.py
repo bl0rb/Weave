@@ -22,7 +22,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from app.models.models import ImportRun, ImportRunStatus, Job, JobStatus, ManagedBot, Team, UserRole, user_teams
+from app.models.models import Collection, ImportRun, ImportRunStatus, Job, JobStatus, ManagedBot, Team, UserRole, user_teams
 from app.services.security import rate_limiter
 from conftest import TestingSessionLocal, create_test_user, login_as
 
@@ -640,3 +640,51 @@ def test_single_upload_frontmatter_never_carries_collection_fields(monkeypatch):
     assert frontmatter['mode'] == 'single'
     assert 'collection' not in frontmatter
     assert 'collection_name' not in frontmatter
+
+
+def test_duplicate_space_name_conflicts_only_when_visible():
+    """A second space with a name the caller can already see is a 409 with a
+    clear detail (also on rename); a restricted space the caller cannot see
+    never counts, so the error cannot reveal that it exists (ADR 0008)."""
+    name = f'Doppelt {uuid.uuid4().hex[:8]}'
+    owner = _user('coll-dup-owner')
+    owner_client = login_as(owner.username)
+    assert _create(owner_client, name).status_code == 200
+
+    duplicate = _create(owner_client, name.upper())
+    assert duplicate.status_code == 409, duplicate.text
+    assert duplicate.json()['detail'] == 'A knowledge space with this name already exists'
+
+    other = _create(owner_client, f'{name} B').json()
+    renamed = owner_client.patch(f"/api/v1/collections/{other['collection_id']}", json={'name': name})
+    assert renamed.status_code == 409, renamed.text
+
+    outsider = _user('coll-dup-outsider')
+    assert _create(login_as(outsider.username), name).status_code == 200
+
+
+def test_duplicate_space_name_check_folds_non_ascii_and_spares_legacy_duplicates():
+    """SQLite's lower() folds ASCII only, so both sides of the comparison go
+    through it ('Übersicht' twice is caught). An edit that keeps
+    the name must not trip the check: two legacy spaces already sharing a
+    name stay editable."""
+    name = f'Übersicht {uuid.uuid4().hex[:8]}'
+    owner = _user('coll-dup-umlaut')
+    client = login_as(owner.username)
+    first = _create(client, name)
+    assert first.status_code == 200, first.text
+    assert _create(client, name).status_code == 409
+
+    second = _create(client, f'{name} B').json()
+    db = TestingSessionLocal()
+    try:
+        db.get(Collection, second['collection_id']).name = name
+        db.commit()
+    finally:
+        db.close()
+
+    edited = client.patch(
+        f"/api/v1/collections/{second['collection_id']}", json={'name': name, 'description': 'Neuer Zweck'}
+    )
+    assert edited.status_code == 200, edited.text
+    assert edited.json()['description'] == 'Neuer Zweck'

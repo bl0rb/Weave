@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ApiError, apiFetch, apiJson } from '@/lib/api';
-import { ReviewDocument, ReviewInbox } from './reviews';
+import { ReviewDocument, ReviewInbox, resetReviewQueueCache } from './reviews';
 import { useVisiblePolling } from '@/lib/data-cache';
 
 const auth = vi.hoisted(() => ({ user: { role: 'admin' as 'admin' | 'user' } }));
@@ -30,6 +30,7 @@ function mockDocument(overrides = {}) {
     : path === '/api/v1/paddle/capabilities' ? capabilities : { ...content, ...overrides });
 }
 beforeEach(() => {
+  resetReviewQueueCache();
   api.mockReset();
   fetcher.mockReset();
   fetcher.mockResolvedValue({ ok: true, blob: async () => new Blob(['{}'], { type: 'application/json' }) } as Response);
@@ -133,7 +134,7 @@ it('permits explicitly confirmed grade C without rewriting its quality', async (
 
 it('skips a document and shows it as übersprungen with an unskip button', async () => {
   render(<ReviewDocument id="doc" />);
-  const skipButton = await screen.findByRole('button', { name: /Nicht freigeben \/ überspringen/ });
+  const skipButton = await screen.findByRole('button', { name: 'Nicht freigeben' });
   api.mockResolvedValueOnce({ ...content, review_decision: 'skipped' });
   fireEvent.click(skipButton);
   await screen.findByRole('button', { name: 'Wieder zur Prüfung' });
@@ -374,4 +375,52 @@ it('resets the bulk release confirmation after a batch so a new selection needs 
   const confirmCheckbox = screen.getByRole('checkbox', { name: /Ich habe die Inhalte geprüft/ }) as HTMLInputElement;
   expect(confirmCheckbox.checked).toBe(false);
   expect((screen.getByRole('button', { name: 'Freigeben' }) as HTMLButtonElement).disabled).toBe(true);
+});
+
+it('parks a document and offers to take it back into review', async () => {
+  render(<ReviewDocument id="doc" />);
+  const parkButton = await screen.findByRole('button', { name: 'Parken' });
+  api.mockResolvedValueOnce({ ...content, review_decision: 'parked' });
+  fireEvent.click(parkButton);
+  await screen.findByRole('button', { name: 'Wieder zur Prüfung' });
+  expect(screen.getByText('Geparkt')).toBeTruthy();
+  expect(api.mock.calls.some(([path]) => path === '/api/v1/portal/documents/doc/park')).toBe(true);
+});
+
+it('pages through the open review queue like a ticket list', async () => {
+  api.mockImplementation(async path => path === '/api/v1/portal/config' ? config
+    : typeof path === 'string' && path.startsWith('/api/v1/portal/documents?') ? { items: [{ id: 'first' }, { id: 'doc' }, { id: 'third' }], total: 250 }
+      : { ...content });
+  render(<ReviewDocument id="doc" />);
+  // The total comes from the page, not from the (capped) list of fetched ids.
+  expect(await screen.findByText('Dokument 2 von 250 zur Prüfung')).toBeTruthy();
+  expect(screen.getByRole('link', { name: '← Vorheriges' }).getAttribute('href')).toBe('/reviews/first');
+  expect(screen.getByRole('link', { name: 'Nächstes →' }).getAttribute('href')).toBe('/reviews/third');
+});
+
+it('reuses the fetched review queue when opening the next document, and loads artifacts without an auth redirect', async () => {
+  const queueCalls = () => api.mock.calls.filter(([path]) => typeof path === 'string' && path.startsWith('/api/v1/portal/documents?')).length;
+  api.mockImplementation(async path => path === '/api/v1/portal/config' ? config
+    : typeof path === 'string' && path.startsWith('/api/v1/portal/documents?') ? { items: [{ id: 'doc' }, { id: 'third' }], total: 2 }
+      : { ...content });
+  const { unmount } = render(<ReviewDocument id="doc" />);
+  await screen.findByText('Dokument 1 von 2 zur Prüfung');
+  const artifactsCall = api.mock.calls.find(([path]) => path === '/api/v1/jobs/doc/artifacts');
+  expect(artifactsCall?.[1]).toMatchObject({ skipAuthRedirect: true });
+  unmount();
+  render(<ReviewDocument id="third" />);
+  await screen.findByText('Dokument 2 von 2 zur Prüfung');
+  expect(queueCalls()).toBe(1);
+});
+
+it('blocks park, skip and release while another decision is in flight', async () => {
+  render(<ReviewDocument id="doc" />);
+  const park = await screen.findByRole('button', { name: 'Parken' }) as HTMLButtonElement;
+  fireEvent.click(screen.getByRole('checkbox'));
+  const release = screen.getByRole('button', { name: 'Geprüften Stand freigeben' }) as HTMLButtonElement;
+  api.mockImplementationOnce(() => new Promise(() => {}));
+  fireEvent.click(park);
+  await screen.findByRole('button', { name: 'Wird geparkt …' });
+  expect(release.disabled).toBe(true);
+  expect((screen.getByRole('button', { name: 'Nicht freigeben' }) as HTMLButtonElement).disabled).toBe(true);
 });

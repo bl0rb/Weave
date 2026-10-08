@@ -47,23 +47,96 @@ it('shows no page description and lets documents be selected for a bulk action',
   await waitFor(() => expect(screen.queryByRole('toolbar')).toBeNull());
 });
 
-it('offers "Sammlung freigeben" only when a space is selected and releases it through release-all', async () => {
+it('shows "Dokumente freigeben" from the navigation too, but releases only a selected space through release-all', async () => {
   const { unmount } = render(<PortalDocuments />);
   await screen.findByText('Handbuch.pdf');
-  expect(screen.queryByRole('button', { name: /Sammlung freigeben/ })).toBeNull();
+  expect((screen.getByRole('button', { name: 'Dokumente freigeben' }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByText(/Wähle oben einen Wissensbereich/)).toBeTruthy();
   unmount();
 
   render(<PortalDocuments initialBereich="servicewissen" />);
   await screen.findByText('Handbuch.pdf');
-  fireEvent.click(await screen.findByRole('button', { name: /Sammlung freigeben/ }));
-  fireEvent.click(screen.getByRole('button', { name: /Ja, Sammlung freigeben/ }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Dokumente freigeben' }));
+  fireEvent.click(screen.getByRole('button', { name: /Ja, alle Dokumente freigeben/ }));
   await waitFor(() => expect(json.mock.calls.some(([path, init]) => path === '/api/v1/portal/collections/area-1/release-all' && init?.method === 'POST')).toBe(true));
   expect(await screen.findByText('1 Dokumente wurden freigegeben.')).toBeTruthy();
 });
 
-it('hides "Sammlung freigeben" when the user may not release in the selected space', async () => {
+it('hides "Dokumente freigeben" when the user may not release in the selected space', async () => {
   mockApi({ ...area, can_manage: false, can_upload: false });
   render(<PortalDocuments initialBereich="servicewissen" />);
   await screen.findByText('Handbuch.pdf');
-  expect(screen.queryByRole('button', { name: /Sammlung freigeben/ })).toBeNull();
+  expect(screen.queryByRole('button', { name: /Dokumente freigeben/ })).toBeNull();
+});
+
+it('selects every filtered document, not just the current page, and shows more per page on request', async () => {
+  const many = Array.from({ length: 25 }, (_, index) => ({ ...document, id: `d${index}`, original_filename: `Dok-${index}.pdf` }));
+  json.mockImplementation(async path => {
+    if (path === '/api/v1/portal/documents/bulk') return { done: 25, errors: [] };
+    if (typeof path === 'string' && path.startsWith('/api/v1/portal/documents')) return { items: many, total: 25 };
+    if (typeof path === 'string' && path.startsWith('/api/v1/portal/indexing-status')) return { items: [] };
+    return { items: [area] };
+  });
+  render(<PortalDocuments />);
+  await screen.findByText('Dok-0.pdf');
+  expect(screen.queryByText('Dok-24.pdf')).toBeNull();
+
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Alle 25 Dokumente auswählen' }));
+  expect(screen.getByText('25 ausgewählt')).toBeTruthy();
+
+  fireEvent.change(screen.getByRole('combobox', { name: 'Pro Seite' }), { target: { value: '50' } });
+  expect(screen.getByText('Dok-24.pdf')).toBeTruthy();
+  expect(screen.getByText('25 ausgewählt')).toBeTruthy();
+});
+
+it('deletes a single released document from its row, withdrawing it first', async () => {
+  const released = { ...document, release: { id: 'r1', created_at: document.created_at, status: 'sent', error_message: null, released_by: 'anna' } };
+  json.mockImplementation(async path => {
+    if (path === '/api/v1/portal/documents/bulk') return { done: 1, errors: [] };
+    if (typeof path === 'string' && path.startsWith('/api/v1/portal/documents')) return { items: [released], total: 1 };
+    if (typeof path === 'string' && path.startsWith('/api/v1/portal/indexing-status')) return { items: [] };
+    return { items: [area] };
+  });
+  render(<PortalDocuments />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Handbuch.pdf löschen' }));
+  expect(screen.getByText(/aus dem Wissen zurückgezogen/)).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Löschen' }));
+  await waitFor(() => {
+    const call = json.mock.calls.find(([path]) => path === '/api/v1/portal/documents/bulk');
+    expect(JSON.parse(call?.[1]?.body as string)).toMatchObject({ job_ids: ['d1'], action: 'delete', withdraw_released: true });
+  });
+});
+
+it('does not count or list a parked document under the review stage, but keeps it under "Alle"', async () => {
+  const parked = { ...document, id: 'd2', original_filename: 'Geparkt.pdf', review_decision: 'parked' };
+  json.mockImplementation(async path => {
+    if (typeof path === 'string' && path.startsWith('/api/v1/portal/documents')) return { items: [document, parked], total: 2 };
+    if (typeof path === 'string' && path.startsWith('/api/v1/portal/indexing-status')) return { items: [] };
+    return { items: [area] };
+  });
+  render(<PortalDocuments />);
+  await screen.findByText('Geparkt.pdf');
+  const review = screen.getByRole('button', { name: /Prüfung/ });
+  expect(review.querySelector('b')?.textContent).toBe('1');
+  fireEvent.click(review);
+  expect(screen.getByText('Handbuch.pdf')).toBeTruthy();
+  expect(screen.queryByText('Geparkt.pdf')).toBeNull();
+});
+
+it('hints that only the newest documents are loaded when the space holds more', async () => {
+  const two = [document, { ...document, id: 'd2', original_filename: 'Zweit.pdf' }];
+  const mockPage = (total: number) => json.mockImplementation(async path => {
+    if (typeof path === 'string' && path.startsWith('/api/v1/portal/documents')) return { items: two, total };
+    if (typeof path === 'string' && path.startsWith('/api/v1/portal/indexing-status')) return { items: [] };
+    return { items: [area] };
+  });
+  mockPage(350);
+  const { unmount } = render(<PortalDocuments />);
+  expect(await screen.findByText(/Geladen sind die neuesten 2 von 350 Dokumenten/)).toBeTruthy();
+  unmount();
+
+  mockPage(2);
+  render(<PortalDocuments />);
+  await screen.findByText('Zweit.pdf');
+  expect(screen.queryByText(/Geladen sind die neuesten/)).toBeNull();
 });

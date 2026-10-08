@@ -9,7 +9,7 @@ import { BotSharing } from '@/components/bot-sharing';
 import { listOwnedBots, toGrantInputs, updateOwnedBot, type BotGrant, type OwnedBot } from '@/lib/bots';
 import { loadDirectoryTeams, portalError, type KnowledgeSpace, type TeamRef } from '@/lib/portal';
 import { useI18n } from '@/i18n/provider';
-import { EmptyState, Notice, PortalPage } from './shared';
+import { EmptyState, Notice, PortalPage, RequiredMark } from './shared';
 
 /** "Meine Bots" (ADR 0008): owners maintain the content and the users of
  * their bots; the connection and the owners stay with the administrators. */
@@ -101,7 +101,7 @@ function OwnedBotEditor({ bot, onClose, onSaved }: { bot: OwnedBot; onClose: () 
     {error && <Notice error>{error}</Notice>}
     <form className="space-y-4" onSubmit={save}>
       <label className="block text-sm font-medium text-[var(--ink-2)]">{t('common.description')}<textarea rows={2} maxLength={4000} className={inputClass} value={description} disabled={saving} onChange={event => setDescription(event.target.value)} /></label>
-      {bot.kind === 'llm' && <label className="block text-sm font-medium text-[var(--ink-2)]">{t('portal.bots.systemPrompt')}<textarea required rows={5} maxLength={12000} className={inputClass} value={systemPrompt} disabled={saving} onChange={event => setSystemPrompt(event.target.value)} /></label>}
+      {bot.kind === 'llm' && <label className="block text-sm font-medium text-[var(--ink-2)]">{t('portal.bots.systemPrompt')}<RequiredMark /><textarea required rows={5} maxLength={12000} className={inputClass} value={systemPrompt} disabled={saving} onChange={event => setSystemPrompt(event.target.value)} /></label>}
       <fieldset disabled={saving}>
         <legend className="text-sm font-medium text-[var(--ink-2)]">{t('portal.bots.spaces')}</legend>
         <p className="portal-field-hint">{t('portal.bots.spacesHint')}{restricted && ` ${t('portal.bots.spacesKeepOne')}`}</p>
@@ -112,7 +112,7 @@ function OwnedBotEditor({ bot, onClose, onSaved }: { bot: OwnedBot; onClose: () 
         </div>
       </fieldset>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={requireSources} disabled={saving} onChange={event => setRequireSources(event.target.checked)} />{t('portal.bots.requireSources')}</label>
-      {requireSources && <label className="block text-sm font-medium text-[var(--ink-2)]">{t('portal.bots.noContextReply')}<textarea required rows={2} maxLength={2000} className={inputClass} value={noContextReply} disabled={saving} onChange={event => setNoContextReply(event.target.value)} /></label>}
+      {requireSources && <label className="block text-sm font-medium text-[var(--ink-2)]">{t('portal.bots.noContextReply')}<RequiredMark /><textarea required rows={2} maxLength={2000} className={inputClass} value={noContextReply} disabled={saving} onChange={event => setNoContextReply(event.target.value)} /></label>}
       <BotSharing isPublic={isPublic} onPublicChange={setIsPublic} grants={grants} onGrantsChange={setGrants} teams={teams} canEditOwners={false} disabled={saving} />
       <div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" onClick={onClose} disabled={saving}>{t('common.cancel')}</Button><Button type="submit" disabled={!canSave}>{saving ? t('portal.access.dialog.saving') : t('common.save')}</Button></div>
     </form>

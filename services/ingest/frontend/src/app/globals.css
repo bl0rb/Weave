@@ -150,6 +150,11 @@ html.dark .text-slate-900, html.dark .text-slate-800 { color: #e8f2e4 !important
 html.dark .text-slate-700, html.dark .text-slate-600 { color: #c9d4c8 !important; }
 html.dark .text-slate-500, html.dark .text-slate-400 { color: #a9c9a3 !important; }
 html.dark .text-emerald-800, html.dark .text-emerald-700 { color: #a9c9a3 !important; }
+/* Outline/ghost buttons (components/ui/button.tsx) use near-black emerald
+   text and light hover fills -- flip both, or they vanish on dark surfaces. */
+html.dark .text-emerald-950, html.dark .text-emerald-900 { color: #eef2ec !important; }
+html.dark .hover\:bg-emerald-50:hover { background-color: #234339 !important; }
+html.dark .hover\:bg-emerald-100:hover { background-color: #28563f !important; }
 html.dark [class*="border-slate-"], html.dark [class*="border-emerald-"] { border-color: #3e5248 !important; }
 html.dark input, html.dark select, html.dark textarea { background: #203b33 !important; color: #eef2ec !important; border-color: #53655c !important; }
 /* portal-* and shell-* below are token-driven (var(--bg)/var(--ink)/...),
@@ -207,6 +212,8 @@ body :is(a, button, input, select, textarea):focus-visible {
 .portal-table tr:hover td { background: var(--hover); }
 .portal-document-link { display: flex; align-items: center; gap: 10px; font-weight: 600; min-width: 160px; max-width: 300px; overflow-wrap: anywhere; }
 .portal-document-link svg { flex-shrink: 0; color: var(--muted); }
+.portal-doc-table .portal-document-link { font-weight: 400; }
+.portal-release-all { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 0 20px 16px; }
 .portal-date { white-space: nowrap; font-size: 12px; color: var(--muted); }
 .portal-badge { display: inline-flex; align-items: center; height: 24px; border-radius: 6px; padding: 0 10px; font-weight: 600; font-size: 12px; line-height: 1; }
 .portal-badge-neutral { background: var(--surface-2); color: var(--muted); }
@@ -242,6 +249,7 @@ body :is(a, button, input, select, textarea):focus-visible {
 .portal-access-confirm { padding: 13px; background: var(--warn-bg); border-radius: var(--radius-control); color: var(--warn); }
 .portal-field-hint { font-size: 13px; font-weight: 400; line-height: 1.6; color: var(--muted); margin-top: 8px; }
 .portal-optional { font-weight: 400; color: var(--muted); margin-left: 6px; }
+.portal-required { font-weight: 700; color: var(--err); margin-left: 3px; }
 .portal-form-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 12px; }
 .portal-search { display: block; }
 .portal-search input { max-width: 480px; }
@@ -259,6 +267,9 @@ body :is(a, button, input, select, textarea):focus-visible {
 .portal-space-management > button { justify-content: center; min-width: 0; width: 100%; padding-inline: 8px; white-space: nowrap; }
 .portal-space-management > button > svg { flex: 0 0 auto; }
 .portal-back { display: block; color: var(--accent); font-size: 13px; margin-top: -14px; margin-bottom: 24px; }
+.portal-review-nav { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: -14px; margin-bottom: 24px; }
+.portal-review-nav > .portal-back { margin: 0; }
+.portal-review-nav > nav { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
 .portal-context-bar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px; font-size: 13px; color: var(--accent-ink); padding: 16px 20px; background: var(--surface-2); border-radius: var(--radius-control); margin-bottom: 24px; }
 .portal-context-bar > span { display: inline-flex; align-items: center; gap: 9px; }
 .portal-pagination { display: flex; justify-content: flex-end; align-items: center; gap: 10px; padding: 18px; font-size: 13px; border-top: 1px solid var(--line); }
@@ -270,8 +281,12 @@ body :is(a, button, input, select, textarea):focus-visible {
 .portal-bulk-bar > span:first-child { font-weight: 600; margin-right: auto; }
 .portal-review-grid { display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 24px; align-items: start; }
 .portal-preview { padding: 20px; overflow-wrap: anywhere; }
+.portal-preview img { max-width: min(100%, 640px); max-height: 420px; width: auto; }
+/* The review page needs the width for the document, not the centred 1240px column. */
+.portal-page:has(> .portal-review-grid) > * { max-width: 1600px; }
 .portal-preview > .portal-field-hint { padding-bottom: 22px; border-bottom: 1px solid var(--line); margin-bottom: 22px; }
-.portal-release-panel { padding: 20px; position: sticky; top: 24px; font-size: 14px; line-height: 1.6; }
+/* Below the sticky 62px topbar, and scrollable itself: on a long document the actions must stay reachable. */
+.portal-release-panel { padding: 20px; position: sticky; top: 86px; max-height: calc(100vh - 110px); overflow-y: auto; font-size: 14px; line-height: 1.6; }
 .portal-release-panel > h2 { margin: 12px 0 20px; }
 .portal-release-panel dl { margin-bottom: 24px; }
 .portal-release-panel dt { color: var(--muted); font-size: 12px; margin-top: 12px; }
@@ -327,6 +342,7 @@ a.portal-tile:hover { border-color: var(--line-2); box-shadow: 0 4px 14px rgb(20
 .portal-task-list { list-style: none; margin: 0; padding: 4px 8px 8px; }
 .portal-task { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 12px; }
 .portal-task + .portal-task { border-top: 1px solid var(--line); }
+.portal-task-selectable { grid-template-columns: auto 38px minmax(0, 1fr) auto; }
 .portal-task-icon { display: grid; place-items: center; width: 38px; height: 38px; flex-shrink: 0; border-radius: var(--radius-control); background: var(--warn-bg); color: var(--warn); }
 .portal-task-icon-err { background: var(--err-bg); color: var(--err); }
 .portal-task-icon-ok { background: var(--ok-bg); color: var(--ok); }
@@ -347,6 +363,7 @@ a.portal-tile:hover { border-color: var(--line-2); box-shadow: 0 4px 14px rgb(20
 .portal-space-state { display: flex; gap: 6px; flex-wrap: wrap; min-height: 24px; }
 .portal-chip { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 10px; border-radius: 6px; font-size: 12px; font-weight: 600; }
 .portal-chip svg { width: 14px; height: 14px; }
+a.portal-chip:hover { text-decoration: underline; text-underline-offset: 2px; }
 .portal-chip-warn { background: var(--warn-bg); color: var(--warn); }
 .portal-chip-err { background: var(--err-bg); color: var(--err); }
 .portal-chip-proc { background: var(--proc-bg); color: var(--proc); }
@@ -441,7 +458,7 @@ select.portal-role-select, .portal-page select.portal-role-select { display: inl
 @media (max-width: 1200px) { .portal-journey { grid-template-columns: 1fr; } .portal-journey > a + a { border-left: 0; border-top: 1px solid var(--line-2); } .portal-journey > a { padding: 17px 22px; } }
 @media (max-width: 1180px) { .portal-overview-grid { grid-template-columns: 1fr; } }
 @media (max-width: 899px) { .portal-page { padding: 16px; } }
-@media (max-width: 800px) { .portal-header { flex-direction: column; align-items: flex-start; gap: 20px; } .portal-actions { width: 100%; } .portal-home-grid, .portal-review-grid, .portal-source-types, .portal-space-grid { grid-template-columns: minmax(0, 1fr); } .portal-release-panel { position: static; } .portal-section-heading { align-items: flex-start; } .portal-section-heading > a { font-size: 12px; } .portal-notice, .portal-pagination { flex-wrap: wrap; } .portal-pagination { justify-content: flex-start; } .portal-pagination > span { flex-basis: 100%; margin-right: 0; } }
+@media (max-width: 800px) { .portal-header { flex-direction: column; align-items: flex-start; gap: 20px; } .portal-actions { width: 100%; } .portal-home-grid, .portal-review-grid, .portal-source-types, .portal-space-grid { grid-template-columns: minmax(0, 1fr); } .portal-release-panel { position: static; max-height: none; overflow: visible; } .portal-section-heading { align-items: flex-start; } .portal-section-heading > a { font-size: 12px; } .portal-notice, .portal-pagination { flex-wrap: wrap; } .portal-pagination { justify-content: flex-start; } .portal-pagination > span { flex-basis: 100%; margin-right: 0; } }
 @media (prefers-reduced-motion: reduce) { * { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; } }
 @media (pointer: coarse) { .portal-text-btn { min-height: 40px; } .btn-sm { height: 40px; } }
 
