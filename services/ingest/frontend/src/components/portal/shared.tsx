@@ -60,7 +60,7 @@ export function BulkActionBar({ count, onRelease, onPark, onSkip, onDelete, onCl
     <Button variant="outline" size="sm" disabled={busy || !releaseConfirmed} onClick={onRelease}>{t('portal.documents.bulk.release')}</Button>
     {onPark && <Button variant="outline" size="sm" disabled={busy} onClick={onPark}>{t('portal.documents.bulk.park')}</Button>}
     <Button variant="outline" size="sm" disabled={busy} onClick={onSkip}>{t('portal.documents.bulk.skip')}</Button>
-    <Button variant="outline" size="sm" disabled={busy} onClick={onDelete}>{t('common.delete')}</Button>
+    <Button variant="danger" size="sm" disabled={busy} onClick={onDelete}>{t('common.delete')}</Button>
     <Button variant="ghost" size="sm" disabled={busy} onClick={onClear}>{t('portal.documents.bulk.clearSelection')}</Button>
   </div>;
 }

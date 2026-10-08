@@ -148,7 +148,7 @@ it('does not offer approval to a reader', async () => {
   const box = await screen.findByRole('checkbox');
   expect((box as HTMLInputElement).disabled).toBe(true);
   expect((screen.getByRole('button', { name: 'Geprüften Stand freigeben' }) as HTMLButtonElement).disabled).toBe(true);
-  expect(screen.queryByRole('button', { name: 'Erneut prüfen' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Erneut verarbeiten' })).toBeNull();
 });
 it('requires another review after a stale-hash conflict', async () => {
   render(<ReviewDocument id="doc" />);
@@ -162,7 +162,7 @@ it('requires another review after a stale-hash conflict', async () => {
 
 it.each(['ppocrv6_medium_structurev3', 'vl:vision'])('reprocesses the reviewed hash with %s and removes the old approval UI', async profileId => {
   render(<ReviewDocument id="doc" />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Erneut prüfen' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Erneut verarbeiten' }));
   const select = await screen.findByRole('combobox', { name: 'Neues Verarbeitungsprofil' });
   expect(screen.getByRole('option', { name: 'Standard – schnell' })).toBeTruthy();
   expect(screen.getByRole('option', { name: 'Gründlich – komplexe Dokumente' })).toBeTruthy();
@@ -176,7 +176,7 @@ it.each(['ppocrv6_medium_structurev3', 'vl:vision'])('reprocesses the reviewed h
   await waitFor(() => expect(document.activeElement).toBe(heading));
   expect(screen.queryByText('Geprüfter Text')).toBeNull();
   expect(screen.queryByRole('checkbox')).toBeNull();
-  expect(screen.getByRole('link', { name: 'Verarbeitung ansehen' }).getAttribute('href')).toBe('/processing');
+  expect(screen.getByRole('link', { name: 'Verarbeitung ansehen' }).getAttribute('href')).toBe('/documents?stand=processing');
   const calls = api.mock.calls.filter(([path]) => path.endsWith('/reprocess'));
   expect(calls).toHaveLength(1);
   expect(JSON.parse(calls[0][1]?.body as string)).toEqual({ profile_id: profileId, markdown_sha256: content.markdown_sha256 });
@@ -188,7 +188,7 @@ it('allows another profile for blocked quality without allowing approval', async
   render(<ReviewDocument id="doc" />);
   await screen.findByRole('checkbox');
   expect((screen.getByRole('checkbox') as HTMLInputElement).disabled).toBe(true);
-  fireEvent.click(screen.getByRole('button', { name: 'Erneut prüfen' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Erneut verarbeiten' }));
   await screen.findByRole('combobox', { name: 'Neues Verarbeitungsprofil' });
   expect(screen.queryByRole('checkbox')).toBeNull();
 });
@@ -196,7 +196,7 @@ it('allows another profile for blocked quality without allowing approval', async
 it('clears the approval confirmation when the profile action is cancelled', async () => {
   render(<ReviewDocument id="doc" />);
   fireEvent.click(await screen.findByRole('checkbox'));
-  fireEvent.click(screen.getByRole('button', { name: 'Erneut prüfen' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Erneut verarbeiten' }));
   await screen.findByRole('combobox', { name: 'Neues Verarbeitungsprofil' });
   fireEvent.click(screen.getByRole('button', { name: 'Abbrechen' }));
   expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(false);
@@ -207,7 +207,7 @@ it('keeps issued releases protected even if stale capabilities say reprocessing 
   mockDocument({ release: { id: 'released', created_at: content.created_at, status: 'sent', error_message: null, released_by: 'anna' } });
   render(<ReviewDocument id="doc" />);
   await screen.findByText('Freigabe gespeichert');
-  expect(screen.queryByRole('button', { name: 'Erneut prüfen' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Erneut verarbeiten' })).toBeNull();
 });
 
 it('offers indexing diagnostics to admins for released documents', async () => {
@@ -229,7 +229,7 @@ it('does not offer indexing diagnostics to regular users', async () => {
 
 it('shows a reprocessing conflict and does not claim the job was started', async () => {
   render(<ReviewDocument id="doc" />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Erneut prüfen' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Erneut verarbeiten' }));
   fireEvent.change(await screen.findByRole('combobox', { name: 'Neues Verarbeitungsprofil' }), { target: { value: 'ppocrv6_medium_structurev3' } });
   api.mockRejectedValueOnce(new ApiError(409, 'Preview changed'));
   fireEvent.click(screen.getByRole('button', { name: 'Neu verarbeiten' }));
@@ -243,7 +243,7 @@ it('offers no invented profile when the server reports none', async () => {
   api.mockImplementation(async path => path === '/api/v1/portal/config' ? config
     : path === '/api/v1/paddle/capabilities' ? { profiles: [] } : content);
   render(<ReviewDocument id="doc" />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Erneut prüfen' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Erneut verarbeiten' }));
   await screen.findByText(/kein passendes Profil verfügbar/);
   expect(screen.queryByRole('combobox')).toBeNull();
   expect((screen.getByRole('button', { name: 'Neu verarbeiten' }) as HTMLButtonElement).disabled).toBe(true);

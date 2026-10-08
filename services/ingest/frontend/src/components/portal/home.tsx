@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import Link from 'next/link';
-import { AlertTriangle, ArrowRight, CheckCheck, Clock3, FileText } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCheck, Clock3, FilePlus, FileText } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { firstName } from '@/lib/utils';
 import { buttonVariants } from '@/components/ui/button';
@@ -82,7 +82,7 @@ export function PortalHome() {
     .slice(0, 5), [documents]);
 
   return (
-    <PortalPage title={`${greeting(t, hour)}${user ? `, ${firstName(user.username)}` : ''}.`}>
+    <PortalPage title={`${greeting(t, hour)}${user ? `, ${firstName(user.username)}` : ''}.`} actions={<Link className={buttonVariants()} href="/sources/new"><FilePlus size={16} aria-hidden="true" />{t('portal.chrome.addSource')}</Link>}>
       {error && <Notice error action={load}>{error}</Notice>}
       <section aria-labelledby="stand-title">
         <h2 className="sr-only" id="stand-title">{t('portal.home.statusHeading')}</h2>

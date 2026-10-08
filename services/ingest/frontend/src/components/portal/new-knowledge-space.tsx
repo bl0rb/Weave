@@ -58,7 +58,8 @@ export function NewKnowledgeSpace() {
         visibility: shareAll ? 'public' : 'restricted',
         grants: memberTeams.map(team_id => ({ team_id, role: 'member' })),
       }));
-      // Continue the journey with the new area already selected.
+      // Continue with the new area already selected; the form stays disabled while navigating.
+      // Choosing Confluence (and setting up a connection) happens in the source form's step 02.
       router.replace(`/sources/new?collection=${encodeURIComponent(space.collection_id)}`);
     } catch (err) {
       // The only conflict here: a space the user can see already has this name.
@@ -67,7 +68,7 @@ export function NewKnowledgeSpace() {
     }
   }
 
-  return <PortalPage title={t('portal.chrome.breadcrumb.knowledgeNew')} eyebrow={t('portal.newSpace.step')}
+  return <PortalPage title={t('portal.chrome.breadcrumb.knowledgeNew')} eyebrow={null}
     description={t('portal.newSpace.description')}>
     <Link className="portal-back" href="/knowledge">{t('portal.newSpace.backLink')}</Link>
     {error && <Notice error action={!config ? load : undefined}>{error}</Notice>}

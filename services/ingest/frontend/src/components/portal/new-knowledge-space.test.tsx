@@ -29,6 +29,7 @@ it('creates the area with purpose, responsible team and member team, then contin
   fireEvent.change(screen.getByRole('textbox', { name: 'Details angeben' }), { target: { value: ' Antworten für den Service ' } });
   api.mockResolvedValueOnce(area);
   fireEvent.click(screen.getByRole('button', { name: 'Anlegen und Quelle hinzufügen' }));
+  // Straight on to the source form (files or Confluence are chosen there, in step 02).
   await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('/sources/new?collection=area'));
   expect(JSON.parse(api.mock.calls[1][1]?.body as string)).toEqual({
     name: 'Servicewissen',
@@ -94,12 +95,13 @@ it('only opens an area to everyone after an explicit confirmation', async () => 
   expect(save.disabled).toBe(false);
 });
 
-it('keeps the lean Übersicht free of a "Wissensbereich anlegen" shortcut and header upload action', async () => {
+it('keeps the Übersicht free of a "Wissensbereich anlegen" shortcut but offers "Quelle hinzufügen" as its one header action', async () => {
   api.mockResolvedValue({ items: [], total: 0 });
   const { container } = render(<PortalHome />);
   await screen.findByRole('heading', { name: /^Guten (Morgen|Tag|Abend), Ada\.$/ });
   expect(screen.queryByRole('link', { name: /Wissensbereich anlegen/ })).toBeNull();
-  expect(container.querySelector('header.portal-header a')).toBeNull();
+  expect(container.querySelectorAll('header.portal-header a')).toHaveLength(1);
+  expect(screen.getByRole('link', { name: 'Quelle hinzufügen' }).getAttribute('href')).toBe('/sources/new');
 });
 
 it.each([false, true])('offers one context-specific upload action for an area (has documents: %s)', async hasDocuments => {
@@ -130,17 +132,9 @@ it('uses the upload capability for entitled existing team members', async () => 
     total: 1,
   });
   render(<KnowledgeDetail id="area" />);
-  expect(await screen.findByRole('button', { name: 'Dokumente freigeben' })).toBeTruthy();
-  expect(screen.getByRole('link', { name: 'Quelle hinzufügen' })).toBeTruthy();
-});
-
-it('keeps bulk release available when eligible documents are on another page', async () => {
-  api.mockImplementation(async path => path === '/api/v1/collections/area' ? area : {
-    items: [{ id: 'doc', original_filename: 'Leitfaden.pdf', status: 'FINISHED', collection_id: 'area', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'C', quality_recommendation: 'block', can_release: false, release: null }],
-    total: 21,
-  });
-  render(<KnowledgeDetail id="area" />);
-  expect(await screen.findByRole('button', { name: 'Dokumente freigeben' })).toBeTruthy();
+  expect(await screen.findByRole('link', { name: 'Quelle hinzufügen' })).toBeTruthy();
+  // Several documents at once go through the selection + bulk bar, not a release-all button.
+  expect(screen.queryByRole('button', { name: 'Dokumente freigeben' })).toBeNull();
 });
 
 it('keeps explicit readers from uploading or releasing a collection', async () => {
@@ -149,6 +143,5 @@ it('keeps explicit readers from uploading or releasing a collection', async () =
     : { items: [], total: 1 });
   render(<KnowledgeDetail id="area" />);
   await screen.findByRole('heading', { name: 'Servicewissen' });
-  expect(screen.queryByRole('button', { name: 'Dokumente freigeben' })).toBeNull();
   expect(screen.queryByRole('link', { name: 'Quelle hinzufügen' })).toBeNull();
 });

@@ -229,7 +229,7 @@ function ReviewDocumentContent({ id }: { id: string }) {
       <h2 id="reprocess-started-title" tabIndex={-1} ref={startedHeading}>{t('portal.reviews.reprocessStartedHeading')}</h2>
       <p className="mt-4">{t('portal.reviews.reprocessStartedBody1')}</p>
       <p className="mt-3">{t('portal.reviews.reprocessStartedBody2')}</p>
-      <div className="portal-form-actions"><Link href="/processing" className={buttonVariants()}>{t('portal.reviews.viewProcessing')}</Link><Link href="/reviews" className={buttonVariants({ variant: 'ghost' })}>{t('portal.reviews.backToReview')}</Link></div>
+      <div className="portal-form-actions"><Link href="/documents?stand=processing" className={buttonVariants()}>{t('portal.reviews.viewProcessing')}</Link><Link href="/reviews" className={buttonVariants({ variant: 'ghost' })}>{t('portal.reviews.backToReview')}</Link></div>
     </section>}
     {preview && !reprocessStarted && <><div className="portal-context-bar"><Link href={`/knowledge/${preview.collection_id}`}>{preview.collection_name}</Link><span aria-live="polite" className={`portal-badge portal-badge-${state?.tone}`}>{state?.label}</span></div>
       <div className="portal-review-grid"><article className="portal-panel portal-preview"><div className="flex flex-wrap items-start justify-between gap-3"><h2>{editing ? t('portal.reviews.editHeading') : preview.release ? t('portal.reviews.releasedHeading') : t('portal.reviews.processedHeading')}</h2>{preview.can_edit && !editing && <Button variant="outline" size="sm" onClick={() => { setEditing(true); setError(''); }}><Pencil size={15} />{t('portal.reviews.editAction')}</Button>}</div>
@@ -271,9 +271,11 @@ function ReviewDocumentContent({ id }: { id: string }) {
             ? <Button className="w-full" variant="outline" disabled={saving || Boolean(deciding)} onClick={() => void decide('unskip')}>{deciding === 'unskip' ? t('portal.reviews.unskipping') : t('portal.reviews.unskip')}</Button>
             : <Button className="w-full" variant="outline" disabled={saving || Boolean(deciding)} onClick={() => void decide('park')}><PauseCircle size={16} />{deciding === 'park' ? t('portal.reviews.parking') : t('portal.reviews.parkAction')}</Button>)}
           {preview.can_release && <Button className="w-full" variant="outline" disabled={saving || Boolean(deciding)} onClick={() => void decide('skip')}><Ban size={16} />{deciding === 'skip' ? t('portal.reviews.skipping') : t('portal.reviews.skipAction')}</Button>}
-          {preview.can_reprocess && <Button className="w-full whitespace-normal h-auto py-3" variant="outline" disabled={saving} onClick={() => { setReprocessOpen(true); setConfirmed(false); setError(''); }}>{t('portal.reviews.reprocessTrigger')}</Button>}
-          {!deleting && <Button className="w-full" variant="outline" disabled={saving} onClick={() => setDeleting(true)}><Trash2 size={16} />{t('portal.reviews.deleteDocument')}</Button>}
-          <Link href="/reviews" className="portal-defer">{t('portal.reviews.reviewLater')}</Link>
+          {/* Tools, visually apart from the three decisions above. */}
+          {(preview.can_reprocess || !deleting) && <div className="mt-4 grid gap-2 border-t border-[var(--line)] pt-4">
+            {preview.can_reprocess && <Button className="w-full" variant="outline" disabled={saving} onClick={() => { setReprocessOpen(true); setConfirmed(false); setError(''); }}><RefreshCw size={16} />{t('portal.reviews.reprocessTrigger')}</Button>}
+            {!deleting && <Button className="w-full" variant="ghost" disabled={saving} onClick={() => setDeleting(true)}><Trash2 size={16} />{t('portal.reviews.deleteDocument')}</Button>}
+          </div>}
         </>}
       </aside></div></>}
     {deleting && preview && <ConfirmDialog title={t('portal.reviews.deleteDocument')} body={<p>{t('portal.reviews.deleteDialogBodyPrefix')} <strong className="text-slate-950">{preview.original_filename}</strong> {t('portal.reviews.deleteDialogBodySuffix')}</p>} confirmLabel={t('portal.reviews.deleteDocument')} onClose={() => setDeleting(false)} onConfirm={async () => { await apiSend(`/api/v1/jobs/${encodeURIComponent(id)}`, { method: 'DELETE' }); router.push('/reviews'); router.refresh(); }} />}

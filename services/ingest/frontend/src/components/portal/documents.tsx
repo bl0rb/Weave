@@ -3,15 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { AlertTriangle, ArrowRight, CheckCheck, Info, Trash2 } from 'lucide-react';
+import { AlertTriangle, Info, Trash2 } from 'lucide-react';
 import { apiJson } from '@/lib/api';
-import { Button, buttonVariants } from '@/components/ui/button';
+import { buttonVariants } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/admin/admin-shared';
 import { spaceColorVar } from '@/lib/space-color';
 import { useIndexingStatus } from '@/lib/use-indexing-status';
 import {
   bulkPortalAction,
-  jsonBody,
   pipelineSteps,
   dateLabel,
   documentState,
@@ -55,7 +54,7 @@ function actionFor(document: PortalDocument, stage: PipelineStage, t: (key: Mess
   switch (stage) {
     case 'review': case 'decided': return <Link className={buttonVariants({ size: 'sm' })} href={`/reviews/${document.id}`}>{t('portal.tasks.reviewAction')}</Link>;
     case 'ready': return <Link className={buttonVariants({ size: 'sm', variant: 'outline' })} href={documentUrl(document)}>{t('common.open')}</Link>;
-    case 'error': return <Link className={buttonVariants({ size: 'sm', variant: 'outline' })} href={`/jobs/${document.id}`}>{t('common.retry')}</Link>;
+    case 'error': return <Link className={buttonVariants({ size: 'sm', variant: 'outline' })} href={`/jobs/${document.id}`}>{t('portal.tasks.viewJob')}</Link>;
     default: return <Link className={buttonVariants({ size: 'sm', variant: 'ghost' })} href={`/jobs/${document.id}`}>{t('portal.documents.statusAction')}</Link>;
   }
 }
@@ -74,8 +73,6 @@ export function PortalDocuments({ initialQuery, initialStand, initialBereich }: 
   const [bereichSlug, setBereichSlug] = useState(initialBereich ?? '');
   const [offset, setOffset] = useState(0);
   const [notice, setNotice] = useState('');
-  const [confirmReleaseAll, setConfirmReleaseAll] = useState(false);
-  const [releasingAll, setReleasingAll] = useState(false);
   const [pageSize, setPageSize] = useState(20);
   const [rowDeleting, setRowDeleting] = useState<PortalDocument | null>(null);
 
@@ -115,7 +112,7 @@ export function PortalDocuments({ initialQuery, initialStand, initialBereich }: 
   // Filter changes reset pagination inline (in the setters below) rather than via a separate effect.
   function updateQuery(value: string) { setQuery(value); setOffset(0); bulk.clear(); }
   function updateStand(value: PipelineStage | '') { setStand(value); setOffset(0); bulk.clear(); }
-  function updateBereich(value: string) { setBereichSlug(value); setOffset(0); bulk.clear(); setConfirmReleaseAll(false); }
+  function updateBereich(value: string) { setBereichSlug(value); setOffset(0); bulk.clear(); }
   // The selection spans pages ("alle auswählen" selects every filtered document), so paging keeps it.
   function updateOffset(value: number) { setOffset(value); }
   function updatePageSize(value: number) { setPageSize(value); setOffset(0); }
@@ -149,30 +146,10 @@ export function PortalDocuments({ initialQuery, initialStand, initialBereich }: 
     bulk.deselect(rowDeleting.id);
     load();
   }
-  // Same endpoint and confirm flow as the knowledge space detail page ("Dokumente freigeben").
-  async function releaseAll() {
-    if (!collectionId || !confirmReleaseAll || releasingAll) return;
-    setReleasingAll(true); setError(''); setNotice('');
-    try {
-      const result = await apiJson<{ released: number; skipped: number }>(`/api/v1/portal/collections/${encodeURIComponent(collectionId)}/release-all`, jsonBody({ accept_quality_warnings: true }));
-      setNotice(`${t('portal.spaces.releasedNotice', { count: result.released })}${result.skipped ? t('portal.spaces.releasedSkippedSuffix', { count: result.skipped }) : ''}.`);
-      setConfirmReleaseAll(false);
-      bulk.clear();
-      load();
-    } catch (err) { setError(portalError(err, locale)); }
-    finally { setReleasingAll(false); }
-  }
-  const canReleaseAll = Boolean(selectedSpace && (selectedSpace.can_upload ?? selectedSpace.can_manage) && documents?.length);
-  // Reached from the navigation ("Alle Bereiche"): show the action, but it needs one space to act on.
-  const releaseAllNeedsSpace = !selectedSpace && Boolean(spaces?.some((space) => space.can_upload ?? space.can_manage) && documents?.length);
 
   return (
     <PortalPage
       title={t('portal.nav.documents')}
-      actions={<div className="flex flex-wrap items-center gap-4">
-        <Link className="portal-inline-link" href="/processing">{t('portal.chrome.breadcrumb.processing')} <ArrowRight size={14} aria-hidden="true" /></Link>
-        <Link className="portal-inline-link" href="/imports">{t('portal.documents.importsLink')} <ArrowRight size={14} aria-hidden="true" /></Link>
-      </div>}
     >
       {error && <Notice error action={load}>{error}</Notice>}
       {notice && <Notice>{notice}</Notice>}
@@ -225,14 +202,7 @@ export function PortalDocuments({ initialQuery, initialStand, initialBereich }: 
         </div>
         <p className="portal-pipe-note"><Info size={16} aria-hidden="true" /><span>{t('portal.documents.pipelineNote.part1')} <em>{t('common.and')}</em> {t('portal.documents.pipelineNote.part2')}</span></p>
 
-        {(canReleaseAll || releaseAllNeedsSpace) && <div className="portal-release-all">
-          {canReleaseAll && confirmReleaseAll ? <>
-            <Button variant="outline" disabled={releasingAll} onClick={() => setConfirmReleaseAll(false)}>{t('common.cancel')}</Button>
-            <Button variant="danger" disabled={releasingAll} onClick={() => void releaseAll()}><CheckCheck size={15} />{releasingAll ? t('portal.spaces.releasingAll') : t('portal.spaces.confirmReleaseAll')}</Button>
-          </> : <Button variant="outline" disabled={!canReleaseAll} aria-describedby={releaseAllNeedsSpace ? 'release-all-hint' : undefined} onClick={() => setConfirmReleaseAll(true)}><CheckCheck size={15} />{t('portal.spaces.releaseCollection')}</Button>}
-          {releaseAllNeedsSpace && <span id="release-all-hint" className="text-xs text-[var(--muted)]">{t('portal.spaces.releaseAllNeedsSpace')}</span>}
-        </div>}
-
+        {/* Several documents at once: select them, the bulk bar asks for the review confirmation (and grade C explicitly). */}
         <BulkActionBar {...bulk.barProps} />
 
         {documents === null && !error ? <p role="status" className="portal-loading">{t('portal.tasks.documentsLoading')}</p> : pageItems.length ? (

@@ -42,7 +42,16 @@ it('lists failed jobs under Braucht Hilfe with a link to the job', async () => {
   render(<Aufgaben />);
   expect(await screen.findByText('Vertrag.pdf')).toBeTruthy();
   expect(screen.getByText('Seite nicht erreichbar (404)')).toBeTruthy();
-  expect(screen.getByRole('link', { name: 'Auftrag ansehen' }).getAttribute('href')).toBe('/jobs/j1');
+  expect(screen.getByRole('link', { name: 'Fehler ansehen' }).getAttribute('href')).toBe('/jobs/j1');
+});
+
+it('lists parked and skipped documents here too, without the separate review inbox', async () => {
+  render(<Aufgaben />);
+  await screen.findByText('Handbuch.pdf');
+  fireEvent.click(screen.getByRole('button', { name: 'Geparkt' }));
+  await waitFor(() => expect(api.mock.calls.some(([path]) => typeof path === 'string' && path.includes('review_state=parked'))).toBe(true));
+  expect(await screen.findByRole('heading', { name: 'Geparkt' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Geparkt' }).getAttribute('aria-pressed')).toBe('true');
 });
 
 it('shows only documents released by the signed-in user under "Von dir freigegeben"', async () => {

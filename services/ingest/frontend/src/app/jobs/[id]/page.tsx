@@ -40,6 +40,14 @@ const MarkdownView = dynamic(() => import('@/components/markdown/markdown-view')
   ),
 });
 
+/** Readable status for the header; unknown values fall back to the raw status. */
+const JOB_STATUS_LABEL: Record<string, MessageKey> = {
+  PENDING: 'portal.documents.state.pending',
+  RUNNING: 'portal.documents.state.running',
+  FINISHED: 'portal.activity.filterFinished',
+  FAILED: 'portal.documents.state.failed',
+};
+
 const qualityRecommendationKeys: Record<string, MessageKey> = {
   allow: 'portal.jobDetail.recommendation.allow',
   warn: 'portal.jobDetail.recommendation.warn',
@@ -473,15 +481,15 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
     <main className="min-h-screen bg-white px-4 py-6 text-slate-950 sm:px-6 lg:px-8">
       <div className="mx-auto w-full max-w-6xl space-y-4 rounded-xl border border-slate-200 bg-white p-4 sm:p-6 lg:p-8">
         <div className="flex justify-start">
-          <Link href="/jobs">
-            <Button variant="outline">{t('portal.jobDetail.backToJobs')}</Button>
-          </Link>
+          {/* Members come from Aufgaben/Dokumente; the job list is an admin view. */}
+          {isAdmin ? <Link href="/jobs"><Button variant="outline">{t('portal.jobDetail.backToJobs')}</Button></Link>
+            : <Link href="/aufgaben" className={buttonVariants({ variant: 'outline' })}>{t('portal.jobDetail.backToTasks')}</Link>}
         </div>
         <h1 className="text-3xl font-semibold">{t('portal.jobDetail.title')}</h1>
         <p>{t('portal.jobDetail.filenameLabel', { name: job.original_filename })}</p>
         {job.tags && job.tags.length > 0 && <p>{t('portal.jobDetail.tagsLabel', { tags: job.tags.join(', ') })}</p>}
         <p className="flex items-center gap-2">
-          {t('portal.jobDetail.statusLabel')} {job.status}
+          {t('portal.jobDetail.statusLabel')} {JOB_STATUS_LABEL[job.status] ? t(JOB_STATUS_LABEL[job.status]) : job.status}
           {typeof job.document_version === 'number' && (
             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
               v{job.document_version}
@@ -527,12 +535,12 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
             {(suggestedLowerProfile || canRestartWithProfile) && (
               <div className="mt-2 flex flex-wrap gap-2">
                 {suggestedLowerProfile && (
-                  <Button size="sm" variant="outline" disabled={isRetryingLower} onClick={retryWithLowerProfile}>
+                  <Button size="sm" disabled={isRetryingLower} onClick={retryWithLowerProfile}>
                     {isRetryingLower ? t('portal.jobDetail.retrying') : t('portal.jobDetail.retryWith', { profile: suggestedLowerProfile })}
                   </Button>
                 )}
                 {canRestartWithProfile && (
-                  <Button size="sm" variant="outline" onClick={() => setRestartProfileDialogOpen(true)}>
+                  <Button size="sm" variant={suggestedLowerProfile ? 'outline' : 'default'} onClick={() => setRestartProfileDialogOpen(true)}>
                     <Settings2 className="h-4 w-4" />
                     {t('portal.jobs.browser.rerunWithProfile')}
                   </Button>

@@ -40,7 +40,7 @@ it('replaces the upload form with next steps and keeps the selected area for mor
   expect(container.querySelector('input[type="file"]')).toBeNull();
   expect(screen.getByText(/einige Minuten dauern/)).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Zum Wissensbereich' }).getAttribute('href')).toBe('/knowledge/area');
-  expect(screen.getByRole('link', { name: 'Verarbeitung ansehen' }).getAttribute('href')).toBe('/processing');
+  expect(screen.getByRole('link', { name: 'Verarbeitung ansehen' }).getAttribute('href')).toBe('/documents?stand=processing');
   const restart = api.mock.calls.find(([path]) => path === '/api/v1/jobs/job/restart');
   expect(JSON.parse(restart?.[1]?.body as string).profile_id).toBe('ppocrv6_tiny_structurev3');
   expect(api.mock.calls.some(([path]) => path.includes('/mail/'))).toBe(false);
@@ -96,4 +96,21 @@ it('applies the selected profile to Confluence attachments, not to the page text
   await screen.findByRole('heading', { name: 'Confluence-Import gestartet' });
   const mutation = api.mock.calls.find(([path]) => path === '/api/v1/import/runs');
   expect(JSON.parse(mutation?.[1]?.body as string).options).toEqual({ collection_id: 'area', include_attachments: true, ocr_attachments: true, ocr_profile_id: 'ppocrv6_medium_structurev3' });
+});
+
+it('starts the Confluence setup right away when Confluence is chosen without a connection, then selects it', async () => {
+  const normal = api.getMockImplementation()!;
+  api.mockImplementation(async (path, options) => {
+    if (path === '/api/v1/import/sources' && options?.method === 'POST') return { id: 'new-source', name: 'Mein Wiki' };
+    if (path === '/api/v1/import/sources') return { items: [] };
+    return normal(path, options);
+  });
+  render(<SourceForm initialCollection="area" initialKind="confluence" />);
+  await screen.findByRole('heading', { name: 'Confluence-Verbindung hinzufügen' });
+  expect(screen.getByText(/noch keine Confluence-Verbindung/)).toBeTruthy();
+  fireEvent.change(screen.getByRole('textbox', { name: 'Basis-URL' }), { target: { value: 'https://confluence.example.com' } });
+  fireEvent.change(screen.getByPlaceholderText('Confluence-PAT'), { target: { value: 'pat-token' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Verbindung hinzufügen' }));
+  await waitFor(() => expect((screen.getByRole('combobox', { name: 'Deine Confluence-Verbindung' }) as HTMLSelectElement).value).toBe('new-source'));
+  expect(screen.queryByRole('heading', { name: 'Confluence-Verbindung hinzufügen' })).toBeNull();
 });

@@ -19,7 +19,6 @@ const document = { id: 'd1', original_filename: 'Handbuch.pdf', status: 'FINISHE
 function mockApi(space = area) {
   json.mockImplementation(async path => {
     if (path === '/api/v1/portal/documents/bulk') return { done: 1, errors: [] };
-    if (path === '/api/v1/portal/collections/area-1/release-all') return { released: 1, skipped: 0 };
     if (typeof path === 'string' && path.startsWith('/api/v1/portal/documents')) return { items: [document], total: 1 };
     if (typeof path === 'string' && path.startsWith('/api/v1/portal/indexing-status')) return { items: [] };
     return { items: [space] };
@@ -47,26 +46,11 @@ it('shows no page description and lets documents be selected for a bulk action',
   await waitFor(() => expect(screen.queryByRole('toolbar')).toBeNull());
 });
 
-it('shows "Dokumente freigeben" from the navigation too, but releases only a selected space through release-all', async () => {
-  const { unmount } = render(<PortalDocuments />);
-  await screen.findByText('Handbuch.pdf');
-  expect((screen.getByRole('button', { name: 'Dokumente freigeben' }) as HTMLButtonElement).disabled).toBe(true);
-  expect(screen.getByText(/Wähle oben einen Wissensbereich/)).toBeTruthy();
-  unmount();
-
-  render(<PortalDocuments initialBereich="servicewissen" />);
-  await screen.findByText('Handbuch.pdf');
-  fireEvent.click(await screen.findByRole('button', { name: 'Dokumente freigeben' }));
-  fireEvent.click(screen.getByRole('button', { name: /Ja, alle Dokumente freigeben/ }));
-  await waitFor(() => expect(json.mock.calls.some(([path, init]) => path === '/api/v1/portal/collections/area-1/release-all' && init?.method === 'POST')).toBe(true));
-  expect(await screen.findByText('1 Dokumente wurden freigegeben.')).toBeTruthy();
-});
-
-it('hides "Dokumente freigeben" when the user may not release in the selected space', async () => {
-  mockApi({ ...area, can_manage: false, can_upload: false });
+it('offers no release-all and no header links; several documents are released through the selection', async () => {
   render(<PortalDocuments initialBereich="servicewissen" />);
   await screen.findByText('Handbuch.pdf');
   expect(screen.queryByRole('button', { name: /Dokumente freigeben/ })).toBeNull();
+  expect(screen.queryByRole('link', { name: /Verarbeitung|Importe/ })).toBeNull();
 });
 
 it('selects every filtered document, not just the current page, and shows more per page on request', async () => {

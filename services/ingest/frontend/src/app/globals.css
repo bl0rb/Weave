@@ -83,36 +83,43 @@
 }
 
 :root.dark {
-  --background: #172d27;
-  --foreground: #e8f2e4;
-  --surface: #203b33;
-  --border: #3e5248;
+  /* Neutral dark grey; green stays the accent only (links, focus, active nav, primary buttons). */
+  --background: #16171a;
+  --foreground: #e6e7ea;
+  --surface: #1f2024;
+  --border: #303238;
   color-scheme: dark;
 
-  --bg: #172d27;
-  --surface-2: #1b332c;
-  --hover: #234339;
-  --ink: #eef2ec;
-  --ink-2: #c9d4c8;
-  --muted: #a9c9a3;
-  --line: #3e5248;
-  --line-2: #4c6358;
-  --accent: #4caf82;
-  --accent-hover: #5fbd91;
-  --accent-ink: #bfe6d2;
-  --accent-soft: #1f3f34;
-  --on-accent: #0b241c;
+  /* Tailwind's slate scale is green-tinted for light mode; its dark end
+     (overlays, code blocks) turns neutral here. */
+  --color-slate-800: #2a2c31;
+  --color-slate-900: #1b1c20;
+  --color-slate-950: #0f1012;
+
+  --bg: #16171a;
+  --surface-2: #1b1c20;
+  --hover: #2a2c31;
+  --ink: #eceef1;
+  --ink-2: #c9ccd2;
+  --muted: #9da1a9;
+  --line: #303238;
+  --line-2: #43464d;
+  --accent: #52b48b;
+  --accent-hover: #67c39d;
+  --accent-ink: #a6dcc3;
+  --accent-soft: #233029;
+  --on-accent: #0c1511;
 
   --warn: #f0c869;
-  --warn-bg: #4a3a12;
+  --warn-bg: #3a3119;
   --proc: #9db8f2;
-  --proc-bg: #253357;
+  --proc-bg: #232b40;
   --idx: #c9b8f5;
-  --idx-bg: #362a52;
+  --idx-bg: #2e2843;
   --ok: #8fe0b3;
-  --ok-bg: #1c3c2c;
+  --ok-bg: #1d3027;
   --err: #f3a79e;
-  --err-bg: #4a2420;
+  --err-bg: #3d2320;
 
   --sp-1: #5cb89b;
   --sp-2: #a99bdd;
@@ -140,23 +147,26 @@ body {
 }
 
 html.dark body { background: var(--background); }
-html.dark .bg-white { background-color: #203b33 !important; }
-html.dark .bg-slate-50 { background-color: #203b33 !important; }
-html.dark .bg-slate-100 { background-color: #2d4439 !important; }
-html.dark .bg-emerald-50 { background-color: #214b38 !important; }
-html.dark .bg-emerald-100 { background-color: #28563f !important; }
-html.dark .text-slate-950 { color: #eef2ec !important; }
-html.dark .text-slate-900, html.dark .text-slate-800 { color: #e8f2e4 !important; }
-html.dark .text-slate-700, html.dark .text-slate-600 { color: #c9d4c8 !important; }
-html.dark .text-slate-500, html.dark .text-slate-400 { color: #a9c9a3 !important; }
-html.dark .text-emerald-800, html.dark .text-emerald-700 { color: #a9c9a3 !important; }
+/* Tailwind utilities of the admin/technical pages, mapped onto the dark tokens above. */
+html.dark .bg-white, html.dark .bg-slate-50 { background-color: var(--surface) !important; }
+html.dark .bg-slate-50\/60 { background-color: var(--surface-2) !important; }
+html.dark .bg-slate-100, html.dark .bg-slate-200 { background-color: var(--hover) !important; }
+html.dark .bg-emerald-50, html.dark .bg-emerald-50\/40 { background-color: var(--accent-soft) !important; }
+html.dark .bg-emerald-100 { background-color: #2b3c34 !important; }
+html.dark .text-slate-950, html.dark .text-slate-900, html.dark .text-slate-800 { color: var(--ink) !important; }
+html.dark .text-slate-700, html.dark .text-slate-600 { color: var(--ink-2) !important; }
+html.dark .text-slate-500, html.dark .text-slate-400 { color: var(--muted) !important; }
+html.dark .text-emerald-800, html.dark .text-emerald-700, html.dark .text-emerald-600 { color: var(--accent-ink) !important; }
 /* Outline/ghost buttons (components/ui/button.tsx) use near-black emerald
    text and light hover fills -- flip both, or they vanish on dark surfaces. */
-html.dark .text-emerald-950, html.dark .text-emerald-900 { color: #eef2ec !important; }
-html.dark .hover\:bg-emerald-50:hover { background-color: #234339 !important; }
-html.dark .hover\:bg-emerald-100:hover { background-color: #28563f !important; }
-html.dark [class*="border-slate-"], html.dark [class*="border-emerald-"] { border-color: #3e5248 !important; }
-html.dark input, html.dark select, html.dark textarea { background: #203b33 !important; color: #eef2ec !important; border-color: #53655c !important; }
+html.dark .text-emerald-950, html.dark .text-emerald-900 { color: var(--ink) !important; }
+html.dark :is(.hover\:bg-slate-50, .hover\:bg-slate-100, .hover\:bg-emerald-50):hover { background-color: var(--hover) !important; }
+html.dark .hover\:bg-emerald-100:hover { background-color: #2b3c34 !important; }
+html.dark [class*="border-slate-"], html.dark [class*="border-emerald-"] { border-color: var(--line-2) !important; }
+/* White marks on the light dark-mode space/status colors are unreadable: dark text instead. */
+html.dark :is(.portal-space-mark, .portal-pipe-human .portal-pipe-n) { color: #141518; }
+/* Form controls need a visible boundary (>= 3:1 against the surface). */
+html.dark input, html.dark select, html.dark textarea { background: var(--surface-2) !important; color: var(--ink) !important; border-color: #6b6f78 !important; }
 /* portal-* and shell-* below are token-driven (var(--bg)/var(--ink)/...),
    which already flip under :root.dark — no per-class dark overrides needed. */
 
@@ -213,7 +223,6 @@ body :is(a, button, input, select, textarea):focus-visible {
 .portal-document-link { display: flex; align-items: center; gap: 10px; font-weight: 600; min-width: 160px; max-width: 300px; overflow-wrap: anywhere; }
 .portal-document-link svg { flex-shrink: 0; color: var(--muted); }
 .portal-doc-table .portal-document-link { font-weight: 400; }
-.portal-release-all { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 0 20px 16px; }
 .portal-date { white-space: nowrap; font-size: 12px; color: var(--muted); }
 .portal-badge { display: inline-flex; align-items: center; height: 24px; border-radius: 6px; padding: 0 10px; font-weight: 600; font-size: 12px; line-height: 1; }
 .portal-badge-neutral { background: var(--surface-2); color: var(--muted); }
@@ -299,7 +308,6 @@ body :is(a, button, input, select, textarea):focus-visible {
 .portal-quality-legend dt { color: var(--muted); font-size: 12px; margin-top: 8px; }
 .portal-quality-legend dd { margin-top: 2px; }
 .portal-approval { margin: 24px 0; }
-.portal-defer { display: block; text-align: center; margin: 14px 0 24px; color: var(--accent-ink); }
 /* Publication progress remains visible without nesting another card. */
 .portal-indexing { border-top: 1px solid var(--line); margin-top: 22px; padding-top: 20px; }
 .portal-index-steps { list-style: none; padding: 0; margin: 0 0 20px; display: grid; gap: 12px; }
@@ -314,6 +322,7 @@ body :is(a, button, input, select, textarea):focus-visible {
 .portal-source-form legend { display: flex; align-items: center; gap: 12px; float: left; width: 100%; margin-bottom: 22px; font-size: 18px; }
 .portal-source-form legend + * { clear: both; }
 .portal-source-form .portal-inline-link { margin-top: 12px; }
+button.portal-inline-link { padding: 0; border: 0; background: none; font-family: inherit; cursor: pointer; }
 .portal-source-types { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 22px; }
 .portal-source-types > label { display: flex; align-items: center; gap: 12px; padding: 18px; border: 1px solid var(--line-2); border-radius: var(--radius-control); cursor: pointer; }
 .portal-source-types > label.selected { border-color: var(--accent); background: var(--accent-soft); }

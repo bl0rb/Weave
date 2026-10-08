@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { FilePlus, Menu, Search } from 'lucide-react';
@@ -8,6 +8,9 @@ import { buttonVariants } from '@/components/ui/button';
 import { useI18n } from '@/i18n/provider';
 import type { MessageKey } from '@/i18n/messages';
 import { cn } from '@/lib/utils';
+import { apiJson } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
+import type { KnowledgeSpace } from '@/lib/portal';
 
 /** Longest-prefix-wins route → breadcrumb label. Extend when a new top-level route is added. */
 const ROUTE_LABELS: [string, MessageKey][] = [
@@ -47,6 +50,17 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
   const router = useRouter();
   const { t } = useI18n();
   const [query, setQuery] = useState('');
+  const { user } = useAuth();
+  // Readers (no space they may upload to) get no CTA; the form behind it would only show an empty state.
+  const [canAddSource, setCanAddSource] = useState(true);
+  useEffect(() => {
+    if (!user) return;
+    const controller = new AbortController();
+    apiJson<{ items: KnowledgeSpace[] }>('/api/v1/collections', { signal: controller.signal })
+      .then(data => setCanAddSource(data.items.some(space => space.can_upload ?? space.can_manage)))
+      .catch(() => setCanAddSource(true));
+    return () => controller.abort();
+  }, [user]);
 
   function submitSearch(event: FormEvent) {
     event.preventDefault();
@@ -83,7 +97,7 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
       </form>
 
       {/* Overview and knowledge spaces offer "add source" in their own content (each space card). */}
-      {pathname !== '/' && pathname !== '/knowledge' && <Link href="/sources/new" className={cn(buttonVariants({ size: 'sm' }), 'flex-shrink-0')}>
+      {canAddSource && pathname !== '/' && pathname !== '/knowledge' && <Link href="/sources/new" className={cn(buttonVariants({ size: 'sm' }), 'flex-shrink-0')}>
         <FilePlus className="h-4 w-4" aria-hidden="true" />
         <span className="hidden sm:inline">{t('portal.chrome.addSource')}</span>
       </Link>}

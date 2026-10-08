@@ -11,10 +11,8 @@ import {
   ConfirmDialog,
   ErrorNotice,
   errorMessage,
-  Field,
   inputClass,
   LoadingState,
-  Modal,
   SectionCard,
   Toggle,
   apiSend,
@@ -23,12 +21,12 @@ import {
   refreshIntervalOptions,
   TEST_COOLDOWN_FALLBACK_MS,
   formatRefreshInterval,
-  type ImportAuthType,
   type ImportSource,
   type ImportSourceListResponse,
   type ImportSourceTestResponse,
 } from '@/lib/imports';
 import { useI18n } from '@/i18n/provider';
+import { ConfluenceSetupDialog } from './confluence-setup-dialog';
 
 export function ConfluenceConnectionsTab() {
   const { t, locale } = useI18n();
@@ -395,7 +393,7 @@ export function ConfluenceConnectionsTab() {
       </p>
 
       {creating && (
-        <CreateSourceModal
+        <ConfluenceSetupDialog
           onClose={() => setCreating(false)}
           onCreated={async () => {
             setCreating(false);
@@ -439,141 +437,5 @@ function TestResult({ result }: { result: ImportSourceTestResponse }) {
       </div>
       {result.detail && <p className="mt-1 text-xs">{result.detail}</p>}
     </div>
-  );
-}
-
-/** Create-only modal -- credentials are write-only, so there is nothing to prefill for an edit variant. */
-function CreateSourceModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => Promise<void> }) {
-  const { t } = useI18n();
-  const [name, setName] = useState('');
-  const [baseUrl, setBaseUrl] = useState('');
-  const [authType, setAuthType] = useState<ImportAuthType>('cloud_basic');
-  const [email, setEmail] = useState('');
-  // Write-only secret: only ever holds what the user is typing right now.
-  const [credential, setCredential] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Toggling the auth scheme clears the typed secret: the field is masked, so
-  // a token entered for one scheme must not silently become the credential
-  // of the other (mirrors imports/new/page.tsx's selectAuthType).
-  const selectAuthType = (next: ImportAuthType) => {
-    if (next !== authType) setCredential('');
-    setAuthType(next);
-  };
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    const trimmedEmail = email.trim();
-    if (authType === 'cloud_basic' && !trimmedEmail) {
-      setError(t('portal.connections.confluence.cloudEmailRequired'));
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      await apiJson<ImportSource>('/api/v1/import/sources', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: name.trim(),
-          base_url: baseUrl.trim(),
-          auth_type: authType,
-          auth_username: authType === 'cloud_basic' ? trimmedEmail : '',
-          credential: credential.trim(),
-        }),
-      });
-      await onCreated();
-    } catch (err) {
-      setError(errorMessage(err));
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Modal title={t('portal.connections.confluence.modalTitle')} onClose={onClose}>
-      <form onSubmit={submit} className="space-y-4">
-        <Field label={t('portal.connections.confluence.nameLabel')}>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className={inputClass}
-            required
-            autoFocus
-            placeholder="ACME Confluence"
-          />
-        </Field>
-        <Field label={t('portal.connections.confluence.baseUrlLabel')}>
-          <input
-            type="url"
-            value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
-            className={inputClass}
-            required
-            placeholder="https://acme.atlassian.net"
-          />
-        </Field>
-        <div>
-          <p className="text-sm font-medium text-slate-700">{t('portal.connections.confluence.authenticationLabel')}</p>
-          <div className="mt-1 grid gap-3 sm:grid-cols-2">
-            <button
-              type="button"
-              onClick={() => selectAuthType('cloud_basic')}
-              className={`rounded-xl border p-3 text-left ${
-                authType === 'cloud_basic' ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white'
-              }`}
-            >
-              <p className="text-sm font-semibold text-slate-950">{t('portal.connections.confluence.authCloudTitle')}</p>
-              <p className="mt-1 text-xs text-slate-600">{t('portal.connections.confluence.authCloudHint')}</p>
-            </button>
-            <button
-              type="button"
-              onClick={() => selectAuthType('pat_bearer')}
-              className={`rounded-xl border p-3 text-left ${
-                authType === 'pat_bearer' ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white'
-              }`}
-            >
-              <p className="text-sm font-semibold text-slate-950">{t('portal.connections.confluence.authServerTitle')}</p>
-              <p className="mt-1 text-xs text-slate-600">{t('portal.connections.confluence.authServerHint')}</p>
-            </button>
-          </div>
-        </div>
-        {authType === 'cloud_basic' && (
-          <Field label={t('portal.connections.confluence.emailLabel')}>
-            <input
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              type="email"
-              className={inputClass}
-              required
-              placeholder="name@company.com"
-            />
-          </Field>
-        )}
-        <Field label={authType === 'cloud_basic' ? t('portal.connections.confluence.apiTokenLabel') : t('portal.connections.confluence.patLabel')} hint={t('portal.connections.confluence.credentialHint')}>
-          <input
-            value={credential}
-            onChange={(e) => setCredential(e.target.value)}
-            type="password"
-            className={inputClass}
-            required
-            autoComplete="new-password"
-            data-1p-ignore
-            data-lpignore="true"
-            placeholder={authType === 'cloud_basic' ? 'Atlassian-API-Token' : 'Confluence-PAT'}
-          />
-        </Field>
-        <ErrorNotice message={error} />
-        <div className="flex justify-end gap-2 pt-1">
-          <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={busy}>
-            {t('portal.connections.confluence.cancel')}
-          </Button>
-          <Button type="submit" size="sm" disabled={busy}>
-            {busy && <LoaderCircle className="h-4 w-4 animate-spin" />}
-            {t('portal.connections.confluence.add')}
-          </Button>
-        </div>
-      </form>
-    </Modal>
   );
 }
