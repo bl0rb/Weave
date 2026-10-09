@@ -53,7 +53,7 @@ from typing import Any
 from mcp.server.mcpserver import Context, MCPServer
 
 from app.core.config import settings
-from app.mcp_auth import MCPOAuthMiddleware, oauth_transport_security
+from app.mcp_auth import MCPOAuthMiddleware, mcp_transport_security
 from app.services.scope import (
     Scope,
     ScopeConfigurationError,
@@ -166,6 +166,6 @@ async def search(
 mcp_app = mcp_server.streamable_http_app(
     stateless_http=True,
     json_response=True,
-    transport_security=oauth_transport_security(),
+    transport_security=mcp_transport_security(),
 )
 mcp_app.add_middleware(MCPOAuthMiddleware)

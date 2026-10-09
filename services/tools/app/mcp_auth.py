@@ -12,13 +12,20 @@ from app.core.config import settings
 from app.services.scope import ScopeConfigurationError, ScopeError, ScopeInsufficientScopeError, resolve_scope
 
 
-def oauth_transport_security() -> TransportSecuritySettings | None:
-    if not settings.mcp_oauth_resource_url:
-        return None
-    url = urlsplit(settings.mcp_oauth_resource_url)
+def mcp_transport_security() -> TransportSecuritySettings:
+    # Always explicit: passing None lets the SDK fall back to a loopback-only
+    # allowlist, which rejects container names and proxied public hosts.
+    if settings.mcp_oauth_resource_url:
+        url = urlsplit(settings.mcp_oauth_resource_url)
+        hosts = [url.netloc, 'localhost:*', '127.0.0.1:*', '[::1]:*']
+        origins = [f'{url.scheme}://{url.netloc}']
+    else:
+        hosts = ['127.0.0.1:*', 'localhost:*', '[::1]:*']
+        origins = ['http://127.0.0.1:*', 'http://localhost:*', 'http://[::1]:*']
+    extra = settings.mcp_allowed_hosts
     return TransportSecuritySettings(
-        allowed_hosts=[url.netloc, 'localhost:*', '127.0.0.1:*', '[::1]:*'],
-        allowed_origins=[f'{url.scheme}://{url.netloc}'],
+        allowed_hosts=hosts + extra,
+        allowed_origins=origins + [f'{scheme}://{host}' for host in extra for scheme in ('http', 'https')],
     )
 
 
