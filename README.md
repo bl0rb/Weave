@@ -32,7 +32,7 @@ evaluated before any data or budget leaves the building.
 does not decide anything. It answers questions from documents that someone
 deliberately published, and it shows its work.
 
-The current release is **v0.7.1** — nine services, running and tested end to
+The current release is **v0.7.2** — nine services, running and tested end to
 end, and each one can run as several replicas. The [wiki](https://github.com/bl0rb/Weave/wiki) is the place to
 start reading; this README covers the repository itself.
 
@@ -62,6 +62,17 @@ another.
 The [knowledge portal guide](docs/wissensportal.md) explains the separation
 between processing and publication. Under the normal workflow, only content
 that a user explicitly releases is indexed.
+
+### New in v0.7.2
+
+**Review portal.** Reviewers can *park* a document (decide later) next to
+*don't release*; parked documents leave the "To review" list and have their own
+filter. The review page pages through the queue ("document n of m"), the task
+inbox collects open work and errors in one place, and a bulk release no longer
+releases documents a reviewer skipped or parked
+([docs/wissensportal.md](docs/wissensportal.md)). The bulk endpoint accepts the
+new action `park`; `POST /api/v1/portal/documents/{job_id}/park` is new.
+Knowledge-space names must be unique among the spaces a user can see.
 
 ### New in v0.7.1
 

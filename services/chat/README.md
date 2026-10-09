@@ -19,8 +19,10 @@ dieser Server aufruft, und es baut jede einzelne davon aus
 
 ## Zweck
 
-- Die Chat-Ansicht ausliefern: Bot-Liste, Collection-Filter, gestreamte Antwort,
-  Quellen-Karten, Trace-Panel, Guard-Banner, Theme-Umschalter
+- Die Chat-Ansicht ausliefern: Bot-Liste, Wissensbereich-Auswahl im Composer,
+  Modellauswahl (wenn der Bot mehrere LLM-Endpunkte anbietet), gestreamte Antwort,
+  Quellen-Karten mit Herkunft und Relevanz in Prozent, Trace-Panel, Guard-Banner,
+  Theme- und Sprachumschalter (Deutsch/Englisch)
 - Jede Browser-Aktion über die eigenen `/api/*`-Route-Handler dieses Servers
   leiten, damit der Browser nie ein Weave-API-Credential hält und nie einen
   Cross-Origin-Request stellt
@@ -70,7 +72,7 @@ dieser Server aufruft, und es baut jede einzelne davon aus
 **Eigene Route Handler (`src/app/api/**`)** — alles, was der Browser aufruft. Die
 vier Proxy-Routen erzwingen ihre eigene Session-Prüfung
 (`src/lib/require-session.ts`) und antworten mit JSON, nie mit einem Redirect,
-wenn das Cookie fehlt; die beiden Session-Routen und der SSO-Callback setzen
+wenn das Cookie fehlt; die Session-Routen `login`/`logout` und der SSO-Callback setzen
 bzw. löschen dieses Cookie selbst und haben deshalb keine solche Prüfung:
 
 | Route | Aufruf auf Weave-API | Anmerkung |
@@ -81,6 +83,11 @@ bzw. löschen dieses Cookie selbst und haben deshalb keine solche Prüfung:
 | `POST /api/chat/stream` | `POST /v1/chat/stream` | Reicht die SSE-Bytes unangetastet durch; geparst wird clientseitig in `src/lib/sse.ts` |
 | `POST /api/session/login` | `GET /v1/bots` | Prüft ein eingetipptes Personal-Token, bevor irgendein Cookie gesetzt wird |
 | `POST /api/session/logout` | `POST /v1/auth/logout` | Gateway-Aufruf nur für ein per SSO erlangtes Credential; Best-Effort und nie blockierend |
+| `GET /api/session/me` | `GET /v1/me` | Angemeldeter Nutzer samt gespeicherter Sprache |
+| `PUT /api/session/locale` | `PUT /v1/me/locale` | Speichert die UI-Sprache im Nutzerkonto |
+| `GET`/`DELETE /api/conversations`, `GET`/`DELETE /api/conversations/[id]` | `/v1/conversations[/{id}]` | Gesprächsverlauf lesen und löschen |
+| `GET`/`POST /api/tokens`, `DELETE /api/tokens/[id]` | `/v1/me/tokens[/{id}]` | Persönliche API-Tokens verwalten (einmalige Anzeige des Klartexts) |
+| `GET /api/portal-artifacts/[releaseId]/[filename]` | `/v1/portal/releases/{id}/artifacts/{file}` | Bilder aus freigegebenen Dokumenten (z. B. Confluence) in Antworten |
 | `GET /api/auth/sso/callback` | `POST /v1/auth/session/exchange` | Löst den Einmal-Login-Code serverseitig ein |
 
 Diese Tabelle ist die vollständige Liste der Weave-API-Routen, die dieser Dienst
@@ -132,7 +139,7 @@ Entwicklungs-Port von Weave-API.
 npm test        # vitest run
 ```
 
-Siebzehn Testdateien unter `src/`, die den SSE-Parser, die
+Sechsundzwanzig Testdateien unter `src/`, die den SSE-Parser, die
 Fehler-Mapping-Tabelle, den Chat-Request-Builder, den Aufbau der SSO-URL, den
 Weave-API-Client, jeden session-relevanten Route Handler und die
 Chat-Komponenten abdecken. Die Suite läuft standardmäßig in Vitests schlichter
@@ -281,7 +288,7 @@ Wert gibt.
 
 ## Status
 
-Die Chat-Oberfläche deckt Weave-APIs vier Lese- und Chat-Routen vollständig ab.
+Die Chat-Oberfläche deckt Weave-APIs Chat-, Gesprächs-, Token- und Konto-Routen ab (siehe Tabelle oben).
 Ein Turn wird standardmäßig gestreamt (`POST /api/chat/stream`); das
 nicht-streamende `POST /api/chat` ist ein Fallback, der nur greift, wenn der
 gestreamte Turn überhaupt nicht gestartet werden konnte, nie der Standardweg.
@@ -293,5 +300,8 @@ selbst es tut: nicht als fertige Antwort (`src/lib/run-chat-stream.ts`).
 Beide Login-Wege und der Personal-Token-Weg teilen sich ein Cookie und eine
 Credential-Abstraktion; ihre Route Handler sind gegen ein gestubbtes `fetch`
 getestet, das für Weave-API einspringt, bis hin zu den Cookie-Attributen, die
-jeder einzelne davon setzt. Die UI-Texte sind deutsch (`<html lang="de">`,
-`src/lib/errors.ts`); der Code ist englisch.
+jeder einzelne davon setzt. Die Oberfläche ist zweisprachig (Deutsch/Englisch, `src/i18n`): die Sprache folgt dem
+Browser, wird im Nutzerkonto gespeichert (`PUT /api/session/locale`) und setzt
+`<html lang>`. Der Code ist englisch.
+Bot-Bezug: Wählt ein Bot mehrere benannte LLM-Endpunkte, zeigt der Composer eine
+Modellauswahl; ein Fehlversuch wiederholt die richtige Frage, Entwürfe bleiben erhalten.
