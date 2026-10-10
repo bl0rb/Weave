@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     # left empty, the REST routes answer 503 rather than silently accepting
     # an empty header as a match -- a real deployment MUST set this.
     tools_api_token: str = ''
+    # Opt-out of the gate above for deployments where every REST caller
+    # (n8n, other integrations) should authenticate with nothing but
+    # `Authorization: Bearer` -- a delegation, personal or technical-
+    # identity (`wti_`) token, exactly like the MCP surface already does.
+    # Scope resolution (app/api/deps.py:get_scope) is unaffected and still
+    # rejects every call without a valid token.
+    tools_rest_require_service_token: bool = True
 
     # --- Personal-Token path of scope resolution (app/services/scope.py).
     # Weave-Tools is the CALLER here: introspection_service_token is the

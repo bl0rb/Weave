@@ -67,6 +67,9 @@ claude.ai werden aus genau diesen Dateien neu veröffentlicht.
 - **[integrations/jira-mcp.md](integrations/jira-mcp.md)** — Entwurf für einen
   Helpdesk-Bot mit Jira Data Center: MCP über n8n, native Erweiterungsoption,
   Ticket-/JSM-Werkzeuge und getrennte Benutzerrechte.
+- **[integrations/n8n-rag-openai.md](integrations/n8n-rag-openai.md)** —
+  importierbarer n8n-Beispielflow: Weave-RAG über Weave-Tools abfragen und mit
+  einem externen OpenAI-kompatiblen LLM beantworten.
 
 Die Datenverträge zwischen den Diensten liegen nicht hier, sondern zentral in
 [../contracts/](../contracts/).

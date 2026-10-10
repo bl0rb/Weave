@@ -155,10 +155,18 @@ Header zu packen würde genau das unmöglich machen (`app/api/deps.py:19`).
 
 Beide Gates sind fail-closed. Ein nicht gesetztes `TOOLS_API_TOKEN` lässt jeden
 REST-Aufruf mit `503` antworten, statt einen leeren Header auf eine leere
-Einstellung passen zu lassen (`app/api/deps.py:32`). `ScopeConfigurationError`
+Einstellung passen zu lassen (`app/api/deps.py:39`). `ScopeConfigurationError`
 wird getrennt von `ScopeError` und vor diesem gefangen, damit die
 Fehlkonfiguration eines Deployments den Aufrufer nie als "dein Token ist
-falsch" erreicht (`app/api/deps.py:57`).
+falsch" erreicht (`app/api/deps.py:64`).
+
+**Nur Bearer:** Mit `TOOLS_REST_REQUIRE_SERVICE_TOKEN=false` entfällt das
+`X-Tools-Service-Token`-Gate; der Header wird dann ignoriert, und REST-Aufrufer
+wie n8n authentifizieren sich wie am MCP-Server allein mit
+`Authorization: Bearer …` (Delegations-, Personal- oder `wti_`-Token). Die
+Rechteprüfung über `get_scope` bleibt unverändert; ohne gültiges Token gibt es
+weiterhin `401`. Was wegfällt, ist nur die grobe Vorab-Tür: auch unbekannte
+Aufrufer erreichen dann die Token-Prüfung (inkl. Introspection bei Weave-API).
 
 ## Asymmetrie: der MCP-Server hat kein Deployment-Gate
 
@@ -302,6 +310,7 @@ Repository-Root, und `python scripts/weave_config.py render` schreibt
 | Variable | Default | Bedeutung |
 |---|---|---|
 | `TOOLS_API_TOKEN` | leer | Deployment-Gate für den REST-Spiegel, geprüft auf `X-Tools-Service-Token`. Nicht gesetzt heißt `503` bei jedem REST-Aufruf. |
+| `TOOLS_REST_REQUIRE_SERVICE_TOKEN` | `true` | `false` schaltet das `X-Tools-Service-Token`-Gate ab; REST-Aufrufer brauchen dann nur `Authorization: Bearer …`. |
 | `WEAVE_API_BASE_URL` | `http://localhost:8004` | Weave-API, für die Token-Introspection |
 | `INTROSPECTION_SERVICE_TOKEN` | leer | Was dieser Dienst dem Introspection-Endpunkt von Weave-API vorweist |
 | `WEAVE_API_TIMEOUT_SECONDS` | `10` | Timeout für diesen Aufruf |

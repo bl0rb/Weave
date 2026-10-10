@@ -1062,6 +1062,17 @@ services:
           stack (also see docs/betrieb.md section 9: it must additionally
           be entered into the n8n flow's own credentials store, which lives
           outside this file entirely).
+      TOOLS_REST_REQUIRE_SERVICE_TOKEN:
+        secret: false
+        value: true
+        type: bool
+        required: false
+        comment: >
+          false switches the X-Tools-Service-Token gate off: REST callers
+          (n8n, other integrations) then authenticate with
+          `Authorization: Bearer` alone -- delegation, personal or `wti_`
+          token -- exactly like the MCP server. TOOLS_API_TOKEN is then not
+          checked.
       WEAVE_API_TIMEOUT_SECONDS:
         secret: false
         value: 10
