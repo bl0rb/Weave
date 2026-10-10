@@ -41,9 +41,9 @@ it('renders the Konten & Zugriffe page head and defaults to the Personen section
 it('switches to the Teams section via the segmented control', async () => {
   render(<AdminMenschenPage />);
   await screen.findByText('alice@example.com');
-  fireEvent.click(screen.getByRole('tab', { name: 'Teams' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Gruppen' }));
   expect(await screen.findByText('Legal')).toBeTruthy();
-  expect(screen.getByRole('tab', { name: 'Teams' }).getAttribute('aria-selected')).toBe('true');
+  expect(screen.getByRole('tab', { name: 'Gruppen' }).getAttribute('aria-selected')).toBe('true');
 });
 
 it('renders in English inside an I18nProvider set to "en"', async () => {

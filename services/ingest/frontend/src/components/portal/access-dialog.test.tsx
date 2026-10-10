@@ -48,7 +48,7 @@ it('updates the summary count as teams and persons are added', async () => {
   fireEvent.click(screen.getByRole('checkbox', { name: /^Service/ }));
   expect(await screen.findByText(/^5 Personen können/)).toBeTruthy();
 
-  fireEvent.change(screen.getByPlaceholderText('Name oder Team suchen …'), { target: { value: 'Max' } });
+  fireEvent.change(screen.getByPlaceholderText('Name oder Gruppe suchen …'), { target: { value: 'Max' } });
   fireEvent.click(await screen.findByRole('button', { name: /msmith/ }));
   expect(await screen.findByText(/^6 Personen können/)).toBeTruthy();
 
@@ -59,7 +59,7 @@ it('updates the summary count as teams and persons are added', async () => {
 it('adds the first search hit on Enter as a reader', async () => {
   render(<AccessDialog collection={ownerOnly} onClose={vi.fn()} onSaved={vi.fn()} />);
   await screen.findByRole('checkbox', { name: /^Service/ });
-  const search = screen.getByPlaceholderText('Name oder Team suchen …');
+  const search = screen.getByPlaceholderText('Name oder Gruppe suchen …');
   fireEvent.change(search, { target: { value: 'Max' } });
   await waitFor(() => expect(api.mock.calls.some(([path]) => typeof path === 'string' && path.startsWith('/api/v1/directory/users'))).toBe(true));
 
