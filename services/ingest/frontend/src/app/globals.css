@@ -401,7 +401,12 @@ a.portal-chip:hover { text-decoration: underline; text-underline-offset: 2px; }
 .portal-access-picker { border: 1px solid var(--line-2); border-radius: var(--radius-control); background: var(--surface); }
 .portal-access-picker:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .portal-access-search { display: flex; align-items: center; padding: 0 12px; }
-.portal-access-search input { flex: 1; display: block; margin: 0; padding: 11px 0; border: 0; background: none; outline: 0; font-size: 14px; color: var(--ink); }
+/* The picker box is the visible field; the search input inside stays borderless.
+   Selector outweighs the generic `.portal-page :is(input…)` field rule (and its focus ring). */
+.portal-access-picker .portal-access-search input[type='search'] { flex: 1; display: block; width: auto; height: auto; margin: 0; padding: 11px 0; border: 0; border-radius: 0; background: none; outline: 0; box-shadow: none; font-size: 14px; color: var(--ink); }
+.portal-access-picker .portal-access-search input[type='search']:focus-visible { border: 0; outline: none; box-shadow: none; }
+html.dark .portal-access-picker { background: var(--surface-2); border-color: #6b6f78; }
+html.dark .portal-access-picker input[type='search'] { background: transparent !important; }
 .portal-access-results { list-style: none; margin: 0; padding: 0; }
 .portal-access-results:not(:empty) { padding: 4px 6px 6px; border-top: 1px solid var(--line); }
 .portal-access-results button { display: flex; align-items: center; width: 100%; min-height: 36px; padding: 8px; border: 0; border-radius: 8px; background: none; color: var(--ink); text-align: left; font-size: 14px; font-weight: 600; }
