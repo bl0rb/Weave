@@ -102,6 +102,11 @@ class Settings(BaseSettings):
     mcp_oauth_resource_url: str = ''
     mcp_oauth_scopes: list[str] = ['mcp.read']
 
+    # Extra Host header values the MCP transport accepts besides loopback
+    # (and the OAuth resource host): `host` or `host:port`, `host:*` for any
+    # port. DNS-rebinding protection stays on; this only widens its list.
+    mcp_allowed_hosts: list[str] = []
+
     @field_validator('mcp_oauth_issuer', 'mcp_oauth_resource_url')
     @classmethod
     def validate_oauth_url(cls, value: str, info) -> str:
@@ -122,6 +127,17 @@ class Settings(BaseSettings):
         if not scopes or any(not scope or any(ord(c) < 33 or ord(c) > 126 or c in '"\\' for c in scope) for scope in scopes):
             raise ValueError('OAuth scopes must be nonempty scope tokens')
         return scopes
+
+    @field_validator('mcp_allowed_hosts')
+    @classmethod
+    def validate_allowed_hosts(cls, hosts: list[str]) -> list[str]:
+        # A URL or a bare '*' would silently match nothing in the MCP SDK's
+        # check, so reject it at startup instead.
+        for host in hosts:
+            name = host.removesuffix(':*')
+            if not name or any(c in '*/@' or ord(c) < 33 or ord(c) > 126 for c in name):
+                raise ValueError('MCP allowed hosts must be host[:port] values, optionally host:*')
+        return hosts
 
 
 settings = Settings()

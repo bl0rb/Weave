@@ -1050,6 +1050,20 @@ services:
         value: [mcp.read]
         type: json_list
         required: false
+      MCP_ALLOWED_HOSTS:
+        secret: false
+        value: ["weave-tools-mcp:*"]
+        type: json_list
+        required: false
+        comment: >
+          Extra Host header values weave-tools-mcp accepts on /mcp besides
+          loopback (and the MCP_OAUTH_RESOURCE_URL host): host, host:port,
+          or host:* for any port; each also becomes an allowed http(s)
+          Origin. DNS-rebinding protection stays on -- a Host not listed
+          here gets 421. The default covers other compose containers (e.g.
+          n8n) calling http://weave-tools-mcp:8000/mcp; add the public
+          host a reverse proxy forwards, and under Helm the release's own
+          <fullname>-tools-mcp service name.
       TOOLS_API_TOKEN:
         secret: true
         env_var: TOOLS_API_TOKEN

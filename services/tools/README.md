@@ -58,6 +58,15 @@ Optionaler nativer VS-Code-Login über Entra/Keycloak: siehe
 Mit `MCP_OAUTH_ISSUER` prüft der MCP-Transport jeden HTTP-Aufruf und liefert
 OAuth-Discovery/401-Challenges; bestehende Token-Arten bleiben gültig.
 
+Der MCP-Transport prüft den `Host`-Header (DNS-Rebinding-Schutz, immer aktiv):
+erlaubt sind Loopback und — mit OAuth — der Host aus `MCP_OAUTH_RESOURCE_URL`,
+jeder andere Host bekommt `421 Invalid Host header`. `MCP_ALLOWED_HOSTS`
+(JSON-Liste aus `host`, `host:port` oder `host:*` für jeden Port) erweitert diese
+Liste; jeder Eintrag ist zugleich als `http(s)`-`Origin` erlaubt. Compose-Default
+`["weave-tools-mcp:*"]` für Aufrufe aus anderen Containern (z. B. n8n); hinter
+einem Reverse-Proxy, der den öffentlichen `Host` durchreicht, diesen ergänzen,
+unter Helm den Service-Namen `<fullname>-tools-mcp`.
+
 **Input:**
 
 | Surface | Endpunkt | Auth |

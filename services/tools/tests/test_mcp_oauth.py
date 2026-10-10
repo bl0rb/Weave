@@ -12,7 +12,7 @@ from mcp.server.mcpserver import MCPServer
 from pydantic import ValidationError
 
 from app.core.config import Settings, settings
-from app.mcp_auth import MCPOAuthMiddleware, oauth_transport_security
+from app.mcp_auth import MCPOAuthMiddleware, mcp_transport_security
 from app.mcp_server import list_collections, mcp_app, search
 from app.services.scope import ScopeError, resolve_scope
 from tests.conftest import fake_response
@@ -93,6 +93,9 @@ def test_scope_forwards_person_grants_and_current_db_teams_without_cache():
     ('mcp_oauth_resource_url', 'http://weave.example.com/mcp'),
     ('mcp_oauth_resource_url', 'https://weave.example.com/mcp?secret=1'),
     ('mcp_oauth_scopes', ['mcp.read\nInjected: bad']),
+    ('mcp_allowed_hosts', ['*']),
+    ('mcp_allowed_hosts', ['https://weave.example.com']),
+    ('mcp_allowed_hosts', ['']),
 ])
 def test_insecure_or_header_injecting_config_is_rejected(field, value):
     with pytest.raises(ValidationError):
@@ -103,7 +106,7 @@ def test_oauth_mcp_client_round_trip_uses_authenticated_request_scope():
     server = MCPServer(name='Weave OAuth test')
     server.add_tool(list_collections)
     server.add_tool(search)
-    app = server.streamable_http_app(transport_security=oauth_transport_security())
+    app = server.streamable_http_app(transport_security=mcp_transport_security())
     app.add_middleware(MCPOAuthMiddleware)
 
     async def run():
@@ -125,3 +128,41 @@ def test_oauth_mcp_client_round_trip_uses_authenticated_request_scope():
         asyncio.run(run())
         assert post.call_count > 0
         assert all(call.args[0].endswith('/mcp-oauth/introspect') for call in post.call_args_list)
+
+
+@pytest.mark.parametrize(('oauth', 'allowed', 'base_url', 'origin', 'status'), [
+    # Without OAuth: loopback only by default; protection stays on when extended.
+    (False, [], 'http://localhost:8000', None, 200),
+    (False, [], 'http://weave-tools-mcp:8000', None, 421),
+    (False, ['weave-tools-mcp:*'], 'http://weave-tools-mcp:8000', None, 200),
+    (False, ['weave-tools-mcp:*'], 'http://weave-tools-mcp:8000', 'http://weave-tools-mcp:8000', 200),
+    (False, ['weave-tools-mcp:*'], 'http://weave-tools-mcp:8000', 'http://evil.example', 403),
+    (False, ['weave-tools-mcp:*'], 'http://evil.example:8000', None, 421),
+    # With OAuth: resource host plus loopback, extended the same way.
+    (True, [], 'https://weave.example.com', 'https://weave.example.com', 200),
+    (True, [], 'http://weave-tools-mcp:8000', None, 421),
+    (True, ['weave-tools-mcp:*'], 'http://weave-tools-mcp:8000', None, 200),
+    (True, ['weave-tools-mcp:*'], 'http://evil.example:8000', None, 421),
+])
+def test_mcp_allowed_hosts_extend_dns_rebinding_allowlist(monkeypatch, oauth, allowed, base_url, origin, status):
+    if not oauth:
+        monkeypatch.setattr(settings, 'mcp_oauth_issuer', '')
+        monkeypatch.setattr(settings, 'mcp_oauth_resource_url', '')
+    monkeypatch.setattr(settings, 'mcp_allowed_hosts', allowed)
+    server = MCPServer(name='Weave host check')
+    server.add_tool(list_collections)
+    app = server.streamable_http_app(stateless_http=True, json_response=True, transport_security=mcp_transport_security())
+    app.add_middleware(MCPOAuthMiddleware)
+    headers = {
+        'Authorization': f'Bearer {JWT_TOKEN}', 'Accept': 'application/json, text/event-stream',
+        'MCP-Protocol-Version': '2025-06-18', **({'Origin': origin} if origin else {}),
+    }
+
+    async def run():
+        async with app.router.lifespan_context(app):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url=base_url) as client:
+                return await client.post('/mcp', json={'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'}, headers=headers)
+
+    with patch('app.services.scope.httpx.post', return_value=fake_response(200, IDENTITY)), \
+         patch('app.services.scope.httpx.get', return_value=fake_response(200, COLLECTIONS)):
+        assert asyncio.run(run()).status_code == status

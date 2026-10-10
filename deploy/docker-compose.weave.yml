@@ -1129,6 +1129,7 @@ services:
       MCP_OAUTH_ISSUER: ${MCP_OAUTH_ISSUER:-}
       MCP_OAUTH_RESOURCE_URL: ${MCP_OAUTH_RESOURCE_URL:-}
       MCP_OAUTH_SCOPES: '${MCP_OAUTH_SCOPES:-["mcp.read"]}'
+      MCP_ALLOWED_HOSTS: '${MCP_ALLOWED_HOSTS:-["weave-tools-mcp:*"]}'
     depends_on:
       weave-api:
         condition: service_healthy
