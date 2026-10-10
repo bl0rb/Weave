@@ -28,21 +28,53 @@ it('batches a visible page and polls pending status faster than completed status
   expect(polling.mock.calls.at(-1)?.[1]).toBe(30_000);
 });
 
+it('splits long lists into requests of at most 50 IDs and merges the answers', async () => {
+  const ids = Array.from({ length: 120 }, (_, index) => `job-${String(index).padStart(3, '0')}`);
+  api.mockImplementation(async path => {
+    const requested = new URL(path, 'http://localhost').searchParams.getAll('job_id');
+    return { items: requested.map(id => status(id, 'indexed')) };
+  });
+  const { result } = renderHook(() => useIndexingStatus(ids));
+  await waitFor(() => expect(Object.keys(result.current.items)).toHaveLength(120));
+  expect(api.mock.calls.map(call => new URL(call[0], 'http://localhost').searchParams.getAll('job_id').length)).toEqual([50, 50, 20]);
+  expect(Object.values(result.current.items).every(item => item.indexing?.state === 'indexed')).toBe(true);
+});
+
 it('does not fetch or poll before a document has a release', () => {
   renderHook(() => useIndexingStatus([]));
   expect(api).not.toHaveBeenCalled();
   expect(polling.mock.calls.at(-1)?.[1]).toBeNull();
 });
 
-it.each(['failure', 'permission removed'])('clears a previous success on %s and retries', async mode => {
+it.each(['permission removed', 'rejected session', 'rejected request'])('clears a previous success on %s and retries', async mode => {
   api.mockResolvedValueOnce({ items: [status('one', 'indexed')] });
   const { result } = renderHook(() => useIndexingStatus(['one']));
   await waitFor(() => expect(result.current.items.one?.indexing?.state).toBe('indexed'));
-  if (mode === 'failure') api.mockRejectedValueOnce(new Error('network'));
+  if (mode === 'rejected session') api.mockRejectedValueOnce(Object.assign(new Error('unauthorized'), { status: 401 }));
+  else if (mode === 'rejected request') api.mockRejectedValueOnce(Object.assign(new Error('invalid'), { status: 422 }));
   else api.mockResolvedValueOnce({ items: [] });
   await act(() => result.current.refresh());
   expect(result.current.items.one.indexing?.state).toBe('unavailable');
+  expect(result.current.items.one.indexing?.retrying).toBeFalsy();
   expect(polling.mock.calls.at(-1)?.[1]).toBe(5_000);
+});
+
+it('keeps the last answer as stale for five minutes when the lookup fails', async () => {
+  api.mockResolvedValueOnce({ items: [status('one', 'indexed')] });
+  const { result } = renderHook(() => useIndexingStatus(['one']));
+  await waitFor(() => expect(result.current.items.one?.indexing?.state).toBe('indexed'));
+  api.mockRejectedValueOnce(new Error('network'));
+  await act(() => result.current.refresh());
+  expect(result.current.items.one.indexing).toMatchObject({ state: 'indexed', stale: true });
+  expect(result.current.items.one.indexing?.checked_at).toBeTruthy();
+  expect(polling.mock.calls.at(-1)?.[1]).toBe(5_000);
+
+  const later = Date.now() + 6 * 60_000;
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(later);
+  api.mockRejectedValueOnce(new Error('network'));
+  await act(() => result.current.refresh());
+  clock.mockRestore();
+  expect(result.current.items.one.indexing).toMatchObject({ state: 'unavailable', retrying: true });
 });
 
 it('aborts an old page lookup and never paints its status on the new page', async () => {

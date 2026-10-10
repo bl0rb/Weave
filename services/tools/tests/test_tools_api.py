@@ -48,6 +48,24 @@ def test_collections_with_unconfigured_tools_api_token_is_503(monkeypatch):
     assert resp.status_code == 503
 
 
+def test_search_bearer_only_when_service_token_not_required(monkeypatch):
+    monkeypatch.setattr(settings, 'tools_rest_require_service_token', False)
+    monkeypatch.setattr(settings, 'tools_api_token', '')
+    token = make_delegation_token(collections=['handbuch'])
+    retrieval_resp = fake_response(200, {'results': []})
+    with patch('app.services.tools.httpx.post', return_value=retrieval_resp):
+        resp = client.post('/api/v1/tools/search', json={'query': 'x'}, headers={'Authorization': f'Bearer {token}'})
+    assert resp.status_code == 200
+
+
+def test_bearer_still_required_when_service_token_not_required(monkeypatch):
+    monkeypatch.setattr(settings, 'tools_rest_require_service_token', False)
+    resp = client.post('/api/v1/tools/search', json={'query': 'x'})
+    assert resp.status_code == 401
+    resp = client.post('/api/v1/tools/search', json={'query': 'x'}, headers={'Authorization': 'Bearer forged.token'})
+    assert resp.status_code == 401
+
+
 # --- WEAVE_DELEGATION_SECRET unconfigured: fail-closed 503, never a 200 ------
 #
 # Regression coverage for the fail-open bug in app/services/scope.py's

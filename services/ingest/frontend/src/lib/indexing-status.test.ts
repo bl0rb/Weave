@@ -20,6 +20,15 @@ it.each(['not_received', 'mismatch', 'empty', 'incomplete', 'failed', 'blocked',
   expect(result.label).not.toBe('Für KI verfügbar');
 });
 
+it('marks a stale confirmation with its time and shows a retried outage as neutral', () => {
+  const stale = publicationState('sent', { ...indexed, stale: true, checked_at: '2026-09-02T11:35:00Z' });
+  expect(stale.tone).toBe('success');
+  expect(stale.hint).toMatch(/2 Textabschnitte · .* · Stand \d{2}:\d{2}$/);
+  const retrying = publicationState('sent', { state: 'unavailable', indexed_at: null, chunk_count: 0, retrying: true });
+  expect(retrying).toMatchObject({ label: 'Status wird aktualisiert…', tone: 'neutral' });
+  expect(publicationState('sent', { state: 'unavailable', indexed_at: null, chunk_count: 0 })).toMatchObject({ label: 'Indexstatus nicht verfügbar', tone: 'warning' });
+});
+
 it('does not use a status response for another release', () => {
   const release = { id: 'current', status: 'sent' as const, created_at: '2026-09-02T11:30:00Z', error_message: null, released_by: null };
   const live: IndexingItem = { job_id: 'job', release: { ...release, id: 'old' }, indexing: indexed };

@@ -24,7 +24,7 @@ it('creates the area with purpose, responsible team and member team, then contin
   api.mockResolvedValueOnce(serviceConfig);
   render(<NewKnowledgeSpace />);
   await screen.findByRole('checkbox', { name: 'Service' });
-  expect((screen.getByRole('combobox', { name: /Zuständiges Team/ }) as HTMLSelectElement).value).toBe('t-service');
+  expect((screen.getByRole('combobox', { name: /Zuständige Gruppe/ }) as HTMLSelectElement).value).toBe('t-service');
   fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: '  Servicewissen  ' } });
   fireEvent.change(screen.getByRole('textbox', { name: 'Details angeben' }), { target: { value: ' Antworten für den Service ' } });
   api.mockResolvedValueOnce(area);
@@ -69,7 +69,7 @@ it('lets the member teams be narrowed and adds a newly chosen responsible team',
   await screen.findByRole('checkbox', { name: 'Service' });
   expect((screen.getByRole('checkbox', { name: 'Vertrieb' }) as HTMLInputElement).checked).toBe(false);
   fireEvent.click(screen.getByRole('checkbox', { name: 'Service' }));
-  fireEvent.change(screen.getByRole('combobox', { name: /Zuständiges Team/ }), { target: { value: 't-sales' } });
+  fireEvent.change(screen.getByRole('combobox', { name: /Zuständige Gruppe/ }), { target: { value: 't-sales' } });
   expect((screen.getByRole('checkbox', { name: 'Vertrieb' }) as HTMLInputElement).checked).toBe(true);
   fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Übergreifendes Wissen' } });
   fireEvent.change(screen.getByRole('textbox', { name: 'Details angeben' }), { target: { value: 'Vertriebswissen' } });

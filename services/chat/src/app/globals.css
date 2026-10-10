@@ -125,11 +125,11 @@ body {
   outline-offset: 2px;
 }
 
-/* The composer's container already shows focus (border + ring via
-   focus-within) — the global outline above would add a second, green
-   border on the textarea itself, and it beats Tailwind's layered
-   `outline-none`. */
-#chat-composer-input:focus-visible {
+/* Text fields and selects show focus themselves (accent border + ring, on
+   the field or on its wrapper via focus-within, e.g. the composer) — the
+   global outline above would draw a second frame around them ("field in a
+   field"), and it beats Tailwind's layered `outline-none`. */
+:is(input:not([type='checkbox']):not([type='radio']), select, textarea):focus-visible {
   outline: none;
 }
 

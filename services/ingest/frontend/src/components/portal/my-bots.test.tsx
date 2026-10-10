@@ -32,7 +32,7 @@ afterEach(cleanup);
 it('lists owned bots with who may use them', async () => {
   render(<MyBots />);
   expect(await screen.findByRole('heading', { name: 'Wissens-Bot' })).toBeTruthy();
-  expect(screen.getByText('Team Service')).toBeTruthy();
+  expect(screen.getByText('Gruppe Service')).toBeTruthy();
 });
 
 it('saves content and users but keeps the owners fixed', async () => {

@@ -13,6 +13,12 @@ class PortalIndexingStatus(BaseModel):
     ]
     indexed_at: datetime | None = None
     chunk_count: int = Field(default=0, ge=0, strict=True)
+    # Last status Knowledge confirmed for exactly this release, served during
+    # a short transient outage (app/services/indexing_status.py).
+    stale: bool = False
+    checked_at: datetime | None = None
+    # 'unavailable' only: a transient outage the portal shows as neutral.
+    retrying: bool = False
 
 
 class PortalIndexingItem(BaseModel):

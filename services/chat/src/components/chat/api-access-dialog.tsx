@@ -111,11 +111,11 @@ export function ApiAccessDialog({ onClose }: { onClose: () => void }) {
           </div>}
           <form onSubmit={create} className="flex flex-wrap items-end gap-2">
             <label className="flex min-w-48 flex-1 flex-col gap-1 font-medium">{t('chat.apiAccess.label')}
-              <input className="h-9 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 font-normal" value={label} maxLength={100}
+              <input className="h-9 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 font-normal outline-none focus-visible:border-[var(--accent)] focus-visible:ring-[3px] focus-visible:ring-[var(--accent-soft)]" value={label} maxLength={100}
                 onChange={event => setLabel(event.target.value)} placeholder={t('chat.apiAccess.labelPlaceholder')} />
             </label>
             <label className="flex flex-col gap-1 font-medium">{t('chat.apiAccess.expiry')}
-              <select className="h-9 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 font-normal" value={expiry} onChange={event => setExpiry(event.target.value as (typeof EXPIRY_DAYS)[number])}>
+              <select className="h-9 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2 font-normal outline-none focus-visible:border-[var(--accent)] focus-visible:ring-[3px] focus-visible:ring-[var(--accent-soft)]" value={expiry} onChange={event => setExpiry(event.target.value as (typeof EXPIRY_DAYS)[number])}>
                 {EXPIRY_DAYS.map(value => <option key={value} value={value}>{t(`chat.apiAccess.expiry.${value}`)}</option>)}
               </select>
             </label>

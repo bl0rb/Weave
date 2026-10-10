@@ -1049,6 +1049,8 @@ services:
       # credential -- not shared with any other service in THIS compose
       # file, so it is not in the file header's shared-secrets list.
       TOOLS_API_TOKEN: ${TOOLS_API_TOKEN:?TOOLS_API_TOKEN is required}
+      # false: REST callers need only `Authorization: Bearer` (like MCP).
+      TOOLS_REST_REQUIRE_SERVICE_TOKEN: ${TOOLS_REST_REQUIRE_SERVICE_TOKEN:-true}
       # Weave-Tools is the CALLER here (resolves a raw Personal-Token via
       # Weave-API) -- INTROSPECTION_SERVICE_TOKEN is the SAME shared value
       # documented in the file header, verified by weave-api above.

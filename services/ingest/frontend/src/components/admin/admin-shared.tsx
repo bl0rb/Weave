@@ -219,7 +219,7 @@ export function Toggle({
   );
 }
 
-const MODAL_WIDTH = { sm: 'max-w-lg', md: 'max-w-2xl', lg: 'max-w-5xl' } as const;
+const MODAL_WIDTH = { sm: 'max-w-xl', md: 'max-w-3xl', lg: 'max-w-6xl' } as const;
 
 export function Modal({
   title,

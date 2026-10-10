@@ -110,6 +110,8 @@ Fehlt `X-Tools-Service-Token`, oder ist `TOOLS_API_TOKEN` bei Weave-Tools selbst
 
 **MCP-Weg zum Vergleich:** ruft der Flow stattdessen Weave-Tools' MCP-Server auf (`services/tools/app/mcp_server.py`, streamable-HTTP), genuegt EIN einziger Header — `Authorization: Bearer <delegation_token>`. Der MCP-Server hat keine zu `require_tools_service_token` aequivalente Pruefung; jedes MCP-Tool (`list_collections`, `search`) loest seinen Scope ausschliesslich aus diesem einen Header auf. Ein Flow, der ueber MCP statt REST spricht, braucht `TOOLS_API_TOKEN` also gar nicht erst zu konfigurieren — das ist ein bewusster Unterschied zwischen den beiden Transportwegen, keine Luecke in einem von beiden.
 
+**REST nur mit Bearer:** setzt der Betreiber bei Weave-Tools `TOOLS_REST_REQUIRE_SERVICE_TOKEN=false`, entfaellt das `X-Tools-Service-Token`-Gate auch an der REST-Oberflaeche — der Flow schickt dann wie beim MCP-Weg nur `Authorization: Bearer <delegation_token>` und braucht kein eigenes Weave-Tools-Credential. Die Token-Pruefung selbst (Abschnitt "Delegations-Token" oben) bleibt unveraendert. Default ist `true` (Verhalten wie oben beschrieben).
+
 ## Signatur-Pruefung (n8n prueft Weave-Runtime)
 
 Beim EMPFANG des Webhook-Aufrufs prueft der n8n-Flow selbst (typischerweise als erster Schritt, vor jeder weiteren Verarbeitung):

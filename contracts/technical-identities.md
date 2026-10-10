@@ -106,7 +106,7 @@ async with streamablehttp_client(f'{TOOLS_MCP_URL}/mcp', headers={'Authorization
         await session.call_tool('search', {'query': 'Urlaubsantrag'})
 ```
 
-Weave-Tools verlangt für REST zusätzlich `X-Tools-Service-Token` (die grobe „darf dieser Aufrufer Weave-Tools überhaupt erreichen"-Tür, siehe `services/tools/README.md`) — für MCP gibt es diese Tür bewusst nicht, dort entscheidet allein der `Authorization`-Header.
+Weave-Tools verlangt für REST zusätzlich `X-Tools-Service-Token` (die grobe „darf dieser Aufrufer Weave-Tools überhaupt erreichen"-Tür, siehe `services/tools/README.md`) — für MCP gibt es diese Tür bewusst nicht, dort entscheidet allein der `Authorization`-Header. Mit `TOOLS_REST_REQUIRE_SERVICE_TOKEN=false` entfällt diese Tür auch für REST; dann genügt dort ebenfalls `Authorization: Bearer wti_<raw-value>`.
 
 ## Interne Retrieval-Zugangsdaten werden nie herausgegeben
 

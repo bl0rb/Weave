@@ -28,7 +28,14 @@ def require_tools_service_token(x_tools_service_token: str | None = Header(defau
     impossible for a single request to carry both "is this deployment
     allowed to call Weave-Tools at all" and "whose rights does this
     particular call run under" at the same time.
+
+    TOOLS_REST_REQUIRE_SERVICE_TOKEN=false switches this gate off entirely
+    (the header is then ignored), leaving get_scope's Bearer check as the
+    only one -- the same model as the MCP surface.
     """
+    if not settings.tools_rest_require_service_token:
+        return
+
     if not settings.tools_api_token:
         logger.error('TOOLS_API_TOKEN is not configured; refusing all REST tool calls')
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='service token not configured')

@@ -6,6 +6,11 @@ export type IndexingStatus = {
   state: 'not_received' | 'mismatch' | 'pending' | 'indexed' | 'empty' | 'incomplete' | 'failed' | 'blocked' | 'superseded' | 'unavailable';
   indexed_at: string | null;
   chunk_count: number;
+  /** Last confirmed status, kept for up to 5 minutes during a transient outage. */
+  stale?: boolean;
+  checked_at?: string | null;
+  /** 'unavailable' only: a transient outage that is still being retried. */
+  retrying?: boolean;
 };
 export type IndexingItem = { job_id: string; release: Publication | null; indexing: IndexingStatus | null };
 export type PublicationState = { label: string; tone: 'neutral' | 'working' | 'warning' | 'success' | 'error'; hint: string };
@@ -20,6 +25,14 @@ export function indexingDate(value: string, locale: Locale = DEFAULT_LOCALE): st
 }
 
 export function publicationState(delivery: Publication['status'], indexing?: IndexingStatus | null, locale: Locale = DEFAULT_LOCALE): PublicationState {
+  const state = currentPublicationState(delivery, indexing, locale);
+  const checkedAt = indexing?.stale && indexing.checked_at ? Date.parse(indexing.checked_at) : NaN;
+  if (!Number.isFinite(checkedAt)) return state;
+  const time = new Intl.DateTimeFormat(INTL_LOCALE[locale], { hour: '2-digit', minute: '2-digit' }).format(new Date(checkedAt));
+  return { ...state, hint: `${state.hint} · ${translate(locale, 'portal.indexing.stale.suffix', { time })}` };
+}
+
+function currentPublicationState(delivery: Publication['status'], indexing: IndexingStatus | null | undefined, locale: Locale): PublicationState {
   if (isIndexReady(indexing)) return {
     label: translate(locale, 'portal.indexing.ready.label'), tone: 'success',
     hint: `${translate(locale, 'portal.indexing.chunks.count', { count: indexing!.chunk_count })} · ${indexingDate(indexing!.indexed_at!, locale)}`,
@@ -37,6 +50,7 @@ export function publicationState(delivery: Publication['status'], indexing?: Ind
     case 'superseded': return { label: translate(locale, 'portal.indexing.superseded.label'), tone: 'neutral', hint: translate(locale, 'portal.indexing.superseded.hint') };
   }
   if (delivery === 'failed') return { label: translate(locale, 'portal.indexing.deliveryFailed.label'), tone: 'error', hint: translate(locale, 'portal.indexing.deliveryFailed.hint') };
+  if (indexing?.state === 'unavailable' && indexing.retrying) return { label: translate(locale, 'portal.indexing.refreshing.label'), tone: 'neutral', hint: translate(locale, 'portal.indexing.refreshing.hint') };
   if (indexing?.state === 'unavailable') return { label: translate(locale, 'portal.indexing.statusUnavailable.label'), tone: 'warning', hint: translate(locale, 'portal.indexing.statusUnavailable.hint') };
   if (delivery === 'pending') return { label: translate(locale, 'portal.indexing.released.label'), tone: 'working', hint: translate(locale, 'portal.indexing.released.hint') };
   if (indexing?.state === 'not_received') return { label: translate(locale, 'portal.indexing.waitingForIndex.label'), tone: 'working', hint: translate(locale, 'portal.indexing.waitingForIndex.hint') };

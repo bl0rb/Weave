@@ -41,7 +41,7 @@ afterEach(cleanup);
 it('offers "Wissensbereich anlegen" once, on the card after the spaces', async () => {
   render(<KnowledgeSpaces />);
   await screen.findByRole('heading', { name: 'Servicewissen' });
-  expect(screen.getByText('Besitzer: Ada · Zuständig: Team Service')).toBeTruthy();
+  expect(screen.getByText('Besitzer: Ada · Zuständig: Gruppe Service')).toBeTruthy();
   const startLinks = screen.getAllByRole('link', { name: /Wissensbereich anlegen/ });
   expect(startLinks.length).toBe(1);
   expect(startLinks[0].getAttribute('href')).toBe('/knowledge/new');

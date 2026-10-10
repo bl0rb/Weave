@@ -129,6 +129,35 @@ class _FakeRedis:
         # AV-03: /api/v1/ready pings the broker via this same fake client.
         return True
 
+    # GET / MGET / non-transactional pipeline: the indexing status memory
+    # (app/services/indexing_status.py) batches its calls this way.
+    def get(self, key: str):
+        self._evict_if_expired(key)
+        value = self._counts.get(key)
+        return None if value is None else str(value)
+
+    def mget(self, keys: list[str]) -> list:
+        return [self.get(key) for key in keys]
+
+    def pipeline(self, transaction: bool = True) -> '_FakePipeline':
+        return _FakePipeline(self)
+
+
+class _FakePipeline:
+    def __init__(self, redis: _FakeRedis) -> None:
+        self._redis = redis
+        self._calls: list = []
+
+    def __getattr__(self, name: str):
+        def queue(*args, **kwargs):
+            self._calls.append((getattr(self._redis, name), args, kwargs))
+            return self
+        return queue
+
+    def execute(self) -> list:
+        calls, self._calls = self._calls, []
+        return [method(*args, **kwargs) for method, args, kwargs in calls]
+
 
 security_module._redis_client = _FakeRedis()
 
