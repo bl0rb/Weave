@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Weave transformation, the product is called Weave Ingest. Entries below predating that
 > change are left as written and refer to the project under its former name.
 
+## [0.7.3] - 2026-10-10
+
+### Added
+- Portal index status rides out short Knowledge outages: one retry with a 5 s timeout, then for
+  up to 5 minutes the last status Knowledge confirmed for the same release, shown with its time
+  (`stale`, `checked_at`; kept in Redis for all replicas), then a neutral "Updating status…"
+  (`retrying`), and only after 10 minutes the warning. Revoked access, a new release or snapshot,
+  or an invalid answer clears it at once.
+
+### Changed
+- Portal and administration call teams "Gruppen" / "groups"; API fields, database and contracts
+  keep `team`.
+- Portal and administration dialogs are one size wider (576 / 768 / 1152 px).
+
+### Fixed
+- Documents page, home and knowledge-space overview showed "Index status unavailable" on every
+  row once more than 50 released documents were listed, because the status lookup exceeded its
+  50-ID limit; the portal now queries in batches of 50.
+- The member search in the knowledge-space access dialog no longer renders as a field inside a
+  field.
+
 ## [Unreleased]
 
 ### Removed
@@ -22,11 +43,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the normal source upload, review and release workflow.
 
 ### Added
-- Portal index status rides out short Knowledge outages (v0.7.3): one retry with a 5 s timeout,
-  then for up to 5 minutes the last status Knowledge confirmed for the same release, shown with
-  its time (`stale`, `checked_at`; kept in Redis for all replicas), then a neutral "Updating
-  status…" (`retrying`), and only after 10 minutes the warning. Revoked access, a new release or
-  snapshot, or an invalid answer clears it at once.
 - Review portal: reviewers can park a document (`POST /api/v1/portal/documents/{job_id}/park`,
   bulk action `park`) next to "don't release"; parked documents have their own filter. The review
   page pages through the queue, one task inbox collects open work and errors, and a bulk release
@@ -43,17 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - German/English portal and administration, language stored per user account; system status page,
   source provenance in citations and a portal Markdown editor.
 
-### Changed
-- Portal and administration call teams "Gruppen" / "groups" (v0.7.3); API fields, database and
-  contracts keep `team`.
-- Portal and administration dialogs are one size wider (576 / 768 / 1152 px) (v0.7.3).
-
 ### Fixed
-- Documents page, home and knowledge-space overview showed "Index status unavailable" on every
-  row once more than 50 released documents were listed, because the status lookup exceeded its
-  50-ID limit; the portal now queries in batches of 50 (v0.7.3).
-- The member search in the knowledge-space access dialog no longer renders as a field inside a
-  field (v0.7.3).
 - Space grants now scope documents, spaces, bots, Confluence imports, page states and run control;
   legacy Knowledge rows without a space no longer bypass grants.
 - Migration 0041 keeps the case-insensitive email index.
