@@ -22,6 +22,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the normal source upload, review and release workflow.
 
 ### Added
+- Review portal: reviewers can park a document (`POST /api/v1/portal/documents/{job_id}/park`,
+  bulk action `park`) next to "don't release"; parked documents have their own filter. The review
+  page pages through the queue, one task inbox collects open work and errors, and a bulk release
+  skips documents a reviewer skipped or parked. Knowledge-space names are unique among the spaces
+  a user can see.
+- Named LLM endpoints (Administration › Chat & LLM) and per-bot endpoint selection (migration 0045).
+- Admin dry-run/apply job that withdraws Knowledge documents whose job or space no longer exists
+  (`POST /api/v1/admin/knowledge/orphans`).
+- Horizontal scaling: originals, results and images live in PostgreSQL, OCR and default worker
+  pools with claim tokens and heartbeats, database-backed rate limits and migration locks.
+- SSO for MCP clients through OAuth access tokens (authorization code with PKCE).
+- Owners, members and readers per knowledge space, sharing with individual people, and owners and
+  users per bot, checked by Runtime; self-service personal API tokens.
+- German/English portal and administration, language stored per user account; system status page,
+  source provenance in citations and a portal Markdown editor.
+
+### Fixed
+- Space grants now scope documents, spaces, bots, Confluence imports, page states and run control;
+  legacy Knowledge rows without a space no longer bypass grants.
+- Migration 0041 keeps the case-insensitive email index.
+
 - "Neu indizieren" as a regular action: per document on the review page (highlighted when
   the indexing failed) and per knowledge space ("Wissensbereich neu indizieren"); both
   re-deliver the release with `reindex: true`, which makes Knowledge re-index even an

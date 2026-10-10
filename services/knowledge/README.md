@@ -123,3 +123,5 @@ von Weave-Ingests `deploy/docker-compose.weave.yml`.
 Der Index-Lauf verarbeitet signierte `document.released`-Events, lädt den
 unveränderlichen Release-Snapshot und schreibt ihn idempotent in den
 Chunk-Store. `document.processed` erzeugt keinen Index-Task.
+
+**Wartung:** `GET /api/v1/internal/documents` (Inventar für den Abgleich mit Ingest) und der Admin-Job in Ingest (`POST /api/v1/admin/knowledge/orphans`, Dry-Run, dann Apply) ziehen Dokumente zurück, deren Auftrag oder Wissensbereich nicht mehr existiert ([docs/betrieb.md](../../docs/betrieb.md) §3.3). Altbestand ohne Wissensbereich wird mit `python -m app.cli reconcile-collections` einmalig zugeordnet (§3.2). Knowledge läuft mit mehreren Replikas ohne gemeinsamen Speicher.
