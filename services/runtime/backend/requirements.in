@@ -28,7 +28,7 @@
 # `RunnableConfig` (the one type this module needs to pass `max_concurrency`
 # through to `graph.invoke()`) and is pinned directly here rather than left
 # implicit, so a future `langgraph` upgrade can't silently drift it.
-langgraph==1.2.12
+langgraph==1.2.14
 langchain-core==1.6.6
 fastapi==0.142.2
 uvicorn[standard]==0.54.0
