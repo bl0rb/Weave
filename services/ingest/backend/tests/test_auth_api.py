@@ -1595,3 +1595,72 @@ def test_admin_can_assign_bot_admin_role(client: TestClient) -> None:
     })
     assert created.status_code == 201, created.text
     assert created.json()['role'] == 'bot_admin'
+
+
+def _role_provider(slug: str) -> AuthProvider:
+    provider = _make_oidc_provider(slug)
+    with _db() as db:
+        row = db.get(AuthProvider, provider.id)
+        row.admin_group = 'weave-admins'
+        row.bot_admin_group = 'weave-bot-admins'
+        db.commit()
+    return provider
+
+
+def _role_of(sub: str) -> tuple[UserRole, bool]:
+    with _db() as db:
+        user = db.scalar(select(User).where(User.oidc_subject == sub))
+        return user.role, user.role_from_oidc
+
+
+def test_oidc_role_follows_groups_and_missing_claim_changes_nothing(client, monkeypatch) -> None:
+    _role_provider('role-sync')
+    # Another active admin, so demoting the synced one is allowed.
+    _create_user(username='role-sync-keeper', email='role-sync-keeper@example.com', password='CorrectHorse1', role=UserRole.ADMIN)
+    sub = f'role-sync-{uuid.uuid4().hex[:6]}'
+
+    def login(**claims):
+        response = _oidc_login(client, monkeypatch, 'role-sync', sub=sub, email=f'{sub}@example.com', **claims)
+        assert response.status_code == 302
+
+    login(groups=['weave-admins', 'other'])
+    assert _role_of(sub) == (UserRole.ADMIN, True)
+    login(groups=['weave-bot-admins'])
+    assert _role_of(sub) == (UserRole.BOT_ADMIN, True)
+    login()
+    assert _role_of(sub) == (UserRole.BOT_ADMIN, True)
+    login(groups=[])
+    assert _role_of(sub) == (UserRole.USER, False)
+
+
+def test_oidc_role_never_lowers_a_role_set_by_hand(client, monkeypatch) -> None:
+    _role_provider('role-manual')
+    sub = f'role-manual-{uuid.uuid4().hex[:6]}'
+    _oidc_login(client, monkeypatch, 'role-manual', sub=sub, email=f'{sub}@example.com', groups=[])
+    with _db() as db:
+        user = db.scalar(select(User).where(User.oidc_subject == sub))
+        user.role = UserRole.ADMIN
+        db.commit()
+    _oidc_login(client, monkeypatch, 'role-manual', sub=sub, email=f'{sub}@example.com', groups=['weave-bot-admins'])
+    assert _role_of(sub) == (UserRole.ADMIN, False)
+
+
+def test_oidc_role_sync_keeps_the_last_active_admin(client, monkeypatch) -> None:
+    _role_provider('role-last')
+    sub = f'role-last-{uuid.uuid4().hex[:6]}'
+    _oidc_login(client, monkeypatch, 'role-last', sub=sub, email=f'{sub}@example.com', groups=['weave-admins'])
+    with _db() as db:
+        me = db.scalar(select(User.id).where(User.oidc_subject == sub))
+        others = db.scalars(select(User).where(User.role == UserRole.ADMIN, User.id != me, User.is_active.is_(True))).all()
+        for other in others:
+            other.is_active = False
+        db.commit()
+        other_ids = [other.id for other in others]
+    try:
+        _oidc_login(client, monkeypatch, 'role-last', sub=sub, email=f'{sub}@example.com', groups=[])
+        assert _role_of(sub) == (UserRole.ADMIN, True)
+    finally:
+        with _db() as db:
+            for other in db.scalars(select(User).where(User.id.in_(other_ids))).all():
+                other.is_active = True
+            db.commit()

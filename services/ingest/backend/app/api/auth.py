@@ -237,6 +237,7 @@ def _user_response(user: User, db: Session) -> UserResponse:
         team_roles=roles,
         is_active=user.is_active,
         oidc_provider_id=user.oidc_provider_id,
+        role_from_oidc=user.role_from_oidc,
         created_at=user.created_at,
         locale=user.locale,
     )
@@ -262,6 +263,8 @@ def _provider_response(provider: AuthProvider) -> ProviderAdminResponse:
         use_email_as_username=provider.use_email_as_username,
         sync_groups=provider.sync_groups,
         groups_claim=provider.groups_claim,
+        admin_group=provider.admin_group,
+        bot_admin_group=provider.bot_admin_group,
         created_at=provider.created_at,
         updated_at=provider.updated_at,
     )
@@ -860,6 +863,46 @@ def _sync_oidc_groups(db: Session, provider: AuthProvider, user: User, claims: d
         db.commit()
 
 
+_ROLE_RANK = {UserRole.USER: 0, UserRole.BOT_ADMIN: 1, UserRole.ADMIN: 2}
+
+
+def _sync_oidc_role(db: Session, provider: AuthProvider, user: User, claims: dict) -> None:
+    """Derive the role from the provider's admin/bot-admin group.
+
+    A role set by hand is only ever raised, never lowered; a role the
+    provider granted (User.role_from_oidc) follows the groups both ways. A
+    missing claim changes nothing, and the last active admin is never
+    demoted, so a misconfigured IdP cannot lock everyone out."""
+    groups = _claimed_groups(claims.get(provider.groups_claim))
+    if groups is None:
+        _log_auth_event(
+            db, 'WARNING',
+            f'oidc role sync skipped for user {user.username}: claim {provider.groups_claim!r} missing',
+        )
+        db.commit()
+        return
+    if provider.admin_group and provider.admin_group in groups:
+        target = UserRole.ADMIN
+    elif provider.bot_admin_group and provider.bot_admin_group in groups:
+        target = UserRole.BOT_ADMIN
+    else:
+        target = UserRole.USER
+    if target == user.role or (not user.role_from_oidc and _ROLE_RANK[target] < _ROLE_RANK[user.role]):
+        return
+    if user.role == UserRole.ADMIN and _count_active_admins(db, exclude_user_id=user.id) < 1:
+        _log_auth_event(
+            db, 'WARNING', f'oidc role sync kept admin role of user {user.username}: last active admin',
+        )
+        db.commit()
+        return
+    _log_auth_event(
+        db, 'INFO', f'oidc role sync for user {user.username}: {user.role.value} -> {target.value}',
+    )
+    user.role = target
+    user.role_from_oidc = target != UserRole.USER
+    db.commit()
+
+
 @router_public.get('/oidc/{slug}/callback')
 def oidc_callback(
     slug: str,
@@ -944,7 +987,8 @@ def oidc_callback(
     userinfo_endpoint = discovery.get('userinfo_endpoint')
     access_token = tokens.get('access_token')
     userinfo_fetched = False
-    groups_missing = provider.sync_groups and provider.groups_claim not in claims
+    uses_groups = provider.sync_groups or bool(provider.admin_group or provider.bot_admin_group)
+    groups_missing = uses_groups and provider.groups_claim not in claims
     if (
         (not resolved_email or not claims.get('preferred_username') or groups_missing)
         and userinfo_endpoint and access_token
@@ -1092,6 +1136,8 @@ def oidc_callback(
 
     if provider.sync_groups:
         _sync_oidc_groups(db, provider, user, claims)
+    if provider.admin_group or provider.bot_admin_group:
+        _sync_oidc_role(db, provider, user, claims)
 
     _log_auth_event(db, 'INFO', f'oidc login succeeded: provider={slug} user={user.username} {login_diagnostic}')
 
@@ -1358,6 +1404,7 @@ def admin_update_user(user_id: str, payload: AdminUserUpdateRequest, db: Session
         user.password_hash = hash_password(payload.password)
     if payload.role is not None:
         user.role = payload.role
+        user.role_from_oidc = False
     if payload.clear_team:
         _set_user_teams(db, user, [], None, {})
     elif payload.team_ids is not None or payload.team_id is not None:
@@ -1589,6 +1636,8 @@ def admin_create_provider(payload: ProviderCreateRequest, db: Session = Depends(
         use_email_as_username=payload.use_email_as_username,
         sync_groups=payload.sync_groups,
         groups_claim=payload.groups_claim.strip() or 'groups',
+        admin_group=(payload.admin_group or '').strip() or None,
+        bot_admin_group=(payload.bot_admin_group or '').strip() or None,
     )
     db.add(provider)
     db.commit()
@@ -1620,6 +1669,10 @@ def admin_update_provider(
         provider.sync_groups = payload.sync_groups
     if payload.groups_claim is not None:
         provider.groups_claim = payload.groups_claim.strip() or 'groups'
+    if payload.admin_group is not None:
+        provider.admin_group = payload.admin_group.strip() or None
+    if payload.bot_admin_group is not None:
+        provider.bot_admin_group = payload.bot_admin_group.strip() or None
     db.commit()
     return _provider_response(provider)
 

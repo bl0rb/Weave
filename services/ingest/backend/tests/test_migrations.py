@@ -1508,3 +1508,29 @@ def test_bot_admin_group_sync_migration_widens_role_and_rolls_back():
             migration.downgrade()
             assert connection.execute(text('SELECT role FROM users')).scalar() == 'user'
             assert 'oidc_group' not in {c['name'] for c in inspect(connection).get_columns('teams')}
+
+
+def test_oidc_role_groups_migration_round_trips():
+    import importlib.util
+    from pathlib import Path
+
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import create_engine, inspect, text
+
+    path = Path(__file__).resolve().parents[1] / 'alembic/versions/0048_oidc_role_groups.py'
+    spec = importlib.util.spec_from_file_location('oidc_role_groups_migration', path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    engine = create_engine('sqlite://')
+    with engine.begin() as connection:
+        connection.execute(text('CREATE TABLE auth_providers (id TEXT PRIMARY KEY)'))
+        connection.execute(text('CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT, role VARCHAR(16) NOT NULL)'))
+        connection.execute(text("INSERT INTO users VALUES ('u1', 'u1@example.org', 'admin')"))
+        with Operations.context(MigrationContext.configure(connection)):
+            migration.upgrade()
+            assert connection.execute(text('SELECT role, role_from_oidc FROM users')).one() == ('admin', 0)
+            assert {'admin_group', 'bot_admin_group'} <= {c['name'] for c in inspect(connection).get_columns('auth_providers')}
+            migration.downgrade()
+            assert 'role_from_oidc' not in {c['name'] for c in inspect(connection).get_columns('users')}
+            assert connection.execute(text('SELECT role FROM users')).scalar() == 'admin'
