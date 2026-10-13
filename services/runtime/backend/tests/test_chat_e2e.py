@@ -942,3 +942,52 @@ def test_complex_intent_on_general_assistant_requires_retrieval_service():
     }
     resp = client.post('/internal/chat', json=body, headers=AUTH_HEADERS)
     assert resp.status_code == 503
+
+
+# --- clarify guard: ambiguous hits (several documents score alike) -----------
+
+
+def _ambiguous_hit(document_id, rerank, **kw):
+    from app.services.retrieval_client import RetrievedChunk, RetrievedChunkScores
+
+    return RetrievedChunk(
+        chunk_id=1, document_id=document_id, text='t', source='upload', original_filename=kw.get('filename'),
+        page_start=None, page_end=None, document_version=1, heading_path=[], collection=None,
+        scores=RetrievedChunkScores(rerank=rerank),
+    )
+
+
+def test_clarify_ambiguous_hits_name_the_close_documents(monkeypatch):
+    bot = _clarify_bot(monkeypatch)
+    from app.services.chat import _build_clarification
+
+    hits = [
+        _ambiguous_hit('a', 0.80, filename='vertrag-a.pdf'),
+        _ambiguous_hit('b', 0.77, filename='vertrag-b.pdf'),
+        _ambiguous_hit('a', 0.79, filename='vertrag-a.pdf'),
+        _ambiguous_hit('c', 0.50, filename='zu-weit.pdf'),
+    ]
+    clarification = _build_clarification(bot, 'Frage?', hits)
+    assert [option.document_id for option in clarification.options] == ['a', 'b']
+    assert clarification.question == 'Deine Frage passt zu mehreren Dokumenten: vertrag-a, vertrag-b. Welches meinst du?'
+
+
+def test_clarify_ambiguous_stays_silent_for_one_document_or_a_clear_winner(monkeypatch):
+    bot = _clarify_bot(monkeypatch)
+    from app.services.chat import _build_clarification
+
+    same_doc = [_ambiguous_hit('a', 0.80), _ambiguous_hit('a', 0.79)]
+    assert _build_clarification(bot, 'Frage?', same_doc) is None
+    clear_winner = [_ambiguous_hit('a', 0.80), _ambiguous_hit('b', 0.60)]
+    assert _build_clarification(bot, 'Frage?', clear_winner) is None
+
+
+def test_clarify_ambiguous_can_be_disabled_and_needs_clarify_below(monkeypatch):
+    from app.services.chat import _build_clarification
+
+    hits = [_ambiguous_hit('a', 0.80), _ambiguous_hit('b', 0.79)]
+    for margin in (None, 0):
+        bot = _clarify_bot(monkeypatch, clarify_ambiguous_margin=margin)
+        assert _build_clarification(bot, 'Frage?', hits) is None
+    bot = _clarify_bot(monkeypatch, clarify_below=None)
+    assert _build_clarification(bot, 'Frage?', hits) is None

@@ -380,6 +380,10 @@ _DEFAULT_CLARIFY_QUESTION = (
     'Ich bin mir nicht sicher, worauf sich deine Frage bezieht. Meinst du eines dieser Dokumente?'
 )
 
+_DEFAULT_CLARIFY_AMBIGUOUS_QUESTION = (
+    'Deine Frage passt zu mehreren Dokumenten: {documents}. Welches meinst du?'
+)
+
 
 class GuardConfig(BaseModel):
     """The response guard (see README's "Zweck") that keeps a
@@ -417,6 +421,15 @@ class GuardConfig(BaseModel):
     clarify_below: float | None = Field(default=None, ge=0.0, le=1.0)
     clarify_max_options: int = Field(default=3, ge=1, le=5)
     clarify_question: str = _DEFAULT_CLARIFY_QUESTION
+    # Second clarify trigger (only active while `clarify_below` is set):
+    # the best hit is strong enough, but chunks of >= 2 DIFFERENT documents
+    # score within `clarify_ambiguous_margin` of it -- the question fits
+    # several documents equally well. The bot then asks
+    # `clarify_ambiguous_question` (`{documents}` is replaced by the
+    # candidate labels) and offers exactly those documents. `None` or `0`
+    # disables it.
+    clarify_ambiguous_margin: float | None = Field(default=0.05, ge=0.0, le=1.0)
+    clarify_ambiguous_question: str = _DEFAULT_CLARIFY_AMBIGUOUS_QUESTION
     # Uncertainty building block for the answer ITSELF (only together with
     # `require_sources`): one extra system message after the context block
     # (app/services/chat.py's `_uncertainty_instruction`) telling the LLM

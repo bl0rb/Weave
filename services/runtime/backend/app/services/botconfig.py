@@ -314,6 +314,8 @@ def _managed_bot(raw: dict) -> BotConfig:
                 # Optional until Ingest's ManagedBot grows the column; absent = None = runtime default.
                 'min_score': raw.get('min_score'),
                 'clarify_below': raw.get('clarify_below'),
+                # Absent (older Ingest) = runtime default margin.
+                **({'clarify_ambiguous_margin': raw['clarify_ambiguous_margin']} if 'clarify_ambiguous_margin' in raw else {}),
                 'uncertainty_hint': bool(raw.get('uncertainty_hint', True)),
                 'weak_context_below': raw.get('weak_context_below'),
                 'no_context_reply': raw.get('no_context_reply') or 'Ich habe dazu keine belegten Informationen gefunden.',
