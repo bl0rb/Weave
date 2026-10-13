@@ -137,6 +137,52 @@ def test_admin_crud_is_redacted_and_runtime_projection_requires_service_token(mo
     assert admin_client.get('/api/v1/auth/admin/bots').json()['items'] == []
 
 
+def test_guard_tuning_fields_round_trip_and_default_to_runtime_defaults(monkeypatch):
+    admin = _identity('guard-admin', role=UserRole.ADMIN)
+    admin_client = login_as(admin.username)
+    team_name = _team()
+    collection_slug = _scope(admin_client, team_name)
+    monkeypatch.setattr(settings, 'chat_config_service_token', 'runtime-control-token')
+    internal_headers = {'Authorization': 'Bearer runtime-control-token'}
+
+    # Omitted: every threshold is None (= Weave-Runtime default), the hint on.
+    plain = _payload(team_name, collection_slug)
+    created = admin_client.post('/api/v1/auth/admin/bots', json=plain)
+    assert created.status_code == 201, created.text
+    for key in ('min_score', 'clarify_below', 'weak_context_below', 'query_rewrite'):
+        assert created.json()[key] is None
+    assert created.json()['uncertainty_hint'] is True
+
+    tuned = {**plain, 'id': 'tuned-bot', 'name': 'Tuned', 'min_score': 0.2, 'clarify_below': 0.4,
+             'weak_context_below': 0.55, 'query_rewrite': True, 'uncertainty_hint': False}
+    created = admin_client.post('/api/v1/auth/admin/bots', json=tuned)
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert (body['min_score'], body['clarify_below'], body['weak_context_below']) == (0.2, 0.4, 0.55)
+    assert body['query_rewrite'] is True and body['uncertainty_hint'] is False
+
+    projected = {
+        item['id']: item
+        for item in admin_client.get('/api/v1/internal/bots', headers=internal_headers).json()['items']
+    }
+    assert projected['tuned-bot']['min_score'] == 0.2
+    assert projected['tuned-bot']['clarify_below'] == 0.4
+    assert projected['tuned-bot']['weak_context_below'] == 0.55
+    assert projected['tuned-bot']['query_rewrite'] is True
+    assert projected['tuned-bot']['uncertainty_hint'] is False
+    assert projected[plain['id']]['query_rewrite'] is None
+    assert projected[plain['id']]['uncertainty_hint'] is True
+
+    update_body = {key: value for key, value in tuned.items() if key != 'id'}
+    update_body.update({'min_score': None, 'clarify_below': 1.5, 'auth_token': None})
+    assert admin_client.put('/api/v1/auth/admin/bots/tuned-bot', json=update_body).status_code == 422
+    update_body['clarify_below'] = None
+    updated = admin_client.put('/api/v1/auth/admin/bots/tuned-bot', json=update_body)
+    assert updated.status_code == 200, updated.text
+    assert updated.json()['min_score'] is None and updated.json()['clarify_below'] is None
+    assert updated.json()['weak_context_below'] == 0.55
+
+
 def test_unreachable_runtime_roster_is_logged(monkeypatch, caplog):
     """Callers like the space-deletion guard then only know Ingest's own
     bots; an operator must be able to see that."""

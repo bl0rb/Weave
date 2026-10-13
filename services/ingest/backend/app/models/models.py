@@ -496,6 +496,15 @@ class ManagedBot(Base):
         back_populates='bot', cascade='all, delete-orphan', passive_deletes=True, lazy='selectin'
     )
 
+    # Retrieval-guard tuning, projected 1:1 into Weave-Runtime's
+    # BotConfig.guard / BotConfig.retrieval (see that service's
+    # app/schemas/bot.py for the semantics). NULL = "use the runtime
+    # default" for every optional one, never "off".
+    min_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    clarify_below: Mapped[float | None] = mapped_column(Float, nullable=True)
+    weak_context_below: Mapped[float | None] = mapped_column(Float, nullable=True)
+    query_rewrite: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    uncertainty_hint: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1', nullable=False)
 
 class BotGrant(Base):
     """One entry of a bot's access list (ADR 0008): a person (local or SSO

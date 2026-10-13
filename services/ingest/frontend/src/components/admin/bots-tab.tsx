@@ -104,6 +104,11 @@ type ManagedBot = {
   final_k?: number;
   rerank?: boolean;
   include_uncollected?: boolean;
+  min_score?: number | null;
+  clarify_below?: number | null;
+  weak_context_below?: number | null;
+  query_rewrite?: boolean | null;
+  uncertainty_hint?: boolean;
   agent?: AgentConfig | null;
   llm_endpoint?: string | null;
   llm_endpoints?: string[];
@@ -117,6 +122,13 @@ type BotDraft = Omit<ManagedBot, 'has_auth_token' | 'created_at' | 'updated_at'>
   auth_token: string;
   clear_auth_token: boolean;
   has_auth_token: boolean;
+};
+
+/** A 0..1 score field: empty input means "use the runtime default" (null), never 0. */
+const scoreOrNull = (raw: string): number | null => {
+  if (raw.trim() === '') return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : null;
 };
 
 const emptyDraft = (noContextReply: string): BotDraft => ({
@@ -144,6 +156,11 @@ const emptyDraft = (noContextReply: string): BotDraft => ({
   final_k: 5,
   rerank: true,
   include_uncollected: false,
+  min_score: null,
+  clarify_below: null,
+  weak_context_below: null,
+  query_rewrite: null,
+  uncertainty_hint: true,
   agent: null,
   llm_endpoint: null,
   llm_endpoints: [],
@@ -316,6 +333,11 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
       collections: draft.collections,
       require_sources: draft.require_sources,
       no_context_reply: draft.no_context_reply,
+      min_score: draft.min_score ?? null,
+      clarify_below: draft.clarify_below ?? null,
+      weak_context_below: draft.weak_context_below ?? null,
+      query_rewrite: draft.query_rewrite ?? null,
+      uncertainty_hint: draft.uncertainty_hint ?? true,
       agent: draft.kind === 'llm' && draft.agent?.enabled ? draft.agent : null,
       llm_endpoint: draft.kind === 'llm' ? draft.llm_endpoint || null : null,
       llm_endpoints: draft.kind === 'llm' ? draft.llm_endpoints ?? [] : [],
@@ -412,7 +434,14 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
         <ScopeChoices title={t('admin.bots.scope.spaces.title')} emptyLabel={t('admin.bots.scope.spaces.empty')} items={spaceChoices} selected={draft.collections} onToggle={value => toggleValue('collections', value)} />
         {draft.kind === 'llm' && draft.retrieval_enabled && <div className="grid gap-4 sm:grid-cols-3"><Field label={t('admin.bots.field.topK')}><input className={inputClass} type="number" min={1} value={draft.top_k} onChange={event => set('top_k', Number(event.target.value) || 20)} /></Field><Field label={t('admin.bots.field.finalK')}><input className={inputClass} type="number" min={1} max={draft.top_k} value={draft.final_k} onChange={event => set('final_k', Number(event.target.value) || 5)} /></Field><div className="flex items-end pb-2"><Toggle checked={Boolean(draft.rerank)} onChange={value => set('rerank', value)} label={t('admin.bots.field.reranking')} /></div></div>}
         {draft.kind === 'llm' && draft.retrieval_enabled && <Field label={t('admin.bots.field.departmentFilter.label')} hint={t('admin.bots.field.departmentFilter.hint')}><input className={inputClass} value={String(draft.retrieval_filters?.department || '')} onChange={event => set('retrieval_filters', { ...draft.retrieval_filters, department: event.target.value || null })} placeholder={t('admin.bots.field.departmentFilter.placeholder')} /></Field>}
+        {draft.kind === 'llm' && draft.retrieval_enabled && <div className="grid gap-4 sm:grid-cols-3">
+          <Field label={t('admin.bots.field.minScore.label')} hint={t('admin.bots.field.minScore.hint')}><input className={inputClass} type="number" min={0} max={1} step={0.05} value={draft.min_score ?? ''} onChange={event => set('min_score', scoreOrNull(event.target.value))} /></Field>
+          <Field label={t('admin.bots.field.clarifyBelow.label')} hint={t('admin.bots.field.clarifyBelow.hint')}><input className={inputClass} type="number" min={0} max={1} step={0.05} value={draft.clarify_below ?? ''} onChange={event => set('clarify_below', scoreOrNull(event.target.value))} /></Field>
+          <Field label={t('admin.bots.field.weakContextBelow.label')} hint={t('admin.bots.field.weakContextBelow.hint')}><input className={inputClass} type="number" min={0} max={1} step={0.05} value={draft.weak_context_below ?? ''} onChange={event => set('weak_context_below', scoreOrNull(event.target.value))} /></Field>
+        </div>}
+        {draft.kind === 'llm' && draft.retrieval_enabled && <Toggle checked={draft.query_rewrite === true} onChange={value => set('query_rewrite', value ? true : null)} label={t('admin.bots.toggle.queryRewrite')} />}
         <Toggle checked={draft.require_sources} onChange={value => set('require_sources', value)} label={t('admin.bots.toggle.requireSources')} />
+        {draft.require_sources && <Toggle checked={draft.uncertainty_hint !== false} onChange={value => set('uncertainty_hint', value)} label={t('admin.bots.toggle.uncertaintyHint')} />}
         {draft.require_sources && <Field label={t('admin.bots.field.noContextReply.label')}><textarea className={inputClass} rows={2} value={draft.no_context_reply} onChange={event => set('no_context_reply', event.target.value)} /></Field>}
       </section>}
 

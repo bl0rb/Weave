@@ -88,6 +88,11 @@ def _admin_response(row: ManagedBot) -> ManagedBotAdminResponse:
         require_sources=row.require_sources,
         no_context_reply=row.no_context_reply,
         agent=dict(row.agent_config) if row.agent_config else None,
+        min_score=row.min_score,
+        clarify_below=row.clarify_below,
+        weak_context_below=row.weak_context_below,
+        query_rewrite=row.query_rewrite,
+        uncertainty_hint=row.uncertainty_hint,
         llm_endpoint=row.llm_endpoint,
         llm_endpoints=list(row.llm_endpoints or []),
         created_at=row.created_at,
@@ -172,6 +177,9 @@ def _runtime_bots(db: Session | None = None) -> list[ManagedBotAdminResponse]:
             ],
             collections=list(retrieval.get('collections') or []),
             require_sources=bool(guard.get('require_sources', True)), no_context_reply=guard.get('no_context_reply', ''),
+            min_score=guard.get('min_score'), clarify_below=guard.get('clarify_below'),
+            weak_context_below=guard.get('weak_context_below'), query_rewrite=retrieval.get('query_rewrite'),
+            uncertainty_hint=bool(guard.get('uncertainty_hint', True)),
             agent=config.get('agent'),
             llm_endpoint=model.get('endpoint'), llm_endpoints=list(model.get('endpoints') or []),
             created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc), source='runtime', editable=True,
@@ -316,6 +324,11 @@ def list_managed_bots(request: Request, db: Session = Depends(get_db)) -> Manage
     runtime = [item for item in _runtime_bots(db) if item.id not in managed_ids and item.id not in tombstoned_ids]
     return ManagedBotListResponse(items=sorted(managed + runtime, key=lambda item: (item.name, item.id)))
 
+    row.min_score = payload.min_score
+    row.clarify_below = payload.clarify_below
+    row.weak_context_below = payload.weak_context_below
+    row.query_rewrite = payload.query_rewrite
+    row.uncertainty_hint = payload.uncertainty_hint
 
 @router_admin.post('', response_model=ManagedBotAdminResponse, status_code=status.HTTP_201_CREATED)
 def create_managed_bot(
@@ -463,6 +476,11 @@ def _owner_response(row: ManagedBot) -> ManagedBotOwnerResponse:
         public=row.public,
         grants=_grant_responses(row),
         updated_at=row.updated_at,
+            min_score=row.min_score,
+            clarify_below=row.clarify_below,
+            weak_context_below=row.weak_context_below,
+            query_rewrite=row.query_rewrite,
+            uncertainty_hint=row.uncertainty_hint,
     )
 
 
