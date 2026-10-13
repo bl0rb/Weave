@@ -22,11 +22,13 @@ reason: ocr_confidence was a measurement artefact, not a real signal):
 
 from __future__ import annotations
 
+from app.services.field_validation import validate_document
 from app.services.quality_gate import (
     _collect_numeric_values,
     _looks_gibberish,
     evaluate_document_quality,
     ocr_confidence_score,
+    quality_findings,
     structure_quality_score,
     text_noise_penalty,
 )
@@ -329,3 +331,34 @@ def test_evaluate_document_quality_field_validation_issues_do_not_affect_score()
     with_fv = evaluate_document_quality(markdown, field_validation=field_validation)
     assert without['score'] == with_fv['score']
     assert without['grade'] == with_fv['grade']
+
+
+# --- findings: located weak spots in the markdown ---------------------------
+
+
+def test_quality_findings_locates_each_kind_with_one_based_positions():
+    markdown = (
+        'Guter Satz hier\n'
+        'Konto DE00 1234 5678 9012 3456 78 fehlt\n'
+        'xyzzyqrstv ok\n'
+        '|---|---|\n'
+        '@#$%^&*()!?\n'
+        'Wiederholte Zeile\n'
+        'Wiederholte Zeile\n'
+    )
+    issues = validate_document(markdown)['issues']
+    found = {(f['kind'], f['line'], f['column']) for f in quality_findings(markdown, issues)}
+
+    assert ('field_validation', 2, 7) in found
+    assert ('gibberish', 3, 1) in found
+    assert ('symbol_heavy', 5, 1) in found
+    assert ('repeated_line', 7, 1) in found
+    # table separator is structural, not symbol noise
+    assert not any(line == 4 for _, line, _ in found)
+
+
+def test_quality_findings_is_capped_and_wired_into_gate():
+    markdown = '\n'.join('@#$%^&*()' for _ in range(300))
+    assert len(quality_findings(markdown)) == 200
+    result = evaluate_document_quality('Sauberer Text', field_validation=validate_document('Sauberer Text'))
+    assert result['findings'] == []

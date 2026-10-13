@@ -12,7 +12,14 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import type { PaddleCapabilities } from '@/components/dashboard/shared';
 import type { JobArtifact } from '@/components/markdown/markdown-view';
 import { WebhookSendDialog } from '@/components/webhook-send-dialog';
-import { apiFetch, redirectIfSessionExpired, type JobVersionEntry, type JobVersionsResponse } from '@/lib/api';
+import {
+  apiFetch,
+  redirectIfSessionExpired,
+  type JobVersionEntry,
+  type JobVersionsResponse,
+  type QualityFinding,
+  type QualityFindingKind,
+} from '@/lib/api';
 import { API_BASE_URL } from '@/lib/api-base';
 import { useAuth } from '@/lib/auth-context';
 import { peekCached, setCached } from '@/lib/data-cache';
@@ -164,6 +171,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isRetryingLower, setIsRetryingLower] = useState(false);
   const [viewTab, setViewTab] = useState<'rendered' | 'raw'>('raw');
+  const [highlightWeaknesses, setHighlightWeaknesses] = useState(false);
   // null = artifact list not fetched yet (images render skeletons); [] after
   // a completed fetch that found nothing or failed (broken-image placeholder).
   const [artifacts, setArtifacts] = useState<JobArtifact[] | null>(null);
@@ -441,6 +449,13 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
   const qualityGrade = typeof qualityGate?.grade === 'string' ? qualityGate.grade : null;
   const qualityScore = typeof qualityGate?.score === 'number' ? qualityGate.score : null;
   const qualityRecommendation = typeof qualityGate?.recommendation === 'string' ? qualityGate.recommendation : null;
+  const qualityFindings = (Array.isArray(qualityGate?.findings) ? qualityGate.findings : []) as QualityFinding[];
+  const findingsByLine = new Map<number, QualityFinding[]>();
+  const findingCounts: Partial<Record<QualityFindingKind, number>> = {};
+  for (const finding of qualityFindings) {
+    findingsByLine.set(finding.line, [...(findingsByLine.get(finding.line) ?? []), finding]);
+    findingCounts[finding.kind] = (findingCounts[finding.kind] ?? 0) + 1;
+  }
   const collectionId = typeof settings?.collection_id === 'string' ? settings.collection_id : null;
 
   const saveMarkdown = async () => {
@@ -683,6 +698,16 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
               >
                 {t('portal.jobDetail.rawTab')}
               </Button>
+              {viewTab === 'raw' && qualityFindings.length > 0 && (
+                <label className="ml-2 flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={highlightWeaknesses}
+                    onChange={(event) => setHighlightWeaknesses(event.target.checked)}
+                  />
+                  {t('portal.jobDetail.highlightWeaknesses')}
+                </label>
+              )}
             </div>
           )}
           {isEditing ? (
@@ -713,6 +738,30 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
             <div className="rounded-xl border border-slate-200 bg-white p-4">
               <MarkdownView markdown={markdown} jobId={job.id} password={password || undefined} artifacts={artifacts} />
             </div>
+          ) : highlightWeaknesses && qualityFindings.length > 0 ? (
+            <>
+              <div className="mb-2 flex flex-wrap gap-3 text-xs text-slate-600">
+                {(Object.keys(findingCounts) as QualityFindingKind[]).map((kind) => (
+                  <span key={kind} className="rounded bg-amber-100 px-2 py-0.5 text-amber-800">
+                    {t(`portal.jobDetail.finding.${kind}` as MessageKey)}: {findingCounts[kind]}
+                  </span>
+                ))}
+              </div>
+              <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-xl border border-slate-200 bg-white p-4 text-sm text-emerald-800">
+                {markdown.split('\n').map((line, index) => {
+                  const lineFindings = findingsByLine.get(index + 1);
+                  return (
+                    <span
+                      key={index}
+                      className={lineFindings ? 'block bg-amber-100' : 'block'}
+                      title={lineFindings?.map((finding) => `${finding.kind}: ${finding.text}`).join('\n')}
+                    >
+                      {line || ' '}
+                    </span>
+                  );
+                })}
+              </pre>
+            </>
           ) : (
             <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-xl border border-slate-200 bg-white p-4 text-sm text-emerald-800">{markdown}</pre>
           )}
