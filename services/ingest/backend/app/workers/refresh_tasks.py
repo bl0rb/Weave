@@ -197,6 +197,44 @@ def _has_active_run(db, source_id: str) -> bool:
     )
 
 
+def _reap_stale_runs(db, source: ImportSource, now: datetime) -> int:
+    """Flip this source's wedged 'pending'/'running' runs to failed -- same
+    heartbeat rule as import_routes._is_stale_active (updated_at older than
+    settings.import_stale_run_seconds) -- so a lost worker or a lost queue
+    message can never block the Doppelstart-Schutz in _dispatch_due_refreshes
+    forever. The API's create-run path reaps for itself; the scheduler never
+    went through it, so without this one stalled run silently stopped every
+    future refresh of the source. Returns the number of runs reaped and
+    surfaces the condition on source.last_refresh_error (cleared again by
+    _record_refresh_outcome once the next run succeeds)."""
+    stale_before = now - timedelta(seconds=settings.import_stale_run_seconds)
+    stale_runs = [
+        run
+        for run in db.scalars(
+            select(ImportRun).where(
+                ImportRun.source_id == source.id,
+                ImportRun.status.in_([ImportRunStatus.PENDING, ImportRunStatus.RUNNING]),
+            )
+        ).all()
+        if _aware_utc(run.updated_at) < stale_before
+    ]
+    for run in stale_runs:
+        run.status = ImportRunStatus.FAILED
+        run.error_message = 'worker lost; run stalled'
+        run.finished_at = now
+    if stale_runs:
+        logger.warning(
+            'confluence refresh: source %s had %d stalled run(s) (no heartbeat for %ds); marked failed',
+            source.id, len(stale_runs), settings.import_stale_run_seconds,
+        )
+        source.last_refresh_error = _truncate(
+            f'{len(stale_runs)} stalled run(s) marked failed (worker lost); the refresh continues with the next run',
+            _START_FAILURE_MESSAGE_MAX_CHARS,
+        )
+        db.commit()
+    return len(stale_runs)
+
+
 def _start_refresh_run(db, source: ImportSource, template: ImportRun | None = None) -> ImportRun | None:
     """Start a new refresh run, copying the scope + options of the source's
     last successful run or an explicit template. Returns the queued run,
@@ -293,6 +331,7 @@ def _dispatch_due_refreshes() -> None:
         for source in sources:
             if not _is_due(source, now):
                 continue
+            _reap_stale_runs(db, source, now)
             if _has_active_run(db, source.id):
                 continue  # Doppelstart-Schutz: an earlier run for this source is still in flight.
             try:
