@@ -4262,6 +4262,17 @@
             ],
             "title": "Agent"
           },
+          "clarify_below": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clarify Below"
+          },
           "collections": {
             "items": {
               "type": "string"
@@ -4341,6 +4352,17 @@
             "title": "Llm Endpoints",
             "type": "array"
           },
+          "min_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Score"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -4353,6 +4375,17 @@
             "default": false,
             "title": "Public",
             "type": "boolean"
+          },
+          "query_rewrite": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Rewrite"
           },
           "require_sources": {
             "title": "Require Sources",
@@ -4413,10 +4446,26 @@
             "title": "Top K",
             "type": "integer"
           },
+          "uncertainty_hint": {
+            "default": true,
+            "title": "Uncertainty Hint",
+            "type": "boolean"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
             "type": "string"
+          },
+          "weak_context_below": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weak Context Below"
           },
           "webhook_url": {
             "anyOf": [
@@ -4473,6 +4522,19 @@
               }
             ],
             "title": "Auth Token"
+          },
+          "clarify_below": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clarify Below"
           },
           "clear_auth_token": {
             "default": false,
@@ -4559,6 +4621,19 @@
             "title": "Llm Endpoints",
             "type": "array"
           },
+          "min_score": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Score"
+          },
           "name": {
             "maxLength": 255,
             "minLength": 1,
@@ -4576,6 +4651,17 @@
             "default": false,
             "title": "Public",
             "type": "boolean"
+          },
+          "query_rewrite": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Rewrite"
           },
           "require_sources": {
             "default": true,
@@ -4641,6 +4727,24 @@
             "title": "Top K",
             "type": "integer"
           },
+          "uncertainty_hint": {
+            "default": true,
+            "title": "Uncertainty Hint",
+            "type": "boolean"
+          },
+          "weak_context_below": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weak Context Below"
+          },
           "webhook_url": {
             "anyOf": [
               {
@@ -4700,6 +4804,17 @@
             "title": "Auth Token",
             "type": "string"
           },
+          "clarify_below": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clarify Below"
+          },
           "collections": {
             "items": {
               "type": "string"
@@ -4755,6 +4870,17 @@
             "title": "Llm Endpoints",
             "type": "array"
           },
+          "min_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Score"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -4767,6 +4893,17 @@
             "default": false,
             "title": "Public",
             "type": "boolean"
+          },
+          "query_rewrite": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Rewrite"
           },
           "require_sources": {
             "title": "Require Sources",
@@ -4829,12 +4966,28 @@
             "title": "Top K",
             "type": "integer"
           },
+          "uncertainty_hint": {
+            "default": true,
+            "title": "Uncertainty Hint",
+            "type": "boolean"
+          },
           "users": {
             "items": {
               "type": "string"
             },
             "title": "Users",
             "type": "array"
+          },
+          "weak_context_below": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weak Context Below"
           },
           "webhook_url": {
             "anyOf": [
@@ -5103,6 +5256,19 @@
             ],
             "title": "Auth Token"
           },
+          "clarify_below": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clarify Below"
+          },
           "clear_auth_token": {
             "default": false,
             "title": "Clear Auth Token",
@@ -5182,6 +5348,19 @@
             "title": "Llm Endpoints",
             "type": "array"
           },
+          "min_score": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Score"
+          },
           "name": {
             "maxLength": 255,
             "minLength": 1,
@@ -5199,6 +5378,17 @@
             "default": false,
             "title": "Public",
             "type": "boolean"
+          },
+          "query_rewrite": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Rewrite"
           },
           "require_sources": {
             "default": true,
@@ -5263,6 +5453,24 @@
             "minimum": 1.0,
             "title": "Top K",
             "type": "integer"
+          },
+          "uncertainty_hint": {
+            "default": true,
+            "title": "Uncertainty Hint",
+            "type": "boolean"
+          },
+          "weak_context_below": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weak Context Below"
           },
           "webhook_url": {
             "anyOf": [
