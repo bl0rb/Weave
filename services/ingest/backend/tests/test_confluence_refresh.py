@@ -610,6 +610,39 @@ def test_refresh_run_unchanged_page_creates_no_new_job(sent, client_holder) -> N
     assert state_row.job_id == prior_job_id
 
 
+def test_refresh_unchanged_pages_do_not_consume_max_pages(sent, client_holder) -> None:
+    owner = _make_owner()
+    source_id = _make_source(owner.id)
+    prior_job_id = _make_prior_job(owner.id, 'P1', version=3)
+    _make_page_state(source_id, 'P1', version=3, job_id=prior_job_id)
+
+    class TreeClient(FakeClient):
+        pages = {'P1': _page('P1', 'Root', '<p>same</p>', version=3), 'C1': _page('C1', 'Child', '<p>new</p>', version=1)}
+
+        def fetch_page(self, page_id: str) -> Page:
+            return self.pages[page_id]
+
+        def iter_children(self, page_id: str):
+            return iter(['C1'] if page_id == 'P1' else [])
+
+    client_holder['client'] = TreeClient(TreeClient.pages['P1'])
+    run_id = _make_refresh_run(owner.id, source_id, scope_value='P1')
+    db = _db()
+    try:
+        run = db.get(ImportRun, run_id)
+        run.options = {**run.options, 'max_pages': 1}
+        db.commit()
+    finally:
+        db.close()
+
+    import_confluence(run_id, 0)
+
+    run = _get_run(run_id)
+    assert run.status == ImportRunStatus.FINISHED
+    assert run.pages_imported == 1
+    assert 'C1' in run.state['visited']
+
+
 def test_refresh_run_changed_page_creates_chained_job_and_updates_state(sent, client_holder) -> None:
     owner = _make_owner()
     source_id = _make_source(owner.id)
