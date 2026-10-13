@@ -5044,6 +5044,17 @@
       "ManagedBotOwnerResponse": {
         "description": "What a bot owner sees and maintains (ADR 0008): the content and the\nsharing, never the technical connection (webhook, secret, timeout).",
         "properties": {
+          "clarify_below": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clarify Below"
+          },
           "collections": {
             "items": {
               "type": "string"
@@ -5081,6 +5092,17 @@
             "title": "Kind",
             "type": "string"
           },
+          "min_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Score"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -5092,6 +5114,17 @@
           "public": {
             "title": "Public",
             "type": "boolean"
+          },
+          "query_rewrite": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Rewrite"
           },
           "require_sources": {
             "title": "Require Sources",
@@ -5113,10 +5146,26 @@
             ],
             "title": "System Prompt"
           },
+          "uncertainty_hint": {
+            "default": true,
+            "title": "Uncertainty Hint",
+            "type": "boolean"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
             "type": "string"
+          },
+          "weak_context_below": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weak Context Below"
           }
         },
         "required": [
@@ -5138,6 +5187,19 @@
         "additionalProperties": false,
         "description": "Owner PATCH: every field optional (None = unchanged). `grants`\nreplaces the users; owners stay as the administrators set them.",
         "properties": {
+          "clarify_below": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clarify Below"
+          },
           "collections": {
             "anyOf": [
               {
@@ -5180,6 +5242,19 @@
             ],
             "title": "Grants"
           },
+          "min_score": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Score"
+          },
           "no_context_reply": {
             "anyOf": [
               {
@@ -5204,6 +5279,17 @@
             ],
             "title": "Public"
           },
+          "query_rewrite": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Rewrite"
+          },
           "require_sources": {
             "anyOf": [
               {
@@ -5226,6 +5312,30 @@
               }
             ],
             "title": "System Prompt"
+          },
+          "uncertainty_hint": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uncertainty Hint"
+          },
+          "weak_context_below": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weak Context Below"
           }
         },
         "title": "ManagedBotOwnerUpdate",

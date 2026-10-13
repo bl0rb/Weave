@@ -731,6 +731,31 @@ def test_owner_lists_and_maintains_content_and_users_but_not_the_connection(monk
     assert owner_client.get('/api/v1/directory/users').status_code == 200
 
 
+def test_owner_tunes_guard_thresholds_with_validation_and_ownership():
+    admin_client = login_as(_identity('guard-owner-admin', role=UserRole.ADMIN).username)
+    owner = _identity('guard-owner')
+    bot = _owned_bot(admin_client, owner, _scope(admin_client, _team()))
+    url = f"/api/v1/bots/{bot['id']}"
+    owner_client = login_as(owner.username)
+
+    tuned = owner_client.patch(url, json={'min_score': 0.2, 'clarify_below': 0.4, 'weak_context_below': 0.55,
+                                          'query_rewrite': True, 'uncertainty_hint': False})
+    assert tuned.status_code == 200, tuned.text
+    body = tuned.json()
+    assert (body['min_score'], body['clarify_below'], body['weak_context_below']) == (0.2, 0.4, 0.55)
+    assert body['query_rewrite'] is True and body['uncertainty_hint'] is False
+
+    # Out of range is rejected; omitted keys stay, explicit null resets.
+    assert owner_client.patch(url, json={'min_score': 1.5}).status_code == 422
+    reset = owner_client.patch(url, json={'min_score': None, 'description': 'x'})
+    assert reset.status_code == 200, reset.text
+    assert reset.json()['min_score'] is None and reset.json()['clarify_below'] == 0.4
+    assert owner_client.get('/api/v1/bots').json()['items'][0]['weak_context_below'] == 0.55
+
+    other = login_as(_identity('guard-not-owner').username)
+    assert other.patch(url, json={'min_score': 0.9}).status_code == 404
+
+
 def test_owner_can_only_attach_knowledge_spaces_they_can_read():
     admin_client = login_as(_identity('bot-scope-admin', role=UserRole.ADMIN).username)
     owner = _identity('bot-scope-owner')

@@ -437,6 +437,11 @@ class ManagedBotOwnerResponse(BaseModel):
     collections: list[str]
     require_sources: bool
     no_context_reply: str
+    min_score: float | None = None
+    clarify_below: float | None = None
+    weak_context_below: float | None = None
+    query_rewrite: bool | None = None
+    uncertainty_hint: bool = True
     public: bool
     grants: list[BotGrantResponse] = Field(default_factory=list)
     updated_at: datetime
@@ -457,6 +462,13 @@ class ManagedBotOwnerUpdate(BaseModel):
     collections: list[str] | None = Field(default=None, max_length=500)
     require_sources: bool | None = None
     no_context_reply: str | None = Field(default=None, min_length=1, max_length=2000)
+    # Retrieval-guard tuning: an explicit null on a threshold / query_rewrite
+    # resets it to the runtime default; an omitted key leaves it unchanged.
+    min_score: float | None = Field(default=None, ge=0, le=1)
+    clarify_below: float | None = Field(default=None, ge=0, le=1)
+    weak_context_below: float | None = Field(default=None, ge=0, le=1)
+    query_rewrite: bool | None = None
+    uncertainty_hint: bool | None = None
     public: bool | None = None
     grants: list[BotGrantInput] | None = Field(default=None, max_length=500)
 
