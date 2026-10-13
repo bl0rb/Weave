@@ -578,14 +578,24 @@ class ConfluenceV1Client(_ConfluenceClientBase):
         super().__init__(base_url, **kwargs)
         self._api = self._base_url + '/rest/api'
 
-    def _next_by_start(self, current_url: str, _data: dict, result_count: int) -> str | None:
-        # A short page (fewer than `limit` results) is the last one.
-        if result_count < _LIST_PAGE_LIMIT:
+    def _next_by_start(self, current_url: str, data: dict, result_count: int) -> str | None:
+        # Prefer the server's own `_links.next`; Data Center may cap or vary
+        # the page size, so don't assume a fixed one.
+        links = data.get('_links')
+        next_link = links.get('next') if isinstance(links, dict) else None
+        if next_link:
+            return self._check_same_host(urljoin(current_url, next_link))
+        # Fallback: a short page (fewer than the limit the server echoes, else
+        # the one we requested) is the last one.
+        limit = data.get('limit')
+        if not isinstance(limit, int) or limit <= 0:
+            limit = _LIST_PAGE_LIMIT
+        if result_count < limit:
             return None
         match = re.search(r'([?&])start=(\d+)', current_url)
         if match is None:
             return None
-        next_start = int(match.group(2)) + _LIST_PAGE_LIMIT
+        next_start = int(match.group(2)) + result_count
         return current_url[: match.start()] + f'{match.group(1)}start={next_start}' + current_url[match.end():]
 
     def fetch_page(self, page_id: str) -> Page:

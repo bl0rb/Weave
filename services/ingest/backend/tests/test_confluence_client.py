@@ -510,6 +510,23 @@ def test_v1_iter_children_start_limit_pagination(monkeypatch):
     ]
 
 
+def test_v1_iter_children_follows_links_next_with_small_pages(monkeypatch):
+    # Data Center may cap the page size below the requested limit.
+    fake = _install(monkeypatch, {
+        f'{DC_BASE}/rest/api/content/42/child/page?start=0&limit=50': (200, _json_body({
+            'results': [{'id': '1'}, {'id': '2'}],
+            'limit': 2,
+            '_links': {'next': '/confluence/rest/api/content/42/child/page?start=2&limit=2'},
+        })),
+        f'{DC_BASE}/rest/api/content/42/child/page?start=2&limit=2': (200, _json_body({
+            'results': [{'id': '3'}],
+            'limit': 2,
+        })),
+    })
+    assert list(_dc_client().iter_children('42')) == ['1', '2', '3']
+    assert len(fake.calls) == 2
+
+
 def test_v1_iter_children_short_page_stops(monkeypatch):
     fake = _install(monkeypatch, {
         f'{DC_BASE}/rest/api/content/42/child/page?start=0&limit=50': (200, _json_body({
