@@ -43,6 +43,10 @@ user_teams = Table(
     Column('user_id', String(36), ForeignKey('users.id', ondelete='CASCADE'), primary_key=True),
     Column('team_id', String(36), ForeignKey('teams.id', ondelete='CASCADE'), primary_key=True),
     Column('role', String(16), nullable=False, server_default='member'),
+    # Set when the membership was synced from an OIDC groups claim
+    # (AuthProvider.sync_groups); NULL = assigned by hand. Only synced
+    # memberships are ever removed by a later login.
+    Column('oidc_provider_id', String(36), ForeignKey('auth_providers.id', ondelete='SET NULL'), nullable=True),
 )
 
 
@@ -262,14 +266,23 @@ class Tag(Base):
 
 class UserRole(str, enum.Enum):
     ADMIN = 'admin'
+    # Manages every managed bot (admin bot surface), nothing else.
+    BOT_ADMIN = 'bot_admin'
     USER = 'user'
 
 
 class Team(Base):
     __tablename__ = 'teams'
+    __table_args__ = (UniqueConstraint('oidc_provider_id', 'oidc_group', name='uq_teams_oidc_provider_group'),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    # Group value from the IdP's groups claim this team is synced from (see
+    # AuthProvider.sync_groups); the team keeps the link when renamed.
+    oidc_provider_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('auth_providers.id', ondelete='SET NULL'), nullable=True
+    )
+    oidc_group: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     users: Mapped[list['User']] = relationship(back_populates='team')
@@ -300,6 +313,11 @@ class AuthProvider(Base):
     # Entra) whose preferred_username is a UPN rather than something
     # human-readable.
     use_email_as_username: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # When true, every login maps the values of the `groups_claim` claim to
+    # teams (created on first sight) and keeps the user's synced team
+    # memberships in line with it; memberships assigned by hand stay.
+    sync_groups: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default='0')
+    groups_claim: Mapped[str] = mapped_column(String(255), default='groups', nullable=False, server_default='groups')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
@@ -478,6 +496,15 @@ class ManagedBot(Base):
         server_default='Ich habe dazu keine belegten Informationen gefunden.',
         nullable=False,
     )
+    # Retrieval-guard tuning, projected 1:1 into Weave-Runtime's
+    # BotConfig.guard / BotConfig.retrieval (see that service's
+    # app/schemas/bot.py for the semantics). NULL = "use the runtime
+    # default" for every optional one, never "off".
+    min_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    clarify_below: Mapped[float | None] = mapped_column(Float, nullable=True)
+    weak_context_below: Mapped[float | None] = mapped_column(Float, nullable=True)
+    query_rewrite: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    uncertainty_hint: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1', nullable=False)
     updated_by_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True
     )
@@ -584,7 +611,7 @@ class User(Base):
     # (sqlite has no native enum type; this also sidesteps the manual
     # CREATE TYPE / DROP TYPE dance used for jobstatus in 0001_init).
     role: Mapped[UserRole] = mapped_column(
-        Enum(UserRole, name='user_role', native_enum=False, validate_strings=True),
+        Enum(UserRole, name='user_role', native_enum=False, validate_strings=True, length=16),
         default=UserRole.USER,
         nullable=False,
     )

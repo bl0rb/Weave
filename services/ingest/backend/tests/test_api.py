@@ -401,6 +401,46 @@ def test_upload_allows_missing_email(monkeypatch, tmp_path):
     assert called['email'] == ''
 
 
+@pytest.mark.parametrize(
+    ('filename', 'content_type', 'content'),
+    [
+        ('notes.md', 'text/markdown', b'# Titel\n\nText.\n'),
+        ('notes.md', 'text/plain', b'# Titel\n'),
+        ('data.xml', 'application/xml', b'<a><b>1</b></a>'),
+        ('data.xml', 'text/xml', b'<a/>'),
+    ],
+)
+def test_md_and_xml_uploads_are_accepted(monkeypatch, tmp_path, filename, content_type, content):
+    from app.api import routes
+    from app.core.config import settings
+
+    settings.worker_tmp_dir = tmp_path / 'work'
+    monkeypatch.setattr(routes.process_job, 'delay', lambda *args, **kwargs: None)
+
+    response = client.post('/api/v1/upload', files={'file': (filename, content, content_type)})
+    assert response.status_code == 200, response.text
+
+    db = TestingSessionLocal()
+    job = db.get(Job, response.json()['job_id'])
+    assert job is not None
+    assert job.original_filename == filename
+    assert job.upload_path.endswith(Path(filename).suffix)
+    assert stored_bytes(job.upload_object_id) == content
+    db.close()
+
+
+def test_xml_upload_with_contradicting_mime_type_is_rejected(monkeypatch, tmp_path):
+    from app.api import routes
+    from app.core.config import settings
+
+    settings.worker_tmp_dir = tmp_path / 'work'
+    monkeypatch.setattr(routes.process_job, 'delay', lambda *args, **kwargs: None)
+
+    response = client.post('/api/v1/upload', files={'file': ('data.xml', b'<a/>', 'image/png')})
+    assert response.status_code == 400
+    assert response.json()['detail'] == 'MIME type does not match file extension'
+
+
 def test_eml_upload_creates_job_like_normal_document(monkeypatch, tmp_path):
     """Test that .eml files can be uploaded through the normal upload flow and create a Job."""
     from app.api import routes

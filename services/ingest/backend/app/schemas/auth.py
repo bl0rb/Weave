@@ -101,6 +101,9 @@ class TeamResponse(BaseModel):
     id: str
     name: str
     created_at: datetime
+    # Set for teams synced from an OIDC groups claim (AuthProvider.sync_groups).
+    oidc_provider_id: str | None = None
+    oidc_group: str | None = None
 
     model_config = {'from_attributes': True}
 
@@ -152,6 +155,9 @@ class ProviderCreateRequest(BaseModel):
     scopes: str = 'openid profile email'
     # See AuthProvider.use_email_as_username.
     use_email_as_username: bool = False
+    # See AuthProvider.sync_groups / groups_claim.
+    sync_groups: bool = False
+    groups_claim: str = Field(default='groups', min_length=1, max_length=255)
 
 
 class ProviderUpdateRequest(BaseModel):
@@ -163,6 +169,8 @@ class ProviderUpdateRequest(BaseModel):
     enabled: bool | None = None
     scopes: str | None = None
     use_email_as_username: bool | None = None
+    sync_groups: bool | None = None
+    groups_claim: str | None = Field(default=None, min_length=1, max_length=255)
 
 
 class ProviderAdminResponse(BaseModel):
@@ -176,6 +184,8 @@ class ProviderAdminResponse(BaseModel):
     enabled: bool
     scopes: str
     use_email_as_username: bool
+    sync_groups: bool
+    groups_claim: str
     created_at: datetime
     updated_at: datetime
 

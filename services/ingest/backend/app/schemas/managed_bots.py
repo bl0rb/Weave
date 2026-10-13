@@ -221,6 +221,13 @@ class ManagedBotWrite(BaseModel):
     no_context_reply: str = Field(
         default='Ich habe dazu keine belegten Informationen gefunden.', min_length=1, max_length=2000
     )
+    # Retrieval-guard tuning (Weave-Runtime BotConfig.guard/retrieval):
+    # rerank-score thresholds 0..1, None = runtime default.
+    min_score: float | None = Field(default=None, ge=0, le=1)
+    clarify_below: float | None = Field(default=None, ge=0, le=1)
+    weak_context_below: float | None = Field(default=None, ge=0, le=1)
+    query_rewrite: bool | None = None
+    uncertainty_hint: bool = True
     # Agent-mode configuration (Weave-Runtime's `BotConfig.agent`, rollout
     # plan "Schritt 4 -- Administration und Streaming") -- validated here
     # via `AgentConfig` (this module, a field-for-field mirror of Runtime's
@@ -355,6 +362,11 @@ class ManagedBotAdminResponse(BaseModel):
     collections: list[str]
     require_sources: bool
     no_context_reply: str
+    min_score: float | None = None
+    clarify_below: float | None = None
+    weak_context_below: float | None = None
+    query_rewrite: bool | None = None
+    uncertainty_hint: bool = True
     agent: dict | None = None
     llm_endpoint: str | None = None
     llm_endpoints: list[str] = Field(default_factory=list)
@@ -394,6 +406,11 @@ class ManagedBotInternalResponse(BaseModel):
     collections: list[str]
     require_sources: bool
     no_context_reply: str
+    min_score: float | None = None
+    clarify_below: float | None = None
+    weak_context_below: float | None = None
+    query_rewrite: bool | None = None
+    uncertainty_hint: bool = True
     agent: dict | None = None
     llm_endpoint: str | None = None
     llm_endpoints: list[str] = Field(default_factory=list)

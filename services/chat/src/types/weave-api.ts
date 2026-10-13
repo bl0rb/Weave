@@ -135,7 +135,7 @@ export interface GuardTrace {
    * — a situation the caller can fix by lifting their own filter, unlike
    * "no_collections" which no selection change can fix.
    */
-  reason: 'no_context' | 'no_collections' | 'filter_excluded_all' | null;
+  reason: 'no_context' | 'no_collections' | 'filter_excluded_all' | 'clarify' | null;
 }
 
 /**
@@ -205,6 +205,28 @@ export interface ChatTrace {
    * initial `trace` event (the research loop hasn't run yet at that
    * point) — see `AgentTrace` above. */
   agent: AgentTrace | null;
+  /** Set exactly when `guard.reason === 'clarify'` — the clarifying
+   * question the bot asked instead of answering, plus the candidate
+   * documents to offer as one-click follow-ups (see `Clarification`).
+   * Optional: traces persisted before this field existed lack it. */
+  clarification?: Clarification | null;
+}
+
+/** One candidate document behind a clarifying question. `message` is the
+ * ready-made follow-up the UI sends verbatim as the next user message when
+ * the option is picked (original question + document). */
+export interface ClarificationOption {
+  label: string;
+  message: string;
+  document_id: string;
+  collection: string | null;
+}
+
+/** Weave-Runtime's `ChatTrace.clarification` — `question` doubles as the
+ * turn's answer text; `options` are best-scored first, one per document. */
+export interface Clarification {
+  question: string;
+  options: ClarificationOption[];
 }
 
 /**

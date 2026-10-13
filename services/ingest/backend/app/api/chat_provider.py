@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import origin_guard, require_admin
+from app.api.deps import origin_guard, require_admin, require_bot_admin
 from app.core.config import settings
 from app.database.session import get_db
 from app.models.models import ChatProviderConfig, ManagedBot, User
@@ -31,6 +31,12 @@ router_admin = APIRouter(
     prefix='/api/v1/auth/admin/chat-provider',
     tags=['chat-provider-admin'],
     dependencies=[Depends(require_admin), Depends(origin_guard)],
+)
+# Read-only endpoint list the bot editor needs; bot admins may see it too.
+router_bot_admin = APIRouter(
+    prefix='/api/v1/auth/admin/chat-provider',
+    tags=['chat-provider-admin'],
+    dependencies=[Depends(require_bot_admin), Depends(origin_guard)],
 )
 router_internal = APIRouter(prefix='/api/v1/internal/chat-provider', tags=['chat-provider-internal'])
 
@@ -143,7 +149,7 @@ def test_chat_provider(request: Request, db: Session = Depends(get_db)) -> ChatP
     return _test(db.get(ChatProviderConfig, DEFAULT_ENDPOINT_ID))
 
 
-@router_admin.get('/endpoints', response_model=ChatProviderListResponse)
+@router_bot_admin.get('/endpoints', response_model=ChatProviderListResponse)
 def list_chat_endpoints(request: Request, db: Session = Depends(get_db)) -> ChatProviderListResponse:
     """Every configured endpoint, the central 'default' first."""
     enforce_rate_limit(request)

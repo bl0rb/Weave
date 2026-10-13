@@ -25,6 +25,8 @@ both modes at the unit level); this file only needs ONE router mode to
 exercise the pipeline stages around it.
 """
 
+import pytest
+
 from app.services.chat import NO_COLLECTION_SENTINEL
 from tests.conftest import AUTH_HEADERS, client
 
@@ -171,7 +173,7 @@ def test_knowledge_flow_passes_context_to_the_llm_and_returns_sources(monkeypatc
     # test_chat_service.py's own `resolve_collection_scope`/
     # `include_uncollected` tests for that function's logic in isolation.
     assert trace['retrieval'] == {
-        'candidates': 2, 'used': 2, 'collections': ['vertraege', '__none__'], 'requested_collections': None,
+        'candidates': 2, 'used': 2, 'collections': ['vertraege', '__none__'], 'requested_collections': None, 'rewritten_query': None,
     }
     assert trace['guard'] is None
     assert 'retrieval_ms' in trace['timings_ms']
@@ -227,10 +229,391 @@ def test_guard_flow_returns_no_context_reply_when_retrieval_finds_nothing(monkey
     # nothing), not 'no_collections' (search never ran at all, see the
     # dedicated test for that below).
     assert trace['retrieval'] == {
-        'candidates': 0, 'used': 0, 'collections': ['vertraege', '__none__'], 'requested_collections': None,
+        'candidates': 0, 'used': 0, 'collections': ['vertraege', '__none__'], 'requested_collections': None, 'rewritten_query': None,
     }
     assert trace['guard'] == {'triggered': True, 'reason': 'no_context'}
     assert trace['model'] is None  # the guard short-circuits before any LLM call
+
+
+# --- uncertainty instruction after the context block -------------------------
+
+
+def _spy_fake_llm(monkeypatch):
+    from app.services.llm import FakeLLM
+
+    seen: list[list[dict[str, str]]] = []
+    original = FakeLLM.chat
+
+    def _chat(self, messages, model=None, temperature=None):
+        seen.append(messages)
+        return original(self, messages, model=model, temperature=temperature)
+
+    monkeypatch.setattr(FakeLLM, 'chat', _chat)
+    return seen
+
+
+def _guard_bot(monkeypatch, **guard):
+    from app.services import chat as chat_module
+    from app.services.botconfig import load_bot
+
+    bot = load_bot('legal-support')
+    monkeypatch.setattr(
+        chat_module, 'load_bot', lambda bot_id: bot.model_copy(update={'guard': bot.guard.model_copy(update=guard)})
+    )
+
+
+def _single_hit(monkeypatch, rerank):
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        return _readable_collections_response()
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        return _FakeResponse(200, _search_response(
+            _chunk(scores={'vector': 0.5, 'fulltext': 0.3, 'rrf': 0.5, 'rerank': rerank}),
+        ))
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _fake_get)
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _fake_post)
+
+
+def test_require_sources_bot_gets_the_uncertainty_instruction_after_the_context(monkeypatch):
+    from app.services.chat import _UNCERTAINTY_INSTRUCTION, _WEAK_CONTEXT_INSTRUCTION
+
+    seen = _spy_fake_llm(monkeypatch)
+    _single_hit(monkeypatch, rerank=0.95)
+
+    body = client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS).json()
+    assert '[context:1]' in body['answer']  # the source count is unaffected by the extra message
+
+    messages = seen[-1]
+    assert [turn['role'] for turn in messages] == ['system', 'system', 'system', 'user']
+    assert messages[1]['content'].startswith('Keep any relevant image markdown')
+    assert messages[2]['content'] == _UNCERTAINTY_INSTRUCTION
+    assert _WEAK_CONTEXT_INSTRUCTION not in messages[2]['content']
+    assert messages[3] == {'role': 'user', 'content': _KNOWLEDGE_QUESTION}
+
+
+@pytest.mark.parametrize(('rerank', 'weak_expected'), [(0.3, True), (0.5, False), (None, False)])
+def test_weak_context_hint_follows_the_best_rerank_score(monkeypatch, rerank, weak_expected):
+    from app.services.chat import _UNCERTAINTY_INSTRUCTION, _WEAK_CONTEXT_INSTRUCTION
+
+    seen = _spy_fake_llm(monkeypatch)
+    _guard_bot(monkeypatch, weak_context_below=0.5)
+    _single_hit(monkeypatch, rerank=rerank)
+
+    client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS)
+    instruction = seen[-1][2]['content']
+    assert instruction.startswith(_UNCERTAINTY_INSTRUCTION)
+    assert (_WEAK_CONTEXT_INSTRUCTION in instruction) is weak_expected
+
+
+@pytest.mark.parametrize('guard', [{'uncertainty_hint': False}, {'require_sources': False}])
+def test_uncertainty_instruction_is_omitted_when_switched_off(monkeypatch, guard):
+    seen = _spy_fake_llm(monkeypatch)
+    _guard_bot(monkeypatch, **guard)
+    _single_hit(monkeypatch, rerank=0.95)
+
+    client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS)
+    assert [turn['role'] for turn in seen[-1]] == ['system', 'system', 'user']
+
+
+# --- clarify guard: weak hits become a clarifying question -------------------
+
+
+def _clarify_bot(monkeypatch, **guard):
+    from app.services import chat as chat_module
+    from app.services.botconfig import load_bot
+
+    bot = load_bot('legal-support')
+    patched = bot.model_copy(update={'guard': bot.guard.model_copy(update={'clarify_below': 0.4, **guard})})
+    monkeypatch.setattr(chat_module, 'load_bot', lambda bot_id: patched)
+    return patched
+
+
+def test_clarify_guard_asks_instead_of_answering_when_every_hit_is_weak(monkeypatch):
+    _clarify_bot(monkeypatch)
+
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        return _readable_collections_response()
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        return _FakeResponse(200, _search_response(
+            _chunk(chunk_id=1, document_id='doc-1', heading_path=['Arbeitsvertrag', 'Kündigung'],
+                   scores={'vector': 0.5, 'fulltext': 0.3, 'rrf': 0.5, 'rerank': 0.21}),
+            _chunk(chunk_id=2, document_id='doc-2', heading_path=[], original_filename='betriebsvereinbarung.pdf',
+                   scores={'vector': 0.5, 'fulltext': 0.3, 'rrf': 0.5, 'rerank': 0.35}),
+            _chunk(chunk_id=3, document_id='doc-1', heading_path=['Arbeitsvertrag', 'Probezeit'],
+                   scores={'vector': 0.5, 'fulltext': 0.3, 'rrf': 0.5, 'rerank': 0.30}),
+        ))
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _fake_get)
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _fake_post)
+
+    resp = client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS)
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert body['answer'] == 'Ich bin mir nicht sicher, worauf sich deine Frage bezieht. Meinst du eines dieser Dokumente?'
+    assert body['sources'] == []
+    trace = body['trace']
+    assert trace['guard'] == {'triggered': True, 'reason': 'clarify'}
+    assert trace['retrieval']['candidates'] == 3
+    assert trace['retrieval']['used'] == 0
+    assert trace['model'] is None
+    # Best score first, one entry per document, label from heading / file name.
+    assert trace['clarification'] == {
+        'question': body['answer'],
+        'options': [
+            {
+                'label': 'betriebsvereinbarung',
+                'message': f'{_KNOWLEDGE_QUESTION} (Dokument: betriebsvereinbarung)',
+                'document_id': 'doc-2',
+                'collection': None,
+            },
+            {
+                'label': 'Arbeitsvertrag',
+                'message': f'{_KNOWLEDGE_QUESTION} (Dokument: Arbeitsvertrag)',
+                'document_id': 'doc-1',
+                'collection': None,
+            },
+        ],
+    }
+
+
+def test_clarify_guard_stays_silent_when_one_hit_is_strong_enough(monkeypatch):
+    _clarify_bot(monkeypatch)
+
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        return _readable_collections_response()
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        return _FakeResponse(200, _search_response(
+            _chunk(chunk_id=1, document_id='doc-1', scores={'vector': 0.5, 'fulltext': 0.3, 'rrf': 0.5, 'rerank': 0.4}),
+            _chunk(chunk_id=2, document_id='doc-2', scores={'vector': 0.5, 'fulltext': 0.3, 'rrf': 0.5, 'rerank': 0.1}),
+        ))
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _fake_get)
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _fake_post)
+
+    body = client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS).json()
+    assert '[context:2]' in body['answer']
+    assert body['trace']['guard'] is None
+    assert body['trace']['clarification'] is None
+
+
+def test_clarify_guard_never_fires_without_rerank_scores_or_hits(monkeypatch):
+    _clarify_bot(monkeypatch)
+
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        return _readable_collections_response()
+
+    responses = iter([
+        _search_response(_chunk(scores={'vector': 0.5, 'fulltext': 0.3, 'rrf': 0.5, 'rerank': None})),
+        _search_response(),
+    ])
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _fake_get)
+    monkeypatch.setattr(
+        'app.services.retrieval_client.httpx.post',
+        lambda url, headers=None, json=None, timeout=None: _FakeResponse(200, next(responses)),
+    )
+
+    unreranked = client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS).json()
+    assert '[context:1]' in unreranked['answer']
+    assert unreranked['trace']['clarification'] is None
+
+    empty = client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS).json()
+    assert empty['trace']['guard'] == {'triggered': True, 'reason': 'no_context'}
+    assert empty['trace']['clarification'] is None
+
+
+def test_clarify_options_are_capped_and_use_the_document_id_as_last_resort(monkeypatch):
+    bot = _clarify_bot(monkeypatch, clarify_max_options=2)
+    from app.services.chat import _build_clarification
+    from app.services.retrieval_client import RetrievedChunk, RetrievedChunkScores
+
+    def _hit(document_id, rerank):
+        return RetrievedChunk(
+            chunk_id=1, document_id=document_id, text='t', source='upload', original_filename=None,
+            page_start=None, page_end=None, document_version=1, heading_path=[],
+            scores=RetrievedChunkScores(rerank=rerank), collection='vertraege',
+        )
+
+    clarification = _build_clarification(bot, '  Frage?  ', [_hit('a', 0.1), _hit('b', 0.3), _hit('c', 0.2)])
+    assert [option.label for option in clarification.options] == ['b', 'c']
+    assert clarification.options[0].message == 'Frage? (Dokument: b)'
+    assert clarification.options[0].collection == 'vertraege'
+
+
+# --- history-aware query rewrite ---------------------------------------------
+
+
+def test_query_rewrite_searches_the_rewritten_query_and_reports_it(monkeypatch):
+    sent_requests = []
+
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        return _readable_collections_response()
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        sent_requests.append(json)
+        return _FakeResponse(200, _search_response(_chunk()))
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _fake_get)
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _fake_post)
+    monkeypatch.setattr('app.services.chat.settings.retrieval_query_rewrite_default', True)
+    seen = {}
+
+    def _fake_rewrite(bot, message, history, llm_provider):
+        seen['message'], seen['history'], seen['provider'] = message, history, llm_provider
+        return 'Kündigungsfrist bei Teilzeit laut Arbeitsvertrag'
+
+    monkeypatch.setattr('app.services.chat._rewrite_query', _fake_rewrite)
+
+    body = {
+        **_LEGAL_BODY,
+        'message': 'Und bei Teilzeit?',
+        'history': [
+            {'role': 'user', 'content': _KNOWLEDGE_QUESTION},
+            {'role': 'assistant', 'content': 'Drei Monate zum Quartalsende.'},
+        ],
+    }
+    resp = client.post('/internal/chat', json=body, headers=AUTH_HEADERS)
+    assert resp.status_code == 200
+    payload = resp.json()
+
+    assert sent_requests[0]['query'] == 'Kündigungsfrist bei Teilzeit laut Arbeitsvertrag'
+    assert payload['trace']['retrieval']['rewritten_query'] == 'Kündigungsfrist bei Teilzeit laut Arbeitsvertrag'
+    # The answering LLM still sees the ORIGINAL message, not the rewrite.
+    assert payload['answer'].startswith('[fake-llm] Und bei Teilzeit?')
+    assert seen['message'] == 'Und bei Teilzeit?'
+    assert [turn['role'] for turn in seen['history']] == ['user', 'assistant']
+    assert seen['provider'] is not None
+
+
+class _StubProvider:
+    def __init__(self, reply: str | Exception) -> None:
+        self.reply = reply
+        self.calls: list[dict] = []
+
+    def chat(self, messages, model=None, temperature=None):
+        from app.services.llm import LLMResult, LLMUsage
+
+        self.calls.append({'messages': messages, 'model': model, 'temperature': temperature})
+        if isinstance(self.reply, Exception):
+            raise self.reply
+        return LLMResult(content=self.reply, model=model or 'stub', usage=LLMUsage(prompt_tokens=1, completion_tokens=1))
+
+
+def _rewrite_bot(enabled: bool | None):
+    from app.services.botconfig import load_bot
+
+    bot = load_bot('legal-support')
+    return bot.model_copy(update={'retrieval': bot.retrieval.model_copy(update={'query_rewrite': enabled})})
+
+
+_HISTORY = [{'role': 'user', 'content': 'Welche Kündigungsfrist gilt?'}, {'role': 'assistant', 'content': 'Drei Monate.'}]
+
+
+@pytest.mark.parametrize(
+    ('reply', 'expected'),
+    [
+        ('"Kündigungsfrist bei Teilzeit"', 'Kündigungsfrist bei Teilzeit'),  # quotes + whitespace cleaned
+        ('Und bei Teilzeit?', None),  # identical to the message -> raw message is searched
+        ('   ', None),
+        ('x' * 600, None),  # implausibly long
+        (RuntimeError('provider down'), None),  # failure never breaks the turn
+    ],
+)
+def test_rewrite_query_cleans_or_rejects_the_llm_reply(reply, expected):
+    from app.services.chat import _rewrite_query
+
+    provider = _StubProvider(reply)
+    assert _rewrite_query(_rewrite_bot(True), 'Und bei Teilzeit?', _HISTORY, provider) == expected
+    assert provider.calls[0]['temperature'] == 0.0
+    assert provider.calls[0]['model'] == 'fake-chat'
+    prompt = provider.calls[0]['messages'][1]['content']
+    assert 'Nutzer: Welche Kündigungsfrist gilt?' in prompt
+    assert 'Assistent: Drei Monate.' in prompt
+    assert prompt.endswith('Letzte Nutzernachricht:\nUnd bei Teilzeit?')
+
+
+def test_rewrite_query_is_skipped_without_history_provider_or_opt_in(monkeypatch):
+    from app.services.chat import _rewrite_query
+
+    provider = _StubProvider('Eigenständige Frage')
+    assert _rewrite_query(_rewrite_bot(True), 'Frage?', [], provider) is None
+    assert _rewrite_query(_rewrite_bot(True), 'Frage?', _HISTORY, None) is None
+    assert _rewrite_query(_rewrite_bot(False), 'Frage?', _HISTORY, provider) is None
+    # None on the bot defers to the runtime default (off unless configured).
+    monkeypatch.setattr('app.services.chat.settings.retrieval_query_rewrite_default', False)
+    assert _rewrite_query(_rewrite_bot(None), 'Frage?', _HISTORY, provider) is None
+    monkeypatch.setattr('app.services.chat.settings.retrieval_query_rewrite_default', True)
+    assert _rewrite_query(_rewrite_bot(None), 'Frage?', _HISTORY, provider) == 'Eigenständige Frage'
+    assert len(provider.calls) == 1
+
+
+def test_rewrite_prompt_only_carries_the_most_recent_turns(monkeypatch):
+    from app.services.chat import _query_rewrite_messages
+
+    monkeypatch.setattr('app.services.chat.settings.retrieval_query_rewrite_history_turns', 2)
+    history = [{'role': 'user', 'content': f'Frage {index}'} for index in range(5)]
+    prompt = _query_rewrite_messages('Nachfrage', history)[1]['content']
+    assert 'Frage 3' in prompt and 'Frage 4' in prompt
+    assert 'Frage 2' not in prompt
+
+
+# --- guard flow: min_score drops weak rerank hits ---------------------------
+
+
+def test_min_score_drops_weak_rerank_hits_but_keeps_unreranked_ones(monkeypatch):
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        return _readable_collections_response()
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        return _FakeResponse(200, _search_response(
+            _chunk(chunk_id=1, document_id='doc-1', scores={'vector': 0.7, 'fulltext': 0.4, 'rrf': 0.6, 'rerank': 0.95}),
+            _chunk(chunk_id=2, document_id='doc-2', scores={'vector': 0.6, 'fulltext': 0.4, 'rrf': 0.5, 'rerank': 0.12}),
+            # No rerank score (reranker off/failed): must pass regardless.
+            _chunk(chunk_id=3, document_id='doc-3', scores={'vector': 0.5, 'fulltext': 0.3, 'rrf': 0.4, 'rerank': None}),
+        ))
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _fake_get)
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _fake_post)
+    # legal-support.yaml leaves guard.min_score unset -> runtime default applies.
+    monkeypatch.setattr('app.services.chat.settings.guard_default_min_score', 0.5)
+
+    resp = client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS)
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert '[context:2]' in body['answer']
+    assert [source['document_id'] for source in body['sources']] == ['doc-1', 'doc-3']
+    assert body['trace']['retrieval']['candidates'] == 3
+    assert body['trace']['retrieval']['used'] == 2
+    assert body['trace']['guard'] is None  # guard did not fire
+
+
+def test_min_score_dropping_every_hit_fires_the_no_context_guard(monkeypatch):
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        return _readable_collections_response()
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        return _FakeResponse(200, _search_response(
+            _chunk(chunk_id=1, document_id='doc-1', scores={'vector': 0.7, 'fulltext': 0.4, 'rrf': 0.6, 'rerank': 0.2}),
+        ))
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _fake_get)
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _fake_post)
+    monkeypatch.setattr('app.services.chat.settings.guard_default_min_score', 0.5)
+
+    resp = client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS)
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert body['answer'] == 'Ich habe dazu keine belegten Informationen in den Rechtsdokumenten gefunden.'
+    assert body['sources'] == []
+    assert body['trace']['retrieval']['candidates'] == 1
+    assert body['trace']['retrieval']['used'] == 0
+    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_context'}
+    assert body['trace']['model'] is None
 
 
 # --- guard flow: no readable/allowed collection at all -----------------------
@@ -265,7 +648,7 @@ def test_guard_flow_returns_no_collections_reply_when_the_user_cannot_read_the_b
 
     trace = body['trace']
     assert trace['intent'] == 'knowledge'
-    assert trace['retrieval'] == {'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': None}
+    assert trace['retrieval'] == {'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': None, 'rewritten_query': None}
     assert trace['guard'] == {'triggered': True, 'reason': 'no_collections'}
     assert trace['model'] is None
 
@@ -308,7 +691,7 @@ def test_collections_filter_restricts_the_effective_search_scope(monkeypatch):
 
     trace = body['trace']
     assert trace['retrieval'] == {
-        'candidates': 1, 'used': 1, 'collections': ['vertraege'], 'requested_collections': ['vertraege'],
+        'candidates': 1, 'used': 1, 'collections': ['vertraege'], 'requested_collections': ['vertraege'], 'rewritten_query': None,
     }
     assert trace['guard'] is None
     assert sent_requests[0]['allowed_collections'] == ['vertraege']
@@ -371,7 +754,7 @@ def test_collections_filter_naming_only_foreign_slugs_triggers_its_own_guard_rea
     trace = body['trace']
     assert trace['guard'] == {'triggered': True, 'reason': 'filter_excluded_all'}
     assert trace['retrieval'] == {
-        'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': ['geheimprojekt'],
+        'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': ['geheimprojekt'], 'rewritten_query': None,
     }
     assert trace['model'] is None
     assert body['sources'] == []
@@ -405,7 +788,7 @@ def test_no_collections_filter_is_byte_for_byte_the_pre_filter_behaviour(monkeyp
 
     trace = body['trace']
     assert trace['retrieval'] == {
-        'candidates': 1, 'used': 1, 'collections': ['vertraege', '__none__'], 'requested_collections': None,
+        'candidates': 1, 'used': 1, 'collections': ['vertraege', '__none__'], 'requested_collections': None, 'rewritten_query': None,
     }
     assert trace['guard'] is None
 

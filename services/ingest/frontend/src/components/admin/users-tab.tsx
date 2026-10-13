@@ -89,8 +89,8 @@ export function UsersTab() {
                     <td className="py-3 pr-3 font-medium text-slate-950">{u.username}</td>
                     <td className="hidden py-3 pr-3 text-slate-700 md:table-cell">{u.email}</td>
                     <td className="py-3 pr-3">
-                      <Badge tone={u.role === 'admin' ? 'emerald' : 'slate'}>
-                        {u.role === 'admin' ? t('admin.users.role.admin') : t('admin.users.role.user')}
+                      <Badge tone={u.role === 'user' ? 'slate' : 'emerald'}>
+                        {t(`admin.users.role.${u.role}`)}
                       </Badge>
                     </td>
                     <td className="hidden py-3 pr-3 text-slate-700 lg:table-cell">
@@ -374,6 +374,7 @@ function CreateUserModal({
               className={inputClass}
             >
               <option value="user">{t('admin.users.role.user')}</option>
+              <option value="bot_admin">{t('admin.users.role.bot_admin')}</option>
               <option value="admin">{t('admin.users.role.admin')}</option>
             </select>
           </Field>
@@ -473,6 +474,7 @@ function EditUserModal({
               className={inputClass}
             >
               <option value="user">{t('admin.users.role.user')}</option>
+              <option value="bot_admin">{t('admin.users.role.bot_admin')}</option>
               <option value="admin">{t('admin.users.role.admin')}</option>
             </select>
           </Field>

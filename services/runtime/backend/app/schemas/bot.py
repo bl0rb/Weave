@@ -132,6 +132,16 @@ class RetrievalConfig(BaseModel):
     top_k: int = 20
     final_k: int = 5
     rerank: bool = True
+    # History-aware query rewrite: when the request carries history, one
+    # extra LLM call condenses the latest message into a standalone search
+    # query ("und bei Teilzeit?" -> "Kündigungsfrist bei Teilzeit laut
+    # Arbeitsvertrag") BEFORE Weave-Retrieval is called -- the LLM that
+    # answers still sees the original message. Any failure, an empty or
+    # implausible rewrite, or an empty history falls back to the raw
+    # message, so this can only ever change WHAT is searched, never
+    # whether. `None` (the default) defers to the runtime-wide
+    # RETRIEVAL_QUERY_REWRITE_DEFAULT (app/core/config.py), off by default.
+    query_rewrite: bool | None = None
 
     # Which Collections (the cross-service Collections contract -- see
     # Weave-Knowledge's `collections` registry table, synced from
@@ -366,6 +376,9 @@ class PermissionsConfig(BaseModel):
 # page -- see the module docstrings in app/main.py/app/core/auth.py for why
 # code and comments stay English while user-visible copy does not.
 _DEFAULT_NO_CONTEXT_REPLY = 'Ich habe dazu keine belegten Informationen gefunden.'
+_DEFAULT_CLARIFY_QUESTION = (
+    'Ich bin mir nicht sicher, worauf sich deine Frage bezieht. Meinst du eines dieser Dokumente?'
+)
 
 
 class GuardConfig(BaseModel):
@@ -381,6 +394,42 @@ class GuardConfig(BaseModel):
     # (app/schemas/chat.py) for how a caller can tell this happened.
     require_sources: bool = True
     no_context_reply: str = _DEFAULT_NO_CONTEXT_REPLY
+    # Minimum RERANK score (the cross-encoder's 0..1 relevance, see
+    # Weave-Retrieval's SearchScores.rerank) a retrieved chunk needs to
+    # reach the LLM at all. Chunks below it are dropped before the context
+    # block is built; drop them all and `require_sources` fires exactly as
+    # if retrieval had found nothing (`guard.reason='no_context'`). Only
+    # ever applied to chunks that HAVE a rerank score: RRF scores are
+    # rank-based, not calibrated, so with the reranker off or failed every
+    # chunk passes untouched. `None` (the default) defers to the runtime-
+    # wide GUARD_DEFAULT_MIN_SCORE (app/core/config.py), itself `None` by
+    # default -- i.e. no threshold at all unless someone sets one.
+    min_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    # Clarifying question instead of a shaky answer: when retrieval DID
+    # return hits but even the best RERANK score stays below
+    # `clarify_below`, the bot asks `clarify_question` and offers up to
+    # `clarify_max_options` candidate documents (built from the hits
+    # themselves, deterministic, no LLM call) as `ChatTrace.clarification`
+    # -- the client renders them as one-click follow-ups. Same rerank-only
+    # rule as `min_score`: without rerank scores this never fires. Checked
+    # BEFORE `min_score`, so a bot can combine "ask below 0.4, drop below
+    # 0.2". `None` (the default) disables it.
+    clarify_below: float | None = Field(default=None, ge=0.0, le=1.0)
+    clarify_max_options: int = Field(default=3, ge=1, le=5)
+    clarify_question: str = _DEFAULT_CLARIFY_QUESTION
+    # Uncertainty building block for the answer ITSELF (only together with
+    # `require_sources`): one extra system message after the context block
+    # (app/services/chat.py's `_uncertainty_instruction`) telling the LLM
+    # to answer from the sources alone, to name explicitly what they do
+    # NOT cover, and to ask one concrete follow-up question instead of
+    # guessing. `weak_context_below` (rerank score, 0..1) adds a second,
+    # stronger hint when even the best hit scores below it: the answer
+    # must flag itself as uncertain and ask what the question refers to.
+    # Rerank-only like `min_score`/`clarify_below`; sits naturally
+    # ABOVE `clarify_below` ("ask outright below 0.3, answer-but-hedge
+    # below 0.5").
+    uncertainty_hint: bool = True
+    weak_context_below: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class BotConfig(BaseModel):

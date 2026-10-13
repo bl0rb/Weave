@@ -547,6 +547,43 @@ def test_dispatch_skips_source_with_an_already_active_run(sent) -> None:
     assert sent == []
 
 
+def test_dispatch_reaps_a_stale_run_and_starts_the_refresh(sent) -> None:
+    owner = _make_owner()
+    now = datetime.now(timezone.utc)
+    source_id = _make_source(owner.id, last_refresh_at=now - timedelta(seconds=1000))
+    _make_finished_run(owner.id, source_id)
+
+    # A 'running' run whose heartbeat died hours ago (worker lost) must not
+    # block the scheduler forever -- it is reaped exactly like the API's
+    # create-run path does, and the due refresh is started.
+    db = _db()
+    try:
+        stale = ImportRun(
+            source_id=source_id, owner_id=owner.id, kind='confluence', status=ImportRunStatus.RUNNING,
+            scope_type='page', scope_value='P1', options={}, state={'frontier': [], 'visited': {}, 'errors': []},
+            updated_at=now - timedelta(hours=2),
+        )
+        db.add(stale)
+        db.commit()
+        stale_id = stale.id
+    finally:
+        db.close()
+
+    _dispatch_due_refreshes()
+
+    assert len(sent) == 1
+    assert _get_run(sent[0][1][0]).source_id == source_id
+    reaped = _get_run(stale_id)
+    assert reaped.status == ImportRunStatus.FAILED
+    assert reaped.error_message == 'worker lost; run stalled'
+    db = _db()
+    try:
+        source = db.get(ImportSource, source_id)
+        assert source.last_refresh_error and 'stalled' in source.last_refresh_error
+    finally:
+        db.close()
+
+
 # --- Per-page diff (import_confluence with options['is_refresh']=True) -----
 
 def test_refresh_run_unchanged_page_creates_no_new_job(sent, client_holder) -> None:
@@ -935,3 +972,49 @@ def test_deactivated_owner_stops_an_already_queued_refresh(sent, client_holder) 
     assert client.fetched == []
     with _db() as db:
         assert db.scalars(select(Job).where(Job.import_run_id == run_id)).all() == []
+
+
+class _TreeClient(FakeClient):
+    """FakeClient plus a static child tree, for the one refresh test that
+    exercises discovery: a NEW child page appearing under an UNCHANGED
+    parent must still be imported."""
+
+    def __init__(self, pages: dict[str, Page], children: dict[str, list[str]]) -> None:
+        super().__init__(next(iter(pages.values())))
+        self.pages = pages
+        self.children = children
+
+    def fetch_page(self, page_id: str) -> Page:
+        self.fetched.append(page_id)
+        return self.pages[page_id]
+
+    def iter_children(self, page_id: str):
+        return iter(self.children.get(page_id, []))
+
+
+def test_refresh_run_imports_new_child_under_unchanged_parent(sent, client_holder) -> None:
+    owner = _make_owner()
+    source_id = _make_source(owner.id)
+    parent_id, new_child_id = 'P1', 'P2'
+    prior_job_id = _make_prior_job(owner.id, parent_id, version=3)
+    _make_page_state(source_id, parent_id, version=3, job_id=prior_job_id)
+
+    client_holder['client'] = _TreeClient(
+        pages={
+            parent_id: _page(parent_id, 'Root Page', '<p>same body</p>', version=3),
+            new_child_id: _page(new_child_id, 'New Child', '<p>brand new</p>', version=1),
+        },
+        children={parent_id: [new_child_id]},
+    )
+
+    run_id = _make_refresh_run(owner.id, source_id, scope_value=parent_id)
+    import_confluence(run_id, 0)
+
+    run = _get_run(run_id)
+    assert run.status == ImportRunStatus.FINISHED
+    assert run.state['visited'][parent_id] == prior_job_id
+    assert run.pages_imported == 1, run.state
+    child_job_id = run.state['visited'].get(new_child_id)
+    assert child_job_id, run.state
+    assert _get_job(child_job_id).document_version == 1
+    assert _get_page_state(source_id, new_child_id).page_version == 1

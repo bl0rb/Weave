@@ -44,6 +44,11 @@ interface MessageBubbleProps {
    * control. */
   isSelectedForSourcesPanel?: boolean;
   onSelectForSourcesPanel?: () => void;
+  /** Called with a clarification option's ready-made follow-up text when
+   * the person picks one of the document chips a `guard.reason: 'clarify'`
+   * answer offers (`trace.clarification`, see types/weave-api.ts). Without
+   * it the chips are not rendered at all. */
+  onClarifyOption?: (message: string) => void;
 }
 
 export function MessageBubble({
@@ -52,8 +57,11 @@ export function MessageBubble({
   onResetScopeAndRetry,
   isSelectedForSourcesPanel,
   onSelectForSourcesPanel,
+  onClarifyOption,
 }: MessageBubbleProps) {
   const { t } = useI18n();
+  const clarification =
+    message.role !== 'user' && !message.streaming ? (message.trace?.clarification ?? null) : null;
   const isUser = message.role === 'user';
   const sourceCount = message.sources?.length ?? 0;
 
@@ -132,6 +140,25 @@ export function MessageBubble({
           </p>
         ) : null}
 
+        {clarification && clarification.options.length > 0 && onClarifyOption ? (
+          <div
+            className="mt-2 flex flex-wrap gap-2"
+            role="group"
+            aria-label={t('chat.clarification.optionsLabel')}
+            data-testid="clarification-options"
+          >
+            {clarification.options.map((option) => (
+              <button
+                key={option.document_id}
+                type="button"
+                className="rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 py-1 text-xs hover:bg-[var(--surface-hover)]"
+                onClick={() => onClarifyOption(option.message)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
         {!isUser && message.sources ? (
           <div className="chat-inline-sources">
             <SourceCards sources={message.sources} />

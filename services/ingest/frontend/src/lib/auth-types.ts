@@ -5,7 +5,7 @@
 
 import type { Locale } from '@/i18n/config';
 
-export type UserRole = 'admin' | 'user';
+export type UserRole = 'admin' | 'bot_admin' | 'user';
 
 /** UserResponse from the backend. `locale` is `null` until this user has
  * ever chosen one explicitly (see PATCH /api/v1/auth/me and
@@ -29,6 +29,9 @@ export interface Team {
   id: string;
   name: string;
   created_at: string;
+  /** Set for teams synced from an OIDC groups claim. */
+  oidc_provider_id?: string | null;
+  oidc_group?: string | null;
 }
 
 /** Public provider entry from GET /api/v1/auth/providers. */
@@ -49,6 +52,8 @@ export interface AdminProvider {
   enabled: boolean;
   scopes: string;
   use_email_as_username: boolean;
+  sync_groups: boolean;
+  groups_claim: string;
   created_at: string;
 }
 
@@ -116,6 +121,8 @@ export interface ProviderCreateRequest {
   enabled?: boolean;
   scopes?: string;
   use_email_as_username?: boolean;
+  sync_groups?: boolean;
+  groups_claim?: string;
 }
 
 /** PATCH /api/v1/auth/admin/providers/{id} — client_secret is write-only; omit to keep the stored secret. */
@@ -128,6 +135,8 @@ export interface ProviderUpdateRequest {
   enabled?: boolean;
   scopes?: string;
   use_email_as_username?: boolean;
+  sync_groups?: boolean;
+  groups_claim?: string;
 }
 
 /** POST /api/v1/auth/admin/providers/{id}/test */

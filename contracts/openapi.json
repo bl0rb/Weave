@@ -319,6 +319,18 @@
             ],
             "title": "Description"
           },
+          "endpoint": {
+            "anyOf": [
+              {
+                "maxLength": 36,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint"
+          },
           "filters": {
             "$ref": "#/components/schemas/AgentSubagentFilters"
           },
@@ -1469,6 +1481,48 @@
         "title": "BotRole",
         "type": "string"
       },
+      "ChatEndpointCatalogResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ChatEndpointSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "title": "ChatEndpointCatalogResponse",
+        "type": "object"
+      },
+      "ChatEndpointSummary": {
+        "description": "Key-free catalog entry Runtime shows to chat users.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "supports_tools": {
+            "default": false,
+            "title": "Supports Tools",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "model"
+        ],
+        "title": "ChatEndpointSummary",
+        "type": "object"
+      },
       "ChatProviderAdminResponse": {
         "properties": {
           "base_url": {
@@ -1487,8 +1541,18 @@
             "title": "Has Api Key",
             "type": "boolean"
           },
+          "id": {
+            "default": "default",
+            "title": "Id",
+            "type": "string"
+          },
           "model": {
             "title": "Model",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "title": "Name",
             "type": "string"
           },
           "supports_tools": {
@@ -1603,6 +1667,19 @@
         "title": "ChatProviderInternalResponse",
         "type": "object"
       },
+      "ChatProviderListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ChatProviderAdminResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "title": "ChatProviderListResponse",
+        "type": "object"
+      },
       "ChatProviderTestResponse": {
         "properties": {
           "detail": {
@@ -1667,6 +1744,12 @@
             "default": "",
             "maxLength": 255,
             "title": "Model",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "maxLength": 255,
+            "title": "Name",
             "type": "string"
           },
           "supports_tools": {
@@ -4179,6 +4262,17 @@
             ],
             "title": "Agent"
           },
+          "clarify_below": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clarify Below"
+          },
           "collections": {
             "items": {
               "type": "string"
@@ -4240,6 +4334,35 @@
             "title": "Kind",
             "type": "string"
           },
+          "llm_endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Endpoint"
+          },
+          "llm_endpoints": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Llm Endpoints",
+            "type": "array"
+          },
+          "min_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Score"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -4252,6 +4375,17 @@
             "default": false,
             "title": "Public",
             "type": "boolean"
+          },
+          "query_rewrite": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Rewrite"
           },
           "require_sources": {
             "title": "Require Sources",
@@ -4312,10 +4446,26 @@
             "title": "Top K",
             "type": "integer"
           },
+          "uncertainty_hint": {
+            "default": true,
+            "title": "Uncertainty Hint",
+            "type": "boolean"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
             "type": "string"
+          },
+          "weak_context_below": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weak Context Below"
           },
           "webhook_url": {
             "anyOf": [
@@ -4372,6 +4522,19 @@
               }
             ],
             "title": "Auth Token"
+          },
+          "clarify_below": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clarify Below"
           },
           "clear_auth_token": {
             "default": false,
@@ -4438,6 +4601,39 @@
             "title": "Kind",
             "type": "string"
           },
+          "llm_endpoint": {
+            "anyOf": [
+              {
+                "maxLength": 36,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Endpoint"
+          },
+          "llm_endpoints": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Llm Endpoints",
+            "type": "array"
+          },
+          "min_score": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Score"
+          },
           "name": {
             "maxLength": 255,
             "minLength": 1,
@@ -4455,6 +4651,17 @@
             "default": false,
             "title": "Public",
             "type": "boolean"
+          },
+          "query_rewrite": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Rewrite"
           },
           "require_sources": {
             "default": true,
@@ -4520,6 +4727,24 @@
             "title": "Top K",
             "type": "integer"
           },
+          "uncertainty_hint": {
+            "default": true,
+            "title": "Uncertainty Hint",
+            "type": "boolean"
+          },
+          "weak_context_below": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weak Context Below"
+          },
           "webhook_url": {
             "anyOf": [
               {
@@ -4579,6 +4804,17 @@
             "title": "Auth Token",
             "type": "string"
           },
+          "clarify_below": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clarify Below"
+          },
           "collections": {
             "items": {
               "type": "string"
@@ -4616,6 +4852,35 @@
             "title": "Kind",
             "type": "string"
           },
+          "llm_endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Endpoint"
+          },
+          "llm_endpoints": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Llm Endpoints",
+            "type": "array"
+          },
+          "min_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Score"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -4628,6 +4893,17 @@
             "default": false,
             "title": "Public",
             "type": "boolean"
+          },
+          "query_rewrite": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Rewrite"
           },
           "require_sources": {
             "title": "Require Sources",
@@ -4690,12 +4966,28 @@
             "title": "Top K",
             "type": "integer"
           },
+          "uncertainty_hint": {
+            "default": true,
+            "title": "Uncertainty Hint",
+            "type": "boolean"
+          },
           "users": {
             "items": {
               "type": "string"
             },
             "title": "Users",
             "type": "array"
+          },
+          "weak_context_below": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weak Context Below"
           },
           "webhook_url": {
             "anyOf": [
@@ -4964,6 +5256,19 @@
             ],
             "title": "Auth Token"
           },
+          "clarify_below": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clarify Below"
+          },
           "clear_auth_token": {
             "default": false,
             "title": "Clear Auth Token",
@@ -5023,6 +5328,39 @@
             "title": "Kind",
             "type": "string"
           },
+          "llm_endpoint": {
+            "anyOf": [
+              {
+                "maxLength": 36,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Endpoint"
+          },
+          "llm_endpoints": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Llm Endpoints",
+            "type": "array"
+          },
+          "min_score": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Score"
+          },
           "name": {
             "maxLength": 255,
             "minLength": 1,
@@ -5040,6 +5378,17 @@
             "default": false,
             "title": "Public",
             "type": "boolean"
+          },
+          "query_rewrite": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Rewrite"
           },
           "require_sources": {
             "default": true,
@@ -5104,6 +5453,24 @@
             "minimum": 1.0,
             "title": "Top K",
             "type": "integer"
+          },
+          "uncertainty_hint": {
+            "default": true,
+            "title": "Uncertainty Hint",
+            "type": "boolean"
+          },
+          "weak_context_below": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weak Context Below"
           },
           "webhook_url": {
             "anyOf": [
@@ -6358,6 +6725,18 @@
       },
       "PortalIndexingStatus": {
         "properties": {
+          "checked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
           "chunk_count": {
             "default": 0,
             "minimum": 0.0,
@@ -6375,6 +6754,16 @@
               }
             ],
             "title": "Indexed At"
+          },
+          "retrying": {
+            "default": false,
+            "title": "Retrying",
+            "type": "boolean"
+          },
+          "stale": {
+            "default": false,
+            "title": "Stale",
+            "type": "boolean"
           },
           "state": {
             "enum": [
@@ -6681,6 +7070,10 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "groups_claim": {
+            "title": "Groups Claim",
+            "type": "string"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -6696,6 +7089,10 @@
           "slug": {
             "title": "Slug",
             "type": "string"
+          },
+          "sync_groups": {
+            "title": "Sync Groups",
+            "type": "boolean"
           },
           "updated_at": {
             "format": "date-time",
@@ -6717,6 +7114,8 @@
           "enabled",
           "scopes",
           "use_email_as_username",
+          "sync_groups",
+          "groups_claim",
           "created_at",
           "updated_at"
         ],
@@ -6747,6 +7146,13 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "groups_claim": {
+            "default": "groups",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Groups Claim",
+            "type": "string"
+          },
           "issuer_url": {
             "maxLength": 1024,
             "minLength": 1,
@@ -6763,6 +7169,11 @@
             "minLength": 1,
             "title": "Slug",
             "type": "string"
+          },
+          "sync_groups": {
+            "default": false,
+            "title": "Sync Groups",
+            "type": "boolean"
           },
           "use_email_as_username": {
             "default": false,
@@ -6917,6 +7328,19 @@
             ],
             "title": "Enabled"
           },
+          "groups_claim": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Groups Claim"
+          },
           "issuer_url": {
             "anyOf": [
               {
@@ -6938,6 +7362,17 @@
               }
             ],
             "title": "Scopes"
+          },
+          "sync_groups": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sync Groups"
           },
           "use_email_as_username": {
             "anyOf": [
@@ -7549,6 +7984,28 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "oidc_group": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oidc Group"
+          },
+          "oidc_provider_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oidc Provider Id"
           }
         },
         "required": [
@@ -8272,6 +8729,7 @@
       "UserRole": {
         "enum": [
           "admin",
+          "bot_admin",
           "user"
         ],
         "title": "UserRole",
@@ -9626,6 +10084,155 @@
           }
         },
         "summary": "Update Chat Provider",
+        "tags": [
+          "chat-provider-admin"
+        ]
+      }
+    },
+    "/api/v1/auth/admin/chat-provider/endpoints": {
+      "get": {
+        "description": "Every configured endpoint, the central 'default' first.",
+        "operationId": "list_chat_endpoints_api_v1_auth_admin_chat_provider_endpoints_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatProviderListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Chat Endpoints",
+        "tags": [
+          "chat-provider-admin"
+        ]
+      }
+    },
+    "/api/v1/auth/admin/chat-provider/endpoints/{endpoint_id}": {
+      "delete": {
+        "operationId": "delete_chat_endpoint_api_v1_auth_admin_chat_provider_endpoints__endpoint_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "endpoint_id",
+            "required": true,
+            "schema": {
+              "title": "Endpoint Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Chat Endpoint",
+        "tags": [
+          "chat-provider-admin"
+        ]
+      },
+      "put": {
+        "operationId": "upsert_chat_endpoint_api_v1_auth_admin_chat_provider_endpoints__endpoint_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "endpoint_id",
+            "required": true,
+            "schema": {
+              "title": "Endpoint Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatProviderUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatProviderAdminResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upsert Chat Endpoint",
+        "tags": [
+          "chat-provider-admin"
+        ]
+      }
+    },
+    "/api/v1/auth/admin/chat-provider/endpoints/{endpoint_id}/test": {
+      "post": {
+        "operationId": "test_chat_endpoint_api_v1_auth_admin_chat_provider_endpoints__endpoint_id__test_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "endpoint_id",
+            "required": true,
+            "schema": {
+              "title": "Endpoint Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatProviderTestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Test Chat Endpoint",
         "tags": [
           "chat-provider-admin"
         ]
@@ -13035,6 +13642,18 @@
     "/api/v1/internal/chat-provider": {
       "get": {
         "operationId": "internal_chat_provider_api_v1_internal_chat_provider_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "endpoint",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "Endpoint",
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -13045,9 +13664,41 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Internal Chat Provider",
+        "tags": [
+          "chat-provider-internal"
+        ]
+      }
+    },
+    "/api/v1/internal/chat-provider/endpoints": {
+      "get": {
+        "description": "Enabled endpoints without credentials -- what Runtime offers chat\nusers to choose from.",
+        "operationId": "internal_chat_endpoints_api_v1_internal_chat_provider_endpoints_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatEndpointCatalogResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Internal Chat Endpoints",
         "tags": [
           "chat-provider-internal"
         ]

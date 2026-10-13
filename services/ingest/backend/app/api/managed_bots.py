@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, origin_guard, require_admin
+from app.api.deps import BOT_ADMIN_ROLES, get_current_user, origin_guard, require_bot_admin
 from app.core.config import settings
 from app.database.session import get_db
 from app.models.models import (
@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 router_admin = APIRouter(
     prefix='/api/v1/auth/admin/bots',
     tags=['managed-bots-admin'],
-    dependencies=[Depends(require_admin), Depends(origin_guard)],
+    dependencies=[Depends(require_bot_admin), Depends(origin_guard)],
 )
 router_internal = APIRouter(prefix='/api/v1/internal/bots', tags=['managed-bots-internal'])
 router_owner = APIRouter(prefix='/api/v1/bots', tags=['managed-bots-owner'], dependencies=[Depends(origin_guard)])
@@ -88,6 +88,11 @@ def _admin_response(row: ManagedBot) -> ManagedBotAdminResponse:
         require_sources=row.require_sources,
         no_context_reply=row.no_context_reply,
         agent=dict(row.agent_config) if row.agent_config else None,
+        min_score=row.min_score,
+        clarify_below=row.clarify_below,
+        weak_context_below=row.weak_context_below,
+        query_rewrite=row.query_rewrite,
+        uncertainty_hint=row.uncertainty_hint,
         llm_endpoint=row.llm_endpoint,
         llm_endpoints=list(row.llm_endpoints or []),
         created_at=row.created_at,
@@ -172,6 +177,9 @@ def _runtime_bots(db: Session | None = None) -> list[ManagedBotAdminResponse]:
             ],
             collections=list(retrieval.get('collections') or []),
             require_sources=bool(guard.get('require_sources', True)), no_context_reply=guard.get('no_context_reply', ''),
+            min_score=guard.get('min_score'), clarify_below=guard.get('clarify_below'),
+            weak_context_below=guard.get('weak_context_below'), query_rewrite=retrieval.get('query_rewrite'),
+            uncertainty_hint=bool(guard.get('uncertainty_hint', True)),
             agent=config.get('agent'),
             llm_endpoint=model.get('endpoint'), llm_endpoints=list(model.get('endpoints') or []),
             created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc), source='runtime', editable=True,
@@ -259,6 +267,26 @@ def _scope_slugs(payload: ManagedBotCreate | ManagedBotUpdate) -> list[str]:
     return list(dict.fromkeys([*payload.collections, *(slug for sub in subagents for slug in sub.collections)]))
 
 
+def _row_scope_slugs(row: ManagedBot) -> set[str]:
+    subagents = (row.agent_config or {}).get('subagents') or []
+    return {*(row.collections or []), *(slug for sub in subagents for slug in sub.get('collections') or [])}
+
+
+def _require_readable_scope(db: Session, user: User, slugs: list[str], previous: set[str]) -> None:
+    """A bot admin -- unlike an admin -- may only attach spaces they can read
+    themselves; spaces already on the bot may stay (same rule as owners)."""
+    if user.role == UserRole.ADMIN:
+        return
+    added = [slug for slug in slugs if slug not in previous]
+    collections = {c.slug: c for c in db.scalars(select(Collection).where(Collection.slug.in_(added))).all()} if added else {}
+    unreadable = sorted(slug for slug in added if collection_role(db, collections[slug], user) is None)
+    if unreadable:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f'Keine Leserechte für: {", ".join(unreadable)}',
+        )
+
+
 def _replace_grants(row: ManagedBot, grants: list[BotGrantInput]) -> None:
     """Replace the access list in place; a subject that stays keeps its row
     and only changes its role (see routes._replace_grants for why)."""
@@ -296,6 +324,11 @@ def _apply(row: ManagedBot, payload: ManagedBotCreate | ManagedBotUpdate, admin:
     row.collections = list(payload.collections)
     row.require_sources = payload.require_sources
     row.no_context_reply = payload.no_context_reply
+    row.min_score = payload.min_score
+    row.clarify_below = payload.clarify_below
+    row.weak_context_below = payload.weak_context_below
+    row.query_rewrite = payload.query_rewrite
+    row.uncertainty_hint = payload.uncertainty_hint
     row.agent_config = payload.agent.model_dump() if payload.agent else None
     row.llm_endpoint = payload.llm_endpoint
     row.llm_endpoints = list(payload.llm_endpoints)
@@ -321,7 +354,7 @@ def list_managed_bots(request: Request, db: Session = Depends(get_db)) -> Manage
 def create_managed_bot(
     payload: ManagedBotCreate,
     request: Request,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_bot_admin),
     db: Session = Depends(get_db),
 ) -> ManagedBotAdminResponse:
     enforce_rate_limit(request)
@@ -329,6 +362,7 @@ def create_managed_bot(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Diese Bot-ID wird bereits verwendet.')
     grants = _validated_grants(db, payload.grants)
     _validate_collections(db, _scope_slugs(payload))
+    _require_readable_scope(db, admin, _scope_slugs(payload), set())
     _validate_llm_endpoints(db, payload)
     # Re-creating a previously deleted Runtime/YAML bot restores it.
     tombstone = db.get(BotTombstone, payload.id)
@@ -347,11 +381,12 @@ def update_managed_bot(
     bot_id: str,
     payload: ManagedBotUpdate,
     request: Request,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_bot_admin),
     db: Session = Depends(get_db),
 ) -> ManagedBotAdminResponse:
     enforce_rate_limit(request)
     row = db.get(ManagedBot, bot_id)
+    previous_scope = _row_scope_slugs(row) if row is not None else set()
     if row is None:
         if bot_id not in {item.id for item in _runtime_bots()}:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bot nicht gefunden.')
@@ -368,6 +403,7 @@ def update_managed_bot(
             db.delete(tombstone)
     grants = _validated_grants(db, payload.grants)
     _validate_collections(db, _scope_slugs(payload))
+    _require_readable_scope(db, admin, _scope_slugs(payload), previous_scope)
     _validate_llm_endpoints(db, payload)
     _apply(row, payload, admin, grants)
     db.commit()
@@ -379,7 +415,7 @@ def update_managed_bot(
 def delete_managed_bot(
     bot_id: str,
     request: Request,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_bot_admin),
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
     enforce_rate_limit(request)
@@ -440,6 +476,11 @@ def internal_managed_bots(response: Response, db: Session = Depends(get_db)) -> 
             require_sources=row.require_sources,
             no_context_reply=row.no_context_reply,
             agent=dict(row.agent_config) if row.agent_config else None,
+            min_score=row.min_score,
+            clarify_below=row.clarify_below,
+            weak_context_below=row.weak_context_below,
+            query_rewrite=row.query_rewrite,
+            uncertainty_hint=row.uncertainty_hint,
             llm_endpoint=row.llm_endpoint,
             llm_endpoints=list(row.llm_endpoints or []),
         ))
@@ -471,7 +512,7 @@ def _owned_bot(db: Session, bot_id: str, user: User) -> ManagedBot:
     that a bot the caller doesn't own exists."""
     row = db.get(ManagedBot, bot_id)
     if row is None or (
-        user.role != UserRole.ADMIN
+        user.role not in BOT_ADMIN_ROLES
         and not any(grant.user_id == user.id and grant.role == BotRole.OWNER for grant in row.grants)
     ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bot nicht gefunden.')

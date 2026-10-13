@@ -46,3 +46,18 @@ permissions:
 guard:
   require_sources: true
   no_context_reply: "Ich habe dazu keine belegten Informationen in den Rechtsdokumenten gefunden."
+  # Optional: Mindest-Rerank-Score (0..1), den ein Treffer braucht, um
+  # ueberhaupt ans LLM zu gehen -- greift nur, wenn Weave-Retrieval
+  # tatsaechlich rerankt (RERANK_PROVIDER=api); Treffer ohne Rerank-Score
+  # passieren immer. Fallen alle Treffer darunter, greift require_sources.
+  # min_score: 0.3
+  # Optional: liegt der beste Rerank-Score unter clarify_below, stellt der
+  # Bot statt einer wackligen Antwort eine Rueckfrage mit bis zu
+  # clarify_max_options Dokument-Vorschlaegen (trace.clarification).
+  # clarify_below: 0.4
+  # Unsicherheits-Baustein (Default an bei require_sources): das LLM soll
+  # Luecken in den Quellen benennen und konkret nachfragen statt zu raten.
+  # Liegt der beste Rerank-Score unter weak_context_below, muss die Antwort
+  # zusaetzlich als unsicher gekennzeichnet werden.
+  # uncertainty_hint: true
+  # weak_context_below: 0.5

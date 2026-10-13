@@ -299,6 +299,8 @@ def _managed_bot(raw: dict) -> BotConfig:
                 'top_k': raw.get('top_k', 20),
                 'final_k': raw.get('final_k', 5),
                 'rerank': bool(raw.get('rerank', True)),
+                # Optional until Ingest's ManagedBot grows the column; absent = None = runtime default.
+                'query_rewrite': raw.get('query_rewrite'),
                 'include_uncollected': bool(raw.get('include_uncollected', True)) if is_llm else False,
             },
             'permissions': {
@@ -309,6 +311,11 @@ def _managed_bot(raw: dict) -> BotConfig:
             },
             'guard': {
                 'require_sources': bool(raw.get('require_sources', True)),
+                # Optional until Ingest's ManagedBot grows the column; absent = None = runtime default.
+                'min_score': raw.get('min_score'),
+                'clarify_below': raw.get('clarify_below'),
+                'uncertainty_hint': bool(raw.get('uncertainty_hint', True)),
+                'weak_context_below': raw.get('weak_context_below'),
                 'no_context_reply': raw.get('no_context_reply') or 'Ich habe dazu keine belegten Informationen gefunden.',
             },
             'n8n': {

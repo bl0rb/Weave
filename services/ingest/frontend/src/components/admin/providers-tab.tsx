@@ -100,6 +100,7 @@ export function ProvidersTab() {
                         {p.client_secret_set ? t('admin.providers.secretSet') : t('admin.providers.noSecret')}
                       </Badge>
                       {p.use_email_as_username && <Badge tone="slate">{t('admin.providers.emailAsUsername')}</Badge>}
+                      {p.sync_groups && <Badge tone="slate">{t('admin.providers.syncGroups')}</Badge>}
                     </div>
                     <dl className="mt-2 space-y-1 text-xs text-slate-500">
                       <div className="flex gap-2">
@@ -264,6 +265,8 @@ function ProviderModal({
   const [scopes, setScopes] = useState(provider?.scopes ?? DEFAULT_SCOPES);
   const [enabled, setEnabled] = useState(provider?.enabled ?? false);
   const [useEmailAsUsername, setUseEmailAsUsername] = useState(provider?.use_email_as_username ?? false);
+  const [syncGroups, setSyncGroups] = useState(provider?.sync_groups ?? false);
+  const [groupsClaim, setGroupsClaim] = useState(provider?.groups_claim ?? 'groups');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -280,6 +283,8 @@ function ProviderModal({
           scopes: scopes.trim(),
           enabled,
           use_email_as_username: useEmailAsUsername,
+          sync_groups: syncGroups,
+          groups_claim: groupsClaim.trim() || 'groups',
           ...(clientSecret ? { client_secret: clientSecret } : {}),
         };
         await apiJson<AdminProvider>(`/api/v1/auth/admin/providers/${provider.id}`, {
@@ -297,6 +302,8 @@ function ProviderModal({
           scopes: scopes.trim(),
           enabled,
           use_email_as_username: useEmailAsUsername,
+          sync_groups: syncGroups,
+          groups_claim: groupsClaim.trim() || 'groups',
         };
         await apiJson<AdminProvider>('/api/v1/auth/admin/providers', {
           method: 'POST',
@@ -390,6 +397,15 @@ function ProviderModal({
             {t('admin.providers.emailAsUsernameText')}
           </p>
         </div>
+        <div>
+          <Toggle checked={syncGroups} onChange={setSyncGroups} label={t('admin.providers.syncGroups')} />
+          <p className="mt-1.5 text-xs text-slate-500">{t('admin.providers.syncGroupsText')}</p>
+        </div>
+        {syncGroups && (
+          <Field label={t('admin.providers.groupsClaim')} hint={t('admin.providers.groupsClaimHint')}>
+            <input value={groupsClaim} onChange={(e) => setGroupsClaim(e.target.value)} className={inputClass} required placeholder="groups" />
+          </Field>
+        )}
         <ErrorNotice message={error} />
         <div className="flex flex-wrap justify-end gap-2 pt-1">
           <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={busy}>

@@ -10,6 +10,9 @@ interface MessageListProps {
   assistantName?: string;
   /** Called with the id of the answer whose guard banner was clicked. */
   onResetScopeAndRetry?: (assistantMessageId: string) => void;
+  /** Sends a clarification option's ready-made follow-up as the next user
+   * message -- see `MessageBubble`'s own prop of the same name. */
+  onClarifyOption?: (message: string) => void;
   selectedSourceMessageId: string | null;
   onSelectForSourcesPanel: (id: string) => void;
 }
@@ -18,6 +21,7 @@ export function MessageList({
   messages,
   assistantName,
   onResetScopeAndRetry,
+  onClarifyOption,
   selectedSourceMessageId,
   onSelectForSourcesPanel,
 }: MessageListProps) {
@@ -48,6 +52,7 @@ export function MessageList({
           message={message}
           assistantName={assistantName}
           onResetScopeAndRetry={onResetScopeAndRetry ? () => onResetScopeAndRetry(message.id) : undefined}
+          onClarifyOption={onClarifyOption}
           isSelectedForSourcesPanel={message.id === selectedSourceMessageId}
           onSelectForSourcesPanel={() => onSelectForSourcesPanel(message.id)}
         />

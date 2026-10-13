@@ -50,7 +50,9 @@ function portalNav(t: T, ownsBots: boolean): Omit<NavItem, 'badge'>[] {
   ];
 }
 
-function adminNav(t: T): NavItem[] {
+function adminNav(t: T, botAdminOnly: boolean): NavItem[] {
+  // Bot admins only manage bots, which live on the Wissen page.
+  if (botAdminOnly) return [{ href: '/admin/wissen', label: t('portal.nav.admin.knowledge'), icon: FolderOpen }];
   return [
     { href: '/admin', label: t('portal.nav.overview'), icon: Home },
     { href: '/admin/menschen', label: t('portal.nav.admin.people'), icon: UsersRound },
@@ -80,7 +82,9 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
   // changes during the page's lifetime.
   const [chatUrl] = useState<string | null>(() => resolveChatPublicUrl());
   const isAdminArea = pathname.startsWith('/admin');
-  const navItems: NavItem[] = isAdminArea ? adminNav(t) : portalNav(t, ownsBots).map((item) => (item.href === '/aufgaben' ? { ...item, badge: tasksBadge ?? undefined } : item));
+  const isBotAdmin = user?.role === 'bot_admin';
+  const adminHome = isBotAdmin ? '/admin/wissen' : '/admin';
+  const navItems: NavItem[] = isAdminArea ? adminNav(t, isBotAdmin) : portalNav(t, ownsBots).map((item) => (item.href === '/aufgaben' ? { ...item, badge: tasksBadge ?? undefined } : item));
 
   // Aufgaben badge = open reviews + failed jobs. Both requests are as cheap
   // as the APIs allow (limit 0/1, only `total` is read) and are refreshed on
@@ -129,7 +133,7 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
         ref={drawerRef}
         className={`fixed left-0 top-0 z-40 flex h-full w-64 flex-col gap-3.5 overflow-y-auto border-r border-[var(--line)] bg-[var(--surface)] p-3.5 shadow-2xl transition-transform duration-200 lg:translate-x-0 lg:shadow-none ${open ? 'translate-x-0' : '-translate-x-full'}`}
       >
-        <Link href={isAdminArea ? '/admin' : '/'} onClick={() => onOpenChange(false)} className="flex items-center gap-2.5 px-1.5 pb-1.5 pt-0.5 text-[var(--ink)] no-underline">
+        <Link href={isAdminArea ? adminHome : '/'} onClick={() => onOpenChange(false)} className="flex items-center gap-2.5 px-1.5 pb-1.5 pt-0.5 text-[var(--ink)] no-underline">
           <WeaveIngestLogo className="h-8 w-8 flex-shrink-0" />
           <span>
             <span className="block text-[19px] font-bold leading-tight tracking-tight">Weave</span>
@@ -219,8 +223,8 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
                   <div role="menuitem" className="flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)]">
                     <LanguageSwitch persist />
                   </div>
-                  {user.role === 'admin' && (
-                    <Link role="menuitem" href="/admin" onClick={() => { setMenuOpen(false); onOpenChange(false); }} className="flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)] no-underline hover:bg-[var(--hover)] hover:text-[var(--ink)]">
+                  {user.role !== 'user' && (
+                    <Link role="menuitem" href={adminHome} onClick={() => { setMenuOpen(false); onOpenChange(false); }} className="flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)] no-underline hover:bg-[var(--hover)] hover:text-[var(--ink)]">
                       <ShieldCheck className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
                       {t('portal.chrome.adminSubtitle')}
                     </Link>
@@ -243,7 +247,7 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13px] font-semibold text-[var(--ink)]" title={user.username}>{firstName(user.username)}</span>
-                  <span className="block text-[11.5px] uppercase tracking-wide text-[var(--muted)]">{user.role === 'admin' ? t('portal.chrome.admin') : t('portal.chrome.member')}</span>
+                  <span className="block text-[11.5px] uppercase tracking-wide text-[var(--muted)]">{user.role === 'admin' ? t('portal.chrome.admin') : isBotAdmin ? t('portal.chrome.botAdmin') : t('portal.chrome.member')}</span>
                 </span>
                 <ChevronDown className={`h-4 w-4 flex-shrink-0 text-[var(--muted)] transition-transform ${menuOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
               </button>

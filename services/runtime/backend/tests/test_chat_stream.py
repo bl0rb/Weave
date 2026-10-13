@@ -157,7 +157,7 @@ def test_stream_knowledge_flow_reconstructs_the_context_marked_answer_and_sends_
     trace = events[0]['trace']
     assert trace['intent'] == 'knowledge'
     assert trace['retrieval'] == {
-        'candidates': 2, 'used': 2, 'collections': ['vertraege', '__none__'], 'requested_collections': None,
+        'candidates': 2, 'used': 2, 'collections': ['vertraege', '__none__'], 'requested_collections': None, 'rewritten_query': None,
     }
     assert 'retrieval_ms' in trace['timings_ms']
 
@@ -204,6 +204,44 @@ def test_stream_guard_flow_streams_the_guard_text_with_empty_sources_no_context(
     assert events[-1]['type'] == 'done'
 
 
+def test_stream_clarify_guard_carries_the_options_in_the_trace_event(monkeypatch):
+    from app.services import chat as chat_module
+    from app.services.botconfig import load_bot
+
+    bot = load_bot('legal-support')
+    monkeypatch.setattr(
+        chat_module, 'load_bot',
+        lambda bot_id: bot.model_copy(update={'guard': bot.guard.model_copy(update={'clarify_below': 0.5})}),
+    )
+
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        return _readable_collections_response()
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        return _FakeResponse(200, _search_response(
+            _chunk(chunk_id=1, document_id='doc-1', scores={'vector': 0.5, 'fulltext': 0.3, 'rrf': 0.5, 'rerank': 0.2}),
+        ))
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _fake_get)
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _fake_post)
+
+    resp = client.post('/internal/chat/stream', json=_LEGAL_BODY, headers=AUTH_HEADERS)
+    assert resp.status_code == 200
+    events = _parse_sse_events(resp.text)
+
+    trace = events[0]['trace']
+    assert trace['guard'] == {'triggered': True, 'reason': 'clarify'}
+    assert trace['clarification']['question'] == (
+        'Ich bin mir nicht sicher, worauf sich deine Frage bezieht. Meinst du eines dieser Dokumente?'
+    )
+    assert [option['document_id'] for option in trace['clarification']['options']] == ['doc-1']
+
+    reconstructed = ''.join(event['text'] for event in events if event['type'] == 'delta')
+    assert reconstructed == trace['clarification']['question']
+    assert next(event for event in events if event['type'] == 'sources')['sources'] == []
+    assert events[-1]['type'] == 'done'
+
+
 def test_stream_guard_flow_streams_the_guard_text_with_empty_sources_no_collections(monkeypatch):
     def _fake_get(url, headers=None, params=None, timeout=None):
         return _readable_collections_response(_collection(slug='handbuch', name='Mitarbeiterhandbuch', public=True))
@@ -220,7 +258,7 @@ def test_stream_guard_flow_streams_the_guard_text_with_empty_sources_no_collecti
 
     trace = events[0]['trace']
     assert trace['guard'] == {'triggered': True, 'reason': 'no_collections'}
-    assert trace['retrieval'] == {'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': None}
+    assert trace['retrieval'] == {'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': None, 'rewritten_query': None}
 
     sources_event = next(event for event in events if event['type'] == 'sources')
     assert sources_event['sources'] == []

@@ -10,6 +10,7 @@ leak into another.
 """
 
 import time
+import uuid
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -1524,3 +1525,73 @@ def test_handoff_locale_put_is_503_when_unconfigured(client: TestClient, monkeyp
     )
 
     assert resp.status_code == 503
+
+
+def _sync_provider(slug: str) -> AuthProvider:
+    provider = _make_oidc_provider(slug)
+    with _db() as db:
+        row = db.get(AuthProvider, provider.id)
+        row.sync_groups = True
+        db.commit()
+    return provider
+
+
+def _team_names(db, user_id: str) -> dict[str, str | None]:
+    rows = db.execute(
+        select(Team.name, user_teams.c.oidc_provider_id)
+        .join(user_teams, user_teams.c.team_id == Team.id)
+        .where(user_teams.c.user_id == user_id)
+    ).all()
+    return dict(rows)
+
+
+def test_oidc_group_sync_creates_teams_and_maintains_only_synced_memberships(client, monkeypatch) -> None:
+    provider = _sync_provider('group-sync')
+    suffix = uuid.uuid4().hex[:6]
+    sales, legal, manual = f'Sales-{suffix}', f'Legal-{suffix}', f'Manual-{suffix}'
+    with _db() as db:
+        db.add(Team(name=legal))  # an existing, not yet linked team is adopted
+        db.add(Team(name=manual))
+        db.commit()
+
+    sub = f'group-sync-{suffix}'
+    response = _oidc_login(client, monkeypatch, 'group-sync', sub=sub, email=f'{sub}@example.com', groups=[f'/{sales}', legal])
+    assert response.status_code == 302
+    with _db() as db:
+        user = db.scalar(select(User).where(User.oidc_subject == sub))
+        assert _team_names(db, user.id) == {sales: provider.id, legal: provider.id}
+        legal_team = db.scalar(select(Team).where(Team.name == legal))
+        assert (legal_team.oidc_provider_id, legal_team.oidc_group) == (provider.id, legal)
+        manual_id = db.scalar(select(Team.id).where(Team.name == manual))
+        db.execute(user_teams.insert().values(user_id=user.id, team_id=manual_id, role='reader'))
+        db.commit()
+        user_id = user.id
+
+    # Dropped from a group: the synced membership goes, the manual one stays.
+    _oidc_login(client, monkeypatch, 'group-sync', sub=sub, email=f'{sub}@example.com', groups=[legal])
+    with _db() as db:
+        assert _team_names(db, user_id) == {legal: provider.id, manual: None}
+
+    # A missing claim (e.g. Entra groups overage) changes nothing.
+    _oidc_login(client, monkeypatch, 'group-sync', sub=sub, email=f'{sub}@example.com')
+    with _db() as db:
+        assert _team_names(db, user_id) == {legal: provider.id, manual: None}
+
+
+def test_oidc_group_sync_off_ignores_groups_claim(client, monkeypatch) -> None:
+    _make_oidc_provider('group-sync-off')
+    group = f'Ignored-{uuid.uuid4().hex[:6]}'
+    _oidc_login(client, monkeypatch, 'group-sync-off', sub=f'no-sync-{group}', email=f'{group}@example.com', groups=[group])
+    with _db() as db:
+        assert db.scalar(select(Team.id).where(Team.name == group)) is None
+
+
+def test_admin_can_assign_bot_admin_role(client: TestClient) -> None:
+    _create_user(username='roleadmin', email='roleadmin@example.com', password='CorrectHorse1', role=UserRole.ADMIN)
+    _login(client, 'roleadmin', 'CorrectHorse1')
+    created = client.post('/api/v1/auth/admin/users', json={
+        'username': f'botadmin-{uuid.uuid4().hex[:6]}', 'email': f'ba-{uuid.uuid4().hex[:6]}@example.com',
+        'role': 'bot_admin',
+    })
+    assert created.status_code == 201, created.text
+    assert created.json()['role'] == 'bot_admin'

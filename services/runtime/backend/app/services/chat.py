@@ -220,6 +220,8 @@ from dataclasses import dataclass
 from app.core.config import settings
 from app.schemas.bot import BotConfig, ModelConfig, SubagentConfig
 from app.schemas.chat import (
+    Clarification,
+    ClarificationOption,
     AgentTrace,
     ChatRequest,
     ChatResponse,
@@ -1078,6 +1080,8 @@ class _KnowledgeTurnResult:
     retrieval_trace: RetrievalTrace
     guard_triggered: bool
     guard_reason: str | None = None
+    # Set exactly when guard_reason == 'clarify' (see _build_clarification).
+    clarification: Clarification | None = None
 
 
 def _run_knowledge_turn(
@@ -1086,6 +1090,9 @@ def _run_knowledge_turn(
     message: str,
     messages: list[dict[str, str]],
     requested_collections: list[str] | None,
+    *,
+    history: list[dict[str, str]] | None = None,
+    llm_provider: llm_service.LLMProvider | None = None,
 ) -> _KnowledgeTurnResult:
     """Collection-scope resolution, retrieval, and the numbered context
     block for a 'knowledge' (or retrieval-eligible 'complex') turn -- called
@@ -1129,8 +1136,9 @@ def _run_knowledge_turn(
             guard_reason=guard_reason,
         )
 
+    rewritten_query = _rewrite_query(bot, message, history or [], llm_provider)
     chunks = retrieval_client.search(
-        query=message,
+        query=rewritten_query or message,
         # exclude_none avoids sending an all-null filters object for a bot
         # whose YAML sets no `retrieval.filters` at all -- `None` and "every
         # field null" mean the identical "no constraint" thing on
@@ -1146,9 +1154,24 @@ def _run_knowledge_turn(
     # already trimmed to `final_k` on its own side) is the exact set this
     # pipeline hands to the LLM/reports as `sources` below -- there is no
     # further filtering step on this side that would make the two diverge.
+    candidate_count = len(chunks)
+    clarification = _build_clarification(bot, message, chunks)
+    if clarification is not None:
+        return _KnowledgeTurnResult(
+            messages=messages,
+            sources=[],
+            retrieval_trace=RetrievalTrace(
+                candidates=candidate_count, used=0, collections=allowed_collections,
+                requested_collections=requested_collections, rewritten_query=rewritten_query,
+            ),
+            guard_triggered=True,
+            guard_reason='clarify',
+            clarification=clarification,
+        )
+    chunks = _apply_min_score(chunks, _effective_min_score(bot))
     retrieval_trace = RetrievalTrace(
-        candidates=len(chunks), used=len(chunks), collections=allowed_collections,
-        requested_collections=requested_collections,
+        candidates=candidate_count, used=len(chunks), collections=allowed_collections,
+        requested_collections=requested_collections, rewritten_query=rewritten_query,
     )
 
     if not chunks and bot.guard.require_sources:
@@ -1166,6 +1189,9 @@ def _run_knowledge_turn(
         )
 
     messages_with_context = [*messages, {'role': 'system', 'content': _context_block(chunks)}]
+    instruction = _uncertainty_instruction(bot, chunks)
+    if instruction is not None:
+        messages_with_context.append({'role': 'system', 'content': instruction})
     sources = [_to_source(chunk) for chunk in chunks]
     return _KnowledgeTurnResult(
         messages=messages_with_context, sources=sources, retrieval_trace=retrieval_trace, guard_triggered=False
@@ -1184,6 +1210,164 @@ def _run_knowledge_turn(
 # blocking`/`_stream_deferred_multi_agent` below) -- which can itself still
 # choose to research with just one agent per turn (its own planner's
 # "simple path").
+_QUERY_REWRITE_SYSTEM_PROMPT = (
+    'Du formulierst die letzte Nutzernachricht eines Gesprächs in eine eigenständige Suchanfrage um, '
+    'die ohne den Gesprächsverlauf verständlich ist. Löse Rückbezüge wie "das", "dort", "und bei ..." '
+    'anhand des Verlaufs auf und übernimm die konkreten Begriffe (Dokumente, Themen, Namen) daraus. '
+    'Erfinde nichts, beantworte die Frage nicht, erkläre nichts. Ist die letzte Nachricht bereits '
+    'eigenständig, gib sie unverändert zurück. Antworte ausschließlich mit der Suchanfrage, ohne Anführungszeichen.'
+)
+_QUERY_REWRITE_MAX_CHARS = 500
+
+
+def _query_rewrite_enabled(bot: BotConfig) -> bool:
+    if bot.retrieval.query_rewrite is not None:
+        return bot.retrieval.query_rewrite
+    return settings.retrieval_query_rewrite_default
+
+
+def _query_rewrite_messages(message: str, history: list[dict[str, str]]) -> list[dict[str, str]]:
+    recent = [turn for turn in history if turn.get('role') in ('user', 'assistant')]
+    recent = recent[-max(settings.retrieval_query_rewrite_history_turns, 1):]
+    transcript = '\n'.join(
+        f"{'Nutzer' if turn['role'] == 'user' else 'Assistent'}: {' '.join((turn.get('content') or '').split())}"
+        for turn in recent
+    )
+    return [
+        {'role': 'system', 'content': _QUERY_REWRITE_SYSTEM_PROMPT},
+        {'role': 'user', 'content': f'Gesprächsverlauf:\n{transcript}\n\nLetzte Nutzernachricht:\n{message}'},
+    ]
+
+
+def _rewrite_query(
+    bot: BotConfig,
+    message: str,
+    history: list[dict[str, str]],
+    llm_provider: llm_service.LLMProvider | None,
+) -> str | None:
+    """The standalone search query for `message` given `history`, or None
+    to search the raw message: rewrite disabled for this bot, no history
+    (nothing to resolve against), no provider (n8n bots never get here),
+    the LLM call failed, or the result is empty, implausibly long, or
+    identical to the message. Never raises -- a rewrite problem must only
+    ever cost the rewrite, never the turn (see `RetrievalConfig.
+    query_rewrite`'s own docstring)."""
+    if not _query_rewrite_enabled(bot) or not history or llm_provider is None:
+        return None
+    try:
+        raw = llm_provider.chat(
+            _query_rewrite_messages(message, history), model=bot.model.model, temperature=0.0
+        ).content
+    except Exception as exc:  # noqa: BLE001 -- any provider failure falls back to the raw message
+        logger.warning('query rewrite failed for bot %s, searching the raw message: %s', bot.id, exc)
+        return None
+    candidate = ' '.join((raw or '').split()).strip().strip('"\'„“')
+    if not candidate or candidate == message.strip() or len(candidate) > _QUERY_REWRITE_MAX_CHARS:
+        return None
+    return candidate
+
+
+# German on purpose, like the bots' own system prompts (bots/*.yaml): this is
+# an instruction the answering LLM follows in the language it answers in.
+# Neither text starts a line with '[source', so FakeLLM's context-source
+# count (app/services/llm.py) is unaffected.
+_UNCERTAINTY_INSTRUCTION = (
+    'Antworte ausschließlich auf Basis der Quellen oben. Decken die Quellen die Frage nur teilweise ab, '
+    'sage ausdrücklich, welcher Teil nicht belegt ist, und stelle dazu eine konkrete Rückfrage, statt zu raten. '
+    'Widersprechen sich Quellen, benenne den Widerspruch, statt stillschweigend eine Seite zu wählen.'
+)
+_WEAK_CONTEXT_INSTRUCTION = (
+    'Hinweis: Die gefundenen Quellen passen nur schwach zur Frage. Mache in deiner Antwort deutlich, dass sie '
+    'unsicher ist, und frage nach, worauf sich die Frage genau bezieht, bevor du Details ableitest.'
+)
+
+
+def _uncertainty_instruction(bot: BotConfig, chunks: list[retrieval_client.RetrievedChunk]) -> str | None:
+    """The extra system message appended after the context block for a
+    `require_sources` bot with `guard.uncertainty_hint` (see that field's
+    own docstring), or None. Adds `_WEAK_CONTEXT_INSTRUCTION` when
+    `guard.weak_context_below` is set and even the best rerank score stays
+    below it; chunks without rerank scores never count as weak."""
+    if not (bot.guard.require_sources and bot.guard.uncertainty_hint):
+        return None
+    parts = [_UNCERTAINTY_INSTRUCTION]
+    threshold = bot.guard.weak_context_below
+    if threshold is not None:
+        scored = [chunk.scores.rerank for chunk in chunks if chunk.scores.rerank is not None]
+        if scored and max(scored) < threshold:
+            parts.append(_WEAK_CONTEXT_INSTRUCTION)
+    return '\n\n'.join(parts)
+
+
+def _clarification_label(chunk: retrieval_client.RetrievedChunk) -> str:
+    """Human-readable document label for a clarification option: the top
+    heading (a Confluence page title / document title), else the upload's
+    file name without extension, else the bare document id."""
+    if chunk.heading_path:
+        head = ' '.join(str(chunk.heading_path[0]).split())
+        if head:
+            return head
+    if chunk.original_filename:
+        stem = chunk.original_filename.rsplit('/', 1)[-1].rsplit('.', 1)[0].strip()
+        if stem:
+            return stem
+    return chunk.document_id
+
+
+def _build_clarification(
+    bot: BotConfig, message: str, chunks: list[retrieval_client.RetrievedChunk]
+) -> Clarification | None:
+    """The clarifying question to ask instead of answering, or None to go
+    on answering: `bot.guard.clarify_below` unset, no hits, no rerank
+    scores at all (RRF scores are never thresholded, same as min_score),
+    or at least one hit scoring at/above the threshold. Options are the
+    distinct documents behind the hits, best rerank score first, capped at
+    `clarify_max_options`. Deterministic -- no LLM involved."""
+    threshold = bot.guard.clarify_below
+    if threshold is None or not chunks:
+        return None
+    scored = [chunk for chunk in chunks if chunk.scores.rerank is not None]
+    if not scored or max(chunk.scores.rerank for chunk in scored) >= threshold:
+        return None
+    options: list[ClarificationOption] = []
+    seen: set[str] = set()
+    question = message.strip()
+    for chunk in sorted(scored, key=lambda chunk: chunk.scores.rerank, reverse=True):
+        if chunk.document_id in seen:
+            continue
+        seen.add(chunk.document_id)
+        label = _clarification_label(chunk)
+        options.append(ClarificationOption(
+            label=label,
+            message=f'{question} (Dokument: {label})',
+            document_id=chunk.document_id,
+            collection=chunk.collection,
+        ))
+        if len(options) >= bot.guard.clarify_max_options:
+            break
+    return Clarification(question=bot.guard.clarify_question, options=options)
+
+
+def _effective_min_score(bot: BotConfig) -> float | None:
+    """`bot.guard.min_score` if the bot sets one, else the runtime-wide
+    `settings.guard_default_min_score` -- see both fields' own docstrings."""
+    return bot.guard.min_score if bot.guard.min_score is not None else settings.guard_default_min_score
+
+
+def _apply_min_score(
+    chunks: list[retrieval_client.RetrievedChunk], min_score: float | None
+) -> list[retrieval_client.RetrievedChunk]:
+    """Drop every chunk whose RERANK score is below `min_score`, keeping
+    the order Weave-Retrieval returned. Chunks with no rerank score at all
+    (reranker not configured, or it failed this one call -- see
+    Weave-Retrieval's SearchTrace.rerank_error) are kept untouched: a
+    threshold meant for a calibrated 0..1 cross-encoder score must never
+    be applied to RRF's rank-based scores. `None` disables the filter."""
+    if min_score is None:
+        return chunks
+    return [chunk for chunk in chunks if chunk.scores.rerank is None or chunk.scores.rerank >= min_score]
+
+
 _AGENT_ELIGIBLE_INTENTS = frozenset({'knowledge', 'document', 'action', 'complex'})
 
 
@@ -1812,6 +1996,8 @@ class _PreparedTurn:
     # turn, including a DEFERRED agent turn (the loop hasn't run yet by the
     # time this dataclass is built for one -- see `deferred_agent` below).
     agent_trace: AgentTrace | None = None
+    # Set exactly when guard.reason == 'clarify' -- forwarded onto ChatTrace.clarification.
+    clarification: Clarification | None = None
     # The agent-mode analogue of `deferred_n8n` -- set (never None) ONLY
     # when `_prepare_turn` was called with `defer_n8n=True` for a bot in
     # agent mode (`bot.agent.enabled`) whose intent is eligible
@@ -2054,7 +2240,10 @@ def _prepare_turn(request: ChatRequest, *, defer_n8n: bool = False) -> _Prepared
     # for why `needs_retrieval` alone is not enough.
     if decision.needs_retrieval and bot.retrieval.enabled:
         retrieval_start = time.perf_counter()
-        result = _run_knowledge_turn(bot, request.user, request.message, messages, request.collections)
+        result = _run_knowledge_turn(
+            bot, request.user, request.message, messages, request.collections,
+            history=messages[1:], llm_provider=llm_provider,
+        )
         timings_ms['retrieval_ms'] = _elapsed_ms(retrieval_start)
 
         retrieval_trace = result.retrieval_trace
@@ -2063,11 +2252,12 @@ def _prepare_turn(request: ChatRequest, *, defer_n8n: bool = False) -> _Prepared
             # (_FILTER_EXCLUDED_ALL_REPLY), never `bot.guard.no_context_reply`
             # -- see that constant's own docstring for why the two must stay
             # visibly distinct to whatever's showing this reply to a human.
-            guard_reply = (
-                _FILTER_EXCLUDED_ALL_REPLY
-                if result.guard_reason == 'filter_excluded_all'
-                else bot.guard.no_context_reply
-            )
+            if result.clarification is not None:
+                guard_reply = result.clarification.question
+            elif result.guard_reason == 'filter_excluded_all':
+                guard_reply = _FILTER_EXCLUDED_ALL_REPLY
+            else:
+                guard_reply = bot.guard.no_context_reply
             return _PreparedTurn(
                 bot=bot,
                 llm_provider=llm_provider,
@@ -2079,6 +2269,7 @@ def _prepare_turn(request: ChatRequest, *, defer_n8n: bool = False) -> _Prepared
                 guard=GuardTrace(triggered=True, reason=result.guard_reason),
                 final_answer=guard_reply,
                 messages=None,
+                clarification=result.clarification,
             )
         messages = result.messages
         sources = result.sources
@@ -2123,6 +2314,7 @@ def handle_chat(request: ChatRequest) -> ChatResponse:
                 needs_retrieval=prepared.decision.needs_retrieval,
                 needs_tool=prepared.decision.needs_tool,
                 retrieval=prepared.retrieval_trace,
+                clarification=prepared.clarification,
                 model=None,
                 router_mode=settings.router_mode,
                 timings_ms=timings_ms,
@@ -2153,6 +2345,7 @@ def handle_chat(request: ChatRequest) -> ChatResponse:
             needs_retrieval=prepared.decision.needs_retrieval,
             needs_tool=prepared.decision.needs_tool,
             retrieval=prepared.retrieval_trace,
+            clarification=prepared.clarification,
             model=llm_result.model,
             router_mode=settings.router_mode,
             timings_ms=timings_ms,
@@ -2250,6 +2443,7 @@ def _stream_prepared_turn(prepared: _PreparedTurn) -> Iterator[ChatStreamEvent |
         needs_retrieval=prepared.decision.needs_retrieval,
         needs_tool=prepared.decision.needs_tool,
         retrieval=prepared.retrieval_trace,
+        clarification=prepared.clarification,
         # `deferred_n8n is not None` is the ONE outcome where `final_answer
         # is not None` is false yet no LLM call is ever going to happen
         # either (see `_DeferredN8nTurn`'s own docstring) -- `model` must

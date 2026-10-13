@@ -718,6 +718,71 @@ def test_eml_conversion_does_not_double_separator(tmp_path, monkeypatch):
     assert len(separator_lines) == 2
 
 
+# --- .md / .xml uploads bypass OCR --------------------------------------------
+
+def _no_paddle(monkeypatch):
+    monkeypatch.setattr(paddle_service, 'get_paddle_settings', lambda: {
+        'default_profile': 'ppocrv6_tiny', 'timeout_seconds': 30,
+    })
+    monkeypatch.setattr(paddle_service, '_paddleocr_available', lambda: False)
+
+
+def test_markdown_upload_is_passed_through_with_its_own_frontmatter_stripped(tmp_path, monkeypatch):
+    _no_paddle(monkeypatch)
+    md_file = tmp_path / 'notes.md'
+    md_file.write_bytes('\ufeff---\ntitle: Eigene Notiz\n---\n\n# Kündigung\n\nDrei Monate zum Quartalsende.\n'.encode('utf-8'))
+
+    markdown, details = paddle_service.convert_to_markdown_with_details(str(md_file), profile_id='ppocrv6_tiny')
+
+    assert markdown.startswith('---\n')
+    assert 'engine: text-md' in markdown
+    assert 'source: notes.md' in markdown
+    # Exactly one frontmatter block: ours. The upload's own was stripped.
+    assert [line for line in markdown.splitlines() if line == '---'] == ['---', '---']
+    assert 'title: Eigene Notiz' not in markdown
+    assert '# Kündigung\n\nDrei Monate zum Quartalsende.' in markdown
+    assert details['engine'] == 'text-md'
+    assert details['page_count'] == 1
+    assert details['used_fallback'] is False
+
+
+def test_xml_upload_is_rendered_as_an_outline(tmp_path, monkeypatch):
+    _no_paddle(monkeypatch)
+    xml_file = tmp_path / 'vertrag.xml'
+    xml_file.write_text(
+        '<?xml version="1.0"?>\n<!-- kommentar -->\n'
+        '<vertrag xmlns="urn:x" id="V-1">\n'
+        '  <titel>Arbeitsvertrag</titel>\n'
+        '  <klauseln>\n'
+        '    <klausel nr="7">Kündigungsfrist:\n   drei Monate</klausel>\n'
+        '    <klausel nr="8"><text>Probezeit</text><dauer>6 Monate</dauer></klausel>\n'
+        '  </klauseln>\n'
+        '</vertrag>\n',
+        encoding='utf-8',
+    )
+
+    markdown, details = paddle_service.convert_to_markdown_with_details(str(xml_file), profile_id='ppocrv6_tiny')
+
+    assert 'engine: text-xml' in markdown
+    body = markdown.split('---\n', 2)[2]
+    assert '# vertrag (id=V-1)' in body  # namespace stripped, attributes kept
+    assert '## titel\n\nArbeitsvertrag' in body
+    assert '## klauseln' in body
+    assert '- **klausel (nr=7)**: Kündigungsfrist: drei Monate' in body  # whitespace collapsed
+    assert '- **klausel (nr=8)**\n  - **text**: Probezeit\n  - **dauer**: 6 Monate' in body
+    assert 'kommentar' not in body
+    assert details['engine'] == 'text-xml'
+
+
+def test_malformed_xml_upload_fails_loudly(tmp_path, monkeypatch):
+    _no_paddle(monkeypatch)
+    xml_file = tmp_path / 'broken.xml'
+    xml_file.write_text('<a><b></a>', encoding='utf-8')
+
+    with pytest.raises(RuntimeError, match=r'Failed to convert \.xml file'):
+        paddle_service.convert_to_markdown_with_details(str(xml_file), profile_id='ppocrv6_tiny')
+
+
 # --- FEATURE: B1 wiring -- normalize_form_latex is called label-independently -
 
 def test_convert_structure_to_markdown_applies_form_latex_normalization():

@@ -1834,6 +1834,88 @@ def _fallback_convert_with_frontmatter(
     }
 
 
+
+# --- Plain-text documents (.md / .xml): no OCR, no PaddleOCR dependency ---
+
+_TEXT_DOCUMENT_ENGINES: dict[str, str] = {'.md': 'text-md', '.xml': 'text-xml'}
+
+
+def _decode_text_upload(data: bytes) -> str:
+    """UTF-8 (BOM stripped) with a Latin-1 fallback -- a stray Windows
+    export must become readable text, never a conversion failure."""
+    try:
+        return data.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        return data.decode('latin-1')
+
+
+def _strip_markdown_frontmatter(text: str) -> str:
+    """Drop a leading YAML frontmatter block from an uploaded .md: the
+    pipeline prepends its own `_build_rag_frontmatter` block, and two
+    consecutive `---` blocks would make the RAG frontmatter unparseable."""
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != '---':
+        return text
+    for index in range(1, len(lines)):
+        if lines[index].strip() in ('---', '...'):
+            return '\n'.join(lines[index + 1:]).lstrip('\n')
+    return text
+
+
+def _xml_local_name(tag: object) -> str:
+    name = str(tag)
+    return name.rsplit('}', 1)[-1] if '}' in name else name
+
+
+def _xml_label(element) -> str:
+    name = _xml_local_name(element.tag)
+    attributes = ', '.join(f'{_xml_local_name(key)}={value}' for key, value in element.attrib.items())
+    return f'{name} ({attributes})' if attributes else name
+
+
+def _xml_element_to_markdown(element, depth: int, lines: list[str]) -> None:
+    """Render one element: the root and its direct children become headings
+    (document-like XML stays navigable), anything deeper a nested bullet
+    list (data-like XML stays compact). Text and tail whitespace is
+    collapsed; comments/processing instructions are already dropped by
+    ElementTree."""
+    text = ' '.join((element.text or '').split())
+    children = list(element)
+    if depth <= 1:
+        lines.append(f"{'#' * (depth + 1)} {_xml_label(element)}")
+        lines.append('')
+        if text:
+            lines.append(text)
+            lines.append('')
+    else:
+        indent = '  ' * (depth - 2)
+        lines.append(f'{indent}- **{_xml_label(element)}**' + (f': {text}' if text else ''))
+    for child in children:
+        _xml_element_to_markdown(child, depth + 1, lines)
+    if depth <= 1 and children and lines and lines[-1] != '':
+        lines.append('')
+    tail = ' '.join((element.tail or '').split())
+    if tail:
+        indent = '  ' * max(depth - 2, 0)
+        lines.append(f'{indent}- {tail}' if depth >= 2 else tail)
+
+
+def _text_document_to_markdown(source: Path, suffix: str) -> str:
+    """Body markdown for a .md (passed through, own frontmatter stripped) or
+    .xml (parsed with the stdlib parser -- expat's built-in entity-expansion
+    limits apply, external entities are never fetched -- and rendered as a
+    heading/bullet outline) upload."""
+    text = _decode_text_upload(source.read_bytes())
+    if suffix == '.md':
+        return _strip_markdown_frontmatter(text).strip() + '\n'
+    import xml.etree.ElementTree as ElementTree
+
+    root = ElementTree.fromstring(text)
+    lines: list[str] = []
+    _xml_element_to_markdown(root, 0, lines)
+    return '\n'.join(lines).rstrip() + '\n'
+
+
 def convert_to_markdown_with_details(
     input_path: str,
     profile_id: str | None = None,
@@ -1874,6 +1956,33 @@ def convert_to_markdown_with_details(
             }
         except Exception as exc:
             raise RuntimeError(f'Failed to convert .eml file: {exc}') from exc
+
+    # .md / .xml are text already: pass through (md) or render an outline
+    # (xml) and skip OCR entirely, same first-class handling as .eml above.
+    if suffix in _TEXT_DOCUMENT_ENGINES:
+        engine = _TEXT_DOCUMENT_ENGINES[suffix]
+        try:
+            body = _text_document_to_markdown(source, suffix)
+        except Exception as exc:
+            raise RuntimeError(f'Failed to convert {suffix} file: {exc}') from exc
+        frontmatter_metadata = {
+            **(metadata or {}),
+            'profile_id': selected_profile_id,
+            'engine': engine,
+            'used_fallback': False,
+        }
+        frontmatter = _build_rag_frontmatter(source.name, 1, selected_profile['label'], metadata=frontmatter_metadata)
+        markdown = _prepend_frontmatter(frontmatter, body)
+        quality_gate = evaluate_document_quality(markdown, field_validation=validate_document(markdown))
+        return markdown, {
+            'engine': engine,
+            'used_fallback': False,
+            'profile_id': selected_profile_id,
+            'profile_label': selected_profile['label'],
+            'page_count': 1,
+            'quality_gate': quality_gate,
+            **capability,
+        }
 
     if not _paddleocr_available():
         if suffix in {'.pdf', '.xls', '.xlsx'}:
