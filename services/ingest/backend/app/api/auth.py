@@ -37,6 +37,7 @@ from app.api.deps import (
     get_current_user,
     origin_guard,
     require_admin,
+    require_bot_admin,
 )
 from app.core.config import settings
 from app.database.session import get_db
@@ -136,6 +137,10 @@ router_authenticated = APIRouter(
 )
 router_admin = APIRouter(
     prefix='/api/v1/auth/admin', tags=['auth-admin'], dependencies=[Depends(require_admin), Depends(origin_guard)]
+)
+# Read-only lists the bot editor needs (team grants); bot admins may see them too.
+router_bot_admin = APIRouter(
+    prefix='/api/v1/auth/admin', tags=['auth-admin'], dependencies=[Depends(require_bot_admin), Depends(origin_guard)]
 )
 
 # Fixed bigint constant (NOT python hash(), which is salted per-process and
@@ -238,7 +243,10 @@ def _user_response(user: User, db: Session) -> UserResponse:
 
 
 def _team_response(team: Team) -> TeamResponse:
-    return TeamResponse(id=team.id, name=team.name, created_at=team.created_at)
+    return TeamResponse(
+        id=team.id, name=team.name, created_at=team.created_at,
+        oidc_provider_id=team.oidc_provider_id, oidc_group=team.oidc_group,
+    )
 
 
 def _provider_response(provider: AuthProvider) -> ProviderAdminResponse:
@@ -252,6 +260,8 @@ def _provider_response(provider: AuthProvider) -> ProviderAdminResponse:
         enabled=provider.enabled,
         scopes=provider.scopes,
         use_email_as_username=provider.use_email_as_username,
+        sync_groups=provider.sync_groups,
+        groups_claim=provider.groups_claim,
         created_at=provider.created_at,
         updated_at=provider.updated_at,
     )
@@ -759,6 +769,97 @@ def _username_base_from_claims(claims: dict, resolved_email: str | None) -> str:
     return claims['sub']
 
 
+# --- OIDC: group -> team sync ----------------------------------------------
+
+def _claimed_groups(value: object) -> list[str] | None:
+    """The groups claim as a clean list; None when it is absent or not a
+    string list -- unknown, which is not the same as "no groups"."""
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return None
+    groups = [item.strip() for item in value if isinstance(item, str) and item.strip() and len(item.strip()) <= 255]
+    return list(dict.fromkeys(groups))
+
+
+def _unique_team_name(db: Session, base: str, provider: AuthProvider) -> str:
+    candidate = base
+    suffix = 1
+    while db.scalar(select(Team.id).where(Team.name == candidate)) is not None:
+        suffix += 1
+        tail = f' ({provider.slug})' if suffix == 2 else f' ({provider.slug} {suffix - 1})'
+        candidate = base[: 255 - len(tail)] + tail
+    return candidate
+
+
+def _sync_oidc_groups(db: Session, provider: AuthProvider, user: User, claims: dict) -> None:
+    """Map the provider's groups claim to teams and keep the user's synced
+    memberships in line with it (AuthProvider.sync_groups).
+
+    A group's team is found by its link (provider, group), else a not yet
+    linked team of the same name is adopted, else one is created. Only
+    memberships this provider synced are ever removed; hand-assigned ones
+    stay. A missing claim (e.g. Entra's groups overage) leaves everything
+    as it is instead of emptying the user's teams."""
+    groups = _claimed_groups(claims.get(provider.groups_claim))
+    if groups is None:
+        _log_auth_event(
+            db, 'WARNING',
+            f'oidc group sync skipped for user {user.username}: claim {provider.groups_claim!r} missing',
+        )
+        db.commit()
+        return
+
+    teams = {
+        team.oidc_group: team
+        for team in db.scalars(
+            select(Team).where(Team.oidc_provider_id == provider.id, Team.oidc_group.in_(groups))
+        ).all()
+    } if groups else {}
+    for group in groups:
+        if group in teams:
+            continue
+        # Keycloak sends full group paths ("/sales"); the team name drops the slash.
+        name = group.lstrip('/') or group
+        team = db.scalar(select(Team).where(Team.name == name, Team.oidc_provider_id.is_(None)))
+        if team is None:
+            team = Team(name=_unique_team_name(db, name, provider))
+            db.add(team)
+            _log_auth_event(db, 'INFO', f'oidc group sync created team {team.name} (provider {provider.slug})')
+        team.oidc_provider_id = provider.id
+        team.oidc_group = group
+        teams[group] = team
+    db.flush()
+
+    wanted = {team.id for team in teams.values()}
+    current = dict(db.execute(
+        select(user_teams.c.team_id, user_teams.c.oidc_provider_id).where(user_teams.c.user_id == user.id)
+    ).all())
+    stale = [team_id for team_id, source in current.items() if source == provider.id and team_id not in wanted]
+    added = [team_id for team_id in wanted if team_id not in current]
+    if stale:
+        db.execute(delete(user_teams).where(user_teams.c.user_id == user.id, user_teams.c.team_id.in_(stale)))
+        if user.team_id in stale:
+            user.team_id = next((team_id for team_id in current if team_id not in stale), None) or next(iter(added), None)
+    if added:
+        db.execute(user_teams.insert(), [
+            {'user_id': user.id, 'team_id': team_id, 'role': 'member', 'oidc_provider_id': provider.id}
+            for team_id in added
+        ])
+    if stale or added:
+        _log_auth_event(
+            db, 'INFO',
+            f'oidc group sync for user {user.username}: +{len(added)} -{len(stale)} team memberships',
+        )
+    try:
+        db.commit()
+    except IntegrityError:
+        # A concurrent login created the same team first; the next login syncs.
+        db.rollback()
+        _log_auth_event(db, 'WARNING', f'oidc group sync for user {user.username} deferred: concurrent update')
+        db.commit()
+
+
 @router_public.get('/oidc/{slug}/callback')
 def oidc_callback(
     slug: str,
@@ -843,7 +944,11 @@ def oidc_callback(
     userinfo_endpoint = discovery.get('userinfo_endpoint')
     access_token = tokens.get('access_token')
     userinfo_fetched = False
-    if (not resolved_email or not claims.get('preferred_username')) and userinfo_endpoint and access_token:
+    groups_missing = provider.sync_groups and provider.groups_claim not in claims
+    if (
+        (not resolved_email or not claims.get('preferred_username') or groups_missing)
+        and userinfo_endpoint and access_token
+    ):
         try:
             userinfo_claims = fetch_userinfo(userinfo_endpoint, access_token)
         except OIDCError as exc:
@@ -984,6 +1089,9 @@ def oidc_callback(
         except IntegrityError:
             db.rollback()
             raise HTTPException(status_code=409, detail='OIDC object identity already assigned') from None
+
+    if provider.sync_groups:
+        _sync_oidc_groups(db, provider, user, claims)
 
     _log_auth_event(db, 'INFO', f'oidc login succeeded: provider={slug} user={user.username} {login_diagnostic}')
 
@@ -1276,9 +1384,17 @@ def _set_user_teams(db: Session, user: User, team_ids: list[str] | None, primary
         roles = {team_id: role for team_id, role in roles.items() if team_id in selected}
     if set(roles) - set(selected) or any(role not in {'member', 'reader'} for role in roles.values()):
         raise HTTPException(status_code=422, detail='Team roles must be member or reader and reference memberships')
+    # A synced membership the admin keeps stays synced (see _sync_oidc_groups).
+    sources = dict(db.execute(
+        select(user_teams.c.team_id, user_teams.c.oidc_provider_id).where(user_teams.c.user_id == user.id)
+    ).all())
     db.execute(delete(user_teams).where(user_teams.c.user_id == user.id))
     if teams:
-        db.execute(user_teams.insert(), [{'user_id': user.id, 'team_id': team.id, 'role': roles.get(team.id, 'member')} for team in teams])
+        db.execute(user_teams.insert(), [
+            {'user_id': user.id, 'team_id': team.id, 'role': roles.get(team.id, 'member'),
+             'oidc_provider_id': sources.get(team.id)}
+            for team in teams
+        ])
     user.team_id = primary or (user.team_id if user.team_id in selected else next(iter(selected), None))
 
 
@@ -1367,7 +1483,7 @@ def admin_delete_user(user_id: str, successor_id: str | None = None, db: Session
 
 # --- admin: teams ----------------------------------------------------------------
 
-@router_admin.get('/teams', response_model=TeamListResponse)
+@router_bot_admin.get('/teams', response_model=TeamListResponse)
 def admin_list_teams(db: Session = Depends(get_db)) -> TeamListResponse:
     teams = db.scalars(select(Team).order_by(Team.name)).all()
     return TeamListResponse(items=[_team_response(t) for t in teams])
@@ -1471,6 +1587,8 @@ def admin_create_provider(payload: ProviderCreateRequest, db: Session = Depends(
         enabled=payload.enabled,
         scopes=payload.scopes.strip() or 'openid profile email',
         use_email_as_username=payload.use_email_as_username,
+        sync_groups=payload.sync_groups,
+        groups_claim=payload.groups_claim.strip() or 'groups',
     )
     db.add(provider)
     db.commit()
@@ -1498,6 +1616,10 @@ def admin_update_provider(
         provider.scopes = payload.scopes.strip() or 'openid profile email'
     if payload.use_email_as_username is not None:
         provider.use_email_as_username = payload.use_email_as_username
+    if payload.sync_groups is not None:
+        provider.sync_groups = payload.sync_groups
+    if payload.groups_claim is not None:
+        provider.groups_claim = payload.groups_claim.strip() or 'groups'
     db.commit()
     return _provider_response(provider)
 

@@ -754,3 +754,33 @@ def test_owner_can_only_attach_knowledge_spaces_they_can_read():
     emptied = owner_client.patch(f"/api/v1/bots/{bot['id']}", json={'collections': []})
     assert emptied.status_code == 403
     assert owner_client.get('/api/v1/bots').json()['items'][0]['collections'] == [attached, own]
+
+
+def test_bot_admin_manages_bots_but_nothing_else_and_only_readable_spaces():
+    admin = _identity('bot-admin-ref-admin', role=UserRole.ADMIN)
+    bot_admin = _identity('bot-admin-ref', role=UserRole.BOT_ADMIN)
+    admin_client = login_as(admin.username)
+    bot_admin_client = login_as(bot_admin.username)
+    team_name = _team()
+    unreadable_slug = _scope(admin_client, team_name)
+
+    assert bot_admin_client.get('/api/v1/auth/admin/bots').status_code == 200
+    assert bot_admin_client.get('/api/v1/auth/admin/teams').status_code == 200
+    assert bot_admin_client.get('/api/v1/auth/admin/chat-provider/endpoints').status_code == 200
+    assert bot_admin_client.get('/api/v1/auth/admin/users').status_code == 403
+    assert bot_admin_client.post('/api/v1/auth/admin/teams', json={'name': 'Nope'}).status_code == 403
+    assert bot_admin_client.get('/api/v1/auth/admin/chat-provider').status_code == 403
+
+    rejected = bot_admin_client.post('/api/v1/auth/admin/bots', json=_payload(team_name, unreadable_slug))
+    assert rejected.status_code == 403
+    assert 'Keine Leserechte' in rejected.text
+
+    created = bot_admin_client.post('/api/v1/auth/admin/bots', json=_payload(team_name, unreadable_slug, collections=[]))
+    assert created.status_code == 201, created.text
+
+    # A space an admin attached may stay when the bot admin edits the bot.
+    payload = _payload(team_name, unreadable_slug)
+    assert admin_client.post('/api/v1/auth/admin/bots', json=payload).status_code == 201
+    bot_id = payload.pop('id')
+    updated = bot_admin_client.put(f'/api/v1/auth/admin/bots/{bot_id}', json=payload)
+    assert updated.status_code == 200, updated.text

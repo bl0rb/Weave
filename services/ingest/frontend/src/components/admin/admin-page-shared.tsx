@@ -33,12 +33,13 @@ export function PageHead({
   );
 }
 
-/** Shared container + admin-only gate for every /admin/* route (identical to the previous single-page gate). */
-export function AdminPageShell({ children }: { children: ReactNode }) {
+/** Shared container + admin-only gate for every /admin/* route (identical to the previous single-page gate).
+ * `allowBotAdmin` also lets bot admins in (the page then shows them only the bots). */
+export function AdminPageShell({ children, allowBotAdmin = false }: { children: ReactNode; allowBotAdmin?: boolean }) {
   const { user } = useAuth();
   const { t } = useI18n();
 
-  if (!user || user.role !== 'admin') {
+  if (!user || (user.role !== 'admin' && !(allowBotAdmin && user.role === 'bot_admin'))) {
     return (
       <main className="min-h-screen">
         <div className="mx-auto flex w-full max-w-7xl flex-col items-center px-4 py-24 sm:px-6 lg:px-8">

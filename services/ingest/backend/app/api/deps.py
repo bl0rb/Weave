@@ -148,6 +148,16 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+BOT_ADMIN_ROLES = frozenset({UserRole.ADMIN, UserRole.BOT_ADMIN})
+
+
+def require_bot_admin(user: User = Depends(get_current_user)) -> User:
+    """Admins and bot admins: the managed-bot surface and what it reads."""
+    if user.role not in BOT_ADMIN_ROLES:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Bot admin privileges required')
+    return user
+
+
 def origin_guard(request: Request) -> None:
     """CSRF defense-in-depth on top of SameSite=Lax: reject any
     state-changing request whose Origin (or, absent that, Referer) is not in

@@ -1478,3 +1478,33 @@ def test_0040_keeps_confluence_page_state_per_space(tmp_path, monkeypatch) -> No
         pages = sorted(row.page_id for row in conn.execute(text('SELECT page_id FROM import_page_states')))
     assert pages == ['NEW', 'P', 'R']
     engine.dispose()
+
+
+def test_bot_admin_group_sync_migration_widens_role_and_rolls_back():
+    import importlib.util
+    from pathlib import Path
+
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import create_engine, inspect, text
+
+    path = Path(__file__).resolve().parents[1] / 'alembic/versions/0046_bot_admin_group_sync.py'
+    spec = importlib.util.spec_from_file_location('bot_admin_group_sync_migration', path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    engine = create_engine('sqlite://')
+    with engine.begin() as connection:
+        connection.execute(text('CREATE TABLE auth_providers (id TEXT PRIMARY KEY)'))
+        connection.execute(text('CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT, role VARCHAR(5) NOT NULL)'))
+        connection.execute(text('CREATE TABLE teams (id TEXT PRIMARY KEY, name TEXT)'))
+        connection.execute(text('CREATE TABLE user_teams (user_id TEXT, team_id TEXT, role TEXT, PRIMARY KEY (user_id, team_id))'))
+        connection.execute(text("INSERT INTO users VALUES ('u1', 'u1@example.org', 'user')"))
+        with Operations.context(MigrationContext.configure(connection)):
+            migration.upgrade()
+            connection.execute(text("UPDATE users SET role = 'bot_admin'"))
+            assert {'sync_groups', 'groups_claim'} <= {c['name'] for c in inspect(connection).get_columns('auth_providers')}
+            assert {'oidc_provider_id', 'oidc_group'} <= {c['name'] for c in inspect(connection).get_columns('teams')}
+            assert 'oidc_provider_id' in {c['name'] for c in inspect(connection).get_columns('user_teams')}
+            migration.downgrade()
+            assert connection.execute(text('SELECT role FROM users')).scalar() == 'user'
+            assert 'oidc_group' not in {c['name'] for c in inspect(connection).get_columns('teams')}

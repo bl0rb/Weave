@@ -9,12 +9,14 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.auth import router_admin as auth_admin_router
+from app.api.auth import router_bot_admin as auth_bot_admin_router
 from app.api.auth import bootstrap_admin
 from app.api.auth import router_authenticated as auth_authenticated_router
 from app.api.auth import router_public as auth_public_router
 from app.api.backup import router as backup_admin_router
 from app.api.benchmarks import router as benchmarks_router
 from app.api.chat_provider import router_admin as chat_provider_admin_router
+from app.api.chat_provider import router_bot_admin as chat_provider_bot_admin_router
 from app.api.chat_provider import router_internal as chat_provider_internal_router
 from app.api.managed_bots import router_admin as managed_bots_admin_router
 from app.api.managed_bots import router_internal as managed_bots_internal_router
@@ -97,7 +99,9 @@ app.include_router(public_router)
 app.include_router(auth_public_router)
 app.include_router(auth_authenticated_router)
 app.include_router(auth_admin_router)
+app.include_router(auth_bot_admin_router)
 app.include_router(chat_provider_admin_router)
+app.include_router(chat_provider_bot_admin_router)
 app.include_router(chat_provider_internal_router)
 app.include_router(managed_bots_admin_router)
 app.include_router(managed_bots_internal_router)
