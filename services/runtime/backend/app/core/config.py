@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     # = no threshold. Meaningful only once Weave-Retrieval actually reranks
     # (RERANK_PROVIDER=api there); chunks without a rerank score always pass.
     guard_default_min_score: float | None = None
+    # Runtime-wide default for `bot.retrieval.query_rewrite` (app/schemas/
+    # bot.py): condense the latest message plus history into a standalone
+    # search query before retrieval. Costs one small LLM call per turn
+    # that HAS history. `retrieval_query_rewrite_history_turns` caps how
+    # many of the most recent turns the rewrite prompt sees.
+    retrieval_query_rewrite_default: bool = False
+    retrieval_query_rewrite_history_turns: int = 6
 
     # --- LLM provider abstraction (see app/services -- filled in a later
     # stage). 'fake' is a deterministic, dependency-free provider so local

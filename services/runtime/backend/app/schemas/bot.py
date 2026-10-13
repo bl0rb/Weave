@@ -132,6 +132,16 @@ class RetrievalConfig(BaseModel):
     top_k: int = 20
     final_k: int = 5
     rerank: bool = True
+    # History-aware query rewrite: when the request carries history, one
+    # extra LLM call condenses the latest message into a standalone search
+    # query ("und bei Teilzeit?" -> "Kündigungsfrist bei Teilzeit laut
+    # Arbeitsvertrag") BEFORE Weave-Retrieval is called -- the LLM that
+    # answers still sees the original message. Any failure, an empty or
+    # implausible rewrite, or an empty history falls back to the raw
+    # message, so this can only ever change WHAT is searched, never
+    # whether. `None` (the default) defers to the runtime-wide
+    # RETRIEVAL_QUERY_REWRITE_DEFAULT (app/core/config.py), off by default.
+    query_rewrite: bool | None = None
 
     # Which Collections (the cross-service Collections contract -- see
     # Weave-Knowledge's `collections` registry table, synced from

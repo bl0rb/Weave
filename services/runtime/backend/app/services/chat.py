@@ -1086,6 +1086,9 @@ def _run_knowledge_turn(
     message: str,
     messages: list[dict[str, str]],
     requested_collections: list[str] | None,
+    *,
+    history: list[dict[str, str]] | None = None,
+    llm_provider: llm_service.LLMProvider | None = None,
 ) -> _KnowledgeTurnResult:
     """Collection-scope resolution, retrieval, and the numbered context
     block for a 'knowledge' (or retrieval-eligible 'complex') turn -- called
@@ -1129,8 +1132,9 @@ def _run_knowledge_turn(
             guard_reason=guard_reason,
         )
 
+    rewritten_query = _rewrite_query(bot, message, history or [], llm_provider)
     chunks = retrieval_client.search(
-        query=message,
+        query=rewritten_query or message,
         # exclude_none avoids sending an all-null filters object for a bot
         # whose YAML sets no `retrieval.filters` at all -- `None` and "every
         # field null" mean the identical "no constraint" thing on
@@ -1150,7 +1154,7 @@ def _run_knowledge_turn(
     chunks = _apply_min_score(chunks, _effective_min_score(bot))
     retrieval_trace = RetrievalTrace(
         candidates=candidate_count, used=len(chunks), collections=allowed_collections,
-        requested_collections=requested_collections,
+        requested_collections=requested_collections, rewritten_query=rewritten_query,
     )
 
     if not chunks and bot.guard.require_sources:
@@ -1186,6 +1190,63 @@ def _run_knowledge_turn(
 # blocking`/`_stream_deferred_multi_agent` below) -- which can itself still
 # choose to research with just one agent per turn (its own planner's
 # "simple path").
+_QUERY_REWRITE_SYSTEM_PROMPT = (
+    'Du formulierst die letzte Nutzernachricht eines Gesprächs in eine eigenständige Suchanfrage um, '
+    'die ohne den Gesprächsverlauf verständlich ist. Löse Rückbezüge wie "das", "dort", "und bei ..." '
+    'anhand des Verlaufs auf und übernimm die konkreten Begriffe (Dokumente, Themen, Namen) daraus. '
+    'Erfinde nichts, beantworte die Frage nicht, erkläre nichts. Ist die letzte Nachricht bereits '
+    'eigenständig, gib sie unverändert zurück. Antworte ausschließlich mit der Suchanfrage, ohne Anführungszeichen.'
+)
+_QUERY_REWRITE_MAX_CHARS = 500
+
+
+def _query_rewrite_enabled(bot: BotConfig) -> bool:
+    if bot.retrieval.query_rewrite is not None:
+        return bot.retrieval.query_rewrite
+    return settings.retrieval_query_rewrite_default
+
+
+def _query_rewrite_messages(message: str, history: list[dict[str, str]]) -> list[dict[str, str]]:
+    recent = [turn for turn in history if turn.get('role') in ('user', 'assistant')]
+    recent = recent[-max(settings.retrieval_query_rewrite_history_turns, 1):]
+    transcript = '\n'.join(
+        f"{'Nutzer' if turn['role'] == 'user' else 'Assistent'}: {' '.join((turn.get('content') or '').split())}"
+        for turn in recent
+    )
+    return [
+        {'role': 'system', 'content': _QUERY_REWRITE_SYSTEM_PROMPT},
+        {'role': 'user', 'content': f'Gesprächsverlauf:\n{transcript}\n\nLetzte Nutzernachricht:\n{message}'},
+    ]
+
+
+def _rewrite_query(
+    bot: BotConfig,
+    message: str,
+    history: list[dict[str, str]],
+    llm_provider: llm_service.LLMProvider | None,
+) -> str | None:
+    """The standalone search query for `message` given `history`, or None
+    to search the raw message: rewrite disabled for this bot, no history
+    (nothing to resolve against), no provider (n8n bots never get here),
+    the LLM call failed, or the result is empty, implausibly long, or
+    identical to the message. Never raises -- a rewrite problem must only
+    ever cost the rewrite, never the turn (see `RetrievalConfig.
+    query_rewrite`'s own docstring)."""
+    if not _query_rewrite_enabled(bot) or not history or llm_provider is None:
+        return None
+    try:
+        raw = llm_provider.chat(
+            _query_rewrite_messages(message, history), model=bot.model.model, temperature=0.0
+        ).content
+    except Exception as exc:  # noqa: BLE001 -- any provider failure falls back to the raw message
+        logger.warning('query rewrite failed for bot %s, searching the raw message: %s', bot.id, exc)
+        return None
+    candidate = ' '.join((raw or '').split()).strip().strip('"\'„“')
+    if not candidate or candidate == message.strip() or len(candidate) > _QUERY_REWRITE_MAX_CHARS:
+        return None
+    return candidate
+
+
 def _effective_min_score(bot: BotConfig) -> float | None:
     """`bot.guard.min_score` if the bot sets one, else the runtime-wide
     `settings.guard_default_min_score` -- see both fields' own docstrings."""
@@ -2076,7 +2137,10 @@ def _prepare_turn(request: ChatRequest, *, defer_n8n: bool = False) -> _Prepared
     # for why `needs_retrieval` alone is not enough.
     if decision.needs_retrieval and bot.retrieval.enabled:
         retrieval_start = time.perf_counter()
-        result = _run_knowledge_turn(bot, request.user, request.message, messages, request.collections)
+        result = _run_knowledge_turn(
+            bot, request.user, request.message, messages, request.collections,
+            history=messages[1:], llm_provider=llm_provider,
+        )
         timings_ms['retrieval_ms'] = _elapsed_ms(retrieval_start)
 
         retrieval_trace = result.retrieval_trace

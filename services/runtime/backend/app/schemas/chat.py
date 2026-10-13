@@ -182,6 +182,13 @@ class RetrievalTrace(BaseModel):
     # `guard.reason == "filter_excluded_all"` -- exactly which filter is
     # responsible for the empty `collections` result.
     requested_collections: list[str] | None = None
+    # The standalone query the history-aware rewrite (`bot.retrieval.
+    # query_rewrite`, app/services/chat.py's `_rewrite_query`) actually
+    # sent to Weave-Retrieval INSTEAD of `ChatRequest.message` -- `None`
+    # whenever the raw message was searched (rewrite disabled, no history,
+    # rewrite failed or came back identical/implausible). Lets a caller see
+    # exactly what was searched when a follow-up question was expanded.
+    rewritten_query: str | None = None
 
 
 class GuardTrace(BaseModel):

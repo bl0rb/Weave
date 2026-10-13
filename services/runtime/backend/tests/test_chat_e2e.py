@@ -25,6 +25,8 @@ both modes at the unit level); this file only needs ONE router mode to
 exercise the pipeline stages around it.
 """
 
+import pytest
+
 from app.services.chat import NO_COLLECTION_SENTINEL
 from tests.conftest import AUTH_HEADERS, client
 
@@ -171,7 +173,7 @@ def test_knowledge_flow_passes_context_to_the_llm_and_returns_sources(monkeypatc
     # test_chat_service.py's own `resolve_collection_scope`/
     # `include_uncollected` tests for that function's logic in isolation.
     assert trace['retrieval'] == {
-        'candidates': 2, 'used': 2, 'collections': ['vertraege', '__none__'], 'requested_collections': None,
+        'candidates': 2, 'used': 2, 'collections': ['vertraege', '__none__'], 'requested_collections': None, 'rewritten_query': None,
     }
     assert trace['guard'] is None
     assert 'retrieval_ms' in trace['timings_ms']
@@ -227,10 +229,127 @@ def test_guard_flow_returns_no_context_reply_when_retrieval_finds_nothing(monkey
     # nothing), not 'no_collections' (search never ran at all, see the
     # dedicated test for that below).
     assert trace['retrieval'] == {
-        'candidates': 0, 'used': 0, 'collections': ['vertraege', '__none__'], 'requested_collections': None,
+        'candidates': 0, 'used': 0, 'collections': ['vertraege', '__none__'], 'requested_collections': None, 'rewritten_query': None,
     }
     assert trace['guard'] == {'triggered': True, 'reason': 'no_context'}
     assert trace['model'] is None  # the guard short-circuits before any LLM call
+
+
+# --- history-aware query rewrite ---------------------------------------------
+
+
+def test_query_rewrite_searches_the_rewritten_query_and_reports_it(monkeypatch):
+    sent_requests = []
+
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        return _readable_collections_response()
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        sent_requests.append(json)
+        return _FakeResponse(200, _search_response(_chunk()))
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _fake_get)
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _fake_post)
+    monkeypatch.setattr('app.services.chat.settings.retrieval_query_rewrite_default', True)
+    seen = {}
+
+    def _fake_rewrite(bot, message, history, llm_provider):
+        seen['message'], seen['history'], seen['provider'] = message, history, llm_provider
+        return 'Kündigungsfrist bei Teilzeit laut Arbeitsvertrag'
+
+    monkeypatch.setattr('app.services.chat._rewrite_query', _fake_rewrite)
+
+    body = {
+        **_LEGAL_BODY,
+        'message': 'Und bei Teilzeit?',
+        'history': [
+            {'role': 'user', 'content': _KNOWLEDGE_QUESTION},
+            {'role': 'assistant', 'content': 'Drei Monate zum Quartalsende.'},
+        ],
+    }
+    resp = client.post('/internal/chat', json=body, headers=AUTH_HEADERS)
+    assert resp.status_code == 200
+    payload = resp.json()
+
+    assert sent_requests[0]['query'] == 'Kündigungsfrist bei Teilzeit laut Arbeitsvertrag'
+    assert payload['trace']['retrieval']['rewritten_query'] == 'Kündigungsfrist bei Teilzeit laut Arbeitsvertrag'
+    # The answering LLM still sees the ORIGINAL message, not the rewrite.
+    assert payload['answer'].startswith('[fake-llm] Und bei Teilzeit?')
+    assert seen['message'] == 'Und bei Teilzeit?'
+    assert [turn['role'] for turn in seen['history']] == ['user', 'assistant']
+    assert seen['provider'] is not None
+
+
+class _StubProvider:
+    def __init__(self, reply: str | Exception) -> None:
+        self.reply = reply
+        self.calls: list[dict] = []
+
+    def chat(self, messages, model=None, temperature=None):
+        from app.services.llm import LLMResult, LLMUsage
+
+        self.calls.append({'messages': messages, 'model': model, 'temperature': temperature})
+        if isinstance(self.reply, Exception):
+            raise self.reply
+        return LLMResult(content=self.reply, model=model or 'stub', usage=LLMUsage(prompt_tokens=1, completion_tokens=1))
+
+
+def _rewrite_bot(enabled: bool | None):
+    from app.services.botconfig import load_bot
+
+    bot = load_bot('legal-support')
+    return bot.model_copy(update={'retrieval': bot.retrieval.model_copy(update={'query_rewrite': enabled})})
+
+
+_HISTORY = [{'role': 'user', 'content': 'Welche Kündigungsfrist gilt?'}, {'role': 'assistant', 'content': 'Drei Monate.'}]
+
+
+@pytest.mark.parametrize(
+    ('reply', 'expected'),
+    [
+        ('"Kündigungsfrist bei Teilzeit"', 'Kündigungsfrist bei Teilzeit'),  # quotes + whitespace cleaned
+        ('Und bei Teilzeit?', None),  # identical to the message -> raw message is searched
+        ('   ', None),
+        ('x' * 600, None),  # implausibly long
+        (RuntimeError('provider down'), None),  # failure never breaks the turn
+    ],
+)
+def test_rewrite_query_cleans_or_rejects_the_llm_reply(reply, expected):
+    from app.services.chat import _rewrite_query
+
+    provider = _StubProvider(reply)
+    assert _rewrite_query(_rewrite_bot(True), 'Und bei Teilzeit?', _HISTORY, provider) == expected
+    assert provider.calls[0]['temperature'] == 0.0
+    assert provider.calls[0]['model'] == 'fake-chat'
+    prompt = provider.calls[0]['messages'][1]['content']
+    assert 'Nutzer: Welche Kündigungsfrist gilt?' in prompt
+    assert 'Assistent: Drei Monate.' in prompt
+    assert prompt.endswith('Letzte Nutzernachricht:\nUnd bei Teilzeit?')
+
+
+def test_rewrite_query_is_skipped_without_history_provider_or_opt_in(monkeypatch):
+    from app.services.chat import _rewrite_query
+
+    provider = _StubProvider('Eigenständige Frage')
+    assert _rewrite_query(_rewrite_bot(True), 'Frage?', [], provider) is None
+    assert _rewrite_query(_rewrite_bot(True), 'Frage?', _HISTORY, None) is None
+    assert _rewrite_query(_rewrite_bot(False), 'Frage?', _HISTORY, provider) is None
+    # None on the bot defers to the runtime default (off unless configured).
+    monkeypatch.setattr('app.services.chat.settings.retrieval_query_rewrite_default', False)
+    assert _rewrite_query(_rewrite_bot(None), 'Frage?', _HISTORY, provider) is None
+    monkeypatch.setattr('app.services.chat.settings.retrieval_query_rewrite_default', True)
+    assert _rewrite_query(_rewrite_bot(None), 'Frage?', _HISTORY, provider) == 'Eigenständige Frage'
+    assert len(provider.calls) == 1
+
+
+def test_rewrite_prompt_only_carries_the_most_recent_turns(monkeypatch):
+    from app.services.chat import _query_rewrite_messages
+
+    monkeypatch.setattr('app.services.chat.settings.retrieval_query_rewrite_history_turns', 2)
+    history = [{'role': 'user', 'content': f'Frage {index}'} for index in range(5)]
+    prompt = _query_rewrite_messages('Nachfrage', history)[1]['content']
+    assert 'Frage 3' in prompt and 'Frage 4' in prompt
+    assert 'Frage 2' not in prompt
 
 
 # --- guard flow: min_score drops weak rerank hits ---------------------------
@@ -321,7 +440,7 @@ def test_guard_flow_returns_no_collections_reply_when_the_user_cannot_read_the_b
 
     trace = body['trace']
     assert trace['intent'] == 'knowledge'
-    assert trace['retrieval'] == {'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': None}
+    assert trace['retrieval'] == {'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': None, 'rewritten_query': None}
     assert trace['guard'] == {'triggered': True, 'reason': 'no_collections'}
     assert trace['model'] is None
 
@@ -364,7 +483,7 @@ def test_collections_filter_restricts_the_effective_search_scope(monkeypatch):
 
     trace = body['trace']
     assert trace['retrieval'] == {
-        'candidates': 1, 'used': 1, 'collections': ['vertraege'], 'requested_collections': ['vertraege'],
+        'candidates': 1, 'used': 1, 'collections': ['vertraege'], 'requested_collections': ['vertraege'], 'rewritten_query': None,
     }
     assert trace['guard'] is None
     assert sent_requests[0]['allowed_collections'] == ['vertraege']
@@ -427,7 +546,7 @@ def test_collections_filter_naming_only_foreign_slugs_triggers_its_own_guard_rea
     trace = body['trace']
     assert trace['guard'] == {'triggered': True, 'reason': 'filter_excluded_all'}
     assert trace['retrieval'] == {
-        'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': ['geheimprojekt'],
+        'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': ['geheimprojekt'], 'rewritten_query': None,
     }
     assert trace['model'] is None
     assert body['sources'] == []
@@ -461,7 +580,7 @@ def test_no_collections_filter_is_byte_for_byte_the_pre_filter_behaviour(monkeyp
 
     trace = body['trace']
     assert trace['retrieval'] == {
-        'candidates': 1, 'used': 1, 'collections': ['vertraege', '__none__'], 'requested_collections': None,
+        'candidates': 1, 'used': 1, 'collections': ['vertraege', '__none__'], 'requested_collections': None, 'rewritten_query': None,
     }
     assert trace['guard'] is None
 

@@ -299,6 +299,8 @@ def _managed_bot(raw: dict) -> BotConfig:
                 'top_k': raw.get('top_k', 20),
                 'final_k': raw.get('final_k', 5),
                 'rerank': bool(raw.get('rerank', True)),
+                # Optional until Ingest's ManagedBot grows the column; absent = None = runtime default.
+                'query_rewrite': raw.get('query_rewrite'),
                 'include_uncollected': bool(raw.get('include_uncollected', True)) if is_llm else False,
             },
             'permissions': {
