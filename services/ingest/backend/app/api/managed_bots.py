@@ -501,6 +501,11 @@ def _owner_response(row: ManagedBot) -> ManagedBotOwnerResponse:
         collections=list(row.collections or []),
         require_sources=row.require_sources,
         no_context_reply=row.no_context_reply,
+        min_score=row.min_score,
+        clarify_below=row.clarify_below,
+        weak_context_below=row.weak_context_below,
+        query_rewrite=row.query_rewrite,
+        uncertainty_hint=row.uncertainty_hint,
         public=row.public,
         grants=_grant_responses(row),
         updated_at=row.updated_at,
@@ -582,6 +587,11 @@ def update_owned_bot(
         if not reply:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail='no_context_reply cannot be empty')
         row.no_context_reply = reply
+    for field in ('min_score', 'clarify_below', 'weak_context_below', 'query_rewrite'):
+        if field in payload.model_fields_set:
+            setattr(row, field, getattr(payload, field))
+    if payload.uncertainty_hint is not None:
+        row.uncertainty_hint = payload.uncertainty_hint
     if payload.public is not None:
         row.public = payload.public
     if payload.grants is not None:
