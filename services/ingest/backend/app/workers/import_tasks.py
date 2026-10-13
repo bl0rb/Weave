@@ -906,6 +906,10 @@ def _import_one_page(
         # fresh version-1 chain, exactly like a page seen for the first
         # time).
         state.visited[str(page.id)] = existing_state.job_id
+        # An unchanged page must not consume max_pages (checked against
+        # pages_discovered in _discover_children), or trees near the cap
+        # would silently stop discovering new pages on refresh.
+        run.pages_discovered = max(run.pages_discovered - 1, 0)
         state.add_child_title(parent_page_id, page.title)
         state.persist(run)
         _commit_owned(db, run.id, claimed_seq)
