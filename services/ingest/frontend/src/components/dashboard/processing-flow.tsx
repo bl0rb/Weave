@@ -786,7 +786,7 @@ export function ProcessingFlow() {
                 ref={singleFileInputRef}
                 type="file"
                 className="hidden"
-                accept=".pdf,.docx,.pptx,.xlsx,.xls,.png,.jpg,.jpeg,.eml,message/rfc822"
+                accept=".pdf,.docx,.pptx,.xlsx,.xls,.png,.jpg,.jpeg,.eml,.md,.xml,message/rfc822"
                 onChange={(event) => {
                   const file = event.currentTarget.files?.[0];
                   if (file) {
@@ -800,7 +800,7 @@ export function ProcessingFlow() {
                 type="file"
                 multiple
                 className="hidden"
-                accept=".pdf,.docx,.pptx,.xlsx,.xls,.png,.jpg,.jpeg,.eml,message/rfc822"
+                accept=".pdf,.docx,.pptx,.xlsx,.xls,.png,.jpg,.jpeg,.eml,.md,.xml,message/rfc822"
                 onChange={async (event) => {
                   const files = event.currentTarget.files;
                   if (files) {

@@ -10,7 +10,7 @@ from fastapi import HTTPException, UploadFile, status
 
 from app.core.config import settings
 
-ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.pptx', '.xlsx', '.xls', '.png', '.jpg', '.jpeg', '.eml'}
+ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.pptx', '.xlsx', '.xls', '.png', '.jpg', '.jpeg', '.eml', '.md', '.xml'}
 ALLOWED_MIME_TYPES = {
     'application/pdf',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -20,6 +20,11 @@ ALLOWED_MIME_TYPES = {
     'image/png',
     'image/jpeg',
     'message/rfc822',
+    'text/markdown',
+    'text/x-markdown',
+    'text/plain',
+    'application/xml',
+    'text/xml',
 }
 
 _EXTENSION_TO_MIME_TYPES: dict[str, set[str]] = {
@@ -32,6 +37,11 @@ _EXTENSION_TO_MIME_TYPES: dict[str, set[str]] = {
     '.jpg': {'image/jpeg'},
     '.jpeg': {'image/jpeg'},
     '.eml': {'message/rfc822'},
+    # Plain-text formats: converted without OCR (see paddle_service's
+    # `_text_document_to_markdown`); browsers announce .md as text/markdown
+    # or text/plain, .xml as application/xml or text/xml.
+    '.md': {'text/markdown', 'text/x-markdown', 'text/plain'},
+    '.xml': {'application/xml', 'text/xml'},
 }
 
 _GENERIC_MIME_TYPES = {'', 'application/octet-stream', 'binary/octet-stream'}
