@@ -1320,19 +1320,35 @@ def _build_clarification(
     """The clarifying question to ask instead of answering, or None to go
     on answering: `bot.guard.clarify_below` unset, no hits, no rerank
     scores at all (RRF scores are never thresholded, same as min_score),
-    or at least one hit scoring at/above the threshold. Options are the
+    or at least one hit scoring at/above the threshold AND no ambiguity
+    (fewer than two distinct documents within `clarify_ambiguous_margin`
+    of the best rerank score; margin None/0 turns that check off). Options are the
     distinct documents behind the hits, best rerank score first, capped at
     `clarify_max_options`. Deterministic -- no LLM involved."""
     threshold = bot.guard.clarify_below
     if threshold is None or not chunks:
         return None
     scored = [chunk for chunk in chunks if chunk.scores.rerank is not None]
-    if not scored or max(chunk.scores.rerank for chunk in scored) >= threshold:
+    if not scored:
+        return None
+    best = max(chunk.scores.rerank for chunk in scored)
+    margin = bot.guard.clarify_ambiguous_margin
+    # Weak (all below threshold) -> every document is a candidate; ambiguous
+    # (best is strong, but >= 2 documents sit within `margin` of it) -> only
+    # those documents are.
+    if best < threshold:
+        pool, question_text = scored, bot.guard.clarify_question
+    elif margin:
+        pool = [chunk for chunk in scored if chunk.scores.rerank >= best - margin]
+        if len({chunk.document_id for chunk in pool}) < 2:
+            return None
+        question_text = None
+    else:
         return None
     options: list[ClarificationOption] = []
     seen: set[str] = set()
     question = message.strip()
-    for chunk in sorted(scored, key=lambda chunk: chunk.scores.rerank, reverse=True):
+    for chunk in sorted(pool, key=lambda chunk: chunk.scores.rerank, reverse=True):
         if chunk.document_id in seen:
             continue
         seen.add(chunk.document_id)
@@ -1345,7 +1361,11 @@ def _build_clarification(
         ))
         if len(options) >= bot.guard.clarify_max_options:
             break
-    return Clarification(question=bot.guard.clarify_question, options=options)
+    if question_text is None:
+        question_text = bot.guard.clarify_ambiguous_question.replace(
+            '{documents}', ', '.join(option.label for option in options)
+        )
+    return Clarification(question=question_text, options=options)
 
 
 def _effective_min_score(bot: BotConfig) -> float | None:
