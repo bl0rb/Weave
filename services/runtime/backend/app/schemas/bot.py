@@ -381,6 +381,17 @@ class GuardConfig(BaseModel):
     # (app/schemas/chat.py) for how a caller can tell this happened.
     require_sources: bool = True
     no_context_reply: str = _DEFAULT_NO_CONTEXT_REPLY
+    # Minimum RERANK score (the cross-encoder's 0..1 relevance, see
+    # Weave-Retrieval's SearchScores.rerank) a retrieved chunk needs to
+    # reach the LLM at all. Chunks below it are dropped before the context
+    # block is built; drop them all and `require_sources` fires exactly as
+    # if retrieval had found nothing (`guard.reason='no_context'`). Only
+    # ever applied to chunks that HAVE a rerank score: RRF scores are
+    # rank-based, not calibrated, so with the reranker off or failed every
+    # chunk passes untouched. `None` (the default) defers to the runtime-
+    # wide GUARD_DEFAULT_MIN_SCORE (app/core/config.py), itself `None` by
+    # default -- i.e. no threshold at all unless someone sets one.
+    min_score: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class BotConfig(BaseModel):

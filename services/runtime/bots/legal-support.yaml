@@ -46,3 +46,8 @@ permissions:
 guard:
   require_sources: true
   no_context_reply: "Ich habe dazu keine belegten Informationen in den Rechtsdokumenten gefunden."
+  # Optional: Mindest-Rerank-Score (0..1), den ein Treffer braucht, um
+  # ueberhaupt ans LLM zu gehen -- greift nur, wenn Weave-Retrieval
+  # tatsaechlich rerankt (RERANK_PROVIDER=api); Treffer ohne Rerank-Score
+  # passieren immer. Fallen alle Treffer darunter, greift require_sources.
+  # min_score: 0.3

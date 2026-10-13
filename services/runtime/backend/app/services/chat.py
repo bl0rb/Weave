@@ -1146,8 +1146,10 @@ def _run_knowledge_turn(
     # already trimmed to `final_k` on its own side) is the exact set this
     # pipeline hands to the LLM/reports as `sources` below -- there is no
     # further filtering step on this side that would make the two diverge.
+    candidate_count = len(chunks)
+    chunks = _apply_min_score(chunks, _effective_min_score(bot))
     retrieval_trace = RetrievalTrace(
-        candidates=len(chunks), used=len(chunks), collections=allowed_collections,
+        candidates=candidate_count, used=len(chunks), collections=allowed_collections,
         requested_collections=requested_collections,
     )
 
@@ -1184,6 +1186,26 @@ def _run_knowledge_turn(
 # blocking`/`_stream_deferred_multi_agent` below) -- which can itself still
 # choose to research with just one agent per turn (its own planner's
 # "simple path").
+def _effective_min_score(bot: BotConfig) -> float | None:
+    """`bot.guard.min_score` if the bot sets one, else the runtime-wide
+    `settings.guard_default_min_score` -- see both fields' own docstrings."""
+    return bot.guard.min_score if bot.guard.min_score is not None else settings.guard_default_min_score
+
+
+def _apply_min_score(
+    chunks: list[retrieval_client.RetrievedChunk], min_score: float | None
+) -> list[retrieval_client.RetrievedChunk]:
+    """Drop every chunk whose RERANK score is below `min_score`, keeping
+    the order Weave-Retrieval returned. Chunks with no rerank score at all
+    (reranker not configured, or it failed this one call -- see
+    Weave-Retrieval's SearchTrace.rerank_error) are kept untouched: a
+    threshold meant for a calibrated 0..1 cross-encoder score must never
+    be applied to RRF's rank-based scores. `None` disables the filter."""
+    if min_score is None:
+        return chunks
+    return [chunk for chunk in chunks if chunk.scores.rerank is None or chunk.scores.rerank >= min_score]
+
+
 _AGENT_ELIGIBLE_INTENTS = frozenset({'knowledge', 'document', 'action', 'complex'})
 
 

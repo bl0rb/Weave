@@ -309,6 +309,8 @@ def _managed_bot(raw: dict) -> BotConfig:
             },
             'guard': {
                 'require_sources': bool(raw.get('require_sources', True)),
+                # Optional until Ingest's ManagedBot grows the column; absent = None = runtime default.
+                'min_score': raw.get('min_score'),
                 'no_context_reply': raw.get('no_context_reply') or 'Ich habe dazu keine belegten Informationen gefunden.',
             },
             'n8n': {

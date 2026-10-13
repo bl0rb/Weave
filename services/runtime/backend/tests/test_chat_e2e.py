@@ -233,6 +233,62 @@ def test_guard_flow_returns_no_context_reply_when_retrieval_finds_nothing(monkey
     assert trace['model'] is None  # the guard short-circuits before any LLM call
 
 
+# --- guard flow: min_score drops weak rerank hits ---------------------------
+
+
+def test_min_score_drops_weak_rerank_hits_but_keeps_unreranked_ones(monkeypatch):
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        return _readable_collections_response()
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        return _FakeResponse(200, _search_response(
+            _chunk(chunk_id=1, document_id='doc-1', scores={'vector': 0.7, 'fulltext': 0.4, 'rrf': 0.6, 'rerank': 0.95}),
+            _chunk(chunk_id=2, document_id='doc-2', scores={'vector': 0.6, 'fulltext': 0.4, 'rrf': 0.5, 'rerank': 0.12}),
+            # No rerank score (reranker off/failed): must pass regardless.
+            _chunk(chunk_id=3, document_id='doc-3', scores={'vector': 0.5, 'fulltext': 0.3, 'rrf': 0.4, 'rerank': None}),
+        ))
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _fake_get)
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _fake_post)
+    # legal-support.yaml leaves guard.min_score unset -> runtime default applies.
+    monkeypatch.setattr('app.services.chat.settings.guard_default_min_score', 0.5)
+
+    resp = client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS)
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert '[context:2]' in body['answer']
+    assert [source['document_id'] for source in body['sources']] == ['doc-1', 'doc-3']
+    assert body['trace']['retrieval']['candidates'] == 3
+    assert body['trace']['retrieval']['used'] == 2
+    assert body['trace']['guard'] is None  # guard did not fire
+
+
+def test_min_score_dropping_every_hit_fires_the_no_context_guard(monkeypatch):
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        return _readable_collections_response()
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        return _FakeResponse(200, _search_response(
+            _chunk(chunk_id=1, document_id='doc-1', scores={'vector': 0.7, 'fulltext': 0.4, 'rrf': 0.6, 'rerank': 0.2}),
+        ))
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _fake_get)
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _fake_post)
+    monkeypatch.setattr('app.services.chat.settings.guard_default_min_score', 0.5)
+
+    resp = client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS)
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert body['answer'] == 'Ich habe dazu keine belegten Informationen in den Rechtsdokumenten gefunden.'
+    assert body['sources'] == []
+    assert body['trace']['retrieval']['candidates'] == 1
+    assert body['trace']['retrieval']['used'] == 0
+    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_context'}
+    assert body['trace']['model'] is None
+
+
 # --- guard flow: no readable/allowed collection at all -----------------------
 
 

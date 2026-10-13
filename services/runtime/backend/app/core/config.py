@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     retrieval_base_url: str = 'http://localhost:8002'
     retrieval_api_token: str = ''
     retrieval_timeout_seconds: float = 10.0
+    # Runtime-wide fallback for `bot.guard.min_score` (app/schemas/bot.py):
+    # the minimum rerank score a retrieved chunk needs to reach the LLM,
+    # used for every bot that leaves its own `guard.min_score` unset. None
+    # = no threshold. Meaningful only once Weave-Retrieval actually reranks
+    # (RERANK_PROVIDER=api there); chunks without a rerank score always pass.
+    guard_default_min_score: float | None = None
 
     # --- LLM provider abstraction (see app/services -- filled in a later
     # stage). 'fake' is a deterministic, dependency-free provider so local
