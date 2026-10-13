@@ -235,6 +235,133 @@ def test_guard_flow_returns_no_context_reply_when_retrieval_finds_nothing(monkey
     assert trace['model'] is None  # the guard short-circuits before any LLM call
 
 
+# --- clarify guard: weak hits become a clarifying question -------------------
+
+
+def _clarify_bot(monkeypatch, **guard):
+    from app.services import chat as chat_module
+    from app.services.botconfig import load_bot
+
+    bot = load_bot('legal-support')
+    patched = bot.model_copy(update={'guard': bot.guard.model_copy(update={'clarify_below': 0.4, **guard})})
+    monkeypatch.setattr(chat_module, 'load_bot', lambda bot_id: patched)
+    return patched
+
+
+def test_clarify_guard_asks_instead_of_answering_when_every_hit_is_weak(monkeypatch):
+    _clarify_bot(monkeypatch)
+
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        return _readable_collections_response()
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        return _FakeResponse(200, _search_response(
+            _chunk(chunk_id=1, document_id='doc-1', heading_path=['Arbeitsvertrag', 'Kündigung'],
+                   scores={'vector': 0.5, 'fulltext': 0.3, 'rrf': 0.5, 'rerank': 0.21}),
+            _chunk(chunk_id=2, document_id='doc-2', heading_path=[], original_filename='betriebsvereinbarung.pdf',
+                   scores={'vector': 0.5, 'fulltext': 0.3, 'rrf': 0.5, 'rerank': 0.35}),
+            _chunk(chunk_id=3, document_id='doc-1', heading_path=['Arbeitsvertrag', 'Probezeit'],
+                   scores={'vector': 0.5, 'fulltext': 0.3, 'rrf': 0.5, 'rerank': 0.30}),
+        ))
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _fake_get)
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _fake_post)
+
+    resp = client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS)
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert body['answer'] == 'Ich bin mir nicht sicher, worauf sich deine Frage bezieht. Meinst du eines dieser Dokumente?'
+    assert body['sources'] == []
+    trace = body['trace']
+    assert trace['guard'] == {'triggered': True, 'reason': 'clarify'}
+    assert trace['retrieval']['candidates'] == 3
+    assert trace['retrieval']['used'] == 0
+    assert trace['model'] is None
+    # Best score first, one entry per document, label from heading / file name.
+    assert trace['clarification'] == {
+        'question': body['answer'],
+        'options': [
+            {
+                'label': 'betriebsvereinbarung',
+                'message': f'{_KNOWLEDGE_QUESTION} (Dokument: betriebsvereinbarung)',
+                'document_id': 'doc-2',
+                'collection': None,
+            },
+            {
+                'label': 'Arbeitsvertrag',
+                'message': f'{_KNOWLEDGE_QUESTION} (Dokument: Arbeitsvertrag)',
+                'document_id': 'doc-1',
+                'collection': None,
+            },
+        ],
+    }
+
+
+def test_clarify_guard_stays_silent_when_one_hit_is_strong_enough(monkeypatch):
+    _clarify_bot(monkeypatch)
+
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        return _readable_collections_response()
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        return _FakeResponse(200, _search_response(
+            _chunk(chunk_id=1, document_id='doc-1', scores={'vector': 0.5, 'fulltext': 0.3, 'rrf': 0.5, 'rerank': 0.4}),
+            _chunk(chunk_id=2, document_id='doc-2', scores={'vector': 0.5, 'fulltext': 0.3, 'rrf': 0.5, 'rerank': 0.1}),
+        ))
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _fake_get)
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _fake_post)
+
+    body = client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS).json()
+    assert '[context:2]' in body['answer']
+    assert body['trace']['guard'] is None
+    assert body['trace']['clarification'] is None
+
+
+def test_clarify_guard_never_fires_without_rerank_scores_or_hits(monkeypatch):
+    _clarify_bot(monkeypatch)
+
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        return _readable_collections_response()
+
+    responses = iter([
+        _search_response(_chunk(scores={'vector': 0.5, 'fulltext': 0.3, 'rrf': 0.5, 'rerank': None})),
+        _search_response(),
+    ])
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _fake_get)
+    monkeypatch.setattr(
+        'app.services.retrieval_client.httpx.post',
+        lambda url, headers=None, json=None, timeout=None: _FakeResponse(200, next(responses)),
+    )
+
+    unreranked = client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS).json()
+    assert '[context:1]' in unreranked['answer']
+    assert unreranked['trace']['clarification'] is None
+
+    empty = client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS).json()
+    assert empty['trace']['guard'] == {'triggered': True, 'reason': 'no_context'}
+    assert empty['trace']['clarification'] is None
+
+
+def test_clarify_options_are_capped_and_use_the_document_id_as_last_resort(monkeypatch):
+    bot = _clarify_bot(monkeypatch, clarify_max_options=2)
+    from app.services.chat import _build_clarification
+    from app.services.retrieval_client import RetrievedChunk, RetrievedChunkScores
+
+    def _hit(document_id, rerank):
+        return RetrievedChunk(
+            chunk_id=1, document_id=document_id, text='t', source='upload', original_filename=None,
+            page_start=None, page_end=None, document_version=1, heading_path=[],
+            scores=RetrievedChunkScores(rerank=rerank), collection='vertraege',
+        )
+
+    clarification = _build_clarification(bot, '  Frage?  ', [_hit('a', 0.1), _hit('b', 0.3), _hit('c', 0.2)])
+    assert [option.label for option in clarification.options] == ['b', 'c']
+    assert clarification.options[0].message == 'Frage? (Dokument: b)'
+    assert clarification.options[0].collection == 'vertraege'
+
+
 # --- history-aware query rewrite ---------------------------------------------
 
 

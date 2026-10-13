@@ -551,6 +551,9 @@ export function ChatApp() {
           messages={messages}
           assistantName={selectedBot?.name}
           onResetScopeAndRetry={handleResetScopeAndRetry}
+          onClarifyOption={(text) => {
+            void sendTurn(text, selectedCollections);
+          }}
           selectedSourceMessageId={activeSourceMessage?.id ?? null}
           onSelectForSourcesPanel={setSelectedSourceMessageId}
         />

@@ -57,3 +57,49 @@ describe('MessageBubble agent status chips', () => {
     expect(screen.getByText('Legal – fehlgeschlagen')).toBeTruthy();
   });
 });
+
+describe('MessageBubble clarification chips', () => {
+  afterEach(cleanup);
+
+  function clarifyMessage(): UiMessage {
+    const base = makeMessage([]);
+    return {
+      ...base,
+      streaming: false,
+      content: 'Meinst du eines dieser Dokumente?',
+      trace: {
+        intent: 'knowledge',
+        confidence: 0.9,
+        needs_retrieval: true,
+        needs_tool: false,
+        retrieval: null,
+        guard: { triggered: true, reason: 'clarify' },
+        model: null,
+        timings_ms: {},
+        n8n: null,
+        agent: null,
+        clarification: {
+          question: 'Meinst du eines dieser Dokumente?',
+          options: [
+            { label: 'Arbeitsvertrag', message: 'Frage? (Dokument: Arbeitsvertrag)', document_id: 'doc-1', collection: null },
+            { label: 'Betriebsvereinbarung', message: 'Frage? (Dokument: Betriebsvereinbarung)', document_id: 'doc-2', collection: null },
+          ],
+        },
+      } as unknown as UiMessage['trace'],
+    };
+  }
+
+  it('renders one chip per option and sends the ready-made follow-up on click', () => {
+    const sent: string[] = [];
+    render(<MessageBubble message={clarifyMessage()} onClarifyOption={(text) => sent.push(text)} />);
+    const group = screen.getByTestId('clarification-options');
+    expect(group.querySelectorAll('button')).toHaveLength(2);
+    (screen.getByRole('button', { name: 'Betriebsvereinbarung' }) as HTMLButtonElement).click();
+    expect(sent).toEqual(['Frage? (Dokument: Betriebsvereinbarung)']);
+  });
+
+  it('renders no chips without a handler', () => {
+    render(<MessageBubble message={clarifyMessage()} />);
+    expect(screen.queryByTestId('clarification-options')).toBeNull();
+  });
+});

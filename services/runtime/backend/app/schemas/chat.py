@@ -191,9 +191,38 @@ class RetrievalTrace(BaseModel):
     rewritten_query: str | None = None
 
 
+class ClarificationOption(BaseModel):
+    """One candidate document the bot offers back when it asks a clarifying
+    question (see `Clarification`). `message` is the ready-made follow-up a
+    client sends verbatim as the next user message when this option is
+    picked -- the original question plus the document, so the next turn's
+    retrieval lands on it even without `retrieval.query_rewrite`."""
+
+    label: str
+    message: str
+    document_id: str
+    collection: str | None = None
+
+
+class Clarification(BaseModel):
+    """The clarifying question the response guard asked INSTEAD of an
+    answer (`GuardTrace.reason == 'clarify'`, `bot.guard.clarify_below` --
+    app/schemas/bot.py): `question` is also the turn's `answer` text, the
+    `options` are the candidate documents behind the weak hits, best score
+    first, deduplicated by document."""
+
+    question: str
+    options: list[ClarificationOption]
+
+
 class GuardTrace(BaseModel):
     """Whether BotConfig.guard (app/schemas/bot.py) forced a fixed reply
-    instead of the LLM's own answer for this turn. Three possible `reason`s:
+    instead of the LLM's own answer for this turn. Four possible `reason`s:
+
+    - `'clarify'`: retrieval returned hits, but every rerank score stayed
+      below `bot.guard.clarify_below` -- the reply is the bot's
+      `clarify_question`, and `ChatTrace.clarification` carries the
+      candidate documents to offer. Fires before `min_score`/`no_context`.
 
     - `'no_context'`: retrieval actually ran but returned nothing usable
       (`bot.guard.require_sources` and zero chunks came back). Replies with
@@ -331,6 +360,8 @@ class ChatTrace(BaseModel):
     # and for a deferred (streaming) agent turn's own initial `trace` event
     # (the research loop hasn't run yet at that point).
     agent: AgentTrace | None = None
+    # Set exactly when `guard.reason == 'clarify'` -- see Clarification.
+    clarification: Clarification | None = None
 
 
 class ChatResponse(BaseModel):

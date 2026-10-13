@@ -376,6 +376,9 @@ class PermissionsConfig(BaseModel):
 # page -- see the module docstrings in app/main.py/app/core/auth.py for why
 # code and comments stay English while user-visible copy does not.
 _DEFAULT_NO_CONTEXT_REPLY = 'Ich habe dazu keine belegten Informationen gefunden.'
+_DEFAULT_CLARIFY_QUESTION = (
+    'Ich bin mir nicht sicher, worauf sich deine Frage bezieht. Meinst du eines dieser Dokumente?'
+)
 
 
 class GuardConfig(BaseModel):
@@ -402,6 +405,18 @@ class GuardConfig(BaseModel):
     # wide GUARD_DEFAULT_MIN_SCORE (app/core/config.py), itself `None` by
     # default -- i.e. no threshold at all unless someone sets one.
     min_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    # Clarifying question instead of a shaky answer: when retrieval DID
+    # return hits but even the best RERANK score stays below
+    # `clarify_below`, the bot asks `clarify_question` and offers up to
+    # `clarify_max_options` candidate documents (built from the hits
+    # themselves, deterministic, no LLM call) as `ChatTrace.clarification`
+    # -- the client renders them as one-click follow-ups. Same rerank-only
+    # rule as `min_score`: without rerank scores this never fires. Checked
+    # BEFORE `min_score`, so a bot can combine "ask below 0.4, drop below
+    # 0.2". `None` (the default) disables it.
+    clarify_below: float | None = Field(default=None, ge=0.0, le=1.0)
+    clarify_max_options: int = Field(default=3, ge=1, le=5)
+    clarify_question: str = _DEFAULT_CLARIFY_QUESTION
 
 
 class BotConfig(BaseModel):

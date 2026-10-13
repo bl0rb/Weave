@@ -36,7 +36,9 @@ interface GuardBannerProps {
  */
 export function GuardBanner({ guard, onResetScopeAndRetry }: GuardBannerProps) {
   const { t } = useI18n();
-  if (!guard.triggered) return null;
+  // A clarifying question is the answer itself (plus the option chips the
+  // message bubble renders) -- not a "nothing found" warning.
+  if (!guard.triggered || guard.reason === 'clarify') return null;
 
   return (
     <div className="mb-2 flex flex-col gap-2 rounded-[var(--radius-control)] border border-[var(--warn)]/30 bg-[var(--warn-bg)] px-3 py-2 text-xs text-[var(--warn)]">
