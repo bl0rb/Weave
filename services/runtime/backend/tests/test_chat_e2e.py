@@ -235,6 +235,87 @@ def test_guard_flow_returns_no_context_reply_when_retrieval_finds_nothing(monkey
     assert trace['model'] is None  # the guard short-circuits before any LLM call
 
 
+# --- uncertainty instruction after the context block -------------------------
+
+
+def _spy_fake_llm(monkeypatch):
+    from app.services.llm import FakeLLM
+
+    seen: list[list[dict[str, str]]] = []
+    original = FakeLLM.chat
+
+    def _chat(self, messages, model=None, temperature=None):
+        seen.append(messages)
+        return original(self, messages, model=model, temperature=temperature)
+
+    monkeypatch.setattr(FakeLLM, 'chat', _chat)
+    return seen
+
+
+def _guard_bot(monkeypatch, **guard):
+    from app.services import chat as chat_module
+    from app.services.botconfig import load_bot
+
+    bot = load_bot('legal-support')
+    monkeypatch.setattr(
+        chat_module, 'load_bot', lambda bot_id: bot.model_copy(update={'guard': bot.guard.model_copy(update=guard)})
+    )
+
+
+def _single_hit(monkeypatch, rerank):
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        return _readable_collections_response()
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        return _FakeResponse(200, _search_response(
+            _chunk(scores={'vector': 0.5, 'fulltext': 0.3, 'rrf': 0.5, 'rerank': rerank}),
+        ))
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _fake_get)
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _fake_post)
+
+
+def test_require_sources_bot_gets_the_uncertainty_instruction_after_the_context(monkeypatch):
+    from app.services.chat import _UNCERTAINTY_INSTRUCTION, _WEAK_CONTEXT_INSTRUCTION
+
+    seen = _spy_fake_llm(monkeypatch)
+    _single_hit(monkeypatch, rerank=0.95)
+
+    body = client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS).json()
+    assert '[context:1]' in body['answer']  # the source count is unaffected by the extra message
+
+    messages = seen[-1]
+    assert [turn['role'] for turn in messages] == ['system', 'system', 'system', 'user']
+    assert messages[1]['content'].startswith('Keep any relevant image markdown')
+    assert messages[2]['content'] == _UNCERTAINTY_INSTRUCTION
+    assert _WEAK_CONTEXT_INSTRUCTION not in messages[2]['content']
+    assert messages[3] == {'role': 'user', 'content': _KNOWLEDGE_QUESTION}
+
+
+@pytest.mark.parametrize(('rerank', 'weak_expected'), [(0.3, True), (0.5, False), (None, False)])
+def test_weak_context_hint_follows_the_best_rerank_score(monkeypatch, rerank, weak_expected):
+    from app.services.chat import _UNCERTAINTY_INSTRUCTION, _WEAK_CONTEXT_INSTRUCTION
+
+    seen = _spy_fake_llm(monkeypatch)
+    _guard_bot(monkeypatch, weak_context_below=0.5)
+    _single_hit(monkeypatch, rerank=rerank)
+
+    client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS)
+    instruction = seen[-1][2]['content']
+    assert instruction.startswith(_UNCERTAINTY_INSTRUCTION)
+    assert (_WEAK_CONTEXT_INSTRUCTION in instruction) is weak_expected
+
+
+@pytest.mark.parametrize('guard', [{'uncertainty_hint': False}, {'require_sources': False}])
+def test_uncertainty_instruction_is_omitted_when_switched_off(monkeypatch, guard):
+    seen = _spy_fake_llm(monkeypatch)
+    _guard_bot(monkeypatch, **guard)
+    _single_hit(monkeypatch, rerank=0.95)
+
+    client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS)
+    assert [turn['role'] for turn in seen[-1]] == ['system', 'system', 'user']
+
+
 # --- clarify guard: weak hits become a clarifying question -------------------
 
 

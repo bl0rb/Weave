@@ -55,3 +55,9 @@ guard:
   # Bot statt einer wackligen Antwort eine Rueckfrage mit bis zu
   # clarify_max_options Dokument-Vorschlaegen (trace.clarification).
   # clarify_below: 0.4
+  # Unsicherheits-Baustein (Default an bei require_sources): das LLM soll
+  # Luecken in den Quellen benennen und konkret nachfragen statt zu raten.
+  # Liegt der beste Rerank-Score unter weak_context_below, muss die Antwort
+  # zusaetzlich als unsicher gekennzeichnet werden.
+  # uncertainty_hint: true
+  # weak_context_below: 0.5

@@ -417,6 +417,19 @@ class GuardConfig(BaseModel):
     clarify_below: float | None = Field(default=None, ge=0.0, le=1.0)
     clarify_max_options: int = Field(default=3, ge=1, le=5)
     clarify_question: str = _DEFAULT_CLARIFY_QUESTION
+    # Uncertainty building block for the answer ITSELF (only together with
+    # `require_sources`): one extra system message after the context block
+    # (app/services/chat.py's `_uncertainty_instruction`) telling the LLM
+    # to answer from the sources alone, to name explicitly what they do
+    # NOT cover, and to ask one concrete follow-up question instead of
+    # guessing. `weak_context_below` (rerank score, 0..1) adds a second,
+    # stronger hint when even the best hit scores below it: the answer
+    # must flag itself as uncertain and ask what the question refers to.
+    # Rerank-only like `min_score`/`clarify_below`; sits naturally
+    # ABOVE `clarify_below` ("ask outright below 0.3, answer-but-hedge
+    # below 0.5").
+    uncertainty_hint: bool = True
+    weak_context_below: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class BotConfig(BaseModel):

@@ -1189,6 +1189,9 @@ def _run_knowledge_turn(
         )
 
     messages_with_context = [*messages, {'role': 'system', 'content': _context_block(chunks)}]
+    instruction = _uncertainty_instruction(bot, chunks)
+    if instruction is not None:
+        messages_with_context.append({'role': 'system', 'content': instruction})
     sources = [_to_source(chunk) for chunk in chunks]
     return _KnowledgeTurnResult(
         messages=messages_with_context, sources=sources, retrieval_trace=retrieval_trace, guard_triggered=False
@@ -1262,6 +1265,38 @@ def _rewrite_query(
     if not candidate or candidate == message.strip() or len(candidate) > _QUERY_REWRITE_MAX_CHARS:
         return None
     return candidate
+
+
+# German on purpose, like the bots' own system prompts (bots/*.yaml): this is
+# an instruction the answering LLM follows in the language it answers in.
+# Neither text starts a line with '[source', so FakeLLM's context-source
+# count (app/services/llm.py) is unaffected.
+_UNCERTAINTY_INSTRUCTION = (
+    'Antworte ausschließlich auf Basis der Quellen oben. Decken die Quellen die Frage nur teilweise ab, '
+    'sage ausdrücklich, welcher Teil nicht belegt ist, und stelle dazu eine konkrete Rückfrage, statt zu raten. '
+    'Widersprechen sich Quellen, benenne den Widerspruch, statt stillschweigend eine Seite zu wählen.'
+)
+_WEAK_CONTEXT_INSTRUCTION = (
+    'Hinweis: Die gefundenen Quellen passen nur schwach zur Frage. Mache in deiner Antwort deutlich, dass sie '
+    'unsicher ist, und frage nach, worauf sich die Frage genau bezieht, bevor du Details ableitest.'
+)
+
+
+def _uncertainty_instruction(bot: BotConfig, chunks: list[retrieval_client.RetrievedChunk]) -> str | None:
+    """The extra system message appended after the context block for a
+    `require_sources` bot with `guard.uncertainty_hint` (see that field's
+    own docstring), or None. Adds `_WEAK_CONTEXT_INSTRUCTION` when
+    `guard.weak_context_below` is set and even the best rerank score stays
+    below it; chunks without rerank scores never count as weak."""
+    if not (bot.guard.require_sources and bot.guard.uncertainty_hint):
+        return None
+    parts = [_UNCERTAINTY_INSTRUCTION]
+    threshold = bot.guard.weak_context_below
+    if threshold is not None:
+        scored = [chunk.scores.rerank for chunk in chunks if chunk.scores.rerank is not None]
+        if scored and max(scored) < threshold:
+            parts.append(_WEAK_CONTEXT_INSTRUCTION)
+    return '\n\n'.join(parts)
 
 
 def _clarification_label(chunk: retrieval_client.RetrievedChunk) -> str:
