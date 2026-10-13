@@ -209,6 +209,74 @@ def _looks_gibberish(token: str) -> bool:
     return False
 
 
+_MAX_FINDINGS = 200
+_SYMBOL_HEAVY_RATIO = 0.5
+_REPEATED_LINE_MIN_LENGTH = 8
+# Markdown rules / table separators are structural, not OCR noise.
+_STRUCTURAL_LINE_RE = re.compile(r'^[\s|:\-=_*]+$')
+# field_validation issues are plain strings; the offending raw text is either
+# right after the field name ('IBAN <raw>: ...') or the first quoted span.
+_ISSUE_PREFIX_RE = re.compile(r'^(?:IBAN|ICD-10-artiger Code|ICD-10) (.+?): ')
+_ISSUE_QUOTED_RE = re.compile(r"'([^']+)'")
+
+
+def _field_validation_findings(markdown: str, issues: Iterable[str]) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    searched_from: dict[str, int] = {}
+    for issue in issues:
+        match = _ISSUE_PREFIX_RE.match(issue) or _ISSUE_QUOTED_RE.search(issue)
+        if not match:
+            continue
+        needle = match.group(1)
+        offset = markdown.find(needle, searched_from.get(needle, 0))
+        if offset < 0:
+            continue
+        searched_from[needle] = offset + len(needle)
+        line_start = markdown.rfind('\n', 0, offset) + 1
+        findings.append({
+            'line': markdown.count('\n', 0, offset) + 1,
+            'column': offset - line_start + 1,
+            'kind': 'field_validation',
+            'text': issue,
+        })
+    return findings
+
+
+def quality_findings(markdown: str, field_issues: Iterable[str] = ()) -> list[dict[str, Any]]:
+    """Locate weak spots (1-based line/column) in `markdown`.
+
+    Reuses the heuristics behind `text_noise_penalty` (_TOKEN_RE,
+    _looks_gibberish, exact line repetition, symbol ratio) and the issues
+    already produced by field_validation; no new scoring.
+    """
+    findings: list[dict[str, Any]] = []
+    seen_lines: set[str] = set()
+    for number, line in enumerate(markdown.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        for token in _TOKEN_RE.finditer(line):
+            if _looks_gibberish(token.group(0)):
+                findings.append({'line': number, 'column': token.start() + 1, 'kind': 'gibberish', 'text': token.group(0)})
+        column = len(line) - len(line.lstrip()) + 1
+        key = stripped.lower()
+        if len(stripped) >= _REPEATED_LINE_MIN_LENGTH and any(c.isalnum() for c in stripped) and key in seen_lines:
+            findings.append({
+                'line': number,
+                'column': column,
+                'kind': 'repeated_line',
+                'text': stripped,
+            })
+        seen_lines.add(key)
+        if not _STRUCTURAL_LINE_RE.match(stripped):
+            symbols = sum(1 for c in stripped if not c.isalnum() and not c.isspace())
+            if symbols / len(stripped) > _SYMBOL_HEAVY_RATIO:
+                findings.append({'line': number, 'column': column, 'kind': 'symbol_heavy', 'text': stripped})
+    findings.extend(_field_validation_findings(markdown, field_issues))
+    findings.sort(key=lambda finding: (finding['line'], finding['column']))
+    return findings[:_MAX_FINDINGS]
+
+
 def evaluate_document_quality(
     markdown: str,
     *,
@@ -287,4 +355,7 @@ def evaluate_document_quality(
             'A': _QUALITY_THRESHOLD_A,
             'B': _QUALITY_THRESHOLD_B,
         },
+        # Absent on jobs finished before this key existed; readers must
+        # treat a missing value as "no findings".
+        'findings': quality_findings(markdown, field_issues),
     }

@@ -17,8 +17,9 @@ from app.services.quality_gate import evaluate_document_quality
 
 def edited_quality_gate(markdown: str) -> dict:
     """The quality gate the edited Markdown would get, without storing it."""
-    content = markdown.strip()
-    return evaluate_document_quality(content, field_validation=validate_document(content))
+    # Not stripped: findings carry line/column positions that must match the
+    # markdown stored verbatim in job.result_markdown.
+    return evaluate_document_quality(markdown, field_validation=validate_document(markdown))
 
 
 def record_markdown_version(db: Session, job: Job, markdown: str, now: datetime) -> int:

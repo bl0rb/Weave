@@ -133,6 +133,16 @@ export async function apiJson<T>(path: string, init?: ApiFetchInit): Promise<T> 
 }
 
 /** Filter value for GET /api/v1/auth/admin/worker-logs — acts as a floor (e.g. WARNING also returns ERROR/CRITICAL). */
+export type QualityFindingKind = 'gibberish' | 'repeated_line' | 'symbol_heavy' | 'field_validation';
+
+/** execution.quality_gate.findings entry; 1-based line/column in the result markdown. Absent on older jobs. */
+export interface QualityFinding {
+  line: number;
+  column: number;
+  kind: QualityFindingKind;
+  text: string;
+}
+
 export type LogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL';
 
 /**
