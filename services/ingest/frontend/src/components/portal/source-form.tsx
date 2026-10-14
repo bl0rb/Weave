@@ -8,6 +8,7 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { jsonBody, portalError, type KnowledgeSpace } from '@/lib/portal';
 import { accessSummary } from '@/lib/access-summary';
 import type { ImportSource, ImportRun } from '@/lib/imports';
+import { useImportSourceTest } from '@/lib/use-import-source-test';
 import { portalProfiles, type PortalProfile, type ProcessingProfile } from '@/lib/portal-profiles';
 import { ConfluenceSetupDialog } from '@/components/connections/confluence-setup-dialog';
 import { useI18n } from '@/i18n/provider';
@@ -71,6 +72,23 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
   const [sourceError, setSourceError] = useState('');
   const [sourcesLoaded, setSourcesLoaded] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
+  const { test: testSource, testingId, cooldownSecondsFor } = useImportSourceTest();
+  const [testMessage, setTestMessage] = useState('');
+  const selectedSource = sources.find(source => source.id === sourceId);
+  // The backend refuses import runs until the connection has been tested once.
+  const untested = Boolean(selectedSource) && !selectedSource?.server_kind;
+  const testCooldown = selectedSource ? cooldownSecondsFor(selectedSource.id) : 0;
+  async function testSelected() {
+    if (!selectedSource) return;
+    setTestMessage('');
+    const outcome = await testSource(selectedSource.id);
+    if (outcome.kind === 'result' && outcome.result.ok) {
+      setSources(current => current.map(entry => entry.id === selectedSource.id ? { ...entry, server_kind: outcome.result.server_kind ?? entry.server_kind, last_validated_at: new Date().toISOString() } : entry));
+      return;
+    }
+    if (outcome.kind === 'result') setTestMessage(`${t('portal.connections.confluence.testFailed')}${outcome.result.detail ? `: ${outcome.result.detail}` : ''}`);
+    else setTestMessage(outcome.rateLimited ? portalError(outcome.error, locale) : `${t('portal.connections.confluence.testFailed')}: ${portalError(outcome.error, locale)}`);
+  }
   // Someone choosing Confluence without a connection gets the setup right away -- once, not after every reload.
   const setupOffered = useRef(false);
   const [results, setResults] = useState<UploadResult[]>([]);
@@ -164,7 +182,8 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
         {kind === 'files' ? <label className="portal-upload">{t('portal.sourceForm.chooseFiles')}<RequiredMark /><input type="file" multiple required accept=".pdf,.docx,.pptx,.xlsx,.xls,.png,.jpg,.jpeg,.eml,.md,.xml" onChange={event => setFiles(Array.from(event.target.files || []))} /><span>{files.length ? t('portal.sourceForm.filesSelectedCount', { count: files.length }) : t('portal.sourceForm.filesPlaceholder')}</span><span>{t('portal.sourceForm.emailAttachmentsHint')}</span></label> : <div className="portal-form">
           {sourceError && <Notice error action={loadSources}>{sourceError}</Notice>}
           {sourcesLoaded && !sources.length && <p className="portal-field-hint">{t('portal.sourceForm.noConnectionHint')}</p>}
-          <label>{t('portal.sourceForm.connectionLabel')}<RequiredMark /><select required value={sourceId} onChange={event => { setSourceId(event.target.value); setAutomatic(false); }}><option value="">{t('portal.sourceForm.chooseConnection')}</option>{sources.map(source => <option key={source.id} value={source.id}>{source.name}</option>)}</select></label>
+          <label>{t('portal.sourceForm.connectionLabel')}<RequiredMark /><select required value={sourceId} onChange={event => { setSourceId(event.target.value); setAutomatic(false); setTestMessage(''); }}><option value="">{t('portal.sourceForm.chooseConnection')}</option>{sources.map(source => <option key={source.id} value={source.id}>{source.name}</option>)}</select></label>
+          {untested && <p className="portal-field-hint" role="status">{t('portal.sourceForm.untestedHint')} <button type="button" className="portal-inline-link" disabled={testingId !== null || testCooldown > 0} onClick={() => void testSelected()}>{testingId !== null ? t('portal.connections.confluence.testing') : testCooldown > 0 ? t('portal.connections.confluence.testWithCooldown', { seconds: testCooldown }) : t('portal.connections.confluence.test')}</button>{testMessage && <> {testMessage}</>}</p>}
           <div className="flex flex-wrap gap-x-6"><button type="button" className="portal-inline-link" onClick={() => setSetupOpen(true)}><Plus size={14} />{t('portal.sourceForm.setupConnectionButton')}</button><Link className="portal-inline-link" href="/connections">{t('portal.sourceForm.setupConnectionLink')} <ArrowRight size={14} /></Link></div>
           <label>{t('portal.sourceForm.pageLabel')}<RequiredMark /><input required type="url" value={pageUrl} onChange={event => setPageUrl(event.target.value)} placeholder="https://confluence.example.com/..." /></label><p className="portal-field-hint">{t('portal.sourceForm.subpagesHint')}</p>
           <label className="portal-choice"><input type="checkbox" checked={automatic} onChange={event => setAutomatic(event.target.checked)} />{t('portal.sourceForm.autoRefreshLabel')}</label><p className="portal-field-hint">{t('portal.sourceForm.autoRefreshHint')}</p>
@@ -188,7 +207,7 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
           <p id="profile-scope" className="portal-field-hint">{kind === 'confluence' ? t('portal.sourceForm.profileScopeConfluence') : t('portal.sourceForm.profileScopeFiles')}</p>
         </details>}
       </fieldset>
-      <div className="portal-source-summary"><ShieldNotice /><div className="portal-form-actions"><Button type="submit" disabled={saving || !selected || !selectedProfile || Boolean(run) || (kind === 'files' ? files.length === 0 : !sourceId || !pageUrl.trim() || !confirmedAccess)}>{saving ? t('common.starting') : kind === 'files' ? t('portal.sourceForm.uploadSubmit') : t('portal.sourceForm.importSubmit')}</Button><Link href={initialCollection ? `/knowledge/${encodeURIComponent(initialCollection)}` : '/knowledge'} className={buttonVariants({ variant: 'ghost' })}>{t('common.cancel')}</Link></div></div>
+      <div className="portal-source-summary"><ShieldNotice /><div className="portal-form-actions"><Button type="submit" disabled={saving || !selected || !selectedProfile || Boolean(run) || (kind === 'files' ? files.length === 0 : !sourceId || untested || !pageUrl.trim() || !confirmedAccess)}>{saving ? t('common.starting') : kind === 'files' ? t('portal.sourceForm.uploadSubmit') : t('portal.sourceForm.importSubmit')}</Button><Link href={initialCollection ? `/knowledge/${encodeURIComponent(initialCollection)}` : '/knowledge'} className={buttonVariants({ variant: 'ghost' })}>{t('common.cancel')}</Link></div></div>
     </form>}
     {/* Outside the form above: the dialog has a form of its own. */}
     {setupOpen && <ConfluenceSetupDialog onClose={() => setSetupOpen(false)} onCreated={source => {
