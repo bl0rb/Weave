@@ -774,6 +774,111 @@ Konten werden **ausschließlich über den OIDC-Subject** verknüpft, nie über d
 E-Mail-Adresse: sonst könnte sich jemand mit derselben Adresse bei einem anderen
 Provider auf ein bestehendes Konto aufschalten.
 
+### 8.3 Teams und Rollen aus den Token-Gruppen
+
+Gilt für die OIDC-Verbindungen in Ingest (8.1), eingestellt pro Verbindung
+unter `/admin/menschen` → Anmeldung. Beides liest denselben **Gruppen-Claim**
+(Vorgabe `groups`) aus dem ID-Token; fehlt er dort, ergänzt Ingest ihn aus
+dem Userinfo-Endpunkt. Ausgewertet wird bei jedem Login, nicht laufend.
+
+**Gruppen aus Token übernehmen** macht aus jeder Gruppe ein Team. Fehlende
+Teams werden angelegt (ein führender `/` aus Keycloak-Gruppenpfaden fällt
+weg), ein noch nicht verknüpftes Team gleichen Namens wird übernommen.
+Danach bleibt das Team über die Gruppe verknüpft und darf umbenannt werden.
+Mitgliedschaften aus dem Token kommen hinzu und gehen wieder; von Hand
+vergebene bleiben unangetastet.
+
+**Admin-Gruppe** und **Bot-Admin-Gruppe** leiten die Rolle ab:
+
+| Im Token | Rolle |
+|---|---|
+| Admin-Gruppe | `admin` |
+| nur Bot-Admin-Gruppe | `bot_admin` — verwaltet alle Bots unter `/admin/wissen`, sonst nichts |
+| keine der beiden | `user` |
+
+Regeln, damit der IdP nichts kaputtmacht:
+
+- **Von Hand vergebene Rollen werden nur angehoben, nie abgesenkt.** Eine Rolle,
+  die aus der Gruppe kam (in der Benutzerliste „aus Login-Gruppe"), fällt
+  dagegen wieder weg, wenn die Person die Gruppe verlässt — auf `user`, auch
+  wenn sie vorher von Hand `bot_admin` war. Wer die Rolle in der
+  Benutzerverwaltung selbst setzt, pinnt sie: Der IdP senkt sie danach nicht
+  mehr ab.
+- **Der letzte aktive Admin bleibt Admin**, auch wenn er die Gruppe verlässt
+  (Warnung im Worker-Log).
+- **Fehlt der Claim, ändert sich nichts** — weder Teams noch Rolle. Bei Entra ID
+  passiert das bei zu vielen Gruppen (Overage, `_claim_names`).
+
+Zwei Dinge, die still schiefgehen:
+
+- **Der Entzug wirkt erst beim nächsten Login.** Wer aus der Admin-Gruppe
+  entfernt wird, behält die Rolle in laufenden Sitzungen. Sofort geht es nur
+  über die Benutzerverwaltung (Rolle setzen oder Konto deaktivieren).
+- **Entra liefert Gruppen-IDs, keine Namen.** Admin- und Bot-Admin-Gruppe dann
+  als Object-ID eintragen, und neue Teams heißen zunächst wie die ID. Keine
+  Gruppe eintragen, die Nutzer selbst anlegen oder der sie selbst beitreten
+  können — deren Mitglieder würden Admin.
+
+### 8.4 Einrichtung beim IdP: Keycloak und Entra ID
+
+Für beide gilt: Redirect-URI ist
+`{PUBLIC_API_URL}/api/v1/auth/oidc/{slug}/callback` (`slug` = Kürzel der
+Verbindung in Ingest), zeichengleich beim IdP hinterlegt. Scopes bleiben
+`openid profile email`. Nach dem Speichern den Testknopf der Verbindung
+drücken, dann einmal mit einem Testkonto anmelden und im Worker-Log
+(`/admin/verarbeitung` → Worker-Logs) nach `oidc group sync` / `oidc role
+sync` sehen — dort steht auch, wenn der Claim fehlt.
+
+**Keycloak**
+
+| Wo | Einstellung |
+|---|---|
+| Ingest: Issuer | `https://<host>/realms/<realm>` |
+| Client → Settings | *Client authentication* an (vertraulicher Client), nur *Standard flow* |
+| Client → Credentials | Client-Secret nach Ingest kopieren |
+| Client → Client scopes → `<client>-dedicated` → *Add mapper* → *By configuration* → **Group Membership** | *Token Claim Name* `groups`, *Full group path* **aus**, *Add to ID token* an, *Add to userinfo* an |
+| Ingest: Verbindung | *Gruppen aus Token übernehmen* an, Gruppen-Claim `groups`, Admin-Gruppe z. B. `weave-admins`, Bot-Admin-Gruppe `weave-bot-admins` |
+
+*Full group path* aus liefert `weave-admins` statt `/weave-admins`. Bleibt er
+an, musst du die Admin- und Bot-Admin-Gruppe **mit** führendem `/` eintragen
+(`/weave-admins`), denn verglichen wird der Wert genau so, wie er im Token
+steht; nur der Teamname lässt den `/` weg. Mit Pfaden bleiben gleichnamige
+Untergruppen (`/vertrieb/nord`, `/service/nord`) unterscheidbar, ohne heißen
+beide `nord` und landen im selben Team — bei verschachtelten Gruppen also an
+lassen.
+
+**Microsoft Entra ID**
+
+| Wo | Einstellung |
+|---|---|
+| Ingest: Issuer | `https://login.microsoftonline.com/<tenant-id>/v2.0` |
+| Ingest: Verbindung | *E-Mail als Benutzername* an (`preferred_username` ist bei Entra ein UPN) |
+| App-Registrierung → Authentifizierung | Plattform *Web*, Redirect-URI wie oben |
+| App-Registrierung → Zertifikate & Geheimnisse | Geheimer Clientschlüssel nach Ingest kopieren; Ablaufdatum notieren — danach schlägt jeder Login fehl |
+| App-Registrierung → Tokenkonfiguration → *Gruppenanspruch hinzufügen* | **Der Anwendung zugewiesene Gruppen**, im ID-Token als *Gruppen-ID* |
+| Unternehmensanwendung → Benutzer und Gruppen | Die Gruppen zuweisen, die Weave sehen soll (inklusive Admin- und Bot-Admin-Gruppe) |
+| Ingest: Verbindung | Gruppen-Claim `groups`, Admin- und Bot-Admin-Gruppe als **Object-ID** der Entra-Gruppe |
+
+Warum *der Anwendung zugewiesene Gruppen* statt *Sicherheitsgruppen*: Entra
+schreibt höchstens 200 Gruppen ins Token, darüber nur einen Verweis auf
+Graph (Overage). Den liest Ingest nicht — Teams und Rolle bleiben dann
+unverändert (8.3). Mit zugewiesenen Gruppen stehen nur die für Weave
+relevanten im Token, und die Grenze ist praktisch nie erreicht. Das Zuweisen
+von Gruppen an eine Unternehmensanwendung braucht Entra ID P1; ohne P1 bleibt
+nur *Sicherheitsgruppen*, mit dem Overage-Risiko bei Konten in vielen Gruppen.
+
+Teams aus Entra heißen zunächst wie die Object-ID. Einmal in der
+Teamverwaltung umbenennen genügt — die Verknüpfung hängt an der ID, nicht am
+Namen.
+
+Nur Rollen, keine Teams? Dann statt Gruppen **App-Rollen** nutzen:
+Unter App-Registrierung → App-Rollen z. B. `Weave.Admin` und `Weave.BotAdmin`
+anlegen (zulässige Mitgliedertypen: Benutzer/Gruppen) und unter
+Unternehmensanwendung → Benutzer und Gruppen zuweisen. Entra schreibt sie als
+`roles` ins ID-Token; in Ingest Gruppen-Claim `roles`, Admin-Gruppe
+`Weave.Admin`, Bot-Admin-Gruppe `Weave.BotAdmin` und *Gruppen aus Token
+übernehmen* **aus** — sonst würden die App-Rollen zu Teams.
+
 ---
 
 ## 9. n8n und MCP
