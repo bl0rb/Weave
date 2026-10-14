@@ -69,10 +69,13 @@ export function MessageBubble({
     <div className={cn('flex', isUser ? 'justify-end' : 'justify-start')}>
       <div
         className={cn(
-          'max-w-[80ch] rounded-[var(--radius-card)] px-4 py-3 text-sm leading-relaxed',
+          'rounded-[var(--radius-card)] px-4 py-3 text-sm leading-relaxed',
           isUser
-            ? 'bg-[var(--accent)] text-[var(--on-accent)]'
-            : 'border border-[var(--line)] bg-[var(--surface)] text-[var(--ink)]'
+            ? 'max-w-[80ch] bg-[var(--accent)] text-[var(--on-accent)]'
+            // An answer sizes itself by its content: running text stays at
+            // a readable 80ch (see globals.css's `.chat-answer` rules), while
+            // a wide table, code block or image may use the whole column.
+            : 'chat-answer min-w-0 max-w-full border border-[var(--line)] bg-[var(--surface)] text-[var(--ink)]'
         )}
       >
         {!isUser ? (
@@ -211,7 +214,7 @@ function AnswerHead({
   // (mounted with working=false) stays static.
   const [live] = useState(working);
   return (
-    <div className="mb-2 flex flex-wrap items-center gap-2">
+    <div className="chat-answer-head mb-2 flex flex-wrap items-center gap-2">
       <WeaveLogo className="h-6 w-6 flex-none" animation={working ? 'loop' : live ? 'finite' : undefined} />
       <span className="text-[13px] font-semibold">{assistantName}</span>
       {sourceCount > 0 ? (
