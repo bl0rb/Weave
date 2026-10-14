@@ -104,6 +104,23 @@ def test_keda_replaces_the_ocr_hpa_and_keeps_passwords_out_of_the_manifest() -> 
     }
 
 
+def test_tools_mcp_ingress_is_off_by_default_and_targets_the_mcp_service() -> None:
+    assert "t-weave-tools-mcp" not in _kinds(_docs(), "Ingress")
+    docs = _docs("ingress.toolsMcp.enabled=true", "ingress.toolsMcp.hosts[0].host=mcp.example.org")
+    ingress = next(doc for doc in docs if doc["kind"] == "Ingress" and doc["metadata"]["name"] == "t-weave-tools-mcp")
+    rule = ingress["spec"]["rules"][0]
+    assert rule["host"] == "mcp.example.org"
+    backend = rule["http"]["paths"][0]["backend"]["service"]
+    assert backend == {"name": "t-weave-tools-mcp", "port": {"number": 8000}}
+    # Die Discovery-Pfade der Clients laufen ueber die Vorgabe "/".
+    assert rule["http"]["paths"][0]["path"] == "/"
+    # requireIngressHosts und die Deployment-Pruefung gelten auch hier.
+    assert _render("ingress.toolsMcp.enabled=true").returncode != 0
+    assert _render(
+        "ingress.toolsMcp.enabled=true", "ingress.toolsMcp.hosts[0].host=mcp.example.org", "toolsBackend.mcp.enabled=false",
+    ).returncode != 0
+
+
 def test_max_connections_is_set_on_bundled_and_cnpg_postgres() -> None:
     bundled = next(
         doc for doc in _docs() if doc["kind"] == "Deployment" and doc["metadata"]["name"] == "t-weave-postgres"
