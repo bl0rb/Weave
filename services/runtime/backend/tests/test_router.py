@@ -46,6 +46,41 @@ def test_knowledge_question_routes_to_knowledge_when_bot_has_retrieval():
     assert decision.needs_tool is False
 
 
+def test_available_knowledge_question_is_conversational_even_with_retrieval():
+    # Answered from the system prompt's knowledge overview (app/services/
+    # chat.py's `_knowledge_overview_block`), never via retrieval + guard.
+    for message in (
+        'Welches Wissen steht mir zur Verfügung?',
+        'Welche Themen hast du?',
+        'Was weißt du?',
+        'Wobei kannst du mir helfen?',
+        'Which topics are available?',
+        'What do you know?',
+    ):
+        decision = route(message, _bot(retrieval_enabled=True))
+        assert decision.intent == 'conversational', message
+        assert decision.needs_retrieval is False, message
+
+
+def test_real_knowledge_questions_about_documents_still_route_to_knowledge():
+    # A topic attached (preposition between noun and cue, or after the cue)
+    # means a real question: retrieval and the guard must run.
+    for message in (
+        'Welche Dokumente regeln die Urlaubsplanung?',
+        'Was weißt du über die Kündigungsfrist?',
+        'Welche Informationen stehen im Arbeitsvertrag zur Kündigungsfrist?',
+        'Welche Daten stehen in der Tabelle?',
+        'Welche Dokumente gibt es zum Thema Urlaub?',
+        'Welche Dokumente zum Thema Urlaub gibt es?',
+        'Welche Themen kannst du mir zur Reisekostenrichtlinie nennen?',
+        'Welche Informationen hast du zum Arbeitsvertrag?',
+        'What information do you have about the contract?',
+        'Which documents are there for the onboarding?',
+    ):
+        decision = route(message, _bot(retrieval_enabled=True))
+        assert decision.intent == 'knowledge', message
+
+
 def test_action_imperative_routes_to_action():
     decision = route('Buche mir einen Flug nach München.', _bot(retrieval_enabled=False))
     assert decision.intent == 'action'
