@@ -1338,3 +1338,24 @@ ingress:
       nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
     hosts: []
     tls: []
+  toolsMcp:
+    # Der MCP-Server (toolsBackend.mcp) fuer Clients wie VS Code oder Claude
+    # Code per SSO, siehe docs/integrations/vscode-mcp-sso.md. Nur
+    # einschalten, wenn in config.tools MCP_OAUTH_ISSUER und
+    # MCP_OAUTH_RESOURCE_URL gesetzt sind -- ohne OAuth stuende der Dienst
+    # ungeschuetzt im Netz. MCP_ALLOWED_HOSTS muss den Hostnamen von unten
+    # enthalten, sonst antwortet der Dienst auf jede Anfrage mit 421. Die
+    # Vorgabe path "/" reicht neben /mcp auch die Discovery-Pfade
+    # /.well-known/oauth-protected-resource und
+    # /.well-known/oauth-protected-resource/mcp durch, die die Clients
+    # brauchen; wer Pfade einschraenkt, muss diese drei behalten.
+    enabled: false
+    className: ""
+    # MCP streamt ueber laengere Verbindungen -- dieselben Vorgaben wie bei
+    # ingress.chat.annotations.
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-buffering: "off"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    hosts: []
+    tls: []

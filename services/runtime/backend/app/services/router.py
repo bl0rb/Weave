@@ -145,6 +145,41 @@ _ACTION_PATTERNS = _boundary_patterns('buche', 'sende', 'storniere') + (
     re.compile(r'\blege\b.*\ban\b'),
 )
 
+# "What do you know about?": the person asks which knowledge, topics,
+# sources or documents the bot itself has available. Answered from the
+# knowledge overview in the system prompt (app/services/chat.py's
+# `_knowledge_overview_block`), so it must NOT go through retrieval -- a
+# search for "which topics are available" finds nothing and the guard would
+# answer instead. Each pattern needs an availability cue ('verfügbar',
+# 'hast du', 'available', ...) or a bare "was weißt du?", AND no topic
+# attached: a preposition (über/zu/im/about/on/...) between the noun and the
+# cue or right after the cue means the person asks about something specific
+# -- "Welche Informationen stehen im Arbeitsvertrag?", "Welche Dokumente
+# gibt es zum Thema Urlaub?", "What information do you have about the
+# contract?" -- which must still route to 'knowledge' so retrieval and the
+# guard run. Only a topic-free "Welche Themen hast du?" is an overview ask.
+_DE_TOPIC_PREPOSITION = r'(?:über|ueber|zu|zum|zur|im|in|von|vom|aus|für|fuer|bei|an|am)'
+_EN_TOPIC_PREPOSITION = r'(?:about|on|regarding|concerning|for|in|of|from)'
+_KNOWLEDGE_OVERVIEW_PATTERNS = (
+    re.compile(
+        r'\b(?:welche[sn]?|was für)\b.{0,40}\b(?:wissen|wissensbereich\w*|wissensr[äa]e?um\w*|themen\w*|quellen|'
+        r'dokumente|informationen|inhalte|daten)\b'
+        r'(?:(?!\b' + _DE_TOPIC_PREPOSITION + r'\b).){0,40}'
+        r'\b(?:verfügbar|verfuegbar|vorhanden|zur verfügung|zur verfuegung|zugriff|hast du|kennst du|gibt es|kannst du)\b'
+        r'(?!\s+(?:mir\s+|uns\s+)?' + _DE_TOPIC_PREPOSITION + r'\b)'
+    ),
+    re.compile(r'\b(?:was|worüber|worueber)\s+(?:weißt|weisst)\s+du\s*(?:alles|denn|so|eigentlich)?\s*\??\s*$'),
+    re.compile(r'\b(?:wobei|womit|wozu)\s+kannst\s+du\s+(?:mir\s+)?helfen\b'),
+    re.compile(
+        r'\b(?:what|which)\b.{0,40}\b(?:knowledge|topics?|sources?|documents?|information)\b'
+        r'(?:(?!\b' + _EN_TOPIC_PREPOSITION + r'\b).){0,40}'
+        r'\b(?:available|do you have|can you access|have you got|is there|are there|do you know|can you)\b'
+        r'(?!\s+(?:me\s+)?' + _EN_TOPIC_PREPOSITION + r'\b)'
+    ),
+    re.compile(r'\bwhat\s+do\s+you\s+know\s*\??\s*$'),
+    re.compile(r'\bwhat\s+can\s+you\s+help\b'),
+)
+
 # Multi-step/comparison: 'vergleich\w*' covers 'vergleiche/vergleichen/...'.
 _COMPLEX_PATTERNS = (
     re.compile(r'\bvergleich\w*\b.*\b(?:und|oder)\b'),
@@ -170,6 +205,8 @@ def _matched_rules_intent(message: str) -> Intent | None:
     """
     if any(pattern.search(message) for pattern in _GREETING_PATTERNS):
         return 'conversational'
+    if any(pattern.search(message) for pattern in _KNOWLEDGE_OVERVIEW_PATTERNS):
+        return 'conversational'
     if any(pattern.search(message) for pattern in _DOCUMENT_PATTERNS):
         return 'document'
     if any(pattern.search(message) for pattern in _ACTION_PATTERNS):
@@ -192,7 +229,9 @@ def _decide_rules(message: str, bot: BotConfig) -> RouterDecision:
 _LLM_SYSTEM_PROMPT = (
     'You are an intent classifier for a chat routing system. Classify the '
     "user's next message into exactly one of these intents:\n"
-    '- conversational: greetings, small talk, thanks\n'
+    '- conversational: greetings, small talk, thanks, and questions about which '
+    "knowledge, topics or sources the bot itself has available (answered from the bot's "
+    'own configuration, not from the knowledge base)\n'
     "- knowledge: a question answerable from the bot's knowledge base\n"
     '- document: the user is handing over a document/text of their own to '
     'process directly (summarize, translate, ...)\n'

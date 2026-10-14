@@ -1,20 +1,32 @@
 {{/*
 ===========================================================================
-Die vier Dienste, die ueberhaupt nach aussen duerfen.
+Die fuenf Dienste, die ueberhaupt nach aussen duerfen.
 
 Alles andere spricht nur clusterintern miteinander und gehoert nicht ins
 Internet -- insbesondere nicht retrieval, runtime und toolsBackend, die
-nur ein statisches Bearer-Token trennt, und erst recht nicht der
-MCP-Server, der gar kein eigenes Diensttoken hat (siehe
-tools-deployment.yaml). Deshalb gibt es hier genau vier Eintraege und kein
-Muster, mit dem sich ein fuenfter aus values.yaml nachschieben liesse.
+nur ein statisches Bearer-Token trennt. Deshalb gibt es hier genau fuenf
+Eintraege und kein Muster, mit dem sich ein sechster aus values.yaml
+nachschieben liesse.
 
-WARUM EINE DATEI STATT VIER
+Der MCP-Server (toolsMcp) darf nur nach aussen, wenn er jede Anfrage selbst
+per OAuth prueft (services/tools/app/mcp_auth.py): MCP_OAUTH_ISSUER und
+MCP_OAUTH_RESOURCE_URL muessen in config.tools gesetzt sein, sonst steht
+der Dienst ohne Anmeldung im Netz. Ausserdem muss MCP_ALLOWED_HOSTS den
+oeffentlichen Hostnamen enthalten -- die Vorgabe kennt nur den
+clusterinternen Service-Namen, und auf einen fremden Host-Header antwortet
+der Dienst mit 421. Clients (VS Code, Claude Code) brauchen ausser /mcp
+auch /.well-known/oauth-protected-resource und
+/.well-known/oauth-protected-resource/mcp, daher die Vorgabe path "/"
+(siehe docs/integrations/vscode-mcp-sso.md).
 
-Die vier Ingresses unterscheiden sich nur in drei Angaben (Schluessel in
-.Values.ingress, Komponentenname des Services, Port). Als vier fast
-gleiche Dateien waere die Pruefung requireIngressHosts vier Mal zu
-vergessen; als eine Tabelle gilt sie fuer alle vier.
+WARUM EINE DATEI STATT FUENF
+
+Die fuenf Ingresses unterscheiden sich nur in drei Angaben (Schluessel in
+.Values.ingress, Komponentenname des Services, Port). Als fuenf fast
+gleiche Dateien waere die Pruefung requireIngressHosts fuenf Mal zu
+vergessen; als eine Tabelle gilt sie fuer alle fuenf. toolsMcp liegt in
+values.yaml unter toolsBackend.mcp, nicht auf oberster Ebene -- daher die
+Eintraege "values" und "enabled" in der Liste (dasselbe Muster wie hpa.yaml).
 
 WARUM KEIN VORGABE-HOSTNAME
 
@@ -34,7 +46,10 @@ zusammengefuehrt.
       (dict "key" "ingestFrontend" "component" "ingest-frontend" "workload" "ingestFrontend")
       (dict "key" "ingestBackend"  "component" "ingest-backend"  "workload" "ingestBackend")
       (dict "key" "chat"           "component" "chat"            "workload" "chat")
-      (dict "key" "api"            "component" "api"             "workload" "api") }}
+      (dict "key" "api"            "component" "api"             "workload" "api")
+      (dict "key" "toolsMcp"       "component" "tools-mcp"       "workload" "toolsBackend.mcp"
+            "values" .Values.toolsBackend.mcp
+            "enabled" (and .Values.toolsBackend.enabled .Values.toolsBackend.mcp.enabled)) }}
 {{- range $i := $ingresses }}
 {{- $ing := get $.Values.ingress $i.key }}
 {{/* Die Pruefung laeuft VOR dem enabled-Zweig, damit ein eingeschalteter
@@ -43,11 +58,12 @@ zusammengefuehrt.
 {{- include "weave.requireIngressHosts" (dict "ctx" $ "name" $i.key) }}
 {{- if $ing.enabled }}
 {{- include "weave.validate" $ }}
-{{- $workload := get $.Values $i.workload }}
+{{- $workload := $i.values | default (get $.Values $i.workload) }}
+{{- $workloadEnabled := ternary $i.enabled $workload.enabled (hasKey $i "enabled") }}
 {{/* Ein Ingress auf einen abgeschalteten Dienst zeigt auf einen Service,
      den dieses Release nicht anlegt. Der Ingress-Controller meldet das als
      503 ohne Hinweis auf die Ursache -- also lieber hier abbrechen. */}}
-{{- if not $workload.enabled }}
+{{- if not $workloadEnabled }}
 {{- fail (printf "ingress.%s.enabled=true, aber %s.enabled=false. Der Ingress zeigte auf einen Service, den dieses Release nicht anlegt." $i.key $i.workload) }}
 {{- end }}
 {{- $svcName := include "weave.componentName" (dict "ctx" $ "component" $i.component) }}

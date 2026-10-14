@@ -788,6 +788,30 @@ Danach bleibt das Team über die Gruppe verknüpft und darf umbenannt werden.
 Mitgliedschaften aus dem Token kommen hinzu und gehen wieder; von Hand
 vergebene bleiben unangetastet.
 
+**Zugriffsgruppe** begrenzt, wer sich über die Verbindung überhaupt anmelden
+darf: Ist sie eingetragen, kommen nur Mitglieder dieser Gruppe sowie der
+Admin- und Bot-Admin-Gruppe hinein. Alle anderen landen wieder auf der
+Login-Seite und sehen dort den **Text bei abgewiesener Anmeldung** der
+Verbindung (leer = Standardtext; am besten steht darin, wo der Zugriff
+beantragt wird). Es wird kein Konto angelegt oder verändert, aber: Wer die
+Gruppe verlässt und sich erneut anmeldet, verliert dabei alle Sitzungen und
+persönlichen API-Token — ein Token aus Mitgliedszeiten läuft nicht weiter.
+Jede Abweisung steht als Warnung im Auth-Log. Fehlt der Gruppen-Claim, wird
+ebenfalls abgewiesen (bei Entra ID: Overage, siehe unten). Leer gelassen darf
+sich jeder anmelden, den der IdP durchlässt. Eine Ausnahme wie bei der
+Admin-Gruppe: Der letzte aktive Admin wird nie ausgesperrt (nur eine Warnung
+im Auth-Log), damit ein vertippter Gruppenname von innen korrigierbar bleibt.
+
+Die Zugriffsgruppe gilt auch für **MCP-Token** vom IdP
+(`/internal/mcp-oauth/introspect`): Der Access-Token muss dafür denselben
+Gruppen-Claim tragen wie das ID-Token (Keycloak: Group-Membership-Mapper
+auch für den Access-Token; Entra: Gruppen-Claim im Access-Token der
+MCP-App-Registrierung), sonst gilt er als inaktiv — mit Warnung im Auth-Log,
+die den Grund nennt (Claim fehlt oder kein Mitglied). **Technische
+Identitäten** (`wti_…`) sind davon unberührt: Sie gehören zu keinem Konto
+und keinem IdP, ihre Rechte sind allein die eingetragenen Wissensräume.
+Ebenso unberührt bleibt die lokale Anmeldung mit Passwort.
+
 **Admin-Gruppe** und **Bot-Admin-Gruppe** leiten die Rolle ab:
 
 | Im Token | Rolle |

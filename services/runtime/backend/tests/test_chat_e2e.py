@@ -121,6 +121,68 @@ def test_conversational_flow_answers_via_the_llm_with_no_retrieval_and_no_source
     assert set(trace['timings_ms']) >= {'router_ms', 'llm_ms', 'total_ms'}
 
 
+def test_available_knowledge_question_is_answered_from_the_overview_without_retrieval(monkeypatch):
+    collection_calls = []
+
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        collection_calls.append(params)
+        return _readable_collections_response(_collection(description='Arbeits- und Lieferverträge'))
+
+    def _unexpected_post(*args, **kwargs):
+        raise AssertionError('an available-knowledge question must never search Weave-Retrieval')
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _fake_get)
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _unexpected_post)
+    seen = _spy_fake_llm(monkeypatch)
+
+    body = {**_LEGAL_BODY, 'message': 'Welches Wissen steht mir zur Verfügung?'}
+    resp = client.post('/internal/chat', json=body, headers=AUTH_HEADERS)
+    assert resp.status_code == 200
+    assert resp.json()['trace']['intent'] == 'conversational'
+    assert resp.json()['trace']['guard'] is None
+    assert len(collection_calls) == 1
+    # The overview rides along in the system prompt, by name and description.
+    system_prompt = seen[0][0]['content']
+    assert seen[0][0]['role'] == 'system'
+    assert 'Knowledge available to this user' in system_prompt
+    assert '- Vertraege: Arbeits- und Lieferverträge' in system_prompt
+
+
+def test_knowledge_turn_fetches_the_readable_collections_only_once(monkeypatch):
+    collection_calls = []
+
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        collection_calls.append(params)
+        return _readable_collections_response()
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _fake_get)
+    monkeypatch.setattr(
+        'app.services.retrieval_client.httpx.post',
+        lambda url, headers=None, json=None, timeout=None: _FakeResponse(200, _search_response(_chunk())),
+    )
+    seen = _spy_fake_llm(monkeypatch)
+
+    resp = client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS)
+    assert resp.status_code == 200
+    assert len(collection_calls) == 1
+    assert 'Knowledge available to this user' in seen[0][0]['content']
+
+
+def test_conversational_turn_survives_a_retrieval_outage_without_the_overview(monkeypatch):
+    import httpx
+
+    def _down(*args, **kwargs):
+        raise httpx.ConnectError('down')
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _down)
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _down)
+    seen = _spy_fake_llm(monkeypatch)
+
+    resp = client.post('/internal/chat', json={**_LEGAL_BODY, 'message': 'Hallo!'}, headers=AUTH_HEADERS)
+    assert resp.status_code == 200
+    assert 'Knowledge available to this user' not in seen[0][0]['content']
+
+
 # --- knowledge flow with sources ---------------------------------------------
 
 

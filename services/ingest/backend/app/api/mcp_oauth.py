@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.auth import _log_auth_event, _oidc_access_denial
 from app.api.technical_identities import _require_tools_introspection_token
 from app.core.config import settings
 from app.database.session import get_db
@@ -78,6 +79,18 @@ def introspect_access_token(payload: IntrospectionRequest, db: Session = Depends
     ))
     if user is None:
         return {'active': False}
+    # The provider's access group gates tokens too: a person it keeps out
+    # of the portal must not reach the knowledge by MCP token either. The
+    # groups claim has to be in the ACCESS token for this (see
+    # docs/betrieb.md); without it the token is inactive, fail closed.
+    if provider.access_group:
+        denial = _oidc_access_denial(provider, claims)
+        if denial is not None:
+            # Logged like a denied login, so an operator can tell a missing
+            # groups claim on the MCP app registration from a real non-member.
+            _log_auth_event(db, 'WARNING', f'mcp token denied: provider={provider.slug} user={user.username} {denial}')
+            db.commit()
+            return {'active': False, 'error': 'access_denied'}
     teams = list(dict.fromkeys(([user.team.name] if user.team else []) + [team.name for team in user.memberships]))
     return {
         'active': True, 'user_id': user.id, 'username': user.username,

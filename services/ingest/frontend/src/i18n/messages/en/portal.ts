@@ -51,6 +51,7 @@ export const portal: Record<keyof typeof de, string> = {
   'login.identifierLabel': 'Username or email',
   'login.signingIn': 'Signing in …',
   'login.orDivider': 'or through your organization',
+  'login.accessDeniedDefault': 'Thank you for your interest in the knowledge portal and the chat. Your account is not yet enabled for Weave. Please request access from your administrators.',
 
   // src/app/setup/page.tsx
   'setup.passwordTooShort': 'Password must be at least 8 characters.',
@@ -410,6 +411,7 @@ export const portal: Record<keyof typeof de, string> = {
   'sourceForm.setupConnectionLink': 'Check and manage connections',
   'sourceForm.setupConnectionButton': 'Set up a new Confluence connection',
   'sourceForm.noConnectionHint': 'You don’t have a Confluence connection yet. Set it up once with your personal access token (PAT).',
+  'sourceForm.untestedHint': 'This connection hasn’t been tested successfully yet.',
   'sourceForm.pageLabel': 'Confluence page',
   'sourceForm.subpagesHint': 'Subpages and attachments are included within the configured import limits.',
   'sourceForm.autoRefreshLabel': 'Check this connection daily for changes',
@@ -836,6 +838,8 @@ export const portal: Record<keyof typeof de, string> = {
   'connections.confluence.deleteConfirm': 'Delete connection',
   'connections.confluence.testSuccess': 'Connection successful',
   'connections.confluence.testFailed': 'Connection failed',
+  'connections.confluence.testing': 'Testing connection …',
+  'connections.confluence.keepUntested': 'Keep without testing',
   'connections.confluence.nameEmpty': 'Name cannot be empty.',
   'connections.confluence.cloudEmailRequired': 'The Atlassian account email is required for Cloud connections.',
   'connections.confluence.modalTitle': 'Add Confluence connection',

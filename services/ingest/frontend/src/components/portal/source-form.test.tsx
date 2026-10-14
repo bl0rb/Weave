@@ -80,7 +80,7 @@ it('offers the two structure presets and configured vision models, forwarding th
 it('applies the selected profile to Confluence attachments, not to the page text', async () => {
   const normal = api.getMockImplementation()!;
   api.mockImplementation(async (path, options) => {
-    if (path === '/api/v1/import/sources') return { items: [{ id: 'wiki', name: 'Firmenwiki' }] };
+    if (path === '/api/v1/import/sources') return { items: [{ id: 'wiki', name: 'Firmenwiki', server_kind: 'server' }] };
     if (path === '/api/v1/import/runs') return { id: 'run', status: 'pending' };
     return normal(path, options);
   });
@@ -101,7 +101,8 @@ it('applies the selected profile to Confluence attachments, not to the page text
 it('starts the Confluence setup right away when Confluence is chosen without a connection, then selects it', async () => {
   const normal = api.getMockImplementation()!;
   api.mockImplementation(async (path, options) => {
-    if (path === '/api/v1/import/sources' && options?.method === 'POST') return { id: 'new-source', name: 'Mein Wiki' };
+    if (path === '/api/v1/import/sources' && options?.method === 'POST') return { id: 'new-source', name: 'Mein Wiki', server_kind: '' };
+    if (path === '/api/v1/import/sources/new-source/test') return { ok: true, detail: null, server_kind: 'server' };
     if (path === '/api/v1/import/sources') return { items: [] };
     return normal(path, options);
   });
@@ -111,6 +112,51 @@ it('starts the Confluence setup right away when Confluence is chosen without a c
   fireEvent.change(screen.getByRole('textbox', { name: 'Basis-URL' }), { target: { value: 'https://confluence.example.com' } });
   fireEvent.change(screen.getByPlaceholderText('Confluence-PAT'), { target: { value: 'pat-token' } });
   fireEvent.click(screen.getByRole('button', { name: 'Verbindung hinzufügen' }));
+  await waitFor(() => expect((screen.getByRole('combobox', { name: 'Deine Confluence-Verbindung' }) as HTMLSelectElement).value).toBe('new-source'));
+  expect(screen.queryByRole('heading', { name: 'Confluence-Verbindung hinzufügen' })).toBeNull();
+});
+
+it('keeps a failed connection test visible, retries it and blocks the import while the connection is untested', async () => {
+  const normal = api.getMockImplementation()!;
+  let ok = false;
+  api.mockImplementation(async (path, options) => {
+    if (path === '/api/v1/import/sources' && options?.method === 'POST') return { id: 'new-source', name: 'Mein Wiki', server_kind: '' };
+    if (path === '/api/v1/import/sources/new-source/test') return ok ? { ok: true, detail: null, server_kind: 'server' } : { ok: false, detail: 'HTTP 401', server_kind: null };
+    if (path === '/api/v1/import/sources') return { items: [] };
+    return normal(path, options);
+  });
+  render(<SourceForm initialCollection="area" initialKind="confluence" />);
+  await screen.findByRole('heading', { name: 'Confluence-Verbindung hinzufügen' });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Basis-URL' }), { target: { value: 'https://confluence.example.com' } });
+  fireEvent.change(screen.getByPlaceholderText('Confluence-PAT'), { target: { value: 'pat-token' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Verbindung hinzufügen' }));
+  await screen.findByText(/Verbindung fehlgeschlagen: HTTP 401/);
+  expect(api.mock.calls.filter(([path, o]) => path === '/api/v1/import/sources' && o?.method === 'POST')).toHaveLength(1);
+  expect(screen.queryByRole('button', { name: 'Verbindung hinzufügen' })).toBeNull();
+  // Keep the untested connection: the form flags it and refuses to start the import.
+  fireEvent.click(screen.getByRole('button', { name: 'Ohne Prüfung speichern' }));
+  await screen.findByText(/noch nicht erfolgreich geprüft/);
+  expect((screen.getByRole('button', { name: 'Import starten' }) as HTMLButtonElement).disabled).toBe(true);
+  ok = true;
+  fireEvent.click(screen.getByRole('button', { name: 'Verbindung prüfen' }));
+  await waitFor(() => expect(screen.queryByText(/noch nicht erfolgreich geprüft/)).toBeNull());
+});
+
+it('hands an already created connection to the form even when the dialog is simply closed', async () => {
+  const normal = api.getMockImplementation()!;
+  api.mockImplementation(async (path, options) => {
+    if (path === '/api/v1/import/sources' && options?.method === 'POST') return { id: 'new-source', name: 'Mein Wiki', server_kind: '' };
+    if (path === '/api/v1/import/sources/new-source/test') return { ok: false, detail: 'HTTP 401', server_kind: null };
+    if (path === '/api/v1/import/sources') return { items: [] };
+    return normal(path, options);
+  });
+  render(<SourceForm initialCollection="area" initialKind="confluence" />);
+  await screen.findByRole('heading', { name: 'Confluence-Verbindung hinzufügen' });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Basis-URL' }), { target: { value: 'https://confluence.example.com' } });
+  fireEvent.change(screen.getByPlaceholderText('Confluence-PAT'), { target: { value: 'pat-token' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Verbindung hinzufügen' }));
+  await screen.findByText(/Verbindung fehlgeschlagen: HTTP 401/);
+  fireEvent.click(screen.getByRole('button', { name: 'Dialog schließen' }));
   await waitFor(() => expect((screen.getByRole('combobox', { name: 'Deine Confluence-Verbindung' }) as HTMLSelectElement).value).toBe('new-source'));
   expect(screen.queryByRole('heading', { name: 'Confluence-Verbindung hinzufügen' })).toBeNull();
 });

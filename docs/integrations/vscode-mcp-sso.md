@@ -46,6 +46,16 @@ Namen im Zugriffstoken. Bei Helm werden die Einstellungen mit
 `config.tools` übertragen. Geänderte Dienste neu bauen und bereitstellen;
 eine bereits veröffentlichte Image-Version enthält diese Erweiterung nicht.
 
+Die öffentliche HTTPS-URL liefert bei Helm der Ingress `ingress.toolsMcp`
+(standardmäßig aus, `hosts` und `tls` wie bei den anderen Ingresses setzen).
+Er zeigt auf den Service `tools-mcp` und reicht mit der Vorgabe `path: /`
+neben `/mcp` auch die beiden Discovery-Pfade
+`/.well-known/oauth-protected-resource` und
+`/.well-known/oauth-protected-resource/mcp` durch; wer die Pfade
+einschränkt, muss diese drei behalten. Vorher `MCP_OAUTH_ISSUER` und
+`MCP_OAUTH_RESOURCE_URL` setzen und `MCP_ALLOWED_HOSTS` um den öffentlichen
+Hostnamen ergänzen, sonst antwortet der Dienst mit 421.
+
 Keycloak-Beispiel (Adressen und Slug ersetzen):
 
 ```dotenv

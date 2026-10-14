@@ -212,6 +212,21 @@ body {
 }
 
 /*
+ * Content-sized answers (message-bubble.tsx's `.chat-answer`): the bubble
+ * may grow to the full column, but only markdown content that needs the
+ * room (tables, code, images) drives that growth. Running text keeps its
+ * readable 80ch measure, and the answer's own chrome (guard banner, inline
+ * sources, trace panel, notes) never widens the bubble on its own — the
+ * header is the exception, so its right-aligned control follows the edge.
+ */
+.prose-chat :where(p, ul, ol, blockquote, h1, h2, h3, h4) {
+  max-width: 80ch;
+}
+.chat-answer > :not(.prose-chat, .chat-answer-head) {
+  max-width: 80ch;
+}
+
+/*
  * Three-column chat shell (rail | main | sources panel) — breakpoints match
  * the design prototype's own (docs/design-proposals/06-loom-rc/style.css):
  * the sources panel gives way to the inline per-answer sources below

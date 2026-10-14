@@ -76,6 +76,31 @@ def test_keycloak_resolves_db_identity_and_ignores_claimed_groups(oauth):
     }
 
 
+def _gate(oauth, **fields):
+    with TestingSessionLocal() as db:
+        provider = db.get(AuthProvider, oauth['provider'].id)
+        for key, value in fields.items():
+            setattr(provider, key, value)
+        db.commit()
+
+
+@pytest.mark.parametrize('groups', [['weave-users', 'x'], ['weave-admins']], ids=['access-group', 'admin-group'])
+def test_access_group_admits_a_member_by_token(oauth, groups):
+    _gate(oauth, access_group='weave-users', admin_group='weave-admins')
+    result = introspect(oauth, token(oauth, groups=groups))
+    assert result.status_code == 200 and result.json()['active'] is True
+
+
+@pytest.mark.parametrize('claims', [{'groups': ['other']}, {}], ids=['non-member', 'claim-missing'])
+def test_access_group_keeps_a_non_member_out_by_token_too(oauth, claims):
+    # Same gate as the portal login (app/api/auth.py's _oidc_access_granted):
+    # an MCP token must not outrun the group, and a missing claim fails closed.
+    _gate(oauth, access_group='weave-users')
+    result = introspect(oauth, token(oauth, **claims))
+    assert result.status_code == 200
+    assert result.json() == {'active': False, 'error': 'access_denied'}
+
+
 @pytest.mark.parametrize('claims', [
     {'aud': 'portal-client'}, {'aud': 'other-resource'}, {'iss': 'https://attacker.example'},
     {'exp': -60}, {'exp': None}, {'nbf': 300},

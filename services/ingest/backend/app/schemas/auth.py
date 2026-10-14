@@ -52,6 +52,9 @@ class LocaleUpdateRequest(BaseModel):
 class ProviderPublic(BaseModel):
     slug: str
     display_name: str
+    # What the login page shows after this provider's access group turned
+    # someone away (`?denied=<slug>`); None = the frontend's default text.
+    access_denied_message: str | None = None
 
 
 class ProvidersPublicResponse(BaseModel):
@@ -163,6 +166,9 @@ class ProviderCreateRequest(BaseModel):
     # See AuthProvider.admin_group / bot_admin_group; empty = off.
     admin_group: str | None = Field(default=None, max_length=255)
     bot_admin_group: str | None = Field(default=None, max_length=255)
+    # See AuthProvider.access_group; empty = everyone may log in.
+    access_group: str | None = Field(default=None, max_length=255)
+    access_denied_message: str | None = Field(default=None, max_length=2000)
 
 
 class ProviderUpdateRequest(BaseModel):
@@ -179,6 +185,9 @@ class ProviderUpdateRequest(BaseModel):
     # Empty string clears the group.
     admin_group: str | None = Field(default=None, max_length=255)
     bot_admin_group: str | None = Field(default=None, max_length=255)
+    # See AuthProvider.access_group; empty = everyone may log in.
+    access_group: str | None = Field(default=None, max_length=255)
+    access_denied_message: str | None = Field(default=None, max_length=2000)
 
 
 class ProviderAdminResponse(BaseModel):
@@ -196,6 +205,8 @@ class ProviderAdminResponse(BaseModel):
     groups_claim: str
     admin_group: str | None = None
     bot_admin_group: str | None = None
+    access_group: str | None = None
+    access_denied_message: str | None = None
     created_at: datetime
     updated_at: datetime
 

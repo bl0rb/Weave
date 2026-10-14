@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { apiJson } from '@/lib/api';
 import { ErrorNotice, errorMessage, Field, inputClass, Modal } from '@/components/admin/admin-shared';
 import type { ImportAuthType, ImportSource } from '@/lib/imports';
+import { useImportSourceTest } from '@/lib/use-import-source-test';
 import { useI18n } from '@/i18n/provider';
 
 /**
@@ -27,6 +28,31 @@ export function ConfluenceSetupDialog({ onClose, onCreated }: { onClose: () => v
   const [credential, setCredential] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set once the source exists; from then on the dialog only (re)tests it --
+  // the create form is locked so it can never POST a second connection.
+  const [created, setCreated] = useState<ImportSource | null>(null);
+  const { test, testingId, cooldownSecondsFor } = useImportSourceTest();
+  const testing = testingId !== null;
+  const cooldownSeconds = created ? cooldownSecondsFor(created.id) : 0;
+
+  // The backend refuses import runs until a test has succeeded, so a new
+  // connection is tested right away; failures stay visible with a retry.
+  // `onCreated` runs outside the test's own error handling: a failure in the
+  // caller (say, its list reload) must not read as a failed connection test.
+  async function testCreated(source: ImportSource) {
+    setError(null);
+    const outcome = await test(source.id);
+    if (outcome.kind === 'result' && outcome.result.ok) {
+      await onCreated({ ...source, server_kind: outcome.result.server_kind ?? source.server_kind, last_validated_at: new Date().toISOString() });
+      return;
+    }
+    if (outcome.kind === 'result') {
+      setError(`${t('portal.connections.confluence.testFailed')}${outcome.result.detail ? `: ${outcome.result.detail}` : ''}`);
+    } else {
+      // A 429 is the per-source cooldown itself, not a broken connection.
+      setError(outcome.rateLimited ? errorMessage(outcome.error) : `${t('portal.connections.confluence.testFailed')}: ${errorMessage(outcome.error)}`);
+    }
+  }
 
   // Toggling the auth scheme clears the typed secret: the field is masked, so
   // a token entered for one scheme must not silently become the credential
@@ -57,7 +83,10 @@ export function ConfluenceSetupDialog({ onClose, onCreated }: { onClose: () => v
           credential: credential.trim(),
         }),
       });
-      await onCreated(source);
+      setCreated(source);
+      setBusy(false);
+      await testCreated(source);
+      return;
     } catch (err) {
       setError(errorMessage(err));
       setBusy(false);
@@ -77,8 +106,12 @@ export function ConfluenceSetupDialog({ onClose, onCreated }: { onClose: () => v
   );
 
   return (
-    <Modal title={t('portal.connections.confluence.modalTitle')} onClose={onClose}>
+    // Once the connection exists on the server, closing the dialog any way
+    // (X, Escape) hands it to the caller like "keep without testing" does, so
+    // the list it belongs to never misses a connection that is already there.
+    <Modal title={t('portal.connections.confluence.modalTitle')} onClose={created ? () => void onCreated(created) : onClose}>
       <form onSubmit={submit} className="space-y-4">
+        <fieldset disabled={created !== null} className="min-w-0 space-y-4 border-0 p-0">
         <Field label={t('portal.connections.confluence.nameLabel')}>
           <input value={name} onChange={(e) => setName(e.target.value)} className={inputClass} required autoFocus placeholder="ACME Confluence" />
         </Field>
@@ -117,16 +150,35 @@ export function ConfluenceSetupDialog({ onClose, onCreated }: { onClose: () => v
             placeholder={authType === 'cloud_basic' ? 'Atlassian-API-Token' : 'Confluence-PAT'}
           />
         </Field>
+        </fieldset>
         <ErrorNotice message={error} />
-        <div className="flex justify-end gap-2 pt-1">
-          <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={busy}>
-            {t('portal.connections.confluence.cancel')}
-          </Button>
-          <Button type="submit" size="sm" disabled={busy}>
-            {busy && <LoaderCircle className="h-4 w-4 animate-spin" />}
-            {t('portal.connections.confluence.add')}
-          </Button>
-        </div>
+        {testing && (
+          <p role="status" className="flex items-center gap-2 text-sm text-slate-600">
+            <LoaderCircle className="h-4 w-4 animate-spin" />
+            {t('portal.connections.confluence.testing')}
+          </p>
+        )}
+        {created ? (
+          <div className="flex justify-end gap-2 pt-1">
+            <Button type="button" variant="outline" size="sm" onClick={() => void onCreated(created)} disabled={testing}>
+              {t('portal.connections.confluence.keepUntested')}
+            </Button>
+            <Button type="button" size="sm" onClick={() => void testCreated(created)} disabled={testing || cooldownSeconds > 0}>
+              {testing && <LoaderCircle className="h-4 w-4 animate-spin" />}
+              {cooldownSeconds > 0 ? t('portal.connections.confluence.testWithCooldown', { seconds: cooldownSeconds }) : t('portal.connections.confluence.test')}
+            </Button>
+          </div>
+        ) : (
+          <div className="flex justify-end gap-2 pt-1">
+            <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={busy}>
+              {t('portal.connections.confluence.cancel')}
+            </Button>
+            <Button type="submit" size="sm" disabled={busy}>
+              {busy && <LoaderCircle className="h-4 w-4 animate-spin" />}
+              {t('portal.connections.confluence.add')}
+            </Button>
+          </div>
+        )}
       </form>
     </Modal>
   );

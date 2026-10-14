@@ -40,6 +40,8 @@ export interface Team {
 export interface PublicProvider {
   slug: string;
   display_name: string;
+  /** Shown on the login page after this provider's access group turned someone away (`?denied=<slug>`); null = default wording. */
+  access_denied_message?: string | null;
 }
 
 /** Admin provider entry from /api/v1/auth/admin/providers. */
@@ -56,6 +58,8 @@ export interface AdminProvider {
   use_email_as_username: boolean;
   sync_groups: boolean;
   groups_claim: string;
+  access_group: string | null;
+  access_denied_message: string | null;
   admin_group: string | null;
   bot_admin_group: string | null;
   created_at: string;
@@ -128,6 +132,8 @@ export interface ProviderCreateRequest {
   sync_groups?: boolean;
   groups_claim?: string;
   /** Empty string clears the group. */
+  access_group?: string;
+  access_denied_message?: string;
   admin_group?: string;
   bot_admin_group?: string;
 }
@@ -145,6 +151,8 @@ export interface ProviderUpdateRequest {
   sync_groups?: boolean;
   groups_claim?: string;
   /** Empty string clears the group. */
+  access_group?: string;
+  access_denied_message?: string;
   admin_group?: string;
   bot_admin_group?: string;
 }
