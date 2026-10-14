@@ -1,0 +1,63 @@
+name: Bug report
+description: Something does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report security vulnerabilities here — see SECURITY.md.
+        Remove secrets, tokens, and personal data from logs before pasting them.
+  - type: dropdown
+    id: service
+    attributes:
+      label: Affected service
+      multiple: true
+      options:
+        - api
+        - chat
+        - embeddings
+        - ingest
+        - knowledge
+        - reranker
+        - retrieval
+        - runtime
+        - tools
+        - contracts / deploy / scripts
+        - not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Tag or commit SHA you reproduced the problem with.
+      placeholder: v0.7.2
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. …
+        2. …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: Include error messages and relevant log lines.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment and configuration
+      description: Docker Compose or Helm, LLM / embedding provider, OIDC provider, and any deviation from weave.yaml defaults that matters.
