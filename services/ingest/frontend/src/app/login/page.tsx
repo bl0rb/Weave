@@ -41,6 +41,10 @@ export default function LoginPage() {
   // prerendering). The value is only ever needed after mount anyway.
   const [handoff, setHandoff] = useState<Handoff | null>(null);
   const [returnTo, setReturnTo] = useState<string | null>(null);
+  // `?denied=<slug>`: the OIDC callback sent the person back because the
+  // provider's access group keeps them out (see the backend's
+  // _deny_oidc_access). Shown as that provider's own wording, or a default.
+  const [deniedBy, setDeniedBy] = useState<string | null>(null);
 
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
@@ -59,6 +63,7 @@ export default function LoginPage() {
         params.get('handoff') === '1' ? { state: params.get('handoff_state') } : null;
       if (!cancelled) setReturnTo(safeReturnTo(params.get('returnTo')));
       if (!cancelled) setHandoff(requestedHandoff);
+      if (!cancelled) setDeniedBy(params.get('denied'));
       const timeout = window.setTimeout(() => {
         if (!cancelled) {
           setChecking(false);
@@ -159,11 +164,20 @@ export default function LoginPage() {
 
   if (checking) return <AuthPageSpinner />;
 
+  const deniedMessage = deniedBy
+    ? providers.find((provider) => provider.slug === deniedBy)?.access_denied_message?.trim() || t('portal.login.accessDeniedDefault')
+    : null;
+
   return (
     <AuthShell
       title={t('portal.login.title')}
       subtitle={handoff ? t('portal.login.subtitleHandoff') : t('portal.login.subtitleDefault')}
     >
+      {deniedMessage && (
+        <p role="status" className="mb-4 whitespace-pre-line rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-900">
+          {deniedMessage}
+        </p>
+      )}
       <form onSubmit={onSubmit} className="flex flex-col gap-4">
         {checkError && (
           <div className="space-y-2">

@@ -51,6 +51,7 @@ export const portal: Record<keyof typeof de, string> = {
   'login.identifierLabel': 'Username or email',
   'login.signingIn': 'Signing in …',
   'login.orDivider': 'or through your organization',
+  'login.accessDeniedDefault': 'Thank you for your interest in the knowledge portal and the chat. Your account is not yet enabled for Weave. Please request access from your administrators.',
 
   // src/app/setup/page.tsx
   'setup.passwordTooShort': 'Password must be at least 8 characters.',

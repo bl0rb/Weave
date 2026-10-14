@@ -17,7 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 from joserfc import jwt as joserfc_jwt
 from joserfc.jwk import KeySet, RSAKey
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 import app.api.auth as auth_module
 from app.core.config import settings
@@ -635,6 +635,7 @@ def _oidc_login(
     discovery_extra: dict | None = None,
     userinfo_response: dict | None = None,
     userinfo_raises: bool = False,
+    authorize_query: str = '',
     **claim_overrides,
 ):
     """Drives the full authorize -> callback dance for `slug` and returns the
@@ -659,7 +660,8 @@ def _oidc_login(
 
         monkeypatch.setattr(auth_module, 'fetch_userinfo', _raise_userinfo_error)
 
-    authorize_resp = client.get(f'/api/v1/auth/oidc/{slug}/authorize', follow_redirects=False)
+    authorize_url = f'/api/v1/auth/oidc/{slug}/authorize' + (f'?{authorize_query}' if authorize_query else '')
+    authorize_resp = client.get(authorize_url, follow_redirects=False)
     assert authorize_resp.status_code == 302
 
     id_token = _sign_id_token(signing_key, nonce='fixed-oidc-test-token', **claim_overrides)
@@ -1664,3 +1666,137 @@ def test_oidc_role_sync_keeps_the_last_active_admin(client, monkeypatch) -> None
             for other in db.scalars(select(User).where(User.id.in_(other_ids))).all():
                 other.is_active = True
             db.commit()
+
+
+def _access_provider(slug: str) -> AuthProvider:
+    provider = _make_oidc_provider(slug)
+    with _db() as db:
+        row = db.get(AuthProvider, provider.id)
+        row.access_group = 'weave-users'
+        row.admin_group = 'weave-admins'
+        db.commit()
+    return provider
+
+
+def _user_exists(sub: str) -> bool:
+    with _db() as db:
+        return db.scalar(select(User).where(User.oidc_subject == sub)) is not None
+
+
+def test_oidc_access_group_admits_members(client, monkeypatch) -> None:
+    _access_provider('access-member')
+    sub = f'access-member-{uuid.uuid4().hex[:6]}'
+    response = _oidc_login(client, monkeypatch, 'access-member', sub=sub, email=f'{sub}@example.com', groups=['weave-users', 'other'])
+    assert response.status_code == 302
+    assert _role_of(sub) == (UserRole.USER, False)
+
+
+def test_oidc_access_group_admits_admin_group_members_as_admin(client, monkeypatch) -> None:
+    _access_provider('access-admin')
+    sub = f'access-admin-{uuid.uuid4().hex[:6]}'
+    response = _oidc_login(client, monkeypatch, 'access-admin', sub=sub, email=f'{sub}@example.com', groups=['weave-admins'])
+    assert response.status_code == 302
+    assert _role_of(sub) == (UserRole.ADMIN, True)
+
+
+@pytest.mark.parametrize('claims', [{'groups': ['other']}, {}], ids=['non-member', 'claim-missing'])
+def test_oidc_access_group_denies_outsiders_without_creating_a_user(client, monkeypatch, claims) -> None:
+    slug = f'access-deny-{uuid.uuid4().hex[:6]}'
+    _access_provider(slug)
+    sub = f'{slug}-sub'
+    response = _oidc_login(client, monkeypatch, slug, sub=sub, email=f'{sub}@example.com', **claims)
+    # A friendly landing, not a bare 403: the login page shows the
+    # provider's own access_denied_message for `?denied=<slug>`.
+    assert response.status_code == 302
+    assert response.headers['location'].endswith(f'/login?denied={slug}')
+    assert auth_module.SESSION_COOKIE_NAME not in response.cookies
+    assert not _user_exists(sub)
+
+
+def test_oidc_access_denial_keeps_the_handoff_context_for_a_retry(client, monkeypatch) -> None:
+    slug = f'access-handoff-{uuid.uuid4().hex[:6]}'
+    _access_provider(slug)
+    monkeypatch.setattr(auth_module.settings, 'handoff_callback_url', 'https://chat.example.com/api/auth/sso/callback')
+    monkeypatch.setattr(auth_module.settings, 'handoff_secret', 'x' * 32)
+    response = _oidc_login(
+        client, monkeypatch, slug, sub=f'{slug}-sub', email=f'{slug}@example.com', groups=['other'],
+        authorize_query='handoff=1&handoff_state=abc',
+    )
+    assert response.status_code == 302
+    location = response.headers['location']
+    assert f'denied={slug}' in location and 'handoff=1' in location and 'handoff_state=abc' in location
+
+
+def test_oidc_access_group_keeps_an_existing_user_out_without_touching_the_account(client, monkeypatch) -> None:
+    _access_provider('access-left')
+    sub = f'access-left-{uuid.uuid4().hex[:6]}'
+    assert _oidc_login(client, monkeypatch, 'access-left', sub=sub, email=f'{sub}@example.com', groups=['weave-users']).status_code == 302
+    # A personal token minted while still a member ...
+    created = client.post('/api/v1/auth/tokens', json={'name': 'script'})
+    assert created.status_code == 201, created.text
+    raw_token = created.json()['token']
+    assert client.get('/api/v1/auth/me', headers={'Authorization': f'Bearer {raw_token}'}).status_code == 200
+    with _db() as db:
+        user = db.scalar(select(User).where(User.oidc_subject == sub))
+        assert db.scalar(select(func.count()).select_from(auth_module.SessionModel).where(auth_module.SessionModel.user_id == user.id)) == 1
+    client.cookies.clear()
+    denied = _oidc_login(client, monkeypatch, 'access-left', sub=sub, email=f'{sub}@example.com', groups=[])
+    assert denied.status_code == 302 and 'denied=access-left' in denied.headers['location']
+    # ... stops working the moment the group turns the person away, as does
+    # every session; the account itself stays as it was.
+    assert client.get('/api/v1/auth/me', headers={'Authorization': f'Bearer {raw_token}'}).status_code == 401
+    with _db() as db:
+        user = db.scalar(select(User).where(User.oidc_subject == sub))
+        assert user is not None and user.is_active
+        assert db.scalar(select(func.count()).select_from(auth_module.SessionModel).where(auth_module.SessionModel.user_id == user.id)) == 0
+        assert db.scalar(select(func.count()).select_from(auth_module.ApiToken).where(auth_module.ApiToken.user_id == user.id)) == 0
+
+
+def test_oidc_access_group_never_shuts_out_the_last_active_admin(client, monkeypatch) -> None:
+    _access_provider('access-last')
+    sub = f'access-last-{uuid.uuid4().hex[:6]}'
+    _oidc_login(client, monkeypatch, 'access-last', sub=sub, email=f'{sub}@example.com', groups=['weave-admins'])
+    with _db() as db:
+        me = db.scalar(select(User.id).where(User.oidc_subject == sub))
+        others = db.scalars(select(User).where(User.role == UserRole.ADMIN, User.id != me, User.is_active.is_(True))).all()
+        for other in others:
+            other.is_active = False
+        db.commit()
+        other_ids = [other.id for other in others]
+    client.cookies.clear()
+    try:
+        # In no group at all (a mistyped IdP group, say): still signed in, so the
+        # provider settings stay reachable; the role sync keeps the admin too.
+        response = _oidc_login(client, monkeypatch, 'access-last', sub=sub, email=f'{sub}@example.com', groups=[])
+        assert response.status_code == 302
+        assert 'denied=' not in response.headers['location']
+        assert auth_module.SESSION_COOKIE_NAME in response.cookies
+        assert _role_of(sub) == (UserRole.ADMIN, True)
+    finally:
+        with _db() as db:
+            for other in db.scalars(select(User).where(User.id.in_(other_ids))).all():
+                other.is_active = True
+            db.commit()
+
+
+def test_admin_provider_access_group_round_trips_and_empty_string_clears(client: TestClient) -> None:
+    _create_user(username='accessgroupadmin', email='accessgroupadmin@example.com', password='CorrectHorse1', role=UserRole.ADMIN)
+    _login(client, 'accessgroupadmin', 'CorrectHorse1')
+    created = client.post('/api/v1/auth/admin/providers', json={
+        'slug': 'access-round-trip', 'display_name': 'Access', 'issuer_url': 'https://idp.example.com',
+        'client_id': 'client123', 'client_secret': 'secret', 'access_group': ' weave-users ', 'enabled': True,
+        'access_denied_message': ' Bitte bei it@example.com beantragen. ',
+    })
+    assert created.status_code == 201, created.text
+    assert created.json()['access_group'] == 'weave-users'
+    assert created.json()['access_denied_message'] == 'Bitte bei it@example.com beantragen.'
+    # The login page reads it from the public listing.
+    public = client.get('/api/v1/auth/providers').json()['items']
+    assert next(p for p in public if p['slug'] == 'access-round-trip')['access_denied_message'] == 'Bitte bei it@example.com beantragen.'
+    provider_id = created.json()['id']
+    untouched = client.patch(f'/api/v1/auth/admin/providers/{provider_id}', json={'display_name': 'Still access'})
+    assert untouched.status_code == 200, untouched.text
+    assert untouched.json()['access_group'] == 'weave-users'
+    cleared = client.patch(f'/api/v1/auth/admin/providers/{provider_id}', json={'access_group': ''})
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()['access_group'] is None

@@ -267,6 +267,8 @@ function ProviderModal({
   const [useEmailAsUsername, setUseEmailAsUsername] = useState(provider?.use_email_as_username ?? false);
   const [syncGroups, setSyncGroups] = useState(provider?.sync_groups ?? false);
   const [groupsClaim, setGroupsClaim] = useState(provider?.groups_claim ?? 'groups');
+  const [accessGroup, setAccessGroup] = useState(provider?.access_group ?? '');
+  const [accessDeniedMessage, setAccessDeniedMessage] = useState(provider?.access_denied_message ?? '');
   const [adminGroup, setAdminGroup] = useState(provider?.admin_group ?? '');
   const [botAdminGroup, setBotAdminGroup] = useState(provider?.bot_admin_group ?? '');
   const [busy, setBusy] = useState(false);
@@ -287,6 +289,8 @@ function ProviderModal({
           use_email_as_username: useEmailAsUsername,
           sync_groups: syncGroups,
           groups_claim: groupsClaim.trim() || 'groups',
+          access_group: accessGroup.trim(),
+          access_denied_message: accessDeniedMessage.trim(),
           admin_group: adminGroup.trim(),
           bot_admin_group: botAdminGroup.trim(),
           ...(clientSecret ? { client_secret: clientSecret } : {}),
@@ -308,6 +312,8 @@ function ProviderModal({
           use_email_as_username: useEmailAsUsername,
           sync_groups: syncGroups,
           groups_claim: groupsClaim.trim() || 'groups',
+          access_group: accessGroup.trim(),
+          access_denied_message: accessDeniedMessage.trim(),
           admin_group: adminGroup.trim(),
           bot_admin_group: botAdminGroup.trim(),
         };
@@ -407,13 +413,28 @@ function ProviderModal({
           <Toggle checked={syncGroups} onChange={setSyncGroups} label={t('admin.providers.syncGroups')} />
           <p className="mt-1.5 text-xs text-slate-500">{t('admin.providers.syncGroupsText')}</p>
         </div>
+        <Field label={t('admin.providers.accessGroup')} hint={t('admin.providers.accessGroupHint')}>
+          <input value={accessGroup} onChange={(e) => setAccessGroup(e.target.value)} className={inputClass} />
+        </Field>
+        {accessGroup.trim() && (
+          <Field label={t('admin.providers.accessDeniedMessage')} hint={t('admin.providers.accessDeniedMessageHint')}>
+            <textarea
+              value={accessDeniedMessage}
+              onChange={(e) => setAccessDeniedMessage(e.target.value)}
+              className={inputClass}
+              rows={3}
+              maxLength={2000}
+              placeholder={t('admin.providers.accessDeniedMessagePlaceholder')}
+            />
+          </Field>
+        )}
         <Field label={t('admin.providers.adminGroup')} hint={t('admin.providers.roleGroupHint')}>
           <input value={adminGroup} onChange={(e) => setAdminGroup(e.target.value)} className={inputClass} />
         </Field>
         <Field label={t('admin.providers.botAdminGroup')}>
           <input value={botAdminGroup} onChange={(e) => setBotAdminGroup(e.target.value)} className={inputClass} />
         </Field>
-        {(syncGroups || adminGroup.trim() || botAdminGroup.trim()) && (
+        {(syncGroups || accessGroup.trim() || adminGroup.trim() || botAdminGroup.trim()) && (
           <Field label={t('admin.providers.groupsClaim')} hint={t('admin.providers.groupsClaimHint')}>
             <input value={groupsClaim} onChange={(e) => setGroupsClaim(e.target.value)} className={inputClass} required placeholder="groups" />
           </Field>

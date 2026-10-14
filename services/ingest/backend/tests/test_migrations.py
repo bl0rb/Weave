@@ -1534,3 +1534,27 @@ def test_oidc_role_groups_migration_round_trips():
             migration.downgrade()
             assert 'role_from_oidc' not in {c['name'] for c in inspect(connection).get_columns('users')}
             assert connection.execute(text('SELECT role FROM users')).scalar() == 'admin'
+
+
+def test_oidc_access_group_migration_round_trips():
+    import importlib.util
+    from pathlib import Path
+
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import create_engine, inspect, text
+
+    path = Path(__file__).resolve().parents[1] / 'alembic/versions/0049_oidc_access_group.py'
+    spec = importlib.util.spec_from_file_location('oidc_access_group_migration', path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    engine = create_engine('sqlite://')
+    with engine.begin() as connection:
+        connection.execute(text('CREATE TABLE auth_providers (id TEXT PRIMARY KEY)'))
+        with Operations.context(MigrationContext.configure(connection)):
+            migration.upgrade()
+            columns = {c['name'] for c in inspect(connection).get_columns('auth_providers')}
+            assert {'access_group', 'access_denied_message'} <= columns
+            migration.downgrade()
+            columns = {c['name'] for c in inspect(connection).get_columns('auth_providers')}
+            assert not ({'access_group', 'access_denied_message'} & columns)

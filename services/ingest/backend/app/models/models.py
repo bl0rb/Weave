@@ -322,6 +322,14 @@ class AuthProvider(Base):
     # bot-admin role at login; see app/api/auth.py:_sync_oidc_role.
     admin_group: Mapped[str | None] = mapped_column(String(255), nullable=True)
     bot_admin_group: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Shown on the login page to someone the access group kept out
+    # (`access_denied_message`, see app/api/auth.py:_deny_oidc_access);
+    # NULL = the frontend's default wording.
+    access_denied_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Optional group value (from `groups_claim`) that gates login via this
+    # provider: only members of it, of admin_group or of bot_admin_group may
+    # sign in; see app/api/auth.py:oidc_callback.
+    access_group: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)

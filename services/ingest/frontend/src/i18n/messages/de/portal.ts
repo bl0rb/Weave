@@ -50,6 +50,7 @@ export const portal = {
   'login.identifierLabel': 'Benutzername oder E-Mail',
   'login.signingIn': 'Anmeldung läuft …',
   'login.orDivider': 'oder über eure Organisation',
+  'login.accessDeniedDefault': 'Vielen Dank für dein Interesse an der Wissensverwaltung und dem Chat. Dein Konto ist noch nicht für Weave freigeschaltet. Bitte beantrage den Zugriff bei deiner Administration.',
 
   // src/app/setup/page.tsx
   'setup.passwordTooShort': 'Das Passwort muss mindestens 8 Zeichen haben.',

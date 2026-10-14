@@ -265,6 +265,8 @@ def _provider_response(provider: AuthProvider) -> ProviderAdminResponse:
         groups_claim=provider.groups_claim,
         admin_group=provider.admin_group,
         bot_admin_group=provider.bot_admin_group,
+        access_group=provider.access_group,
+        access_denied_message=provider.access_denied_message,
         created_at=provider.created_at,
         updated_at=provider.updated_at,
     )
@@ -632,7 +634,10 @@ def delete_api_token(
 @router_public.get('/providers', response_model=ProvidersPublicResponse)
 def list_public_providers(db: Session = Depends(get_db)) -> ProvidersPublicResponse:
     providers = db.scalars(select(AuthProvider).where(AuthProvider.enabled.is_(True)).order_by(AuthProvider.slug)).all()
-    return ProvidersPublicResponse(items=[ProviderPublic(slug=p.slug, display_name=p.display_name) for p in providers])
+    return ProvidersPublicResponse(items=[
+        ProviderPublic(slug=p.slug, display_name=p.display_name, access_denied_message=p.access_denied_message)
+        for p in providers
+    ])
 
 
 @router_public.get('/oidc/{slug}/authorize')
@@ -903,6 +908,54 @@ def _sync_oidc_role(db: Session, provider: AuthProvider, user: User, claims: dic
     db.commit()
 
 
+def _oidc_access_denial(provider: AuthProvider, claims: dict) -> str | None:
+    """Why `claims` do NOT admit this person through `provider.access_group`
+    -- a member of the access, admin or bot-admin group gets None. Fails
+    closed: a missing or malformed groups claim is a reason, never a yes.
+    Shared by the login callback and the MCP token introspection
+    (app/api/mcp_oauth.py), so a person the group keeps out of the portal
+    cannot slip in by token, and both log the same reason."""
+    groups = _claimed_groups(claims.get(provider.groups_claim))
+    if groups is None:
+        return f'claim {provider.groups_claim!r} missing'
+    allowed = {group for group in (provider.access_group, provider.admin_group, provider.bot_admin_group) if group}
+    if allowed.isdisjoint(groups):
+        return f'not a member of access group {provider.access_group!r}'
+    return None
+
+
+def _deny_oidc_access(
+    db: Session, provider: AuthProvider, subject: str, email: str, reason: str, existing: User | None, state_payload: dict
+) -> RedirectResponse:
+    """The access group kept this person out: nothing is created for a
+    newcomer, and an existing account keeps its row but loses every
+    session and personal API token right here -- the group decides who
+    may use Weave, and a token minted while they were still a member
+    must not outlive the membership. The browser lands on the login page
+    (`?denied=<slug>`, the handoff context preserved so a retry still
+    returns to the chat), which shows the provider's own
+    `access_denied_message` or its default wording."""
+    revoked = ''
+    if existing is not None:
+        sessions = db.execute(delete(SessionModel).where(SessionModel.user_id == existing.id)).rowcount
+        tokens = db.execute(delete(ApiToken).where(ApiToken.user_id == existing.id)).rowcount
+        revoked = f' (user {existing.username}: {sessions} sessions and {tokens} api tokens revoked)'
+    _log_auth_event(
+        db, 'WARNING', f'oidc login denied: provider={provider.slug} sub={subject} email={email} {reason}{revoked}'
+    )
+    db.commit()
+    params = {'denied': provider.slug}
+    if state_payload.get('handoff') is True:
+        params['handoff'] = '1'
+        handoff_state = state_payload.get('handoff_state')
+        if isinstance(handoff_state, str):
+            params['handoff_state'] = handoff_state
+    base = (settings.cors_origins[0] if settings.cors_origins else '').rstrip('/')
+    response = RedirectResponse(url=f'{base}/login?{urlencode(params)}', status_code=status.HTTP_302_FOUND)
+    response.delete_cookie(key=_OIDC_STATE_COOKIE, path=_OIDC_STATE_COOKIE_PATH)
+    return response
+
+
 @router_public.get('/oidc/{slug}/callback')
 def oidc_callback(
     slug: str,
@@ -987,7 +1040,7 @@ def oidc_callback(
     userinfo_endpoint = discovery.get('userinfo_endpoint')
     access_token = tokens.get('access_token')
     userinfo_fetched = False
-    uses_groups = provider.sync_groups or bool(provider.admin_group or provider.bot_admin_group)
+    uses_groups = provider.sync_groups or bool(provider.access_group or provider.admin_group or provider.bot_admin_group)
     groups_missing = uses_groups and provider.groups_claim not in claims
     if (
         (not resolved_email or not claims.get('preferred_username') or groups_missing)
@@ -1023,6 +1076,23 @@ def oidc_callback(
     login_diagnostic = f'id_token_claims=[{diagnostic_claims}] userinfo_fetched={userinfo_fetched}'
 
     user = db.scalar(select(User).where(User.oidc_provider_id == provider.id, User.oidc_subject == subject))
+
+    denial = _oidc_access_denial(provider, claims) if provider.access_group else None
+    if denial is not None:
+        # Same safety net as _sync_oidc_role: the last active admin is never
+        # shut out -- a mistyped group name must stay fixable from inside.
+        if (
+            user is not None and user.is_active and user.role == UserRole.ADMIN
+            and _count_active_admins(db, exclude_user_id=user.id) < 1
+        ):
+            _log_auth_event(
+                db, 'WARNING',
+                f'oidc access group ignored for user {user.username}: last active admin ({denial})',
+            )
+            db.commit()
+        else:
+            return _deny_oidc_access(db, provider, subject, email, denial, user, state_payload)
+
     if user is not None:
         if not user.is_active:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Account is inactive')
@@ -1638,6 +1708,8 @@ def admin_create_provider(payload: ProviderCreateRequest, db: Session = Depends(
         groups_claim=payload.groups_claim.strip() or 'groups',
         admin_group=(payload.admin_group or '').strip() or None,
         bot_admin_group=(payload.bot_admin_group or '').strip() or None,
+        access_group=(payload.access_group or '').strip() or None,
+        access_denied_message=(payload.access_denied_message or '').strip() or None,
     )
     db.add(provider)
     db.commit()
@@ -1673,6 +1745,10 @@ def admin_update_provider(
         provider.admin_group = payload.admin_group.strip() or None
     if payload.bot_admin_group is not None:
         provider.bot_admin_group = payload.bot_admin_group.strip() or None
+    if payload.access_group is not None:
+        provider.access_group = payload.access_group.strip() or None
+    if payload.access_denied_message is not None:
+        provider.access_denied_message = payload.access_denied_message.strip() or None
     db.commit()
     return _provider_response(provider)
 

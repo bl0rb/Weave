@@ -7159,6 +7159,28 @@
       },
       "ProviderAdminResponse": {
         "properties": {
+          "access_denied_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Denied Message"
+          },
+          "access_group": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Group"
+          },
           "admin_group": {
             "anyOf": [
               {
@@ -7256,6 +7278,30 @@
       },
       "ProviderCreateRequest": {
         "properties": {
+          "access_denied_message": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Denied Message"
+          },
+          "access_group": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Group"
+          },
           "admin_group": {
             "anyOf": [
               {
@@ -7365,6 +7411,17 @@
       },
       "ProviderPublic": {
         "properties": {
+          "access_denied_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Denied Message"
+          },
           "display_name": {
             "title": "Display Name",
             "type": "string"
@@ -7440,6 +7497,30 @@
       },
       "ProviderUpdateRequest": {
         "properties": {
+          "access_denied_message": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Denied Message"
+          },
+          "access_group": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Group"
+          },
           "admin_group": {
             "anyOf": [
               {
