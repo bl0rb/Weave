@@ -20,6 +20,8 @@ export interface AuthUser {
   team_roles?: Record<string, 'member' | 'reader'>;
   is_active: boolean;
   oidc_provider_id: string | null;
+  /** The role comes from the login provider's admin/bot-admin group. */
+  role_from_oidc?: boolean;
   created_at: string;
   locale: Locale | null;
 }
@@ -54,6 +56,8 @@ export interface AdminProvider {
   use_email_as_username: boolean;
   sync_groups: boolean;
   groups_claim: string;
+  admin_group: string | null;
+  bot_admin_group: string | null;
   created_at: string;
 }
 
@@ -123,6 +127,9 @@ export interface ProviderCreateRequest {
   use_email_as_username?: boolean;
   sync_groups?: boolean;
   groups_claim?: string;
+  /** Empty string clears the group. */
+  admin_group?: string;
+  bot_admin_group?: string;
 }
 
 /** PATCH /api/v1/auth/admin/providers/{id} — client_secret is write-only; omit to keep the stored secret. */
@@ -137,6 +144,9 @@ export interface ProviderUpdateRequest {
   use_email_as_username?: boolean;
   sync_groups?: boolean;
   groups_claim?: string;
+  /** Empty string clears the group. */
+  admin_group?: string;
+  bot_admin_group?: string;
 }
 
 /** POST /api/v1/auth/admin/providers/{id}/test */

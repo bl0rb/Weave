@@ -267,6 +267,8 @@ function ProviderModal({
   const [useEmailAsUsername, setUseEmailAsUsername] = useState(provider?.use_email_as_username ?? false);
   const [syncGroups, setSyncGroups] = useState(provider?.sync_groups ?? false);
   const [groupsClaim, setGroupsClaim] = useState(provider?.groups_claim ?? 'groups');
+  const [adminGroup, setAdminGroup] = useState(provider?.admin_group ?? '');
+  const [botAdminGroup, setBotAdminGroup] = useState(provider?.bot_admin_group ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -285,6 +287,8 @@ function ProviderModal({
           use_email_as_username: useEmailAsUsername,
           sync_groups: syncGroups,
           groups_claim: groupsClaim.trim() || 'groups',
+          admin_group: adminGroup.trim(),
+          bot_admin_group: botAdminGroup.trim(),
           ...(clientSecret ? { client_secret: clientSecret } : {}),
         };
         await apiJson<AdminProvider>(`/api/v1/auth/admin/providers/${provider.id}`, {
@@ -304,6 +308,8 @@ function ProviderModal({
           use_email_as_username: useEmailAsUsername,
           sync_groups: syncGroups,
           groups_claim: groupsClaim.trim() || 'groups',
+          admin_group: adminGroup.trim(),
+          bot_admin_group: botAdminGroup.trim(),
         };
         await apiJson<AdminProvider>('/api/v1/auth/admin/providers', {
           method: 'POST',
@@ -401,7 +407,13 @@ function ProviderModal({
           <Toggle checked={syncGroups} onChange={setSyncGroups} label={t('admin.providers.syncGroups')} />
           <p className="mt-1.5 text-xs text-slate-500">{t('admin.providers.syncGroupsText')}</p>
         </div>
-        {syncGroups && (
+        <Field label={t('admin.providers.adminGroup')} hint={t('admin.providers.roleGroupHint')}>
+          <input value={adminGroup} onChange={(e) => setAdminGroup(e.target.value)} className={inputClass} />
+        </Field>
+        <Field label={t('admin.providers.botAdminGroup')}>
+          <input value={botAdminGroup} onChange={(e) => setBotAdminGroup(e.target.value)} className={inputClass} />
+        </Field>
+        {(syncGroups || adminGroup.trim() || botAdminGroup.trim()) && (
           <Field label={t('admin.providers.groupsClaim')} hint={t('admin.providers.groupsClaimHint')}>
             <input value={groupsClaim} onChange={(e) => setGroupsClaim(e.target.value)} className={inputClass} required placeholder="groups" />
           </Field>

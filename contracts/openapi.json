@@ -7159,6 +7159,28 @@
       },
       "ProviderAdminResponse": {
         "properties": {
+          "admin_group": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Admin Group"
+          },
+          "bot_admin_group": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bot Admin Group"
+          },
           "client_id": {
             "title": "Client Id",
             "type": "string"
@@ -7234,6 +7256,30 @@
       },
       "ProviderCreateRequest": {
         "properties": {
+          "admin_group": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Admin Group"
+          },
+          "bot_admin_group": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bot Admin Group"
+          },
           "client_id": {
             "maxLength": 255,
             "minLength": 1,
@@ -7394,6 +7440,30 @@
       },
       "ProviderUpdateRequest": {
         "properties": {
+          "admin_group": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Admin Group"
+          },
+          "bot_admin_group": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bot Admin Group"
+          },
           "client_id": {
             "anyOf": [
               {
@@ -8794,6 +8864,11 @@
           },
           "role": {
             "$ref": "#/components/schemas/UserRole"
+          },
+          "role_from_oidc": {
+            "default": false,
+            "title": "Role From Oidc",
+            "type": "boolean"
           },
           "team_id": {
             "anyOf": [

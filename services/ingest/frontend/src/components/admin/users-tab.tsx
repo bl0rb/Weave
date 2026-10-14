@@ -92,6 +92,7 @@ export function UsersTab() {
                       <Badge tone={u.role === 'user' ? 'slate' : 'emerald'}>
                         {t(`admin.users.role.${u.role}`)}
                       </Badge>
+                      {u.role_from_oidc && <span className="ml-1.5 text-xs text-slate-500" title={t('admin.users.roleFromOidcHint')}>{t('admin.users.roleFromOidc')}</span>}
                     </td>
                     <td className="hidden py-3 pr-3 text-slate-700 lg:table-cell">
                       <span className="block max-w-xs break-words">

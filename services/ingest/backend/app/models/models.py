@@ -318,6 +318,10 @@ class AuthProvider(Base):
     # memberships in line with it; memberships assigned by hand stay.
     sync_groups: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default='0')
     groups_claim: Mapped[str] = mapped_column(String(255), default='groups', nullable=False, server_default='groups')
+    # Optional group values (from `groups_claim`) that grant the admin /
+    # bot-admin role at login; see app/api/auth.py:_sync_oidc_role.
+    admin_group: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    bot_admin_group: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
@@ -625,6 +629,10 @@ class User(Base):
     # Entra's stable object id, captured only from a verified ID token.
     # Its pairwise sub can differ for portal and native MCP clients.
     oidc_object_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # True while `role` was granted by the provider's admin/bot-admin group;
+    # only such a role is taken away again by a later login. Cleared when an
+    # admin sets the role by hand.
+    role_from_oidc: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default='0')
     # UI language preference ('de' | 'en'); NULL = no explicit choice (client
     # falls back to browser/Accept-Language). Plain string + application-
     # level validation (UserResponse / PATCH /auth/me), not a DB enum -- see

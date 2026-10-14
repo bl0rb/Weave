@@ -32,6 +32,8 @@ class UserResponse(BaseModel):
     team_roles: dict[str, str] = Field(default_factory=dict)
     is_active: bool
     oidc_provider_id: str | None = None
+    # The role comes from the provider's admin/bot-admin group.
+    role_from_oidc: bool = False
     created_at: datetime
     locale: Literal['de', 'en'] | None = None
 
@@ -158,6 +160,9 @@ class ProviderCreateRequest(BaseModel):
     # See AuthProvider.sync_groups / groups_claim.
     sync_groups: bool = False
     groups_claim: str = Field(default='groups', min_length=1, max_length=255)
+    # See AuthProvider.admin_group / bot_admin_group; empty = off.
+    admin_group: str | None = Field(default=None, max_length=255)
+    bot_admin_group: str | None = Field(default=None, max_length=255)
 
 
 class ProviderUpdateRequest(BaseModel):
@@ -171,6 +176,9 @@ class ProviderUpdateRequest(BaseModel):
     use_email_as_username: bool | None = None
     sync_groups: bool | None = None
     groups_claim: str | None = Field(default=None, min_length=1, max_length=255)
+    # Empty string clears the group.
+    admin_group: str | None = Field(default=None, max_length=255)
+    bot_admin_group: str | None = Field(default=None, max_length=255)
 
 
 class ProviderAdminResponse(BaseModel):
@@ -186,6 +194,8 @@ class ProviderAdminResponse(BaseModel):
     use_email_as_username: bool
     sync_groups: bool
     groups_claim: str
+    admin_group: str | None = None
+    bot_admin_group: str | None = None
     created_at: datetime
     updated_at: datetime
 
