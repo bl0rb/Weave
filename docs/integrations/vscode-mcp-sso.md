@@ -52,7 +52,12 @@ Er zeigt auf den Service `tools-mcp` und reicht mit der Vorgabe `path: /`
 neben `/mcp` auch die beiden Discovery-Pfade
 `/.well-known/oauth-protected-resource` und
 `/.well-known/oauth-protected-resource/mcp` durch; wer die Pfade
-einschränkt, muss diese drei behalten. Vorher `MCP_OAUTH_ISSUER` und
+einschränkt, muss diese drei behalten. Teilt sich der MCP-Dienst den Host
+mit dem Portal, gehört `/` dort bereits dem Portal; dann unter
+`ingress.toolsMcp.hosts[].paths` nur `/mcp` und
+`/.well-known/oauth-protected-resource` (beide `Prefix`) eintragen. Liefert
+die MCP-URL eine HTML-404-Seite des Portals, fehlt genau diese Weiterleitung.
+Vorher `MCP_OAUTH_ISSUER` und
 `MCP_OAUTH_RESOURCE_URL` setzen und `MCP_ALLOWED_HOSTS` um den öffentlichen
 Hostnamen ergänzen, sonst antwortet der Dienst mit 421.
 
@@ -94,6 +99,32 @@ müssen sich danach einmal im Weave-Portal über Entra anmelden: dabei wird
 die verifizierte `oid` gespeichert. Sie wird zusammen mit dem ausgewählten
 Provider abgeglichen; E-Mail-Adressen dienen niemals zur Kontoverknüpfung.
 
+### Entra Schritt für Schritt
+
+API-App (Weave-MCP, nicht die App-Registrierung des Portal-Logins):
+
+1. „Expose an API“: Application ID URI `api://<api-client-id>` – ohne
+   Scope-Namen, sonst entsteht `…/mcp.read/mcp.read`.
+2. Scope `mcp.read` hinzufügen, Zustand „Enabled“. Bei „Admins only“ muss
+   ein Admin der Client-App die Berechtigung erteilen.
+3. Manifest: `requestedAccessTokenVersion` auf `2` setzen (im neuen Editor
+   unter `api`). Sonst stellt Entra v1-Tokens mit Issuer
+   `https://sts.windows.net/<tenant-id>/` aus, und der Issuer passt nicht.
+
+Öffentliche Client-App (VS Code bzw. Claude Code):
+
+1. „Authentication“: Plattform „Mobile and desktop applications“ mit der
+   Redirect-URI des Clients, für Claude Code
+   `http://localhost:<callback-port>/callback`; „Allow public client flows“
+   einschalten, kein Client-Secret.
+2. „API permissions“: delegierte Berechtigung `mcp.read` der API-App
+   hinzufügen und „Grant admin consent“ ausführen – oder die Client-ID in
+   der API-App unter „Authorized client applications“ eintragen.
+
+Daraus ergeben sich die Werte: `MCP_OAUTH_AUDIENCE=<api-client-id>`,
+`MCP_OAUTH_SCOPES=["api://<api-client-id>/mcp.read"]`,
+`MCP_OAUTH_REQUIRED_SCOPES=["mcp.read"]`, `MCP_OAUTH_SUBJECT_CLAIM=oid`.
+
 ## VS Code konfigurieren
 
 Die Projektdatei `.vscode/mcp.json` verwendet OAuth ohne festen Bearer-Token.
@@ -106,6 +137,28 @@ Die VS-Code-Agent-Host-Umgebung übernimmt Konfigurationen mit interaktiven
 `${input:...}`-Variablen nicht. Dafür eine portable `.mcp.json` mit einem
 `mcpServers`-Objekt verwenden und die öffentliche Client-ID direkt eintragen
 (sie ist kein Geheimnis). Keine Access-/Refresh-Tokens ins Repository schreiben.
+
+## Claude Code konfigurieren
+
+Claude Code spricht denselben Endpunkt per OAuth mit PKCE an. Ohne Dynamic
+Client Registration (Entra) braucht es die Client-ID der öffentlichen
+Client-App und einen festen Callback-Port, dessen Redirect-URI
+`http://localhost:<port>/callback` beim Provider registriert ist:
+
+```bash
+claude mcp add --transport http --scope project \
+  --client-id <public-client-id> --callback-port 8976 \
+  weave https://weave.example.org/mcp
+```
+
+- URL immer mit `/mcp`; die Portal-Wurzel ist kein MCP-Endpunkt.
+- Kein `Authorization`-Header eintragen, Claude Code holt und erneuert das
+  Token selbst.
+- Die anzufordernden Scopes nennt der Server in der 401-Antwort
+  (`MCP_OAUTH_SCOPES`). Lässt der Client sie explizit setzen, für Entra
+  `api://<api-client-id>/mcp.read` angeben, für Keycloak `mcp.read`.
+- In Claude Code `/mcp` öffnen, `weave` → Authenticate, Browser-Login
+  abschließen.
 
 ## Fehler und Prüfung
 

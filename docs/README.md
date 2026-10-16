@@ -54,12 +54,15 @@ claude.ai werden aus genau diesen Dateien neu veröffentlicht.
   Upload über Freigabe und Indizierung bis zur zitierten Antwort samt
   Widerruf; `agent-mode` zeigt einen Chat-Turn durch den LangGraph-Orchestrator
   mit parallelen Recherche-Subagenten; `external-access` zeigt die fünf
-  Zugriffswege auf die Wissenssuche und ihre gemeinsame Rechteschnittmenge.
+  Zugriffswege auf die Wissenssuche und ihre gemeinsame Rechteschnittmenge;
+  `platform-coding-agent` (deutsch, `-en` englisch, zusätzlich als PNG) zeigt
+  alle Komponenten mit Fachbereichen, Confluence und einem Coding Agent als
+  MCP-Client per Entra-SSO.
 - **[integrations/mail-ingestion.md](integrations/mail-ingestion.md)** — wie
   Dokumente per Mail hereinkommen und warum die frühere separate Mail-API
   entfernt wurde.
 - **[integrations/vscode-mcp-sso.md](integrations/vscode-mcp-sso.md)** — VS Code
-  per SSO (Entra ID oder Keycloak, OAuth mit PKCE) mit Weave-MCP verbinden.
+  und Claude Code per SSO (Entra ID oder Keycloak, OAuth mit PKCE) mit Weave-MCP verbinden.
 - **[plan-skalierung-datenbank.md](plan-skalierung-datenbank.md)** — wie Weave
   über PostgreSQL horizontal skaliert (v0.7.0): Objektspeicher, Auftrags-
   Übernahme mit Heartbeat, zwei Worker-Pools, Verbindungsbudget, KEDA-Schalter;
