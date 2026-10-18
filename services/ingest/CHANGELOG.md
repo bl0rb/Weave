@@ -9,6 +9,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Weave transformation, the product is called Weave Ingest. Entries below predating that
 > change are left as written and refer to the project under its former name.
 
+## [Unreleased]
+
+### Added
+- **Several synced Confluence imports per connection.** An import is now a configuration
+  (`ImportSync`: scope, target knowledge space, options, schedule) and runs are executions of it
+  (`import_runs.sync_id`). Before, a connection had one auto-sync that re-ran its newest finished
+  run, whatever its scope, so importing a second space silently changed what was synced.
+  - Migration `0050_import_syncs` creates one configuration per distinct (connection, scope, space)
+    of the existing runs; the one the old scheduler would have re-run inherits the connection's
+    schedule, all others start disabled. Restoring an older backup runs the same backfill.
+  - The scheduler starts every due configuration, longest-waiting first, still one crawl per
+    connection at a time.
+  - API: `GET/PATCH/DELETE /api/v1/import/syncs/{id}`, `GET /api/v1/import/syncs`,
+    `POST /api/v1/import/syncs/{id}/run`. `POST /api/v1/import/runs` attaches the run to the
+    configuration of its scope (creating it) and accepts `sync: {enabled, interval_seconds}`.
+    Scope and space of a configuration are fixed; options and schedule can be edited.
+  - Verbindungen › Confluence lists each connection's imports with target space, auto-sync switch
+    and interval, last success, next sync, last run and errors, plus "Sync now", "Edit", "Remove"
+    and "Add import".
+  - Import wizard: required target knowledge space, auto-sync section, edit mode
+    (`/imports/new?sync=<id>`, also reached from any run of the configuration) with
+    "Save" / "Save & sync now"; folder/subfolder fields removed. "Quelle hinzufügen" can import a
+    whole space and saves the daily auto-sync with the import instead of switching the connection.
+
+### Changed
+- Navigation reorganised. Aufgaben has tabs Übersicht · Prüfen & freigeben (`/reviews`) ·
+  Verarbeitung (`/processing`), Dokumente has Übersicht · Erweitert (`/jobs`); the sidebar
+  keeps the parent entry highlighted. URLs are unchanged.
+- Uploading is one flow: the legacy four-step wizard `/processing/new` now redirects to
+  `/sources/new` (Quelle hinzufügen, with profile choice) and has been removed.
+- Admin paths match their labels: `/admin/menschen` → `/admin/konten`, `/admin/wissen` →
+  `/admin/ki`; the old paths redirect and keep `?bereich=`.
+- Admin › Verarbeitung and Admin › Betrieb no longer list links to user pages or to redirect
+  stubs (Mail-Import, Suche); Betrieb › Werkzeuge keeps index maintenance.
+- Profile menu: "Farbschema" is a full-width row aligned with the other entries.
+
+### Removed
+- `refresh_enabled` / `refresh_interval_seconds` on `PATCH /api/v1/import/sources/{id}` and the
+  `refresh_*` fields of source responses (now per import configuration); sources report
+  `sync_count`. The columns stay in the database for downgrade.
+- VL benchmark (`/benchmark`, `/api/v1/benchmarks*`) and its links under Admin → Verarbeitung and
+  Admin → Betrieb. VL connections stay available as processing profiles; the read-only
+  `GET /api/v1/vl-connections` list is unchanged. Existing benchmark runs and their variant jobs
+  stay in the database and remain hidden from job lists, search and stats.
+
+### Fixed
+- Stray Chinese/Japanese characters in extracted Markdown. PP-OCRv6 recognises Chinese and
+  Latin script with one shared model, and on noisy regions it occasionally emits an ideograph
+  or full-width punctuation. For predominantly Latin documents (CJK share ≤ 5 %) these
+  characters are now removed and full-width punctuation is mapped to ASCII; real Chinese or
+  Japanese documents and the frontmatter are left untouched. The count is recorded as
+  `stray_cjk_removed` in the processing details.
+
 ## [0.7.3] - 2026-10-10
 
 ### Added
