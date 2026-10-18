@@ -68,8 +68,8 @@ async function submit(text) {
   if (mode === 'search') return runSearch(text);
   if (!agent) return;
 
-  messages.push({ role: 'user', text });
-  const answer = { role: 'answer', text: '', status: t('Weave denkt nach …'), sources: [], options: [] };
+  messages.push({ role: 'user', text, fresh: true });
+  const answer = { role: 'answer', text: '', status: t('Weave denkt nach …'), sources: [], options: [], fresh: true };
   messages.push(answer);
   streaming = true;
   render();
@@ -146,7 +146,7 @@ function renderAnswer(message) {
     return !seen.has(key) && seen.add(key);
   });
   return h('div', { class: 'msg-answer' },
-    message.status && h('div', { class: 'status-line' }, spinner(), message.status),
+    message.status && h('div', { class: 'status-line' }, h('span', { class: 'shimmer-text' }, message.status)),
     message.text && text,
     message.options.length > 0 && message.done && h('div', { class: 'options' },
       message.options.map((option) => h('button', { onclick: () => submit(option.message) }, option.label))),
@@ -155,18 +155,29 @@ function renderAnswer(message) {
   );
 }
 
+/** A message fades in once, when it first appears -- not on every streamed delta. */
+function renderMessage(m) {
+  const el = m.role === 'user' ? h('div', { class: 'msg-user' }, m.text) : renderAnswer(m);
+  if (m.fresh) { el.classList.add('appear'); m.fresh = false; }
+  return el;
+}
+
+/** Busy: an answer is streaming or a search is running -- the logo turns. */
+const isBusy = () => streaming || Boolean(searchView?.loading);
+const logo = () => h('img', { src: 'weave.svg', alt: '', class: isBusy() ? 'logo busy' : 'logo' });
+
 function renderMessages() {
   const content = document.getElementById('content');
   if (!content) return;
   const atBottom = content.scrollHeight - content.scrollTop - content.clientHeight < 40;
   if (QUICK) {
-    content.replaceChildren(...messages.map((m) => (m.role === 'user' ? h('div', { class: 'msg-user' }, m.text) : renderAnswer(m))));
+    content.replaceChildren(...messages.map(renderMessage));
     content.scrollTop = content.scrollHeight;
     fitWindow();
     return;
   }
   content.replaceChildren(...(messages.length
-    ? messages.map((m) => (m.role === 'user' ? h('div', { class: 'msg-user' }, m.text) : renderAnswer(m)))
+    ? messages.map(renderMessage)
     : [h('div', { class: 'empty compact' },
       h('img', { src: 'weave.svg', alt: '' }),
       h('h2', null, t('Was möchten Sie wissen?')),
@@ -178,7 +189,12 @@ function renderSearch(content) {
   if (!searchView) {
     content.append(h('div', { class: 'empty compact' }, icon('search'), h('p', null, t(SEARCH_INFO))));
   } else if (searchView.loading) {
-    content.append(h('div', { class: 'status-line' }, spinner(), searchView.query));
+    for (let i = 0; i < 3; i++) {
+      content.append(h('div', { class: 'hit skeleton', 'aria-hidden': 'true' },
+        h('div', { class: 'skeleton-line', style: 'width: 45%' }),
+        h('div', { class: 'skeleton-line', style: 'width: 92%' }),
+        h('div', { class: 'skeleton-line', style: 'width: 70%' })));
+    }
   } else if (searchView.error) {
     content.append(h('div', { class: 'error-text' }, searchView.error));
   } else if (!searchView.results.length) {
@@ -187,7 +203,7 @@ function renderSearch(content) {
     for (const hit of searchView.results) {
       const space = collections.find((c) => c.slug === hit.source.collection)?.name ?? hit.source.collection;
       const meta = [space, hit.source.page && t('S. %@', hit.source.page)].filter(Boolean).join(' · ');
-      content.append(h('div', { class: 'hit' },
+      content.append(h('div', { class: 'hit appear' },
         h('div', { class: 'hit-head' },
           h('span', { class: 'hit-title', title: hit.source.document }, hit.source.document),
           hit.source.source_url && h('button', { class: 'link', onclick: () => invoke('open_url', { url: hit.source.source_url }) }, icon('external'), t('Öffnen'))),
@@ -251,7 +267,7 @@ function renderQuick() {
     },
   });
   const bar = h('div', { class: 'quick-bar' },
-    h('img', { src: 'weave.svg', alt: '' }),
+    logo(),
     input,
     state.signed_in && mode === 'ask' && h('select', { 'aria-label': 'Agent', disabled: !bots?.length, onchange: (e) => setAgent(e.target.value) },
       bots?.length ? bots.map((b) => h('option', { value: b.id, selected: b.id === agent, title: b.description ?? '' }, b.name ?? b.id)) : h('option', null, t('Kein Agent verfügbar'))),
@@ -303,7 +319,7 @@ function render() {
   const agentSelect = h('select', { 'aria-label': 'Agent', disabled: mode === 'search' || !bots?.length, onchange: (e) => setAgent(e.target.value) },
     bots?.length ? bots.map((b) => h('option', { value: b.id, selected: b.id === agent, title: b.description ?? '' }, b.name ?? b.id)) : h('option', null, t('Kein Agent verfügbar')));
   const head = h('header', { class: 'panel-head' },
-    h('img', { src: 'weave.svg', alt: '' }),
+    logo(),
     agentSelect,
     h('span', { class: 'spacer' }),
     mode === 'ask' && h('button', { class: 'icon-only plain', title: t('Neue Unterhaltung'), 'aria-label': t('Neue Unterhaltung'), onclick: newConversation }, icon('plus')),
