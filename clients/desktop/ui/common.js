@@ -53,8 +53,17 @@ const EN = {
   'Beim Anmelden am Computer starten': 'Start when I log in to this computer',
   'Speichern': 'Save',
   'Gespeichert': 'Saved',
-  'Weave für den Desktop – Version %@': 'Weave for the desktop – version %@',
   'Weave fragen': 'Ask Weave',
+  'Über Weave': 'About Weave',
+  'Version': 'Version',
+  'Nach Updates suchen': 'Check for updates',
+  'Suche nach Updates …': 'Checking for updates …',
+  'Weave ist aktuell.': 'Weave is up to date.',
+  'Version %@ ist verfügbar.': 'Version %@ is available.',
+  'Jetzt installieren': 'Install now',
+  'Update wird installiert – Weave startet danach neu …': 'Installing the update – Weave restarts afterwards …',
+  'Updates verteilt Ihre IT.': 'Your IT distributes updates.',
+  'Update auf %@': 'Update to %@',
 };
 
 /** Translates a German source string and fills its `%@` placeholders in order. */

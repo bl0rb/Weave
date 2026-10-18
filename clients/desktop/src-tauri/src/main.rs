@@ -6,6 +6,7 @@
 mod api;
 mod auth;
 mod settings;
+mod update;
 
 use api::{Weave, UNAUTHORIZED};
 use serde::Serialize;
@@ -19,13 +20,17 @@ use tauri::image::Image;
 use tauri::ipc::Channel;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent, Wry};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_positioner::{Position, WindowExt};
+use update::{UpdateView, Updates};
 
 const KEYRING_SERVICE: &str = "Weave Desktop";
+/// First automatic update check after start, then this often.
+const UPDATE_FIRST_CHECK: Duration = Duration::from_secs(20);
+const UPDATE_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60);
 
 #[derive(Clone)]
 struct Session {
@@ -42,11 +47,17 @@ struct AppState {
     login_task: Mutex<Option<JoinHandle<()>>>,
     chat_abort: Mutex<Option<tokio::task::AbortHandle>>,
     panel_hidden_at: Mutex<Option<Instant>>,
+    updates: Updates,
+    update_menu_item: Mutex<Option<MenuItem<Wry>>>,
 }
 
 impl AppState {
     fn effective(&self) -> Settings {
         self.settings.lock().unwrap().effective(&self.managed)
+    }
+
+    fn updates_enabled(&self) -> bool {
+        self.managed.update_check != Some(false)
     }
 
     fn weave(&self) -> Result<Weave, String> {
@@ -298,6 +309,54 @@ fn stop_answer(state: State<'_, AppState>) {
 }
 
 #[tauri::command]
+fn get_update_state(state: State<'_, AppState>) -> UpdateView {
+    state.updates.view(state.updates_enabled())
+}
+
+#[tauri::command]
+async fn check_for_updates(app: AppHandle) {
+    run_update_check(&app).await;
+}
+
+#[tauri::command]
+async fn install_update(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let _ = app.emit("update-changed", ());
+    let result = state.updates.install(&app).await;
+    let _ = app.emit("update-changed", ());
+    result
+}
+
+async fn run_update_check(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    if !state.updates_enabled() {
+        return;
+    }
+    let notify = |app: &AppHandle| {
+        let _ = app.emit("update-changed", ());
+    };
+    let feed = state.managed.update_url.clone();
+    let task = state.updates.check(app, feed.as_deref());
+    notify(app);
+    if task.await {
+        refresh_update_menu(app);
+        notify(app);
+    }
+}
+
+/// The tray entry offers the install once a newer version is known.
+fn refresh_update_menu(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let text = match state.updates.available_version() {
+        Some(version) => format!("Update auf {version} installieren …"),
+        None => "Nach Updates suchen …".to_string(),
+    };
+    let item = state.update_menu_item.lock().unwrap().clone();
+    if let Some(item) = item {
+        let _ = item.set_text(text);
+    }
+}
+
+#[tauri::command]
 fn open_url(app: AppHandle, url: String) -> Result<(), String> {
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err("Nur http(s)-Links".into());
@@ -393,15 +452,22 @@ fn load_session(server: &str) -> Option<Session> {
 }
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
+    let state = app.state::<AppState>();
+    let version = MenuItem::with_id(app, "version", format!("Weave {}", app.package_info().version), false, None::<&str>)?;
+    let update_item = MenuItem::with_id(app, "update", "Nach Updates suchen …", state.updates_enabled(), None::<&str>)?;
     let menu = Menu::with_items(
         app,
         &[
             &MenuItem::with_id(app, "ask", "Weave fragen …", true, None::<&str>)?,
             &MenuItem::with_id(app, "settings", "Einstellungen …", true, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
+            &version,
+            &update_item,
+            &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, "quit", "Weave beenden", true, None::<&str>)?,
         ],
     )?;
+    *state.update_menu_item.lock().unwrap() = Some(update_item);
     TrayIconBuilder::with_id("weave")
         .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
         .icon_as_template(true)
@@ -412,6 +478,21 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             "ask" => show_panel(app, false),
             "settings" => {
                 let _ = show_settings(app);
+            }
+            "update" => {
+                // With a known update: install it. Otherwise check, and show
+                // the result in the settings window's "About" section.
+                let app = app.clone();
+                if app.state::<AppState>().updates.available_version().is_some() {
+                    tauri::async_runtime::spawn(async move {
+                        let _ = app.emit("update-changed", ());
+                        let _ = app.state::<AppState>().updates.install(&app).await;
+                        let _ = app.emit("update-changed", ());
+                    });
+                } else {
+                    let _ = show_settings(&app);
+                    tauri::async_runtime::spawn(async move { run_update_check(&app).await });
+                }
             }
             "quit" => app.exit(0),
             _ => {}
@@ -429,6 +510,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .plugin(
@@ -456,6 +539,8 @@ fn main() {
                 login_task: Mutex::new(None),
                 chat_abort: Mutex::new(None),
                 panel_hidden_at: Mutex::new(None),
+                updates: Updates::default(),
+                update_menu_item: Mutex::new(None),
             });
 
             let handle = app.handle().clone();
@@ -466,6 +551,14 @@ fn main() {
             if effective.server_url.is_empty() {
                 show_settings(&handle)?;
             }
+            let updater = handle.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(UPDATE_FIRST_CHECK).await;
+                loop {
+                    run_update_check(&updater).await;
+                    tokio::time::sleep(UPDATE_INTERVAL).await;
+                }
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -500,6 +593,9 @@ fn main() {
             open_url,
             open_settings,
             hide_panel,
+            get_update_state,
+            check_for_updates,
+            install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Weave");

@@ -15,12 +15,14 @@ let streaming = false;
 /** Search mode: { query, results } | { query, loading } | { error } */
 let searchView = null;
 let draft = '';
+let update = null;
 
 const panel = document.getElementById('panel');
 wireLinks(panel);
 
 async function refresh() {
   state = await invoke('get_state');
+  update = await invoke('get_update_state');
   if (!state.signed_in) bots = null;
   else if (bots === null) await loadLists();
   render();
@@ -235,6 +237,10 @@ function render() {
       collections.map((c) => h('option', { value: c.slug, selected: c.slug === collection }, c.name ?? c.slug))));
 
   const content = h('section', { class: 'content', id: 'content' });
+  const updateBanner = update?.available && h('div', { class: 'update-banner' },
+    update.installing ? [spinner(), t('Update wird installiert – Weave startet danach neu …')]
+      : [h('span', null, t('Version %@ ist verfügbar.', update.available)),
+        h('button', { class: 'link', onclick: () => invoke('install_update').catch(() => {}) }, t('Jetzt installieren'))]);
   const input = h('textarea', {
     rows: 1,
     placeholder: mode === 'ask' ? t('Frage an Weave …') : t('In Weave suchen …'),
@@ -248,7 +254,7 @@ function render() {
     ? h('button', { onclick: stop, title: t('Stopp') }, icon('stop'))
     : h('button', { class: 'primary', title: t('Senden'), disabled: mode === 'ask' && !agent, onclick: () => submit(input.value) }, icon(mode === 'ask' ? 'send' : 'search'));
 
-  panel.replaceChildren(head, tools, content, h('footer', { class: 'composer' }, input, sendButton));
+  panel.replaceChildren(head, updateBanner || '', tools, content, h('footer', { class: 'composer' }, input, sendButton));
   if (mode === 'ask') renderMessages(); else renderSearch(content);
   input.focus();
 }
@@ -259,6 +265,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 listen('state-changed', () => refresh());
+listen('update-changed', () => refresh());
 listen('login-result', (event) => { loginError = event.payload ?? null; if (!loginError) bots = null; refresh(); });
 listen('panel-shown', () => { refresh(); });
 refresh();

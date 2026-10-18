@@ -7,9 +7,11 @@ let form = null;
 let check = null; // { checking } | { ok } | { error }
 let accountError = null;
 let saveResult = null; // { ok } | { error }
+let update = null;
 
 async function refresh() {
   state = await invoke('get_state');
+  update = await invoke('get_update_state');
   if (!form) form = { server_url: state.server_url, hotkey: state.hotkey, default_agent: state.default_agent };
   if (state.server_managed) form.server_url = state.server_url;
   if (state.hotkey_managed) form.hotkey = state.hotkey;
@@ -48,6 +50,24 @@ function managedBadge(managed) {
 
 function field(label, control, note) {
   return [h('div', { class: 'field' }, h('label', null, label), control), note && h('div', { class: 'field-note muted' }, note)];
+}
+
+function renderAbout() {
+  let status;
+  if (!update.enabled) status = h('span', { class: 'muted' }, t('Updates verteilt Ihre IT.'));
+  else if (update.installing) status = [spinner(), t('Update wird installiert – Weave startet danach neu …')];
+  else if (update.checking) status = [spinner(), t('Suche nach Updates …')];
+  else if (update.available) status = [h('span', { class: 'accent' }, t('Version %@ ist verfügbar.', update.available)),
+    h('button', { class: 'primary', onclick: () => invoke('install_update').catch(() => {}) }, t('Jetzt installieren'))];
+  else if (update.checked && !update.error) status = h('span', { class: 'green' }, icon('check'), ' ', t('Weave ist aktuell.'));
+  return h('section', { class: 'card' },
+    h('div', { class: 'card-head' }, h('h2', null, t('Über Weave'), managedBadge(!update.enabled))),
+    field(t('Version'), h('span', { class: 'mono selectable' }, state.version)),
+    h('div', { class: 'actions' },
+      update.enabled && h('button', { disabled: update.checking || update.installing, onclick: () => invoke('check_for_updates') }, t('Nach Updates suchen')),
+      status),
+    update.notes && update.available && h('div', { class: 'section-note selectable' }, update.notes),
+    update.error && h('div', { class: 'error-text' }, update.error));
 }
 
 function render() {
@@ -103,10 +123,10 @@ function render() {
     saveResult?.error && h('span', { class: 'error-text' }, saveResult.error),
     h('button', { class: 'primary', onclick: save }, t('Speichern')));
 
-  document.getElementById('main').replaceChildren(server, account, usage, actions,
-    h('div', { class: 'footer' }, t('Weave für den Desktop – Version %@', state.version)));
+  document.getElementById('main').replaceChildren(server, account, usage, actions, renderAbout());
 }
 
 listen('state-changed', () => refresh());
+listen('update-changed', () => refresh());
 listen('login-result', (event) => { accountError = event.payload ?? null; refresh(); });
 refresh();

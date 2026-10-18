@@ -242,3 +242,4 @@ button.source { min-height: 0; color: var(--accent); }
 /* Settings window */
 .badge.managed { color: var(--orange); border-color: color-mix(in srgb, var(--orange) 45%, transparent); }
 .card .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.update-banner { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 12px; background: var(--accent-soft); border-bottom: 1px solid var(--border); }
