@@ -1,4 +1,4 @@
-// Tray panel and quick overlay (quick.html, opened by the hotkey): ask an agent or search Weave.
+// App window (panel.html) and quick overlay (quick.html; tray click or hotkey): ask an agent or search Weave.
 import { invoke, Channel, listen, t, h, icon, spinner, markdown, wireLinks } from './common.js';
 
 let state = null;
@@ -18,8 +18,12 @@ let draft = '';
 let update = null;
 
 const panel = document.getElementById('panel');
+document.documentElement.classList.add(navigator.userAgent.includes('Windows') ? 'os-windows' : 'os-mac');
 /** The Spotlight-like overlay: one bar, answers expand below it. */
 const QUICK = document.body.classList.contains('quick');
+/** What the two modes do -- shown as tooltip on their switches and in search mode. */
+const ASK_INFO = 'Ein Agent beantwortet Ihre Frage aus den freigegebenen Dokumenten – mit Quellen. Folgefragen bauen aufeinander auf.';
+const SEARCH_INFO = 'Zeigt passende Textstellen aus allen Wissensräumen, die Sie lesen dürfen – ohne KI-Antwort. Schneller, und Sie bewerten die Treffer selbst.';
 wireLinks(panel);
 
 async function refresh() {
@@ -166,13 +170,13 @@ function renderMessages() {
     : [h('div', { class: 'empty compact' },
       h('img', { src: 'weave.svg', alt: '' }),
       h('h2', null, t('Was möchten Sie wissen?')),
-      h('p', null, t('Antworten kommen nur aus freigegebenen Dokumenten – mit Quellen.')))]));
+      h('p', null, t(ASK_INFO)))]));
   if (atBottom || streaming) content.scrollTop = content.scrollHeight;
 }
 
 function renderSearch(content) {
   if (!searchView) {
-    content.append(h('div', { class: 'empty compact' }, icon('search'), h('p', null, t('Durchsuchen Sie alle Wissensräume, die Sie lesen dürfen.'))));
+    content.append(h('div', { class: 'empty compact' }, icon('search'), h('p', null, t(SEARCH_INFO))));
   } else if (searchView.loading) {
     content.append(h('div', { class: 'status-line' }, spinner(), searchView.query));
   } else if (searchView.error) {
@@ -225,7 +229,7 @@ function fitWindow() {
   fitPending = true;
   requestAnimationFrame(() => {
     fitPending = false;
-    invoke('fit_quick', { height: Math.ceil(panel.getBoundingClientRect().height) + 24 });
+    invoke('fit_quick', { height: Math.ceil(panel.getBoundingClientRect().height) });
   });
 }
 
@@ -252,7 +256,9 @@ function renderQuick() {
     state.signed_in && mode === 'ask' && h('select', { 'aria-label': 'Agent', disabled: !bots?.length, onchange: (e) => setAgent(e.target.value) },
       bots?.length ? bots.map((b) => h('option', { value: b.id, selected: b.id === agent, title: b.description ?? '' }, b.name ?? b.id)) : h('option', null, t('Kein Agent verfügbar'))),
     state.signed_in && h('button', {
-      class: 'icon-only plain', title: mode === 'ask' ? t('Suchen') : t('Fragen'), 'aria-label': mode === 'ask' ? t('Suchen') : t('Fragen'),
+      class: 'icon-only plain',
+      title: mode === 'ask' ? `${t('Suchen statt fragen')}: ${t(SEARCH_INFO)}` : `${t('Fragen statt suchen')}: ${t(ASK_INFO)}`,
+      'aria-label': mode === 'ask' ? t('Suchen statt fragen') : t('Fragen statt suchen'),
       onclick: () => { mode = mode === 'ask' ? 'search' : 'ask'; render(); },
     }, icon(mode === 'ask' ? 'search' : 'send')),
     state.signed_in && mode === 'ask' && messages.length > 0 && h('button', { class: 'icon-only plain', title: t('Neue Unterhaltung'), 'aria-label': t('Neue Unterhaltung'), onclick: newConversation }, icon('plus')),
@@ -273,6 +279,7 @@ function renderQuick() {
     parts.push(quickNote(t('Version %@ ist verfügbar.', update.available), update.installing ? t('Update wird installiert – Weave startet danach neu …') : null,
       !update.installing && h('button', { onclick: () => invoke('install_update').catch(() => {}) }, t('Jetzt installieren'))));
   }
+  if (state.signed_in && mode === 'search' && !searchView) parts.push(quickNote(t('Suchen'), t(SEARCH_INFO)));
   const content = h('section', { class: 'quick-content', id: 'content' });
   if (state.signed_in && mode === 'ask' && messages.length) parts.push(content);
   if (state.signed_in && mode === 'search' && searchView) { parts.push(content); renderSearch(content); }
@@ -302,9 +309,9 @@ function render() {
     mode === 'ask' && h('button', { class: 'icon-only plain', title: t('Neue Unterhaltung'), 'aria-label': t('Neue Unterhaltung'), onclick: newConversation }, icon('plus')),
     settingsButton);
 
-  const modeButton = (value, label) => h('button', { 'aria-pressed': String(mode === value), onclick: () => { mode = value; render(); } }, label);
+  const modeButton = (value, label, info) => h('button', { 'aria-pressed': String(mode === value), title: t(info), onclick: () => { mode = value; render(); } }, label);
   const tools = h('div', { class: 'panel-tools' },
-    h('div', { class: 'segmented', role: 'group' }, modeButton('ask', t('Fragen')), modeButton('search', t('Suchen'))),
+    h('div', { class: 'segmented', role: 'group' }, modeButton('ask', t('Fragen'), ASK_INFO), modeButton('search', t('Suchen'), SEARCH_INFO)),
     collections.length > 0 && h('select', { 'aria-label': t('Alle Wissensräume'), onchange: (e) => { collection = e.target.value; } },
       h('option', { value: '' }, t('Alle Wissensräume')),
       collections.map((c) => h('option', { value: c.slug, selected: c.slug === collection }, c.name ?? c.slug))));
@@ -334,7 +341,7 @@ function render() {
 }
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { if (streaming) stop(); else invoke('hide_panel'); }
+  if (e.key === 'Escape') { if (streaming) stop(); else if (QUICK) invoke('hide_panel'); }
   if (QUICK && (e.metaKey || e.ctrlKey) && e.key === ',') { e.preventDefault(); invoke('open_settings'); }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') { e.preventDefault(); newConversation(); }
 });
