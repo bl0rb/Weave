@@ -70,7 +70,9 @@ keeps a condensed summary of every released document and an overview of every
 knowledge space, rebuilt automatically after each change. Bots then answer
 overview questions such as "Was ist im Wissensbereich X?" or "Welche Dokumente
 gibt es zu Y?" from it, with sources, and only within what the asking person may
-read ([ADR-0009](docs/adr/0009-wissensgedaechtnis.md)).
+read ([ADR-0009](docs/adr/0009-wissensgedaechtnis.md)). Admins adjust mode, model and
+limits and watch coverage and LLM usage under *Administration › KI ›
+Wissensgedächtnis*.
 
 ### New in v0.7.2
 

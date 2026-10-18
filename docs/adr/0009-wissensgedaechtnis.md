@@ -92,7 +92,11 @@ Dokumentinhalte sind beim Zusammenfassen **Daten, keine Anweisungen** (abgegrenz
 
 ### 9. Konfiguration
 
-`weave.yaml` bekommt den geteilten Wert `KNOWLEDGE_MEMORY_MODE` (Ziele: knowledge, runtime; Standard `off`). Runtime wertet nur „≠ off“ aus. Nur in Knowledge: `MEMORY_DEBOUNCE_SECONDS`, `MEMORY_MAX_DOCUMENTS_PER_RUN`, `MEMORY_MAX_INPUT_CHARS`.
+`weave.yaml` bekommt den geteilten Wert `KNOWLEDGE_MEMORY_MODE` (Ziele: knowledge, runtime; Standard `off`). Runtime wertet nur „≠ off“ aus. Nur in Knowledge: `MEMORY_DEBOUNCE_SECONDS`, `MEMORY_MAX_DOCUMENTS_PER_RUN`, `MEMORY_MAX_INPUT_CHARS`, `MEMORY_LLM_ENDPOINT`.
+
+**Administration (nach ADR-0007):** Unter *Administration › KI › Wissensgedächtnis* stellt ein Administrator Betriebsart, LLM-Endpunkt (aus „Chat & LLM“), Wartezeit, Dokumente pro Lauf und Höchstlänge pro Dokument ein. Weave-Ingest speichert das als Singleton `knowledge_memory_config` (Migration `0051`). Knowledge liest es bei jedem Tick und Lauf über `GET /api/v1/internal/knowledge-memory` (gleiches `CHAT_CONFIG_SERVICE_TOKEN` wie `/internal/retrieval-provider`). Runtime erhält den Modus als `knowledge_memory_mode` im ohnehin pro Turn gelesenen Chat-Provider-Snapshot, also ohne zusätzlichen Aufruf. Solange niemand gespeichert hat (`managed: false`), gelten die Umgebungswerte oben.
+
+**Kennzahlen:** Die Bereichszeile in `knowledge_memory` führt pro Lauf `last_run_at`, `last_duration_ms` und `last_error` sowie kumulativ `llm_calls` und `llm_failures`. Knowledge liefert unter `GET /api/v1/internal/memory/status` Abdeckung (zusammengefasst / indiziert, davon per LLM), Übersichten (gebaut, wartend, im Aufbau), LLM-Aufrufe und Fehlschläge, gesamt und pro Bereich. `POST /api/v1/internal/memory/rebuild` plant einen vollständigen Neuaufbau (etwa nach einem Modellwechsel). Beide sind mit demselben Header `X-Weave-Reindex-Token` geschützt wie die Reindex-Routen und werden nur über Weave-Ingest (`/api/v1/admin/knowledge-memory/status|rebuild`, nur Administratoren) aufgerufen; der Browser spricht nie direkt mit Knowledge.
 
 ## Konsequenzen
 

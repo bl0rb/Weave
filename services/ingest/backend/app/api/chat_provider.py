@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import origin_guard, require_admin, require_bot_admin
 from app.core.config import settings
 from app.database.session import get_db
-from app.models.models import ChatProviderConfig, ManagedBot, User
+from app.models.models import ChatProviderConfig, KnowledgeMemoryConfig, ManagedBot, User
 from app.schemas.chat_provider import (
     ChatEndpointCatalogResponse,
     ChatEndpointSummary,
@@ -43,6 +43,12 @@ router_internal = APIRouter(prefix='/api/v1/internal/chat-provider', tags=['chat
 
 DEFAULT_ENDPOINT_ID = 'default'
 _ENDPOINT_ID_RE = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
+
+
+def managed_memory_mode(db: Session) -> str | None:
+    """ADR-0009: the knowledge-memory mode an admin saved, None while unsaved."""
+    row = db.get(KnowledgeMemoryConfig, 'default')
+    return row.mode if row is not None and row.updated_by_id is not None else None
 
 
 def _endpoint_id(raw: str) -> str:
@@ -214,8 +220,9 @@ def internal_chat_provider(
 ) -> ChatProviderInternalResponse:
     response.headers['Cache-Control'] = 'no-store'
     row = db.get(ChatProviderConfig, endpoint)
+    memory_mode = managed_memory_mode(db)
     if row is None:
-        return ChatProviderInternalResponse(configured=False, enabled=False)
+        return ChatProviderInternalResponse(configured=False, enabled=False, knowledge_memory_mode=memory_mode)
     try:
         api_key = decrypt_chat_provider_api_key(row.api_key_encrypted) if row.api_key_encrypted else ''
     except ValueError as exc:
@@ -230,4 +237,5 @@ def internal_chat_provider(
         temperature=row.temperature,
         supports_tools=row.supports_tools,
         updated_at=row.updated_at,
+        knowledge_memory_mode=memory_mode,
     )

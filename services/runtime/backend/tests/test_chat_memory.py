@@ -142,3 +142,24 @@ def test_memory_off_leaves_routing_and_retrieval_unchanged(monkeypatch):
     body = client.post('/internal/chat', json=BODY, headers=AUTH_HEADERS).json()
     assert [name for name, _ in calls] == ['search']
     assert body['trace']['intent'] == 'knowledge'
+
+
+def test_mode_saved_in_ingest_wins_over_the_environment(monkeypatch):
+    from app.services.chat_config_client import ChatProviderSnapshot
+
+    monkeypatch.setattr('app.services.chat.load_bot', _bot_without_filters)
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', lambda *a, **k: _readable_collections_response())
+    calls = _retrieval(monkeypatch, _FakeResponse(200, MEMORY))
+    monkeypatch.setattr(
+        'app.services.chat.fetch_chat_provider',
+        lambda endpoint: ChatProviderSnapshot(enabled=False, knowledge_memory_mode='extractive'),
+    )
+    assert client.post('/internal/chat', json=BODY, headers=AUTH_HEADERS).json()['trace']['intent'] == 'overview'
+    assert [name for name, _ in calls] == ['memory']
+
+    monkeypatch.setattr(settings, 'knowledge_memory_mode', 'llm')
+    monkeypatch.setattr(
+        'app.services.chat.fetch_chat_provider',
+        lambda endpoint: ChatProviderSnapshot(enabled=False, knowledge_memory_mode='off'),
+    )
+    assert client.post('/internal/chat', json=BODY, headers=AUTH_HEADERS).json()['trace']['intent'] == 'knowledge'

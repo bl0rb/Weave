@@ -279,3 +279,69 @@ def test_registry_sync_marks_renamed_and_forgets_deleted_collections(monkeypatch
             sync_collections(db)
         rows = _rows(db, 'collection')
         assert [(row.collection_slug, row.dirty_since is not None) for row in rows] == [(SLUG, True)]
+
+
+# --- admin: central settings, metrics, rebuild ---------------------------------
+
+
+def test_settings_saved_in_ingest_override_the_environment(monkeypatch):
+    monkeypatch.setattr(settings, 'knowledge_memory_mode', 'off')
+    monkeypatch.setattr(settings, 'memory_max_documents_per_run', 25)
+    monkeypatch.setattr(settings, 'memory_llm_endpoint', 'default')
+    monkeypatch.setattr(settings, 'memory_max_input_chars', 12000)
+    monkeypatch.setattr(settings, 'chat_config_base_url', 'https://ingest.local')
+    monkeypatch.setattr(settings, 'chat_config_service_token', 'svc')
+    central = MagicMock(status_code=200)
+    central.json.return_value = {
+        'managed': True, 'mode': 'llm', 'llm_endpoint': 'klein', 'debounce_seconds': 30,
+        'max_documents_per_run': 5, 'max_input_chars': 8000,
+    }
+    with patch('app.services.memory.httpx.get', return_value=central) as get:
+        memory.refresh_settings()
+    assert get.call_args.args[0] == 'https://ingest.local/api/v1/internal/knowledge-memory'
+    assert (settings.knowledge_memory_mode, settings.memory_llm_endpoint, settings.memory_max_documents_per_run) == ('llm', 'klein', 5)
+
+    central.json.return_value = {'managed': False, 'mode': 'off'}  # never saved: environment stays
+    with patch('app.services.memory.httpx.get', return_value=central):
+        memory.refresh_settings()
+    assert settings.knowledge_memory_mode == 'llm'
+
+
+def test_build_records_run_metrics_and_status_reports_them(_llm_mode):
+    answers = [_llm_answer('kein json'), _llm_answer(json.dumps({'summary': 'Übersicht.', 'topics': []}))]
+    with TestingSessionLocal() as db, patch('app.services.memory.httpx.get', return_value=_provider()), \
+            patch('app.services.memory.httpx.post', side_effect=answers):
+        db.add(Collection(slug=SLUG, name='Personal', synced_at=datetime.now(timezone.utc)))
+        _doc(db)
+        _doc(db, slug='leer', status=DocumentStatus.PENDING)
+        memory.touch(db, SLUG)
+        memory.build_collection_memory(db, SLUG)
+        status = memory.memory_status(db)
+    assert status['mode'] == 'llm'
+    assert (status['documents'], status['summarized'], status['summarized_llm']) == (1, 1, 0)
+    assert (status['llm_calls'], status['llm_failures']) == (2, 1)  # document fell back, overview succeeded
+    personal = status['collections'][0]
+    assert personal['name'] == 'Personal' and personal['overview_generator'] == 'llm'
+    assert personal['last_duration_ms'] is not None and personal['pending'] is False
+    assert status['collections_built'] == 1 and status['last_run_at']
+
+
+def test_rebuild_resummarizes_everything_on_the_next_tick():
+    with TestingSessionLocal() as db:
+        _doc(db)
+        memory.touch(db, SLUG)
+        memory.build_collection_memory(db, SLUG)
+        assert memory.request_rebuild(db, 'andere') == 0
+        assert memory.request_rebuild(db) == 1
+        assert _rows(db, 'document')[0].source_sha256 is None
+        assert memory.claim_due_collections(db) == [SLUG]
+
+
+def test_admin_routes_require_the_shared_secret(monkeypatch):
+    from tests.conftest import client
+
+    monkeypatch.setattr(settings, 'weave_ingest_webhook_secret', 'memory-secret')
+    assert client.get('/api/v1/internal/memory/status').status_code == 401
+    headers = {'X-Weave-Reindex-Token': 'memory-secret'}
+    assert client.get('/api/v1/internal/memory/status', headers=headers).json()['mode'] == 'extractive'
+    assert client.post('/api/v1/internal/memory/rebuild', headers=headers, json={}).json() == {'queued': 0}

@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     it refuses calls without a concrete `allowed_collections`.
   - Production: `GRANT SELECT ON knowledge_memory TO weave_retrieval_ro` unless default privileges
     already cover new tables.
+  - Administration › KI › **Wissensgedächtnis**: mode, LLM endpoint, wait after changes, documents
+    per run and input length are editable (migration `0051_knowledge_memory_config`, projected to
+    Knowledge and, via the chat-provider snapshot, to Runtime). Metrics per knowledge space
+    (coverage, LLM vs. extractive, pending/building, last run, duration, errors, LLM calls and
+    failures) and a confirmed "rebuild everything" action.
 
 ## [0.7.8] - 2026-10-18
 

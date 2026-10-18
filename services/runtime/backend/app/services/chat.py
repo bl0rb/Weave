@@ -2307,7 +2307,12 @@ def _prepare_turn(request: ChatRequest, *, defer_n8n: bool = False) -> _Prepared
     # with `router_fallback=True` (see router.py's own docstring), exactly
     # the behaviour an n8n bot needs here.
     llm_call = _router_llm_call(llm_provider) if (settings.router_mode == 'llm' and llm_provider is not None) else None
-    memory = settings.knowledge_memory_mode != 'off' and not is_n8n_bot
+    memory_mode = (
+        central_provider.knowledge_memory_mode
+        if central_provider is not None and central_provider.knowledge_memory_mode
+        else settings.knowledge_memory_mode
+    )
+    memory = memory_mode != 'off' and not is_n8n_bot
     decision = router_service.route(request.message, bot, settings.router_mode, llm_call, memory=memory)
     timings_ms['router_ms'] = _elapsed_ms(router_start)
 

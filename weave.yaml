@@ -109,6 +109,8 @@ shared:
       unchanged; 'extractive' costs no LLM budget; 'llm' summarizes with the
       central chat provider and falls back to extractive per entry. Knowledge
       builds, Runtime only asks "not off" -- one value so the two cannot drift.
+      Once an admin saves the settings under Administration › KI ›
+      Wissensgedächtnis, those win over this value in both services.
 
   # --- Postgres cluster credentials -----------------------------------------
   # Not called out in docs/betrieb.md section 5 (that section is about

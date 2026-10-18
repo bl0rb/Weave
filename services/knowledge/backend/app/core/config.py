@@ -112,6 +112,10 @@ class Settings(BaseSettings):
     # through chat_config_base_url/chat_config_service_token above and falls
     # back to extractive per entry whenever that model is missing or fails.
     knowledge_memory_mode: str = 'off'
+    # Named central LLM endpoint (Weave-Ingest › Chat & LLM) for mode 'llm'.
+    # These memory_* values are overridden by Weave-Ingest's admin settings
+    # (GET /api/v1/internal/knowledge-memory) once an admin saved them there.
+    memory_llm_endpoint: str = 'default'
     memory_debounce_seconds: int = 120
     memory_max_documents_per_run: int = 25
     memory_max_input_chars: int = 12000

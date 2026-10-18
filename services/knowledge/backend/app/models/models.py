@@ -345,3 +345,10 @@ class KnowledgeMemory(Base):
     built_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     dirty_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     building_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Run metrics, collection rows only (shown in Weave-Ingest's admin UI):
+    # last build, its duration and error, cumulative model calls/failures.
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    llm_calls: Mapped[int] = mapped_column(Integer, default=0, server_default='0', nullable=False)
+    llm_failures: Mapped[int] = mapped_column(Integer, default=0, server_default='0', nullable=False)

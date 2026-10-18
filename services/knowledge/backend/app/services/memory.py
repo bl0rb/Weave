@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -49,8 +49,45 @@ _TITLE_CHARS = 200
 _ITEM_CHARS = 200
 
 
+MODES = ('off', 'extractive', 'llm')
+_MANAGED_FIELDS = (
+    ('mode', 'knowledge_memory_mode'),
+    ('llm_endpoint', 'memory_llm_endpoint'),
+    ('debounce_seconds', 'memory_debounce_seconds'),
+    ('max_documents_per_run', 'memory_max_documents_per_run'),
+    ('max_input_chars', 'memory_max_input_chars'),
+)
+
+
 def enabled() -> bool:
     return settings.knowledge_memory_mode in ('extractive', 'llm')
+
+
+def refresh_settings() -> None:
+    """Apply the settings an admin saved in Weave-Ingest (Administration ›
+    KI › Wissensgedächtnis) over this service's environment defaults. Same
+    control-plane path and token as app/services/embeddings.py's
+    refresh_control_plane; unreachable or never saved keeps the current
+    values."""
+    base_url = settings.chat_config_base_url.rstrip('/')
+    token = settings.chat_config_service_token
+    if not base_url or not token:
+        return
+    try:
+        response = httpx.get(
+            f'{base_url}/api/v1/internal/knowledge-memory', headers={'Authorization': f'Bearer {token}'}, timeout=2,
+        )
+        if response.status_code != 200:
+            return
+        body = response.json()
+        if body.get('managed') is not True or body.get('mode') not in MODES:
+            return
+        for key, name in _MANAGED_FIELDS:
+            value = body.get(key)
+            if isinstance(value, type(getattr(settings, name))) and value not in ('', None):
+                setattr(settings, name, value)
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return
 
 
 def _now() -> datetime:
@@ -86,6 +123,7 @@ def claim_due_collections(db: Session) -> list[str]:
     the next tick does not enqueue it a second time. Also marks collections
     holding an indexed document without any summary yet -- the safety net for
     a lost trigger and the backfill right after the feature is switched on."""
+    refresh_settings()
     if not enabled():
         return []
     missing = db.scalars(
@@ -129,7 +167,7 @@ class LlmConfig:
     temperature: float | None = None
 
 
-def fetch_llm_config() -> LlmConfig | None:
+def fetch_llm_config(endpoint: str = 'default') -> LlmConfig | None:
     """A fresh snapshot of the central chat provider, or None when there is
     none (standalone, disabled, unreachable, incomplete) -- the caller then
     builds extractively instead of failing."""
@@ -140,6 +178,7 @@ def fetch_llm_config() -> LlmConfig | None:
     try:
         response = httpx.get(
             f'{base_url}/api/v1/internal/chat-provider', headers={'Authorization': f'Bearer {token}'}, timeout=5,
+            **({'params': {'endpoint': endpoint}} if endpoint and endpoint != 'default' else {}),
         )
         if response.status_code != 200:
             return None
@@ -409,6 +448,7 @@ def build_collection_memory(db: Session, slug: str) -> None:
     `memory_max_documents_per_run`, the rest continues on the next tick),
     drops summaries of documents no longer indexed here, then rebuilds the
     overview if its inputs changed."""
+    refresh_settings()
     if not enabled():
         return
     state = _collection_state(db, slug)
@@ -418,8 +458,12 @@ def build_collection_memory(db: Session, slug: str) -> None:
     state.dirty_since = None
     state.building_since = now
     db.commit()
+    calls = failures = 0
+    error: str | None = None
     try:
-        llm = fetch_llm_config() if settings.knowledge_memory_mode == 'llm' else None
+        llm = fetch_llm_config(settings.memory_llm_endpoint) if settings.knowledge_memory_mode == 'llm' else None
+        if settings.knowledge_memory_mode == 'llm' and llm is None:
+            error = 'Kein zentrales LLM verfügbar, extraktiv aufgebaut.'
         documents = db.scalars(
             select(Document)
             .where(Document.collection_slug == slug, Document.status == DocumentStatus.INDEXED)
@@ -442,6 +486,9 @@ def build_collection_memory(db: Session, slug: str) -> None:
         for document in batch:
             try:
                 summary = summarize_document(document, llm)
+                if llm is not None:
+                    calls += 1
+                    failures += summary.generator != 'llm'
                 row = existing.get(document.id)
                 if row is None:
                     row = KnowledgeMemory(kind=KIND_DOCUMENT, collection_slug=slug, document_id=document.id)
@@ -456,23 +503,38 @@ def build_collection_memory(db: Session, slug: str) -> None:
                 row.built_at = _now()
                 db.commit()
                 existing[document.id] = row
-            except Exception:  # noqa: BLE001 - e.g. withdrawn meanwhile; the next run retries
+            except Exception as exc:  # noqa: BLE001 - e.g. withdrawn meanwhile; the next run retries
                 db.rollback()
+                error = f'Dokument {document.id}: {exc}'[:500]
                 logger.warning('knowledge memory: summary for document %s failed', document.id, exc_info=True)
 
         if len(must) > settings.memory_max_documents_per_run:
             # Continue on the very next tick rather than after a full debounce.
             state.dirty_since = now - timedelta(seconds=settings.memory_debounce_seconds)
         else:
-            _build_overview(db, state, slug, [d for d in documents if d.id in existing], existing, llm)
+            overview_calls, overview_failures = _build_overview(
+                db, state, slug, [d for d in documents if d.id in existing], existing, llm
+            )
+            calls += overview_calls
+            failures += overview_failures
+    except Exception as exc:
+        db.rollback()
+        error = str(exc)[:500]
+        raise
     finally:
         state.building_since = None
+        state.last_run_at = _now()
+        state.last_duration_ms = int((state.last_run_at - now).total_seconds() * 1000)
+        state.last_error = error
+        state.llm_calls = (state.llm_calls or 0) + calls
+        state.llm_failures = (state.llm_failures or 0) + failures
         db.commit()
 
 
 def _build_overview(
     db: Session, state: KnowledgeMemory, slug: str, documents: list[Document], existing: dict, llm: LlmConfig | None
-) -> None:
+) -> tuple[int, int]:
+    """Rebuild the overview if its inputs changed; returns (model calls, failures)."""
     collection = db.get(Collection, slug)
     name = collection.name if collection is not None else slug
     description = collection.description if collection is not None else None
@@ -483,9 +545,12 @@ def _build_overview(
         'documents': [[str(e.document_id), e.source_sha256, e.generator] for e in entries],
     }).encode()).hexdigest()
     if state.built_at is not None and state.source_sha256 == fingerprint and (llm is None or state.generator == 'llm' or not entries):
-        return
+        return 0, 0
+    calls = failures = 0
     if entries:
         overview = summarize_collection(name, description, documents, entries, llm)
+        if llm is not None:
+            calls, failures = 1, int(overview.generator != 'llm')
         state.summary, state.topics = overview.summary, overview.topics
         state.generator, state.model = overview.generator, overview.model
     else:
@@ -495,3 +560,97 @@ def _build_overview(
     state.source_sha256 = fingerprint
     state.built_at = _now()
     db.commit()
+    return calls, failures
+
+
+# --- Admin: metrics and manual rebuild (via Weave-Ingest) ----------------------
+
+
+def request_rebuild(db: Session, slug: str | None = None) -> int:
+    """Rebuild every summary (of one collection, or all) from scratch on the
+    next tick -- e.g. after switching mode or model. Returns the number of
+    collections queued."""
+    slugs = set(db.scalars(
+        select(Document.collection_slug).distinct().where(
+            Document.status == DocumentStatus.INDEXED, Document.collection_slug.is_not(None),
+        )
+    ).all())
+    slugs.update(db.scalars(select(KnowledgeMemory.collection_slug).where(KnowledgeMemory.kind == KIND_COLLECTION)).all())
+    if slug is not None:
+        slugs &= {slug}
+    due = _now() - timedelta(seconds=settings.memory_debounce_seconds)
+    for name in slugs:
+        state = _collection_state(db, name)
+        if state is None:
+            db.add(KnowledgeMemory(kind=KIND_COLLECTION, collection_slug=name, dirty_since=due))
+        else:
+            state.dirty_since, state.source_sha256 = due, None
+        for row in db.scalars(
+            select(KnowledgeMemory).where(KnowledgeMemory.kind == KIND_DOCUMENT, KnowledgeMemory.collection_slug == name)
+        ).all():
+            row.source_sha256 = None
+    db.commit()
+    return len(slugs)
+
+
+def _iso(value: datetime | None) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+def memory_status(db: Session) -> dict:
+    """Metrics for the admin UI: coverage, generator mix, pending work and
+    model usage, overall and per collection."""
+    refresh_settings()
+    indexed = dict(db.execute(
+        select(Document.collection_slug, func.count())
+        .where(Document.status == DocumentStatus.INDEXED, Document.collection_slug.is_not(None))
+        .group_by(Document.collection_slug)
+    ).all())
+    summarized: dict[str, dict[str, int]] = {}
+    for slug, generator, count in db.execute(
+        select(KnowledgeMemory.collection_slug, KnowledgeMemory.generator, func.count())
+        .join(Document, Document.id == KnowledgeMemory.document_id)
+        .where(KnowledgeMemory.kind == KIND_DOCUMENT, Document.status == DocumentStatus.INDEXED)
+        .group_by(KnowledgeMemory.collection_slug, KnowledgeMemory.generator)
+    ).all():
+        summarized.setdefault(slug, {})[generator or 'extractive'] = count
+    states = {row.collection_slug: row for row in db.scalars(
+        select(KnowledgeMemory).where(KnowledgeMemory.kind == KIND_COLLECTION)
+    ).all()}
+    names = dict(db.execute(select(Collection.slug, Collection.name)).all())
+    collections = []
+    for slug in sorted(set(indexed) | set(states), key=lambda s: (names.get(s) or s).casefold()):
+        state = states.get(slug)
+        by_generator = summarized.get(slug, {})
+        collections.append({
+            'collection': slug,
+            'name': names.get(slug) or slug,
+            'documents': indexed.get(slug, 0),
+            'summarized': sum(by_generator.values()),
+            'summarized_llm': by_generator.get('llm', 0),
+            'overview_generator': state.generator if state else None,
+            'built_at': _iso(state.built_at) if state else None,
+            'pending': bool(state and state.dirty_since),
+            'building': bool(state and state.building_since),
+            'last_run_at': _iso(state.last_run_at) if state else None,
+            'last_duration_ms': state.last_duration_ms if state else None,
+            'last_error': state.last_error if state else None,
+            'llm_calls': state.llm_calls if state else 0,
+            'llm_failures': state.llm_failures if state else 0,
+        })
+    total = {
+        key: sum(item[key] for item in collections)
+        for key in ('documents', 'summarized', 'summarized_llm', 'llm_calls', 'llm_failures')
+    }
+    runs = [item['last_run_at'] for item in collections if item['last_run_at']]
+    return {
+        'mode': settings.knowledge_memory_mode,
+        'llm_endpoint': settings.memory_llm_endpoint,
+        'collections_total': len(collections),
+        'collections_built': sum(1 for item in collections if item['built_at']),
+        'collections_pending': sum(1 for item in collections if item['pending']),
+        'collections_building': sum(1 for item in collections if item['building']),
+        'last_run_at': max(runs) if runs else None,
+        **total,
+        'collections': collections,
+    }

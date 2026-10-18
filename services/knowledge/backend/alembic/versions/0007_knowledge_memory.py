@@ -40,6 +40,11 @@ def upgrade() -> None:
         sa.Column('built_at', sa.DateTime(timezone=True), nullable=True),
         sa.Column('dirty_since', sa.DateTime(timezone=True), nullable=True),
         sa.Column('building_since', sa.DateTime(timezone=True), nullable=True),
+        sa.Column('last_run_at', sa.DateTime(timezone=True), nullable=True),
+        sa.Column('last_duration_ms', sa.Integer(), nullable=True),
+        sa.Column('last_error', sa.Text(), nullable=True),
+        sa.Column('llm_calls', sa.Integer(), server_default='0', nullable=False),
+        sa.Column('llm_failures', sa.Integer(), server_default='0', nullable=False),
     )
     op.create_index('ix_knowledge_memory_collection_slug', 'knowledge_memory', ['collection_slug'])
     op.create_index(
