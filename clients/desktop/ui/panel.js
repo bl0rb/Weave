@@ -1,4 +1,4 @@
-// Tray panel: ask an agent or search Weave.
+// Tray panel and quick overlay (quick.html, opened by the hotkey): ask an agent or search Weave.
 import { invoke, Channel, listen, t, h, icon, spinner, markdown, wireLinks } from './common.js';
 
 let state = null;
@@ -18,6 +18,8 @@ let draft = '';
 let update = null;
 
 const panel = document.getElementById('panel');
+/** The Spotlight-like overlay: one bar, answers expand below it. */
+const QUICK = document.body.classList.contains('quick');
 wireLinks(panel);
 
 async function refresh() {
@@ -153,6 +155,12 @@ function renderMessages() {
   const content = document.getElementById('content');
   if (!content) return;
   const atBottom = content.scrollHeight - content.scrollTop - content.clientHeight < 40;
+  if (QUICK) {
+    content.replaceChildren(...messages.map((m) => (m.role === 'user' ? h('div', { class: 'msg-user' }, m.text) : renderAnswer(m))));
+    content.scrollTop = content.scrollHeight;
+    fitWindow();
+    return;
+  }
   content.replaceChildren(...(messages.length
     ? messages.map((m) => (m.role === 'user' ? h('div', { class: 'msg-user' }, m.text) : renderAnswer(m)))
     : [h('div', { class: 'empty compact' },
@@ -210,8 +218,73 @@ async function signIn() {
   refresh();
 }
 
+let fitPending = false;
+/** The overlay window follows its content's height. */
+function fitWindow() {
+  if (!QUICK || fitPending) return;
+  fitPending = true;
+  requestAnimationFrame(() => {
+    fitPending = false;
+    invoke('fit_quick', { height: Math.ceil(panel.getBoundingClientRect().height) + 24 });
+  });
+}
+
+function quickNote(title, detail, ...buttons) {
+  return h('div', { class: 'quick-note' },
+    h('div', { class: 'text' }, h('strong', null, title), detail && h('span', { class: 'muted small' }, detail)),
+    buttons);
+}
+
+function renderQuick() {
+  const input = h('textarea', {
+    rows: 1,
+    disabled: !state.signed_in,
+    placeholder: mode === 'ask' ? t('Frage an Weave …') : t('In Weave suchen …'),
+    value: draft,
+    oninput: (e) => { draft = e.target.value; e.target.style.height = 'auto'; e.target.style.height = `${e.target.scrollHeight}px`; fitWindow(); },
+    onkeydown: (e) => {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(e.target.value); }
+    },
+  });
+  const bar = h('div', { class: 'quick-bar' },
+    h('img', { src: 'weave.svg', alt: '' }),
+    input,
+    state.signed_in && mode === 'ask' && h('select', { 'aria-label': 'Agent', disabled: !bots?.length, onchange: (e) => setAgent(e.target.value) },
+      bots?.length ? bots.map((b) => h('option', { value: b.id, selected: b.id === agent, title: b.description ?? '' }, b.name ?? b.id)) : h('option', null, t('Kein Agent verfügbar'))),
+    state.signed_in && h('button', {
+      class: 'icon-only plain', title: mode === 'ask' ? t('Suchen') : t('Fragen'), 'aria-label': mode === 'ask' ? t('Suchen') : t('Fragen'),
+      onclick: () => { mode = mode === 'ask' ? 'search' : 'ask'; render(); },
+    }, icon(mode === 'ask' ? 'search' : 'send')),
+    state.signed_in && mode === 'ask' && messages.length > 0 && h('button', { class: 'icon-only plain', title: t('Neue Unterhaltung'), 'aria-label': t('Neue Unterhaltung'), onclick: newConversation }, icon('plus')),
+    streaming
+      ? h('button', { class: 'quick-send', onclick: stop, title: t('Stopp') }, icon('stop'))
+      : h('button', { class: 'primary quick-send', title: t('Senden'), disabled: !state.signed_in || (mode === 'ask' && !agent), onclick: () => submit(input.value) }, icon('arrowUp')));
+
+  const parts = [bar];
+  if (!state.signed_in) {
+    parts.push(!state.server_url
+      ? quickNote(t('Weave einrichten'), t('Tragen Sie die Adresse Ihres Weave-Servers ein.'),
+        h('button', { onclick: () => invoke('open_settings') }, t('Einstellungen öffnen')))
+      : quickNote(t('Bei Weave anmelden'), loginError ?? t('Die Anmeldung läuft über das SSO Ihrer Organisation im Browser.'),
+        state.login_pending
+          ? [spinner(), h('button', { onclick: () => invoke('cancel_sign_in') }, t('Abbrechen'))]
+          : [h('button', { class: 'primary', onclick: signIn }, t('Anmelden')), h('button', { onclick: () => invoke('open_settings') }, t('Einstellungen'))]));
+  } else if (update?.available) {
+    parts.push(quickNote(t('Version %@ ist verfügbar.', update.available), update.installing ? t('Update wird installiert – Weave startet danach neu …') : null,
+      !update.installing && h('button', { onclick: () => invoke('install_update').catch(() => {}) }, t('Jetzt installieren'))));
+  }
+  const content = h('section', { class: 'quick-content', id: 'content' });
+  if (state.signed_in && mode === 'ask' && messages.length) parts.push(content);
+  if (state.signed_in && mode === 'search' && searchView) { parts.push(content); renderSearch(content); }
+  panel.replaceChildren(...parts);
+  if (content.isConnected && mode === 'ask') renderMessages();
+  fitWindow();
+  input.focus();
+}
+
 function render() {
   if (!state) return;
+  if (QUICK) return renderQuick();
   const settingsButton = h('button', { class: 'icon-only plain', title: t('Einstellungen'), 'aria-label': t('Einstellungen'), onclick: () => invoke('open_settings') }, icon('gear'));
   if (!state.signed_in) {
     panel.replaceChildren(
@@ -261,6 +334,7 @@ function render() {
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { if (streaming) stop(); else invoke('hide_panel'); }
+  if (QUICK && (e.metaKey || e.ctrlKey) && e.key === ',') { e.preventDefault(); invoke('open_settings'); }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') { e.preventDefault(); newConversation(); }
 });
 

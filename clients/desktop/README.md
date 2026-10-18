@@ -1,9 +1,11 @@
 # Weave für den Desktop
 
-Tray-App für macOS (Menüleiste) und Windows (Infobereich): Klick auf das
-Weave-Symbol oder `Cmd/Ctrl+Shift+Space`, Agent wählen, fragen – oder in allen
-Wissensräumen suchen, die man lesen darf. Antworten kommen gestreamt mit
-Quellen; Quellen mit Link (z. B. Confluence) öffnen sich im Browser.
+Tray-App für macOS (Menüleiste) und Windows (Infobereich). `Cmd/Ctrl+Shift+Space`
+öffnet – wie bei Claude – eine schwebende Eingabeleiste in der Bildschirmmitte, auch über
+Vollbild-Apps; die Antwort klappt darunter auf. Ein Klick auf das Weave-Symbol öffnet das
+Fenster am Symbol. Agent wählen, fragen – oder in allen Wissensräumen suchen, die man lesen
+darf. Antworten kommen gestreamt mit Quellen; Quellen mit Link (z. B. Confluence) öffnen
+sich im Browser.
 
 Gebaut mit Tauri 2 wie [KeyZapper](https://github.com/bl0rb/ClaudeKeyZapper);
 die Einstellungen sehen auch so aus. Keine Build-Kette für die Oberfläche

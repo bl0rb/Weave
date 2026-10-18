@@ -20,7 +20,10 @@ use tauri::image::Image;
 use tauri::ipc::Channel;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent, Wry};
+use tauri::{
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    WindowEvent, Wry,
+};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
@@ -31,6 +34,8 @@ const KEYRING_SERVICE: &str = "Weave Desktop";
 /// First automatic update check after start, then this often.
 const UPDATE_FIRST_CHECK: Duration = Duration::from_secs(20);
 const UPDATE_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60);
+/// Logical width of the quick overlay window (the bar plus its shadow margin).
+const QUICK_WIDTH: f64 = 760.0;
 
 #[derive(Clone)]
 struct Session {
@@ -235,7 +240,7 @@ async fn run_sign_in(app: &AppHandle, server: &str) -> Result<(), String> {
     }
     *app.state::<AppState>().session.lock().unwrap() =
         Some(Session { server: server.to_string(), token: token.to_string(), username: None });
-    show_panel(app, false);
+    show_quick(app);
     Ok(())
 }
 
@@ -369,10 +374,17 @@ fn open_settings(app: AppHandle) -> Result<(), String> {
     show_settings(&app).map_err(|e| e.to_string())
 }
 
+/// Hides whichever window called it (tray panel or quick overlay).
 #[tauri::command]
-fn hide_panel(app: AppHandle) {
-    if let Some(panel) = app.get_webview_window("panel") {
-        let _ = panel.hide();
+fn hide_panel(window: WebviewWindow) {
+    let _ = window.hide();
+}
+
+/// The quick overlay grows with its content; its top edge stays put.
+#[tauri::command]
+fn fit_quick(app: AppHandle, height: f64) {
+    if let Some(quick) = app.get_webview_window("quick") {
+        let _ = quick.set_size(LogicalSize::new(QUICK_WIDTH, height.clamp(80.0, 640.0)));
     }
 }
 
@@ -398,6 +410,59 @@ fn show_panel(app: &AppHandle, at_tray: bool) {
     let _ = panel.emit("panel-shown", ());
 }
 
+/// Opens the quick overlay centred on the screen with the mouse pointer,
+/// a little above the middle -- where Spotlight and Claude put theirs.
+fn show_quick(app: &AppHandle) {
+    let Some(quick) = app.get_webview_window("quick") else { return };
+    if let Some(panel) = panel(app) {
+        let _ = panel.hide();
+    }
+    let monitor = app
+        .cursor_position()
+        .ok()
+        .and_then(|p| app.monitor_from_point(p.x, p.y).ok().flatten())
+        .or_else(|| quick.primary_monitor().ok().flatten());
+    if let Some(monitor) = monitor {
+        let (origin, size) = (monitor.position(), monitor.size());
+        let width = (QUICK_WIDTH * monitor.scale_factor()) as i32;
+        let x = origin.x + (size.width as i32 - width) / 2;
+        let y = origin.y + (size.height as f64 * 0.22) as i32;
+        let _ = quick.set_position(PhysicalPosition::new(x, y));
+    }
+    let _ = quick.show();
+    let _ = quick.set_focus();
+    let _ = quick.emit("panel-shown", ());
+}
+
+fn toggle_quick(app: &AppHandle) {
+    match app.get_webview_window("quick") {
+        Some(quick) if quick.is_visible().unwrap_or(false) => {
+            let _ = quick.hide();
+        }
+        _ => show_quick(app),
+    }
+}
+
+/// macOS: show the window on every Space and above full-screen apps, like a
+/// menu-bar popover; otherwise it would open on the desktop Space instead.
+#[cfg(target_os = "macos")]
+fn float_over_full_screen(window: &WebviewWindow) {
+    use objc2_app_kit::{NSStatusWindowLevel, NSWindow, NSWindowCollectionBehavior};
+    let Ok(pointer) = window.ns_window() else { return };
+    // SAFETY: called on the main thread (setup); the pointer is the live
+    // NSWindow behind this Tauri window.
+    let ns_window = unsafe { &*(pointer as *const NSWindow) };
+    ns_window.setCollectionBehavior(
+        NSWindowCollectionBehavior::CanJoinAllSpaces
+            | NSWindowCollectionBehavior::FullScreenAuxiliary
+            | NSWindowCollectionBehavior::IgnoresCycle,
+    );
+    ns_window.setLevel(NSStatusWindowLevel);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn float_over_full_screen(_window: &WebviewWindow) {}
+
 fn toggle_panel(app: &AppHandle, at_tray: bool) {
     let Some(panel) = panel(app) else { return };
     // A click on the tray icon first blurs (and so hides) the open panel;
@@ -416,8 +481,10 @@ fn toggle_panel(app: &AppHandle, at_tray: bool) {
 }
 
 fn show_settings(app: &AppHandle) -> tauri::Result<()> {
-    if let Some(panel) = panel(app) {
-        let _ = panel.hide();
+    for label in ["panel", "quick"] {
+        if let Some(window) = app.get_webview_window(label) {
+            let _ = window.hide();
+        }
     }
     if let Some(window) = app.get_webview_window("settings") {
         window.show()?;
@@ -475,7 +542,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
-            "ask" => show_panel(app, false),
+            "ask" => show_quick(app),
             "settings" => {
                 let _ = show_settings(app);
             }
@@ -518,7 +585,7 @@ fn main() {
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
                     if event.state() == ShortcutState::Pressed {
-                        toggle_panel(app, false);
+                        toggle_quick(app);
                     }
                 })
                 .build(),
@@ -544,6 +611,11 @@ fn main() {
             });
 
             let handle = app.handle().clone();
+            for label in ["panel", "quick"] {
+                if let Some(window) = handle.get_webview_window(label) {
+                    float_over_full_screen(&window);
+                }
+            }
             build_tray(&handle)?;
             if let Err(error) = register_hotkey(&handle, &effective.hotkey) {
                 eprintln!("{error}");
@@ -562,7 +634,7 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if window.label() != "panel" {
+            if !matches!(window.label(), "panel" | "quick") {
                 return;
             }
             match event {
@@ -593,6 +665,7 @@ fn main() {
             open_url,
             open_settings,
             hide_panel,
+            fit_quick,
             get_update_state,
             check_for_updates,
             install_update,

@@ -22,11 +22,27 @@
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "focus": true
+      },
+      {
+        "label": "quick",
+        "url": "quick.html",
+        "title": "Weave",
+        "width": 760,
+        "height": 92,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": true
       }
     ],
     "security": {
       "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,
