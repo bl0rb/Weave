@@ -54,3 +54,39 @@ npm run dev
 
 Tests der Rust-Seite: `cargo test` in `src-tauri/`. Paket bauen: `npm run build`
 (macOS `.app`/`.dmg`, Windows `.msi`/`.exe`; Windows braucht die WebView2-Runtime).
+
+Auf macOS 27 bricht der Release-Build derzeit mit `mis-aligned LINKEDIT` in
+Proc-Macro-Bibliotheken ab (das System-`strip` beschädigt sie). Lokal hilft
+`CARGO_PROFILE_RELEASE_STRIP=none npm run build`; die CI läuft auf macOS 15.
+
+## Builds und Releases
+
+`.github/workflows/desktop.yml` testet und baut bei jedem Pull Request, der
+`clients/desktop/` berührt, beide Installer: `Weave-<version>.dmg` (macOS,
+universal) und `Weave-<version>.msi` (Windows). Sie liegen als Artefakte am Lauf.
+
+Ein Tag `desktop-vX.Y.Z` veröffentlicht beide als GitHub-Release
+(`desktop-vX.Y.Z-rc.1` als Vorabversion). Das Präfix hält diese Tags aus
+`release.yml` heraus, das bei `v*` den Server-Stack veröffentlicht.
+
+```bash
+git tag desktop-v0.1.0
+```
+
+```bash
+git push origin desktop-v0.1.0
+```
+
+Signieren ist optional und schaltet sich mit den Repository-Secrets ein. Ohne
+sie ist die macOS-App nur ad hoc signiert (Gatekeeper warnt beim ersten Start)
+und das MSI unsigniert (SmartScreen warnt) – gut zum Testen, nicht für den
+Rollout.
+
+| Secret | Inhalt |
+|---|---|
+| `APPLE_CERTIFICATE` | „Developer ID Application“-Zertifikat als `.p12`, base64 |
+| `APPLE_CERTIFICATE_PASSWORD` | Passwort der `.p12` |
+| `APPLE_SIGNING_IDENTITY` | z. B. `Developer ID Application: Firma (TEAMID)` |
+| `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` | Notarisierung: Apple-ID, app-spezifisches Passwort, Team-ID |
+| `WINDOWS_CERTIFICATE` | Code-Signing-Zertifikat als `.pfx`, base64 |
+| `WINDOWS_CERTIFICATE_PASSWORD` | Passwort der `.pfx` |
