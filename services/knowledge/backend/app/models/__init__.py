@@ -3,6 +3,7 @@ from app.models.models import (
     Document,
     DocumentStatus,
     IngestEvent,
+    KnowledgeMemory,
     VectorType,
 )
 
@@ -11,5 +12,6 @@ __all__ = [
     'Document',
     'DocumentStatus',
     'IngestEvent',
+    'KnowledgeMemory',
     'VectorType',
 ]

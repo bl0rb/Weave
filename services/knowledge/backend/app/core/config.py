@@ -106,6 +106,17 @@ class Settings(BaseSettings):
     chat_config_base_url: str = ''
     chat_config_service_token: str = ''
 
+    # --- Knowledge memory (ADR-0009, app/services/memory.py): condensed
+    # summaries per document and collection. 'off' (default) builds nothing;
+    # 'extractive' needs no LLM; 'llm' uses the central chat provider read
+    # through chat_config_base_url/chat_config_service_token above and falls
+    # back to extractive per entry whenever that model is missing or fails.
+    knowledge_memory_mode: str = 'off'
+    memory_debounce_seconds: int = 120
+    memory_max_documents_per_run: int = 25
+    memory_max_input_chars: int = 12000
+    memory_llm_timeout_seconds: float = 120.0
+
     # --- Structure-aware chunking (see app/services -- filled in a later
     # stage). Chars, not tokens: cheap to compute against raw markdown
     # without pulling in a tokenizer at this layer.

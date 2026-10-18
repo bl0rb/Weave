@@ -63,6 +63,15 @@ The [knowledge portal guide](docs/wissensportal.md) explains the separation
 between processing and publication. Under the normal workflow, only content
 that a user explicitly releases is indexed.
 
+### Knowledge memory (opt-in, unreleased)
+
+With `KNOWLEDGE_MEMORY_MODE` set to `extractive` or `llm` in `weave.yaml`, Weave
+keeps a condensed summary of every released document and an overview of every
+knowledge space, rebuilt automatically after each change. Bots then answer
+overview questions such as "Was ist im Wissensbereich X?" or "Welche Dokumente
+gibt es zu Y?" from it, with sources, and only within what the asking person may
+read ([ADR-0009](docs/adr/0009-wissensgedaechtnis.md)).
+
 ### New in v0.7.2
 
 **Review portal.** Reviewers can *park* a document (decide later) next to

@@ -14,6 +14,7 @@ Dieses Verzeichnis enthält die Architektur-Entscheidungen der Weave-Plattform. 
 | [0006](0006-foederierte-anmeldung.md) | Weave-Ingest als Identitaetsanbieter der Plattform | angenommen | 2026-09-01 |
 | [0007](0007-zentrale-chat-provider-konfiguration.md) | Zentrale Chat-Provider-Konfiguration in Weave-Ingest | angenommen | 2026-09-02 |
 | [0008](0008-besitz-freigaben-metadaten.md) | Besitz, Freigaben und Metadaten für Wissensbereiche und Bots | angenommen | 2026-09-26 |
+| [0009](0009-wissensgedaechtnis.md) | Wissensgedächtnis: Zusammenfassungen pro Dokument und Wissensbereich | angenommen | 2026-10-18 |
 
 ## Format
 
@@ -51,3 +52,6 @@ Weave-Ingest speichert den OpenAI-kompatiblen Endpoint, Modellnamen und den vers
 
 ### 0008: Besitz, Freigaben und Metadaten
 Rechte an Wissensbereichen entstehen nur über Freigaben an Personen (lokal oder SSO) oder Teams mit den Rollen Besitzer, Mitglied und Leser; Bots kennen Besitzer und Nutzer. Beim Anlegen werden Zweck, zuständiges Team und Ersteller erfasst. Bots antworten nur aus Bereichen, die der Fragende selbst lesen darf; SSO-Personen sind nach ihrer ersten Anmeldung freigebbar.
+
+### 0009: Wissensgedächtnis
+Weave-Knowledge verdichtet nach jeder Änderung an einem Wissensbereich (entprellt, über den bestehenden Sync-Tick) jedes Dokument zu Titel, Typ, Kurzfassung und Kernpunkten und jeden Bereich zu einer Übersicht – per zentralem Chat-Provider oder ohne LLM extraktiv (`KNOWLEDGE_MEMORY_MODE`, Standard `off`). Weave-Retrieval liest die neue Tabelle `knowledge_memory` über dasselbe Rechteprädikat wie die Chunk-Suche; Runtime beantwortet Überblicksfragen (Intent `overview`) daraus mit Quellen und fällt sonst auf die Chunk-Suche zurück.

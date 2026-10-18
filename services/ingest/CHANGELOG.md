@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Weave transformation, the product is called Weave Ingest. Entries below predating that
 > change are left as written and refer to the project under its former name.
 
+## [Unreleased]
+
+### Added
+- **Knowledge memory** ([ADR-0009](../../docs/adr/0009-wissensgedaechtnis.md)), opt-in via
+  `KNOWLEDGE_MEMORY_MODE` in `weave.yaml` (`off` by default, `extractive` without LLM budget, `llm`
+  with the central chat provider and extractive fallback). After every change to a knowledge space
+  (release, new version, re-index, withdrawal, rename), debounced per space, Weave-Knowledge builds a
+  summary per document (title, type, summary, key points) and an overview per space. Bots answer
+  "Was weißt du?", "Was ist im Wissensbereich X?", "Welche Dokumente gibt es zu Y?" and "Worum geht
+  es in Dokument Z?" from it with sources (new intent `overview`, `Source.memory_kind`), falling back
+  to the regular search when the memory has nothing.
+  - Weave-Knowledge: migration `0007_knowledge_memory` (table `knowledge_memory`), task
+    `weave.knowledge.build_memory`, scheduled by the existing collection-sync tick.
+  - Weave-Retrieval: `POST /api/v1/memory`, read with the same permission predicate as the search;
+    it refuses calls without a concrete `allowed_collections`.
+  - Production: `GRANT SELECT ON knowledge_memory TO weave_retrieval_ro` unless default privileges
+    already cover new tables.
+
 ## [0.7.8] - 2026-10-18
 
 ### Added

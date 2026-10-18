@@ -133,6 +133,11 @@ class Source(BaseModel):
     source_url: str | None = None
     uploaded_by: str | None = None
     uploaded_at: str | None = None
+    # ADR-0009: set when this source is a knowledge-memory entry rather than
+    # a chunk -- 'document' (a document summary, `chunk_id` 0) or
+    # 'collection' (a knowledge-space overview, `document_id`
+    # 'collection:<slug>', `chunk_id` 0). None for every chunk source.
+    memory_kind: Literal['document', 'collection'] | None = None
 
     @field_validator('source_url')
     @classmethod

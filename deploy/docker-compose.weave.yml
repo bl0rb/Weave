@@ -573,6 +573,8 @@ services:
       # indexing, so it needs the identical values.
       EMBEDDING_REQUEST_TIMEOUT_SECONDS: ${EMBEDDING_REQUEST_TIMEOUT_SECONDS:-180}
       EMBEDDING_MAX_ATTEMPTS: ${EMBEDDING_MAX_ATTEMPTS:-6}
+      # ADR-0009 knowledge memory, built by this worker ('off' | 'extractive' | 'llm').
+      KNOWLEDGE_MEMORY_MODE: ${KNOWLEDGE_MEMORY_MODE:-off}
       # Same shared `x-embedding-env` anchor as weave-knowledge above --
       # the worker is what actually calls the embedding provider during
       # indexing, so it needs the identical values, not just "similar" ones.
@@ -848,6 +850,9 @@ services:
       # 'rules': deterministic keyword/heuristic intent router. 'llm':
       # delegates classification to LLM_PROVIDER above.
       ROUTER_MODE: ${ROUTER_MODE:-rules}
+      # ADR-0009: anything but 'off' answers overview questions from the
+      # knowledge memory (same value as weave-knowledge-worker).
+      KNOWLEDGE_MEMORY_MODE: ${KNOWLEDGE_MEMORY_MODE:-off}
       # Symmetric secret -- see the file header's WEAVE_DELEGATION_SECRET
       # entry. Weave-Runtime is the ISSUER side (mint_delegation_token);
       # Weave-Tools below is the verifier.

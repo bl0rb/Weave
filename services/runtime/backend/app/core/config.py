@@ -91,6 +91,12 @@ class Settings(BaseSettings):
     # reject, not something this settings object needs to gate.
     router_mode: str = 'rules'
 
+    # --- Knowledge memory (ADR-0009). Shared with Weave-Knowledge through
+    # weave.yaml; Runtime only asks "not 'off'": overview questions then get
+    # the 'overview' intent and are answered from Weave-Retrieval's
+    # /api/v1/memory, falling back to the regular chunk search.
+    knowledge_memory_mode: str = 'off'
+
     # --- Delegation tokens (see app/services/delegation.py,
     # contracts/n8n-flow.md). How Weave-Runtime lends an external agent
     # (n8n today, any MCP client tomorrow) the EXACT read-scope of the human

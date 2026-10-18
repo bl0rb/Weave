@@ -803,3 +803,26 @@ def test_without_reindex_flag_an_already_indexed_document_is_left_untouched():
         assert chunks[0].text == 'stale chunk'
     finally:
         db.close()
+
+
+def test_successful_index_marks_the_collection_memory_for_a_rebuild(monkeypatch):
+    """ADR-0009: every newly indexed or re-indexed document triggers a
+    (debounced) rebuild of its collection's knowledge memory."""
+    from app.models.models import KnowledgeMemory
+
+    monkeypatch.setattr(settings, 'knowledge_memory_mode', 'extractive')
+    db = TestingSessionLocal()
+    try:
+        document = _make_document(db, frontmatter=SAMPLE_FRONTMATTER, collection_slug='handbuecher')
+    finally:
+        db.close()
+    with patch('app.workers.tasks.ingest_client.fetch_released_markdown', return_value=_sample_markdown(SAMPLE_FRONTMATTER)):
+        index_document(str(document.id))
+    db = TestingSessionLocal()
+    try:
+        state = db.query(KnowledgeMemory).filter_by(kind='collection', collection_slug='handbuecher').one()
+        assert state.dirty_since is not None
+        db.delete(state)
+        db.commit()
+    finally:
+        db.close()

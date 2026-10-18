@@ -94,6 +94,22 @@ shared:
       user's behalf (GET /v1/portal/releases/{id}/artifacts/{filename}). No
       personal administrator token or UI bootstrap is required.
 
+  KNOWLEDGE_MEMORY_MODE:
+    secret: false
+    value: "off"
+    type: string
+    required: false
+    targets:
+      - {service: knowledge, var: KNOWLEDGE_MEMORY_MODE}
+      - {service: runtime, var: KNOWLEDGE_MEMORY_MODE}
+    comment: >
+      ADR-0009 knowledge memory: condensed summaries per document and
+      knowledge space, rebuilt after every change and used by bots for
+      overview questions. 'off' (default) builds nothing and leaves bots
+      unchanged; 'extractive' costs no LLM budget; 'llm' summarizes with the
+      central chat provider and falls back to extractive per entry. Knowledge
+      builds, Runtime only asks "not off" -- one value so the two cannot drift.
+
   # --- Postgres cluster credentials -----------------------------------------
   # Not called out in docs/betrieb.md section 5 (that section is about
   # application-level secrets between the nine services) but structurally

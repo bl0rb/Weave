@@ -31,11 +31,12 @@ import logging
 from datetime import datetime, timezone
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.models import Collection
+from app.models.models import Collection, KnowledgeMemory
+from app.services import memory
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +128,7 @@ def sync_collections(db: Session, *, timeout: float = _DEFAULT_TIMEOUT_SECONDS) 
 
     now = datetime.now(timezone.utc)
     seen_slugs: set[str] = set()
+    renamed: list[str] = []
     for entry in items:
         if not isinstance(entry, dict) or 'slug' not in entry:
             raise CollectionSyncError(f'{url!r} returned a malformed entry: {entry!r}')
@@ -136,6 +138,8 @@ def sync_collections(db: Session, *, timeout: float = _DEFAULT_TIMEOUT_SECONDS) 
         if collection is None:
             collection = Collection(slug=slug)
             db.add(collection)
+        elif (collection.name, collection.description) != (entry.get('name', slug), entry.get('description')):
+            renamed.append(slug)
         collection.name = entry.get('name', slug)
         collection.description = entry.get('description')
         collection.read_teams = entry.get('read_teams') or []
@@ -159,8 +163,12 @@ def sync_collections(db: Session, *, timeout: float = _DEFAULT_TIMEOUT_SECONDS) 
         stale = db.execute(select(Collection)).scalars().all()
     for row in stale:
         db.delete(row)
+        db.execute(delete(KnowledgeMemory).where(KnowledgeMemory.collection_slug == row.slug))
 
     db.commit()
+    # ADR-0009: a new name or description changes the collection's overview.
+    for slug in renamed:
+        memory.touch(db, slug)
     logger.info('collection sync: upserted %d collection(s), removed %d stale row(s)', len(seen_slugs), len(stale))
     return len(seen_slugs)
 

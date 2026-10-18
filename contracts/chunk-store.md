@@ -129,6 +129,26 @@ Weave-Retrieval  --  beantwortet "welche Collections darf Team X lesen"
 
 Weave-Knowledge ist der **einzige Schreiber** von `collections` in dieser Datenbank (genau wie bei `documents`/`chunks`) — es schreibt hier nie etwas zurueck nach Weave-Ingest. Weave-Retrieval liest `collections` genauso read-only mit wie `documents`/`chunks` (siehe "DB-Rolle" unten — derselbe `GRANT SELECT` deckt alle drei Tabellen ab) und ist damit die Lese-Autoritaet dafuer, welche Collections ein Team lesen darf; es legt dafuer **kein eigenes Schema** an, exakt wie im Architektur-Entscheidungsabschnitt oben fuer `documents`/`chunks` beschrieben.
 
+## Tabelle `knowledge_memory`
+
+Extrahiert aus Weave-Knowledges `backend/app/models/models.py` (`class KnowledgeMemory`) + `backend/alembic/versions/0007_knowledge_memory.py`. Das Wissensgedächtnis nach [ADR-0009](../docs/adr/0009-wissensgedaechtnis.md): verdichtete Zusammenfassungen, geschrieben ausschliesslich von Weave-Knowledge (`app/services/memory.py`), gelesen von Weave-Retrieval (`POST /api/v1/memory`).
+
+| Spalte | Typ | Nullable | Bedeutung |
+|---|---|---|---|
+| `id` | `integer` (PK) | nein | |
+| `kind` | `varchar(16)` | nein | `document` (eine Zeile pro zusammengefasstem Dokument) \| `collection` (eine Zeile pro Wissensbereich, zugleich dessen Neuaufbau-Zustand). |
+| `collection_slug` | `varchar(255)`, indexiert | nein | Wissensbereich; bei `collection` eindeutig (partieller Unique-Index `uq_knowledge_memory_collection`). |
+| `document_id` | `uuid` (FK `documents.id`, `ON DELETE CASCADE`), unique | ja | Nur bei `document`. |
+| `title`, `document_type` | `varchar` | ja | Titel bzw. Dokumentart; bei `collection` ist `title` der Bereichsname. |
+| `summary` | `text` | ja | Kurzfassung bzw. Bereichsübersicht. |
+| `key_points`, `topics` | `json` (`list[str]`) | nein | Kernpunkte (`document`) bzw. Hauptthemen (`collection`). |
+| `source_document_ids` | `json` (`list[str]`) | nein | Nur `collection`: Dokument-IDs, aus denen die Übersicht gebaut wurde. |
+| `source_sha256` | `varchar(64)` | ja | `document`: Snapshot-Hash (`_weave_markdown_sha256`); `collection`: Fingerabdruck der Eingaben. |
+| `generator`, `model` | `varchar` | ja | `llm` oder `extractive`, verwendetes Modell. |
+| `built_at`, `dirty_since`, `building_since` | `timestamptz` | ja | Aufbauzeitpunkt bzw. Entprell-/Sperrzustand (nur `collection`). |
+
+**Rechte:** Die Tabelle trägt keine eigene Berechtigung. Weave-Retrieval liest `document`-Zeilen ausschliesslich per `JOIN documents` durch dieselbe `apply_filters()`-Bedingung wie die Chunk-Suche und `collection`-Zeilen ausschliesslich für Slugs aus `allowed_collections`; der Übersichtstext wird nur ausgegeben, solange alle `source_document_ids` noch `indexed` im selben Bereich sind. Dokumente ohne Collection erhalten kein Gedächtnis.
+
 ## Indexe
 
 | Index | Tabelle/Spalte(n) | Typ | Nur Postgres? |
@@ -153,6 +173,8 @@ CREATE ROLE weave_retrieval_ro WITH LOGIN PASSWORD '<siehe Secret-Manager, niema
 GRANT CONNECT ON DATABASE weave_knowledge TO weave_retrieval_ro;
 GRANT USAGE ON SCHEMA public TO weave_retrieval_ro;
 GRANT SELECT ON documents, chunks, collections TO weave_retrieval_ro;
+-- Seit ADR-0009 (entfaellt mit der DEFAULT-PRIVILEGES-Zeile unten):
+GRANT SELECT ON knowledge_memory TO weave_retrieval_ro;
 
 -- Optional, damit ein zukuenftig additiv hinzugefuegtes Read-Model
 -- (siehe "Versionierungsregel" unten) nicht erst einen manuellen GRANT
@@ -182,3 +204,4 @@ Lokale Entwicklung und die Pytest-Suite beider Services laufen gegen eine lokale
 - **v1 (2026-08-31):** Initialer Vertrag, extrahiert aus Weave-Knowledges `backend/app/models/models.py` (`Document`, `Chunk`, `VectorType`) und `backend/alembic/versions/0001_init.py`. Erstellt im Rahmen des Weave-Retrieval-Service-Skeletons (Phase 3).
 - **Additiv, weiterhin v1 (2026-08-31):** `collections`-Tabelle (Registry-Spiegel), `documents.collection_slug` (nullable, kein FK) und `chunks.meta.collection` hinzugefuegt — siehe "Tabelle `collections`" und "Sync-Richtung" oben. Rein additiv im Sinn der Versionierungsregel oben (neue nullable Spalte + neue Tabelle), daher kein Versionssprung: ein bereits laufendes Weave-Retrieval, das diese Felder noch nicht kennt, funktioniert unveraendert weiter, es sieht nur noch keine Collection-Filterung.
 - **Additiv, weiterhin v1 (2026-09-24):** `collections.visibility` (NOT NULL, Default `'public'`) und `collections.read_users` (NOT NULL, Default `[]`) hinzugefuegt — Wissensbereiche sind jetzt zusaetzlich zu oeffentlich/Team auch an einzelne Personen teilbar. `visibility` ersetzt die fruehere implizite "leeres `read_teams` = oeffentlich"-Regel als massgebliches Sichtbarkeits-Flag (siehe "Tabelle `collections`" oben); `read_users` ist das personenbezogene Gegenstueck zu `read_teams`. Ein Sync-Payload eines aelteren Weave-Ingest ohne diese beiden Felder wird von Weave-Knowledge so interpretiert, als kaeme er von einer Version mit der alten Regel (`visibility = 'public' if not read_teams else 'restricted'`, `read_users = []`) — additiv, kein Versionssprung: ein bereits laufendes Weave-Retrieval, das `visibility`/`read_users` noch nicht auswertet, funktioniert unveraendert weiter (es wertet dann weiterhin nur `read_teams` aus, mit dem alten leer-heisst-oeffentlich-Verhalten fuer JEDE Collection, nicht mehr nur fuer eine `'public'`-markierte).
+- **Additiv, weiterhin v1 (2026-10-18):** Tabelle `knowledge_memory` (Wissensgedächtnis, ADR-0009) hinzugefügt — neue Tabelle im Sinn der Versionierungsregel, kein Versionssprung. Ein Weave-Retrieval, das sie nicht kennt, funktioniert unverändert; `POST /api/v1/memory` liefert dann nichts, und Runtime fällt auf die Chunk-Suche zurück.

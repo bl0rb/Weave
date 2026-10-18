@@ -5,6 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.api.collections import router as collections_router
+from app.api.memory import router as memory_router
 from app.api.search import router as search_router
 from app.core.config import settings
 from app.core.db import get_db
@@ -29,3 +30,4 @@ def healthcheck(db: Session = Depends(get_db)) -> HealthResponse:
 
 app.include_router(search_router)
 app.include_router(collections_router)
+app.include_router(memory_router)
