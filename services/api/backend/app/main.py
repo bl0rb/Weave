@@ -13,6 +13,7 @@ from app.api.internal import router as internal_router
 from app.api.me import router as me_router
 from app.api.openai_compat import router as openai_compat_router
 from app.api.portal_artifacts import router as portal_artifacts_router
+from app.api.search import router as search_router
 from app.core.config import settings
 from app.core.db import get_db
 from app.schemas.health import HealthResponse
@@ -44,6 +45,7 @@ app.include_router(bots_router)
 app.include_router(chat_router)
 app.include_router(openai_compat_router)
 app.include_router(collections_router)
+app.include_router(search_router)
 app.include_router(internal_router)
 app.include_router(portal_artifacts_router)
 app.include_router(me_router)

@@ -967,6 +967,7 @@ services:
       # ignored and the user lands on THIS gateway after logging in
       # instead of back in the UI, with nothing telling anyone why.
       OIDC_POST_LOGIN_ALLOWED_URLS: ${OIDC_POST_LOGIN_ALLOWED_URLS:-[]}
+      NATIVE_LOGIN_ENABLED: ${NATIVE_LOGIN_ENABLED:-false}
       # --- Federated login via Weave-Ingest (RECOMMENDED, and the
       # alternative to the OIDC block above -- configure one or the other).
       # This gateway then has no identity of its own: whoever can sign in

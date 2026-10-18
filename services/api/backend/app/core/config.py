@@ -180,6 +180,16 @@ class Settings(BaseSettings):
     # third party's.
     oidc_post_login_allowed_urls: list[str] = []
 
+    # --- Native-app login (RFC 8252), e.g. the Weave desktop tray app.
+    # A desktop app cannot be listed above: it listens on a loopback port
+    # the OS picks per login. When enabled, `return_to` may ALSO be exactly
+    # `http://127.0.0.1:<port>/callback` (or `http://[::1]:<port>/callback`)
+    # -- but only together with a PKCE `code_challenge` (S256). The one-time
+    # code is then bound to that challenge, and POST /v1/auth/session/exchange
+    # only redeems it with the matching `code_verifier`, so another local
+    # process that sees the redirect cannot use the code. Off by default.
+    native_login_enabled: bool = False
+
     # --- Federated login via Weave-Ingest (app/api/auth.py's
     # /v1/auth/ingest/login + /callback, app/services/ingest_identity.py).
     #

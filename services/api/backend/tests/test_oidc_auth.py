@@ -25,6 +25,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
+from authlib.oauth2.rfc7636 import create_s256_code_challenge
 from joserfc import jwt as joserfc_jwt
 from joserfc.jwk import RSAKey
 
@@ -955,3 +956,96 @@ def test_return_to_still_allows_ordinary_encoded_paths():
     assert _return_to_matches_base(
         'https://ui.example.com/ui/a%20b/callback', 'https://ui.example.com/ui'
     ) is True
+
+
+# --- native-app login (NATIVE_LOGIN_ENABLED, RFC 8252 loopback + PKCE) -------
+
+_NATIVE_VERIFIER = 'v' * 43 + 'native-desktop-verifier'
+_NATIVE_CHALLENGE = create_s256_code_challenge(_NATIVE_VERIFIER)
+_NATIVE_RETURN_TO = 'http://127.0.0.1:53917/callback'
+
+
+def _run_native_login(provider, *, subject: str, return_to: str = _NATIVE_RETURN_TO, challenge: str | None = _NATIVE_CHALLENGE):
+    key = RSAKey.generate_key(2048, parameters={'kid': 'key-1'}, private=True)
+    nonce_holder: dict[str, str] = {}
+    provider.handle(
+        _make_handler(
+            publish_key=key,
+            id_token_factory=lambda: _sign_id_token(key, kid='key-1', subject=subject, nonce=nonce_holder.get('nonce')),
+        )
+    )
+    params = {'return_to': return_to}
+    if challenge is not None:
+        params['code_challenge'] = challenge
+    login_response = client.get('/v1/auth/oidc/login', params=params, follow_redirects=False)
+    query = parse_qs(urlsplit(login_response.headers['location']).query)
+    nonce_holder['nonce'] = query['nonce'][0]
+    return _callback(state=query['state'][0])
+
+
+def test_native_login_redirects_to_loopback_and_requires_the_verifier(provider, oidc_settings, monkeypatch):
+    monkeypatch.setattr(settings, 'native_login_enabled', True)
+    response = _run_native_login(provider, subject='sub-native-happy')
+
+    location = response.headers['location']
+    assert location.startswith(f'{_NATIVE_RETURN_TO}?code=')
+    code = parse_qs(urlsplit(location).query)['code'][0]
+
+    assert client.post('/v1/auth/session/exchange', json={'code': code}).status_code == 400
+    wrong = client.post('/v1/auth/session/exchange', json={'code': code, 'code_verifier': 'w' * 43})
+    assert wrong.status_code == 400
+    ok = client.post('/v1/auth/session/exchange', json={'code': code, 'code_verifier': _NATIVE_VERIFIER})
+    assert ok.status_code == 200
+    assert ok.json()['session_token']
+
+
+def test_native_login_accepts_ipv6_loopback(provider, oidc_settings, monkeypatch):
+    monkeypatch.setattr(settings, 'native_login_enabled', True)
+    response = _run_native_login(provider, subject='sub-native-v6', return_to='http://[::1]:61000/callback')
+    assert response.headers['location'].startswith('http://[::1]:61000/callback?code=')
+
+
+def test_native_login_is_ignored_when_disabled(provider, oidc_settings):
+    response = _run_native_login(provider, subject='sub-native-off')
+    assert response.headers['location'] == '/'
+
+
+def test_native_login_without_challenge_is_ignored(provider, oidc_settings, monkeypatch):
+    monkeypatch.setattr(settings, 'native_login_enabled', True)
+    response = _run_native_login(provider, subject='sub-native-nochallenge', challenge=None)
+    assert response.headers['location'] == '/'
+
+
+@pytest.mark.parametrize(
+    'candidate',
+    [
+        'http://localhost:53917/callback',
+        'https://127.0.0.1:53917/callback',
+        'http://127.0.0.1/callback',
+        'http://127.0.0.1:53917/other',
+        'http://127.0.0.1:53917/callback?x=1',
+        'http://127.0.0.1:53917/callback#f',
+        'http://evil.example@127.0.0.1:53917/callback',
+        'http://127.0.0.1:53917\\@evil.example/callback',
+        'http://127.0.0.2:53917/callback',
+    ],
+)
+def test_native_login_rejects_non_loopback_shapes(provider, oidc_settings, monkeypatch, candidate):
+    monkeypatch.setattr(settings, 'native_login_enabled', True)
+    response = _run_native_login(provider, subject=f'sub-native-bad-{abs(hash(candidate))}', return_to=candidate)
+    assert response.headers['location'] == '/'
+
+
+def test_native_login_rejects_a_malformed_challenge(provider, oidc_settings, monkeypatch):
+    monkeypatch.setattr(settings, 'native_login_enabled', True)
+    response = _run_native_login(provider, subject='sub-native-badchallenge', challenge='too-short')
+    assert response.headers['location'] == '/'
+
+
+def test_allowlisted_return_to_with_challenge_binds_the_code(provider, oidc_settings, monkeypatch):
+    monkeypatch.setattr(settings, 'oidc_post_login_allowed_urls', [_ALLOWED_UI_ORIGIN])
+    response = _run_native_login(provider, subject='sub-allowlisted-pkce', return_to=_ALLOWED_UI_ORIGIN)
+    code = parse_qs(urlsplit(response.headers['location']).query)['code'][0]
+    assert client.post('/v1/auth/session/exchange', json={'code': code}).status_code == 400
+    ok = client.post('/v1/auth/session/exchange', json={'code': code, 'code_verifier': _NATIVE_VERIFIER})
+    assert ok.status_code == 200

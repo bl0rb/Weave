@@ -214,6 +214,9 @@ class SessionExchangeCode(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # PKCE S256 challenge of a native-app login (NATIVE_LOGIN_ENABLED); the
+    # exchange then requires the matching `code_verifier`. NULL for browser UIs.
+    code_challenge: Mapped[str | None] = mapped_column(String(43), nullable=True)
 
     user: Mapped[User] = relationship(back_populates='session_exchange_codes')
 

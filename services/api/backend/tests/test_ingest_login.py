@@ -351,3 +351,25 @@ def test_the_state_cookie_is_cleared_on_every_exit(configured, monkeypatch) -> N
     # that has nothing to do with that attempt.
     assert 'weave_api_ingest_state' in resp.headers.get('set-cookie', '')
     assert 'Max-Age=0' in resp.headers['set-cookie'] or 'expires=' in resp.headers['set-cookie'].lower()
+
+
+def test_native_app_login_via_ingest_binds_the_code_to_pkce(configured, monkeypatch) -> None:
+    from authlib.oauth2.rfc7636 import create_s256_code_challenge
+
+    monkeypatch.setattr(settings, 'native_login_enabled', True)
+    _mock_ingest(monkeypatch)
+    verifier = 'd' * 64
+    start = client.get(
+        '/v1/auth/ingest/login',
+        params={'return_to': 'http://127.0.0.1:49152/callback', 'code_challenge': create_s256_code_challenge(verifier)},
+        follow_redirects=False,
+    )
+
+    resp = _callback('a-code', _state_from(start))
+
+    location = resp.headers['location']
+    assert location.startswith('http://127.0.0.1:49152/callback?code=')
+    code = parse_qs(urlsplit(location).query)['code'][0]
+    assert client.post('/v1/auth/session/exchange', json={'code': code}).status_code == 400
+    ok = client.post('/v1/auth/session/exchange', json={'code': code, 'code_verifier': verifier})
+    assert ok.status_code == 200

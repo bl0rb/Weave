@@ -114,6 +114,7 @@ browser-side JavaScript:
 import hmac
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
@@ -121,7 +122,7 @@ from authlib.common.security import generate_token
 from authlib.oauth2.rfc7636 import create_s256_code_challenge
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse, RedirectResponse
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -477,6 +478,62 @@ def _resolve_return_to(candidate: str | None) -> str | None:
     return None
 
 
+_PKCE_CHALLENGE = re.compile(r'^[A-Za-z0-9_-]{43}$')
+_NATIVE_LOOPBACK_HOSTS = ('127.0.0.1', '::1')
+_NATIVE_CALLBACK_PATH = '/callback'
+
+
+def _valid_code_challenge(code_challenge: str | None) -> str | None:
+    """`code_challenge` if it has the shape of an S256 challenge (base64url
+    of a sha256 digest, no padding), else `None`."""
+    if code_challenge and _PKCE_CHALLENGE.match(code_challenge):
+        return code_challenge
+    return None
+
+
+def _is_native_loopback_return_to(candidate: str) -> bool:
+    """Exactly `http://127.0.0.1:<port>/callback` or `http://[::1]:<port>/
+    callback` -- the loopback redirect RFC 8252 section 7.3 describes. Any
+    port, because the OS assigns it per login; nothing else varies: no
+    userinfo, no query, no fragment, no other path."""
+    parsed = _split_or_none(candidate)
+    if parsed is None:
+        return False
+    return (
+        parsed.scheme == 'http'
+        and parsed.hostname in _NATIVE_LOOPBACK_HOSTS
+        and parsed.port is not None
+        and '@' not in parsed.netloc
+        and parsed.path == _NATIVE_CALLBACK_PATH
+        and not parsed.query
+        and not parsed.fragment
+    )
+
+
+def _resolve_login_target(return_to: str | None, code_challenge: str | None) -> tuple[str | None, str | None]:
+    """`(return_to, code_challenge)` to store in the login state cookie.
+
+    An allowlisted `return_to` works as before; a valid `code_challenge`
+    alongside it binds the one-time code to that challenge too. A loopback
+    `return_to` (NATIVE_LOGIN_ENABLED) is accepted ONLY with a valid
+    challenge -- without one, any local process listening on a port could
+    redeem the code. Everything else collapses to `(None, None)`, same
+    silence as `_resolve_return_to`."""
+    challenge = _valid_code_challenge(code_challenge)
+    resolved = _resolve_return_to(return_to)
+    if resolved is None and return_to and challenge and settings.native_login_enabled:
+        if _is_native_loopback_return_to(return_to):
+            resolved = return_to
+    if resolved is None:
+        return None, None
+    return resolved, challenge
+
+
+def _state_code_challenge(state_payload: dict) -> str | None:
+    value = state_payload.get('code_challenge')
+    return value if isinstance(value, str) and value else None
+
+
 def _append_query(url: str, params: dict[str, str]) -> str:
     """`url` with `params` merged into its query string -- preserving what
     it already carries rather than clobbering it, since a UI's own landing
@@ -498,7 +555,9 @@ def _append_code_param(return_to: str, code: str) -> str:
 
 
 @router.get('/oidc/login', dependencies=[Depends(require_oidc_enabled)])
-def oidc_login(request: Request, return_to: str | None = None) -> RedirectResponse:
+def oidc_login(
+    request: Request, return_to: str | None = None, code_challenge: str | None = None
+) -> RedirectResponse:
     """Starts the authorization-code + PKCE dance: fetches the provider's
     discovery document, generates `state`/`nonce`/PKCE `code_verifier`,
     redirects the browser to the provider's `authorization_endpoint`, and
@@ -508,7 +567,7 @@ def oidc_login(request: Request, return_to: str | None = None) -> RedirectRespon
     never retroactively change what an in-flight login resolves to -- in a
     signed, short-lived, httpOnly cookie for `oidc_callback` below to verify
     and consume."""
-    resolved_return_to = _resolve_return_to(return_to)
+    resolved_return_to, client_challenge = _resolve_login_target(return_to, code_challenge)
     try:
         discovery = get_discovery_document(settings.oidc_issuer)
     except OIDCError as exc:
@@ -540,7 +599,13 @@ def oidc_login(request: Request, return_to: str | None = None) -> RedirectRespon
 
     redirect_response = RedirectResponse(url=f'{authorization_endpoint}?{query}', status_code=status.HTTP_302_FOUND)
     state_payload = json.dumps(
-        {'state': state, 'nonce': nonce, 'code_verifier': code_verifier, 'return_to': resolved_return_to}
+        {
+            'state': state,
+            'nonce': nonce,
+            'code_verifier': code_verifier,
+            'return_to': resolved_return_to,
+            'code_challenge': client_challenge,
+        }
     )
     redirect_response.set_cookie(
         key=_OIDC_STATE_COOKIE,
@@ -708,6 +773,7 @@ def oidc_callback(
                     code_hash=hash_exchange_code(raw_exchange_code),
                     created_at=now,
                     expires_at=now + _EXCHANGE_CODE_TTL,
+                    code_challenge=_state_code_challenge(state_payload),
                 )
             )
             db.commit()
@@ -828,19 +894,23 @@ def _provision_ingest_user(db: Session, identity: IngestIdentity) -> User:
 
 
 @router.get('/ingest/login', dependencies=[Depends(require_ingest_login_enabled)])
-def ingest_login(request: Request, return_to: str | None = None) -> RedirectResponse:
+def ingest_login(
+    request: Request, return_to: str | None = None, code_challenge: str | None = None
+) -> RedirectResponse:
     """Step 1. `return_to` is resolved against OIDC_POST_LOGIN_ALLOWED_URLS
     right here rather than at the callback -- same reasoning as
     `oidc_login` above: a later allowlist change must not retroactively
     change where an in-flight login lands."""
-    resolved_return_to = _resolve_return_to(return_to)
+    resolved_return_to, client_challenge = _resolve_login_target(return_to, code_challenge)
     state = generate_token(32)
 
     redirect_response = RedirectResponse(
         url=_append_query(settings.ingest_login_url, {'handoff': '1', 'handoff_state': state}),
         status_code=status.HTTP_302_FOUND,
     )
-    state_payload = json.dumps({'state': state, 'return_to': resolved_return_to})
+    state_payload = json.dumps(
+        {'state': state, 'return_to': resolved_return_to, 'code_challenge': client_challenge}
+    )
     redirect_response.set_cookie(
         key=_INGEST_STATE_COOKIE,
         value=sign_value(state_payload),
@@ -924,6 +994,7 @@ def ingest_callback(
                     code_hash=hash_exchange_code(raw_exchange_code),
                     created_at=now,
                     expires_at=now + _EXCHANGE_CODE_TTL,
+                    code_challenge=_state_code_challenge(state_payload),
                 )
             )
             db.commit()
@@ -979,12 +1050,24 @@ def exchange_session_code(payload: SessionExchangeRequest, db: Session = Depends
     code_hash = hash_exchange_code(payload.code)
     now = datetime.now(timezone.utc)
 
+    # A code bound to a PKCE challenge (native-app login) only redeems with
+    # the matching verifier; an unbound one ignores any verifier. Part of the
+    # same atomic WHERE, so a wrong verifier fails exactly like an unknown code.
+    if payload.code_verifier:
+        challenge_matches = or_(
+            SessionExchangeCode.code_challenge.is_(None),
+            SessionExchangeCode.code_challenge == create_s256_code_challenge(payload.code_verifier),
+        )
+    else:
+        challenge_matches = SessionExchangeCode.code_challenge.is_(None)
+
     result = db.execute(
         update(SessionExchangeCode)
         .where(
             SessionExchangeCode.code_hash == code_hash,
             SessionExchangeCode.used_at.is_(None),
             SessionExchangeCode.expires_at > now,
+            challenge_matches,
         )
         .values(used_at=now)
     )

@@ -11,6 +11,7 @@ Weave-API ist das **Bot-Gateway** und der zentrale Einstiegspunkt des Weave-Syst
 - POST `/v1/chat/completions`: optionaler OpenAI-kompatibler, zustandsloser Shim (Modell = bot_id), inkl. `"stream": true`
 - GET `/v1/models`: OpenAI-kompatible Modell-Liste, gespeist aus der Bot-Registry
 - GET `/v1/collections`: die Collections, die der aufrufende Nutzer (über sein Team) lesen darf — proxied zu Weave-Retrievals Collections-Lese-Autorität
+- POST `/v1/search`: Hybridsuche nur über die Collections, die der Aufrufer lesen darf (Treffer statt Bot-Antwort, z. B. für die Desktop-App)
 - POST `/internal/tokens/introspect`: service-zu-service Token-Introspection für andere Weave-Dienste (z. B. einen künftigen MCP-Dienst)
 - OIDC + API-Token Authentifizierung (nach Weave-Ingest-Muster)
 - Rate-Limiting pro User und Bot
@@ -43,9 +44,11 @@ Weave-API ist das **Bot-Gateway** und der zentrale Einstiegspunkt des Weave-Syst
 - GET `/v1/collections`: kein Body — die Team-Zugehörigkeit kommt aus dem Bearer-Token/der Session des Aufrufers, nie aus einem Parameter
 - GET `/v1/me`: kein Body — das eigene Profil des Aufrufers
 - PUT `/v1/me/locale`: { locale: "de" | "en" | null } — eigene UI-Sprachpräferenz setzen/löschen
+- POST `/v1/search`: { query, collection?, top_k? } — `collection` kann den lesbaren Bereich nur einschränken; eine nicht lesbare Collection liefert eine leere Trefferliste
+- Native Apps (`NATIVE_LOGIN_ENABLED=true`, RFC 8252): beide Login-Wege akzeptieren zusätzlich `return_to=http://127.0.0.1:<port>/callback` (oder `[::1]`) — nur zusammen mit `code_challenge` (PKCE S256). Der Einmal-Code lässt sich dann nur mit dem passenden `code_verifier` einlösen. Die App schickt das Sitzungs-Token danach wie die Chat-Oberfläche als Cookie `weave_api_session`.
 - POST `/internal/tokens/introspect`: { token } — hinter einem eigenen Service-Token, nicht dem End-Nutzer-Bearer-Token
 - GET `/v1/auth/oidc/login`, GET `/v1/auth/oidc/callback`, POST `/v1/auth/logout`: OIDC-Browser-Session (siehe "OIDC-Anmeldung einrichten" unten) — kein Body, nur wenn `OIDC_ISSUER`/`OIDC_CLIENT_ID` gesetzt sind, sonst `404`. `GET /v1/auth/oidc/login` akzeptiert zusätzlich einen optionalen `return_to`-Query-Parameter (siehe "Cross-Origin-Übergabe" unten)
-- POST `/v1/auth/session/exchange`: { code } — tauscht einen Übergabe-Code aus der Cross-Origin-Übergabe gegen ein echtes Sitzungs-Token; ebenfalls nur erreichbar, wenn OIDC konfiguriert ist, sonst `404`
+- POST `/v1/auth/session/exchange`: { code, code_verifier? } — tauscht einen Übergabe-Code aus der Cross-Origin-Übergabe gegen ein echtes Sitzungs-Token; ebenfalls nur erreichbar, wenn OIDC konfiguriert ist, sonst `404`
 
 **Output:**
 - POST `/v1/chat`: JSON `{ answer, sources[], trace, created_at, conversation_id }`
@@ -53,6 +56,7 @@ Weave-API ist das **Bot-Gateway** und der zentrale Einstiegspunkt des Weave-Syst
 - POST `/v1/chat/completions`: JSON im OpenAI-Format `{ id, object, created, model, choices[], usage? }`, oder — mit `"stream": true` — `text/event-stream` aus `chat.completion.chunk`-Ereignissen + `[DONE]`
 - GET `/v1/models`: JSON im OpenAI-Format `{ object: "list", data: [{ id, object, created, owned_by }, ...] }`
 - GET `/v1/collections`: JSON-Array `[{ slug, name, description, public }, ...]` — Weave-Retrievals eigenes `CollectionOut`, unverändert durchgereicht
+- POST `/v1/search`: `{ query, results: [{ text, source: { document, document_id, chunk_id, page, collection, source_url } }] }`
 - GET `/v1/me`: `{ username, locale }`
 - PUT `/v1/me/locale`: `{ locale }` bei Erfolg; `422` bei ungültigem Wert; `503` (Wert bleibt lokal unverändert), wenn der Aufrufer über Weave-Ingest authentifiziert ist und Weave-Ingest nicht erreichbar/konfiguriert ist
 - POST `/internal/tokens/introspect`: `{ active: true, user_id, username, team, is_admin }` bei gültigem Token, sonst `{ active: false }` (immer HTTP 200)
