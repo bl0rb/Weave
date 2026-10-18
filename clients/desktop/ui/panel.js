@@ -18,6 +18,7 @@ let draft = '';
 let update = null;
 
 const panel = document.getElementById('panel');
+document.documentElement.classList.add(navigator.userAgent.includes('Windows') ? 'os-windows' : 'os-mac');
 /** The Spotlight-like overlay: one bar, answers expand below it. */
 const QUICK = document.body.classList.contains('quick');
 /** What the two modes do -- shown as tooltip on their switches and in search mode. */
@@ -228,7 +229,7 @@ function fitWindow() {
   fitPending = true;
   requestAnimationFrame(() => {
     fitPending = false;
-    invoke('fit_quick', { height: Math.ceil(panel.getBoundingClientRect().height) + 24 });
+    invoke('fit_quick', { height: Math.ceil(panel.getBoundingClientRect().height) });
   });
 }
 

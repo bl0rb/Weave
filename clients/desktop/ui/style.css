@@ -200,10 +200,17 @@ textarea.document { min-height: 300px; }
 .empty.compact { min-height: 0; flex: 1; padding: 24px; }
 .empty img { width: 44px; height: 44px; }
 
-/* Tray panel: a floating card in a transparent window, like Claude's */
+/* Tray panel and overlay: the card fills its transparent window with a crisp
+   edge; the shadow is the system's own window shadow, like Claude's. Windows 11
+   rounds frameless windows to 8 px, so the card follows that there. */
+:root { --edge: rgb(0 0 0 / .16); --card-radius: 12px; }
+@media (prefers-color-scheme: dark) { :root { --edge: rgb(255 255 255 / .18); } }
+:root.os-windows { --card-radius: 8px; }
+
+/* Tray panel */
 html:has(body.panel-body), body.panel-body { background: transparent; }
 body.panel-body { height: 100vh; overflow: hidden; margin: 0; }
-.panel { display: flex; flex-direction: column; height: calc(100vh - 20px); margin: 8px 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 10px 32px rgb(0 0 0 / .22); overflow: hidden; }
+.panel { display: flex; flex-direction: column; height: 100vh; background: var(--surface); border: 1px solid var(--edge); border-radius: var(--card-radius); overflow: hidden; }
 .panel-head { display: flex; align-items: center; gap: 6px; padding: 12px 12px 4px 14px; }
 .panel-head img { width: 22px; height: 22px; }
 .panel-head select { min-width: 0; flex: 1; max-width: 240px; border: none; background: transparent; font-weight: 600; font-size: 14px; padding-left: 2px; }
@@ -251,7 +258,7 @@ button.source { min-height: 0; color: var(--accent); }
 /* Quick overlay (hotkey): a floating bar like Spotlight; the window is transparent around it */
 html:has(body.quick), body.quick { background: transparent; }
 body.quick { margin: 0; overflow: hidden; }
-.quick-shell { margin: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 10px 36px rgb(0 0 0 / .22); overflow: hidden; display: flex; flex-direction: column; }
+.quick-shell { background: var(--surface); border: 1px solid var(--edge); border-radius: var(--card-radius); overflow: hidden; display: flex; flex-direction: column; }
 .quick-bar { display: flex; align-items: center; gap: 10px; padding: 14px 14px 14px 18px; }
 .quick-bar > img { width: 28px; height: 28px; flex: none; }
 .quick-bar textarea { flex: 1; border: none; background: transparent; font-family: inherit; font-size: 16px; resize: none; min-height: 26px; max-height: 140px; padding: 3px 0; }

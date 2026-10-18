@@ -34,8 +34,8 @@ const KEYRING_SERVICE: &str = "Weave Desktop";
 /// First automatic update check after start, then this often.
 const UPDATE_FIRST_CHECK: Duration = Duration::from_secs(20);
 const UPDATE_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60);
-/// Logical width of the quick overlay window (the bar plus its shadow margin).
-const QUICK_WIDTH: f64 = 760.0;
+/// Logical width of the quick overlay window.
+const QUICK_WIDTH: f64 = 720.0;
 
 #[derive(Clone)]
 struct Session {
@@ -384,8 +384,28 @@ fn hide_panel(window: WebviewWindow) {
 #[tauri::command]
 fn fit_quick(app: AppHandle, height: f64) {
     if let Some(quick) = app.get_webview_window("quick") {
-        let _ = quick.set_size(LogicalSize::new(QUICK_WIDTH, height.clamp(80.0, 640.0)));
+        let _ = quick.set_size(LogicalSize::new(QUICK_WIDTH, height.clamp(56.0, 640.0)));
+        refresh_shadow(&quick);
     }
+}
+
+/// macOS derives a transparent window's shadow from its content once; after
+/// the card changes size, the shadow has to be recomputed or it keeps the old
+/// outline.
+fn refresh_shadow(window: &WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    {
+        let window = window.clone();
+        let _ = window.clone().run_on_main_thread(move || {
+            if let Ok(pointer) = window.ns_window() {
+                // SAFETY: on the main thread; the pointer is the live NSWindow.
+                let ns_window = unsafe { &*(pointer as *const objc2_app_kit::NSWindow) };
+                ns_window.invalidateShadow();
+            }
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = window;
 }
 
 // MARK: Windows, tray, hotkey
@@ -407,6 +427,7 @@ fn show_panel(app: &AppHandle, at_tray: bool) {
     let _ = panel.move_window(position);
     keep_in_work_area(&panel);
     let _ = panel.show();
+    refresh_shadow(&panel);
     let _ = panel.set_focus();
     let _ = panel.emit("panel-shown", ());
 }
@@ -431,6 +452,7 @@ fn show_quick(app: &AppHandle) {
         let _ = quick.set_position(PhysicalPosition::new(x, y));
     }
     let _ = quick.show();
+    refresh_shadow(&quick);
     let _ = quick.set_focus();
     let _ = quick.emit("panel-shown", ());
 }
