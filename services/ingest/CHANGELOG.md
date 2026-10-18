@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Weave transformation, the product is called Weave Ingest. Entries below predating that
 > change are left as written and refer to the project under its former name.
 
+## [0.7.8] - 2026-10-18
+
+### Added
+- **Weave for the desktop** (`clients/desktop`): a tray / menu-bar app for macOS and Windows. Click
+  the icon or press `CmdOrCtrl+Shift+Space`, pick an agent and ask (streamed answer with sources),
+  or search every knowledge space you may read. Sign-in through the organisation's SSO; the
+  session token lives in the OS credential store. Server URL and hotkey can be enforced via
+  MDM/Intune. Installers are published separately on `desktop-v*` tags.
+- **Weave-API: native-app login (RFC 8252).** With `api.NATIVE_LOGIN_ENABLED: true` (default
+  `false`), both login paths also accept `return_to=http://127.0.0.1:<port>/callback` (or
+  `[::1]`), but only together with a PKCE `code_challenge`. The one-time code then redeems at
+  `POST /v1/auth/session/exchange` only with the matching `code_verifier`. Migration
+  `0008_exchange_code_challenge` adds the column. Required for the desktop app.
+- **Weave-API: `POST /v1/search`.** Hybrid search over exactly the collections the caller may
+  read; a `collection` outside that set returns an empty list.
+
 ## [0.7.7] - 2026-10-18
 
 ### Added
