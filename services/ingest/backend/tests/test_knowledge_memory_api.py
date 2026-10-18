@@ -47,6 +47,20 @@ def test_settings_start_unmanaged_and_are_saved(monkeypatch):
     assert admin.get('/api/v1/internal/chat-provider', headers=INTERNAL).json()['knowledge_memory_mode'] == 'llm'
 
 
+def test_deleting_the_saving_admin_keeps_the_settings_managed(monkeypatch):
+    _clear()
+    admin = _admin('memory-gone-admin')
+    monkeypatch.setattr(settings, 'chat_config_service_token', 'knowledge-secret')
+    admin.put(PATH, json={'mode': 'llm', 'llm_endpoint': 'default', 'debounce_seconds': 60,
+                          'max_documents_per_run': 10, 'max_input_chars': 8000})
+    with TestingSessionLocal() as db:  # what ON DELETE SET NULL leaves behind
+        db.get(KnowledgeMemoryConfig, 'default').updated_by_id = None
+        db.commit()
+    assert admin.get(PATH).json()['managed'] is True
+    assert admin.get('/api/v1/internal/knowledge-memory', headers=INTERNAL).json()['mode'] == 'llm'
+    assert admin.get('/api/v1/internal/chat-provider', headers=INTERNAL).json()['knowledge_memory_mode'] == 'llm'
+
+
 def test_invalid_settings_are_refused():
     _clear()
     admin = _admin('memory-invalid-admin')

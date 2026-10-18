@@ -70,7 +70,16 @@ def test_overview_questions_route_to_overview_only_with_memory(message):
     assert router_service.route(message, bot).intent in ('conversational', 'knowledge')
 
 
-@pytest.mark.parametrize('message', ['Hallo, was weißt du?', 'Wie lang ist die Kündigungsfrist im Arbeitsvertrag?'])
+@pytest.mark.parametrize('message', [
+    'Hallo, was weißt du?',
+    'Wie lang ist die Kündigungsfrist im Arbeitsvertrag?',
+    # Detail questions a summary cannot answer: they keep the chunk search and its guard.
+    'Welche Dokumente sind für den Visumsantrag nötig?',
+    'Was steht im Dokument zur Kündigungsfrist?',
+    'Worum geht es im Abschnitt 3 des Arbeitsvertrags?',
+    'Which documents do I need to submit for reimbursement?',
+    'What files are allowed for upload?',
+])
 def test_other_questions_keep_their_intent_with_memory(message):
     bot = real_load_bot('legal-support')
     assert router_service.route(message, bot, memory=True) == router_service.route(message, bot)
@@ -125,6 +134,32 @@ def test_overview_turn_falls_back_to_the_chunk_search(memory_on, monkeypatch, me
     assert [name for name, _ in calls] == ['memory', 'search']
     assert body['trace']['intent'] == 'overview'
     assert body['sources'][0]['memory_kind'] is None and body['sources'][0]['chunk_id'] == 1
+
+
+def test_empty_memory_still_answers_what_do_you_know_from_the_bot_overview(memory_on, monkeypatch):
+    """ADR-0009 §7: with nothing built, 'Was weißt du?' gets the same answer
+    as without the memory (the overview block), never the guard reply."""
+    calls = []
+
+    def _post(url, headers=None, json=None, timeout=None):
+        calls.append(url.rsplit('/', 1)[-1])
+        return _FakeResponse(200, {'collections': [], 'documents': []} if url.endswith('/memory') else _search_response())
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _post)
+    body = client.post('/internal/chat', json={**BODY, 'message': 'Was weißt du?'}, headers=AUTH_HEADERS).json()
+    assert calls == ['memory']
+    assert body['trace']['intent'] == 'conversational' and body['trace']['guard'] is None
+    assert body['answer'] != real_load_bot('legal-support').guard.no_context_reply
+
+
+@pytest.mark.parametrize('mode', ['Off', 'disabled', ''])
+def test_an_unknown_mode_keeps_the_memory_off(monkeypatch, mode):
+    monkeypatch.setattr(settings, 'knowledge_memory_mode', mode)
+    monkeypatch.setattr('app.services.chat.load_bot', _bot_without_filters)
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', lambda *a, **k: _readable_collections_response())
+    calls = _retrieval(monkeypatch, _FakeResponse(200, MEMORY))
+    assert client.post('/internal/chat', json=BODY, headers=AUTH_HEADERS).json()['trace']['intent'] == 'knowledge'
+    assert [name for name, _ in calls] == ['search']
 
 
 def test_bot_filters_the_memory_cannot_apply_skip_it(monkeypatch):

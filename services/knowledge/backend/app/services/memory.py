@@ -26,7 +26,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from app.core.config import settings
 from app.models.models import Collection, Document, DocumentStatus, KnowledgeMemory
@@ -38,8 +38,14 @@ KIND_DOCUMENT = 'document'
 KIND_COLLECTION = 'collection'
 
 # A claimed build that never finished (worker killed, task lost) is claimable
-# again after this long -- generous enough for a full batch of LLM calls.
-_BUILD_STALE_SECONDS = 1800
+# again after this long: a full batch of LLM calls plus the overview, each
+# bounded by the LLM timeout, plus a margin -- so a slow model never makes a
+# healthy run look orphaned and the tick never enqueues it a second time.
+_BUILD_STALE_MARGIN_SECONDS = 300
+
+
+def _build_stale_seconds() -> int:
+    return (settings.memory_max_documents_per_run + 1) * settings.memory_llm_timeout_seconds + _BUILD_STALE_MARGIN_SECONDS
 
 _SUMMARY_CHARS = 600
 _OVERVIEW_CHARS = 1200
@@ -103,12 +109,20 @@ def _collection_state(db: Session, slug: str) -> KnowledgeMemory | None:
 def touch(db: Session, slug: str | None) -> None:
     """Mark `slug`'s memory for a rebuild. Call it AFTER the caller's own
     commit: it commits on its own and never raises, so a memory hiccup can
-    never undo an index run, a withdrawal or a registry sync."""
-    if not slug or not enabled():
+    never undo an index run, a withdrawal or a registry sync.
+
+    Only the worker's tick and build apply the centrally saved mode
+    (`refresh_settings`); this runs in the API process too, whose own
+    environment may still say 'off'. So an existing collection row -- proof
+    that the worker builds this collection -- is always marked, and the
+    process-local mode only decides whether a first row is created."""
+    if not slug:
         return
     try:
         state = _collection_state(db, slug)
         if state is None:
+            if not enabled():
+                return
             db.add(KnowledgeMemory(kind=KIND_COLLECTION, collection_slug=slug, dirty_since=_now()))
         elif state.dirty_since is None:
             state.dirty_since = _now()
@@ -126,15 +140,15 @@ def claim_due_collections(db: Session) -> list[str]:
     refresh_settings()
     if not enabled():
         return []
+    # Joined with the registry mirror: a collection deleted at Weave-Ingest
+    # may keep indexed documents here for a while, and those must not
+    # resurrect the memory the sync just removed.
     missing = db.scalars(
         select(Document.collection_slug)
         .distinct()
+        .join(Collection, Collection.slug == Document.collection_slug)
         .outerjoin(KnowledgeMemory, KnowledgeMemory.document_id == Document.id)
-        .where(
-            Document.status == DocumentStatus.INDEXED,
-            Document.collection_slug.is_not(None),
-            KnowledgeMemory.id.is_(None),
-        )
+        .where(Document.status == DocumentStatus.INDEXED, KnowledgeMemory.id.is_(None))
     ).all()
     for slug in missing:
         touch(db, slug)
@@ -146,7 +160,7 @@ def claim_due_collections(db: Session) -> list[str]:
             KnowledgeMemory.dirty_since <= now - timedelta(seconds=settings.memory_debounce_seconds),
             or_(
                 KnowledgeMemory.building_since.is_(None),
-                KnowledgeMemory.building_since < now - timedelta(seconds=_BUILD_STALE_SECONDS),
+                KnowledgeMemory.building_since < now - timedelta(seconds=_build_stale_seconds()),
             ),
         )
     ).all()
@@ -435,11 +449,15 @@ def summarize_collection(
 # --- Build -------------------------------------------------------------------
 
 
-def _snapshot_sha(document: Document) -> str:
+def _snapshot_sha(db: Session, document: Document) -> str:
     sha = (document.frontmatter or {}).get('_weave_markdown_sha256')
     if isinstance(sha, str) and sha:
         return sha
-    return hashlib.sha256((document.markdown_body or '').encode()).hexdigest()
+    # Legacy document without the indexed hash: the body is loaded for the
+    # hash only and released again (see build_collection_memory's query).
+    sha = hashlib.sha256((document.markdown_body or '').encode()).hexdigest()
+    db.expire(document, ['markdown_body'])
+    return sha
 
 
 def build_collection_memory(db: Session, slug: str) -> None:
@@ -449,10 +467,12 @@ def build_collection_memory(db: Session, slug: str) -> None:
     drops summaries of documents no longer indexed here, then rebuilds the
     overview if its inputs changed."""
     refresh_settings()
-    if not enabled():
-        return
     state = _collection_state(db, slug)
     if state is None:
+        return
+    if not enabled():
+        state.building_since = None  # release the tick's claim, or the next 'on' waits for it to go stale
+        db.commit()
         return
     now = _now()
     state.dirty_since = None
@@ -464,8 +484,12 @@ def build_collection_memory(db: Session, slug: str) -> None:
         llm = fetch_llm_config(settings.memory_llm_endpoint) if settings.knowledge_memory_mode == 'llm' else None
         if settings.knowledge_memory_mode == 'llm' and llm is None:
             error = 'Kein zentrales LLM verfügbar, extraktiv aufgebaut.'
+        # Bodies are deferred: only the documents summarized in this run load
+        # theirs, one at a time, so a large collection does not pull every
+        # markdown body into the worker's memory.
         documents = db.scalars(
             select(Document)
+            .options(defer(Document.markdown_body))
             .where(Document.collection_slug == slug, Document.status == DocumentStatus.INDEXED)
             .order_by(Document.original_filename, Document.id)
         ).all()
@@ -480,8 +504,10 @@ def build_collection_memory(db: Session, slug: str) -> None:
                 db.delete(row)
         db.commit()
 
-        must = [d for d in documents if d.id not in existing or existing[d.id].source_sha256 != _snapshot_sha(d)]
-        upgrade = [d for d in documents if llm is not None and d not in must and existing[d.id].generator != 'llm']
+        snapshots = {d.id: _snapshot_sha(db, d) for d in documents}
+        must = [d for d in documents if d.id not in existing or existing[d.id].source_sha256 != snapshots[d.id]]
+        must_ids = {d.id for d in must}
+        upgrade = [d for d in documents if llm is not None and d.id not in must_ids and existing[d.id].generator != 'llm']
         batch = (must + upgrade)[:settings.memory_max_documents_per_run]
         for document in batch:
             try:
@@ -497,7 +523,7 @@ def build_collection_memory(db: Session, slug: str) -> None:
                 row.document_type = summary.document_type
                 row.summary = summary.summary
                 row.key_points = summary.key_points
-                row.source_sha256 = _snapshot_sha(document)
+                row.source_sha256 = snapshots[document.id]
                 row.generator = summary.generator
                 row.model = summary.model
                 row.built_at = _now()
@@ -507,6 +533,8 @@ def build_collection_memory(db: Session, slug: str) -> None:
                 db.rollback()
                 error = f'Dokument {document.id}: {exc}'[:500]
                 logger.warning('knowledge memory: summary for document %s failed', document.id, exc_info=True)
+            finally:
+                db.expire(document, ['markdown_body'])
 
         if len(must) > settings.memory_max_documents_per_run:
             # Continue on the very next tick rather than after a full debounce.

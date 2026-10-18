@@ -46,6 +46,11 @@ def _values(row: KnowledgeMemoryConfig) -> dict:
     return {field: getattr(row, field) for field in _FIELDS}
 
 
+def _defaults() -> dict:
+    """The environment-era values shown while nothing is saved here."""
+    return {field: KnowledgeMemoryConfig.__table__.c[field].default.arg for field in _FIELDS}
+
+
 def _knowledge(method: str, path: str, error_detail: str, **kwargs) -> dict:
     if not settings.portal_knowledge_base_url:
         raise HTTPException(status_code=503, detail=error_detail)
@@ -63,8 +68,13 @@ def _knowledge(method: str, path: str, error_detail: str, **kwargs) -> dict:
 @router_admin.get('', response_model=KnowledgeMemoryAdminResponse)
 def get_knowledge_memory(request: Request, db: Session = Depends(get_db)) -> KnowledgeMemoryAdminResponse:
     enforce_rate_limit(request)
-    row = _row(db)
-    return KnowledgeMemoryAdminResponse(**_values(row), managed=row.updated_by_id is not None, updated_at=row.updated_at)
+    # The row exists only once an admin saved: `managed` is its existence,
+    # not `updated_by_id`, which goes NULL when that admin's account is
+    # deleted and must not switch the feature back to the environment.
+    row = db.get(KnowledgeMemoryConfig, 'default')
+    if row is None:
+        return KnowledgeMemoryAdminResponse(**_defaults(), managed=False)
+    return KnowledgeMemoryAdminResponse(**_values(row), managed=True, updated_at=row.updated_at)
 
 
 @router_admin.put('', response_model=KnowledgeMemoryAdminResponse)
@@ -108,4 +118,4 @@ def internal_knowledge_memory(response: Response, db: Session = Depends(get_db))
     row = db.get(KnowledgeMemoryConfig, 'default')
     if row is None:
         return KnowledgeMemoryInternalResponse(managed=False)
-    return KnowledgeMemoryInternalResponse(**_values(row), managed=row.updated_by_id is not None)
+    return KnowledgeMemoryInternalResponse(**_values(row), managed=True)

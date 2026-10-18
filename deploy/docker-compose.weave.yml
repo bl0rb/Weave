@@ -492,6 +492,9 @@ services:
       CHAT_CONFIG_SERVICE_TOKEN: ${CHAT_CONFIG_SERVICE_TOKEN:?CHAT_CONFIG_SERVICE_TOKEN is required}
       WEAVE_INGEST_API_TOKEN: ${WEAVE_KNOWLEDGE_INGEST_API_TOKEN:?WEAVE_KNOWLEDGE_INGEST_API_TOKEN is required}
       WEAVE_INGEST_WEBHOOK_SECRET: ${WEAVE_KNOWLEDGE_WEBHOOK_SECRET:?WEAVE_KNOWLEDGE_WEBHOOK_SECRET is required}
+      # ADR-0009 knowledge memory, same value as the worker below: a
+      # withdrawal handled here marks the collection for a rebuild.
+      KNOWLEDGE_MEMORY_MODE: ${KNOWLEDGE_MEMORY_MODE:-off}
       # Guards THIS service's own read API (GET /api/v1/documents,
       # /documents/{id}, /collections) -- the indexed corpus itself, past
       # the team/read_teams scoping every search goes through. No Weave

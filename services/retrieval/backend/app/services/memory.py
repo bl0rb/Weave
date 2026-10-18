@@ -167,6 +167,8 @@ def _ranked_document_ids(db: Session, request: MemoryRequest) -> list:
 
 def _documents(db: Session, request: MemoryRequest, query: str) -> list[MemoryDocument]:
     rows = {str(document.id): (row, document) for row, document in _document_rows(db, request)}
+    if not rows:
+        return []  # nothing built yet: no embedding and no search, Runtime runs the chunk search itself
     named = [
         document_id for document_id, (row, document) in rows.items()
         if _named_in(query, row.title) or len(_stem(document.original_filename)) >= _MIN_NAME_CHARS

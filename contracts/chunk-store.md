@@ -146,6 +146,8 @@ Extrahiert aus Weave-Knowledges `backend/app/models/models.py` (`class Knowledge
 | `source_sha256` | `varchar(64)` | ja | `document`: Snapshot-Hash (`_weave_markdown_sha256`); `collection`: Fingerabdruck der Eingaben. |
 | `generator`, `model` | `varchar` | ja | `llm` oder `extractive`, verwendetes Modell. |
 | `built_at`, `dirty_since`, `building_since` | `timestamptz` | ja | Aufbauzeitpunkt bzw. Entprell-/Sperrzustand (nur `collection`). |
+| `last_run_at`, `last_duration_ms`, `last_error` | `timestamptz`, `integer`, `text` | ja | Nur `collection`: letzter Lauf, seine Dauer und sein letzter Fehler (Kennzahlen für die Administration). |
+| `llm_calls`, `llm_failures` | `integer` | nein | Nur `collection`: kumulierte Modellaufrufe und davon auf extraktiv zurückgefallene. |
 
 **Rechte:** Die Tabelle trägt keine eigene Berechtigung. Weave-Retrieval liest `document`-Zeilen ausschliesslich per `JOIN documents` durch dieselbe `apply_filters()`-Bedingung wie die Chunk-Suche und `collection`-Zeilen ausschliesslich für Slugs aus `allowed_collections`; der Übersichtstext wird nur ausgegeben, solange alle `source_document_ids` noch `indexed` im selben Bereich sind. Dokumente ohne Collection erhalten kein Gedächtnis.
 

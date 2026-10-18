@@ -46,9 +46,10 @@ _ENDPOINT_ID_RE = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
 
 
 def managed_memory_mode(db: Session) -> str | None:
-    """ADR-0009: the knowledge-memory mode an admin saved, None while unsaved."""
+    """ADR-0009: the knowledge-memory mode an admin saved, None while unsaved
+    (the row only exists once saved -- see app/api/knowledge_memory.py)."""
     row = db.get(KnowledgeMemoryConfig, 'default')
-    return row.mode if row is not None and row.updated_by_id is not None else None
+    return row.mode if row is not None else None
 
 
 def _endpoint_id(raw: str) -> str:

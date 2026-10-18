@@ -110,10 +110,50 @@ def test_changes_are_debounced_per_collection_and_claimed_once():
 
 def test_backfill_marks_collections_with_unsummarized_documents():
     with TestingSessionLocal() as db:
+        db.add(Collection(slug=SLUG, name='Personal', synced_at=datetime.now(timezone.utc)))
         _doc(db)
         _doc(db, slug=None)  # legacy, no collection: no memory in v1
+        _doc(db, slug='geloescht')  # still indexed, but no longer in the registry: not resurrected
         memory.claim_due_collections(db)
         assert [row.collection_slug for row in _rows(db, 'collection')] == [SLUG]
+
+
+def test_touch_marks_an_existing_collection_even_where_this_process_is_off(monkeypatch):
+    """The API process (withdrawal) may run with KNOWLEDGE_MEMORY_MODE=off
+    while the worker builds on the centrally saved mode."""
+    with TestingSessionLocal() as db:
+        memory.touch(db, SLUG)
+        _rows(db, 'collection')[0].dirty_since = None
+        db.commit()
+    monkeypatch.setattr(settings, 'knowledge_memory_mode', 'off')
+    with TestingSessionLocal() as db:
+        memory.touch(db, SLUG)
+        memory.touch(db, 'neu')
+        assert [(row.collection_slug, row.dirty_since is not None) for row in _rows(db, 'collection')] == [(SLUG, True)]
+
+
+def test_a_claim_outlives_a_full_batch_of_slow_llm_calls(monkeypatch):
+    monkeypatch.setattr(settings, 'memory_max_documents_per_run', 25)
+    monkeypatch.setattr(settings, 'memory_llm_timeout_seconds', 120)
+    assert memory._build_stale_seconds() > 26 * 120
+    with TestingSessionLocal() as db:
+        memory.touch(db, SLUG)
+        state = _rows(db, 'collection')[0]
+        state.dirty_since = datetime.now(timezone.utc) - timedelta(hours=1)
+        state.building_since = datetime.now(timezone.utc) - timedelta(minutes=45)  # a slow run, still alive
+        db.commit()
+        assert memory.claim_due_collections(db) == []
+
+
+def test_build_while_switched_off_releases_the_claim(monkeypatch):
+    with TestingSessionLocal() as db:
+        memory.touch(db, SLUG)
+        state = _rows(db, 'collection')[0]
+        state.building_since = datetime.now(timezone.utc)
+        db.commit()
+        monkeypatch.setattr(settings, 'knowledge_memory_mode', 'off')
+        memory.build_collection_memory(db, SLUG)
+        assert _rows(db, 'collection')[0].building_since is None
 
 
 def test_schedule_enqueues_one_build_per_due_collection():

@@ -215,7 +215,7 @@ import re
 import threading
 import time
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from app.core.config import settings
 from app.schemas.bot import BotConfig, ModelConfig, SubagentConfig
@@ -2312,7 +2312,7 @@ def _prepare_turn(request: ChatRequest, *, defer_n8n: bool = False) -> _Prepared
         if central_provider is not None and central_provider.knowledge_memory_mode
         else settings.knowledge_memory_mode
     )
-    memory = memory_mode != 'off' and not is_n8n_bot
+    memory = memory_mode in ('extractive', 'llm') and not is_n8n_bot
     decision = router_service.route(request.message, bot, settings.router_mode, llm_call, memory=memory)
     timings_ms['router_ms'] = _elapsed_ms(router_start)
 
@@ -2466,6 +2466,12 @@ def _prepare_turn(request: ChatRequest, *, defer_n8n: bool = False) -> _Prepared
         timings_ms['memory_ms'] = _elapsed_ms(retrieval_start)
     if overview is not None:
         messages, sources, retrieval_trace = overview
+    elif decision.intent == 'overview' and router_service.answered_from_bot_overview(request.message):
+        # Nothing in the memory for a question the bot answers from its
+        # own overview block (already in the system prompt): the same
+        # 'conversational' turn as without the memory, never a chunk search
+        # that ends in the guard -- ADR-0009 §7, "never worse than today".
+        decision = replace(decision, intent='conversational', needs_retrieval=False)
     # Both conditions required -- see this module's own docstring, step 5,
     # for why `needs_retrieval` alone is not enough.
     elif decision.needs_retrieval and bot.retrieval.enabled:

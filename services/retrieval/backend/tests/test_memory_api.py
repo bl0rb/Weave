@@ -127,6 +127,20 @@ def test_documents_follow_the_chunk_search_ranking(corpus, monkeypatch):
     assert documents[0]['source_kind'] == 'upload' and documents[0]['original_filename'] == 'reisekosten.pdf'
 
 
+def test_nothing_built_skips_the_chunk_search(monkeypatch):
+    """Runtime runs the chunk search itself when the memory is empty, so an
+    empty memory must not embed and search a second time."""
+    def _boom(*args, **kwargs):
+        raise AssertionError('search must not run without summaries')
+
+    monkeypatch.setattr(memory_service, 'search', _boom)
+    with TestingSessionLocal() as db:
+        db.add(make_collection(slug='personal', name='Personal'))
+        db.commit()
+    body = _memory(query='Welche Dokumente gibt es zu Spesen?', allowed_collections=['personal']).json()
+    assert body == {'collections': [], 'documents': []}
+
+
 def test_search_failure_keeps_name_matches(corpus, monkeypatch):
     def _boom(*args, **kwargs):
         raise RuntimeError('embeddings down')

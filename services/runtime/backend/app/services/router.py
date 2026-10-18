@@ -187,17 +187,41 @@ _KNOWLEDGE_OVERVIEW_PATTERNS = (
 # contains, which documents exist (also on a topic), what one document is
 # about. Only consulted while the memory is on; together with the
 # "what do you know?" patterns above they then route to 'overview'.
+# Each one asks what a space or document holds, never what it says on a
+# point: 'Was steht im Dokument zur Kündigungsfrist?', 'Welche Dokumente
+# sind für den Antrag nötig?' or 'Worum geht es in Abschnitt 3?' stay
+# 'knowledge', since a summary cannot answer them and the memory turn has
+# no guard of its own once it finds any summary at all.
+_DE_DETAIL_PREPOSITION = r'zu[rm]?|über|ueber|bezüglich|bezueglich|hinsichtlich|wegen|zum\s+thema'
+_DE_SECTION_WORDS = r'abschnitt|kapitel|absatz|paragraph|punkt|anhang|anlage|seite|tabelle|§'
 _MEMORY_OVERVIEW_PATTERNS = (
     re.compile(
         r'\bwas\s+(?:ist|steht|gibt es|findet man|finde ich)\s+(?:alles\s+)?(?:in|im)\s+'
         r'(?:dem\s+|der\s+|den\s+)?(?:wissensbereich\w*|wissensr[äa]e?um\w*|bereich\w*|dokument\w*|datei\w*)\b'
+        r'(?!\s+(?:' + _DE_DETAIL_PREPOSITION + r')\b)'
     ),
-    re.compile(r'\bwelche\s+(?:dokumente|unterlagen|dateien)\b.{0,60}\b(?:gibt es|hast du|kennst du|liegen|sind|stehen)\b'),
-    re.compile(r'\bworum\s+geht\s+es\s+(?:in|im|bei)\b'),
+    re.compile(
+        r'\bwelche\s+(?:dokumente|unterlagen|dateien)\b.{0,60}'
+        r'\b(?:gibt es|hast du|kennst du|existieren|liegen\s+vor|sind\s+(?:vorhanden|verfügbar|verfuegbar|da)|'
+        r'stehen\s+zur\s+verf(?:ü|ue)gung)\b'
+    ),
+    re.compile(r'\bworum\s+geht\s+es\s+(?:in|im|bei)\b(?!\s+(?:dem\s+|der\s+)?(?:' + _DE_SECTION_WORDS + r')\b)'),
     re.compile(r"\bwhat(?:'s|\s+is)\s+in\s+(?:the\s+)?(?:knowledge\s+(?:space|base)|space|collection|document|file)\b"),
-    re.compile(r'\b(?:which|what)\s+(?:documents|files)\b'),
+    re.compile(
+        r'\b(?:which|what)\s+(?:documents|files)\b.{0,40}'
+        r'\b(?:do you have|have you got|are there|are available|exist|do you know|can you see)\b'
+    ),
     re.compile(r'\bwhat\s+is\s+(?:the\s+)?(?:document|file)\b.{1,80}\babout\b'),
 )
+
+
+def answered_from_bot_overview(message: str) -> bool:
+    """True for the questions the bot answered from its own configuration
+    before the memory existed ('Was weißt du?'): with the memory on they
+    route to 'overview', and when that turn finds nothing they must still
+    get that answer, never a chunk search ending in the guard."""
+    lowered = message.lower()
+    return any(pattern.search(lowered) for pattern in _KNOWLEDGE_OVERVIEW_PATTERNS)
 
 # Multi-step/comparison: 'vergleich\w*' covers 'vergleiche/vergleichen/...'.
 _COMPLEX_PATTERNS = (

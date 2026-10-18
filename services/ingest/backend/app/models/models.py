@@ -444,8 +444,9 @@ class KnowledgeMemoryConfig(Base):
     """Singleton admin settings for the knowledge memory (ADR-0009),
     projected to Weave-Knowledge (GET /api/v1/internal/knowledge-memory) and,
     as `knowledge_memory_mode`, to Runtime with every chat-provider snapshot.
-    Until an admin saves them (`updated_by_id` NULL), each service keeps its
-    own KNOWLEDGE_MEMORY_MODE environment value."""
+    The row exists only once an admin saved; until then each service keeps
+    its own KNOWLEDGE_MEMORY_MODE environment value. `updated_by_id` is an
+    audit trail only -- it goes NULL when that account is deleted."""
 
     __tablename__ = 'knowledge_memory_config'
 
