@@ -14,7 +14,6 @@ from app.api.auth import bootstrap_admin
 from app.api.auth import router_authenticated as auth_authenticated_router
 from app.api.auth import router_public as auth_public_router
 from app.api.backup import router as backup_admin_router
-from app.api.benchmarks import router as benchmarks_router
 from app.api.chat_provider import router_admin as chat_provider_admin_router
 from app.api.chat_provider import router_bot_admin as chat_provider_bot_admin_router
 from app.api.chat_provider import router_internal as chat_provider_internal_router
@@ -38,6 +37,7 @@ from app.api.portal_management import router as portal_management_router
 from app.api.portal_indexing import router as portal_indexing_router
 from app.api.routes import router
 from app.api.routes import knowledge_router as knowledge_registry_router
+from app.api.vl_connections import router as vl_connections_router
 from app.api.webhook_routes import router as webhook_router
 from app.core.config import settings
 from app.database.session import SessionLocal, get_db
@@ -129,9 +129,9 @@ app.include_router(router, dependencies=[Depends(get_current_user), Depends(orig
 # the main router; the module itself adds the IMPORT_ENABLED kill-switch.
 app.include_router(import_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
 
-# Benchmark runs + user-facing VL-connections list: same session + CSRF gate
-# as the main router, no separate kill-switch.
-app.include_router(benchmarks_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
+# User-facing VL-connections list: same session + CSRF gate as the main
+# router, no separate kill-switch.
+app.include_router(vl_connections_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
 
 # Outbound webhook surface (/api/v1/webhooks/...): same session + CSRF gate
 # as the main router; the module itself adds the WEBHOOKS_ENABLED kill-switch

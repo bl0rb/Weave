@@ -83,7 +83,6 @@ export const admin = {
   'processing.moreTools': 'Weitere Werkzeuge:',
   'processing.tool.confluenceImports': 'Confluence-Importe',
   'processing.tool.mailImport': 'E-Mail-Import',
-  'processing.tool.benchmark': 'Qualität vergleichen',
   'processing.tool.connections': 'Verbindungen',
   'processing.tool.search': 'Suche',
 
@@ -128,8 +127,6 @@ export const admin = {
   'operations.tools.sectionDescription': 'Verbindungen prüfen, Verarbeitungsprofile vergleichen und einzelne Aufträge untersuchen.',
   'operations.tools.connections.title': 'Verbindungen',
   'operations.tools.connections.description': 'Confluence und Webhooks einrichten und prüfen.',
-  'operations.tools.benchmark.title': 'Qualität vergleichen',
-  'operations.tools.benchmark.description': 'OCR- und Vision-Profile mit denselben Dokumenten vergleichen.',
   'operations.tools.jobs.title': 'Auftragsverwaltung',
   'operations.tools.jobs.description': 'Alle sichtbaren Aufträge, technische Details und Wiederholungen.',
   'operations.tools.imports.title': 'Confluence-Importe',

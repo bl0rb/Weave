@@ -84,7 +84,6 @@ export const admin: Record<keyof typeof de, string> = {
   'processing.moreTools': 'More tools:',
   'processing.tool.confluenceImports': 'Confluence Imports',
   'processing.tool.mailImport': 'Email Import',
-  'processing.tool.benchmark': 'Compare Quality',
   'processing.tool.connections': 'Connections',
   'processing.tool.search': 'Search',
 
@@ -129,8 +128,6 @@ export const admin: Record<keyof typeof de, string> = {
   'operations.tools.sectionDescription': 'Check connections, compare processing profiles, and inspect individual jobs.',
   'operations.tools.connections.title': 'Connections',
   'operations.tools.connections.description': 'Set up and check Confluence and webhooks.',
-  'operations.tools.benchmark.title': 'Compare Quality',
-  'operations.tools.benchmark.description': 'Compare OCR and vision profiles using the same documents.',
   'operations.tools.jobs.title': 'Job Management',
   'operations.tools.jobs.description': 'All visible jobs, technical details, and retries.',
   'operations.tools.imports.title': 'Confluence Imports',

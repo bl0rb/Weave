@@ -38,7 +38,6 @@ function AdminVerarbeitungPageInner() {
   const WEITERE_WERKZEUGE: { href: string; label: string }[] = [
     { href: '/imports', label: t('admin.processing.tool.confluenceImports') },
     { href: '/mail', label: t('admin.processing.tool.mailImport') },
-    { href: '/benchmark', label: t('admin.processing.tool.benchmark') },
     { href: '/connections', label: t('admin.processing.tool.connections') },
     { href: '/search', label: t('admin.processing.tool.search') },
   ];

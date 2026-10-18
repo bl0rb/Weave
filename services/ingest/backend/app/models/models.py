@@ -1075,8 +1075,11 @@ class ImportPageState(Base):
 class BenchmarkRun(Base):
     """One multi-variant document-conversion comparison: a single uploaded
     file processed by 2-7 variants (VL connections and/or one OCR profile),
-    each as its own Job row linked via Job.benchmark_run_id. See
-    app/api/benchmarks.py for creation/report/export logic.
+    each as its own Job row linked via Job.benchmark_run_id.
+
+    Legacy: the benchmark feature (API + UI) has been removed; no new runs
+    are created. The table and Job.benchmark_run_id stay so existing child
+    jobs remain excluded from job lists, search and stats.
 
     Child jobs bypass the normal duplicate-409/version-chain path entirely
     (always document_version=1, previous_job_id=None) and are excluded from

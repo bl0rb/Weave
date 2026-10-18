@@ -38,7 +38,6 @@ function AdminBetriebPageInner() {
   // Link grid carried over unchanged from the old "Werkzeuge" tab.
   const WERKZEUGE_LINKS: { href: string; title: string; description: string }[] = [
     { href: '/connections', title: t('admin.operations.tools.connections.title'), description: t('admin.operations.tools.connections.description') },
-    { href: '/benchmark', title: t('admin.operations.tools.benchmark.title'), description: t('admin.operations.tools.benchmark.description') },
     { href: '/jobs', title: t('admin.operations.tools.jobs.title'), description: t('admin.operations.tools.jobs.description') },
     { href: '/imports', title: t('admin.operations.tools.imports.title'), description: t('admin.operations.tools.imports.description') },
     { href: '/processing/new', title: t('admin.operations.tools.processNew.title'), description: t('admin.operations.tools.processNew.description') },
