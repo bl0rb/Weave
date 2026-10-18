@@ -42,10 +42,13 @@ jobs:
         include:
           - os: macos-15
             bundle: dmg
+            # `app` too: the updater package is the .app, which a dmg-only build discards.
+            bundles: app,dmg
             target: universal-apple-darwin
             rust_targets: aarch64-apple-darwin x86_64-apple-darwin
           - os: windows-latest
             bundle: msi
+            bundles: msi
             target: x86_64-pc-windows-msvc
             rust_targets: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
@@ -98,7 +101,7 @@ jobs:
             if [ -z "${!name}" ]; then unset "$name"; fi
           done
           npm ci
-          npx tauri build --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundle }} \
+          npx tauri build --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} \
             --config src-tauri/target/version.conf.json
           mkdir -p dist
           cp src-tauri/target/${{ matrix.target }}/release/bundle/${{ matrix.bundle }}/*.${{ matrix.bundle }} \
