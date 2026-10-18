@@ -9,6 +9,30 @@ use tauri::ipc::Channel;
 /// Error text the UI recognises as "signed out".
 pub const UNAUTHORIZED: &str = "unauthorized";
 
+/// A network error as a person can act on it: the cause, not just "error
+/// sending request". Walks the error's source chain for the root cause.
+pub fn describe(error: &reqwest::Error) -> String {
+    let mut chain = vec![error.to_string()];
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        chain.push(cause.to_string());
+        source = cause.source();
+    }
+    let all = chain.join(": ").to_lowercase();
+    let hint = if all.contains("dns") || all.contains("failed to lookup") || all.contains("nodename nor servname") {
+        "Servername nicht gefunden (DNS). Stimmt die Adresse, und sind Sie im Firmennetz bzw. VPN?"
+    } else if all.contains("certificate") || all.contains("ssl") || all.contains("tls") {
+        "Dem Zertifikat des Servers wird nicht vertraut."
+    } else if error.is_timeout() || all.contains("timed out") {
+        "Keine Antwort vom Server (Zeitüberschreitung)."
+    } else if error.is_connect() {
+        "Keine Verbindung zum Server."
+    } else {
+        "Netzwerkfehler."
+    };
+    format!("{hint} ({})", chain.last().map(String::as_str).unwrap_or_default())
+}
+
 pub struct Weave {
     http: reqwest::Client,
     base: String,
@@ -27,7 +51,7 @@ impl Weave {
     }
 
     async fn checked(response: Result<Response, reqwest::Error>) -> Result<Response, String> {
-        let response = response.map_err(|e| format!("Weave ist nicht erreichbar: {e}"))?;
+        let response = response.map_err(|e| describe(&e))?;
         match response.status() {
             StatusCode::UNAUTHORIZED => Err(UNAUTHORIZED.into()),
             status if status.is_success() => Ok(response),
@@ -93,7 +117,7 @@ impl Weave {
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| format!("Verbindung zu Weave abgebrochen: {e}"))?;
+            let chunk = chunk.map_err(|e| describe(&e))?;
             buffer.push_str(&String::from_utf8_lossy(&chunk).replace("\r\n", "\n"));
             while let Some(end) = buffer.find("\n\n") {
                 let frame: String = buffer.drain(..end + 2).collect();
@@ -118,6 +142,12 @@ fn parse_frame(frame: &str) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn unknown_host_is_reported_as_dns() {
+        let error = reqwest::get("https://weave-api.does-not-exist.invalid/health").await.unwrap_err();
+        assert!(describe(&error).starts_with("Servername nicht gefunden (DNS)"), "{}", describe(&error));
+    }
 
     #[test]
     fn parses_data_lines_and_skips_garbage() {

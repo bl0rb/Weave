@@ -172,7 +172,7 @@ async fn test_connection(server_url: String) -> Result<(), String> {
         .timeout(Duration::from_secs(10))
         .send()
         .await
-        .map_err(|e| format!("Nicht erreichbar: {e}"))?;
+        .map_err(|e| api::describe(&e))?;
     if response.status().is_success() {
         Ok(())
     } else {
@@ -212,7 +212,7 @@ async fn run_sign_in(app: &AppHandle, server: &str) -> Result<(), String> {
         .json(&serde_json::json!({ "code": code, "code_verifier": pkce.verifier }))
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| api::describe(&e))?;
     if !response.status().is_success() {
         return Err("Die Anmeldung wurde abgelehnt. Ist NATIVE_LOGIN_ENABLED auf dem Server aktiv?".into());
     }
