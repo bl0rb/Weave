@@ -57,9 +57,14 @@ impl Settings {
     }
 }
 
-/// Trims whitespace and trailing slashes so paths can be appended.
+/// Trims whitespace, trailing slashes and a pasted `/health` or `/v1`
+/// suffix, so the app's paths (`/v1/...`, `/health`) can be appended.
 pub fn normalize_server_url(url: &str) -> String {
-    url.trim().trim_end_matches('/').to_string()
+    let mut url = url.trim().trim_end_matches('/');
+    for suffix in ["/health", "/v1"] {
+        url = url.strip_suffix(suffix).unwrap_or(url).trim_end_matches('/');
+    }
+    url.to_string()
 }
 
 /// https everywhere; plain http only for a server on this machine.
@@ -133,6 +138,13 @@ mod tests {
         assert!(is_secure_server_url("http://localhost:8000"));
         assert!(!is_secure_server_url("http://weave.example.com"));
         assert!(!is_secure_server_url("weave.example.com"));
+    }
+
+    #[test]
+    fn normalizes_pasted_suffixes() {
+        assert_eq!(normalize_server_url(" https://w.example/api/v1/ "), "https://w.example/api");
+        assert_eq!(normalize_server_url("https://w.example/health"), "https://w.example");
+        assert_eq!(normalize_server_url("https://w.example"), "https://w.example");
     }
 
     #[test]

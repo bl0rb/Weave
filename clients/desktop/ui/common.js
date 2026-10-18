@@ -35,7 +35,7 @@ const EN = {
   'Sitzung abgelaufen – bitte neu anmelden.': 'Session expired – please sign in again.',
   'Server': 'Server',
   'API-Adresse': 'API address',
-  'Adresse von weave-api, z. B. https://weave.example.com/api': 'Address of weave-api, e.g. https://weave.example.com/api',
+  'Öffentliche Adresse von weave-api – dieselbe, auf die der Browser bei der Chat-Anmeldung weiterleitet (ohne /v1).': 'Public address of weave-api – the one the browser is sent to when signing in to the chat (without /v1).',
   'Verbindung testen': 'Test connection',
   'Erreichbar': 'Reachable',
   'Von der IT vorgegeben': 'Managed by IT',

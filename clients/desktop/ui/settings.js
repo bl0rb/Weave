@@ -61,7 +61,7 @@ function render() {
     field(t('API-Adresse'),
       h('input', { type: 'text', class: 'mono', value: form.server_url, disabled: state.server_managed, placeholder: 'https://weave.example.com/api', spellcheck: 'false',
         oninput: (e) => { form.server_url = e.target.value; check = null; } }),
-      t('Adresse von weave-api, z. B. https://weave.example.com/api')),
+      t('Öffentliche Adresse von weave-api – dieselbe, auf die der Browser bei der Chat-Anmeldung weiterleitet (ohne /v1).')),
     h('div', { class: 'actions' },
       h('button', { onclick: testConnection, disabled: check?.checking }, t('Verbindung testen')),
       check?.checking && spinner(),

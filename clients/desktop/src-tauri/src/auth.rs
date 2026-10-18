@@ -43,7 +43,7 @@ pub async fn login_url(server: &str, return_to: &str, challenge: &str) -> Result
         .build()
         .map_err(|e| e.to_string())?;
     for path in ["/v1/auth/ingest/login", "/v1/auth/oidc/login"] {
-        let response = client.get(format!("{server}{path}")).send().await.map_err(|e| e.to_string())?;
+        let response = client.get(format!("{server}{path}")).send().await.map_err(|e| crate::api::describe(&e))?;
         if response.status().is_redirection() {
             let url = url::Url::parse_with_params(
                 &format!("{server}{path}"),
