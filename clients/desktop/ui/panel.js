@@ -126,11 +126,18 @@ function sourceLabel(source) {
   return page != null ? `${name} · ${t('S. %@', page)}` : name;
 }
 
+// ADR-0009: a knowledge-memory source is a condensed summary or a space
+// overview, not a quoted passage -- marked so the two are not confused.
+const MEMORY_KIND = { document: 'Zusammenfassung', collection: 'Bereichs-Übersicht' };
+
 function sourceChip(source) {
   const label = sourceLabel(source);
+  const kind = MEMORY_KIND[source.memory_kind];
+  const title = kind ? `${t(kind)}: ${label}` : label;
+  const content = kind ? [h('span', { class: 'source-kind' }, t(kind)), label] : [label];
   return source.source_url
-    ? h('button', { class: 'source', title: label, onclick: () => invoke('open_url', { url: source.source_url }) }, label)
-    : h('span', { class: 'source', title: label }, label);
+    ? h('button', { class: 'source', title, onclick: () => invoke('open_url', { url: source.source_url }) }, ...content)
+    : h('span', { class: 'source', title }, ...content);
 }
 
 function renderAnswer(message) {
@@ -138,7 +145,7 @@ function renderAnswer(message) {
   text.innerHTML = markdown(message.text);
   const seen = new Set();
   const sources = message.sources.filter((s) => {
-    const key = s.document_id + (s.page_start ?? '');
+    const key = s.document_id + (s.page_start ?? '') + (s.memory_kind ?? '');
     return !seen.has(key) && seen.add(key);
   });
   return h('div', { class: 'msg-answer' },

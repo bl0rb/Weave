@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Knowledge and, via the chat-provider snapshot, to Runtime). Metrics per knowledge space
     (coverage, LLM vs. extractive, pending/building, last run, duration, errors, LLM calls and
     failures) and a confirmed "rebuild everything" action.
+  - Weave-Chat and the desktop app mark memory sources as "Zusammenfassung" / "Bereichs-Übersicht".
 
 ## [0.7.8] - 2026-10-18
 

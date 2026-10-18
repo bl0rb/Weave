@@ -88,7 +88,7 @@ Dokumentinhalte sind beim Zusammenfassen **Daten, keine Anweisungen** (abgegrenz
 
 ### 8. Darstellung als Quelle
 
-`Source` bekommt das optionale Feld `memory_kind: 'document' | 'collection' | null` (additiv). Dokument-Zusammenfassung: `document_id` des Dokuments, `chunk_id = 0`, Dateiname, Version, Bereich und Herkunft wie bei einem Chunk. Bereichs-Übersicht: `document_id = "collection:<slug>"`, `chunk_id = 0`, `original_filename = "Übersicht: <Bereichsname>"`, `collection = <slug>`. Chat und Desktop zeigen diese Quellen ohne Änderung als normale Karten an. Ein eigenes Abzeichen („Zusammenfassung“/„Übersicht“) ist ein optionaler, späterer UI-Schritt.
+`Source` bekommt das optionale Feld `memory_kind: 'document' | 'collection' | null` (additiv). Dokument-Zusammenfassung: `document_id` des Dokuments, `chunk_id = 0`, Dateiname, Version, Bereich und Herkunft wie bei einem Chunk. Bereichs-Übersicht: `document_id = "collection:<slug>"`, `chunk_id = 0`, `original_filename = "Übersicht: <Bereichsname>"`, `collection = <slug>`. Weave-Chat (Quellenkarten und Quellenleiste) und die Desktop-App kennzeichnen sie mit einem Abzeichen „Zusammenfassung“ bzw. „Bereichs-Übersicht“; ältere Clients zeigen sie als normale Quellen.
 
 ### 9. Konfiguration
 

@@ -30,6 +30,8 @@ const EN = {
   'Öffnen': 'Open',
   'S. %@': 'p. %@',
   'Quellen': 'Sources',
+  'Zusammenfassung': 'Summary',
+  'Bereichs-Übersicht': 'Space overview',
   'Abgebrochen.': 'Stopped.',
   'Weave denkt nach …': 'Weave is thinking …',
   'Sitzung abgelaufen – bitte neu anmelden.': 'Session expired – please sign in again.',

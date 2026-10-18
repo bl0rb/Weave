@@ -104,6 +104,8 @@ export const chat: Record<keyof typeof de, string> = {
   'sources.page': 'p. {page}',
   'sources.pageRange': 'p. {start}–{end}',
   'sources.none': '–',
+  'sources.memory.document': 'Summary',
+  'sources.memory.collection': 'Space overview',
 
   // components/chat/source-cards.tsx
   'sourceCards.toggle': 'Sources ({count})',
