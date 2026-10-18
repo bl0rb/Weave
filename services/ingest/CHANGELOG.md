@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Weave transformation, the product is called Weave Ingest. Entries below predating that
 > change are left as written and refer to the project under its former name.
 
-## [Unreleased]
+## [0.7.7] - 2026-10-18
 
 ### Added
 - **Several synced Confluence imports per connection.** An import is now a configuration
