@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Weave transformation, the product is called Weave Ingest. Entries below predating that
 > change are left as written and refer to the project under its former name.
 
+## [Unreleased]
+
+### Changed
+- **License:** from this release on, Weave is licensed under the MIT License with the Commons
+  Clause license condition. Using, modifying and self-hosting stay free, including inside an
+  organization; selling the software, or a product or service (hosting, consulting, support) whose
+  value derives entirely or substantially from it, is not permitted. Releases up to 0.7.8 remain
+  available under the plain MIT License.
+
 ## [0.7.8] - 2026-10-18
 
 ### Added

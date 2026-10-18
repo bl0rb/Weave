@@ -46,7 +46,7 @@
     "active": true,
     "targets": "all",
     "category": "Productivity",
-    "copyright": "© 2026 bl0rb · MIT License · github.com/bl0rb/Weave",
+    "copyright": "© 2026 bl0rb · MIT + Commons Clause · github.com/bl0rb/Weave",
     "shortDescription": "Ask Weave from the menu bar",
     "icon": [
       "icons/32x32.png",

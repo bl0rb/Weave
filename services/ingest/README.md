@@ -1,6 +1,6 @@
 # <img src="docs/logo.svg" width="30" alt="" align="top"> Weave Ingest
 
-[![License](https://img.shields.io/badge/License-MIT-6C7686?style=flat-square)](../../LICENSE)
+[![License](https://img.shields.io/badge/License-MIT%20%2B%20Commons%20Clause-6C7686?style=flat-square)](../../LICENSE)
 
 [![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white&style=flat-square)](backend/Dockerfile)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.141-009688?logo=fastapi&logoColor=white&style=flat-square)](backend/requirements.in)

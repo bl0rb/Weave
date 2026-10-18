@@ -1,8 +1,10 @@
 # Third-party notices
 
-This repository is licensed under the MIT license (`LICENSE`). The container
+This repository is licensed under the MIT license with the Commons Clause
+license condition (`LICENSE`), which does not grant the right to sell the
+software or a service whose value derives substantially from it. The container
 images built from it install, and at runtime download, third-party components
-that the MIT license does not cover and that carry terms of their own. This
+that this license does not cover and that carry terms of their own. This
 file records the ones a redistributor has to act on.
 
 It is not a complete bill of materials. The exact, version-pinned dependency
