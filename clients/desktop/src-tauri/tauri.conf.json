@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Weave",
   "mainBinaryName": "Weave",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "identifier": "io.github.bl0rb.weave.desktop",
   "build": {
     "frontendDist": "../ui"
@@ -15,13 +15,15 @@
         "url": "panel.html",
         "title": "Weave",
         "width": 440,
-        "height": 580,
+        "height": 600,
         "visible": false,
         "decorations": false,
         "resizable": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,
-        "focus": true
+        "focus": true,
+        "transparent": true,
+        "shadow": false
       },
       {
         "label": "quick",

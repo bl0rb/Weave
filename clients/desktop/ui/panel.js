@@ -325,9 +325,10 @@ function render() {
   });
   const sendButton = streaming
     ? h('button', { onclick: stop, title: t('Stopp') }, icon('stop'))
-    : h('button', { class: 'primary', title: t('Senden'), disabled: mode === 'ask' && !agent, onclick: () => submit(input.value) }, icon(mode === 'ask' ? 'send' : 'search'));
+    : h('button', { class: 'primary', title: t('Senden'), disabled: mode === 'ask' && !agent, onclick: () => submit(input.value) }, icon(mode === 'ask' ? 'arrowUp' : 'search'));
 
-  panel.replaceChildren(head, updateBanner || '', tools, content, h('footer', { class: 'composer' }, input, sendButton));
+  panel.replaceChildren(head, updateBanner || '', tools, content,
+    h('footer', { class: 'composer' }, h('div', { class: 'composer-box' }, input, sendButton)));
   if (mode === 'ask') renderMessages(); else renderSearch(content);
   input.focus();
 }
