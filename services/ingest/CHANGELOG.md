@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Weave transformation, the product is called Weave Ingest. Entries below predating that
 > change are left as written and refer to the project under its former name.
 
-## [Unreleased]
+## [0.7.9] - 2026-10-18
 
 ### Added
 - **Knowledge memory** ([ADR-0009](../../docs/adr/0009-wissensgedaechtnis.md)), opt-in via
@@ -130,7 +130,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The member search in the knowledge-space access dialog no longer renders as a field inside a
   field.
 
-## [Unreleased]
+## [0.7.9] - 2026-10-18
 
 ### Removed
 - The direct OpenWebUI integration has been retired: connection CRUD, push API, worker task,
