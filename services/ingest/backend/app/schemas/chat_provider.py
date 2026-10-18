@@ -59,6 +59,9 @@ class ChatProviderInternalResponse(BaseModel):
     temperature: float | None = None
     supports_tools: bool = False
     updated_at: datetime | None = None
+    # ADR-0009: the admin-saved knowledge-memory mode, None while unsaved
+    # (Runtime then keeps its own KNOWLEDGE_MEMORY_MODE).
+    knowledge_memory_mode: str | None = None
 
 
 class ChatEndpointSummary(BaseModel):

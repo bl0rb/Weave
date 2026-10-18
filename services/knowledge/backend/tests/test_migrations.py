@@ -316,3 +316,25 @@ def test_migration_revision_ids_fit_alembic_version_column():
         if len(rev.revision) > 32
     ]
     assert not too_long, f'revision ids exceed alembic_version VARCHAR(32): {too_long}'
+
+
+def test_0007_knowledge_memory_migration_round_trip(tmp_path, monkeypatch):
+    db_url = f'sqlite:///{tmp_path / "migration_scratch_0007.db"}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+    cfg = _alembic_config()
+
+    command.upgrade(cfg, 'head')
+    engine = create_engine(db_url, future=True)
+    insp = inspect(engine)
+    columns = {c['name'] for c in insp.get_columns('knowledge_memory')}
+    assert {
+        'kind', 'collection_slug', 'document_id', 'title', 'document_type', 'summary', 'key_points', 'topics',
+        'source_document_ids', 'source_sha256', 'generator', 'model', 'built_at', 'dirty_since', 'building_since',
+    } <= columns
+    assert any(fk['referred_table'] == 'documents' for fk in insp.get_foreign_keys('knowledge_memory'))
+    assert 'uq_knowledge_memory_collection' in {ix['name'] for ix in insp.get_indexes('knowledge_memory')}
+
+    command.downgrade(cfg, '0006_visibility_fail_closed')
+    assert 'knowledge_memory' not in inspect(engine).get_table_names()
+    command.upgrade(cfg, 'head')
+    assert 'knowledge_memory' in inspect(engine).get_table_names()

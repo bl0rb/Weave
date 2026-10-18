@@ -354,3 +354,51 @@ def list_collections(team: str | list[str] | None = None, *, user: str | None = 
         return [_parse_collection(item) for item in data]
     except (KeyError, TypeError) as exc:
         raise RetrievalUnavailable(f'Weave-Retrieval returned a malformed collection for GET {url}: {exc}') from exc
+
+
+def memory(
+    query: str,
+    *,
+    allowed_collections: list[str],
+    allowed_teams: list[str] | None = None,
+    collection: str | None = None,
+    limit: int = 8,
+) -> dict:
+    """POST `{settings.retrieval_base_url}/api/v1/memory` (ADR-0009): the
+    knowledge memory -- collection overviews and document summaries -- for
+    an overview question, scoped by exactly the same permission inputs as
+    `search()`. `allowed_collections` is required (Weave-Retrieval refuses
+    an unrestricted call). Returns `{'collections': [...], 'documents':
+    [...]}` as plain dicts. Same error mapping as `search()`."""
+    url = f'{settings.retrieval_base_url.rstrip("/")}/api/v1/memory'
+    headers = {'Authorization': f'Bearer {settings.retrieval_api_token}', 'Content-Type': 'application/json'}
+    payload = {
+        'query': query, 'allowed_collections': allowed_collections, 'allowed_teams': allowed_teams,
+        'collection': collection, 'limit': limit,
+    }
+    try:
+        response = httpx.post(url, headers=headers, json=payload, timeout=settings.retrieval_timeout_seconds)
+    except httpx.HTTPError as exc:
+        raise RetrievalUnavailable(f'Weave-Retrieval unreachable at {url!r}: {exc}') from exc
+    if response.status_code >= 500:
+        raise RetrievalUnavailable(
+            f'Weave-Retrieval returned HTTP {response.status_code} for POST {url}', status_code=response.status_code,
+        )
+    if response.status_code >= 400:
+        detail = _error_detail(response)
+        raise RetrievalError(
+            f'Weave-Retrieval returned HTTP {response.status_code} for POST {url}: {detail}',
+            status_code=response.status_code, detail=detail,
+        )
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise RetrievalUnavailable(f'Weave-Retrieval returned a non-JSON response for POST {url}') from exc
+    if (
+        not isinstance(data, dict)
+        or not isinstance(data.get('collections'), list)
+        or not isinstance(data.get('documents'), list)
+        or not all(isinstance(item, dict) for item in [*data['collections'], *data['documents']])
+    ):
+        raise RetrievalUnavailable(f'Weave-Retrieval returned a malformed memory response for POST {url}')
+    return {'collections': data['collections'], 'documents': data['documents']}

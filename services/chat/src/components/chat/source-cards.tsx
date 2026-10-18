@@ -52,6 +52,21 @@ export function formatScore(source: Source, t: Translator = translateDefault): s
   return t('chat.sources.score', { value: Math.round(source.score * 100) });
 }
 
+/**
+ * Marks a knowledge-memory source (ADR-0009) so a reader can tell a
+ * condensed summary or space overview apart from a quoted passage.
+ * Renders nothing for an ordinary chunk source.
+ */
+export function MemoryBadge({ source }: { source: Source }) {
+  const { t } = useI18n();
+  if (source.memory_kind !== 'document' && source.memory_kind !== 'collection') return null;
+  return (
+    <span className="inline-flex items-center rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-[11px] font-semibold text-[var(--accent)]">
+      {t(source.memory_kind === 'collection' ? 'chat.sources.memory.collection' : 'chat.sources.memory.document')}
+    </span>
+  );
+}
+
 const isWebLink = (value: string | null | undefined): value is string => typeof value === 'string' && /^https?:\/\//.test(value);
 
 /** The exact page a source links to (http(s) only), with its link label, or `null`. */
@@ -148,13 +163,18 @@ export function SourceCards({ sources }: { sources: Source[] }) {
               className="rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--surface-2)] p-4 text-xs"
             >
               <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-                <span className="font-medium text-[var(--ink)]">
+                <span className="flex items-baseline gap-2 font-medium text-[var(--ink)]">
                   {source.original_filename ?? t('chat.sources.documentFallback', { id: source.document_id })}
+                  <MemoryBadge source={source} />
                 </span>
-                <span className="text-[var(--muted)]">
-                  {formatPages(source, t)} · {formatVersion(source, t)}
-                  {scoreText ? ` · ${scoreText}` : ''}
-                </span>
+                {source.memory_kind ? (
+                  source.document_version != null ? <span className="text-[var(--muted)]">{formatVersion(source, t)}</span> : null
+                ) : (
+                  <span className="text-[var(--muted)]">
+                    {formatPages(source, t)} · {formatVersion(source, t)}
+                    {scoreText ? ` · ${scoreText}` : ''}
+                  </span>
+                )}
               </div>
               <div className="mt-0.5 flex flex-wrap gap-x-3 text-[var(--muted)]">
                 <SourceOrigin source={source} />

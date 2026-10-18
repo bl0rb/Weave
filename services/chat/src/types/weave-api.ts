@@ -104,6 +104,10 @@ export interface Source {
   source_url?: string | null;
   uploaded_by?: string | null;
   uploaded_at?: string | null;
+  /** Set for a knowledge-memory source (ADR-0009): 'document' = a document
+   * summary, 'collection' = a knowledge-space overview (its document_id is
+   * `collection:<slug>`, not a real document). Absent/null for a chunk. */
+  memory_kind?: 'document' | 'collection' | null;
 }
 
 export interface RetrievalTrace {

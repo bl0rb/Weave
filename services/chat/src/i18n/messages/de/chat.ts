@@ -106,6 +106,8 @@ export const chat = {
   'sources.page': 'S. {page}',
   'sources.pageRange': 'S. {start}–{end}',
   'sources.none': '–',
+  'sources.memory.document': 'Zusammenfassung',
+  'sources.memory.collection': 'Bereichs-Übersicht',
 
   // components/chat/source-cards.tsx
   'sourceCards.toggle': 'Belege ({count})',
