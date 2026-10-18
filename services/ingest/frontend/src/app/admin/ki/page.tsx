@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense } from 'react';
-import { Bot, MessageSquareText, ScanEye } from 'lucide-react';
+import { Bot, BrainCircuit, MessageSquareText, ScanEye } from 'lucide-react';
 
 import {
   AdminPageShell,
@@ -12,11 +12,12 @@ import {
 } from '@/components/admin/admin-page-shared';
 import { BotsTab } from '@/components/admin/bots-tab';
 import { ChatEndpointsSection, ChatProviderTab } from '@/components/admin/chat-provider-tab';
+import { KnowledgeMemoryTab } from '@/components/admin/knowledge-memory-tab';
 import { RetrievalProviderTab } from '@/components/admin/retrieval-provider-tab';
 import { useI18n } from '@/i18n/provider';
 import { useAuth } from '@/lib/auth-context';
 
-type Bereich = 'bots' | 'chat-llm' | 'suche-modelle';
+type Bereich = 'bots' | 'chat-llm' | 'suche-modelle' | 'wissensgedaechtnis';
 
 export default function AdminWissenPage() {
   return (
@@ -33,6 +34,7 @@ function AdminWissenPageInner() {
     { id: 'bots', label: t('admin.knowledge.tab.bots'), icon: Bot },
     { id: 'chat-llm', label: t('admin.knowledge.tab.chatLlm'), icon: MessageSquareText },
     { id: 'suche-modelle', label: t('admin.knowledge.tab.searchModels'), icon: ScanEye },
+    { id: 'wissensgedaechtnis', label: t('admin.knowledge.tab.memory'), icon: BrainCircuit },
   ];
   // Bot admins manage bots only; the LLM and search settings stay with admins.
   const TABS = user?.role === 'admin' ? ALL_TABS : ALL_TABS.filter((tab) => tab.id === 'bots');
@@ -58,6 +60,11 @@ function AdminWissenPageInner() {
       {bereich === 'suche-modelle' && (
         <SectionPanel idPrefix="wissen" id="suche-modelle">
           <RetrievalProviderTab />
+        </SectionPanel>
+      )}
+      {bereich === 'wissensgedaechtnis' && (
+        <SectionPanel idPrefix="wissen" id="wissensgedaechtnis">
+          <KnowledgeMemoryTab />
         </SectionPanel>
       )}
     </AdminPageShell>

@@ -49,4 +49,10 @@ describe('SourcesPanel', () => {
     expect(screen.queryByText(/^S\. /)).toBeNull();
     expect(screen.getByText('Collection: ohne Collection · Relevanz 87 %')).toBeTruthy();
   });
+
+  it('marks a knowledge-space overview from the knowledge memory', () => {
+    render(<SourcesPanel sources={[makeSource({ document_id: 'collection:personal', original_filename: 'Übersicht: Personal', page_start: null, page_end: null, memory_kind: 'collection' })]} scopeLabel="Alle" />);
+    expect(screen.getByText('Übersicht: Personal')).toBeTruthy();
+    expect(screen.getByText('Bereichs-Übersicht')).toBeTruthy();
+  });
 });

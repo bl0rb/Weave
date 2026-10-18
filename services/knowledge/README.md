@@ -19,6 +19,7 @@ Weave-Knowledge ist die **Index-Pipeline** des Weave-Systems. Sie konsumiert fre
 - Embedding-Generation über Provider-Interface
 - Datenbankschema-Verwaltung und Indexoptimierung
 - Telemetrie und Monitoring der Pipeline
+- Wissensgedächtnis ([ADR-0009](../../docs/adr/0009-wissensgedaechtnis.md), `KNOWLEDGE_MEMORY_MODE`, Standard `off`): nach jeder Änderung an einem Wissensbereich, entprellt über den Collection-Sync-Tick, eine Zusammenfassung pro Dokument und eine Übersicht pro Bereich in `knowledge_memory` (`app/services/memory.py`, Task `weave.knowledge.build_memory`). Im Modus `llm` mit dem zentralen Chat-Provider, sonst oder bei dessen Ausfall extraktiv ohne LLM.
 
 ## Nicht-Ziele / Abgrenzung
 
@@ -34,6 +35,7 @@ Weave-Knowledge ist die **Index-Pipeline** des Weave-Systems. Sie konsumiert fre
 
 **Output:**
 - PostgreSQL + pgvector: Persistierte Embeddings mit Metadaten
+- `knowledge_memory`: Dokument-Zusammenfassungen und Bereichs-Übersichten (Lesezugriff durch Weave-Retrieval, `contracts/chunk-store.md`)
 - Interner Zustand: Content-SHA256 für Idempotenz-Tracking
 
 **Abhängigkeiten:**

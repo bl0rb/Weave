@@ -41,7 +41,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.db import SessionLocal
 from app.models.models import Chunk, Document, DocumentStatus
-from app.services import ingest_client
+from app.services import ingest_client, memory
 from app.services.chunker import chunk_markdown
 from app.services.embeddings import EmbeddingProviderError, embed_chunks, get_provider
 from app.services.enrichment import build_chunk_meta
@@ -358,6 +358,7 @@ def _run_pipeline(self, db: Session, document: Document, *, reindex: bool = Fals
     _supersede_previous_version(db, document)
 
     db.commit()
+    memory.touch(db, document.collection_slug)
 
 
 def _index_document_unlocked(self, document_id: str, *, reindex: bool = False) -> None:
@@ -435,3 +436,4 @@ def _kickstart_collection_sync_tick(sender=None, **kwargs) -> None:  # pragma: n
 # convention (the import itself has no ordering dependency on anything
 # above it).
 import app.workers.collection_sync_tasks  # noqa: E402,F401  (registers weave.knowledge.collection_sync_tick)
+import app.workers.memory_tasks  # noqa: E402,F401  (registers weave.knowledge.build_memory)

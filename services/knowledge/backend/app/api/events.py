@@ -92,7 +92,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.db import SessionLocal, get_db
-from app.models.models import Chunk, Collection, Document, DocumentStatus, IngestEvent
+from app.models.models import Chunk, Collection, Document, DocumentStatus, IngestEvent, KnowledgeMemory
+from app.services import memory
 from app.schemas.events import DocumentReleasedEvent
 from app.services.collection_sync import CollectionSyncError, sync_collections
 from app.workers.tasks import index_document
@@ -368,10 +369,15 @@ def _handle_withdrawal(db: Session, raw_payload: dict, raw_body: bytes) -> Respo
             db.rollback()
             _lock_source_job(db, job_id)
     document = db.scalar(select(Document).where(Document.source_job_id == job_id).with_for_update())
+    collection_slug = None
     if document is not None:
+        collection_slug = document.collection_slug
         db.execute(delete(Chunk).where(Chunk.document_id == document.id))
+        # ADR-0009: the summary goes with the document, in the same transaction.
+        db.execute(delete(KnowledgeMemory).where(KnowledgeMemory.document_id == document.id))
         db.delete(document)
     db.commit()
+    memory.touch(db, collection_slug)
     return JSONResponse(status_code=200, content={'status': 'withdrawn', 'job_id': job_id})
 
 

@@ -89,4 +89,16 @@ describe('SourceCards', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Belege (1)' }));
     expect(screen.queryByText(/Relevanz/)).toBeNull();
   });
+
+  it('marks knowledge-memory sources and drops the page locator for them', () => {
+    render(<SourceCards sources={[
+      makeSource({ document_id: 'collection:personal', chunk_id: 0, original_filename: 'Übersicht: Personal', document_version: null, page_start: null, page_end: null, memory_kind: 'collection' }),
+      makeSource({ document_id: 'doc-2', chunk_id: 0, page_start: null, page_end: null, memory_kind: 'document' }),
+      makeSource({ document_id: 'doc-3', chunk_id: 4 }),
+    ]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Belege (3)' }));
+    expect(screen.getByText('Bereichs-Übersicht')).toBeTruthy();
+    expect(screen.getByText('Zusammenfassung')).toBeTruthy();
+    expect(screen.getAllByText(/S\. 1/)).toHaveLength(1);  // only the ordinary chunk keeps its page
+  });
 });

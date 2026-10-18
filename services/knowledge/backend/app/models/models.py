@@ -8,12 +8,14 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     TypeDecorator,
     Uuid,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -301,3 +303,52 @@ class IngestEvent(Base):
     # payload be told apart from a same-key delivery whose payload actually
     # changed (which would indicate a Weave-Ingest bug, not a normal retry).
     payload_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class KnowledgeMemory(Base):
+    """Condensed knowledge (ADR-0009): one `document` row per indexed
+    document inside a collection (title, type, summary, key points) and one
+    `collection` row per collection (overview, main topics, the documents it
+    was built from). Built by app/workers/memory_tasks.py, read-only by
+    Weave-Retrieval -- part of the shared read model (contracts/chunk-store.md).
+
+    Holds no permission of its own: Retrieval reads document rows only through
+    a JOIN on `documents` with the same filter as the chunk search, and
+    collection rows only for an `allowed_collections` slug. The collection row
+    doubles as the per-collection rebuild state (`dirty_since`,
+    `building_since`) so the debounce survives restarts without Redis.
+    """
+
+    __tablename__ = 'knowledge_memory'
+    __table_args__ = (
+        Index(
+            'uq_knowledge_memory_collection', 'collection_slug', unique=True,
+            postgresql_where=text("kind = 'collection'"), sqlite_where=text("kind = 'collection'"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    collection_slug: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey('documents.id', ondelete='CASCADE'), nullable=True, unique=True
+    )
+    title: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    document_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    key_points: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    topics: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    source_document_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    source_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    generator: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    built_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dirty_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    building_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Run metrics, collection rows only (shown in Weave-Ingest's admin UI):
+    # last build, its duration and error, cumulative model calls/failures.
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    llm_calls: Mapped[int] = mapped_column(Integer, default=0, server_default='0', nullable=False)
+    llm_failures: Mapped[int] = mapped_column(Integer, default=0, server_default='0', nullable=False)

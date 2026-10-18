@@ -40,6 +40,7 @@ from app.core.config import settings
 from app.core.db import SessionLocal
 from app.models.models import Document, DocumentStatus
 from app.services.collection_sync import sync_collections
+from app.workers import memory_tasks
 from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -367,5 +368,10 @@ def collection_sync_tick(self, lock_token: str | None = None) -> None:
         _redrive_stalled_index_retries()
     except Exception:
         logger.exception('collection sync: stalled index retry re-drive failed')
+    try:
+        # ADR-0009: rebuild the knowledge memory of collections that changed.
+        memory_tasks.schedule_memory_builds()
+    except Exception:
+        logger.exception('collection sync: scheduling knowledge memory builds failed')
     finally:
         _reenqueue_next_tick(token)

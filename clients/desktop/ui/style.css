@@ -241,6 +241,7 @@ body.panel-body { height: 100vh; overflow: hidden; margin: 0; background: var(--
 .sources { display: flex; flex-wrap: wrap; gap: 4px; }
 .source { font-size: 11px; border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; background: var(--surface-2); color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 button.source { min-height: 0; color: var(--accent); }
+.source-kind { font-weight: 600; color: var(--accent); margin-right: 4px; }
 .options { display: flex; flex-direction: column; gap: 4px; }
 .options button { justify-content: flex-start; text-align: left; }
 

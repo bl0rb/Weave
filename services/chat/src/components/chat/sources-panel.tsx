@@ -1,7 +1,7 @@
 'use client';
 
 import { ExternalLink, Lock } from 'lucide-react';
-import { formatCollection, formatPages, formatScore, formatVersion, getSourceLink, SourceOrigin } from '@/components/chat/source-cards';
+import { formatCollection, formatPages, formatScore, formatVersion, getSourceLink, MemoryBadge, SourceOrigin } from '@/components/chat/source-cards';
 import { toProxiedImageUrl } from '@/lib/portal-artifact-url';
 import { useI18n } from '@/i18n/provider';
 import type { Source } from '@/types/weave-api';
@@ -92,6 +92,7 @@ export function SourcesPanel({ sources, scopeLabel }: SourcesPanelProps) {
                     <strong className="block truncate text-[13px] font-semibold text-[var(--ink)]">
                       {source.original_filename ?? t('chat.sources.documentFallback', { id: source.document_id })}
                     </strong>
+                    {source.memory_kind ? <div className="mt-0.5"><MemoryBadge source={source} /></div> : null}
                     <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px] text-[var(--muted)]">
                       {link ? (
                         <a

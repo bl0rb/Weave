@@ -440,6 +440,26 @@ class RetrievalProviderConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now(), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
 
+class KnowledgeMemoryConfig(Base):
+    """Singleton admin settings for the knowledge memory (ADR-0009),
+    projected to Weave-Knowledge (GET /api/v1/internal/knowledge-memory) and,
+    as `knowledge_memory_mode`, to Runtime with every chat-provider snapshot.
+    The row exists only once an admin saved; until then each service keeps
+    its own KNOWLEDGE_MEMORY_MODE environment value. `updated_by_id` is an
+    audit trail only -- it goes NULL when that account is deleted."""
+
+    __tablename__ = 'knowledge_memory_config'
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default='default')
+    mode: Mapped[str] = mapped_column(String(16), default='off', server_default='off', nullable=False)
+    llm_endpoint: Mapped[str] = mapped_column(String(64), default='default', server_default='default', nullable=False)
+    debounce_seconds: Mapped[int] = mapped_column(Integer, default=120, server_default='120', nullable=False)
+    max_documents_per_run: Mapped[int] = mapped_column(Integer, default=25, server_default='25', nullable=False)
+    max_input_chars: Mapped[int] = mapped_column(Integer, default=12000, server_default='12000', nullable=False)
+    updated_by_id: Mapped[str | None] = mapped_column(String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now(), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
+
 class BotRole(str, enum.Enum):
     """A role on a managed bot (ADR 0008): owners maintain its content and
     sharing, users may chat with it."""

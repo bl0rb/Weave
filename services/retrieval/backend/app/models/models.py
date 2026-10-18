@@ -237,3 +237,34 @@ class Chunk(Base):
     # the search pipeline (a later stage) queries it with a raw
     # `to_tsquery(...)` expression against `chunks.tsv`, not through this
     # ORM model.
+
+
+class KnowledgeMemory(Base):
+    """Read model of Weave-Knowledge's `knowledge_memory` table (ADR-0009,
+    contracts/chunk-store.md): condensed summaries, one `document` row per
+    summarized document and one `collection` row per collection. Carries no
+    permission of its own -- app/services/memory.py reads document rows only
+    JOINed to `documents` through apply_filters(), the same boundary as the
+    chunk search, and collection rows only for an allowed collection slug.
+    """
+
+    __tablename__ = 'knowledge_memory'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    collection_slug: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey('documents.id', ondelete='CASCADE'), nullable=True, unique=True
+    )
+    title: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    document_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    key_points: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    topics: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    source_document_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    source_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    generator: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    built_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dirty_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    building_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

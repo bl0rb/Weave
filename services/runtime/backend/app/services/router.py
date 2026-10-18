@@ -54,9 +54,12 @@ from app.schemas.bot import BotConfig
 
 logger = logging.getLogger(__name__)
 
-Intent = Literal['conversational', 'knowledge', 'document', 'action', 'complex']
+Intent = Literal['conversational', 'knowledge', 'document', 'action', 'complex', 'overview']
 
 _INTENTS: frozenset[str] = frozenset({'conversational', 'knowledge', 'document', 'action', 'complex'})
+# ADR-0009: only produced while the knowledge memory is on (route()'s
+# `memory`); otherwise routing is exactly what it was without it.
+_MEMORY_INTENTS: frozenset[str] = _INTENTS | {'overview'}
 
 # RULES-mode confidence: 0.9 for an actual keyword/regex match, 0.6 for the
 # 'sonst' default (knowledge-if-retrieval-else-conversational) branch that
@@ -98,7 +101,7 @@ def _flags_for_intent(intent: Intent, bot: BotConfig) -> tuple[bool, bool]:
     the message, only on the resulting intent plus this bot's own
     retrieval.enabled.
     """
-    needs_retrieval = intent == 'knowledge' or (intent == 'complex' and bot.retrieval.enabled)
+    needs_retrieval = intent in ('knowledge', 'overview') or (intent == 'complex' and bot.retrieval.enabled)
     needs_tool = intent in ('action', 'complex')
     return needs_retrieval, needs_tool
 
@@ -180,6 +183,46 @@ _KNOWLEDGE_OVERVIEW_PATTERNS = (
     re.compile(r'\bwhat\s+can\s+you\s+help\b'),
 )
 
+# ADR-0009: overview questions the knowledge memory answers -- what a space
+# contains, which documents exist (also on a topic), what one document is
+# about. Only consulted while the memory is on; together with the
+# "what do you know?" patterns above they then route to 'overview'.
+# Each one asks what a space or document holds, never what it says on a
+# point: 'Was steht im Dokument zur Kündigungsfrist?', 'Welche Dokumente
+# sind für den Antrag nötig?' or 'Worum geht es in Abschnitt 3?' stay
+# 'knowledge', since a summary cannot answer them and the memory turn has
+# no guard of its own once it finds any summary at all.
+_DE_DETAIL_PREPOSITION = r'zu[rm]?|über|ueber|bezüglich|bezueglich|hinsichtlich|wegen|zum\s+thema'
+_DE_SECTION_WORDS = r'abschnitt|kapitel|absatz|paragraph|punkt|anhang|anlage|seite|tabelle|§'
+_MEMORY_OVERVIEW_PATTERNS = (
+    re.compile(
+        r'\bwas\s+(?:ist|steht|gibt es|findet man|finde ich)\s+(?:alles\s+)?(?:in|im)\s+'
+        r'(?:dem\s+|der\s+|den\s+)?(?:wissensbereich\w*|wissensr[äa]e?um\w*|bereich\w*|dokument\w*|datei\w*)\b'
+        r'(?!\s+(?:' + _DE_DETAIL_PREPOSITION + r')\b)'
+    ),
+    re.compile(
+        r'\bwelche\s+(?:dokumente|unterlagen|dateien)\b.{0,60}'
+        r'\b(?:gibt es|hast du|kennst du|existieren|liegen\s+vor|sind\s+(?:vorhanden|verfügbar|verfuegbar|da)|'
+        r'stehen\s+zur\s+verf(?:ü|ue)gung)\b'
+    ),
+    re.compile(r'\bworum\s+geht\s+es\s+(?:in|im|bei)\b(?!\s+(?:dem\s+|der\s+)?(?:' + _DE_SECTION_WORDS + r')\b)'),
+    re.compile(r"\bwhat(?:'s|\s+is)\s+in\s+(?:the\s+)?(?:knowledge\s+(?:space|base)|space|collection|document|file)\b"),
+    re.compile(
+        r'\b(?:which|what)\s+(?:documents|files)\b.{0,40}'
+        r'\b(?:do you have|have you got|are there|are available|exist|do you know|can you see)\b'
+    ),
+    re.compile(r'\bwhat\s+is\s+(?:the\s+)?(?:document|file)\b.{1,80}\babout\b'),
+)
+
+
+def answered_from_bot_overview(message: str) -> bool:
+    """True for the questions the bot answered from its own configuration
+    before the memory existed ('Was weißt du?'): with the memory on they
+    route to 'overview', and when that turn finds nothing they must still
+    get that answer, never a chunk search ending in the guard."""
+    lowered = message.lower()
+    return any(pattern.search(lowered) for pattern in _KNOWLEDGE_OVERVIEW_PATTERNS)
+
 # Multi-step/comparison: 'vergleich\w*' covers 'vergleiche/vergleichen/...'.
 _COMPLEX_PATTERNS = (
     re.compile(r'\bvergleich\w*\b.*\b(?:und|oder)\b'),
@@ -197,7 +240,7 @@ def _has_multiple_linked_questions(message: str) -> bool:
     return message.count('?') >= 2 and (' und ' in message or ' oder ' in message)
 
 
-def _matched_rules_intent(message: str) -> Intent | None:
+def _matched_rules_intent(message: str, memory: bool = False) -> Intent | None:
     """The lowercased message's intent per the RULES heuristics, checked in
     the task spec's own listed order (greeting, document, action, complex),
     or None if nothing matched -- in which case _decide_rules applies the
@@ -205,6 +248,10 @@ def _matched_rules_intent(message: str) -> Intent | None:
     """
     if any(pattern.search(message) for pattern in _GREETING_PATTERNS):
         return 'conversational'
+    if memory and any(
+        pattern.search(message) for pattern in (*_KNOWLEDGE_OVERVIEW_PATTERNS, *_MEMORY_OVERVIEW_PATTERNS)
+    ):
+        return 'overview'
     if any(pattern.search(message) for pattern in _KNOWLEDGE_OVERVIEW_PATTERNS):
         return 'conversational'
     if any(pattern.search(message) for pattern in _DOCUMENT_PATTERNS):
@@ -216,8 +263,8 @@ def _matched_rules_intent(message: str) -> Intent | None:
     return None
 
 
-def _decide_rules(message: str, bot: BotConfig) -> RouterDecision:
-    matched = _matched_rules_intent(message.lower())
+def _decide_rules(message: str, bot: BotConfig, memory: bool = False) -> RouterDecision:
+    matched = _matched_rules_intent(message.lower(), memory)
     intent = matched if matched is not None else ('knowledge' if bot.retrieval.enabled else 'conversational')
     needs_retrieval, needs_tool = _flags_for_intent(intent, bot)
     confidence = _CONFIDENT if matched is not None else _DEFAULT
@@ -243,6 +290,15 @@ _LLM_SYSTEM_PROMPT = (
     '{"intent": "<one of the five intents above>", "confidence": <number between 0.0 and 1.0>}'
 )
 
+_LLM_MEMORY_SYSTEM_PROMPT = _LLM_SYSTEM_PROMPT.replace(
+    '- conversational: greetings, small talk, thanks, and questions about which '
+    "knowledge, topics or sources the bot itself has available (answered from the bot's "
+    'own configuration, not from the knowledge base)\n',
+    '- conversational: greetings, small talk and thanks\n'
+    '- overview: questions about which knowledge, topics or documents are available, what a '
+    'knowledge space contains, which documents exist on a topic, or what one document is about\n',
+).replace('one of the five intents above', 'one of the six intents above')
+
 _CODE_FENCE_RE = re.compile(r'```(?:json)?\s*(.*?)\s*```', re.DOTALL)
 
 
@@ -256,7 +312,7 @@ def _strip_code_fence(text: str) -> str:
     return match.group(1) if match else text
 
 
-def _parse_llm_classification(raw: str) -> tuple[Intent, float]:
+def _parse_llm_classification(raw: str, memory: bool = False) -> tuple[Intent, float]:
     """Parse `raw` (an LLMCallable's return value) as
     `{"intent": ..., "confidence": ...}`. Raises ValueError for anything
     that doesn't yield a valid (Intent, float) pair -- malformed JSON, a
@@ -274,7 +330,7 @@ def _parse_llm_classification(raw: str) -> tuple[Intent, float]:
         raise ValueError(f'router LLM response is not a JSON object: {data!r}')
 
     intent = data.get('intent')
-    if intent not in _INTENTS:
+    if intent not in (_MEMORY_INTENTS if memory else _INTENTS):
         raise ValueError(f'router LLM response has an unknown intent: {intent!r}')
 
     confidence = data.get('confidence')
@@ -284,20 +340,20 @@ def _parse_llm_classification(raw: str) -> tuple[Intent, float]:
     return intent, float(confidence)
 
 
-def _classification_messages(message: str) -> list[dict[str, str]]:
+def _classification_messages(message: str, memory: bool = False) -> list[dict[str, str]]:
     return [
-        {'role': 'system', 'content': _LLM_SYSTEM_PROMPT},
+        {'role': 'system', 'content': _LLM_MEMORY_SYSTEM_PROMPT if memory else _LLM_SYSTEM_PROMPT},
         {'role': 'user', 'content': message},
     ]
 
 
-def _decide_llm(message: str, bot: BotConfig, llm_call: LLMCallable) -> RouterDecision:
+def _decide_llm(message: str, bot: BotConfig, llm_call: LLMCallable, memory: bool = False) -> RouterDecision:
     try:
-        raw = llm_call(_classification_messages(message), bot.model.model)
-        intent, confidence = _parse_llm_classification(raw)
+        raw = llm_call(_classification_messages(message, memory), bot.model.model)
+        intent, confidence = _parse_llm_classification(raw, memory)
     except Exception as exc:  # noqa: BLE001 -- any provider/parse failure falls back, see module docstring
         logger.warning('router LLM classification failed, falling back to RULES: %s', exc)
-        return replace(_decide_rules(message, bot), router_fallback=True)
+        return replace(_decide_rules(message, bot, memory), router_fallback=True)
 
     needs_retrieval, needs_tool = _flags_for_intent(intent, bot)
     return RouterDecision(intent=intent, confidence=confidence, needs_retrieval=needs_retrieval, needs_tool=needs_tool)
@@ -311,6 +367,7 @@ def route(
     bot: BotConfig,
     mode: str = 'rules',
     llm_call: LLMCallable | None = None,
+    memory: bool = False,
 ) -> RouterDecision:
     """Classify `message`'s intent for `bot` and return the RouterDecision
     a later stage's chat pipeline builds ChatTrace from (see
@@ -327,9 +384,13 @@ def route(
     `llm_call` is only consulted when `mode == 'llm'`; passing that mode
     without an `llm_call` (nothing to call) is treated the same as any
     other 'llm'-mode failure -- a RULES decision with `router_fallback=True`.
+
+    `memory` (ADR-0009, settings.knowledge_memory_mode != 'off') adds the
+    'overview' intent for questions the knowledge memory answers; without it
+    routing is unchanged.
     """
     if mode == 'llm' and llm_call is not None:
-        return _decide_llm(message, bot, llm_call)
+        return _decide_llm(message, bot, llm_call, memory)
     if mode == 'llm':
-        return replace(_decide_rules(message, bot), router_fallback=True)
-    return _decide_rules(message, bot)
+        return replace(_decide_rules(message, bot, memory), router_fallback=True)
+    return _decide_rules(message, bot, memory)

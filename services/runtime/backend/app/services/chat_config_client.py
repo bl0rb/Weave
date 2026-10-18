@@ -32,6 +32,9 @@ class ChatProviderSnapshot:
     # this field. See app/services/chat.py's `agent_mode_supported`, which
     # is the sole reader.
     supports_tools: bool = False
+    # ADR-0009: the knowledge-memory mode an admin saved in Weave-Ingest;
+    # None while unsaved (or from an older Ingest) -- settings then decide.
+    knowledge_memory_mode: str | None = None
 
 
 DEFAULT_ENDPOINT = 'default'
@@ -71,6 +74,7 @@ def fetch_chat_provider(endpoint: str = DEFAULT_ENDPOINT) -> ChatProviderSnapsho
             timeout_seconds=float(body.get('timeout_seconds', 60.0)),
             temperature=float(body['temperature']) if body.get('temperature') is not None else None,
             supports_tools=bool(body.get('supports_tools', False)),
+            knowledge_memory_mode=body['knowledge_memory_mode'] if isinstance(body.get('knowledge_memory_mode'), str) else None,
         )
     except (ValueError, TypeError, KeyError) as exc:
         raise ChatConfigUnavailable('Zentrale Chat-Konfiguration hat ungültige Daten geliefert.') from exc
