@@ -99,6 +99,12 @@ export function searchDirectoryUsers(query: string, signal?: AbortSignal): Promi
   return apiJson(`/api/v1/directory/users?${new URLSearchParams({ q: query, limit: '20' })}`, { signal });
 }
 
+/** Knowledge spaces the caller may add sources to (upload or import into). */
+export async function loadWritableSpaces(): Promise<KnowledgeSpace[]> {
+  const data = await apiJson<{ items: KnowledgeSpace[] }>('/api/v1/collections');
+  return data.items.filter(space => space.can_upload ?? space.can_manage);
+}
+
 /** Team-chip listing behind the access dialog -- same authorization gate as {@link searchDirectoryUsers}. */
 export function loadDirectoryTeams(signal?: AbortSignal): Promise<{ items: DirectoryTeam[] }> {
   return apiJson('/api/v1/directory/teams', { signal });

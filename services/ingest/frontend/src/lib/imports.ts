@@ -22,14 +22,60 @@ export type ImportSource = {
   has_credential: boolean;
   last_validated_at: string | null;
   created_at: string;
-  // Periodic re-crawl toggle/cadence. Optional: an older backend may not
-  // send these yet, so render them defensively (?? a default) rather than
-  // assuming presence.
-  refresh_enabled?: boolean;
-  refresh_interval_seconds?: number | null;
-  last_refresh_at?: string | null;
-  last_refresh_error?: string | null;
+  // Number of configured imports (syncs) on this connection.
+  sync_count?: number;
 };
+
+/** One configured Confluence import: scope + target space + options + schedule (GET /api/v1/import/syncs). */
+export type ImportSync = {
+  id: string;
+  source_id: string;
+  source_name: string;
+  scope_type: string;
+  scope_value: string;
+  root_page_title: string;
+  collection_id: string | null;
+  collection_name: string | null;
+  options: ImportRunOptions;
+  enabled: boolean;
+  interval_seconds: number | null;
+  last_success_at: string | null;
+  last_error: string | null;
+  next_refresh_at: string | null;
+  last_run: ImportSyncLastRun | null;
+  created_at: string;
+};
+
+export type ImportSyncLastRun = {
+  id: string;
+  status: ImportRunStatus;
+  is_refresh: boolean;
+  created_at: string;
+  finished_at: string | null;
+  pages_imported: number;
+  pages_failed: number;
+};
+
+/** Options stored on runs and syncs (backend ImportRunOptions). */
+export type ImportRunOptions = {
+  collection_id?: string | null;
+  max_pages: number | null;
+  max_depth: number | null;
+  include_attachments: boolean;
+  ocr_attachments: boolean;
+  ocr_profile_id: string | null;
+  folder?: string;
+  subfolder?: string;
+  tags: string[];
+  email: string;
+  path_tags: boolean;
+  webhook_connection_id: string | null;
+};
+
+export type ImportSyncListResponse = { items: ImportSync[] };
+
+/** Auto-sync part of POST /api/v1/import/runs and PATCH /api/v1/import/syncs/{id}. */
+export type ImportSyncSchedule = { enabled: boolean; interval_seconds?: number | null };
 
 /** PATCH /api/v1/import/sources/{id} body -- all fields optional, only refresh_* used by the Sources UI so far. */
 export type ImportSourceUpdateRequest = {
@@ -38,8 +84,6 @@ export type ImportSourceUpdateRequest = {
   auth_type?: ImportAuthType;
   auth_username?: string;
   credential?: string;
-  refresh_enabled?: boolean;
-  refresh_interval_seconds?: number;
 };
 
 /**
@@ -83,6 +127,7 @@ export type ImportSourceTestResponse = {
 
 export type ImportRun = {
   id: string;
+  sync_id?: string | null;
   kind: string;
   status: ImportRunStatus;
   scope_type: string;

@@ -956,6 +956,65 @@ class ImportSource(Base):
     # deleted source's page-state rows disappear with it on sqlite too (no
     # PRAGMA foreign_keys there -- same reasoning as Job.markdown_versions).
     page_states: Mapped[list['ImportPageState']] = relationship(back_populates='source', cascade='all, delete-orphan')
+    syncs: Mapped[list['ImportSync']] = relationship(back_populates='source', cascade='all, delete-orphan')
+
+
+class ImportSync(Base):
+    """One configured Confluence import: scope + target knowledge space +
+    options + schedule. Runs are executions of it (ImportRun.sync_id); the
+    periodic refresh (app/workers/refresh_tasks.py) starts a run per due,
+    enabled sync. A source can have any number of syncs.
+
+    The refresh_* columns on ImportSource predate this table (one sync per
+    source); migration 0050 moved them here and they are no longer read.
+
+    Scope and collection are fixed for the life of a sync: page states and
+    version chains are keyed by (source, collection, page), so a different
+    scope or space is a different sync. Hence the unique key below.
+    """
+
+    __tablename__ = 'import_syncs'
+    __table_args__ = (
+        UniqueConstraint(
+            'source_id', 'scope_type', 'scope_value', 'collection_id', name='uq_import_syncs_source_scope_collection'
+        ),
+        Index(
+            'uq_import_syncs_unassigned_scope', 'source_id', 'scope_type', 'scope_value', unique=True,
+            sqlite_where=sql_text('collection_id IS NULL'), postgresql_where=sql_text('collection_id IS NULL'),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey('import_sources.id', ondelete='CASCADE'), nullable=False, index=True
+    )
+    owner_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    scope_type: Mapped[str] = mapped_column(String(16), nullable=False)  # 'space' | 'page'
+    scope_value: Mapped[str] = mapped_column(String(512), nullable=False)  # space key or page id
+    # Display only; refreshed from each finished run's root page.
+    root_page_title: Mapped[str] = mapped_column(String(512), default='', server_default='', nullable=False)
+    # NULL only for legacy imports without a knowledge space.
+    collection_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('collections.id', ondelete='CASCADE'), nullable=True, index=True
+    )
+    # Run options copied into every run (max_pages, max_depth,
+    # include_attachments, ocr_attachments, ocr_profile_id, path_tags, tags,
+    # email, webhook_connection_id); collection_* are added per run.
+    options: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0', nullable=False)
+    # Server-clamped to >= settings.confluence_refresh_min_interval_seconds.
+    interval_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
+
+    source: Mapped[ImportSource] = relationship(back_populates='syncs')
+    runs: Mapped[list['ImportRun']] = relationship(back_populates='sync')
 
 
 class ImportRun(Base):
@@ -974,6 +1033,10 @@ class ImportRun(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     source_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey('import_sources.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    # The configured import this run executes (NULL: legacy run or sync deleted).
+    sync_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('import_syncs.id', ondelete='SET NULL'), nullable=True, index=True
     )
     # NULL = legacy/admin-only, mirrors jobs.owner_id semantics.
     owner_id: Mapped[str | None] = mapped_column(
@@ -1018,6 +1081,7 @@ class ImportRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     source: Mapped[ImportSource | None] = relationship(back_populates='runs')
+    sync: Mapped[ImportSync | None] = relationship(back_populates='runs')
     owner: Mapped[User | None] = relationship(back_populates='import_runs')
     jobs: Mapped[list[Job]] = relationship(back_populates='import_run')
 

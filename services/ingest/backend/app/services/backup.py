@@ -90,6 +90,7 @@ from app.models.models import (
 )
 from app.services import security
 from app.services.collection_access import backfill_legacy_grants
+from app.services.import_syncs import backfill_import_syncs
 from app.workers import publication_tasks
 
 logger = logging.getLogger(__name__)
@@ -928,6 +929,9 @@ def import_backup(
         # And Confluence page states before 0040_space_scoped_page_states:
         # rows without `collection_id` are moved into spaces once jobs exist.
         legacy_page_states = False
+        # And Confluence import configurations before 0050_import_syncs: one
+        # sync per distinct scope of the restored runs (see import_syncs.py).
+        legacy_import_syncs = 'import_syncs' not in manifest.get('tables', {})
 
         # 1. Wipe every included table in reverse dependency order. A no-op
         # set of DELETEs when the target is already fresh, so the force and
@@ -1073,6 +1077,8 @@ def import_backup(
             _backfill_legacy_bot_grants(db, legacy_bot_teams)
         if legacy_page_states:
             _scope_legacy_page_states(db)
+        if legacy_import_syncs:
+            backfill_import_syncs(db.connection())
 
         # 3. Restore the on-disk upload/result trees.
 

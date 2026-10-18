@@ -9,21 +9,21 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Toggle } from '@/components/admin/admin-shared';
 import { ApiError, apiJson } from '@/lib/api';
+import { type PaddleCapabilities } from '@/components/dashboard/shared';
 import {
-  type FolderOptions,
-  type Job,
-  type PaddleCapabilities,
-  buildFolderOptions,
-} from '@/components/dashboard/shared';
-import {
+  formatRefreshInterval,
+  refreshIntervalOptions,
   type ImportAuthType,
   type ImportRun,
   type ImportRunDetail,
+  type ImportRunOptions,
   type ImportSource,
   type ImportSourceListResponse,
   type ImportSourceTestResponse,
+  type ImportSync,
   TEST_COOLDOWN_FALLBACK_MS,
 } from '@/lib/imports';
+import { loadWritableSpaces, type KnowledgeSpace } from '@/lib/portal';
 import { listWebhookConnections, type WebhookConnection } from '@/lib/webhooks';
 import { useI18n } from '@/i18n/provider';
 import type { MessageKey } from '@/i18n/messages';
@@ -41,31 +41,13 @@ function wizardSteps(t: (key: MessageKey) => string) {
 const SERVER_DEFAULT_MAX_PAGES = 200;
 const SERVER_DEFAULT_MAX_DEPTH = 10;
 
-// The detail endpoint's `options` mirrors ImportRunOptions on the backend
-// (backend/app/schemas/import_.py) -- not yet part of the shared ImportRun
-// type in lib/imports.ts, so it is typed locally to this "prefill" use.
-type ImportRunOptionsPayload = {
-  collection_id?: string | null;
-  max_pages: number | null;
-  max_depth: number | null;
-  include_attachments: boolean;
-  ocr_attachments: boolean;
-  ocr_profile_id: string | null;
-  folder: string;
-  subfolder: string;
-  tags: string[];
-  email: string;
-  // Optional: an older backend may not send this yet, so read it
-  // defensively (?? false) rather than assuming presence.
-  path_tags?: boolean;
-  // Optional for the same reason -- absent/null both mean "no webhook".
-  webhook_connection_id?: string | null;
-};
-
 type ImportRunDetailWithPrefill = ImportRunDetail & {
   source_id: string | null;
-  options: ImportRunOptionsPayload;
+  options: ImportRunOptions;
 };
+
+// Daily: the preset "Quelle hinzufügen" uses too.
+const DEFAULT_SYNC_INTERVAL_SECONDS = 86400;
 
 export default function NewImportPage() {
   return (
@@ -76,10 +58,14 @@ export default function NewImportPage() {
 }
 
 function NewImportPageInner() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const router = useRouter();
   const searchParams = useSearchParams();
   const prefillFromRunId = searchParams.get('from');
+  // ?sync=<id> edits an import configuration in place; ?source=<id> starts a
+  // new import on that connection (both linked from Verbindungen › Confluence).
+  const editSyncId = searchParams.get('sync');
+  const presetSourceId = searchParams.get('source');
 
   const [wizardStep, setWizardStep] = useState(1);
   const [prefillNotice, setPrefillNotice] = useState<string | null>(null);
@@ -116,9 +102,14 @@ function NewImportPageInner() {
   const [scopeType, setScopeType] = useState<'space' | 'page'>('space');
   const [scopeValue, setScopeValue] = useState('');
 
-  // --- Step 3: options + metadata ---
-  const [maxPages, setMaxPages] = useState('');
+  // --- Step 3: target, schedule, options ---
+  const [spaces, setSpaces] = useState<KnowledgeSpace[]>([]);
   const [collectionId, setCollectionId] = useState<string | null>(null);
+  const [syncEnabled, setSyncEnabled] = useState(false);
+  const [syncInterval, setSyncInterval] = useState(DEFAULT_SYNC_INTERVAL_SECONDS);
+  // The configuration being edited: scope and space are then fixed.
+  const [editingSync, setEditingSync] = useState<ImportSync | null>(null);
+  const [maxPages, setMaxPages] = useState('');
   const [maxDepth, setMaxDepth] = useState('');
   const [includeAttachments, setIncludeAttachments] = useState(true);
   const [ocrAttachments, setOcrAttachments] = useState(false);
@@ -129,12 +120,6 @@ function NewImportPageInner() {
   const [webhookConnections, setWebhookConnections] = useState<WebhookConnection[]>([]);
   const [webhookConnectionId, setWebhookConnectionId] = useState('');
 
-  const [folder, setFolder] = useState('');
-  const [subfolder, setSubfolder] = useState('');
-  const [folderOptions, setFolderOptions] = useState<FolderOptions>({});
-  const [newFolderName, setNewFolderName] = useState('');
-  const [newSubfolderName, setNewSubfolderName] = useState('');
-  const [folderBusy, setFolderBusy] = useState(false);
   const [tags, setTags] = useState('');
   const [email, setEmail] = useState('');
 
@@ -142,7 +127,7 @@ function NewImportPageInner() {
   const [startError, setStartError] = useState<string | null>(null);
 
   const selectedSource = sources.find((entry) => entry.id === selectedSourceId) ?? null;
-  const selectedSubfolderOptions = folder ? (folderOptions[folder] ?? []) : [];
+  const intervalOptions = refreshIntervalOptions(locale);
 
   // Current-language messages without making `t` an effect dependency: a
   // language switch must not re-run the load and reset the wizard.
@@ -153,9 +138,9 @@ function NewImportPageInner() {
 
     const loadInitialData = async () => {
       try {
-        const [sourcesPayload, jobsPayload, capabilitiesPayload, webhookConnectionsPayload, prefillRun] = await Promise.all([
+        const [sourcesPayload, spacesPayload, capabilitiesPayload, webhookConnectionsPayload, prefillRun, requestedSync] = await Promise.all([
           apiJson<ImportSourceListResponse>('/api/v1/import/sources', { cache: 'no-store' }),
-          apiJson<{ items: Job[] }>('/api/v1/jobs', { cache: 'no-store' }).catch(() => ({ items: [] as Job[] })),
+          loadWritableSpaces().catch(() => [] as KnowledgeSpace[]),
           apiJson<PaddleCapabilities>('/api/v1/paddle/capabilities', { cache: 'no-store' }).catch(
             () => ({ profiles: [] }) as PaddleCapabilities,
           ),
@@ -165,55 +150,74 @@ function NewImportPageInner() {
                 () => null,
               )
             : Promise.resolve(null),
+          editSyncId
+            ? apiJson<ImportSync>(`/api/v1/import/syncs/${editSyncId}`, { cache: 'no-store' }).catch(() => null)
+            : Promise.resolve(null),
         ]);
+        // A run that belongs to a configuration is edited as that configuration.
+        const syncToEdit =
+          requestedSync ??
+          (prefillRun?.sync_id
+            ? await apiJson<ImportSync>(`/api/v1/import/syncs/${prefillRun.sync_id}`, { cache: 'no-store' }).catch(() => null)
+            : null);
         if (cancelled) return;
         setSources(sourcesPayload.items);
+        setSpaces(spacesPayload);
 
         const prefillSourceStillExists =
           prefillRun?.source_id != null && sourcesPayload.items.some((entry) => entry.id === prefillRun.source_id);
 
-        if (prefillRun && prefillSourceStillExists) {
+        if (syncToEdit) {
+          setSelectedSourceId(syncToEdit.source_id);
+        } else if (prefillRun && prefillSourceStillExists) {
           setSelectedSourceId(prefillRun.source_id as string);
+        } else if (presetSourceId && sourcesPayload.items.some((entry) => entry.id === presetSourceId)) {
+          setSelectedSourceId(presetSourceId);
+          setWizardStep(2);
         } else if (sourcesPayload.items.length > 0) {
           setSelectedSourceId(sourcesPayload.items[0].id);
         } else {
           setCreatingSource(true);
         }
 
-        setFolderOptions((prev) => buildFolderOptions(prev, jobsPayload.items ?? []));
         const profiles = capabilitiesPayload.profiles ?? [];
         setCapabilities({ profiles });
         setWebhookConnections(webhookConnectionsPayload.items.filter((connection) => connection.enabled));
-        const prefillProfileId = prefillRun?.options.ocr_profile_id ?? null;
+        const prefillOptions = syncToEdit?.options ?? prefillRun?.options ?? null;
+        const prefillProfileId = prefillOptions?.ocr_profile_id ?? null;
         if (prefillProfileId && profiles.some((profile) => profile.value === prefillProfileId)) {
           setSelectedProfileId(prefillProfileId);
         } else if (profiles.length > 0) {
           setSelectedProfileId(profiles[0].value);
         }
 
-        if (prefillRun) {
-          setScopeType(prefillRun.scope_type === 'page' ? 'page' : 'space');
-          setScopeValue(prefillRun.scope_value);
-          const options = prefillRun.options;
+        const prefill = syncToEdit ?? prefillRun;
+        if (prefill && prefillOptions) {
+          setScopeType(prefill.scope_type === 'page' ? 'page' : 'space');
+          setScopeValue(prefill.scope_value);
+          const options = prefillOptions;
           setCollectionId(options.collection_id ?? null);
           setMaxPages(options.max_pages != null ? String(options.max_pages) : '');
           setMaxDepth(options.max_depth != null ? String(options.max_depth) : '');
           setIncludeAttachments(options.include_attachments);
           setOcrAttachments(options.ocr_attachments);
           setPathTags(options.path_tags ?? false);
-          setFolder(options.folder ?? '');
-          setSubfolder(options.subfolder ?? '');
           setTags((options.tags ?? []).join(', '));
           setEmail(options.email ?? '');
           setWebhookConnectionId(webhookConnectionsPayload.items.some(connection => connection.enabled && connection.id === options.webhook_connection_id) ? options.webhook_connection_id ?? '' : '');
-          if (prefillSourceStillExists) {
+          if (syncToEdit) {
+            setEditingSync(syncToEdit);
+            setSyncEnabled(syncToEdit.enabled);
+            setSyncInterval(syncToEdit.interval_seconds ?? DEFAULT_SYNC_INTERVAL_SECONDS);
+            setWizardStep(3);
+          } else if (prefillSourceStillExists) {
             setWizardStep(3);
             setPrefillNotice(message('portal.importWizard.prefillReused'));
           } else {
             setConnectionMessage(message('portal.importWizard.prefillSourceMissing'));
             setPrefillNotice(message('portal.importWizard.prefillReused'));
           }
-        } else if (prefillFromRunId) {
+        } else if (prefillFromRunId || editSyncId) {
           setPrefillNotice(message('portal.importWizard.prefillFailed'));
         }
       } catch (error) {
@@ -230,7 +234,7 @@ function NewImportPageInner() {
     return () => {
       cancelled = true;
     };
-  }, [loadNonce, prefillFromRunId]);
+  }, [loadNonce, prefillFromRunId, editSyncId, presetSourceId]);
 
   const retryLoadSources = () => {
     setSourcesLoaded(false);
@@ -357,45 +361,7 @@ function NewImportPageInner() {
     }
   };
 
-  const createFolder = async () => {
-    const folderValue = newFolderName.trim();
-    const subfolderValue = newSubfolderName.trim();
-    if (!folderValue && !subfolderValue) {
-      setStartError(t('portal.importWizard.error.folderNameRequired'));
-      return;
-    }
-    setFolderBusy(true);
-    setStartError(null);
-    try {
-      const payload = await apiJson<{ path?: string }>('/api/v1/folders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folder: folderValue, subfolder: subfolderValue }),
-      });
-      const createdPath = String(payload.path ?? '').split('/').filter(Boolean);
-      const createdFolder = createdPath[0] ?? '';
-      const createdSubfolder = createdPath.length > 1 ? createdPath.slice(1).join('/') : '';
-      if (createdFolder) {
-        setFolderOptions((prev) => {
-          const next = { ...prev };
-          const current = new Set(next[createdFolder] ?? []);
-          if (createdSubfolder) current.add(createdSubfolder);
-          next[createdFolder] = Array.from(current).sort((a, b) => a.localeCompare(b));
-          return next;
-        });
-        setFolder(createdFolder);
-        setSubfolder(createdSubfolder);
-      }
-      setNewFolderName('');
-      setNewSubfolderName('');
-    } catch (error) {
-      setStartError(error instanceof ApiError ? error.detail : t('portal.importWizard.error.createFolderFailed'));
-    } finally {
-      setFolderBusy(false);
-    }
-  };
-
-  const startImport = async () => {
+  const startImport = async (runAfterSave = false) => {
     if (!selectedSourceId) {
       setStartError(t('portal.importWizard.error.pickConnectionFirst'));
       setWizardStep(1);
@@ -416,34 +382,53 @@ function NewImportPageInner() {
       setStartError(t('portal.importWizard.error.maxDepthInvalid'));
       return;
     }
+    if (!collectionId && !editingSync) {
+      setStartError(t('portal.importWizard.error.chooseSpace'));
+      return;
+    }
+
+    const options = {
+      ...(collectionId ? { collection_id: collectionId } : {}),
+      max_pages: parsedMaxPages,
+      max_depth: parsedMaxDepth,
+      include_attachments: includeAttachments,
+      ocr_attachments: includeAttachments && ocrAttachments,
+      path_tags: pathTags,
+      ocr_profile_id: includeAttachments && ocrAttachments && selectedProfileId ? selectedProfileId : null,
+      tags: tags
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean),
+      email: email.trim(),
+      webhook_connection_id: webhookConnectionId || null,
+    };
+    const schedule = { enabled: syncEnabled, interval_seconds: syncInterval };
 
     setStartBusy(true);
     setStartError(null);
     try {
+      if (editingSync) {
+        await apiJson<ImportSync>(`/api/v1/import/syncs/${editingSync.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...schedule, options }),
+        });
+        if (runAfterSave) {
+          const run = await apiJson<ImportRun>(`/api/v1/import/syncs/${editingSync.id}/run`, { method: 'POST' });
+          router.push(`/imports/${run.id}`);
+        } else {
+          router.push('/connections?tab=confluence');
+        }
+        return;
+      }
       const run = await apiJson<ImportRun>('/api/v1/import/runs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           source_id: selectedSourceId,
           scope: { type: scopeType, value: scopeValue.trim() },
-          options: {
-            ...(collectionId ? { collection_id: collectionId } : {}),
-            max_pages: parsedMaxPages,
-            max_depth: parsedMaxDepth,
-            include_attachments: includeAttachments,
-            ocr_attachments: includeAttachments && ocrAttachments,
-            path_tags: pathTags,
-            ocr_profile_id:
-              includeAttachments && ocrAttachments && selectedProfileId ? selectedProfileId : null,
-            folder: folder.trim(),
-            subfolder: subfolder.trim(),
-            tags: tags
-              .split(',')
-              .map((entry) => entry.trim())
-              .filter(Boolean),
-            email: email.trim(),
-            ...(webhookConnectionId ? { webhook_connection_id: webhookConnectionId } : {}),
-          },
+          options,
+          sync: schedule,
         }),
       });
       router.push(`/imports/${run.id}`);
@@ -476,8 +461,8 @@ function NewImportPageInner() {
       <div className="mx-auto w-full max-w-6xl px-4 py-8 text-slate-950 sm:px-6 lg:px-8">
         <section className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h1 className="text-3xl font-semibold">{t('portal.importWizard.title')}</h1>
-            <p className="mt-2 text-slate-600">{t('portal.importWizard.subtitle')}</p>
+            <h1 className="text-3xl font-semibold">{editingSync ? t('portal.importWizard.editTitle') : t('portal.importWizard.title')}</h1>
+            <p className="mt-2 text-slate-600">{editingSync ? t('portal.importWizard.editSubtitle') : t('portal.importWizard.subtitle')}</p>
           </div>
           <Link href="/imports" className="text-sm text-emerald-700 hover:text-emerald-800">
             {t('portal.importWizard.backToImports')}
@@ -500,8 +485,9 @@ function NewImportPageInner() {
                   key={step.id}
                   type="button"
                   onClick={() => {
-                    if (step.id < wizardStep) setWizardStep(step.id);
+                    if (step.id < wizardStep && !editingSync) setWizardStep(step.id);
                   }}
+                  disabled={Boolean(editingSync) && step.id !== wizardStep}
                   className={`rounded-lg border px-4 py-3 text-left transition ${
                     active
                       ? 'border-emerald-400 bg-emerald-50'
@@ -813,6 +799,74 @@ function NewImportPageInner() {
                 exit={{ opacity: 0, y: -12 }}
                 className="space-y-4"
               >
+                <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-4">
+                  <label className="block text-sm text-slate-600">
+                    {t('portal.importWizard.spaceLabel')}
+                    {editingSync ? (
+                      <p className="mt-1 font-medium text-slate-950">
+                        {editingSync.collection_name ?? t('portal.connections.confluence.syncNoTarget')}
+                      </p>
+                    ) : (
+                      <select
+                        required
+                        value={collectionId ?? ''}
+                        onChange={(event) => setCollectionId(event.target.value || null)}
+                        className="mt-1 w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950 md:w-1/2"
+                      >
+                        <option value="">{t('portal.sourceForm.pleaseSelect')}</option>
+                        {spaces.map((space) => (
+                          <option key={space.collection_id} value={space.collection_id}>
+                            {space.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </label>
+                  {editingSync ? (
+                    <p className="text-xs text-slate-500">
+                      {t('portal.importWizard.fixedScopeHint')}{' '}
+                      <Link
+                        href={`/imports/new?source=${encodeURIComponent(editingSync.source_id)}`}
+                        className="text-emerald-700 hover:text-emerald-800"
+                      >
+                        {t('portal.importWizard.newImportLink')}
+                      </Link>
+                    </p>
+                  ) : (
+                    spaces.length === 0 && (
+                      <p className="text-xs text-slate-500">
+                        {t('portal.sourceForm.emptySpacesBody')}{' '}
+                        <Link href="/knowledge/new" className="text-emerald-700 hover:text-emerald-800">
+                          {t('portal.sourceForm.newSpaceLink')}
+                        </Link>
+                      </p>
+                    )
+                  )}
+                </div>
+
+                <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-4">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Toggle checked={syncEnabled} onChange={setSyncEnabled} label={t('portal.importWizard.syncLabel')} />
+                    <select
+                      value={syncInterval}
+                      onChange={(event) => setSyncInterval(Number(event.target.value))}
+                      disabled={!syncEnabled}
+                      aria-label={t('portal.connections.confluence.syncIntervalAria')}
+                      className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-sm text-slate-950 disabled:opacity-50"
+                    >
+                      {!intervalOptions.some((option) => option.value === syncInterval) && (
+                        <option value={syncInterval}>{formatRefreshInterval(syncInterval, locale)}</option>
+                      )}
+                      {intervalOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <p className="text-xs text-slate-500">{t('portal.importWizard.syncHint')}</p>
+                </div>
+
                 <div className="grid gap-3 md:grid-cols-2">
                   <label className="text-sm text-slate-600">
                     {t('portal.importWizard.maxPagesLabel')}
@@ -920,68 +974,6 @@ function NewImportPageInner() {
                 </div>
 
                 <div className="grid gap-3 md:grid-cols-2">
-                  <label className="text-sm text-slate-600">
-                    {t('portal.importWizard.targetFolderLabel')}
-                    <select
-                      value={folder}
-                      onChange={(event) => {
-                        const nextFolder = event.target.value;
-                        setFolder(nextFolder);
-                        if (!nextFolder || !(folderOptions[nextFolder] ?? []).includes(subfolder)) {
-                          setSubfolder('');
-                        }
-                      }}
-                      className="mt-1 w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950"
-                    >
-                      <option value="">{t('portal.importWizard.targetFolderDefault')}</option>
-                      {Object.keys(folderOptions)
-                        .sort((left, right) => left.localeCompare(right))
-                        .map((option) => (
-                          <option key={option} value={option}>
-                            {option}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
-                  <label className="text-sm text-slate-600">
-                    {t('portal.importWizard.targetSubfolderLabel')}
-                    <select
-                      value={subfolder}
-                      onChange={(event) => setSubfolder(event.target.value)}
-                      disabled={!folder}
-                      className="mt-1 w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950"
-                    >
-                      <option value="">{t('portal.importWizard.noSubfolder')}</option>
-                      {selectedSubfolderOptions.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="text-sm text-slate-600">
-                    {t('portal.importWizard.newFolderLabel')}
-                    <input
-                      value={newFolderName}
-                      onChange={(event) => setNewFolderName(event.target.value)}
-                      className="mt-1 w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950"
-                      placeholder="wiki"
-                    />
-                  </label>
-                  <label className="text-sm text-slate-600">
-                    {t('portal.importWizard.newSubfolderLabel')}
-                    <input
-                      value={newSubfolderName}
-                      onChange={(event) => setNewSubfolderName(event.target.value)}
-                      className="mt-1 w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-slate-950"
-                      placeholder="2026/product"
-                    />
-                  </label>
-                  <div className="flex items-end md:col-span-2">
-                    <Button type="button" variant="outline" onClick={() => void createFolder()} disabled={folderBusy}>
-                      {folderBusy ? t('portal.importWizard.adding') : t('portal.importWizard.addFolder')}
-                    </Button>
-                  </div>
                   <label className="text-sm text-slate-600 md:col-span-2">
                     {t('portal.importWizard.tagsLabel')}
                     <input
@@ -1009,13 +1001,30 @@ function NewImportPageInner() {
                   </p>
                 )}
 
-                <div className="flex justify-between gap-3">
-                  <Button variant="outline" onClick={() => setWizardStep(2)}>
-                    {t('common.back')}
-                  </Button>
-                  <Button onClick={() => void startImport()} disabled={startBusy}>
-                    {startBusy ? t('common.starting') : t('portal.importWizard.startImport')}
-                  </Button>
+                <div className="flex flex-wrap justify-between gap-3">
+                  {editingSync ? (
+                    <Link href="/connections?tab=confluence" className="self-center text-sm text-emerald-700 hover:text-emerald-800">
+                      {t('common.cancel')}
+                    </Link>
+                  ) : (
+                    <Button variant="outline" onClick={() => setWizardStep(2)}>
+                      {t('common.back')}
+                    </Button>
+                  )}
+                  {editingSync ? (
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" onClick={() => void startImport(false)} disabled={startBusy}>
+                        {t('portal.importWizard.save')}
+                      </Button>
+                      <Button onClick={() => void startImport(true)} disabled={startBusy}>
+                        {startBusy ? t('common.starting') : t('portal.importWizard.saveAndSync')}
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button onClick={() => void startImport()} disabled={startBusy}>
+                      {startBusy ? t('common.starting') : t('portal.importWizard.startImport')}
+                    </Button>
+                  )}
                 </div>
               </motion.div>
             )}

@@ -14,24 +14,24 @@ import {
   inputClass,
   LoadingState,
   SectionCard,
-  Toggle,
   apiSend,
 } from '@/components/admin/admin-shared';
 import {
-  refreshIntervalOptions,
   TEST_COOLDOWN_FALLBACK_MS,
-  formatRefreshInterval,
   type ImportSource,
   type ImportSourceListResponse,
   type ImportSourceTestResponse,
+  type ImportSync,
+  type ImportSyncListResponse,
 } from '@/lib/imports';
 import { useI18n } from '@/i18n/provider';
 import { ConfluenceSetupDialog } from './confluence-setup-dialog';
+import { ConfluenceSyncs } from './confluence-syncs';
 
 export function ConfluenceConnectionsTab() {
-  const { t, locale } = useI18n();
-  const intervalOptions = refreshIntervalOptions(locale);
+  const { t } = useI18n();
   const [sources, setSources] = useState<ImportSource[]>([]);
+  const [syncs, setSyncs] = useState<ImportSync[]>([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   // 404 means the backend hasn't shipped this endpoint yet, not a real
@@ -58,8 +58,12 @@ export function ConfluenceConnectionsTab() {
   // logic instead of calling `reload()` directly.
   const reload = useCallback(async () => {
     try {
-      const data = await apiJson<ImportSourceListResponse>('/api/v1/import/sources', { cache: 'no-store' });
+      const [data, syncData] = await Promise.all([
+        apiJson<ImportSourceListResponse>('/api/v1/import/sources', { cache: 'no-store' }),
+        apiJson<ImportSyncListResponse>('/api/v1/import/syncs', { cache: 'no-store' }),
+      ]);
       setSources(data.items);
+      setSyncs(syncData.items);
       setListError(null);
       setUnavailable(false);
     } catch (err) {
@@ -79,9 +83,13 @@ export function ConfluenceConnectionsTab() {
     let cancelled = false;
     (async () => {
       try {
-        const data = await apiJson<ImportSourceListResponse>('/api/v1/import/sources', { cache: 'no-store' });
+        const [data, syncData] = await Promise.all([
+          apiJson<ImportSourceListResponse>('/api/v1/import/sources', { cache: 'no-store' }),
+          apiJson<ImportSyncListResponse>('/api/v1/import/syncs', { cache: 'no-store' }),
+        ]);
         if (cancelled) return;
         setSources(data.items);
+        setSyncs(syncData.items);
         setListError(null);
         setUnavailable(false);
       } catch (err) {
@@ -196,26 +204,6 @@ export function ConfluenceConnectionsTab() {
     }
   };
 
-  const updateRefresh = async (
-    source: ImportSource,
-    patch: { refresh_enabled?: boolean; refresh_interval_seconds?: number },
-  ) => {
-    setBusyId(source.id);
-    try {
-      const updated = await apiJson<ImportSource>(`/api/v1/import/sources/${source.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
-      });
-      setSources((current) => current.map((entry) => (entry.id === source.id ? updated : entry)));
-      setActionError(null);
-    } catch (err) {
-      setActionError(errorMessage(err));
-    } finally {
-      setBusyId(null);
-    }
-  };
-
   return (
     <div className="space-y-6">
       <SectionCard
@@ -301,48 +289,6 @@ export function ConfluenceConnectionsTab() {
                         <dd>{new Date(source.created_at).toLocaleDateString()}</dd>
                       </div>
                     </dl>
-                    <div className="mt-3 flex flex-wrap items-center gap-3">
-                      <Toggle
-                        checked={source.refresh_enabled ?? false}
-                        onChange={(next) => void updateRefresh(source, { refresh_enabled: next })}
-                        label={t('portal.connections.confluence.autoRefresh')}
-                        disabled={busyId === source.id}
-                      />
-                      <select
-                        value={source.refresh_interval_seconds ?? intervalOptions[2].value}
-                        onChange={(event) =>
-                          void updateRefresh(source, { refresh_interval_seconds: Number(event.target.value) })
-                        }
-                        disabled={!(source.refresh_enabled ?? false) || busyId === source.id}
-                        className="rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-950 disabled:opacity-50"
-                      >
-                        {/* Covers the server's own floor default (e.g. 900s), which the
-                            toggle-only enable path sets without going through this select --
-                            without it, `value` above would match none of the options below
-                            and the control would render blank. */}
-                        {source.refresh_interval_seconds != null &&
-                          !intervalOptions.some((option) => option.value === source.refresh_interval_seconds) && (
-                            <option value={source.refresh_interval_seconds}>
-                              {formatRefreshInterval(source.refresh_interval_seconds, locale)}
-                            </option>
-                          )}
-                        {intervalOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    {(source.refresh_enabled ?? false) && (
-                      <p className="mt-1 text-xs text-slate-500">
-                        {source.last_refresh_at
-                          ? t('portal.connections.confluence.lastRefresh', { date: new Date(source.last_refresh_at).toLocaleString() })
-                          : t('portal.connections.confluence.neverRefreshed')}
-                      </p>
-                    )}
-                    {source.last_refresh_error && (
-                      <p className="mt-1 text-xs text-red-600">{source.last_refresh_error}</p>
-                    )}
                   </div>
                   <div className="flex flex-shrink-0 items-center gap-1">
                     <Button
@@ -379,6 +325,7 @@ export function ConfluenceConnectionsTab() {
                   </div>
                 </div>
                 {testResults[source.id] && <TestResult result={testResults[source.id]} />}
+                <ConfluenceSyncs sourceId={source.id} syncs={syncs.filter((sync) => sync.source_id === source.id)} onChanged={reload} />
               </li>
             ))}
           </ul>

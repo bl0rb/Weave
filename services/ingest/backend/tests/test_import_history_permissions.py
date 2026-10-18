@@ -7,6 +7,7 @@ from app.models.models import (
     DocumentRelease,
     ImportRun,
     ImportRunStatus,
+    ImportSync,
     Job,
     KnowledgeWithdrawal,
     Team,
@@ -48,11 +49,18 @@ def test_admin_can_manage_completed_import_without_reading_personal_credentials(
     admin = _user('history-admin', role=UserRole.ADMIN)
     source = _make_source(owner.id, server_kind='cloud')
     run = _make_run(owner_id=owner.id, source_id=source.id, status=ImportRunStatus.FINISHED)
+    with _db() as db:
+        sync = ImportSync(source_id=source.id, owner_id=owner.id, scope_type=run.scope_type, scope_value=run.scope_value, options={})
+        db.add(sync)
+        db.flush()
+        db.get(ImportRun, run.id).sync_id = sync.id
+        sync_id = sync.id
+        db.commit()
     calls = []
-    def start_refresh(db, selected_source, *, template):
-        calls.append((selected_source.id, selected_source.owner_id, template.id))
-        return template
-    monkeypatch.setattr('app.workers.refresh_tasks._start_refresh_run', start_refresh)
+    def start_refresh(db, selected_sync):
+        calls.append((selected_sync.id, selected_sync.source_id))
+        return db.get(ImportRun, run.id)
+    monkeypatch.setattr('app.workers.refresh_tasks.start_sync_run', start_refresh)
     client = login_as(admin.username)
     listing = client.get('/api/v1/import/runs').json()['items']
     item = next(item for item in listing if item['id'] == run.id)
@@ -66,7 +74,7 @@ def test_admin_can_manage_completed_import_without_reading_personal_credentials(
     assert source.id not in {item['id'] for item in client.get('/api/v1/import/sources').json()['items']}
     response = client.post(f'/api/v1/import/runs/{run.id}/sync')
     assert response.status_code == 202, response.text
-    assert calls == [(source.id, owner.id, run.id)]
+    assert calls == [(sync_id, source.id)]
 
 
 def _space_import(importer_id: str, space_owner_id: str) -> tuple[str, str, str]:

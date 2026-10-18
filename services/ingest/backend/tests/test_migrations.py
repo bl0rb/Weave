@@ -1558,3 +1558,82 @@ def test_oidc_access_group_migration_round_trips():
             migration.downgrade()
             columns = {c['name'] for c in inspect(connection).get_columns('auth_providers')}
             assert not ({'access_group', 'access_denied_message'} & columns)
+
+
+def test_0050_turns_each_imported_scope_into_a_sync(tmp_path, monkeypatch) -> None:
+    db_url = f'sqlite:///{tmp_path / "import_syncs.db"}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+    engine = create_engine(db_url, future=True)
+    _build_legacy_metadata().create_all(bind=engine)
+    cfg = _alembic_config()
+    command.stamp(cfg, '0003_job_markdown_versions')
+    command.upgrade(cfg, '0049_oidc_access_group')
+
+    # Source s1 (auto-sync on, 6 h) imported space DOC into A twice, page 42
+    # into A, and DOC into B (its newest finished run, i.e. the old sync
+    # template). r5 went into a deleted space. Source s2 never synced.
+    runs = [
+        ('r1', 's1', 'space', 'DOC', 'space-a', 'FINISHED', '2026-01-01', 'Handbuch'),
+        ('r2', 's1', 'page', '42', 'space-a', 'FINISHED', '2026-01-02', 'Seite'),
+        ('r3', 's1', 'space', 'DOC', 'space-a', 'FAILED', '2026-01-03', ''),
+        ('r4', 's1', 'space', 'DOC', 'space-b', 'FINISHED', '2026-01-04', 'Handbuch B'),
+        ('r5', 's1', 'space', 'DOC', 'space-gone', 'FINISHED', '2026-01-05', ''),
+        ('r6', 's2', 'page', '7', None, 'FINISHED', '2026-01-06', ''),
+    ]
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO users (id, username, email, created_at, updated_at) "
+            "VALUES ('u1', 'u1', 'u1@example.com', '2026-01-01', '2026-01-01')"
+        ))
+        for source_id, enabled in (('s1', 1), ('s2', 0)):
+            conn.execute(text(
+                "INSERT INTO import_sources (id, owner_id, name, base_url, auth_type, credential_encrypted, "
+                "refresh_enabled, refresh_interval_seconds, last_refresh_at, created_at, updated_at) "
+                "VALUES (:id, 'u1', :id, 'https://c', 'pat_bearer', 'enc', :enabled, 21600, '2026-01-04', '2026-01-01', '2026-01-01')"
+            ), {'id': source_id, 'enabled': enabled})
+        for collection_id in ('space-a', 'space-b'):
+            conn.execute(text(
+                "INSERT INTO collections (id, name, slug, created_at, updated_at) "
+                "VALUES (:id, :id, :id, '2026-01-01', '2026-01-01')"
+            ), {'id': collection_id})
+        for run_id, source_id, scope_type, scope_value, collection_id, status, created_at, title in runs:
+            options = {'max_pages': 50, 'is_refresh': True, 'sync_template_run_id': 'x'}
+            if collection_id:
+                options.update(collection_id=collection_id, collection_name=collection_id)
+            conn.execute(text(
+                "INSERT INTO import_runs (id, source_id, owner_id, status, scope_type, scope_value, root_page_title, options, created_at, updated_at) "
+                "VALUES (:id, :source, 'u1', :status, :type, :value, :title, :options, :created, :created)"
+            ), {'id': run_id, 'source': source_id, 'status': status, 'type': scope_type, 'value': scope_value,
+                'title': title, 'options': json.dumps(options), 'created': created_at})
+
+    command.upgrade(cfg, '0050_import_syncs')
+    with engine.connect() as conn:
+        syncs = {
+            (row.source_id, row.scope_type, row.scope_value, row.collection_id): row
+            for row in conn.execute(text('SELECT * FROM import_syncs'))
+        }
+        run_sync = dict(conn.execute(text('SELECT id, sync_id FROM import_runs')).all())
+    assert set(syncs) == {
+        ('s1', 'space', 'DOC', 'space-a'), ('s1', 'page', '42', 'space-a'),
+        ('s1', 'space', 'DOC', 'space-b'), ('s2', 'page', '7', None),
+    }
+    doc_a, page_a = syncs[('s1', 'space', 'DOC', 'space-a')], syncs[('s1', 'page', '42', 'space-a')]
+    doc_b, page_s2 = syncs[('s1', 'space', 'DOC', 'space-b')], syncs[('s2', 'page', '7', None)]
+    # Only the old template inherits the schedule; nothing else syncs on its own.
+    assert (bool(doc_b.enabled), doc_b.interval_seconds) == (True, 21600)
+    assert not doc_a.enabled and not page_a.enabled and not page_s2.enabled
+    assert doc_a.root_page_title == 'Handbuch'
+    assert json.loads(doc_a.options) == {'max_pages': 50}
+    assert run_sync == {'r1': doc_a.id, 'r2': page_a.id, 'r3': doc_a.id, 'r4': doc_b.id, 'r5': None, 'r6': page_s2.id}
+
+    with pytest.raises(Exception):
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO import_syncs (id, source_id, scope_type, scope_value, collection_id, options, enabled) "
+                "VALUES ('dup', 's1', 'space', 'DOC', 'space-a', '{}', 0)"
+            ))
+
+    command.downgrade(cfg, '0049_oidc_access_group')
+    with engine.connect() as conn:
+        assert 'sync_id' not in {row[1] for row in conn.execute(text('PRAGMA table_info(import_runs)'))}
+    engine.dispose()

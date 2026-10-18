@@ -15,6 +15,7 @@ from app.models.models import (
     ImportRun,
     ImportRunStatus,
     ImportSource,
+    ImportSync,
     Job,
     JobArtifact,
     UserRole,
@@ -271,6 +272,14 @@ def test_refresh_preserves_collection_and_fails_closed_when_deleted(monkeypatch)
             state={'frontier': [], 'visited': {}, 'errors': []},
             finished_at=datetime.now(timezone.utc),
         )
+        sync = ImportSync(
+            source_id=source.id, owner_id=owner.id, scope_type='page', scope_value='portal-page',
+            collection_id=collection.id, options={'max_pages': 10, 'max_depth': 0, 'include_attachments': True},
+            enabled=True, interval_seconds=900,
+        )
+        db.add(sync)
+        db.flush()
+        prior.sync_id = sync.id
         db.add(prior)
         db.commit()
         sent: list[tuple[str, list]] = []
@@ -279,7 +288,7 @@ def test_refresh_preserves_collection_and_fails_closed_when_deleted(monkeypatch)
             'send_task',
             lambda name, args=None, **kwargs: sent.append((name, list(args or []))),
         )
-        started_run = refresh_tasks._start_refresh_run(db, db.get(ImportSource, source.id))
+        started_run = refresh_tasks.start_sync_run(db, sync)
         assert isinstance(started_run, ImportRun)
         refresh_run = db.scalar(
             select(ImportRun)
@@ -292,16 +301,14 @@ def test_refresh_preserves_collection_and_fails_closed_when_deleted(monkeypatch)
         assert refresh_run.options['collection_slug'] == collection.slug
         assert sent == [('import_confluence', [refresh_run.id, 0])]
 
-        # An assigned collection disappearing must stop dispatch at the
-        # scheduler boundary; no unassigned replacement run is allowed.
+        # An assigned collection disappearing takes its import configuration
+        # with it (FK CASCADE): no unassigned replacement run is allowed.
         refresh_run.status = ImportRunStatus.FINISHED
         refresh_run.finished_at = datetime.now(timezone.utc)
         db.commit()
         db.delete(collection)
         db.commit()
         sent.clear()
-        db.get(ImportSource, source.id).last_refresh_at = None
-        db.commit()
         target_run_ids_before = set(
             db.scalars(select(ImportRun.id).where(ImportRun.source_id == source.id)).all()
         )
@@ -314,8 +321,7 @@ def test_refresh_preserves_collection_and_fails_closed_when_deleted(monkeypatch)
             db.scalars(select(ImportRun.id).where(ImportRun.source_id == source.id)).all()
         )
         assert target_run_ids_after == target_run_ids_before
-        source_row = db.get(ImportSource, source.id)
-        assert 'refusing an unassigned refresh' in source_row.last_refresh_error
+        assert db.scalar(select(ImportSync).where(ImportSync.source_id == source.id)) is None
     finally:
         db.close()
 
