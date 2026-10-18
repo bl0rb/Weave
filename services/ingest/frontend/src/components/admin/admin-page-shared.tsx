@@ -2,9 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { ComponentType, KeyboardEvent, ReactNode } from 'react';
-import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { ArrowRight, ShieldAlert } from 'lucide-react';
+import { ShieldAlert } from 'lucide-react';
 
 import { apiJson } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
@@ -184,13 +183,13 @@ export function useBereich<T extends string>(validIds: readonly T[], fallback: T
 
 /** Old `/admin?tab=<id>` values → the new page (and section) that now hosts them. */
 export const OLD_TAB_REDIRECTS: Record<string, { path: string; bereich?: string }> = {
-  collections: { path: '/admin/menschen', bereich: 'zugriff' },
-  users: { path: '/admin/menschen', bereich: 'personen' },
-  teams: { path: '/admin/menschen', bereich: 'teams' },
-  providers: { path: '/admin/menschen', bereich: 'anmeldung' },
-  bots: { path: '/admin/wissen', bereich: 'bots' },
-  'chat-provider': { path: '/admin/wissen', bereich: 'chat-llm' },
-  'retrieval-provider': { path: '/admin/wissen', bereich: 'suche-modelle' },
+  collections: { path: '/admin/konten', bereich: 'zugriff' },
+  users: { path: '/admin/konten', bereich: 'personen' },
+  teams: { path: '/admin/konten', bereich: 'teams' },
+  providers: { path: '/admin/konten', bereich: 'anmeldung' },
+  bots: { path: '/admin/ki', bereich: 'bots' },
+  'chat-provider': { path: '/admin/ki', bereich: 'chat-llm' },
+  'retrieval-provider': { path: '/admin/ki', bereich: 'suche-modelle' },
   'vl-connections': { path: '/admin/verarbeitung', bereich: 'dokument-ki' },
   paddle: { path: '/admin/verarbeitung', bereich: 'ocr' },
   logs: { path: '/admin/verarbeitung', bereich: 'worker-logs' },
@@ -204,27 +203,6 @@ export function oldTabRedirectUrl(tab: string): string | null {
   const target = OLD_TAB_REDIRECTS[tab];
   if (!target) return null;
   return target.bereich ? `${target.path}?bereich=${target.bereich}` : target.path;
-}
-
-/** Small link card used for "further tools" grids on the admin sub-pages. */
-export function ToolLinkCard({
-  href,
-  title,
-  description,
-}: {
-  href: string;
-  title: string;
-  description: string;
-}) {
-  return (
-    <Link href={href} className="rounded-xl border border-[var(--line)] bg-[var(--surface)] p-5 transition hover:border-emerald-400">
-      <span className="flex items-center justify-between gap-3 font-semibold text-emerald-800">
-        {title}
-        <ArrowRight size={16} />
-      </span>
-      <p className="mt-2 text-sm text-[var(--muted)]">{description}</p>
-    </Link>
-  );
 }
 
 /**

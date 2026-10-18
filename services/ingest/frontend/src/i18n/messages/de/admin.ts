@@ -59,7 +59,7 @@ export const admin = {
   'overview.attention.deliveryFailed.title': '{count} Freigabe bei der Auslieferung fehlgeschlagen|{count} Freigaben bei der Auslieferung fehlgeschlagen',
   'overview.attention.deliveryFailed.detail': 'Den Wissensindex aus den Freigaben neu aufbauen.',
 
-  // --- Konten & Zugriffe (/admin/menschen) ---
+  // --- Konten & Zugriffe (/admin/konten) ---
   'people.pageTitle': 'Konten & Zugriffe',
   'people.pageDescription': 'Wer Weave nutzt und für wen welches Wissen im Chat freigegeben ist.',
   'people.tab.people': 'Personen',
@@ -67,7 +67,7 @@ export const admin = {
   'people.tab.signIn': 'Anmeldung',
   'people.tab.access': 'Wissensbereiche & Zugriff',
 
-  // --- Bots & KI (/admin/wissen) ---
+  // --- Bots & KI (/admin/ki) ---
   'knowledge.pageTitle': 'Bots & KI',
   'knowledge.pageDescription': 'Wie Weave passende Textstellen findet und daraus Antworten formuliert.',
   'knowledge.tab.bots': 'Bots',
@@ -80,11 +80,6 @@ export const admin = {
   'processing.tab.documentAi': 'Dokument-KI',
   'processing.tab.ocr': 'OCR',
   'processing.tab.workerLogs': 'Worker-Logs',
-  'processing.moreTools': 'Weitere Werkzeuge:',
-  'processing.tool.confluenceImports': 'Confluence-Importe',
-  'processing.tool.mailImport': 'E-Mail-Import',
-  'processing.tool.connections': 'Verbindungen',
-  'processing.tool.search': 'Suche',
 
   // --- Betrieb & Sicherheit (/admin/betrieb) ---
   'operations.pageTitle': 'Betrieb & Sicherheit',
@@ -123,16 +118,6 @@ export const admin = {
   'operations.tab.backup': 'Sicherung & Wiederherstellung',
   'operations.tab.identities': 'Technische Identitäten',
   'operations.tab.tools': 'Werkzeuge',
-  'operations.tools.sectionTitle': 'Werkzeuge für die Administration',
-  'operations.tools.sectionDescription': 'Verbindungen prüfen, Verarbeitungsprofile vergleichen und einzelne Aufträge untersuchen.',
-  'operations.tools.connections.title': 'Verbindungen',
-  'operations.tools.connections.description': 'Confluence und Webhooks einrichten und prüfen.',
-  'operations.tools.jobs.title': 'Auftragsverwaltung',
-  'operations.tools.jobs.description': 'Alle sichtbaren Aufträge, technische Details und Wiederholungen.',
-  'operations.tools.imports.title': 'Confluence-Importe',
-  'operations.tools.imports.description': 'Importfortschritt, Quellen und Fehler im Detail.',
-  'operations.tools.processNew.title': 'Verarbeitung testen',
-  'operations.tools.processNew.description': 'Dateien mit erweiterten OCR-Einstellungen verarbeiten.',
 
   // === AGENT B: people & access tabs — users, teams, providers, identities ===
   // --- Nutzer (users-tab.tsx) ---

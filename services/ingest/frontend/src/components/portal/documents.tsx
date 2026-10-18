@@ -26,6 +26,7 @@ import {
 import { useI18n } from '@/i18n/provider';
 import type { MessageKey } from '@/i18n/messages';
 import { BulkActionBar, EmptyState, Notice, Pagination, PortalPage, useBulkSelection } from './shared';
+import { DocumentTabs } from './page-tabs';
 
 /** Bounds the whole filterable/searchable list to the most recent N documents visible to the user — the backend has no full-text search for portal documents yet, so filtering happens client-side over this batch. */
 const DOCUMENTS_FETCH_LIMIT = 200;
@@ -150,6 +151,7 @@ export function PortalDocuments({ initialQuery, initialStand, initialBereich }: 
   return (
     <PortalPage
       title={t('portal.nav.documents')}
+      tabs={<DocumentTabs />}
     >
       {error && <Notice error action={load}>{error}</Notice>}
       {notice && <Notice>{notice}</Notice>}

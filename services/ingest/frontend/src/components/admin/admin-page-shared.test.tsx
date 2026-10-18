@@ -29,13 +29,13 @@ it('maps every old tab id to a new admin page', () => {
 });
 
 it('resolves each old tab id to its new page and section', () => {
-  expect(oldTabRedirectUrl('collections')).toBe('/admin/menschen?bereich=zugriff');
-  expect(oldTabRedirectUrl('users')).toBe('/admin/menschen?bereich=personen');
-  expect(oldTabRedirectUrl('teams')).toBe('/admin/menschen?bereich=teams');
-  expect(oldTabRedirectUrl('providers')).toBe('/admin/menschen?bereich=anmeldung');
-  expect(oldTabRedirectUrl('bots')).toBe('/admin/wissen?bereich=bots');
-  expect(oldTabRedirectUrl('chat-provider')).toBe('/admin/wissen?bereich=chat-llm');
-  expect(oldTabRedirectUrl('retrieval-provider')).toBe('/admin/wissen?bereich=suche-modelle');
+  expect(oldTabRedirectUrl('collections')).toBe('/admin/konten?bereich=zugriff');
+  expect(oldTabRedirectUrl('users')).toBe('/admin/konten?bereich=personen');
+  expect(oldTabRedirectUrl('teams')).toBe('/admin/konten?bereich=teams');
+  expect(oldTabRedirectUrl('providers')).toBe('/admin/konten?bereich=anmeldung');
+  expect(oldTabRedirectUrl('bots')).toBe('/admin/ki?bereich=bots');
+  expect(oldTabRedirectUrl('chat-provider')).toBe('/admin/ki?bereich=chat-llm');
+  expect(oldTabRedirectUrl('retrieval-provider')).toBe('/admin/ki?bereich=suche-modelle');
   expect(oldTabRedirectUrl('vl-connections')).toBe('/admin/verarbeitung?bereich=dokument-ki');
   expect(oldTabRedirectUrl('paddle')).toBe('/admin/verarbeitung?bereich=ocr');
   expect(oldTabRedirectUrl('logs')).toBe('/admin/verarbeitung?bereich=worker-logs');

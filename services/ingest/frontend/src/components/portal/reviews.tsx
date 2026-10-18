@@ -19,6 +19,7 @@ import { currentReleaseStatus } from '@/lib/indexing-status';
 import { useI18n } from '@/i18n/provider';
 import { translate, type MessageKey } from '@/i18n/messages';
 import type { Locale } from '@/i18n/config';
+import { TaskTabs } from './page-tabs';
 
 /** How many open review documents the detail page's previous/next navigation pages through. */
 const REVIEW_QUEUE_LIMIT = 200;
@@ -70,7 +71,7 @@ export function ReviewInbox() {
     .catch(err => setError(portalError(err, locale))), [offset, reviewState, qualityGrade, locale]);
   useEffect(() => { void load(); }, [load]);
   const bulk = useBulkSelection({ documents: documents?.items ?? [], acrossPages: true, onNotice: setNotice, onError: setError, onDone: () => { setDocuments(null); return load(); } });
-  return <PortalPage title={t('portal.reviews.title')} description={t('portal.reviews.description')} actions={<Button variant="outline" onClick={load}>{t('common.refresh')}</Button>}>
+  return <PortalPage title={t('portal.reviews.title')} description={t('portal.reviews.description')} tabs={<TaskTabs />} actions={<Button variant="outline" onClick={load}>{t('common.refresh')}</Button>}>
     <div className="portal-filter-row" role="group" aria-label={t('portal.reviews.selectionAria')}>{reviewStateChips(t).map(chip => <button key={chip.value} aria-pressed={chip.value === reviewState} onClick={() => { setReviewState(chip.value); setOffset(0); setDocuments(null); bulk.clear(); }}>{chip.label}</button>)}</div>
     <QualityGradeFilterRow value={qualityGrade} onChange={value => { setQualityGrade(value); setOffset(0); setDocuments(null); }} />
     <QualityGradeLegend />

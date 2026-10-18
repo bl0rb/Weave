@@ -8,13 +8,11 @@ import {
   PageHead,
   SectionPanel,
   SectionTabs,
-  ToolLinkCard,
   useBereich,
 } from '@/components/admin/admin-page-shared';
 import { BackupTab } from '@/components/admin/backup-tab';
 import { TechnicalIdentitiesTab } from '@/components/admin/technical-identities-tab';
 import { IndexMaintenanceSection } from '@/components/admin/retrieval-provider-tab';
-import { SectionCard } from '@/components/admin/admin-shared';
 import { useI18n } from '@/i18n/provider';
 
 type Bereich = 'sicherung' | 'identitaeten' | 'werkzeuge';
@@ -35,13 +33,6 @@ function AdminBetriebPageInner() {
     { id: 'werkzeuge', label: t('admin.operations.tab.tools'), icon: Wrench },
   ];
   const IDS = TABS.map((tab) => tab.id);
-  // Link grid carried over unchanged from the old "Werkzeuge" tab.
-  const WERKZEUGE_LINKS: { href: string; title: string; description: string }[] = [
-    { href: '/connections', title: t('admin.operations.tools.connections.title'), description: t('admin.operations.tools.connections.description') },
-    { href: '/jobs', title: t('admin.operations.tools.jobs.title'), description: t('admin.operations.tools.jobs.description') },
-    { href: '/imports', title: t('admin.operations.tools.imports.title'), description: t('admin.operations.tools.imports.description') },
-    { href: '/processing/new', title: t('admin.operations.tools.processNew.title'), description: t('admin.operations.tools.processNew.description') },
-  ];
   const [bereich, setBereich] = useBereich<Bereich>(IDS, 'sicherung');
   return (
     <AdminPageShell>
@@ -62,19 +53,7 @@ function AdminBetriebPageInner() {
       )}
       {bereich === 'werkzeuge' && (
         <SectionPanel idPrefix="betrieb" id="werkzeuge">
-          <div className="space-y-6">
-            <SectionCard
-              title={t('admin.operations.tools.sectionTitle')}
-              description={t('admin.operations.tools.sectionDescription')}
-            >
-              <div className="grid gap-4 sm:grid-cols-2">
-                {WERKZEUGE_LINKS.map(({ href, title, description }) => (
-                  <ToolLinkCard key={href} href={href} title={title} description={description} />
-                ))}
-              </div>
-            </SectionCard>
-            <IndexMaintenanceSection />
-          </div>
+          <IndexMaintenanceSection />
         </SectionPanel>
       )}
     </AdminPageShell>

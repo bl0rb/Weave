@@ -52,19 +52,26 @@ function portalNav(t: T, ownsBots: boolean): Omit<NavItem, 'badge'>[] {
 
 function adminNav(t: T, botAdminOnly: boolean): NavItem[] {
   // Bot admins only manage bots, which live on the Wissen page.
-  if (botAdminOnly) return [{ href: '/admin/wissen', label: t('portal.nav.admin.knowledge'), icon: FolderOpen }];
+  if (botAdminOnly) return [{ href: '/admin/ki', label: t('portal.nav.admin.knowledge'), icon: FolderOpen }];
   return [
     { href: '/admin', label: t('portal.nav.overview'), icon: Home },
-    { href: '/admin/menschen', label: t('portal.nav.admin.people'), icon: UsersRound },
-    { href: '/admin/wissen', label: t('portal.nav.admin.knowledge'), icon: FolderOpen },
+    { href: '/admin/konten', label: t('portal.nav.admin.people'), icon: UsersRound },
+    { href: '/admin/ki', label: t('portal.nav.admin.knowledge'), icon: FolderOpen },
     { href: '/admin/verarbeitung', label: t('portal.nav.admin.processing'), icon: Inbox },
     { href: '/admin/betrieb', label: t('portal.nav.admin.operations'), icon: Server },
     { href: '/admin/status', label: t('portal.nav.admin.systemStatus'), icon: Activity },
   ];
 }
 
+// Pages shown as tabs under one sidebar entry (see components/portal/page-tabs.tsx).
+const NAV_ALIASES: Record<string, string[]> = {
+  '/aufgaben': ['/reviews', '/processing'],
+  '/documents': ['/jobs'],
+};
+
 function isActive(href: string, pathname: string): boolean {
-  return href === '/' || href === '/admin' ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
+  if (href === '/' || href === '/admin') return pathname === href;
+  return [href, ...(NAV_ALIASES[href] ?? [])].some((base) => pathname === base || pathname.startsWith(`${base}/`));
 }
 
 export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
@@ -83,7 +90,7 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
   const [chatUrl] = useState<string | null>(() => resolveChatPublicUrl());
   const isAdminArea = pathname.startsWith('/admin');
   const isBotAdmin = user?.role === 'bot_admin';
-  const adminHome = isBotAdmin ? '/admin/wissen' : '/admin';
+  const adminHome = isBotAdmin ? '/admin/ki' : '/admin';
   const navItems: NavItem[] = isAdminArea ? adminNav(t, isBotAdmin) : portalNav(t, ownsBots).map((item) => (item.href === '/aufgaben' ? { ...item, badge: tasksBadge ?? undefined } : item));
 
   // Aufgaben badge = open reviews + failed jobs. Both requests are as cheap
@@ -216,10 +223,7 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
                     <KeyRound className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
                     {t('portal.chrome.apiTokens')}
                   </Link>
-                  <div role="menuitem" className="flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)]">
-                    <ThemeToggle />
-                    {t('portal.chrome.colorScheme')}
-                  </div>
+                  <ThemeToggle menuLabel={t('portal.chrome.colorScheme')} />
                   <div role="menuitem" className="flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)]">
                     <LanguageSwitch persist />
                   </div>

@@ -10,6 +10,7 @@ import { loadDocuments, portalError, type PortalDocument, type ReviewStateFilter
 import { loadFailedJobs, type FailedJob } from '@/lib/jobs-search';
 import { useI18n } from '@/i18n/provider';
 import { BulkActionBar, Notice, PortalPage, useBulkSelection } from './shared';
+import { TaskTabs } from './page-tabs';
 
 /** How many "released by me" candidates to scan for a match — see the component doc comment below. */
 const RELEASED_BY_ME_SCAN_LIMIT = 100;
@@ -63,7 +64,7 @@ export function Aufgaben() {
   const allSelected = Boolean(state.review?.length) && state.review!.every((document) => bulk.selectedIds.has(document.id));
 
   return (
-    <PortalPage title={t('portal.nav.tasks')} description={t('portal.tasks.description')} actions={<button type="button" onClick={() => void load()} className={buttonVariants({ variant: 'outline' })}><RefreshCw size={15} aria-hidden="true" />{t('common.refresh')}</button>}>
+    <PortalPage title={t('portal.nav.tasks')} description={t('portal.tasks.description')} tabs={<TaskTabs />} actions={<button type="button" onClick={() => void load()} className={buttonVariants({ variant: 'outline' })}><RefreshCw size={15} aria-hidden="true" />{t('common.refresh')}</button>}>
       {error && <Notice error action={load}>{error}</Notice>}
       {notice && <Notice>{notice}</Notice>}
 
