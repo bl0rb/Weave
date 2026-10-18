@@ -1,7 +1,7 @@
 {
   "name": "weave-desktop",
   "private": true,
-  "license": "MIT",
+  "license": "SEE LICENSE IN ../../LICENSE",
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",

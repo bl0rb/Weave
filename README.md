@@ -445,3 +445,12 @@ several gigabytes per commit.
 | [contracts/](contracts/) | Data and API contracts between services |
 | [SECURITY.md](SECURITY.md) | How to report a vulnerability, and what is in scope |
 | [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) | Bundled and runtime-downloaded third-party components and their terms |
+
+## License
+
+From the next release on, Weave is licensed under the MIT License with the
+[Commons Clause](https://commonsclause.com/) license condition ([LICENSE](LICENSE)):
+you may use, modify and run it, including inside your organization, but not
+sell it or a product or service (hosting, consulting, support) whose value
+derives entirely or substantially from it. Releases published before this
+change remain available under the plain MIT License.

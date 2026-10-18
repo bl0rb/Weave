@@ -54,4 +54,5 @@ without the fix.
 ## License
 
 By contributing, you agree that your contribution is licensed under the
-[MIT License](LICENSE) of this repository.
+[MIT License with the Commons Clause license condition](LICENSE) of this
+repository.
