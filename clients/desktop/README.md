@@ -1,9 +1,11 @@
 # Weave für den Desktop
 
-Tray-App für macOS (Menüleiste) und Windows (Infobereich): Klick auf das
-Weave-Symbol oder `Cmd/Ctrl+Shift+Space`, Agent wählen, fragen – oder in allen
-Wissensräumen suchen, die man lesen darf. Antworten kommen gestreamt mit
-Quellen; Quellen mit Link (z. B. Confluence) öffnen sich im Browser.
+Tray-App für macOS (Menüleiste) und Windows (Infobereich). `Cmd/Ctrl+Shift+Space`
+öffnet – wie bei Claude – eine schwebende Eingabeleiste in der Bildschirmmitte, auch über
+Vollbild-Apps; die Antwort klappt darunter auf. Ein Klick auf das Weave-Symbol öffnet das
+Fenster am Symbol. Agent wählen, fragen – oder in allen Wissensräumen suchen, die man lesen
+darf. Antworten kommen gestreamt mit Quellen; Quellen mit Link (z. B. Confluence) öffnen
+sich im Browser.
 
 Gebaut mit Tauri 2 wie [KeyZapper](https://github.com/bl0rb/ClaudeKeyZapper);
 die Einstellungen sehen auch so aus. Keine Build-Kette für die Oberfläche
@@ -41,9 +43,25 @@ dem passenden Verifier einlösbar.
 |---|---|
 | `ServerUrl` | Adresse von weave-api, nicht änderbar |
 | `Hotkey` | Tastenkürzel, nicht änderbar (leer = aus) |
+| `UpdateCheck` | `false` schaltet die Update-Prüfung ab (wenn die IT Updates selbst verteilt) |
+| `UpdateUrl` | eigener Update-Feed statt GitHub (Format `latest.json` von Tauri) |
 
 macOS: Konfigurationsprofil für die Domain `io.github.bl0rb.weave.desktop`.
-Windows: Zeichenfolgen unter `HKLM\SOFTWARE\Policies\Weave\Desktop` (oder HKCU).
+Windows: Werte unter `HKLM\SOFTWARE\Policies\Weave\Desktop` (oder HKCU); `UpdateCheck`
+als DWORD (0/1) oder Zeichenfolge.
+
+## Updates
+
+Das Tray-Menü zeigt die Version und „Nach Updates suchen …“; ist ein Update da, wird
+daraus „Update auf X installieren …“. Dasselbe steht unter *Einstellungen › Über Weave*,
+und das Fragefenster zeigt einen Hinweis. Die App prüft 20 Sekunden nach dem Start und
+dann alle 12 Stunden.
+
+Feed ist `latest.json` am Release `desktop-latest`; jedes Desktop-Release (ohne
+Vorabversionen) schreibt ihn neu. Pakete sind mit dem Schlüssel signiert, dessen
+öffentlicher Teil in `src-tauri/tauri.conf.json` steht – ein Download, der nicht passt,
+wird nicht installiert. macOS ersetzt die App, Windows installiert das MSI (passiv).
+Danach startet Weave neu.
 
 ## Entwickeln
 
@@ -90,3 +108,5 @@ Rollout.
 | `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` | Notarisierung: Apple-ID, app-spezifisches Passwort, Team-ID |
 | `WINDOWS_CERTIFICATE` | Code-Signing-Zertifikat als `.pfx`, base64 |
 | `WINDOWS_CERTIFICATE_PASSWORD` | Passwort der `.pfx` |
+| `TAURI_SIGNING_PRIVATE_KEY` | Update-Signaturschlüssel (Inhalt der Datei aus `tauri signer generate`); ohne ihn kein Update-Feed |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Passwort dazu (leer, falls ohne Passwort erzeugt) |

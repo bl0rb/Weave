@@ -53,8 +53,17 @@ const EN = {
   'Beim Anmelden am Computer starten': 'Start when I log in to this computer',
   'Speichern': 'Save',
   'Gespeichert': 'Saved',
-  'Weave für den Desktop – Version %@': 'Weave for the desktop – version %@',
   'Weave fragen': 'Ask Weave',
+  'Über Weave': 'About Weave',
+  'Version': 'Version',
+  'Nach Updates suchen': 'Check for updates',
+  'Suche nach Updates …': 'Checking for updates …',
+  'Weave ist aktuell.': 'Weave is up to date.',
+  'Version %@ ist verfügbar.': 'Version %@ is available.',
+  'Jetzt installieren': 'Install now',
+  'Update wird installiert – Weave startet danach neu …': 'Installing the update – Weave restarts afterwards …',
+  'Updates verteilt Ihre IT.': 'Your IT distributes updates.',
+  'Update auf %@': 'Update to %@',
 };
 
 /** Translates a German source string and fills its `%@` placeholders in order. */
@@ -86,6 +95,7 @@ const ICONS = {
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   send: '<path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"/>',
+  arrowUp: '<path d="M12 19V5M5 12l7-7 7 7"/>',
   stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
   external: '<path d="M14 3h7v7M21 3l-9 9M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/>',

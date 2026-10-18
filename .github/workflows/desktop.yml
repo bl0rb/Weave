@@ -12,6 +12,11 @@ name: Desktop app
 # Signing is optional and switches on with its secrets (README of
 # clients/desktop lists them): without them the macOS build is ad-hoc signed
 # and the Windows build is unsigned -- fine for testing, not for rollout.
+#
+# In-app updates: with TAURI_SIGNING_PRIVATE_KEY set, each build also signs
+# its update package (macOS: the .app as .tar.gz, Windows: the final MSI),
+# and a non-prerelease tag rewrites latest.json on the release
+# `desktop-latest`, the feed the app checks.
 
 on:
   push:
@@ -37,10 +42,13 @@ jobs:
         include:
           - os: macos-15
             bundle: dmg
+            # `app` too: the updater package is the .app, which a dmg-only build discards.
+            bundles: app,dmg
             target: universal-apple-darwin
             rust_targets: aarch64-apple-darwin x86_64-apple-darwin
           - os: windows-latest
             bundle: msi
+            bundles: msi
             target: x86_64-pc-windows-msvc
             rust_targets: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
@@ -93,11 +101,17 @@ jobs:
             if [ -z "${!name}" ]; then unset "$name"; fi
           done
           npm ci
-          npx tauri build --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundle }} \
+          npx tauri build --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} \
             --config src-tauri/target/version.conf.json
           mkdir -p dist
           cp src-tauri/target/${{ matrix.target }}/release/bundle/${{ matrix.bundle }}/*.${{ matrix.bundle }} \
             "dist/Weave-${{ steps.version.outputs.value }}.${{ matrix.bundle }}"
+
+      - name: Package app for the updater
+        if: runner.os == 'macOS'
+        run: |
+          tar -czf "dist/Weave-${{ steps.version.outputs.value }}-macos.app.tar.gz" \
+            -C src-tauri/target/${{ matrix.target }}/release/bundle/macos Weave.app
 
       - name: Sign MSI
         if: runner.os == 'Windows'
@@ -114,6 +128,24 @@ jobs:
           $code = $LASTEXITCODE
           Remove-Item $pfx
           exit $code
+
+      # After Authenticode, so the signature covers the MSI as shipped.
+      - name: Sign update package
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "No TAURI_SIGNING_PRIVATE_KEY secret; no in-app update for this build."
+            exit 0
+          fi
+          if [ "$RUNNER_OS" = macOS ]; then
+            FILE="dist/Weave-${{ steps.version.outputs.value }}-macos.app.tar.gz"
+          else
+            FILE="dist/Weave-${{ steps.version.outputs.value }}.msi"
+          fi
+          npx tauri signer sign "$FILE"
+          test -s "$FILE.sig"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -140,5 +172,37 @@ jobs:
         run: |
           PRE=()
           [[ "$GITHUB_REF_NAME" == *-*-* ]] && PRE=(--prerelease)
+          # --latest=false: "Latest" stays with the server releases (release.yml).
           gh release create "$GITHUB_REF_NAME" dist/Weave-* \
-            --title "Weave Desktop ${GITHUB_REF_NAME#desktop-v}" --generate-notes "${PRE[@]}"
+            --title "Weave Desktop ${GITHUB_REF_NAME#desktop-v}" --generate-notes --latest=false "${PRE[@]}"
+
+      - name: Update feed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [[ "$GITHUB_REF_NAME" == *-*-* ]]; then
+            echo "Prerelease; the update feed stays on the last release."
+            exit 0
+          fi
+          VERSION="${GITHUB_REF_NAME#desktop-v}"
+          MAC="dist/Weave-$VERSION-macos.app.tar.gz"
+          WIN="dist/Weave-$VERSION.msi"
+          if [ ! -s "$MAC.sig" ] || [ ! -s "$WIN.sig" ]; then
+            echo "::warning::No update signatures (TAURI_SIGNING_PRIVATE_KEY missing); the update feed is unchanged."
+            exit 0
+          fi
+          BASE="https://github.com/$GH_REPO/releases/download/$GITHUB_REF_NAME"
+          jq -n --arg version "$VERSION" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg notes "Weave Desktop $VERSION: https://github.com/$GH_REPO/releases/tag/$GITHUB_REF_NAME" \
+            --arg mac_url "$BASE/$(basename "$MAC")" --rawfile mac_sig "$MAC.sig" \
+            --arg win_url "$BASE/$(basename "$WIN")" --rawfile win_sig "$WIN.sig" \
+            '{version: $version, notes: $notes, pub_date: $date, platforms: {
+              "darwin-aarch64": {url: $mac_url, signature: $mac_sig},
+              "darwin-x86_64": {url: $mac_url, signature: $mac_sig},
+              "windows-x86_64": {url: $win_url, signature: $win_sig}}}' > latest.json
+          if ! gh release view desktop-latest > /dev/null 2>&1; then
+            gh release create desktop-latest --prerelease --latest=false --title "Weave Desktop – update feed" \
+              --notes "latest.json for the app's update check. Rewritten by every desktop release; not a release itself."
+          fi
+          gh release upload desktop-latest latest.json --clobber

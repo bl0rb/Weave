@@ -6,6 +6,7 @@
 mod api;
 mod auth;
 mod settings;
+mod update;
 
 use api::{Weave, UNAUTHORIZED};
 use serde::Serialize;
@@ -19,13 +20,22 @@ use tauri::image::Image;
 use tauri::ipc::Channel;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
+use tauri::{
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    WindowEvent, Wry,
+};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_positioner::{Position, WindowExt};
+use update::{UpdateView, Updates};
 
 const KEYRING_SERVICE: &str = "Weave Desktop";
+/// First automatic update check after start, then this often.
+const UPDATE_FIRST_CHECK: Duration = Duration::from_secs(20);
+const UPDATE_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60);
+/// Logical width of the quick overlay window (the bar plus its shadow margin).
+const QUICK_WIDTH: f64 = 760.0;
 
 #[derive(Clone)]
 struct Session {
@@ -42,11 +52,17 @@ struct AppState {
     login_task: Mutex<Option<JoinHandle<()>>>,
     chat_abort: Mutex<Option<tokio::task::AbortHandle>>,
     panel_hidden_at: Mutex<Option<Instant>>,
+    updates: Updates,
+    update_menu_item: Mutex<Option<MenuItem<Wry>>>,
 }
 
 impl AppState {
     fn effective(&self) -> Settings {
         self.settings.lock().unwrap().effective(&self.managed)
+    }
+
+    fn updates_enabled(&self) -> bool {
+        self.managed.update_check != Some(false)
     }
 
     fn weave(&self) -> Result<Weave, String> {
@@ -224,7 +240,7 @@ async fn run_sign_in(app: &AppHandle, server: &str) -> Result<(), String> {
     }
     *app.state::<AppState>().session.lock().unwrap() =
         Some(Session { server: server.to_string(), token: token.to_string(), username: None });
-    show_panel(app, false);
+    show_quick(app);
     Ok(())
 }
 
@@ -298,6 +314,54 @@ fn stop_answer(state: State<'_, AppState>) {
 }
 
 #[tauri::command]
+fn get_update_state(state: State<'_, AppState>) -> UpdateView {
+    state.updates.view(state.updates_enabled())
+}
+
+#[tauri::command]
+async fn check_for_updates(app: AppHandle) {
+    run_update_check(&app).await;
+}
+
+#[tauri::command]
+async fn install_update(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let _ = app.emit("update-changed", ());
+    let result = state.updates.install(&app).await;
+    let _ = app.emit("update-changed", ());
+    result
+}
+
+async fn run_update_check(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    if !state.updates_enabled() {
+        return;
+    }
+    let notify = |app: &AppHandle| {
+        let _ = app.emit("update-changed", ());
+    };
+    let feed = state.managed.update_url.clone();
+    let task = state.updates.check(app, feed.as_deref());
+    notify(app);
+    if task.await {
+        refresh_update_menu(app);
+        notify(app);
+    }
+}
+
+/// The tray entry offers the install once a newer version is known.
+fn refresh_update_menu(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let text = match state.updates.available_version() {
+        Some(version) => format!("Update auf {version} installieren …"),
+        None => "Nach Updates suchen …".to_string(),
+    };
+    let item = state.update_menu_item.lock().unwrap().clone();
+    if let Some(item) = item {
+        let _ = item.set_text(text);
+    }
+}
+
+#[tauri::command]
 fn open_url(app: AppHandle, url: String) -> Result<(), String> {
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err("Nur http(s)-Links".into());
@@ -310,10 +374,17 @@ fn open_settings(app: AppHandle) -> Result<(), String> {
     show_settings(&app).map_err(|e| e.to_string())
 }
 
+/// Hides whichever window called it (tray panel or quick overlay).
 #[tauri::command]
-fn hide_panel(app: AppHandle) {
-    if let Some(panel) = app.get_webview_window("panel") {
-        let _ = panel.hide();
+fn hide_panel(window: WebviewWindow) {
+    let _ = window.hide();
+}
+
+/// The quick overlay grows with its content; its top edge stays put.
+#[tauri::command]
+fn fit_quick(app: AppHandle, height: f64) {
+    if let Some(quick) = app.get_webview_window("quick") {
+        let _ = quick.set_size(LogicalSize::new(QUICK_WIDTH, height.clamp(80.0, 640.0)));
     }
 }
 
@@ -339,6 +410,59 @@ fn show_panel(app: &AppHandle, at_tray: bool) {
     let _ = panel.emit("panel-shown", ());
 }
 
+/// Opens the quick overlay centred on the screen with the mouse pointer,
+/// a little above the middle -- where Spotlight and Claude put theirs.
+fn show_quick(app: &AppHandle) {
+    let Some(quick) = app.get_webview_window("quick") else { return };
+    if let Some(panel) = panel(app) {
+        let _ = panel.hide();
+    }
+    let monitor = app
+        .cursor_position()
+        .ok()
+        .and_then(|p| app.monitor_from_point(p.x, p.y).ok().flatten())
+        .or_else(|| quick.primary_monitor().ok().flatten());
+    if let Some(monitor) = monitor {
+        let (origin, size) = (monitor.position(), monitor.size());
+        let width = (QUICK_WIDTH * monitor.scale_factor()) as i32;
+        let x = origin.x + (size.width as i32 - width) / 2;
+        let y = origin.y + (size.height as f64 * 0.22) as i32;
+        let _ = quick.set_position(PhysicalPosition::new(x, y));
+    }
+    let _ = quick.show();
+    let _ = quick.set_focus();
+    let _ = quick.emit("panel-shown", ());
+}
+
+fn toggle_quick(app: &AppHandle) {
+    match app.get_webview_window("quick") {
+        Some(quick) if quick.is_visible().unwrap_or(false) => {
+            let _ = quick.hide();
+        }
+        _ => show_quick(app),
+    }
+}
+
+/// macOS: show the window on every Space and above full-screen apps, like a
+/// menu-bar popover; otherwise it would open on the desktop Space instead.
+#[cfg(target_os = "macos")]
+fn float_over_full_screen(window: &WebviewWindow) {
+    use objc2_app_kit::{NSStatusWindowLevel, NSWindow, NSWindowCollectionBehavior};
+    let Ok(pointer) = window.ns_window() else { return };
+    // SAFETY: called on the main thread (setup); the pointer is the live
+    // NSWindow behind this Tauri window.
+    let ns_window = unsafe { &*(pointer as *const NSWindow) };
+    ns_window.setCollectionBehavior(
+        NSWindowCollectionBehavior::CanJoinAllSpaces
+            | NSWindowCollectionBehavior::FullScreenAuxiliary
+            | NSWindowCollectionBehavior::IgnoresCycle,
+    );
+    ns_window.setLevel(NSStatusWindowLevel);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn float_over_full_screen(_window: &WebviewWindow) {}
+
 fn toggle_panel(app: &AppHandle, at_tray: bool) {
     let Some(panel) = panel(app) else { return };
     // A click on the tray icon first blurs (and so hides) the open panel;
@@ -357,8 +481,10 @@ fn toggle_panel(app: &AppHandle, at_tray: bool) {
 }
 
 fn show_settings(app: &AppHandle) -> tauri::Result<()> {
-    if let Some(panel) = panel(app) {
-        let _ = panel.hide();
+    for label in ["panel", "quick"] {
+        if let Some(window) = app.get_webview_window(label) {
+            let _ = window.hide();
+        }
     }
     if let Some(window) = app.get_webview_window("settings") {
         window.show()?;
@@ -393,15 +519,22 @@ fn load_session(server: &str) -> Option<Session> {
 }
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
+    let state = app.state::<AppState>();
+    let version = MenuItem::with_id(app, "version", format!("Weave {}", app.package_info().version), false, None::<&str>)?;
+    let update_item = MenuItem::with_id(app, "update", "Nach Updates suchen …", state.updates_enabled(), None::<&str>)?;
     let menu = Menu::with_items(
         app,
         &[
             &MenuItem::with_id(app, "ask", "Weave fragen …", true, None::<&str>)?,
             &MenuItem::with_id(app, "settings", "Einstellungen …", true, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
+            &version,
+            &update_item,
+            &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, "quit", "Weave beenden", true, None::<&str>)?,
         ],
     )?;
+    *state.update_menu_item.lock().unwrap() = Some(update_item);
     TrayIconBuilder::with_id("weave")
         .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
         .icon_as_template(true)
@@ -409,9 +542,24 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
-            "ask" => show_panel(app, false),
+            "ask" => show_quick(app),
             "settings" => {
                 let _ = show_settings(app);
+            }
+            "update" => {
+                // With a known update: install it. Otherwise check, and show
+                // the result in the settings window's "About" section.
+                let app = app.clone();
+                if app.state::<AppState>().updates.available_version().is_some() {
+                    tauri::async_runtime::spawn(async move {
+                        let _ = app.emit("update-changed", ());
+                        let _ = app.state::<AppState>().updates.install(&app).await;
+                        let _ = app.emit("update-changed", ());
+                    });
+                } else {
+                    let _ = show_settings(&app);
+                    tauri::async_runtime::spawn(async move { run_update_check(&app).await });
+                }
             }
             "quit" => app.exit(0),
             _ => {}
@@ -429,13 +577,15 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
                     if event.state() == ShortcutState::Pressed {
-                        toggle_panel(app, false);
+                        toggle_quick(app);
                     }
                 })
                 .build(),
@@ -456,9 +606,16 @@ fn main() {
                 login_task: Mutex::new(None),
                 chat_abort: Mutex::new(None),
                 panel_hidden_at: Mutex::new(None),
+                updates: Updates::default(),
+                update_menu_item: Mutex::new(None),
             });
 
             let handle = app.handle().clone();
+            for label in ["panel", "quick"] {
+                if let Some(window) = handle.get_webview_window(label) {
+                    float_over_full_screen(&window);
+                }
+            }
             build_tray(&handle)?;
             if let Err(error) = register_hotkey(&handle, &effective.hotkey) {
                 eprintln!("{error}");
@@ -466,10 +623,18 @@ fn main() {
             if effective.server_url.is_empty() {
                 show_settings(&handle)?;
             }
+            let updater = handle.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(UPDATE_FIRST_CHECK).await;
+                loop {
+                    run_update_check(&updater).await;
+                    tokio::time::sleep(UPDATE_INTERVAL).await;
+                }
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
-            if window.label() != "panel" {
+            if !matches!(window.label(), "panel" | "quick") {
                 return;
             }
             match event {
@@ -500,6 +665,10 @@ fn main() {
             open_url,
             open_settings,
             hide_panel,
+            fit_quick,
+            get_update_state,
+            check_for_updates,
+            install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Weave");

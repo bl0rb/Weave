@@ -2,7 +2,8 @@
 //! can enforce: macOS managed preferences for `io.github.bl0rb.weave.desktop`
 //! (read through CFPreferences, so `/Library/Managed Preferences` wins);
 //! Windows registry values under `HKLM\SOFTWARE\Policies\Weave\Desktop`
-//! (or HKCU). Supported names: `ServerUrl`, `Hotkey`.
+//! (or HKCU). Supported names: `ServerUrl`, `Hotkey`, `UpdateUrl` (strings) and
+//! `UpdateCheck` (boolean; `false` when IT distributes updates itself).
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -21,6 +22,8 @@ pub struct Settings {
 pub struct Managed {
     pub server_url: Option<String>,
     pub hotkey: Option<String>,
+    pub update_url: Option<String>,
+    pub update_check: Option<bool>,
 }
 
 impl Settings {
@@ -80,7 +83,12 @@ pub fn is_secure_server_url(url: &str) -> bool {
 impl Managed {
     pub fn load() -> Self {
         let read = |name: &str| policy::read_string(name).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
-        Managed { server_url: read("ServerUrl"), hotkey: read("Hotkey") }
+        Managed {
+            server_url: read("ServerUrl"),
+            hotkey: read("Hotkey"),
+            update_url: read("UpdateUrl"),
+            update_check: policy::read_bool("UpdateCheck"),
+        }
     }
 }
 
@@ -101,6 +109,21 @@ mod policy {
         let value = unsafe { CFType::wrap_under_create_rule(raw) };
         value.downcast::<CFString>().map(|s| s.to_string())
     }
+
+    pub fn read_bool(name: &str) -> Option<bool> {
+        use core_foundation::boolean::CFBoolean;
+        let key = CFString::new(name);
+        let domain = CFString::new("io.github.bl0rb.weave.desktop");
+        let raw = unsafe { CFPreferencesCopyAppValue(key.as_concrete_TypeRef(), domain.as_concrete_TypeRef()) };
+        if raw.is_null() {
+            return None;
+        }
+        let value = unsafe { CFType::wrap_under_create_rule(raw) };
+        if let Some(flag) = value.downcast::<CFBoolean>() {
+            return Some(flag.into());
+        }
+        value.downcast::<CFString>().and_then(|s| super::parse_bool(&s.to_string()))
+    }
 }
 
 #[cfg(windows)]
@@ -119,12 +142,38 @@ mod policy {
         }
         None
     }
+
+    pub fn read_bool(name: &str) -> Option<bool> {
+        for hive in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
+            if let Ok(key) = RegKey::predef(hive).open_subkey(r"SOFTWARE\Policies\Weave\Desktop") {
+                if let Ok(value) = key.get_value::<u32, _>(name) {
+                    return Some(value != 0);
+                }
+                if let Ok(value) = key.get_value::<String, _>(name) {
+                    return super::parse_bool(&value);
+                }
+            }
+        }
+        None
+    }
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]
 mod policy {
     pub fn read_string(_name: &str) -> Option<String> {
         None
+    }
+
+    pub fn read_bool(_name: &str) -> Option<bool> {
+        None
+    }
+}
+
+fn parse_bool(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
     }
 }
 
@@ -150,7 +199,7 @@ mod tests {
     #[test]
     fn managed_values_win() {
         let settings = Settings { server_url: "https://mine/".into(), hotkey: "Alt+W".into(), default_agent: String::new() };
-        let managed = Managed { server_url: Some("https://it.example".into()), hotkey: None };
+        let managed = Managed { server_url: Some("https://it.example".into()), ..Default::default() };
         let effective = settings.effective(&managed);
         assert_eq!(effective.server_url, "https://it.example");
         assert_eq!(effective.hotkey, "Alt+W");
