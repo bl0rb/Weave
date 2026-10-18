@@ -565,9 +565,16 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         ],
     )?;
     *state.update_menu_item.lock().unwrap() = Some(update_item);
+    // macOS: a monochrome template glyph, 36 px = the menu bar's 18 pt @2x,
+    // tinted by the system. Windows has no template icons; a black glyph would
+    // vanish on a dark taskbar, so it gets the coloured app icon.
+    #[cfg(target_os = "macos")]
+    let icon = Image::from_bytes(include_bytes!("../icons/tray.png"))?;
+    #[cfg(not(target_os = "macos"))]
+    let icon = Image::from_bytes(include_bytes!("../icons/32x32.png"))?;
     TrayIconBuilder::with_id("weave")
-        .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
-        .icon_as_template(true)
+        .icon(icon)
+        .icon_as_template(cfg!(target_os = "macos"))
         .tooltip("Weave")
         .menu(&menu)
         .show_menu_on_left_click(false)
