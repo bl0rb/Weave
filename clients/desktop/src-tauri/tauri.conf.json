@@ -14,16 +14,12 @@
         "label": "panel",
         "url": "panel.html",
         "title": "Weave",
-        "width": 420,
-        "height": 580,
-        "visible": false,
-        "decorations": false,
-        "resizable": false,
-        "alwaysOnTop": true,
-        "skipTaskbar": true,
-        "focus": true,
-        "transparent": true,
-        "shadow": true
+        "width": 480,
+        "height": 720,
+        "minWidth": 380,
+        "minHeight": 460,
+        "center": true,
+        "visible": false
       },
       {
         "label": "quick",

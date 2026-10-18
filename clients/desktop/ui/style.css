@@ -200,17 +200,16 @@ textarea.document { min-height: 300px; }
 .empty.compact { min-height: 0; flex: 1; padding: 24px; }
 .empty img { width: 44px; height: 44px; }
 
-/* Tray panel and overlay: the card fills its transparent window with a crisp
-   edge; the shadow is the system's own window shadow, like Claude's. Windows 11
+/* Quick overlay: the card fills its transparent window with a crisp edge;
+   the shadow is the system's own window shadow, like Claude's. Windows 11
    rounds frameless windows to 8 px, so the card follows that there. */
 :root { --edge: rgb(0 0 0 / .16); --card-radius: 12px; }
 @media (prefers-color-scheme: dark) { :root { --edge: rgb(255 255 255 / .18); } }
 :root.os-windows { --card-radius: 8px; }
 
-/* Tray panel */
-html:has(body.panel-body), body.panel-body { background: transparent; }
-body.panel-body { height: 100vh; overflow: hidden; margin: 0; }
-.panel { display: flex; flex-direction: column; height: 100vh; background: var(--surface); border: 1px solid var(--edge); border-radius: var(--card-radius); overflow: hidden; }
+/* App window (everything: agents, ask/search, knowledge-space filter) */
+body.panel-body { height: 100vh; overflow: hidden; margin: 0; background: var(--surface); }
+.panel { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 .panel-head { display: flex; align-items: center; gap: 6px; padding: 12px 12px 4px 14px; }
 .panel-head img { width: 22px; height: 22px; }
 .panel-head select { min-width: 0; flex: 1; max-width: 240px; border: none; background: transparent; font-weight: 600; font-size: 14px; padding-left: 2px; }

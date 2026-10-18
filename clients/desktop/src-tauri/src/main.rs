@@ -27,10 +27,11 @@ use tauri::{
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
-use tauri_plugin_positioner::{Position, WindowExt};
 use update::{UpdateView, Updates};
 
 const KEYRING_SERVICE: &str = "Weave Desktop";
+/// Passed by the login item: start quietly in the tray, without the app window.
+const AUTOSTART_ARG: &str = "--autostart";
 /// First automatic update check after start, then this often.
 const UPDATE_FIRST_CHECK: Duration = Duration::from_secs(20);
 const UPDATE_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60);
@@ -51,7 +52,7 @@ struct AppState {
     session: Mutex<Option<Session>>,
     login_task: Mutex<Option<JoinHandle<()>>>,
     chat_abort: Mutex<Option<tokio::task::AbortHandle>>,
-    panel_hidden_at: Mutex<Option<Instant>>,
+    quick_hidden_at: Mutex<Option<Instant>>,
     updates: Updates,
     update_menu_item: Mutex<Option<MenuItem<Wry>>>,
 }
@@ -240,7 +241,9 @@ async fn run_sign_in(app: &AppHandle, server: &str) -> Result<(), String> {
     }
     *app.state::<AppState>().session.lock().unwrap() =
         Some(Session { server: server.to_string(), token: token.to_string(), username: None });
-    show_quick(app);
+    if !panel(app).is_some_and(|p| p.is_visible().unwrap_or(false)) {
+        show_quick(app);
+    }
     Ok(())
 }
 
@@ -409,36 +412,49 @@ fn refresh_shadow(window: &WebviewWindow) {
 }
 
 // MARK: Windows, tray, hotkey
+//
+// Two faces: the quick overlay (a slim bar like Claude's, opened by a click
+// on the tray icon or the hotkey) and the app window `panel` with everything
+// (opened when the app itself is launched, from the Dock / Start menu, or via
+// "Weave öffnen" in the tray menu).
 
 fn panel(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window("panel")
 }
 
-/// Shows the panel: under the tray icon after a click, centred otherwise.
-fn show_panel(app: &AppHandle, at_tray: bool) {
+/// Shows the app window and brings Weave to the front.
+fn show_main(app: &AppHandle) {
     let Some(panel) = panel(app) else { return };
-    let position = if !at_tray {
-        Position::Center
-    } else if cfg!(target_os = "macos") {
-        Position::TrayCenter
-    } else {
-        Position::TrayBottomCenter
-    };
-    let _ = panel.move_window(position);
-    keep_in_work_area(&panel);
+    if let Some(quick) = app.get_webview_window("quick") {
+        let _ = quick.hide();
+    }
+    let _ = panel.unminimize();
     let _ = panel.show();
-    refresh_shadow(&panel);
+    update_dock(app);
     let _ = panel.set_focus();
     let _ = panel.emit("panel-shown", ());
+}
+
+/// macOS: Weave is a menu-bar app; it shows in the Dock and Cmd+Tab only
+/// while its app window or the settings are open.
+fn update_dock(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        let visible = ["panel", "settings"]
+            .iter()
+            .filter_map(|label| app.get_webview_window(label))
+            .any(|window| window.is_visible().unwrap_or(false));
+        let policy = if visible { tauri::ActivationPolicy::Regular } else { tauri::ActivationPolicy::Accessory };
+        let _ = app.set_activation_policy(policy);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
 }
 
 /// Opens the quick overlay centred on the screen with the mouse pointer,
 /// a little above the middle -- where Spotlight and Claude put theirs.
 fn show_quick(app: &AppHandle) {
     let Some(quick) = app.get_webview_window("quick") else { return };
-    if let Some(panel) = panel(app) {
-        let _ = panel.hide();
-    }
     let monitor = app
         .cursor_position()
         .ok()
@@ -458,11 +474,19 @@ fn show_quick(app: &AppHandle) {
 }
 
 fn toggle_quick(app: &AppHandle) {
-    match app.get_webview_window("quick") {
-        Some(quick) if quick.is_visible().unwrap_or(false) => {
-            let _ = quick.hide();
-        }
-        _ => show_quick(app),
+    let Some(quick) = app.get_webview_window("quick") else { return };
+    // A click on the tray icon first blurs (and so hides) the open overlay;
+    // that click must not re-open it right away.
+    let just_hidden = app
+        .state::<AppState>()
+        .quick_hidden_at
+        .lock()
+        .unwrap()
+        .is_some_and(|at| at.elapsed() < Duration::from_millis(300));
+    if quick.is_visible().unwrap_or(false) {
+        let _ = quick.hide();
+    } else if !just_hidden {
+        show_quick(app);
     }
 }
 
@@ -486,57 +510,21 @@ fn float_over_full_screen(window: &WebviewWindow) {
 #[cfg(not(target_os = "macos"))]
 fn float_over_full_screen(_window: &WebviewWindow) {}
 
-/// Moves `window` fully into its screen's work area, with a small gap: below
-/// the menu bar (and so below the notch), above the Dock or taskbar, and
-/// inside the side edges. The tray position alone would put the panel's top
-/// edge at the very top of the screen.
-fn keep_in_work_area(window: &WebviewWindow) {
-    let (Ok(position), Ok(size), Ok(Some(monitor))) = (window.outer_position(), window.outer_size(), window.current_monitor()) else {
-        return;
-    };
-    let area = monitor.work_area();
-    let gap = (6.0 * monitor.scale_factor()) as i32;
-    let (left, top) = (area.position.x + gap, area.position.y + gap);
-    let right = area.position.x + area.size.width as i32 - size.width as i32 - gap;
-    let bottom = area.position.y + area.size.height as i32 - size.height as i32 - gap;
-    let x = position.x.clamp(left, right.max(left));
-    let y = position.y.clamp(top, bottom.max(top));
-    let _ = window.set_position(PhysicalPosition::new(x, y));
-}
-
-fn toggle_panel(app: &AppHandle, at_tray: bool) {
-    let Some(panel) = panel(app) else { return };
-    // A click on the tray icon first blurs (and so hides) the open panel;
-    // that click must not re-open it right away.
-    let just_hidden = app
-        .state::<AppState>()
-        .panel_hidden_at
-        .lock()
-        .unwrap()
-        .is_some_and(|at| at.elapsed() < Duration::from_millis(300));
-    if panel.is_visible().unwrap_or(false) {
-        let _ = panel.hide();
-    } else if !just_hidden {
-        show_panel(app, at_tray);
-    }
-}
-
 fn show_settings(app: &AppHandle) -> tauri::Result<()> {
-    for label in ["panel", "quick"] {
-        if let Some(window) = app.get_webview_window(label) {
-            let _ = window.hide();
-        }
+    if let Some(quick) = app.get_webview_window("quick") {
+        let _ = quick.hide();
     }
-    if let Some(window) = app.get_webview_window("settings") {
-        window.show()?;
-        return window.set_focus();
-    }
-    let window = WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
-        .title("Weave – Einstellungen")
-        .inner_size(620.0, 660.0)
-        .min_inner_size(520.0, 420.0)
-        .center()
-        .build()?;
+    let window = match app.get_webview_window("settings") {
+        Some(window) => window,
+        None => WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
+            .title("Weave – Einstellungen")
+            .inner_size(620.0, 660.0)
+            .min_inner_size(520.0, 420.0)
+            .center()
+            .build()?,
+    };
+    window.show()?;
+    update_dock(app);
     window.set_focus()
 }
 
@@ -567,6 +555,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         app,
         &[
             &MenuItem::with_id(app, "ask", "Weave fragen …", true, None::<&str>)?,
+            &MenuItem::with_id(app, "open", "Weave öffnen", true, None::<&str>)?,
             &MenuItem::with_id(app, "settings", "Einstellungen …", true, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
             &version,
@@ -584,6 +573,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "ask" => show_quick(app),
+            "open" => show_main(app),
             "settings" => {
                 let _ = show_settings(app);
             }
@@ -606,9 +596,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
-            tauri_plugin_positioner::on_tray_event(tray.app_handle(), &event);
             if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
-                toggle_panel(tray.app_handle(), true);
+                toggle_quick(tray.app_handle());
             }
         })
         .build(app)?;
@@ -617,11 +606,13 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 
 fn main() {
     tauri::Builder::default()
+        // Launching Weave again (Start menu, Finder) opens the app window of
+        // the running instance instead of a second tray icon.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_positioner::init())
-        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
+        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![AUTOSTART_ARG])))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -646,16 +637,14 @@ fn main() {
                 session: Mutex::new(load_session(&effective.server_url)),
                 login_task: Mutex::new(None),
                 chat_abort: Mutex::new(None),
-                panel_hidden_at: Mutex::new(None),
+                quick_hidden_at: Mutex::new(None),
                 updates: Updates::default(),
                 update_menu_item: Mutex::new(None),
             });
 
             let handle = app.handle().clone();
-            for label in ["panel", "quick"] {
-                if let Some(window) = handle.get_webview_window(label) {
-                    float_over_full_screen(&window);
-                }
+            if let Some(quick) = handle.get_webview_window("quick") {
+                float_over_full_screen(&quick);
             }
             build_tray(&handle)?;
             if let Err(error) = register_hotkey(&handle, &effective.hotkey) {
@@ -663,6 +652,8 @@ fn main() {
             }
             if effective.server_url.is_empty() {
                 show_settings(&handle)?;
+            } else if !std::env::args().any(|arg| arg == AUTOSTART_ARG) {
+                show_main(&handle);
             }
             let updater = handle.clone();
             tauri::async_runtime::spawn(async move {
@@ -674,21 +665,19 @@ fn main() {
             });
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if !matches!(window.label(), "panel" | "quick") {
-                return;
+        .on_window_event(|window, event| match (window.label(), event) {
+            ("quick", WindowEvent::Focused(false)) => {
+                *window.app_handle().state::<AppState>().quick_hidden_at.lock().unwrap() = Some(Instant::now());
+                let _ = window.hide();
             }
-            match event {
-                WindowEvent::Focused(false) => {
-                    *window.app_handle().state::<AppState>().panel_hidden_at.lock().unwrap() = Some(Instant::now());
-                    let _ = window.hide();
-                }
-                WindowEvent::CloseRequested { api, .. } => {
-                    api.prevent_close();
-                    let _ = window.hide();
-                }
-                _ => {}
+            // Closing the app window keeps Weave in the tray.
+            ("quick" | "panel", WindowEvent::CloseRequested { api, .. }) => {
+                api.prevent_close();
+                let _ = window.hide();
+                update_dock(window.app_handle());
             }
+            ("settings", WindowEvent::Destroyed) => update_dock(window.app_handle()),
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             get_state,
@@ -711,6 +700,15 @@ fn main() {
             check_for_updates,
             install_update,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Weave");
+        .build(tauri::generate_context!())
+        .expect("error while building Weave")
+        .run(|app, event| {
+            // macOS: clicking Weave in the Dock, Finder or Launchpad while it runs.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                show_main(app);
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        });
 }

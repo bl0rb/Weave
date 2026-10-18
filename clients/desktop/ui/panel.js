@@ -1,4 +1,4 @@
-// Tray panel and quick overlay (quick.html, opened by the hotkey): ask an agent or search Weave.
+// App window (panel.html) and quick overlay (quick.html; tray click or hotkey): ask an agent or search Weave.
 import { invoke, Channel, listen, t, h, icon, spinner, markdown, wireLinks } from './common.js';
 
 let state = null;
@@ -341,7 +341,7 @@ function render() {
 }
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { if (streaming) stop(); else invoke('hide_panel'); }
+  if (e.key === 'Escape') { if (streaming) stop(); else if (QUICK) invoke('hide_panel'); }
   if (QUICK && (e.metaKey || e.ctrlKey) && e.key === ',') { e.preventDefault(); invoke('open_settings'); }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') { e.preventDefault(); newConversation(); }
 });
