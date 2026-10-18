@@ -1,0 +1,152 @@
+// Shared UI helpers for the tray panel and the settings window. No framework, no build step.
+export const { invoke, Channel } = window.__TAURI__.core;
+export const { listen } = window.__TAURI__.event;
+
+export const english = !navigator.language.toLowerCase().startsWith('de');
+
+const EN = {
+  'Weave einrichten': 'Set up Weave',
+  'Tragen Sie die Adresse Ihres Weave-Servers ein.': 'Enter the address of your Weave server.',
+  'Einstellungen öffnen': 'Open settings',
+  'Bei Weave anmelden': 'Sign in to Weave',
+  'Die Anmeldung läuft über das SSO Ihrer Organisation im Browser.': "You sign in through your organisation's SSO in the browser.",
+  'Anmelden': 'Sign in',
+  'Anmeldung im Browser läuft …': 'Signing in in the browser …',
+  'Abbrechen': 'Cancel',
+  'Fragen': 'Ask',
+  'Suchen': 'Search',
+  'Alle Wissensräume': 'All knowledge spaces',
+  'Neue Unterhaltung': 'New conversation',
+  'Einstellungen': 'Settings',
+  'Frage an Weave …': 'Ask Weave …',
+  'In Weave suchen …': 'Search Weave …',
+  'Senden': 'Send',
+  'Stopp': 'Stop',
+  'Kein Agent verfügbar': 'No agent available',
+  'Was möchten Sie wissen?': 'What would you like to know?',
+  'Antworten kommen nur aus freigegebenen Dokumenten – mit Quellen.': 'Answers come only from released documents – with sources.',
+  'Durchsuchen Sie alle Wissensräume, die Sie lesen dürfen.': 'Search every knowledge space you may read.',
+  'Keine Treffer.': 'No results.',
+  'Öffnen': 'Open',
+  'S. %@': 'p. %@',
+  'Quellen': 'Sources',
+  'Abgebrochen.': 'Stopped.',
+  'Weave denkt nach …': 'Weave is thinking …',
+  'Sitzung abgelaufen – bitte neu anmelden.': 'Session expired – please sign in again.',
+  'Server': 'Server',
+  'API-Adresse': 'API address',
+  'Adresse von weave-api, z. B. https://weave.example.com/api': 'Address of weave-api, e.g. https://weave.example.com/api',
+  'Verbindung testen': 'Test connection',
+  'Erreichbar': 'Reachable',
+  'Von der IT vorgegeben': 'Managed by IT',
+  'Konto': 'Account',
+  'Angemeldet als %@': 'Signed in as %@',
+  'Angemeldet': 'Signed in',
+  'Nicht angemeldet': 'Not signed in',
+  'Abmelden': 'Sign out',
+  'Bedienung': 'Usage',
+  'Tastenkürzel': 'Hotkey',
+  'Öffnet das Fragefenster von überall, z. B. CmdOrCtrl+Shift+Space. Leer = aus.': 'Opens the ask window from anywhere, e.g. CmdOrCtrl+Shift+Space. Empty = off.',
+  'Standard-Agent': 'Default agent',
+  'Erster verfügbarer': 'First available',
+  'Nach der Anmeldung wählbar': 'Available after sign-in',
+  'Beim Anmelden am Computer starten': 'Start when I log in to this computer',
+  'Speichern': 'Save',
+  'Gespeichert': 'Saved',
+  'Weave für den Desktop – Version %@': 'Weave for the desktop – version %@',
+  'Weave fragen': 'Ask Weave',
+};
+
+/** Translates a German source string and fills its `%@` placeholders in order. */
+export function t(key, ...args) {
+  const text = english ? EN[key] ?? key : key;
+  let i = 0;
+  return text.replace(/%@/g, () => (i < args.length ? String(args[i++]) : '%@'));
+}
+
+const PROPS = new Set(['value', 'checked', 'disabled', 'selected', 'hidden', 'required']);
+
+export function h(tag, props, ...children) {
+  const el = document.createElement(tag);
+  for (const [key, value] of Object.entries(props ?? {})) {
+    if (value == null || value === false) continue;
+    if (key.startsWith('on')) el.addEventListener(key.slice(2), value);
+    else if (key === 'class') el.className = value;
+    else if (PROPS.has(key)) el[key] = value;
+    else el.setAttribute(key, value === true ? '' : value);
+  }
+  for (const child of children.flat(Infinity)) {
+    if (child == null || child === false) continue;
+    el.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+  return el;
+}
+
+const ICONS = {
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  send: '<path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"/>',
+  stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
+  external: '<path d="M14 3h7v7M21 3l-9 9M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/>',
+  check: '<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  warning: '<path d="M12 3 2 20h20z"/><path d="M12 9v5M12 17h.01"/>',
+};
+
+export function icon(name) {
+  const span = document.createElement('span');
+  span.innerHTML = `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
+  return span.firstChild;
+}
+
+export const spinner = () => h('span', { class: 'spinner', role: 'status' });
+
+function escapeHtml(text) {
+  return text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+
+function inline(text) {
+  return escapeHtml(text)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<em>$2</em>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a data-href="$2">$1</a>');
+}
+
+/** A small, safe Markdown subset: paragraphs, headings, lists, code, bold, italics, http(s) links. */
+export function markdown(source) {
+  const out = [];
+  let list = null;
+  let code = null;
+  const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  for (const line of source.replace(/\r\n/g, '\n').split('\n')) {
+    if (code !== null) {
+      if (line.startsWith('```')) { out.push(`<pre>${escapeHtml(code.join('\n'))}</pre>`); code = null; }
+      else code.push(line);
+      continue;
+    }
+    if (line.startsWith('```')) { closeList(); code = []; continue; }
+    const heading = line.match(/^(#{1,4})\s+(.*)/);
+    const bullet = line.match(/^\s*[-*•]\s+(.*)/);
+    const numbered = line.match(/^\s*\d+[.)]\s+(.*)/);
+    if (heading) { closeList(); out.push(`<h4>${inline(heading[2])}</h4>`); }
+    else if (bullet || numbered) {
+      const kind = bullet ? 'ul' : 'ol';
+      if (list !== kind) { closeList(); out.push(`<${kind}>`); list = kind; }
+      out.push(`<li>${inline((bullet ?? numbered)[1])}</li>`);
+    } else if (!line.trim()) closeList();
+    else { closeList(); out.push(`<p>${inline(line)}</p>`); }
+  }
+  if (code !== null) out.push(`<pre>${escapeHtml(code.join('\n'))}</pre>`);
+  closeList();
+  return out.join('');
+}
+
+/** Opens `data-href` links inside `root` in the default browser. */
+export function wireLinks(root) {
+  root.addEventListener('click', (event) => {
+    const link = event.target.closest('a[data-href]');
+    if (link) { event.preventDefault(); invoke('open_url', { url: link.dataset.href }); }
+  });
+}

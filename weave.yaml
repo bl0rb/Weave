@@ -998,6 +998,17 @@ services:
           do not cross-validate this against the chat service (it is a
           list of arbitrary UI origins, not a single fixed value), so keep
           the two in sync by hand.
+      NATIVE_LOGIN_ENABLED:
+        secret: false
+        value: false
+        type: bool
+        required: false
+        comment: >
+          true lets native apps (the Weave desktop tray app, clients/desktop)
+          sign in: `return_to` may then also be
+          http://127.0.0.1:<any port>/callback, but only with a PKCE
+          code_challenge, and the one-time code is redeemable only with the
+          matching code_verifier (RFC 8252). Works on both login paths.
       INGEST_LOGIN_URL:
         secret: false
         value: ""

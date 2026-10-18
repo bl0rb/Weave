@@ -104,3 +104,32 @@ def release_collection(release_id: str) -> str | None:
     except (ValueError, AttributeError) as exc:
         raise RetrievalClientError('Weave-Retrieval returned an invalid release lookup response') from exc
     return collection if isinstance(collection, str) else None
+
+
+def search(*, query: str, allowed_collections: list[str], allowed_teams: list[str], top_k: int | None) -> list:
+    """POST /api/v1/search -- hybrid search restricted to exactly
+    `allowed_collections` (never `None` from here: that is Weave-Retrieval's
+    "no restriction" sentinel for trusted service callers) and, for legacy
+    documents without a collection, `allowed_teams`. Returns that service's
+    `results` list verbatim."""
+    body: dict[str, object] = {
+        'query': query,
+        'allowed_collections': allowed_collections,
+        'allowed_teams': allowed_teams,
+    }
+    if top_k is not None:
+        body['top_k'] = top_k
+
+    try:
+        with _client() as client:
+            response = client.post('/api/v1/search', json=body)
+    except httpx.RequestError as exc:
+        raise RetrievalClientError(f'Weave-Retrieval unreachable: {exc}') from exc
+
+    if response.status_code >= 400:
+        raise RetrievalClientError(f'Weave-Retrieval returned HTTP {response.status_code} for POST /api/v1/search')
+
+    try:
+        return response.json().get('results', [])
+    except (ValueError, AttributeError) as exc:
+        raise RetrievalClientError('Weave-Retrieval returned a non-JSON response for POST /api/v1/search') from exc

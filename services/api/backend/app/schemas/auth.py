@@ -12,6 +12,9 @@ from pydantic import BaseModel, Field
 
 class SessionExchangeRequest(BaseModel):
     code: str = Field(min_length=1)
+    # RFC 7636: 43-128 characters. Required when the login was started with
+    # a `code_challenge` (native-app login), ignored otherwise.
+    code_verifier: str | None = Field(default=None, min_length=43, max_length=128)
 
 
 class SessionExchangeResponse(BaseModel):
