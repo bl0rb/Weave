@@ -21,7 +21,7 @@ mark files that were changed. The model weights are not baked into any image —
 they are downloaded on first start into a mounted cache (`README.md:184`,
 `README.md:185`) — so whoever operates the stack, or ships an image with a
 pre-warmed cache, accepts each model's own terms as set by its provider; the
-MIT license of this repository does not extend to them.
+license of this repository does not extend to them.
 
 ## OCR stack — Weave Ingest worker image
 
