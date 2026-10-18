@@ -4850,7 +4850,7 @@ dependencies = [
 
 [[package]]
 name = "weave-desktop"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "core-foundation 0.10.1",
