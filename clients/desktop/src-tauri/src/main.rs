@@ -405,6 +405,7 @@ fn show_panel(app: &AppHandle, at_tray: bool) {
         Position::TrayBottomCenter
     };
     let _ = panel.move_window(position);
+    keep_in_work_area(&panel);
     let _ = panel.show();
     let _ = panel.set_focus();
     let _ = panel.emit("panel-shown", ());
@@ -462,6 +463,24 @@ fn float_over_full_screen(window: &WebviewWindow) {
 
 #[cfg(not(target_os = "macos"))]
 fn float_over_full_screen(_window: &WebviewWindow) {}
+
+/// Moves `window` fully into its screen's work area, with a small gap: below
+/// the menu bar (and so below the notch), above the Dock or taskbar, and
+/// inside the side edges. The tray position alone would put the panel's top
+/// edge at the very top of the screen.
+fn keep_in_work_area(window: &WebviewWindow) {
+    let (Ok(position), Ok(size), Ok(Some(monitor))) = (window.outer_position(), window.outer_size(), window.current_monitor()) else {
+        return;
+    };
+    let area = monitor.work_area();
+    let gap = (6.0 * monitor.scale_factor()) as i32;
+    let (left, top) = (area.position.x + gap, area.position.y + gap);
+    let right = area.position.x + area.size.width as i32 - size.width as i32 - gap;
+    let bottom = area.position.y + area.size.height as i32 - size.height as i32 - gap;
+    let x = position.x.clamp(left, right.max(left));
+    let y = position.y.clamp(top, bottom.max(top));
+    let _ = window.set_position(PhysicalPosition::new(x, y));
+}
 
 fn toggle_panel(app: &AppHandle, at_tray: bool) {
     let Some(panel) = panel(app) else { return };
