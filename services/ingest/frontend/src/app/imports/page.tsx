@@ -63,7 +63,7 @@ export default function ImportsPage() {
         </section>
 
         <section className="mb-6 flex flex-wrap items-center justify-center gap-3">
-          <Link href="/processing/new">
+          <Link href="/sources/new">
             <Button variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 hover:text-emerald-900">
               <FilePlus className="mr-2 h-4 w-4" /> {t('portal.importsList.newFileTask')}
             </Button>
@@ -149,7 +149,7 @@ export default function ImportsPage() {
                 <Inbox className="h-8 w-8 text-slate-300" />
                 <p className="text-sm text-slate-500">{t('portal.importsList.emptyBody')}</p>
                 <div className="flex flex-wrap items-center justify-center gap-2">
-                  <Link href="/processing/new">
+                  <Link href="/sources/new">
                     <Button variant="outline" size="sm" className="border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 hover:text-emerald-900">
                       <FilePlus className="h-4 w-4" />
                       {t('portal.importsList.newFileTask')}

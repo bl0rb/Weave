@@ -1,9 +1,6 @@
-import { ProcessingFlow } from '@/components/dashboard/processing-flow';
+import { redirect } from 'next/navigation';
 
+// The legacy four-step upload wizard was merged into "Quelle hinzufügen".
 export default function NewProcessingTaskPage() {
-  return (
-    <main className="min-h-screen">
-      <ProcessingFlow />
-    </main>
-  );
+  redirect('/sources/new');
 }

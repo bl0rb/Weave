@@ -25,10 +25,6 @@ class ImportSourceUpdateRequest(BaseModel):
     auth_username: str | None = Field(default=None, max_length=320)
     # Write-only update: omitted or empty keeps the stored credential.
     credential: str | None = Field(default=None, max_length=4096)
-    # Periodic re-crawl toggle/cadence -- server-clamped to
-    # >= settings.confluence_refresh_min_interval_seconds, never raised.
-    refresh_enabled: bool | None = None
-    refresh_interval_seconds: int | None = Field(default=None, ge=1)
 
 
 class ImportSourceResponse(BaseModel):
@@ -42,10 +38,8 @@ class ImportSourceResponse(BaseModel):
     has_credential: bool = True
     last_validated_at: datetime | None = None
     created_at: datetime
-    refresh_enabled: bool = False
-    refresh_interval_seconds: int | None = None
-    last_refresh_at: datetime | None = None
-    last_refresh_error: str | None = None
+    # Derived: number of configured imports (ImportSync) on this source.
+    sync_count: int = 0
 
     model_config = {'from_attributes': True}
 
@@ -97,10 +91,22 @@ class ImportRunOptions(BaseModel):
     webhook_connection_id: str | None = None
 
 
+class ImportSyncSchedule(BaseModel):
+    """Auto-sync of an import configuration. interval_seconds is
+    server-clamped to >= settings.confluence_refresh_min_interval_seconds."""
+
+    enabled: bool = False
+    interval_seconds: int | None = Field(default=None, ge=1)
+
+
 class ImportRunCreateRequest(BaseModel):
     source_id: str = Field(min_length=1)
     scope: ImportRunScope
     options: ImportRunOptions = Field(default_factory=ImportRunOptions)
+    # Every run belongs to the import configuration of its (source, scope,
+    # space); created on first use. Given here, it also sets that
+    # configuration's schedule; omitted, an existing schedule is kept.
+    sync: ImportSyncSchedule | None = None
 
 
 class ImportRunOwner(BaseModel):
@@ -112,6 +118,7 @@ class ImportRunOwner(BaseModel):
 
 class ImportRunResponse(BaseModel):
     id: str
+    sync_id: str | None = None
     kind: str
     status: ImportRunStatus
     scope_type: str
@@ -174,6 +181,51 @@ class ImportRunDetailResponse(ImportRunResponse):
     # children (backstop send failed / startup recovery hasn't caught up
     # yet) be told apart from one that is genuinely all done.
     pending_attachment_jobs: int = 0
+
+
+# --- Import configurations (syncs) ------------------------------------------------
+
+class ImportSyncLastRun(BaseModel):
+    """The configuration's most recent run of any status."""
+
+    id: str
+    status: ImportRunStatus
+    is_refresh: bool = False
+    created_at: datetime
+    finished_at: datetime | None = None
+    pages_imported: int = 0
+    pages_failed: int = 0
+
+
+class ImportSyncResponse(BaseModel):
+    id: str
+    source_id: str
+    source_name: str = ''
+    scope_type: str
+    scope_value: str
+    root_page_title: str = ''
+    collection_id: str | None = None
+    collection_name: str | None = None
+    options: ImportRunOptions = Field(default_factory=ImportRunOptions)
+    enabled: bool = False
+    interval_seconds: int | None = None
+    last_success_at: datetime | None = None
+    last_error: str | None = None
+    next_refresh_at: datetime | None = None
+    last_run: ImportSyncLastRun | None = None
+    created_at: datetime
+
+
+class ImportSyncListResponse(BaseModel):
+    items: list[ImportSyncResponse]
+
+
+class ImportSyncUpdateRequest(BaseModel):
+    enabled: bool | None = None
+    interval_seconds: int | None = Field(default=None, ge=1)
+    # Replaces the stored options. Scope and knowledge space are fixed for
+    # a configuration; options.collection_id must be omitted or unchanged.
+    options: ImportRunOptions | None = None
 
 
 class ImportRunCancelResponse(BaseModel):

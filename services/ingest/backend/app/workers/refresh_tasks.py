@@ -1,6 +1,7 @@
 """Confluence-refresh scheduler: a self-re-enqueuing Celery task
 (`confluence_refresh_tick`) that periodically starts a fresh crawl run for
-every ImportSource with refresh_enabled=true whose interval has elapsed.
+every enabled ImportSync whose interval has elapsed (one active run per
+source at a time; see `_has_active_run`).
 
 There is deliberately no Celery Beat in this deployment, so the recurring
 tick is a chain of self-re-enqueued tasks: each execution re-sends itself
@@ -37,8 +38,8 @@ docstring, so that is the "existing ImportRun pattern" this flag piggybacks
 on instead of a new migration. The per-page diff against ImportPageState
 (skip unchanged pages, version-chain changed ones) lives in
 app/workers/import_tasks.py, gated on that same flag; the
-last_refresh_at/last_refresh_error bookkeeping on ImportSource lives there
-too (set when a refresh run reaches a terminal state).
+last_success_at/last_error bookkeeping on ImportSync lives there too (set
+when a run of the sync reaches a terminal state).
 
 Confluence path/space context (frontmatter `space` / `confluence_path` /
 `parent_title` / `depth`, the breadcrumb line, and `path_tags` -- see
@@ -61,7 +62,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.database.session import SessionLocal
-from app.models.models import Collection, CollectionRole, ImportRun, ImportRunStatus, ImportSource, User
+from app.models.models import Collection, CollectionRole, ImportRun, ImportRunStatus, ImportSource, ImportSync, User
 from app.services.collection_access import collection_role, role_at_least
 from app.workers.celery_app import celery_app
 
@@ -164,28 +165,36 @@ def _aware_utc(value: datetime) -> datetime:
     return value
 
 
-def _effective_interval_seconds(source: ImportSource) -> int:
-    # Same clamp-never-lower-than-the-floor discipline as
-    # PATCH /import/sources/{id}'s write path (import_routes.py), applied
-    # again here defensively -- refresh_interval_seconds is a plain nullable
-    # column an admin could still edit directly, and NULL (never configured
-    # by the client) must fall back to the floor rather than being treated
+def effective_interval_seconds(sync: ImportSync) -> int:
+    # Same clamp-never-lower-than-the-floor discipline as the API write path
+    # (PATCH /import/syncs/{id}), applied again here defensively -- NULL
+    # (never configured) falls back to the floor rather than being treated
     # as "due immediately"/"never due".
     return max(
-        source.refresh_interval_seconds or settings.confluence_refresh_min_interval_seconds,
+        sync.interval_seconds or settings.confluence_refresh_min_interval_seconds,
         settings.confluence_refresh_min_interval_seconds,
     )
 
 
-def _is_due(source: ImportSource, now: datetime) -> bool:
-    if not source.refresh_enabled:
-        return False
-    if source.last_refresh_at is None:
-        return True
-    return _aware_utc(source.last_refresh_at) + timedelta(seconds=_effective_interval_seconds(source)) <= now
+def next_refresh_at(sync: ImportSync) -> datetime | None:
+    """When the scheduler will next start this sync (None: disabled). A
+    sync that never succeeded is due at once."""
+    if not sync.enabled:
+        return None
+    if sync.last_success_at is None:
+        return datetime.now(timezone.utc)
+    return _aware_utc(sync.last_success_at) + timedelta(seconds=effective_interval_seconds(sync))
+
+
+def _is_due(sync: ImportSync, now: datetime) -> bool:
+    due_at = next_refresh_at(sync)
+    return due_at is not None and due_at <= now
 
 
 def _has_active_run(db, source_id: str) -> bool:
+    # Per source, not per sync: one crawl at a time per Confluence
+    # connection keeps its rate limit and the shared page states safe; other
+    # due syncs of the same source start on a later tick.
     return (
         db.scalar(
             select(ImportRun.id)
@@ -202,11 +211,9 @@ def _reap_stale_runs(db, source: ImportSource, now: datetime) -> int:
     heartbeat rule as import_routes._is_stale_active (updated_at older than
     settings.import_stale_run_seconds) -- so a lost worker or a lost queue
     message can never block the Doppelstart-Schutz in _dispatch_due_refreshes
-    forever. The API's create-run path reaps for itself; the scheduler never
-    went through it, so without this one stalled run silently stopped every
-    future refresh of the source. Returns the number of runs reaped and
-    surfaces the condition on source.last_refresh_error (cleared again by
-    _record_refresh_outcome once the next run succeeds)."""
+    forever. Returns the number of runs reaped and surfaces the condition on
+    each affected sync's last_error (cleared again by
+    import_tasks._record_refresh_outcome once its next run succeeds)."""
     stale_before = now - timedelta(seconds=settings.import_stale_run_seconds)
     stale_runs = [
         run
@@ -222,83 +229,65 @@ def _reap_stale_runs(db, source: ImportSource, now: datetime) -> int:
         run.status = ImportRunStatus.FAILED
         run.error_message = 'worker lost; run stalled'
         run.finished_at = now
+        if run.sync_id and (sync := db.get(ImportSync, run.sync_id)) is not None:
+            sync.last_error = 'run stalled (worker lost) and was marked failed; the sync continues with the next run'
     if stale_runs:
         logger.warning(
             'confluence refresh: source %s had %d stalled run(s) (no heartbeat for %ds); marked failed',
             source.id, len(stale_runs), settings.import_stale_run_seconds,
         )
-        source.last_refresh_error = _truncate(
-            f'{len(stale_runs)} stalled run(s) marked failed (worker lost); the refresh continues with the next run',
-            _START_FAILURE_MESSAGE_MAX_CHARS,
-        )
         db.commit()
     return len(stale_runs)
 
 
-def _start_refresh_run(db, source: ImportSource, template: ImportRun | None = None) -> ImportRun | None:
-    """Start a new refresh run, copying the scope + options of the source's
-    last successful run or an explicit template. Returns the queued run,
-    or None when the source is missing, already has an active run, or has
-    no successful run to repeat. refresh_enabled alone invents no scope."""
-    source = db.scalar(select(ImportSource).where(ImportSource.id == source.id).with_for_update())
-    if source is None or _has_active_run(db, source.id):
-        return None
-    last_successful = template or db.scalar(
-        select(ImportRun)
-        .where(ImportRun.source_id == source.id)
-        .where(ImportRun.status == ImportRunStatus.FINISHED)
-        .order_by(ImportRun.created_at.desc())
-        .limit(1)
-    )
-    if last_successful is None:
+def start_sync_run(db, sync: ImportSync) -> ImportRun | None:
+    """Start a run of `sync` -- the scheduler's refresh and the API's "sync
+    now". Scope, target space and options come from the sync itself.
+    Returns the queued run, or None when the sync is gone or its source
+    already has an active run. Raises ValueError when the run must not
+    start (owner deactivated, space gone or no longer controllable)."""
+    source = db.scalar(select(ImportSource).where(ImportSource.id == sync.source_id).with_for_update())
+    sync = db.get(ImportSync, sync.id)
+    if source is None or sync is None or _has_active_run(db, source.id):
         return None
 
-    options = dict(last_successful.options) if isinstance(last_successful.options, dict) else {}
+    options = dict(sync.options) if isinstance(sync.options, dict) else {}
     source_owner = db.get(User, source.owner_id)
     if source_owner is not None and not source_owner.is_active:
         # Deactivation blocks the person at once (ADR 0008); reactivating
         # resumes the refresh without touching any grant.
         raise ValueError('import source owner is deactivated; refusing the refresh')
-    collection_id = options.get('collection_id')
-    if collection_id:
-        collection = db.get(Collection, str(collection_id))
+    if sync.collection_id:
+        collection = db.get(Collection, sync.collection_id)
         if collection is None:
             raise ValueError('assigned collection no longer exists; refusing an unassigned refresh')
         if source_owner is None:
             raise ValueError('import source owner no longer exists; refusing collection assignment')
         if not role_at_least(collection_role(db, collection, source_owner), CollectionRole.MEMBER):
             raise ValueError('assigned collection is no longer controllable by the import source owner')
-        # Keep the original id as the mapping anchor and refresh display values
-        # from the authoritative Collection row.
         options['collection_id'] = collection.id
         options['collection_slug'] = collection.slug
         options['collection_name'] = collection.name
-    elif options.get('collection_slug') or options.get('collection_name'):
-        raise ValueError('collection assignment is missing its collection_id; refusing an unassigned refresh')
-    # Re-clamped here even though the copied snapshot was already clamped at
-    # its own creation time: settings (e.g. import_max_pages) may have
-    # changed since -- same clamp-never-raise discipline as
+    # Re-clamped: settings (e.g. import_max_pages) may have changed since the
+    # sync was saved -- same clamp-never-raise discipline as
     # import_routes.create_import_run / import_tasks.import_confluence.
     options['max_pages'] = min(options.get('max_pages') or settings.import_max_pages, settings.import_max_pages)
     raw_max_depth = options.get('max_depth')
     options['max_depth'] = (
         settings.import_max_depth if raw_max_depth is None else min(int(raw_max_depth), settings.import_max_depth)
     )
-    # The "existing ImportRun pattern" flag AUFGABE 1 asks for -- options is
-    # already an arbitrary settings-snapshot JSON dict (see the model
-    # docstring), so a refresh run is marked here rather than via a new
-    # column/migration. import_tasks.py's per-page diff logic and the
-    # last_refresh_at/last_refresh_error bookkeeping both key off this.
+    # Diff against ImportPageState (skip unchanged pages, chain changed
+    # ones) -- import_tasks.py keys its refresh path off this flag.
     options['is_refresh'] = True
-    options['sync_template_run_id'] = last_successful.id
 
-    frontier = [[last_successful.scope_value, 0]] if last_successful.scope_type == 'page' else []
+    frontier = [[sync.scope_value, 0]] if sync.scope_type == 'page' else []
     run = ImportRun(
         source_id=source.id,
+        sync_id=sync.id,
         owner_id=source.owner_id,
-        kind=last_successful.kind,
-        scope_type=last_successful.scope_type,
-        scope_value=last_successful.scope_value,
+        kind='confluence',
+        scope_type=sync.scope_type,
+        scope_value=sync.scope_value,
         options=options,
         state={'frontier': frontier, 'visited': {}, 'errors': []},
     )
@@ -314,7 +303,7 @@ def _start_refresh_run(db, source: ImportSource, template: ImportRun | None = No
         run.finished_at = datetime.now(timezone.utc)
         db.commit()
         raise
-    logger.info('confluence refresh: started run %s for source %s', run.id, source.id)
+    logger.info('confluence refresh: started run %s for sync %s (source %s)', run.id, sync.id, source.id)
     return run
 
 
@@ -322,36 +311,35 @@ def _dispatch_due_refreshes() -> None:
     db = SessionLocal()
     try:
         now = datetime.now(timezone.utc)
-        # A deactivated owner's sources are skipped, not failed on every tick.
-        sources = db.scalars(
-            select(ImportSource)
+        # A deactivated owner's syncs are skipped, not failed on every tick.
+        # Longest-waiting first, so one busy source cannot starve its others.
+        syncs = db.scalars(
+            select(ImportSync)
+            .join(ImportSource, ImportSource.id == ImportSync.source_id)
             .join(User, User.id == ImportSource.owner_id)
-            .where(ImportSource.refresh_enabled.is_(True), User.is_active.is_(True))
+            .where(ImportSync.enabled.is_(True), User.is_active.is_(True))
+            .order_by(ImportSync.last_success_at.is_not(None), ImportSync.last_success_at, ImportSync.created_at)
         ).all()
-        for source in sources:
-            if not _is_due(source, now):
+        reaped: set[str] = set()
+        for sync in syncs:
+            if not _is_due(sync, now):
                 continue
-            _reap_stale_runs(db, source, now)
-            if _has_active_run(db, source.id):
-                continue  # Doppelstart-Schutz: an earlier run for this source is still in flight.
+            if sync.source_id not in reaped:
+                _reap_stale_runs(db, sync.source, now)
+                reaped.add(sync.source_id)
+            if _has_active_run(db, sync.source_id):
+                continue  # Doppelstart-Schutz: this source is still crawling another (or this) sync.
             try:
-                _start_refresh_run(db, source)
+                start_sync_run(db, sync)
             except Exception as exc:
-                logger.exception(
-                    'confluence refresh: failed to start a run for source %s (%r, %s, server_kind=%s)',
-                    source.id, source.name, source.base_url, source.server_kind,
-                )
+                logger.exception('confluence refresh: failed to start a run for sync %s (source %s)', sync.id, sync.source_id)
                 db.rollback()
-                # Surface the failure on the source itself: this crash happened
+                # Surface the failure on the sync itself: this crash happened
                 # before (or while) an ImportRun even existed, so without this
-                # there is nothing for the admin to see beyond the worker log --
-                # same last_refresh_error field a failed RUN would populate via
-                # _record_refresh_outcome in import_tasks.py.
-                fresh_source = db.get(ImportSource, source.id)
-                if fresh_source is not None:
-                    fresh_source.last_refresh_error = _truncate(
-                        f'failed to start a refresh run: {exc}', _START_FAILURE_MESSAGE_MAX_CHARS
-                    )
+                # there is nothing to see beyond the worker log.
+                fresh_sync = db.get(ImportSync, sync.id)
+                if fresh_sync is not None:
+                    fresh_sync.last_error = _truncate(f'failed to start a refresh run: {exc}', _START_FAILURE_MESSAGE_MAX_CHARS)
                     db.commit()
     finally:
         db.close()

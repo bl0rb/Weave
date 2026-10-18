@@ -777,7 +777,7 @@ Provider auf ein bestehendes Konto aufschalten.
 ### 8.3 Teams und Rollen aus den Token-Gruppen
 
 Gilt für die OIDC-Verbindungen in Ingest (8.1), eingestellt pro Verbindung
-unter `/admin/menschen` → Anmeldung. Beides liest denselben **Gruppen-Claim**
+unter `/admin/konten` → Anmeldung. Beides liest denselben **Gruppen-Claim**
 (Vorgabe `groups`) aus dem ID-Token; fehlt er dort, ergänzt Ingest ihn aus
 dem Userinfo-Endpunkt. Ausgewertet wird bei jedem Login, nicht laufend.
 
@@ -817,7 +817,7 @@ Ebenso unberührt bleibt die lokale Anmeldung mit Passwort.
 | Im Token | Rolle |
 |---|---|
 | Admin-Gruppe | `admin` |
-| nur Bot-Admin-Gruppe | `bot_admin` — verwaltet alle Bots unter `/admin/wissen`, sonst nichts |
+| nur Bot-Admin-Gruppe | `bot_admin` — verwaltet alle Bots unter `/admin/ki`, sonst nichts |
 | keine der beiden | `user` |
 
 Regeln, damit der IdP nichts kaputtmacht:

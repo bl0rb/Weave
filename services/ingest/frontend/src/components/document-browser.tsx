@@ -1184,7 +1184,7 @@ export function DocumentBrowser({
                 <p className="text-sm font-medium text-slate-700">{t('portal.jobs.browser.noDocumentsTitle')}</p>
                 <p className="mt-1 text-sm text-slate-500">{t('portal.jobs.browser.noDocumentsBody')}</p>
               </div>
-              <Link href="/processing/new">
+              <Link href="/sources/new">
                 <Button>{t('portal.jobs.browser.uploadFirst')}</Button>
               </Link>
             </div>

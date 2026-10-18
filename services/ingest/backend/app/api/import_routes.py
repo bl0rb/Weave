@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import and_, delete, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.orm import Session, aliased
 
 from app.api.deps import _aware_utc, get_current_user
@@ -40,6 +40,7 @@ from app.models.models import (
     ImportRun,
     ImportRunStatus,
     ImportSource,
+    ImportSync,
     Job,
     JobArtifact,
     JobStatus,
@@ -63,6 +64,11 @@ from app.schemas.import_ import (
     ImportSourceResponse,
     ImportSourceTestResponse,
     ImportSourceUpdateRequest,
+    ImportSyncLastRun,
+    ImportSyncListResponse,
+    ImportSyncResponse,
+    ImportSyncSchedule,
+    ImportSyncUpdateRequest,
 )
 from app.services.confluence import (
     ConfluenceError,
@@ -71,6 +77,7 @@ from app.services.confluence import (
     detect_server_kind,
     extract_page_id,
 )
+from app.services.import_syncs import sync_options
 from app.services.paddle_service import resolve_profile_selection
 # Module-object access (security.encrypt_import_credential /
 # security.decrypt_import_credential) rather than from-imports: the helpers
@@ -183,7 +190,7 @@ def _can_sync_run(db: Session, run: ImportRun, user: User) -> bool:
     if not _can_edit_run(run, user) or not run.source_id:
         return False
     source = db.get(ImportSource, run.source_id)
-    return source is not None and source.owner_id == run.owner_id
+    return source is not None and source.owner_id == run.owner_id and run.sync_id is not None
 
 
 def _run_collection(db: Session, run: ImportRun) -> Collection | None:
@@ -238,8 +245,10 @@ def _extract_space_key(value: str) -> str | None:
     return candidate
 
 
-def _source_to_response(source: ImportSource) -> ImportSourceResponse:
-    return ImportSourceResponse.model_validate(source)
+def _source_to_response(db: Session, source: ImportSource) -> ImportSourceResponse:
+    response = ImportSourceResponse.model_validate(source)
+    response.sync_count = db.scalar(select(func.count()).select_from(ImportSync).where(ImportSync.source_id == source.id)) or 0
+    return response
 
 
 # --- Sources ------------------------------------------------------------------
@@ -277,7 +286,7 @@ def create_import_source(
     )
     db.add(source)
     db.commit()
-    return _source_to_response(source)
+    return _source_to_response(db, source)
 
 
 @router.get('/sources', response_model=ImportSourceListResponse)
@@ -287,7 +296,7 @@ def list_import_sources(
     sources = db.scalars(
         select(ImportSource).where(ImportSource.owner_id == user.id).order_by(ImportSource.created_at.desc())
     ).all()
-    return ImportSourceListResponse(items=[_source_to_response(source) for source in sources])
+    return ImportSourceListResponse(items=[_source_to_response(db, source) for source in sources])
 
 
 @router.patch('/sources/{source_id}', response_model=ImportSourceResponse)
@@ -329,26 +338,6 @@ def update_import_source(
     if source.auth_type == ImportAuthType.PAT_BEARER:
         source.auth_username = ''
 
-    if payload.refresh_enabled is not None:
-        source.refresh_enabled = payload.refresh_enabled
-    if payload.refresh_interval_seconds is not None:
-        # Server-side clamp: a client-supplied value can only raise the
-        # interval, never lower it below the configured floor (same
-        # clamp-never-widen discipline as max_pages/max_depth on run
-        # creation, just in the opposite direction -- here the client-
-        # unfriendly bound is a MINIMUM, not a maximum).
-        source.refresh_interval_seconds = max(
-            payload.refresh_interval_seconds, settings.confluence_refresh_min_interval_seconds
-        )
-    if source.refresh_enabled and source.refresh_interval_seconds is None:
-        # refresh_interval_seconds=null (i.e. never supplied by any PATCH)
-        # while enabled=true defaults to the floor -- keeps the column
-        # concrete for the tick's due-source scan (refresh_tasks.py
-        # defensively re-derives this same fallback too, but there is no
-        # reason to leave it implicit in the persisted/returned value when
-        # the source is actually active).
-        source.refresh_interval_seconds = settings.confluence_refresh_min_interval_seconds
-
     if connection_changed:
         # A changed URL/auth invalidates the previous detection result until
         # the next successful /test.
@@ -357,7 +346,7 @@ def update_import_source(
         source.last_validated_at = None
 
     db.commit()
-    return _source_to_response(source)
+    return _source_to_response(db, source)
 
 
 @router.delete('/sources/{source_id}')
@@ -484,6 +473,98 @@ def _resolve_page_by_title_via_source(source: ImportSource, space_key: str, titl
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
 
+def _validated_run_options(db: Session, user: User, requested: ImportRunOptions) -> tuple[Collection | None, dict]:
+    """Validate and normalise run options -- shared by POST /runs and
+    PATCH /syncs/{id}. Returns the target collection and the options dict
+    stored on runs (collection_* included)."""
+    # Raises 422 only for an unknown/disabled 'vl:<connection_id>' selection
+    # (see resolve_profile_selection); a bad *static* ocr_profile_id stays
+    # un-validated here, same as upload/collections-start. Fails fast,
+    # before any run-cap bookkeeping below.
+    if requested.ocr_profile_id:
+        resolve_profile_selection(db, requested.ocr_profile_id)
+
+    # Same 422 semantics as routes.py's helper (unknown/foreign/disabled ->
+    # 422 'Unknown webhook connection' / 'Webhook connection is disabled',
+    # never a 404 -- see _validated_webhook_connection's docstring).
+    # Imported from app.api.routes rather than reimplemented here: no
+    # circular import, this module already imports several helpers from
+    # that one.
+    if requested.webhook_connection_id:
+        _validated_webhook_connection(db, user, requested.webhook_connection_id)
+
+    collection = None
+    if requested.collection_id is not None:
+        collection = db.get(Collection, requested.collection_id.strip())
+        if collection is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
+        # Visibility and control are deliberately separate: a teammate may
+        # read a collection, but only its owner or an admin may write into it.
+        _require_visible_collection(db, collection, user)
+        _require_collection_control(db, collection, user)
+
+    # Server-side clamps: client values can lower the caps, never raise them.
+    max_pages = min(requested.max_pages or settings.import_max_pages, settings.import_max_pages)
+    if requested.max_depth is None:
+        max_depth = settings.import_max_depth
+    else:
+        max_depth = min(requested.max_depth, settings.import_max_depth)
+
+    options = {
+        'max_pages': max_pages,
+        'max_depth': max_depth,
+        'collection_id': collection.id if collection is not None else None,
+        'collection_slug': collection.slug if collection is not None else None,
+        'collection_name': collection.name if collection is not None else None,
+        'include_attachments': requested.include_attachments,
+        'ocr_attachments': requested.ocr_attachments,
+        'ocr_profile_id': requested.ocr_profile_id,
+        'folder': _sanitize_storage_path(requested.folder),
+        'subfolder': _sanitize_storage_path(requested.subfolder),
+        'tags': _parse_tags(','.join(requested.tags)),
+        'email': requested.email.strip(),
+        'path_tags': requested.path_tags,
+        'webhook_connection_id': requested.webhook_connection_id,
+    }
+    return collection, options
+
+
+def _clamped_interval(interval_seconds: int | None) -> int:
+    # A client value can only raise the interval, never lower it below the
+    # configured floor (clamp-never-widen, like max_pages/max_depth).
+    return max(interval_seconds or settings.confluence_refresh_min_interval_seconds,
+               settings.confluence_refresh_min_interval_seconds)
+
+
+def _upsert_sync(
+    db: Session, source: ImportSource, user: User, scope_type: str, scope_value: str,
+    collection: Collection | None, options: dict, schedule: ImportSyncSchedule | None,
+) -> ImportSync:
+    """The import configuration of (source, scope, space): created on first
+    use, otherwise its options follow this run (an edit via the wizard).
+    The schedule changes only when the request carries one."""
+    collection_id = collection.id if collection is not None else None
+    sync = db.scalar(select(ImportSync).where(
+        ImportSync.source_id == source.id,
+        ImportSync.scope_type == scope_type,
+        ImportSync.scope_value == scope_value,
+        ImportSync.collection_id.is_(None) if collection_id is None else ImportSync.collection_id == collection_id,
+    ))
+    if sync is None:
+        sync = ImportSync(
+            source_id=source.id, owner_id=user.id, scope_type=scope_type, scope_value=scope_value,
+            collection_id=collection_id,
+        )
+        db.add(sync)
+    sync.options = sync_options(options)
+    if schedule is not None:
+        sync.enabled = schedule.enabled
+        if schedule.interval_seconds is not None or schedule.enabled:
+            sync.interval_seconds = _clamped_interval(schedule.interval_seconds or sync.interval_seconds)
+    db.flush()
+    return sync
+
+
 @router.post('/runs', response_model=ImportRunResponse, status_code=status.HTTP_201_CREATED)
 def create_import_run(
     request: Request,
@@ -504,31 +585,7 @@ def create_import_run(
             detail='Source connection has not been tested successfully yet; test the connection first',
         )
 
-    # Raises 422 only for an unknown/disabled 'vl:<connection_id>' selection
-    # (see resolve_profile_selection); a bad *static* ocr_profile_id stays
-    # un-validated here, same as upload/collections-start. Fails fast,
-    # before any run-cap bookkeeping below.
-    if payload.options.ocr_profile_id:
-        resolve_profile_selection(db, payload.options.ocr_profile_id)
-
-    # Same 422 semantics as routes.py's helper (unknown/foreign/disabled ->
-    # 422 'Unknown webhook connection' / 'Webhook connection is disabled',
-    # never a 404 -- see _validated_webhook_connection's docstring).
-    # Imported from app.api.routes rather than reimplemented here: no
-    # circular import, this module already imports several helpers from
-    # that one.
-    if payload.options.webhook_connection_id:
-        _validated_webhook_connection(db, user, payload.options.webhook_connection_id)
-
-    collection = None
-    if payload.options.collection_id is not None:
-        collection = db.get(Collection, payload.options.collection_id.strip())
-        if collection is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
-        # Visibility and control are deliberately separate: a teammate may
-        # read a collection, but only its owner or an admin may write into it.
-        _require_visible_collection(db, collection, user)
-        _require_collection_control(db, collection, user)
+    collection, options = _validated_run_options(db, user, payload.options)
 
     if payload.scope.type == 'page':
         scope_value = extract_page_id(payload.scope.value)
@@ -553,13 +610,6 @@ def create_import_run(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail='scope.value must be a space key or a Confluence space URL containing one',
             )
-
-    # Server-side clamps: client values can lower the caps, never raise them.
-    max_pages = min(payload.options.max_pages or settings.import_max_pages, settings.import_max_pages)
-    if payload.options.max_depth is None:
-        max_depth = settings.import_max_depth
-    else:
-        max_depth = min(payload.options.max_depth, settings.import_max_depth)
 
     now = datetime.now(timezone.utc)
     # Active-run cap with stale-run reaping: a wedged (worker-lost) 'running'
@@ -586,22 +636,7 @@ def create_import_run(
             detail='An import run is already active; wait for it to finish or cancel it first',
         )
 
-    options = {
-        'max_pages': max_pages,
-        'max_depth': max_depth,
-        'collection_id': collection.id if collection is not None else None,
-        'collection_slug': collection.slug if collection is not None else None,
-        'collection_name': collection.name if collection is not None else None,
-        'include_attachments': payload.options.include_attachments,
-        'ocr_attachments': payload.options.ocr_attachments,
-        'ocr_profile_id': payload.options.ocr_profile_id,
-        'folder': _sanitize_storage_path(payload.options.folder),
-        'subfolder': _sanitize_storage_path(payload.options.subfolder),
-        'tags': _parse_tags(','.join(payload.options.tags)),
-        'email': payload.options.email.strip(),
-        'path_tags': payload.options.path_tags,
-        'webhook_connection_id': payload.options.webhook_connection_id,
-    }
+    sync = _upsert_sync(db, source, user, payload.scope.type, scope_value, collection, options, payload.sync)
     # Page scope seeds the frontier directly; space scope leaves it empty --
     # run creation makes no outbound requests, so the worker resolves the
     # space homepage (resolve_space_root) on its first chunk when the
@@ -609,6 +644,7 @@ def create_import_run(
     frontier = [[scope_value, 0]] if payload.scope.type == 'page' else []
     run = ImportRun(
         source_id=source.id,
+        sync_id=sync.id,
         owner_id=user.id,
         kind='confluence',
         scope_type=payload.scope.type,
@@ -636,6 +672,9 @@ def create_import_run(
     ).all()
     if run.id not in surviving_ids:
         db.delete(run)
+        db.flush()
+        if not db.scalar(select(func.count()).select_from(ImportRun).where(ImportRun.sync_id == sync.id)):
+            db.delete(sync)  # created for this refused run only
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -716,12 +755,25 @@ def get_import_run(
     )
 
 
+def _start_sync(db: Session, sync: ImportSync) -> ImportRun:
+    from app.workers.refresh_tasks import start_sync_run
+
+    try:
+        run = start_sync_run(db, sync)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    except Exception:
+        raise HTTPException(status_code=503, detail='Sync could not be queued; please retry') from None
+    if run is None:
+        raise HTTPException(status_code=409, detail='A synchronization is already running for this source')
+    return run
+
+
 @router.post('/runs/{run_id}/sync', response_model=ImportRunResponse, status_code=202)
 def sync_import_run(
     run_id: str, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user),
 ) -> ImportRunResponse:
-    from app.workers.refresh_tasks import _start_refresh_run
-
+    """"Sync now" from a run: starts a run of that run's import configuration."""
     enforce_rate_limit(request)
     template = _get_visible_run(db, run_id, user)
     _require_run_control(db, template, user)
@@ -730,15 +782,141 @@ def sync_import_run(
     source = db.get(ImportSource, template.source_id) if template.source_id else None
     if source is None or source.owner_id != template.owner_id:
         raise HTTPException(status_code=404, detail='Import source not found')
-    try:
-        run = _start_refresh_run(db, source, template=template)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from None
-    except Exception:
-        raise HTTPException(status_code=503, detail='Sync could not be queued; please retry') from None
-    if run is None:
-        raise HTTPException(status_code=409, detail='A synchronization is already running for this source')
-    return ImportRunResponse.model_validate(run)
+    sync = db.get(ImportSync, template.sync_id) if template.sync_id else None
+    if sync is None:
+        raise HTTPException(status_code=409, detail='This run no longer belongs to an import configuration')
+    return ImportRunResponse.model_validate(_start_sync(db, sync))
+
+
+# --- Import configurations (syncs) ------------------------------------------------
+
+def _get_owned_sync(db: Session, sync_id: str, user: User) -> ImportSync:
+    """Same owner-private rule as sources: a sync runs on its owner's
+    stored Confluence credential, so only the source owner sees and
+    controls it (non-owned ids 404, admins included)."""
+    sync = db.get(ImportSync, sync_id)
+    if sync is None or sync.source is None or sync.source.owner_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Import configuration not found')
+    return sync
+
+
+def _sync_to_response(db: Session, sync: ImportSync) -> ImportSyncResponse:
+    from app.workers.refresh_tasks import next_refresh_at
+
+    collection = db.get(Collection, sync.collection_id) if sync.collection_id else None
+    last_run = db.scalar(
+        select(ImportRun).where(ImportRun.sync_id == sync.id).order_by(ImportRun.created_at.desc(), ImportRun.id.desc()).limit(1)
+    )
+    options = dict(sync.options) if isinstance(sync.options, dict) else {}
+    options['collection_id'] = sync.collection_id
+    return ImportSyncResponse(
+        id=sync.id,
+        source_id=sync.source_id,
+        source_name=sync.source.name if sync.source is not None else '',
+        scope_type=sync.scope_type,
+        scope_value=sync.scope_value,
+        root_page_title=sync.root_page_title,
+        collection_id=sync.collection_id,
+        collection_name=collection.name if collection is not None else None,
+        options=ImportRunOptions.model_validate(options),
+        enabled=sync.enabled,
+        interval_seconds=sync.interval_seconds,
+        last_success_at=sync.last_success_at,
+        last_error=sync.last_error,
+        next_refresh_at=next_refresh_at(sync),
+        last_run=ImportSyncLastRun(
+            id=last_run.id,
+            status=last_run.status,
+            is_refresh=bool((last_run.options or {}).get('is_refresh')),
+            created_at=last_run.created_at,
+            finished_at=last_run.finished_at,
+            pages_imported=last_run.pages_imported,
+            pages_failed=last_run.pages_failed,
+        ) if last_run is not None else None,
+        created_at=sync.created_at,
+    )
+
+
+@router.get('/syncs', response_model=ImportSyncListResponse)
+def list_import_syncs(
+    source_id: str | None = None, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+) -> ImportSyncListResponse:
+    query = (
+        select(ImportSync)
+        .join(ImportSource, ImportSource.id == ImportSync.source_id)
+        .where(ImportSource.owner_id == user.id)
+        .order_by(ImportSync.created_at.asc(), ImportSync.id.asc())
+    )
+    if source_id:
+        query = query.where(ImportSync.source_id == source_id)
+    return ImportSyncListResponse(items=[_sync_to_response(db, sync) for sync in db.scalars(query).all()])
+
+
+@router.get('/syncs/{sync_id}', response_model=ImportSyncResponse)
+def get_import_sync(sync_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> ImportSyncResponse:
+    return _sync_to_response(db, _get_owned_sync(db, sync_id, user))
+
+
+@router.patch('/syncs/{sync_id}', response_model=ImportSyncResponse)
+def update_import_sync(
+    sync_id: str,
+    payload: ImportSyncUpdateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ImportSyncResponse:
+    enforce_rate_limit(request)
+    sync = _get_owned_sync(db, sync_id, user)
+    if payload.options is not None:
+        requested_collection = (payload.options.collection_id or '').strip() or None
+        if requested_collection is not None and requested_collection != sync.collection_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail='The knowledge space of an import cannot be changed; create a new import instead',
+            )
+        _collection, options = _validated_run_options(
+            db, user, payload.options.model_copy(update={'collection_id': sync.collection_id})
+        )
+        sync.options = sync_options(options)
+    if payload.enabled is not None:
+        sync.enabled = payload.enabled
+    if payload.interval_seconds is not None:
+        sync.interval_seconds = _clamped_interval(payload.interval_seconds)
+    if sync.enabled and sync.interval_seconds is None:
+        sync.interval_seconds = _clamped_interval(None)
+    db.commit()
+    return _sync_to_response(db, sync)
+
+
+@router.post('/syncs/{sync_id}/run', response_model=ImportRunResponse, status_code=202)
+def run_import_sync(
+    sync_id: str, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+) -> ImportRunResponse:
+    enforce_rate_limit(request)
+    sync = _get_owned_sync(db, sync_id, user)
+    if sync.collection_id:
+        collection = db.get(Collection, sync.collection_id)
+        if collection is not None:
+            _require_collection_control(db, collection, user)
+    return ImportRunResponse.model_validate(_start_sync(db, sync))
+
+
+@router.delete('/syncs/{sync_id}')
+def delete_import_sync(
+    sync_id: str, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+) -> dict[str, str]:
+    """Remove the configuration: no further syncs. Runs keep their history
+    (sync_id goes NULL) and imported documents stay in their space."""
+    enforce_rate_limit(request)
+    sync = _get_owned_sync(db, sync_id, user)
+    if db.scalar(select(ImportRun.id).where(
+        ImportRun.sync_id == sync.id, ImportRun.status.in_([ImportRunStatus.PENDING, ImportRunStatus.RUNNING])
+    ).limit(1)):
+        raise HTTPException(status_code=409, detail='This import is running; cancel it or wait for it to finish')
+    db.execute(update(ImportRun).where(ImportRun.sync_id == sync.id).values(sync_id=None))
+    db.delete(sync)
+    db.commit()
+    return {'status': 'deleted'}
 
 
 @router.post('/runs/{run_id}/missing/{page_id}/withdraw', status_code=202)

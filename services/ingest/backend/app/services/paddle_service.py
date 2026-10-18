@@ -1916,6 +1916,55 @@ def _text_document_to_markdown(source: Path, suffix: str) -> str:
     return '\n'.join(lines).rstrip() + '\n'
 
 
+# PP-OCRv6's recognition models are one shared model for Chinese, English,
+# Japanese and the Latin-script languages (paddleocr 3.7's _PPOCRV6_LANGS):
+# there is no Latin-only v6 model, so its character set includes CJK. On
+# noisy regions of a German/English page (stamps, logos, signatures, low-res
+# glyphs) it occasionally emits a stray ideograph or full-width punctuation.
+# PaddleOCR-VL is multilingual too. Cleaned up after OCR rather than by
+# switching to the older latin_PP-OCRv5_mobile_rec model, which would cost
+# recognition quality on every page to fix a rare artefact.
+_CJK_CHARS_RE = re.compile(r'[぀-ヿ㐀-䶿一-鿿豈-﫿]+')
+_LATIN_LETTER_RE = re.compile(r'[A-Za-zÀ-ɏ]')
+# Full-width ASCII (U+FF01-FF5E) maps 1:1 onto ASCII; plus the CJK
+# punctuation the models emit most often in Latin text.
+_FULLWIDTH_TO_ASCII = {code: code - 0xFEE0 for code in range(0xFF01, 0xFF5F)} | {
+    0x3000: ' ', 0x3001: ',', 0x3002: '.', 0x300C: '"', 0x300D: '"', 0x300E: '"', 0x300F: '"',
+}
+# Above this share of CJK among all letters the document really is (partly)
+# Chinese/Japanese and is left untouched.
+_STRAY_CJK_MAX_SHARE = 0.05
+
+
+def _strip_stray_cjk(markdown: str) -> tuple[str, int]:
+    """Remove stray CJK characters from a predominantly Latin-script OCR
+    result and map full-width punctuation to ASCII. Returns the cleaned
+    markdown and the number of CJK characters removed. The YAML frontmatter
+    (file name, metadata) is never touched, and a document whose CJK share
+    exceeds _STRAY_CJK_MAX_SHARE is returned unchanged."""
+    frontmatter, body = '', markdown
+    if markdown.startswith('---\n'):
+        end = markdown.find('\n---\n', 4)
+        if end != -1:
+            frontmatter, body = markdown[: end + 5], markdown[end + 5 :]
+
+    cjk_count = sum(len(match) for match in _CJK_CHARS_RE.findall(body))
+    latin_count = len(_LATIN_LETTER_RE.findall(body))
+    if latin_count == 0 or cjk_count / (cjk_count + latin_count) > _STRAY_CJK_MAX_SHARE:
+        return markdown, 0
+
+    cleaned_lines = []
+    for line in body.translate(_FULLWIDTH_TO_ASCII).split('\n'):
+        stripped = _CJK_CHARS_RE.sub('', line)
+        if stripped != line:
+            # Collapse the gap a removed character leaves between two words,
+            # keeping leading indentation (lists, code) intact.
+            indent = len(stripped) - len(stripped.lstrip(' '))
+            stripped = stripped[:indent] + re.sub(r' {2,}', ' ', stripped[indent:]).rstrip()
+        cleaned_lines.append(stripped)
+    return frontmatter + '\n'.join(cleaned_lines), cjk_count
+
+
 def convert_to_markdown_with_details(
     input_path: str,
     profile_id: str | None = None,
@@ -2022,6 +2071,7 @@ def convert_to_markdown_with_details(
             profile_label=selected_profile['label'],
             metadata=frontmatter_metadata,
         )
+        markdown, stray_cjk_removed = _strip_stray_cjk(markdown)
         quality_gate = evaluate_document_quality(
             markdown,
             page_structures=page_structures,
@@ -2044,6 +2094,7 @@ def convert_to_markdown_with_details(
             },
             'quality_gate': quality_gate,
             'pdf_chunking': extraction_meta.get('pdf_chunking'),
+            'stray_cjk_removed': stray_cjk_removed,
             'converter': converter,
             **capability,
         }

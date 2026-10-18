@@ -7,7 +7,9 @@ import { useI18n } from '@/i18n/provider';
 type Theme = 'light' | 'dark';
 const STORAGE_KEY = 'weave-ingest-theme';
 
-export function ThemeToggle() {
+/** Icon button by default; with `menuLabel` a full-width profile-menu row
+ * (icon + label, the whole row clickable) aligned with the other entries. */
+export function ThemeToggle({ menuLabel }: { menuLabel?: string } = {}) {
   const { t } = useI18n();
   const [theme, setTheme] = useState<Theme | null>(null);
 
@@ -26,6 +28,21 @@ export function ThemeToggle() {
 
   if (!theme) return null;
   const dark = theme === 'dark';
+  const icon = dark ? <Sun className="h-4 w-4" aria-hidden="true" /> : <Moon className="h-4 w-4" aria-hidden="true" />;
+  if (menuLabel) {
+    return (
+      <button
+        type="button"
+        role="menuitem"
+        title={dark ? t('portal.themeToggle.light') : t('portal.themeToggle.dark')}
+        onClick={() => setTheme(dark ? 'light' : 'dark')}
+        className="flex min-h-10 w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13.5px] font-medium text-[var(--ink-2)] hover:bg-[var(--hover)] hover:text-[var(--ink)] [&>svg]:text-[var(--muted)]"
+      >
+        {icon}
+        {menuLabel}
+      </button>
+    );
+  }
   return (
     <button
       type="button"
@@ -34,7 +51,7 @@ export function ThemeToggle() {
       onClick={() => setTheme(dark ? 'light' : 'dark')}
       className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
     >
-      {dark ? <Sun className="h-4 w-4" aria-hidden="true" /> : <Moon className="h-4 w-4" aria-hidden="true" />}
+      {icon}
     </button>
   );
 }

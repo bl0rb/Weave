@@ -1,0 +1,177 @@
+[
+  {
+    "file": "01-login.png",
+    "label": "login",
+    "url": "/login"
+  },
+  {
+    "file": "02-portal-uebersicht.png",
+    "label": "portal Übersicht",
+    "url": "/"
+  },
+  {
+    "file": "03-portal-aufgaben.png",
+    "label": "portal Aufgaben",
+    "url": "/aufgaben"
+  },
+  {
+    "file": "04-portal-wissensbereiche.png",
+    "label": "portal Wissensbereiche",
+    "url": "/knowledge"
+  },
+  {
+    "file": "05-portal-dokumente.png",
+    "label": "portal Dokumente",
+    "url": "/documents"
+  },
+  {
+    "file": "06-admin-uebersicht.png",
+    "label": "admin Übersicht",
+    "url": "/admin"
+  },
+  {
+    "file": "07-admin-konten-zugriffe-personen.png",
+    "label": "admin Konten & Zugriffe - Personen",
+    "url": "/admin/konten?bereich=personen"
+  },
+  {
+    "file": "08-admin-konten-zugriffe-gruppen.png",
+    "label": "admin Konten & Zugriffe - Gruppen",
+    "url": "/admin/konten?bereich=teams"
+  },
+  {
+    "file": "09-admin-konten-zugriffe-anmeldung.png",
+    "label": "admin Konten & Zugriffe - Anmeldung",
+    "url": "/admin/konten?bereich=anmeldung"
+  },
+  {
+    "file": "10-admin-konten-zugriffe-wissensbereiche-zugriff.png",
+    "label": "admin Konten & Zugriffe - Wissensbereiche & Zugriff",
+    "url": "/admin/konten?bereich=zugriff"
+  },
+  {
+    "file": "11-admin-bots-ki-bots.png",
+    "label": "admin Bots & KI - Bots",
+    "url": "/admin/ki?bereich=bots"
+  },
+  {
+    "file": "12-admin-bots-ki-chat-llm.png",
+    "label": "admin Bots & KI - Chat & LLM",
+    "url": "/admin/ki?bereich=chat-llm"
+  },
+  {
+    "file": "13-admin-bots-ki-suche-modelle.png",
+    "label": "admin Bots & KI - Suche & Modelle",
+    "url": "/admin/ki?bereich=suche-modelle"
+  },
+  {
+    "file": "14-admin-verarbeitung-quellen-dokument-ki.png",
+    "label": "admin Verarbeitung & Quellen - Dokument-KI",
+    "url": "/admin/verarbeitung?bereich=dokument-ki"
+  },
+  {
+    "file": "15-admin-verarbeitung-quellen-ocr.png",
+    "label": "admin Verarbeitung & Quellen - OCR",
+    "url": "/admin/verarbeitung?bereich=ocr"
+  },
+  {
+    "file": "16-admin-verarbeitung-quellen-worker-logs.png",
+    "label": "admin Verarbeitung & Quellen - Worker-Logs",
+    "url": "/admin/verarbeitung?bereich=worker-logs"
+  },
+  {
+    "file": "17-admin-betrieb-sicherheit-sicherung-wiederherstellung.png",
+    "label": "admin Betrieb & Sicherheit - Sicherung & Wiederherstellung",
+    "url": "/admin/betrieb?bereich=sicherung"
+  },
+  {
+    "file": "18-admin-betrieb-sicherheit-technische-identitaeten.png",
+    "label": "admin Betrieb & Sicherheit - Technische Identitäten",
+    "url": "/admin/betrieb?bereich=identitaeten"
+  },
+  {
+    "file": "19-admin-betrieb-sicherheit-werkzeuge.png",
+    "label": "admin Betrieb & Sicherheit - Werkzeuge",
+    "url": "/admin/betrieb?bereich=werkzeuge"
+  },
+  {
+    "file": "20-admin-systemstatus.png",
+    "label": "admin Systemstatus",
+    "url": "/admin/status"
+  },
+  {
+    "file": "21-portal-aufgaben-pruefen.png",
+    "label": "portal aufgaben - pruefen",
+    "url": "/reviews"
+  },
+  {
+    "file": "22-portal-aufgaben-verarbeitung.png",
+    "label": "portal aufgaben - verarbeitung",
+    "url": "/processing"
+  },
+  {
+    "file": "23-portal-dokumente-erweitert.png",
+    "label": "portal dokumente - erweitert",
+    "url": "/jobs"
+  },
+  {
+    "file": "24-portal-quelle-hinzufuegen.png",
+    "label": "portal quelle hinzufuegen",
+    "url": "/sources/new"
+  },
+  {
+    "file": "25-profilmenue-offen.png",
+    "label": "profilmenue offen",
+    "url": "/"
+  },
+  {
+    "file": "26-profil-verbindungen-confluence.png",
+    "label": "profil Verbindungen - Confluence",
+    "url": "/connections"
+  },
+  {
+    "file": "27-profil-verbindungen-webhooks.png",
+    "label": "profil Verbindungen - Webhooks",
+    "url": "/connections"
+  },
+  {
+    "file": "28-profil-verbindungen-vl-modelle.png",
+    "label": "profil Verbindungen - VL-Modelle",
+    "url": "/connections"
+  },
+  {
+    "file": "29-profil-api-zugaenge.png",
+    "label": "profil API-Zugänge",
+    "url": "/settings"
+  },
+  {
+    "file": "30-hilfe-und-orientierung-offen.png",
+    "label": "hilfe und orientierung offen",
+    "url": "/"
+  },
+  {
+    "file": "31-chat-login.png",
+    "label": "chat login",
+    "url": "http://localhost:3001"
+  },
+  {
+    "file": "32-chat-startseite.png",
+    "label": "chat startseite",
+    "url": "http://localhost:3001"
+  },
+  {
+    "file": "33-chat-api-zugang.png",
+    "label": "chat api zugang",
+    "url": "http://localhost:3001"
+  },
+  {
+    "file": "34-chat-bereichsfilter.png",
+    "label": "chat bereichsfilter",
+    "url": "http://localhost:3001"
+  },
+  {
+    "file": "35-import-bearbeiten.png",
+    "label": "import bearbeiten",
+    "url": "/imports/new?sync=…"
+  }
+]

@@ -1,4 +1,5 @@
 import { DocumentBrowser } from '@/components/document-browser';
+import { DocumentTabs } from '@/components/portal/page-tabs';
 import { getTranslator } from '@/i18n/server';
 
 export default async function JobsPage({
@@ -17,6 +18,7 @@ export default async function JobsPage({
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-3xl font-semibold text-slate-950">{t('portal.chrome.breadcrumb.jobs')}</h1>
         </div>
+        <DocumentTabs />
         <DocumentBrowser
           // initialFolder/initialType only feed the state initializers; the
           // key remounts the browser when either ?folder or ?type deep link

@@ -14,7 +14,7 @@ vi.mock('@/lib/auth-context', () => ({ useAuth: () => ({ user: { username: 'Ada'
 vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(''),
   useRouter: () => ({ replace: vi.fn() }),
-  usePathname: () => '/admin/menschen',
+  usePathname: () => '/admin/konten',
 }));
 
 const api = vi.mocked(apiJson);

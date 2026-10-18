@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { ArrowRight, CheckCheck, Clock3, FileUp, Globe, Plus } from 'lucide-react';
 import { apiJson } from '@/lib/api';
 import { Button, buttonVariants } from '@/components/ui/button';
-import { jsonBody, portalError, type KnowledgeSpace } from '@/lib/portal';
+import { jsonBody, loadWritableSpaces, portalError, type KnowledgeSpace } from '@/lib/portal';
 import { accessSummary } from '@/lib/access-summary';
 import type { ImportSource, ImportRun } from '@/lib/imports';
 import { useImportSourceTest } from '@/lib/use-import-source-test';
@@ -17,7 +17,7 @@ import { EmptyState, Notice, PortalPage, RequiredMark } from './shared';
 type UploadResult = { name: string; id?: string; ok: boolean; message: string };
 
 const SOURCE_DRAFT_KEY = 'weave-source-form-draft';
-type SourceDraft = { collectionId: string; kind: 'files' | 'confluence'; sourceId: string; pageUrl: string; automatic: boolean; confirmedAccess: boolean; profileId: string };
+type SourceDraft = { collectionId: string; kind: 'files' | 'confluence'; sourceId: string; scopeType?: 'page' | 'space'; pageUrl: string; automatic: boolean; confirmedAccess: boolean; profileId: string };
 
 /** `initialKind`/`initialSourceId` come from /sources/new?kind=confluence&source=… (e.g. right after the
  * Confluence setup in the new knowledge space flow) and win over a saved draft. */
@@ -51,6 +51,11 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
   });
   const [profileError, setProfileError] = useState('');
   const selectedProfile = profiles?.find(profile => profile.value === profileId);
+  const [scopeType, setScopeType] = useState<'page' | 'space'>(() => {
+    if (typeof window === 'undefined') return 'page';
+    try { return (JSON.parse(sessionStorage.getItem(SOURCE_DRAFT_KEY) || 'null') as SourceDraft | null)?.scopeType || 'page'; }
+    catch { return 'page'; }
+  });
   const [pageUrl, setPageUrl] = useState(() => {
     if (typeof window === 'undefined') return '';
     try { return (JSON.parse(sessionStorage.getItem(SOURCE_DRAFT_KEY) || 'null') as SourceDraft | null)?.pageUrl || ''; }
@@ -96,8 +101,8 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
   const completed = !saving && (results.length > 0 || run !== null);
   const completedHeading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
-    sessionStorage.setItem(SOURCE_DRAFT_KEY, JSON.stringify({ collectionId, kind, sourceId, pageUrl, automatic, confirmedAccess, profileId } satisfies SourceDraft));
-  }, [collectionId, kind, sourceId, pageUrl, automatic, confirmedAccess, profileId]);
+    sessionStorage.setItem(SOURCE_DRAFT_KEY, JSON.stringify({ collectionId, kind, sourceId, scopeType, pageUrl, automatic, confirmedAccess, profileId } satisfies SourceDraft));
+  }, [collectionId, kind, sourceId, scopeType, pageUrl, automatic, confirmedAccess, profileId]);
   useEffect(() => { if (completed) completedHeading.current?.focus(); }, [completed]);
   function addMore() {
     setResults([]); setRun(null); setFiles([]); setError(''); setSourceError(''); setProgress('');
@@ -105,8 +110,7 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
   const load = useCallback(async () => {
     setError('');
     try {
-      const data = await apiJson<{ items: KnowledgeSpace[] }>('/api/v1/collections');
-      setSpaces(data.items.filter(space => space.can_upload ?? space.can_manage));
+      setSpaces(await loadWritableSpaces());
     } catch (err) { setError(portalError(err, locale)); }
   }, [locale]);
   const loadSources = useCallback(async () => {
@@ -159,12 +163,14 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
         }
         setFiles([]);
       } else {
-        const created = await apiJson<ImportRun>('/api/v1/import/runs', jsonBody({ source_id: sourceId, scope: { type: 'page', value: pageUrl.trim() }, options: { collection_id: collectionId, include_attachments: true, ocr_attachments: true, ocr_profile_id: selectedProfile.value } }));
+        // The import and its daily auto-sync are saved together as one configuration.
+        const created = await apiJson<ImportRun>('/api/v1/import/runs', jsonBody({
+          source_id: sourceId,
+          scope: { type: scopeType, value: pageUrl.trim() },
+          options: { collection_id: collectionId, include_attachments: true, ocr_attachments: true, ocr_profile_id: selectedProfile.value },
+          sync: { enabled: automatic, interval_seconds: 86400 },
+        }));
         setRun(created);
-        if (automatic) {
-          try { await apiJson(`/api/v1/import/sources/${encodeURIComponent(sourceId)}`, { ...jsonBody({ refresh_enabled: true, refresh_interval_seconds: 86400 }), method: 'PATCH' }); }
-          catch { setError(t('portal.sourceForm.autoRefreshFailed')); }
-        }
       }
       sessionStorage.removeItem(SOURCE_DRAFT_KEY);
     } catch (err) { setError(portalError(err, locale)); }
@@ -185,7 +191,13 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
           <label>{t('portal.sourceForm.connectionLabel')}<RequiredMark /><select required value={sourceId} onChange={event => { setSourceId(event.target.value); setAutomatic(false); setTestMessage(''); }}><option value="">{t('portal.sourceForm.chooseConnection')}</option>{sources.map(source => <option key={source.id} value={source.id}>{source.name}</option>)}</select></label>
           {untested && <p className="portal-field-hint" role="status">{t('portal.sourceForm.untestedHint')} <button type="button" className="portal-inline-link" disabled={testingId !== null || testCooldown > 0} onClick={() => void testSelected()}>{testingId !== null ? t('portal.connections.confluence.testing') : testCooldown > 0 ? t('portal.connections.confluence.testWithCooldown', { seconds: testCooldown }) : t('portal.connections.confluence.test')}</button>{testMessage && <> {testMessage}</>}</p>}
           <div className="flex flex-wrap gap-x-6"><button type="button" className="portal-inline-link" onClick={() => setSetupOpen(true)}><Plus size={14} />{t('portal.sourceForm.setupConnectionButton')}</button><Link className="portal-inline-link" href="/connections">{t('portal.sourceForm.setupConnectionLink')} <ArrowRight size={14} /></Link></div>
-          <label>{t('portal.sourceForm.pageLabel')}<RequiredMark /><input required type="url" value={pageUrl} onChange={event => setPageUrl(event.target.value)} placeholder="https://confluence.example.com/..." /></label><p className="portal-field-hint">{t('portal.sourceForm.subpagesHint')}</p>
+          <div className="portal-filter-row" role="group" aria-label={t('portal.sourceForm.scopeLabel')}>
+            <button type="button" aria-pressed={scopeType === 'page'} onClick={() => setScopeType('page')}>{t('portal.sourceForm.scopePage')}</button>
+            <button type="button" aria-pressed={scopeType === 'space'} onClick={() => setScopeType('space')}>{t('portal.sourceForm.scopeSpace')}</button>
+          </div>
+          {scopeType === 'page'
+            ? <><label>{t('portal.sourceForm.pageLabel')}<RequiredMark /><input required type="url" value={pageUrl} onChange={event => setPageUrl(event.target.value)} placeholder="https://confluence.example.com/..." /></label><p className="portal-field-hint">{t('portal.sourceForm.subpagesHint')}</p></>
+            : <><label>{t('portal.sourceForm.spaceLabel')}<RequiredMark /><input required value={pageUrl} onChange={event => setPageUrl(event.target.value)} placeholder="DOCS · https://confluence.example.com/spaces/DOCS" /></label><p className="portal-field-hint">{t('portal.sourceForm.spaceHint')}</p></>}
           <label className="portal-choice"><input type="checkbox" checked={automatic} onChange={event => setAutomatic(event.target.checked)} />{t('portal.sourceForm.autoRefreshLabel')}</label><p className="portal-field-hint">{t('portal.sourceForm.autoRefreshHint')}</p>
           <label className="portal-choice portal-access-confirm"><input required type="checkbox" checked={confirmedAccess} onChange={event => setConfirmedAccess(event.target.checked)} />{t('portal.sourceForm.confirmAccessLabel')}</label>
         </div>}

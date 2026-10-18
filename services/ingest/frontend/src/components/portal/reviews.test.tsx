@@ -8,7 +8,7 @@ import { useVisiblePolling } from '@/lib/data-cache';
 const auth = vi.hoisted(() => ({ user: { role: 'admin' as 'admin' | 'user' } }));
 const push = vi.fn();
 const refresh = vi.fn();
-vi.mock('next/navigation', () => ({ useRouter: () => ({ push, refresh }) }));
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push, refresh }), usePathname: () => '/reviews' }));
 vi.mock('@/lib/api', async importOriginal => ({ ...await importOriginal<typeof import('@/lib/api')>(), apiFetch: vi.fn(), apiJson: vi.fn() }));
 vi.mock('@/lib/data-cache', () => ({ useVisiblePolling: vi.fn() }));
 vi.mock('@/lib/auth-context', () => ({ useAuth: () => auth }));

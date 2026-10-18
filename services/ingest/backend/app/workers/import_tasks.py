@@ -41,6 +41,7 @@ from app.models.models import (
     ImportRun,
     ImportRunStatus,
     ImportSource,
+    ImportSync,
     Job,
     JobArtifact,
     JobStatus,
@@ -353,26 +354,26 @@ def _commit_owned(db, run_id: str, claimed_seq: int) -> None:
 
 
 def _record_refresh_outcome(db, run: ImportRun, *, error: str | None) -> None:
-    """Confluence-refresh bookkeeping (spec AUFGABE 3): last_refresh_at /
-    last_refresh_error on ImportSource, only for runs started by the
-    refresh scheduler (options['is_refresh'] -- see
-    app/workers/refresh_tasks.py). Success clears the error and advances
-    the timestamp; failure only records the error text and leaves
-    last_refresh_at untouched, so the very next tick retries a possibly-
-    transient failure instead of waiting out a full interval. Cancellation
-    is neither -- deliberately left untouched, same as any other run that
-    never reaches finished/failed."""
-    options = run.options if isinstance(run.options, dict) else {}
-    if not options.get('is_refresh') or not run.source_id:
+    """Sync bookkeeping on the run's ImportSync (see refresh_tasks.py):
+    any run of a sync -- the first import, a scheduled refresh or a manual
+    "sync now" -- counts. Success clears the error, advances last_success_at
+    (the anchor of the next scheduled run) and refreshes the display title;
+    failure only records the error text and leaves last_success_at
+    untouched, so the very next tick retries a possibly-transient failure
+    instead of waiting out a full interval. Cancellation is neither --
+    deliberately left untouched."""
+    if not run.sync_id:
         return
-    source = db.get(ImportSource, run.source_id)
-    if source is None:
+    sync = db.get(ImportSync, run.sync_id)
+    if sync is None:
         return
     if error is None:
-        source.last_refresh_at = datetime.now(timezone.utc)
-        source.last_refresh_error = None
+        sync.last_success_at = datetime.now(timezone.utc)
+        sync.last_error = None
+        if run.root_page_title:
+            sync.root_page_title = run.root_page_title
     else:
-        source.last_refresh_error = _truncate(error, _ERROR_MESSAGE_MAX_CHARS)
+        sync.last_error = _truncate(error, _ERROR_MESSAGE_MAX_CHARS)
 
 
 def _fail_run(db, run: ImportRun, state: _RunState, message: str, claimed_seq: int) -> None:

@@ -28,6 +28,7 @@ from app.models.models import (
     ImportRun,
     ImportRunStatus,
     ImportSource,
+    ImportSync,
     Job,
     JobStatus,
 )
@@ -131,13 +132,36 @@ def _make_source(
         db.close()
 
 
+def _ensure_sync(db, source_id: str, scope_value: str, collection_id: str | None) -> ImportSync:
+    """The import configuration of a page scope. Its schedule defaults to
+    the source's legacy refresh_* columns, so the scenarios below read as
+    before: "a source with auto-sync on and a finished run" = an enabled
+    sync with that scope."""
+    sync = db.scalar(select(ImportSync).where(
+        ImportSync.source_id == source_id, ImportSync.scope_type == 'page', ImportSync.scope_value == scope_value,
+        ImportSync.collection_id.is_(None) if collection_id is None else ImportSync.collection_id == collection_id,
+    ))
+    if sync is None:
+        source = db.get(ImportSource, source_id)
+        sync = ImportSync(
+            source_id=source_id, owner_id=source.owner_id, scope_type='page', scope_value=scope_value,
+            collection_id=collection_id,
+            options={'max_pages': 50, 'max_depth': 10, 'include_attachments': True, 'ocr_attachments': False,
+                     'ocr_profile_id': None, 'folder': '', 'subfolder': '', 'tags': [], 'email': ''},
+            enabled=source.refresh_enabled, interval_seconds=source.refresh_interval_seconds,
+            last_success_at=source.last_refresh_at,
+        )
+        db.add(sync)
+        db.flush()
+    return sync
+
+
 def _make_finished_run(owner_id: str, source_id: str, *, scope_value: str = 'P1', collection_id: str | None = None) -> str:
-    """The 'last successful run' _start_refresh_run copies scope/options
-    from -- a refresh has nothing to repeat without one (see its
-    docstring)."""
+    """A finished run of the page scope's sync (created on first use)."""
     db = _db()
     try:
         run = ImportRun(
+            sync_id=_ensure_sync(db, source_id, scope_value, collection_id).id,
             source_id=source_id,
             owner_id=owner_id,
             kind='confluence',
@@ -166,6 +190,7 @@ def _make_refresh_run(owner_id: str, source_id: str, *, scope_value: str, collec
     db = _db()
     try:
         run = ImportRun(
+            sync_id=_ensure_sync(db, source_id, scope_value, collection_id).id,
             source_id=source_id,
             owner_id=owner_id,
             kind='confluence',
@@ -559,6 +584,7 @@ def test_dispatch_reaps_a_stale_run_and_starts_the_refresh(sent) -> None:
     db = _db()
     try:
         stale = ImportRun(
+            sync_id=_ensure_sync(db, source_id, 'P1', None).id,
             source_id=source_id, owner_id=owner.id, kind='confluence', status=ImportRunStatus.RUNNING,
             scope_type='page', scope_value='P1', options={}, state={'frontier': [], 'visited': {}, 'errors': []},
             updated_at=now - timedelta(hours=2),
@@ -578,8 +604,8 @@ def test_dispatch_reaps_a_stale_run_and_starts_the_refresh(sent) -> None:
     assert reaped.error_message == 'worker lost; run stalled'
     db = _db()
     try:
-        source = db.get(ImportSource, source_id)
-        assert source.last_refresh_error and 'stalled' in source.last_refresh_error
+        sync = db.scalar(select(ImportSync).where(ImportSync.source_id == source_id))
+        assert sync.last_error and 'stalled' in sync.last_error
     finally:
         db.close()
 
@@ -984,9 +1010,10 @@ def test_deactivated_owner_gets_no_scheduled_or_manual_refresh(sent) -> None:
         runs = db.scalars(select(ImportRun).where(ImportRun.source_id == source_id)).all()
         assert [run.status for run in runs] == [ImportRunStatus.FINISHED]
         # Skipped, not failed on every tick: reactivation resumes it as it was.
-        assert db.get(ImportSource, source_id).last_refresh_error is None
+        sync = db.scalar(select(ImportSync).where(ImportSync.source_id == source_id))
+        assert sync.last_error is None
         with pytest.raises(ValueError, match='deactivated'):
-            refresh_tasks._start_refresh_run(db, db.get(ImportSource, source_id))
+            refresh_tasks.start_sync_run(db, sync)
 
 
 def test_deactivated_owner_stops_an_already_queued_refresh(sent, client_holder) -> None:

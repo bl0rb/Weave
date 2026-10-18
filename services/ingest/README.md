@@ -29,8 +29,7 @@ Managing OCR and document normalization at scale gets messy fast. Weave Ingest g
 
 - AI-first Markdown output with rich YAML frontmatter (source, hash, version, uploader, team, engine)
 - **Document versioning built in** — re-uploading a changed file becomes version N+1 with full history; byte-identical re-uploads are detected and skipped
-- Multiple OCR and vision profiles (fast OCR, layout-aware, VL, OpenAI-compatible) — **VL connections work as normal processing profiles**, not just benchmark participants: any admin-configured vision-language endpoint shows up as `VL: <name>` in the File Task wizard and every re-run picker
-- **VL Benchmark** — run one document against up to 6 vision-language models plus an OCR baseline and compare the results side by side
+- Multiple OCR and vision profiles (fast OCR, layout-aware, VL, OpenAI-compatible) — **VL connections work as normal processing profiles**: any admin-configured vision-language endpoint shows up as `VL: <name>` in the File Task wizard and every re-run picker
 - **Personal API tokens** — programmatic access via `Authorization: Bearer`, no cookie handling
 - **Mail ingestion** — POST a raw email and Weave Ingest parses it, renders the body
   to Markdown, and OCRs every attachment as its own job; idempotent by content hash
@@ -172,7 +171,7 @@ Since chart 1.1.0 a `SECRET_KEY` is required — the chart refuses to render wit
 - A/B/C document quality gate per job
 - Versioned markdown editing on the job detail page, reachable straight from a jobs-table row action
 - **JSON export per job** — metadata, uploader, processing details, and markdown in one file
-- **VL Benchmark** with per-variant metrics and side-by-side markdown comparison; the same VL connections double as selectable processing profiles for regular uploads
+- VL connections double as selectable processing profiles for regular uploads
 - **Personal API tokens** for programmatic access (created on the Settings page, shown once, stored hashed)
 - **Individual email uploads** — upload `.eml` files in the knowledge portal; body and supported attachments form one document, reviewed and released like other files. The separate Mail API has been removed.
 - **Confluence import** with hierarchy-aware frontmatter, an opt-in hierarchy-as-tags toggle, and an "Edit & run again" action that reopens a past run's settings
@@ -229,17 +228,9 @@ Upload individual `.eml` files through `/sources/new`. Supported attachments are
 
 Confluence import runs, each with a status and page count. Every imported page's frontmatter carries `space`, `confluence_path` (ancestor titles down to its parent), `parent_title`, and `depth`, plus a `> Confluence: A › B › C` breadcrumb line at the top of the body — so RAG chunking keeps hierarchical context beyond the first chunk. Pages that are essentially link lists are flagged `is_navigation: true`; parents get `children_titles`. An opt-in **Use hierarchy as tags** toggle on the import wizard turns breadcrumb parts into job tags so the Jobs list can filter by section. Any run can be reopened via **Edit & run again**, which prefills the wizard with that run's connection, scope, and options and starts a fresh run — history and page-version chaining stay intact.
 
-### VL Benchmark (`/benchmark`)
-
-Run one document against up to 6 admin-configured VL connections plus optionally one OCR profile (2–7 variants per run) — the same document through several vision-language models, compared side by side.
-
-![Benchmark report](../../docs/screenshots/user-wiki/14-quality-benchmark.png)
-
-The report compares duration, pages, output size, quality grade, and errors per variant — with Best result and Fastest badges, a tabbed markdown preview, links to each variant's job, and a JSON export. Variants that silently degraded to plain-text fallback are never crowned fastest/best.
-
 ### Connections (`/connections`)
 
-Every user configures the external systems their account talks to, in two groups of tabs: **External services** (Confluence — create, test, rename, delete import sources and their auto-refresh interval; generic signed export webhooks for explicitly selected jobs/import runs) and **AI models** (**VL Models** — administrators get the full CRUD panel, everyone else a read-only list of the enabled connections so they can see what a File Task or benchmark can run against). These export webhooks are optional integration adapters; they are not the n8n chat-agent path.
+Every user configures the external systems their account talks to, in two groups of tabs: **External services** (Confluence — create, test, rename, delete connections, and per connection any number of imports with their target knowledge space, auto-sync interval, last run, "sync now", edit and remove; generic signed export webhooks for explicitly selected jobs/import runs) and **AI models** (**VL Models** — administrators get the full CRUD panel, everyone else a read-only list of the enabled connections so they can see what a processing profile can run against). These export webhooks are optional integration adapters; they are not the n8n chat-agent path.
 
 **Portal publication is explicit.** `document.processed` acknowledges authenticated processing with `awaiting_release`; Weave-Knowledge indexes only the immutable, owner/admin-approved [`document.released`](../../contracts/events/document.released.md) snapshot. Delivery status is not index completion.
 
@@ -307,7 +298,6 @@ Common endpoints:
 - `GET /api/v1/jobs/{id}/preview` / `/download` — markdown result
 - `GET /api/v1/jobs/{id}/export.json` — structured JSON export (metadata + markdown)
 - `PUT /api/v1/jobs/{id}/save` — edit markdown (creates an edit version)
-- `POST /api/v1/benchmarks` — start a benchmark run; `GET /api/v1/benchmarks/{id}/report` for the comparison
 - `GET /api/v1/vl-connections` — enabled VL connections (id, name, model)
 - `PATCH /api/v1/auth/me` — set or clear the caller's own UI language preference (`{"locale": "de" | "en" | null}`, 422 for any other value); `GET /api/v1/auth/me` and the admin user endpoints return the same `locale` field
 - `POST /api/v1/auth/tokens` / `GET` / `DELETE /api/v1/auth/tokens/{id}` — API token management (session only)

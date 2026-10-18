@@ -141,7 +141,7 @@ function Overview() {
     {
       key: 'anmeldung',
       label: t('admin.overview.tile.signIn.label'),
-      href: '/admin/menschen?bereich=anmeldung',
+      href: '/admin/konten?bereich=anmeldung',
       value: !providers.data
         ? providers.loading
           ? '…'
@@ -155,7 +155,7 @@ function Overview() {
     {
       key: 'modelle',
       label: t('admin.overview.tile.models.label'),
-      href: '/admin/wissen?bereich=chat-llm',
+      href: '/admin/ki?bereich=chat-llm',
       value: !chatProvider.data
         ? chatProvider.loading
           ? '…'
@@ -217,7 +217,7 @@ function Overview() {
       id: 'chat-provider',
       title: t('admin.overview.attention.chatProvider.title'),
       detail: t('admin.overview.attention.chatProvider.detail'),
-      href: '/admin/wissen?bereich=chat-llm',
+      href: '/admin/ki?bereich=chat-llm',
       label: t('admin.overview.attention.chatProvider.cta'),
     });
   }

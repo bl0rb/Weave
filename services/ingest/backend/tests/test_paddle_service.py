@@ -1534,3 +1534,29 @@ def test_eml_conversion_includes_standard_frontmatter(tmp_path, monkeypatch):
     assert 'document_version: 1' in frontmatter
     assert 'content_sha256: abc123def456' in frontmatter
     assert 'processed_at:' in frontmatter
+
+
+# --- Stray CJK characters from the multilingual PP-OCRv6 / VL models ---------
+
+def test_strip_stray_cjk_removes_ideographs_from_latin_text():
+    markdown = (
+        '---\ntitle: 报告.pdf\n---\n'
+        '# Rechnung 丁\n\nDer Betrag：  120 EUR 的 wird fällig。\n  - Punkt eins\n'
+    )
+    cleaned, removed = paddle_service._strip_stray_cjk(markdown)
+    assert removed == 2
+    assert cleaned == (
+        '---\ntitle: 报告.pdf\n---\n'  # frontmatter untouched
+        '# Rechnung\n\nDer Betrag: 120 EUR wird fällig.\n  - Punkt eins\n'
+    )
+
+
+def test_strip_stray_cjk_keeps_documents_that_are_really_chinese():
+    markdown = '# 年度报告\n\n本公司二零二五年的收入增长了百分之十。Revenue grew 10%.\n'
+    cleaned, removed = paddle_service._strip_stray_cjk(markdown)
+    assert (cleaned, removed) == (markdown, 0)
+
+
+def test_strip_stray_cjk_is_a_noop_for_clean_text():
+    markdown = '---\ntitle: a\n---\n# Überschrift\n\nNormaler Text mit Umlauten: äöüß.\n'
+    assert paddle_service._strip_stray_cjk(markdown) == (markdown, 0)

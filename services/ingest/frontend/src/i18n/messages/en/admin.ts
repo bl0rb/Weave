@@ -60,7 +60,7 @@ export const admin: Record<keyof typeof de, string> = {
   'overview.attention.deliveryFailed.title': '{count} share failed to deliver|{count} shares failed to deliver',
   'overview.attention.deliveryFailed.detail': 'Rebuild the knowledge index from the shares.',
 
-  // --- Accounts & Access (/admin/menschen) ---
+  // --- Accounts & Access (/admin/konten) ---
   'people.pageTitle': 'Accounts & Access',
   'people.pageDescription': 'Who uses Weave, and which knowledge is shared with whom in chat.',
   'people.tab.people': 'People',
@@ -68,7 +68,7 @@ export const admin: Record<keyof typeof de, string> = {
   'people.tab.signIn': 'Sign-in',
   'people.tab.access': 'Knowledge Spaces & Access',
 
-  // --- Bots & AI (/admin/wissen) ---
+  // --- Bots & AI (/admin/ki) ---
   'knowledge.pageTitle': 'Bots & AI',
   'knowledge.pageDescription': 'How Weave finds matching passages and turns them into answers.',
   'knowledge.tab.bots': 'Bots',
@@ -81,12 +81,6 @@ export const admin: Record<keyof typeof de, string> = {
   'processing.tab.documentAi': 'Document AI',
   'processing.tab.ocr': 'OCR',
   'processing.tab.workerLogs': 'Worker Logs',
-  'processing.moreTools': 'More tools:',
-  'processing.tool.confluenceImports': 'Confluence Imports',
-  'processing.tool.mailImport': 'Email Import',
-  'processing.tool.benchmark': 'Compare Quality',
-  'processing.tool.connections': 'Connections',
-  'processing.tool.search': 'Search',
 
   // --- Operations & Security (/admin/betrieb) ---
   'operations.pageTitle': 'Operations & Security',
@@ -125,18 +119,6 @@ export const admin: Record<keyof typeof de, string> = {
   'operations.tab.backup': 'Backup & Restore',
   'operations.tab.identities': 'Technical Identities',
   'operations.tab.tools': 'Tools',
-  'operations.tools.sectionTitle': 'Administration Tools',
-  'operations.tools.sectionDescription': 'Check connections, compare processing profiles, and inspect individual jobs.',
-  'operations.tools.connections.title': 'Connections',
-  'operations.tools.connections.description': 'Set up and check Confluence and webhooks.',
-  'operations.tools.benchmark.title': 'Compare Quality',
-  'operations.tools.benchmark.description': 'Compare OCR and vision profiles using the same documents.',
-  'operations.tools.jobs.title': 'Job Management',
-  'operations.tools.jobs.description': 'All visible jobs, technical details, and retries.',
-  'operations.tools.imports.title': 'Confluence Imports',
-  'operations.tools.imports.description': 'Import progress, sources, and errors in detail.',
-  'operations.tools.processNew.title': 'Test Processing',
-  'operations.tools.processNew.description': 'Process files with advanced OCR settings.',
 
   // === AGENT B: people & access tabs — users, teams, providers, identities ===
   // --- Users (users-tab.tsx) ---

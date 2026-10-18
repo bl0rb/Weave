@@ -14,6 +14,7 @@ import { useI18n } from '@/i18n/provider';
 import type { MessageKey } from '@/i18n/messages';
 import { DEFAULT_LOCALE, INTL_LOCALE, type Locale } from '@/i18n/config';
 import { EmptyState, Notice, PortalPage, QualityGradeLegend } from './shared';
+import { TaskTabs } from './page-tabs';
 
 type T = (key: MessageKey, vars?: Record<string, string | number>) => string;
 
@@ -233,6 +234,7 @@ export function ProcessingActivity() {
       title={t('portal.chrome.breadcrumb.processing')}
       description={t('portal.activity.pageDescription')}
       eyebrow={t('portal.activity.eyebrow')}
+      tabs={<TaskTabs />}
       actions={<Link className={buttonVariants()} href="/sources/new">{t('portal.chrome.addSource')} <ArrowRight size={16} /></Link>}
     >
       <section className="portal-panel" aria-labelledby="activity-status-title">
