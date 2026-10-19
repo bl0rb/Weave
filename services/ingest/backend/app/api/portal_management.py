@@ -48,7 +48,7 @@ def _reviewable_job_expression(quality_grade, quality_recommendation):
     """
     return and_(
         Job.status == JobStatus.FINISHED,
-        func.length(func.coalesce(Job.result_markdown, '')) > 0,
+        Job.markdown_nonempty(),
         Job.password_hash.is_(None),
         or_(Job.import_run_id.is_(None), ImportRun.status == ImportRunStatus.FINISHED),
         DocumentRelease.id.is_(None),

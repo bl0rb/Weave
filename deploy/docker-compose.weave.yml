@@ -293,6 +293,14 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required — it encrypts sessions and stored credentials}
       SERVICE_NAME: ${SERVICE_NAME:-ingest-worker}
+      OBJECT_STORAGE_BACKEND: ${OBJECT_STORAGE_BACKEND:-db}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      S3_REGION: ${S3_REGION:-}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_KEY_PREFIX: ${S3_KEY_PREFIX:-weave-ingest/}
+      S3_ADDRESSING_STYLE: ${S3_ADDRESSING_STYLE:-auto}
       PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
       CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:3000"]}
       # --- Identity provider for the rest of the platform (OPTIONAL).
@@ -393,6 +401,14 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required — it encrypts sessions and stored credentials}
       SERVICE_NAME: ${SERVICE_NAME:-ingest-worker}
+      OBJECT_STORAGE_BACKEND: ${OBJECT_STORAGE_BACKEND:-db}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      S3_REGION: ${S3_REGION:-}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_KEY_PREFIX: ${S3_KEY_PREFIX:-weave-ingest/}
+      S3_ADDRESSING_STYLE: ${S3_ADDRESSING_STYLE:-auto}
       # Container reads CELERY_WORKER_CONCURRENCY (worker.Dockerfile's CMD
       # default); the deploy/.env override is named INGEST_WORKER_CONCURRENCY
       # instead so it cannot collide with weave-knowledge-worker's own

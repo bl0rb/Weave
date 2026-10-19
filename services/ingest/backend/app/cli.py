@@ -4,6 +4,12 @@ Run from `backend/` as:
 
     python -m app.cli backup export --out FILE
     python -m app.cli backup import --file FILE --admin-username NAME [--force]
+    python -m app.cli storage status
+    python -m app.cli storage migrate --to {db,s3} [--batch-size N]
+    python -m app.cli storage sweep [--min-age-seconds N]
+
+`storage` moves originals, artifacts and generated markdown between
+PostgreSQL and S3 (app/services/storage_migration.py).
 
 Both `backup` subcommands read the export/import passphrase from the
 WEAVE_BACKUP_PASSPHRASE environment variable rather than a --passphrase
@@ -19,6 +25,7 @@ use the UI (see docs/betrieb.md's disaster-recovery runbook).
 """
 
 import argparse
+import json
 import logging
 import os
 import sys
@@ -28,7 +35,7 @@ from sqlalchemy import select
 
 from app.database.session import SessionLocal
 from app.models.models import User
-from app.services import backup
+from app.services import backup, object_store, storage_migration
 
 _PASSPHRASE_ENV_VAR = 'WEAVE_BACKUP_PASSPHRASE'
 
@@ -122,6 +129,32 @@ def run_backup_import(*, file: str, admin_username: str, force: bool) -> int:
         db.close()
 
 
+def run_storage(args) -> int:
+    try:
+        return _run_storage(args)
+    except object_store.ObjectStorageConfigError as exc:
+        print(f'storage {args.storage_command}: S3 is not configured ({exc})', file=sys.stderr)
+        return 1
+
+
+def _run_storage(args) -> int:
+    with SessionLocal() as db:
+        if args.storage_command == 'status':
+            print(json.dumps(storage_migration.status(db), indent=2))
+            return 0
+        if args.storage_command == 'migrate':
+            try:
+                result = storage_migration.migrate(db, to=args.to, batch_size=args.batch_size)
+            except storage_migration.MigrationRefused as exc:
+                print(f'storage migrate refused: {exc}', file=sys.stderr)
+                return 1
+            print(json.dumps(result))
+            print(json.dumps(storage_migration.status(db), indent=2))
+            return 0
+        print(json.dumps({'deleted': storage_migration.sweep_s3_orphans(db, min_age_seconds=args.min_age_seconds)}))
+        return 0
+
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog='app.cli', description='Weave-Ingest administration CLI')
     subparsers = parser.add_subparsers(dest='command', required=True)
@@ -142,6 +175,21 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     import_parser.add_argument('--force', action='store_true', help='Wipe and overwrite a non-fresh target')
 
+    storage_parser = subparsers.add_parser(
+        'storage', help='Object storage (PostgreSQL/S3) status and migration (see app/services/storage_migration.py)'
+    )
+    storage_subparsers = storage_parser.add_subparsers(dest='storage_command', required=True)
+    storage_subparsers.add_parser('status', help='Objects and markdown per backend')
+    migrate_parser = storage_subparsers.add_parser(
+        'migrate', help='Move all objects and markdown to the configured OBJECT_STORAGE_BACKEND'
+    )
+    migrate_parser.add_argument('--to', required=True, choices=storage_migration.BACKENDS)
+    migrate_parser.add_argument('--batch-size', type=int, default=100)
+    sweep_parser = storage_subparsers.add_parser(
+        'sweep', help='Delete S3 keys no stored object references (S3_KEY_PREFIX must belong to this instance alone)'
+    )
+    sweep_parser.add_argument('--min-age-seconds', type=int, default=3600)
+
     return parser
 
 
@@ -154,6 +202,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_backup_export(out=args.out)
     if args.command == 'backup' and args.backup_command == 'import':
         return run_backup_import(file=args.file, admin_username=args.admin_username, force=args.force)
+    if args.command == 'storage':
+        return run_storage(args)
 
     parser.error(f'unknown command {args.command!r}')  # argparse exits itself here
     return 2  # pragma: no cover -- unreachable, parser.error() calls sys.exit

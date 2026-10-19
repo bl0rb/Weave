@@ -380,11 +380,77 @@ zurückgesetzt. Nach einer Änderung die `profile`-Angabe im erzeugten
 Frontmatter kontrollieren.
 
 **`WORKER_TMP_DIR` — Platz für laufende Aufträge.**
-Originale, Ergebnisse und Bilder liegen ausschließlich in PostgreSQL. Ein
+Originale, Ergebnisse und Bilder liegen in PostgreSQL oder — mit
+`OBJECT_STORAGE_BACKEND=s3` — in einem S3-Bucket (Abschnitt 6.1). Ein
 Worker kopiert das Original pro Auftrag in ein eigenes Verzeichnis unter
 `WORKER_TMP_DIR` und löscht es danach wieder; ein gemeinsames Volume zwischen
 API und Worker gibt es nicht. Das Verzeichnis braucht pro gleichzeitigem
 Auftrag etwa das Dreifache der Uploadgröße.
+
+### 6.1 Objektspeicher: PostgreSQL oder S3
+
+`OBJECT_STORAGE_BACKEND` (Ingest-Backend und -Worker) legt fest, wohin
+**neue** Originale, Anhänge/Bilder und erzeugtes Markdown (Ergebnis,
+Bearbeitungsstände, Freigabe-Snapshots) gehen:
+
+- `db` (Standard): PostgreSQL, Binärdaten in 4-MiB-Blöcken, Markdown in den
+  Textspalten.
+- `s3`: ein S3-kompatibler Bucket (AWS S3, MinIO, Ceph RGW) unter
+  `<S3_KEY_PREFIX>objects/<id>`. PostgreSQL hält nur noch Metadaten und
+  Verweise.
+
+| Variable | Bedeutung |
+|---|---|
+| `S3_BUCKET` | Pflicht bei `s3` (und für jede Migration). Der Bucket muss existieren. |
+| `S3_ENDPOINT_URL` | Leer = AWS. MinIO/Ceph z. B. `http://minio:9000`. |
+| `S3_REGION` | z. B. `eu-central-1`. |
+| `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | Leer = Standard-Credential-Kette (IAM-Rolle, IRSA). Das Secret kommt über `WEAVE_INGEST_S3_SECRET_ACCESS_KEY`. |
+| `S3_KEY_PREFIX` | Standard `weave-ingest/`. Jede Instanz braucht ihr eigenes Präfix: `storage sweep` hält fremde Schlüssel unter dem Präfix für verwaist. Schlüssel sind zufällig und nie aus der Objekt-ID abgeleitet, eine Wiederherstellung teilt also keine Schlüssel mit der Quelle. |
+| `S3_ADDRESSING_STYLE` | `auto`, `path` (meist für MinIO) oder `virtual`. |
+
+Benötigte Rechte: `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` und
+`s3:ListBucket` (nur für `storage sweep`) auf dem Präfix.
+
+Jedes Objekt merkt sich sein Backend. Nach einer Umstellung bleiben alte
+Daten lesbar; ein gemischter Bestand ist ein gültiger Zustand. Umziehen
+(beide Richtungen, unterbrechbar und wiederholbar — jedes Objekt wird
+einzeln übertragen und festgeschrieben):
+
+```bash
+# 1. OBJECT_STORAGE_BACKEND auf das Ziel setzen (S3_* bleiben in beiden
+#    Richtungen gesetzt), Backend und Worker neu starten -- sonst landen
+#    neue Daten weiter im alten Backend; `migrate` verweigert dann.
+# 2. In einem Ingest-Backend-Container:
+python -m app.cli storage migrate --to s3      # PostgreSQL -> S3
+python -m app.cli storage migrate --to db      # S3 -> PostgreSQL
+# 3. Kontrolle: im alten Backend darf nichts mehr stehen.
+python -m app.cli storage status
+```
+
+Nach `--to s3` ist der Platz in PostgreSQL erst nach `VACUUM` (bzw.
+`VACUUM FULL` für `stored_object_chunks`) wieder frei. Nach `--to db`
+löscht die Migration die S3-Schlüssel selbst. Wer ein Objekt gerade liest,
+während es umzieht, liest an derselben Stelle im neuen Backend weiter.
+Objekte, deren Bytes fehlen, überspringt die Migration (`skipped` in der
+Ausgabe, Details in den Zeilen davor); sie bleiben, wo sie sind, und
+erscheinen weiter in `storage status`.
+
+Löschungen in S3 und eine laufende Sicherung schließen sich über eine
+PostgreSQL-Sperre aus: während eines Exports lässt die Garbage Collection
+S3-Objekte liegen (der nächste Durchlauf danach räumt sie ab), `migrate --to
+db` und `storage sweep` warten.
+
+Die Sicherung (Abschnitt „Sicherung & Wiederherstellung“) nimmt S3-Objekte
+mit ins Archiv; die Wiederherstellung schreibt sie in das Backend, das das
+Ziel konfiguriert hat. S3-Schlüssel ohne Datenbankzeile (abgebrochene
+Transaktionen, ersetzte Datenbank nach einer Wiederherstellung) entfernt:
+
+```bash
+python -m app.cli storage sweep    # nur Schlüssel älter als 1 h unter dem Präfix
+```
+
+Ein Downgrade der Datenbank unter `0052_markdown_objects` verweigert, solange
+Markdown in S3 liegt — vorher `storage migrate --to db`.
 
 ---
 
@@ -1160,7 +1226,8 @@ erneut einzutragen.
 Diese Chart-Version ist für **neue Installationen**: Es gibt kein
 gemeinsames Dateivolume mehr (die früheren Werte `persistence.*` und das
 PVC `ingest-storage` entfallen). Originale, Ergebnisse und Bilder liegen in
-PostgreSQL; jeder Pod hat nur ein flüchtiges `/scratch` (`emptyDir`).
+PostgreSQL oder S3 (Abschnitt 6.1); jeder Pod hat nur ein flüchtiges
+`/scratch` (`emptyDir`).
 
 | Stellschraube | Wirkung |
 |---|---|

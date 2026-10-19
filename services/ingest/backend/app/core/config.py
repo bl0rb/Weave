@@ -38,11 +38,26 @@ class Settings(BaseSettings):
     trusted_proxy_hops: int = 1
     # Per-pod scratch space for running tasks: one subdirectory per task,
     # removed when the task ends (app/workers/tasks.py). Durable data lives
-    # in PostgreSQL only (app/services/object_store.py); in Kubernetes this
+    # in PostgreSQL or S3 (app/services/object_store.py); in Kubernetes this
     # is an emptyDir.
     worker_tmp_dir: Path = Path(tempfile.gettempdir()) / 'weave-ingest-tasks'
-    # Chunk size for binary objects (uploads, artifacts) in PostgreSQL.
+    # Chunk size for binary objects (uploads, artifacts) in PostgreSQL, and
+    # the part size of S3 multipart transfers.
     object_chunk_bytes: int = 4 * 1024 * 1024
+    # Where new originals, artifacts and generated markdown go: 'db'
+    # (PostgreSQL chunks/columns) or 's3' (any S3-compatible store). Existing
+    # data keeps its backend and stays readable; `python -m app.cli storage
+    # migrate --to s3|db` moves it (app/services/storage_migration.py).
+    object_storage_backend: Literal['db', 's3'] = 'db'
+    s3_bucket: str = ''
+    # Empty = AWS; e.g. http://minio:9000 for MinIO/Ceph.
+    s3_endpoint_url: str = ''
+    s3_region: str = ''
+    # Empty = the default credential chain (IAM role / IRSA, env, profile).
+    s3_access_key_id: str = ''
+    s3_secret_access_key: str = ''
+    s3_key_prefix: str = 'weave-ingest/'
+    s3_addressing_style: Literal['auto', 'path', 'virtual'] = 'auto'
     # Where backup archives are written (app/services/backup.py).
     backup_dir: Path = Path('backend/storage/backups')
     paddle_default_profile: str = 'ppocrv6_tiny'

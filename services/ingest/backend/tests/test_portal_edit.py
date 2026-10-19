@@ -116,7 +116,7 @@ def test_released_document_becomes_a_new_version_carrying_its_source(monkeypatch
         assert frontmatter['source_url'] == page_url
         assert frontmatter['previous_job_id'] == job.id
         assert frontmatter['uploaded_at'] == _frontmatter(db.scalar(
-            select(DocumentRelease.markdown_snapshot).where(DocumentRelease.job_id == job.id)
+            select(DocumentRelease._markdown_snapshot).where(DocumentRelease.job_id == job.id)
         ))['uploaded_at']
 
     # The old version is no longer editable: that would fork the chain.
