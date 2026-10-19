@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Weave transformation, the product is called Weave Ingest. Entries below predating that
 > change are left as written and refer to the project under its former name.
 
-## [Unreleased]
+## [0.7.10] - 2026-10-19
 
 ### Added
 - **Knowledge memory as search support** ([ADR-0009 §10](../../docs/adr/0009-wissensgedaechtnis.md)),
