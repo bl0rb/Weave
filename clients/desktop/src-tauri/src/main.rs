@@ -45,6 +45,8 @@ struct Session {
     server: String,
     token: String,
     username: Option<String>,
+    /// The web chat's origin from `/v1/me` (`chat_url`), for "Im Web öffnen".
+    chat_url: Option<String>,
 }
 
 struct AppState {
@@ -87,6 +89,7 @@ struct StateView {
     autostart: bool,
     signed_in: bool,
     username: Option<String>,
+    chat_url: Option<String>,
     login_pending: bool,
     version: String,
     /// See `AppState::setup_server`; the settings window shows it as a
@@ -142,6 +145,7 @@ async fn get_state(app: AppHandle, state: State<'_, AppState>) -> Result<StateVi
         if let Ok(me) = me {
             if let Some(current) = state.session.lock().unwrap().as_mut() {
                 current.username = me.get("username").and_then(Value::as_str).map(str::to_string);
+                current.chat_url = me.get("chat_url").and_then(Value::as_str).map(str::to_string);
             }
         }
     }
@@ -155,7 +159,8 @@ async fn get_state(app: AppHandle, state: State<'_, AppState>) -> Result<StateVi
         default_agent: effective.default_agent,
         autostart: app.autolaunch().is_enabled().unwrap_or(false),
         signed_in: session.is_some(),
-        username: session.and_then(|s| s.username),
+        username: session.as_ref().and_then(|s| s.username.clone()),
+        chat_url: session.and_then(|s| s.chat_url),
         login_pending: state.login_task.lock().unwrap().as_ref().is_some_and(|t| !t.inner().is_finished()),
         version: app.package_info().version.to_string(),
         setup_server: state.setup_server.lock().unwrap().clone(),
@@ -279,7 +284,7 @@ async fn run_sign_in(app: &AppHandle, server: &str) -> Result<(), String> {
         let _ = entry.set_password(token);
     }
     *app.state::<AppState>().session.lock().unwrap() =
-        Some(Session { server: server.to_string(), token: token.to_string(), username: None });
+        Some(Session { server: server.to_string(), token: token.to_string(), username: None, chat_url: None });
     if !panel(app).is_some_and(|p| p.is_visible().unwrap_or(false)) {
         show_quick(app);
     }
@@ -583,7 +588,7 @@ fn load_session(server: &str) -> Option<Session> {
         return None;
     }
     let token = keyring_entry(server)?.get_password().ok()?;
-    Some(Session { server: server.to_string(), token, username: None })
+    Some(Session { server: server.to_string(), token, username: None, chat_url: None })
 }
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {

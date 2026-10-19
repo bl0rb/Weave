@@ -301,7 +301,7 @@ Common endpoints:
 - `GET /api/v1/vl-connections` — enabled VL connections (id, name, model)
 - `PATCH /api/v1/auth/me` — set or clear the caller's own UI language preference (`{"locale": "de" | "en" | null}`, 422 for any other value); `GET /api/v1/auth/me` and the admin user endpoints return the same `locale` field
 - `POST /api/v1/auth/tokens` / `GET` / `DELETE /api/v1/auth/tokens/{id}` — API token management (session only)
-- `GET` / `POST /api/v1/auth/admin/bots`, `PUT` / `DELETE /api/v1/auth/admin/bots/{id}` — centrally manage n8n-backed bots (admin; secret values are write-only), including who may use them: `public` or `grants` to persons and teams with the role `owner` or `user` (ADR 0008)
+- `GET` / `POST /api/v1/auth/admin/bots`, `PUT` / `DELETE /api/v1/auth/admin/bots/{id}` — centrally manage n8n-backed bots (admin; secret values are write-only), including who may use them: `public` or `grants` to persons and teams with the role `owner` or `user` (ADR 0008). The list sets `runtime_rejected` on an enabled bot missing from Weave Runtime's validated roster (usually a webhook URL outside `N8N_ALLOWED_BASE_URLS`); the Bots tab shows it as "Not in Chat"
 - `GET /api/v1/bots`, `PATCH /api/v1/bots/{id}` — bot owners maintain description, system prompt, knowledge spaces (only ones they may read), source requirement and the users of their bot; the connection and the owners stay with the administrators
 - `GET /api/v1/internal/bots` — enabled bot projection for Weave Runtime (service token; `Cache-Control: no-store`)
 - `GET /api/v1/auth/admin/worker-logs` — worker logs (admin)

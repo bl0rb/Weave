@@ -32,6 +32,7 @@
 config:
   api:
     API_PORT: "8004"
+    CHAT_PUBLIC_URL: "http://localhost:3001"
     HISTORY_MAX_MESSAGES: "20"
     INGEST_API_URL: "http://weave-ingest-backend:8000"
     INGEST_LOGIN_URL: ""

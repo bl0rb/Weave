@@ -129,6 +129,14 @@ export function ChatApp() {
       }
 
       await refreshConversations();
+
+      // `?conversation=<id>` -- the desktop app's "Im Web öffnen" link --
+      // opens that conversation once, then leaves a plain URL behind.
+      const linked = new URLSearchParams(window.location.search).get('conversation');
+      if (linked && !cancelled) {
+        window.history.replaceState(null, '', window.location.pathname);
+        await handleSelectConversation(linked);
+      }
     })();
 
     return () => {

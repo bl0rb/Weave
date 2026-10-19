@@ -212,6 +212,10 @@ class Settings(BaseSettings):
     # /v1/auth/ingest/* answers 404, exactly like an unconfigured OIDC.
     ingest_login_url: str = ''
     ingest_api_url: str = ''
+    # The web chat's browser-reachable origin (its APP_BASE_URL), handed to
+    # native clients via GET /v1/me so they can link a conversation there.
+    # Empty: clients offer no link.
+    chat_public_url: str = ''
     # Shared with Weave-Ingest (HANDOFF_SECRET there). Presented on the
     # server-to-server exchange; without it a leaked code out of an access
     # log would be enough to impersonate the person it was issued for.

@@ -22,7 +22,8 @@ dieser Server aufruft, und es baut jede einzelne davon aus
 - Die Chat-Ansicht ausliefern: Bot-Liste, Wissensbereich-Auswahl im Composer,
   Modellauswahl (wenn der Bot mehrere LLM-Endpunkte anbietet), gestreamte Antwort,
   Quellen-Karten mit Herkunft und Relevanz in Prozent, Trace-Panel, Guard-Banner,
-  Theme- und Sprachumschalter (Deutsch/Englisch)
+  Theme- und Sprachumschalter (Deutsch/Englisch); `/?conversation=<id>` öffnet
+  eine gespeicherte Unterhaltung direkt (Link aus der Desktop-App)
 - Jede Browser-Aktion über die eigenen `/api/*`-Route-Handler dieses Servers
   leiten, damit der Browser nie ein Weave-API-Credential hält und nie einen
   Cross-Origin-Request stellt

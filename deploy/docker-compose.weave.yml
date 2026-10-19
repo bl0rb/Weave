@@ -1006,6 +1006,9 @@ services:
       # browser could resolve. Both empty (the default) makes
       # /v1/auth/ingest/* 404 exactly like an unconfigured OIDC.
       INGEST_LOGIN_URL: ${INGEST_LOGIN_URL:-}
+      # The web chat's origin, handed to the desktop app via GET /v1/me so
+      # it can link a conversation there. Same value as CHAT_APP_BASE_URL.
+      CHAT_PUBLIC_URL: ${CHAT_PUBLIC_URL:-}
       INGEST_API_URL: ${INGEST_API_URL:-http://weave-ingest-backend:8000}
       # Symmetric secret -- the same value as weave-ingest-backend's
       # HANDOFF_SECRET above. Without it the exchange goes out

@@ -259,3 +259,16 @@ it('assigns an owner through the person search and shares the bot with everyone'
   expect(body.public).toBe(true);
   expect(body.grants).toEqual([{ user_id: 'u-ada', role: 'owner' }]);
 });
+
+it('warns when Runtime did not load a managed n8n bot', async () => {
+  json.mockImplementation(async path => {
+    if (path === '/api/v1/auth/admin/bots') return { items: [{ ...savedBot, kind: 'n8n', runtime_rejected: true }, { ...savedBot, id: 'ok-bot', name: 'Geladen' }] };
+    if (path === '/api/v1/auth/admin/teams') return { items: [] };
+    if (path === '/api/v1/collections') return { items: [] };
+    throw new Error(`unexpected request: ${path}`);
+  });
+  render(<BotsTab />);
+  expect(await screen.findByText('Nicht im Chat')).toBeTruthy();
+  expect(screen.getAllByText('Nicht im Chat')).toHaveLength(1);
+  expect(screen.getByRole('status').textContent).toContain('N8N_ALLOWED_BASE_URLS');
+});

@@ -227,6 +227,35 @@ def test_admin_bot_list_projects_nonempty_runtime_roster(monkeypatch):
     assert item['public'] is False
     assert [(grant['team_id'], grant['name']) for grant in item['grants']] == [(None, 'legal-unbekannt')]
 
+def test_admin_bot_list_flags_managed_bots_missing_from_runtime_roster(monkeypatch):
+    admin = _identity('runtime-rejected-admin', role=UserRole.ADMIN)
+    admin_client = login_as(admin.username)
+    team_name = _team()
+    collection_slug = _scope(admin_client, team_name)
+    accepted = _payload(team_name, collection_slug)
+    rejected = _payload(team_name, collection_slug)
+    inactive = _payload(team_name, collection_slug, enabled=False)
+    for payload in (accepted, rejected, inactive):
+        assert admin_client.post('/api/v1/auth/admin/bots', json=payload).status_code == 201
+
+    def flags():
+        items = admin_client.get('/api/v1/auth/admin/bots').json()['items']
+        return {item['id']: item['runtime_rejected'] for item in items if item['source'] == 'managed'}
+
+    # Runtime unknown (no token): nothing is claimed about its roster.
+    assert set(flags().values()) == {False}
+
+    monkeypatch.setattr(settings, 'runtime_api_token', 'runtime-token')
+    monkeypatch.setattr(
+        'app.api.managed_bots.httpx.get',
+        lambda *args, **kwargs: type('Response', (), {
+            'raise_for_status': lambda self: None,
+            'json': lambda self: [{'id': accepted['id'], 'name': accepted['name'], 'model': {'provider': 'n8n'}}],
+        })(),
+    )
+    assert flags() == {accepted['id']: False, rejected['id']: True, inactive['id']: False}
+
+
 def test_non_admin_cannot_manage_bots_and_unknown_scope_is_rejected():
     admin = _identity('bot-reference-admin', role=UserRole.ADMIN)
     regular = _identity('bot-reference-user')

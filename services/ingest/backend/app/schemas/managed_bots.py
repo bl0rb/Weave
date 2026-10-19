@@ -374,6 +374,8 @@ class ManagedBotAdminResponse(BaseModel):
     updated_at: datetime
     source: str = 'managed'
     editable: bool = True
+    # True when Runtime's roster lacks this active managed bot (list only).
+    runtime_rejected: bool = False
 
 
 class ManagedBotListResponse(BaseModel):

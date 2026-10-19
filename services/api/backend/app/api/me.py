@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.auth import issue_api_token
+from app.core.config import settings
 from app.core.db import get_db
 from app.core.ratelimit import enforce_rate_limit
 from app.models.models import ApiToken, User
@@ -29,7 +30,7 @@ router = APIRouter(prefix='/v1', tags=['me'])
 
 @router.get('/me', response_model=MeResponse)
 def get_me(user: User = Depends(enforce_rate_limit)) -> MeResponse:
-    return MeResponse(username=user.username, locale=user.locale)
+    return MeResponse(username=user.username, locale=user.locale, chat_url=settings.chat_public_url.rstrip('/') or None)
 
 
 @router.put('/me/locale', response_model=LocaleResponse)
