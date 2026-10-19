@@ -5,6 +5,7 @@
 
 mod api;
 mod auth;
+mod deeplink;
 mod settings;
 mod update;
 
@@ -25,6 +26,7 @@ use tauri::{
     WindowEvent, Wry,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
 use update::{UpdateView, Updates};
@@ -55,6 +57,9 @@ struct AppState {
     quick_hidden_at: Mutex<Option<Instant>>,
     updates: Updates,
     update_menu_item: Mutex<Option<MenuItem<Wry>>>,
+    /// A server address proposed by a `weave://setup` link, waiting for the
+    /// user's confirmation in the settings window (see `deeplink`).
+    setup_server: Mutex<Option<String>>,
 }
 
 impl AppState {
@@ -84,6 +89,24 @@ struct StateView {
     username: Option<String>,
     login_pending: bool,
     version: String,
+    /// See `AppState::setup_server`; the settings window shows it as a
+    /// proposal to accept or dismiss, or as ignored when the server is managed.
+    setup_server: Option<String>,
+}
+
+/// A `weave://setup?server=...` link arrived (from Weave-Chat's "Desktop-App
+/// einrichten" button): keep the address as a proposal and show the
+/// settings window, which asks the user to confirm it. Never saves anything
+/// by itself -- any web page can open such a link.
+fn on_setup_link(app: &AppHandle, link: &str) {
+    match deeplink::parse_setup_url(link) {
+        Ok(server) => {
+            *app.state::<AppState>().setup_server.lock().unwrap() = Some(server);
+            notify_state(app);
+            let _ = show_settings(app);
+        }
+        Err(error) => eprintln!("weave:// link ignored: {error}"),
+    }
 }
 
 fn keyring_entry(server: &str) -> Option<keyring::Entry> {
@@ -135,7 +158,23 @@ async fn get_state(app: AppHandle, state: State<'_, AppState>) -> Result<StateVi
         username: session.and_then(|s| s.username),
         login_pending: state.login_task.lock().unwrap().as_ref().is_some_and(|t| !t.inner().is_finished()),
         version: app.package_info().version.to_string(),
+        setup_server: state.setup_server.lock().unwrap().clone(),
     })
+}
+
+/// The user accepted or dismissed the address a `weave://setup` link
+/// proposed. Accepting saves it exactly like typing it into the form; a
+/// managed server (IT policy) is never overwritten.
+#[tauri::command]
+fn resolve_setup(app: AppHandle, state: State<'_, AppState>, accept: bool) -> Result<(), String> {
+    let proposed = state.setup_server.lock().unwrap().take();
+    notify_state(&app);
+    let Some(server_url) = proposed.filter(|_| accept) else { return Ok(()) };
+    if state.managed.server_url.is_some() {
+        return Err("Die Server-Adresse ist von der IT vorgegeben.".into());
+    }
+    let current = state.effective();
+    save_settings(app, state, server_url, current.hotkey, current.default_agent)
 }
 
 #[tauri::command]
@@ -615,7 +654,15 @@ fn main() {
     tauri::Builder::default()
         // Launching Weave again (Start menu, Finder) opens the app window of
         // the running instance instead of a second tray icon.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
+        // A second instance started by a weave:// link hands the link over
+        // (Cargo feature `deep-link`); the deep-link plugin then raises
+        // `on_open_url` below, so only a plain relaunch opens the window.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if !args.iter().any(|arg| arg.starts_with(&format!("{}:", deeplink::SCHEME))) {
+                show_main(app);
+            }
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -647,6 +694,7 @@ fn main() {
                 quick_hidden_at: Mutex::new(None),
                 updates: Updates::default(),
                 update_menu_item: Mutex::new(None),
+                setup_server: Mutex::new(None),
             });
 
             let handle = app.handle().clone();
@@ -657,8 +705,25 @@ fn main() {
             if let Err(error) = register_hotkey(&handle, &effective.hotkey) {
                 eprintln!("{error}");
             }
-            if effective.server_url.is_empty() {
+            // weave:// links: the installers register the scheme; a build run
+            // from the command line (Windows/Linux) registers it here.
+            #[cfg(any(windows, target_os = "linux"))]
+            if let Err(error) = app.deep_link().register_all() {
+                eprintln!("weave:// scheme not registered: {error}");
+            }
+            let opened_by_link = app.deep_link().get_current().ok().flatten().unwrap_or_default();
+            let link_handle = handle.clone();
+            app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    on_setup_link(&link_handle, url.as_str());
+                }
+            });
+            if effective.server_url.is_empty() && opened_by_link.is_empty() {
                 show_settings(&handle)?;
+            } else if !opened_by_link.is_empty() {
+                for url in &opened_by_link {
+                    on_setup_link(&handle, url.as_str());
+                }
             } else if !std::env::args().any(|arg| arg == AUTOSTART_ARG) {
                 show_main(&handle);
             }
@@ -689,6 +754,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_state,
             save_settings,
+            resolve_setup,
             set_autostart,
             test_connection,
             sign_in,

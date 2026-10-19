@@ -87,7 +87,7 @@ export const SSO_CALLBACK_PATH = '/api/auth/sso/callback';
  * coincide) so a deployment that never sets this separately keeps
  * working.
  */
-function resolveWeaveApiPublicBaseUrl(): string {
+export function resolveWeaveApiPublicBaseUrl(): string {
   const configured = process.env.WEAVE_API_PUBLIC_BASE_URL?.trim();
   const base = configured && configured.length > 0 ? configured : resolveWeaveApiBaseUrl();
   return base.replace(/\/+$/, '');

@@ -23,6 +23,17 @@ export const chat: Record<keyof typeof de, string> = {
   'rail.signedIn': 'Signed in',
   'rail.logout': 'Log out',
   'rail.apiAccess': 'API access',
+  'rail.desktop': 'Set up the desktop app',
+  // components/chat/desktop-setup-dialog.tsx
+  'desktop.title': 'Set up the desktop app',
+  'desktop.close': 'Close desktop setup',
+  'desktop.intro': 'Weave for the desktop asks from the menu bar or system tray. This button hands the installed app this server’s address; the app asks before accepting it, then you sign in there just like here.',
+  'desktop.open': 'Open the desktop app',
+  'desktop.download': 'Download the desktop app',
+  'desktop.opened': 'The browser now asks whether Weave may be opened. If nothing happens, the app is not installed yet.',
+  'desktop.manual': 'To enter by hand in the app’s settings (API address):',
+  'desktop.safety': 'Only the server address is handed over, never a credential. In the app, accept only proposals you triggered yourself.',
+  'desktop.loadFailed': 'The server address could not be determined.',
   // components/chat/api-access-dialog.tsx
   'apiAccess.title': 'API access',
   'apiAccess.close': 'Close API access',

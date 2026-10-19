@@ -33,6 +33,26 @@ Voraussetzung auf dem Server: `api.NATIVE_LOGIN_ENABLED: true` in `weave.yaml`.
 Ohne PKCE nimmt weave-api keine Loopback-Adresse an, und der Code ist nur mit
 dem passenden Verifier einlösbar.
 
+## Einrichtung per Link aus Weave-Chat
+
+Die App registriert das URL-Schema `weave://` (`tauri-plugin-deep-link`, Schema in
+`tauri.conf.json`). In Weave-Chat öffnet „Desktop-App einrichten“ (Fußzeile der
+Gesprächsleiste) den Link `weave://setup?server=<API-Adresse>`; die Adresse ist
+`WEAVE_API_PUBLIC_BASE_URL` von Weave-Chat, also dieselbe, die auch die Anmeldung
+im Browser ansteuert. Daneben steht ein Download-Link, falls die App noch fehlt.
+
+Die App übernimmt nichts automatisch: Sie zeigt die Adresse im Einstellungsfenster
+als Vorschlag („Einrichtung aus Weave-Chat“), erst „Übernehmen“ speichert sie, testet
+die Verbindung und bietet „Anmelden“ an. Der Link trägt nur die Server-Adresse,
+nie Zugangsdaten; andere Parameter oder eine `http://`-Adresse (außer localhost)
+werden verworfen (`src-tauri/src/deeplink.rs`). Ist `ServerUrl` von der IT vorgegeben,
+bleibt sie unverändert, der Vorschlag wird nur angezeigt. Jede Webseite kann einen
+`weave://`-Link öffnen – deshalb die Nachfrage.
+
+macOS registriert das Schema über das App-Bundle, Windows der Installer; ein Build aus
+`tauri dev` registriert es unter Windows/Linux beim Start selbst, unter macOS
+funktioniert der Link nur mit der gebauten `.app`.
+
 ## Was die App nutzt
 
 | Endpunkt | Zweck |
