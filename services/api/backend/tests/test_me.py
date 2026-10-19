@@ -78,7 +78,20 @@ def test_get_me_returns_username_and_locale() -> None:
     resp = client.get('/v1/me', headers=auth_headers(token))
 
     assert resp.status_code == 200
-    assert resp.json() == {'username': 'localereader', 'locale': None}
+    assert resp.json() == {'username': 'localereader', 'locale': None, 'chat_url': None}
+
+
+def test_get_me_returns_the_configured_web_chat_url(monkeypatch) -> None:
+    db = _db()
+    try:
+        user, token = make_user_with_token(db, username='chaturlreader')
+    finally:
+        db.close()
+    monkeypatch.setattr(settings, 'chat_public_url', 'https://chat.example.com/')
+
+    resp = client.get('/v1/me', headers=auth_headers(token))
+
+    assert resp.json()['chat_url'] == 'https://chat.example.com'
 
 
 def test_get_me_requires_authentication() -> None:

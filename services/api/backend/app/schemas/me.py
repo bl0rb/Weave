@@ -11,6 +11,8 @@ from pydantic import BaseModel, Field
 class MeResponse(BaseModel):
     username: str
     locale: Literal['de', 'en'] | None = None
+    # Web chat origin (settings.chat_public_url); None when not configured.
+    chat_url: str | None = None
 
 
 class LocaleUpdateRequest(BaseModel):

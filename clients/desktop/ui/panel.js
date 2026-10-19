@@ -16,6 +16,11 @@ let streaming = false;
 let searchView = null;
 let draft = '';
 let update = null;
+/** Set by submit(): renders scroll the new question up to the top, then the answer streams in below it untouched. */
+let pinQuestion = false;
+/** When the window was last shown or used -- after IDLE_RESET_MS away it opens on a fresh conversation. */
+let lastActive = Date.now();
+const IDLE_RESET_MS = 30 * 60 * 1000;
 
 const panel = document.getElementById('panel');
 document.documentElement.classList.add(navigator.userAgent.includes('Windows') ? 'os-windows' : 'os-mac');
@@ -26,11 +31,11 @@ const ASK_INFO = 'Ein Agent beantwortet Ihre Frage aus den freigegebenen Dokumen
 const SEARCH_INFO = 'Zeigt passende Textstellen aus allen Wissensräumen, die Sie lesen dürfen – ohne KI-Antwort. Schneller, und Sie bewerten die Treffer selbst.';
 wireLinks(panel);
 
-async function refresh() {
+async function refresh(reloadLists = false) {
   state = await invoke('get_state');
   update = await invoke('get_update_state');
   if (!state.signed_in) bots = null;
-  else if (bots === null) await loadLists();
+  else if (bots === null || reloadLists) await loadLists();
   render();
 }
 
@@ -69,6 +74,8 @@ async function submit(text) {
   if (!agent) return;
 
   messages.push({ role: 'user', text, fresh: true });
+  pinQuestion = true;
+  lastActive = Date.now();
   const answer = { role: 'answer', text: '', status: t('Weave denkt nach …'), sources: [], options: [], fresh: true };
   messages.push(answer);
   streaming = true;
@@ -103,6 +110,7 @@ async function submit(text) {
   answer.status = null;
   answer.done = true;
   streaming = false;
+  lastActive = Date.now();
   render();
 }
 
@@ -173,24 +181,49 @@ function renderMessage(m) {
 const isBusy = () => streaming || Boolean(searchView?.loading);
 const logo = () => h('img', { src: 'weave.svg', alt: '', class: isBusy() ? 'logo busy' : 'logo' });
 
-function renderMessages() {
+/** `previousScrollTop`: where the #content that a full render just replaced was scrolled to. */
+function renderMessages(previousScrollTop) {
   const content = document.getElementById('content');
   if (!content) return;
-  const atBottom = content.scrollHeight - content.scrollTop - content.clientHeight < 40;
+  const scrollTop = previousScrollTop ?? content.scrollTop;
   if (QUICK) {
     content.replaceChildren(...messages.map(renderMessage));
-    content.scrollTop = content.scrollHeight;
-    fitWindow();
-    return;
+  } else {
+    content.replaceChildren(...(messages.length
+      ? messages.map(renderMessage)
+      : [h('div', { class: 'empty compact' },
+        h('img', { src: 'weave.svg', alt: '' }),
+        h('h2', null, t('Was möchten Sie wissen?')),
+        h('p', null, t(ASK_INFO)),
+        state.chat_url && h('button', { class: 'link', onclick: openWeb }, icon('external'), t('Frühere Fragen im Web')))]));
   }
-  content.replaceChildren(...(messages.length
-    ? messages.map(renderMessage)
-    : [h('div', { class: 'empty compact' },
-      h('img', { src: 'weave.svg', alt: '' }),
-      h('h2', null, t('Was möchten Sie wissen?')),
-      h('p', null, t(ASK_INFO)))]));
-  if (atBottom || streaming) content.scrollTop = content.scrollHeight;
+  content.scrollTop = scrollTop;
+  // Like the web chat: a new question moves up to the top (as far as the
+  // answer below it allows), then the answer streams in without dragging
+  // the view along to its end. Scrolling by hand ends this early.
+  const question = pinQuestion && [...content.querySelectorAll('.msg-user')].pop();
+  if (question) {
+    const target = content.scrollTop + question.getBoundingClientRect().top - content.getBoundingClientRect().top - 8;
+    content.scrollTop = target;
+    if (content.scrollTop >= target - 1 || !streaming) pinQuestion = false;
+  }
+  if (QUICK) fitWindow();
 }
+
+/** The web chat -- on the open conversation, else on its history. */
+function openWeb() {
+  const url = conversationId ? `${state.chat_url}/?conversation=${encodeURIComponent(conversationId)}` : `${state.chat_url}/`;
+  invoke('open_url', { url });
+}
+
+const webButton = () => state.chat_url && h('button', {
+  class: 'icon-only plain',
+  title: conversationId ? t('Im Web öffnen') : t('Frühere Fragen im Web'),
+  'aria-label': conversationId ? t('Im Web öffnen') : t('Frühere Fragen im Web'),
+  onclick: openWeb,
+}, icon('external'));
+
+const clearButton = () => h('button', { class: 'icon-only plain', title: t('Verlauf leeren'), 'aria-label': t('Verlauf leeren'), onclick: newConversation }, icon('trash'));
 
 function renderSearch(content) {
   if (!searchView) {
@@ -284,7 +317,8 @@ function renderQuick() {
       'aria-label': mode === 'ask' ? t('Suchen statt fragen') : t('Fragen statt suchen'),
       onclick: () => { mode = mode === 'ask' ? 'search' : 'ask'; render(); },
     }, icon(mode === 'ask' ? 'search' : 'send')),
-    state.signed_in && mode === 'ask' && messages.length > 0 && h('button', { class: 'icon-only plain', title: t('Neue Unterhaltung'), 'aria-label': t('Neue Unterhaltung'), onclick: newConversation }, icon('plus')),
+    state.signed_in && mode === 'ask' && webButton(),
+    state.signed_in && mode === 'ask' && messages.length > 0 && clearButton(),
     streaming
       ? h('button', { class: 'quick-send', onclick: stop, title: t('Stopp') }, icon('stop'))
       : h('button', { class: 'primary quick-send', title: t('Senden'), disabled: !state.signed_in || (mode === 'ask' && !agent), onclick: () => submit(input.value) }, icon('arrowUp')));
@@ -303,11 +337,12 @@ function renderQuick() {
       !update.installing && h('button', { onclick: () => invoke('install_update').catch(() => {}) }, t('Jetzt installieren'))));
   }
   if (state.signed_in && mode === 'search' && !searchView) parts.push(quickNote(t('Suchen'), t(SEARCH_INFO)));
-  const content = h('section', { class: 'quick-content', id: 'content' });
+  const content = h('section', { class: 'quick-content', id: 'content', onwheel: () => { pinQuestion = false; } });
+  const previousScrollTop = document.getElementById('content')?.scrollTop;
   if (state.signed_in && mode === 'ask' && messages.length) parts.push(content);
   if (state.signed_in && mode === 'search' && searchView) { parts.push(content); renderSearch(content); }
   panel.replaceChildren(...parts);
-  if (content.isConnected && mode === 'ask') renderMessages();
+  if (content.isConnected && mode === 'ask') renderMessages(previousScrollTop);
   fitWindow();
   input.focus();
 }
@@ -329,7 +364,8 @@ function render() {
     logo(),
     agentSelect,
     h('span', { class: 'spacer' }),
-    mode === 'ask' && h('button', { class: 'icon-only plain', title: t('Neue Unterhaltung'), 'aria-label': t('Neue Unterhaltung'), onclick: newConversation }, icon('plus')),
+    mode === 'ask' && webButton(),
+    mode === 'ask' && messages.length > 0 && clearButton(),
     settingsButton);
 
   const modeButton = (value, label, info) => h('button', { 'aria-pressed': String(mode === value), title: t(info), onclick: () => { mode = value; render(); } }, label);
@@ -339,7 +375,8 @@ function render() {
       h('option', { value: '' }, t('Alle Wissensräume')),
       collections.map((c) => h('option', { value: c.slug, selected: c.slug === collection }, c.name ?? c.slug))));
 
-  const content = h('section', { class: 'content', id: 'content' });
+  const content = h('section', { class: 'content', id: 'content', onwheel: () => { pinQuestion = false; } });
+  const previousScrollTop = document.getElementById('content')?.scrollTop;
   const updateBanner = update?.available && h('div', { class: 'update-banner' },
     update.installing ? [spinner(), t('Update wird installiert – Weave startet danach neu …')]
       : [h('span', null, t('Version %@ ist verfügbar.', update.available)),
@@ -359,7 +396,7 @@ function render() {
 
   panel.replaceChildren(head, updateBanner || '', tools, content,
     h('footer', { class: 'composer' }, h('div', { class: 'composer-box' }, input, sendButton)));
-  if (mode === 'ask') renderMessages(); else renderSearch(content);
+  if (mode === 'ask') renderMessages(previousScrollTop); else renderSearch(content);
   input.focus();
 }
 
@@ -372,5 +409,11 @@ document.addEventListener('keydown', (e) => {
 listen('state-changed', () => refresh());
 listen('update-changed', () => refresh());
 listen('login-result', (event) => { loginError = event.payload ?? null; if (!loginError) bots = null; refresh(); });
-listen('panel-shown', () => { refresh(); });
+// Shown again (tray icon, hotkey): fetch the agent list anew -- a bot added
+// or shared since shows up -- and start fresh after a long time away.
+listen('panel-shown', () => {
+  if (!streaming && Date.now() - lastActive > IDLE_RESET_MS) { messages = []; conversationId = null; }
+  lastActive = Date.now();
+  refresh(true);
+});
 refresh();

@@ -1075,6 +1075,16 @@ services:
           http://127.0.0.1:<any port>/callback, but only with a PKCE
           code_challenge, and the one-time code is redeemable only with the
           matching code_verifier (RFC 8252). Works on both login paths.
+      CHAT_PUBLIC_URL:
+        secret: false
+        value: "http://localhost:3001"
+        type: string
+        required: false
+        comment: >
+          The web chat's browser-reachable origin -- the same value as
+          chat.CHAT_APP_BASE_URL. GET /v1/me hands it to the desktop app,
+          which links a conversation there (and all older questions). Empty:
+          the desktop app offers no web link.
       INGEST_LOGIN_URL:
         secret: false
         value: ""

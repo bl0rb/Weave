@@ -493,3 +493,40 @@ describe('ChatApp account locale sync', () => {
     expect(fetchMock.mock.calls.some(([req]) => String(req).endsWith('/api/session/locale'))).toBe(false);
   });
 });
+
+describe('ChatApp conversation link', () => {
+  beforeEach(() => {
+    window.matchMedia = window.matchMedia ?? ((() => ({
+      matches: false, media: '', onchange: null, addListener: () => {}, removeListener: () => {},
+      addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
+    })) as unknown as typeof window.matchMedia);
+    Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? vi.fn();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    window.history.replaceState(null, '', '/');
+  });
+
+  it('opens the conversation named by ?conversation= and drops the parameter', async () => {
+    window.history.replaceState(null, '', '/?conversation=conv-1');
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/api/bots')) return Promise.resolve(jsonResponse(BOTS));
+      if (url.endsWith('/api/conversations/conv-1')) {
+        return Promise.resolve(jsonResponse({
+          id: 'conv-1', bot_id: 'bot-b', title: 'Alt',
+          messages: [{ id: 'm1', role: 'user', content: 'Alte Frage aus dem Desktop', sources: [], trace: null }],
+        }));
+      }
+      if (url.endsWith('/api/conversations')) return Promise.resolve(jsonResponse([]));
+      return Promise.resolve(jsonResponse([]));
+    }));
+
+    render(<I18nProvider initialLocale="de"><ChatApp /></I18nProvider>);
+
+    expect(await screen.findByText('Alte Frage aus dem Desktop')).toBeTruthy();
+    expect(window.location.search).toBe('');
+  });
+});
