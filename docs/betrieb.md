@@ -785,6 +785,10 @@ Dazu im Chat `WEAVE_API_INGEST_LOGIN_ENABLED=true` (zeigt den Knopf) und in
 (`CHAT_APP_BASE_URL` + `/api/auth/sso/callback`). `weave_config.py check` prüft
 die ganze Kette — jede halbe Konfiguration versagt sonst leise.
 
+Für die Desktop-App gehört dazu `NATIVE_LOGIN_ENABLED=true` (API) und — damit sie
+Unterhaltungen im Web-Chat verlinken kann — `CHAT_PUBLIC_URL` (API) mit demselben Wert
+wie `CHAT_APP_BASE_URL`. Leer heißt: kein Web-Link in der App.
+
 Beachte die beiden Adressarten: `INGEST_LOGIN_URL` ist die **Seite im Browser**
 (das Frontend), `INGEST_API_URL` die **containerinterne** Adresse, unter der
 Weave-API den Code einlöst. In einer echten Installation sind das verschiedene
@@ -1044,7 +1048,7 @@ Embedding-Einstellungen von Knowledge und Retrieval nicht zusammenpassen.
 | Antworten beginnen mit `[fake-llm]` | `LLM_PROVIDER` steht noch auf `fake` |
 | Dokumente erscheinen nicht im Index | Meist fehlt schlicht die Freigabe im Wissensportal — sonst weicht `WEAVE_KNOWLEDGE_WEBHOOK_SECRET` ab (Knowledge-Log zeigt 401) |
 | `/v1/bots` antwortet `502`, Runtime meldet sich `degraded` | `CHAT_CONFIG_BASE_URL`/`CHAT_CONFIG_SERVICE_TOKEN` gesetzt, aber Ingest nicht erreichbar: Runtime antwortet `503`, das Gateway macht daraus `502`. Es scheitert die ganze Liste, auch die YAML-Bots |
-| Ein zentral gepflegter n8n-Bot taucht nicht auf | Er ist deaktiviert, oder seine Webhook-Adresse liegt außerhalb von `N8N_ALLOWED_BASE_URLS` |
+| Ein zentral gepflegter n8n-Bot taucht nicht auf | Er ist deaktiviert, oder seine Webhook-Adresse liegt außerhalb von `N8N_ALLOWED_BASE_URLS` (Default leer = kein n8n-Bot). Die Bot-Verwaltung markiert einen aktiven Bot, den Runtime verworfen hat, mit „Nicht im Chat“; das Runtime-Log nennt ihn unter `skipping managed bot` |
 | Collections bleiben leer | Registry-Sync scheitert — der Ingest-Token gehört keinem Administrator |
 | MCP antwortet `503` | `WEAVE_DELEGATION_SECRET` oder `TOOLS_API_TOKEN` nicht gesetzt |
 | Login schlägt mit `403` fehl | Frontend-Adresse fehlt in `CORS_ORIGINS` |

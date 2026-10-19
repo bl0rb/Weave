@@ -10,6 +10,10 @@ INGEST_LOGIN_URL wird bewusst NICHT ueberschrieben: das ist die Adresse, die
 ein BROWSER aufruft (die /login-Seite des Ingest-Frontends), nicht die
 clusterinterne Adresse. Ueberschrieben wird nur INGEST_API_URL -- damit
 loest dieser Container den Handoff-Code serverseitig ein.
+
+Ebenso kommt CHAT_PUBLIC_URL unveraendert aus der Konfiguration: die
+oeffentliche Adresse des Web-Chats (derselbe Wert wie chat.CHAT_APP_BASE_URL),
+die GET /v1/me der Desktop-App fuer ihren "Im Web oeffnen"-Link nennt.
 */}}
 {{- if .Values.api.enabled }}
 {{- include "weave.validate" . }}

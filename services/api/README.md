@@ -57,7 +57,7 @@ Weave-API ist das **Bot-Gateway** und der zentrale Einstiegspunkt des Weave-Syst
 - GET `/v1/models`: JSON im OpenAI-Format `{ object: "list", data: [{ id, object, created, owned_by }, ...] }`
 - GET `/v1/collections`: JSON-Array `[{ slug, name, description, public }, ...]` — Weave-Retrievals eigenes `CollectionOut`, unverändert durchgereicht
 - POST `/v1/search`: `{ query, results: [{ text, source: { document, document_id, chunk_id, page, collection, source_url } }] }`
-- GET `/v1/me`: `{ username, locale }`
+- GET `/v1/me`: `{ username, locale, chat_url }` — `chat_url` ist `CHAT_PUBLIC_URL` (Herkunft des Web-Chats, ohne abschließenden `/`) oder `null`, wenn nicht gesetzt; die Desktop-App verlinkt damit Unterhaltungen (`<chat_url>/?conversation=<id>`)
 - PUT `/v1/me/locale`: `{ locale }` bei Erfolg; `422` bei ungültigem Wert; `503` (Wert bleibt lokal unverändert), wenn der Aufrufer über Weave-Ingest authentifiziert ist und Weave-Ingest nicht erreichbar/konfiguriert ist
 - POST `/internal/tokens/introspect`: `{ active: true, user_id, username, team, is_admin }` bei gültigem Token, sonst `{ active: false }` (immer HTTP 200)
 - GET `/v1/auth/oidc/login`: `302` zum Provider, setzt ein kurzlebiges signiertes State-Cookie

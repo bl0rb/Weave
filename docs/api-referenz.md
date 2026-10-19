@@ -109,7 +109,7 @@ Alle folgenden Endpunkte liegen unter der Basis-URL von Weave-API und verlangen 
 
 #### `GET /v1/me`
 
-Liefert Benutzername und UI-Sprachpräferenz des Aufrufers.
+Liefert Benutzername, UI-Sprachpräferenz und die Adresse des Web-Chats (`chat_url`, aus `api.CHAT_PUBLIC_URL`; `null`, wenn nicht konfiguriert). Eine Unterhaltung öffnet sich im Web-Chat unter `<chat_url>/?conversation=<id>`.
 
 **curl**
 
@@ -134,7 +134,7 @@ print(resp.json())
 **Antwort (Beispiel)**
 
 ```json
-{ "username": "alice", "locale": "de" }
+{ "username": "alice", "locale": "de", "chat_url": "https://chat.example.com" }
 ```
 
 #### `PUT /v1/me/locale`

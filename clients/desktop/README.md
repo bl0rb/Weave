@@ -13,6 +13,16 @@ Tray-App für macOS (Menüleiste) und Windows (Infobereich), zwei Ansichten:
 Agent wählen, fragen – oder in allen Wissensräumen suchen, die man lesen darf. Antworten kommen
 gestreamt mit Quellen; Quellen mit Link (z. B. Confluence) öffnen sich im Browser.
 
+- **Agentenliste** – wird bei jedem Öffnen (Symbol, Kürzel, „Weave öffnen“) neu geladen; ein
+  neu angelegter oder freigegebener Bot erscheint ohne Neustart.
+- **Verlauf** – bleibt stehen, bis man ihn mit „Verlauf leeren“ (Papierkorb, `Cmd/Ctrl+N`)
+  entfernt. Nach 30 Minuten ohne Nutzung öffnet Weave mit einer leeren Unterhaltung.
+- **Im Web öffnen** – öffnet die laufende Unterhaltung im Web-Chat, sonst dessen Verlauf mit
+  allen früheren Fragen (sie bleiben dort gespeichert). Die Adresse liefert weave-api
+  (`api.CHAT_PUBLIC_URL`); ist sie leer, fehlt der Knopf.
+- **Scrollen** – eine neue Frage rückt nach oben, die Antwort läuft darunter ein, ohne die
+  Ansicht bis an ihr Ende mitzuziehen (wie im Web-Chat).
+
 Gebaut mit Tauri 2 wie [KeyZapper](https://github.com/bl0rb/ClaudeKeyZapper);
 die Einstellungen sehen auch so aus. Keine Build-Kette für die Oberfläche
 (`ui/` ist reines HTML/JS).
@@ -30,6 +40,8 @@ Die App meldet sich wie eine native App nach RFC 8252 an:
    Windows-Anmeldeinformationsverwaltung ab.
 
 Voraussetzung auf dem Server: `api.NATIVE_LOGIN_ENABLED: true` in `weave.yaml`.
+Für „Im Web öffnen“ zusätzlich `api.CHAT_PUBLIC_URL` = Adresse des Web-Chats (derselbe
+Wert wie `chat.CHAT_APP_BASE_URL`).
 Ohne PKCE nimmt weave-api keine Loopback-Adresse an, und der Code ist nur mit
 dem passenden Verifier einlösbar.
 
@@ -57,11 +69,11 @@ funktioniert der Link nur mit der gebauten `.app`.
 
 | Endpunkt | Zweck |
 |---|---|
-| `GET /v1/bots` | Agenten, die man nutzen darf |
+| `GET /v1/bots` | Agenten, die man nutzen darf (bei jedem Öffnen neu) |
 | `GET /v1/collections` | Wissensräume für den Filter |
 | `POST /v1/chat/stream` | Frage stellen (Unterhaltung bleibt pro Agent erhalten) |
 | `POST /v1/search` | Suche ohne Bot-Antwort |
-| `GET /v1/me`, `POST /v1/auth/logout` | Konto |
+| `GET /v1/me`, `POST /v1/auth/logout` | Konto; `chat_url` aus `/v1/me` für „Im Web öffnen“ |
 
 ## Vorgaben durch die IT (Intune/MDM)
 
