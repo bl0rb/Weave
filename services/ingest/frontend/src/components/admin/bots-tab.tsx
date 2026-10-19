@@ -116,6 +116,7 @@ type ManagedBot = {
   updated_at: string;
   source?: 'managed' | 'runtime';
   editable?: boolean;
+  runtime_rejected?: boolean;
 };
 
 type BotDraft = Omit<ManagedBot, 'has_auth_token' | 'created_at' | 'updated_at'> & {
@@ -262,8 +263,9 @@ export function BotsTab() {
       ) : <ul className={bots.items.length > 3 ? 'grid gap-3 md:grid-cols-2 xl:grid-cols-3' : 'divide-y divide-slate-100'}>
         {bots.items.map(item => <li key={item.id} className={`flex flex-wrap items-start justify-between gap-4 ${bots.items.length > 3 ? 'min-w-0 rounded-xl border border-slate-200 p-3' : 'py-4'}`}>
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2"><Bot size={18} className="text-emerald-700" /><h3 className="font-semibold text-slate-950">{item.name}</h3><Badge tone={item.enabled ? 'emerald' : 'slate'}>{item.enabled ? t('admin.bots.status.active') : t('admin.bots.status.inactive')}</Badge><Badge tone={item.source === 'runtime' ? 'slate' : 'emerald'}>{item.source === 'runtime' ? t('admin.bots.kind.configBot') : t('admin.bots.kind.managed')}</Badge>{item.streaming && <Badge tone="amber">{t('admin.bots.badge.streaming')}</Badge>}{item.has_auth_token && <Badge tone="amber">{t('admin.bots.badge.bearerToken')}</Badge>}</div>
+            <div className="flex flex-wrap items-center gap-2"><Bot size={18} className="text-emerald-700" /><h3 className="font-semibold text-slate-950">{item.name}</h3><Badge tone={item.enabled ? 'emerald' : 'slate'}>{item.enabled ? t('admin.bots.status.active') : t('admin.bots.status.inactive')}</Badge><Badge tone={item.source === 'runtime' ? 'slate' : 'emerald'}>{item.source === 'runtime' ? t('admin.bots.kind.configBot') : t('admin.bots.kind.managed')}</Badge>{item.streaming && <Badge tone="amber">{t('admin.bots.badge.streaming')}</Badge>}{item.has_auth_token && <Badge tone="amber">{t('admin.bots.badge.bearerToken')}</Badge>}{item.runtime_rejected && <Badge tone="red">{t('admin.bots.badge.notInChat')}</Badge>}</div>
             <p className="mt-1 text-sm text-slate-600">{item.description || item.id}</p>
+            {item.runtime_rejected && <p role="status" className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{item.kind === 'n8n' ? t('admin.bots.runtimeRejected.n8n') : t('admin.bots.runtimeRejected.other')}</p>}
             {item.webhook_url && <p className="mt-2 break-all text-xs text-slate-400">{item.webhook_url}</p>}
             <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-500"><span>{t('admin.bots.teamsLabel', { teams: item.public ? t('admin.bots.teamsAll') : item.grants.filter(grant => grant.role === 'user').map(grant => grant.name).join(', ') || t('admin.bots.teamsNone') })}</span><span>{t('admin.bots.ownersLabel', { owners: item.grants.filter(grant => grant.role === 'owner').map(grant => grant.name).join(', ') || '—' })}</span><span>{t('admin.bots.spacesLabel', { value: item.collections.length ? item.collections.length : t('admin.bots.spacesAllAuthorized') })}</span></div>
           </div>

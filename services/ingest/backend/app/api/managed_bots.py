@@ -103,8 +103,15 @@ def _admin_response(row: ManagedBot) -> ManagedBotAdminResponse:
 
 
 def _runtime_bots(db: Session | None = None) -> list[ManagedBotAdminResponse]:
+    return _runtime_roster(db) or []
+
+
+def _runtime_roster(db: Session | None = None) -> list[ManagedBotAdminResponse] | None:
+    """Runtime's validated roster, or ``None`` when it is unknown (no
+    token configured or Runtime unreachable) -- unlike an empty roster, that
+    says nothing about which managed bots Runtime rejected."""
     if not settings.runtime_api_token:
-        return []
+        return None
     base_url = settings.runtime_bots_base_url.rstrip('/')
     headers = {'Authorization': f'Bearer {settings.runtime_api_token}'}
     try:
@@ -133,14 +140,14 @@ def _runtime_bots(db: Session | None = None) -> list[ManagedBotAdminResponse]:
             response.raise_for_status()
             items = response.json()
         if not isinstance(items, list):
-            return []
+            return None
     except (httpx.HTTPError, ValueError, TypeError, ValidationError):
         # Managed n8n bots remain administrable when Runtime is temporarily
         # unavailable; the next refresh exposes local YAML bots again. Logged,
         # because callers such as the space-deletion guard then check only
         # Ingest's own bots.
         logger.warning('Runtime bot roster unavailable; only managed bots are known', exc_info=True)
-        return []
+        return None
     # YAML bots name teams. Known ones become ordinary user grants; unknown
     # names are still shown (without an id) so the list doesn't claim the
     # bot is closed, and are dropped once an admin saves an override.
@@ -346,7 +353,15 @@ def list_managed_bots(request: Request, db: Session = Depends(get_db)) -> Manage
     managed = [_admin_response(row) for row in rows]
     managed_ids = {item.id for item in managed}
     tombstoned_ids = set(db.scalars(select(BotTombstone.id)).all())
-    runtime = [item for item in _runtime_bots(db) if item.id not in managed_ids and item.id not in tombstoned_ids]
+    roster = _runtime_roster(db)
+    if roster is not None:
+        # Runtime skips a managed bot it cannot validate (typically an n8n
+        # webhook_url outside N8N_ALLOWED_BASE_URLS) without telling anyone;
+        # an active bot missing from its roster never shows up in the chat.
+        roster_ids = {item.id for item in roster}
+        for item in managed:
+            item.runtime_rejected = item.enabled and item.id not in roster_ids
+    runtime = [item for item in roster or [] if item.id not in managed_ids and item.id not in tombstoned_ids]
     return ManagedBotListResponse(items=sorted(managed + runtime, key=lambda item: (item.name, item.id)))
 
 
