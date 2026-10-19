@@ -405,7 +405,7 @@ Bearbeitungsstände, Freigabe-Snapshots) gehen:
 | `S3_ENDPOINT_URL` | Leer = AWS. MinIO/Ceph z. B. `http://minio:9000`. |
 | `S3_REGION` | z. B. `eu-central-1`. |
 | `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | Leer = Standard-Credential-Kette (IAM-Rolle, IRSA). Das Secret kommt über `WEAVE_INGEST_S3_SECRET_ACCESS_KEY`. |
-| `S3_KEY_PREFIX` | Standard `weave-ingest/`; mehrere Instanzen in einem Bucket brauchen verschiedene Präfixe. |
+| `S3_KEY_PREFIX` | Standard `weave-ingest/`. Jede Instanz braucht ihr eigenes Präfix: `storage sweep` hält fremde Schlüssel unter dem Präfix für verwaist. Schlüssel sind zufällig und nie aus der Objekt-ID abgeleitet, eine Wiederherstellung teilt also keine Schlüssel mit der Quelle. |
 | `S3_ADDRESSING_STYLE` | `auto`, `path` (meist für MinIO) oder `virtual`. |
 
 Benötigte Rechte: `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` und
@@ -429,10 +429,16 @@ python -m app.cli storage status
 
 Nach `--to s3` ist der Platz in PostgreSQL erst nach `VACUUM` (bzw.
 `VACUUM FULL` für `stored_object_chunks`) wieder frei. Nach `--to db`
-löscht die Migration die S3-Schlüssel selbst. Während der Migration laufende
-Aufträge, die gerade ein umziehendes Original lesen, können einmal
-fehlschlagen und lassen sich neu starten — am besten in einer ruhigen Zeit
-migrieren.
+löscht die Migration die S3-Schlüssel selbst. Wer ein Objekt gerade liest,
+während es umzieht, liest an derselben Stelle im neuen Backend weiter.
+Objekte, deren Bytes fehlen, überspringt die Migration (`skipped` in der
+Ausgabe, Details in den Zeilen davor); sie bleiben, wo sie sind, und
+erscheinen weiter in `storage status`.
+
+Löschungen in S3 und eine laufende Sicherung schließen sich über eine
+PostgreSQL-Sperre aus: während eines Exports lässt die Garbage Collection
+S3-Objekte liegen (der nächste Durchlauf danach räumt sie ab), `migrate --to
+db` und `storage sweep` warten.
 
 Die Sicherung (Abschnitt „Sicherung & Wiederherstellung“) nimmt S3-Objekte
 mit ins Archiv; die Wiederherstellung schreibt sie in das Backend, das das

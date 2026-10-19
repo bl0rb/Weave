@@ -23,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.models import _OFFLOADED_TEXT, StoredObject, StoredObjectChunk
+from app.models.models import OFFLOADED_TEXT, StoredObject, StoredObjectChunk
 from app.services import object_store
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ class MigrationRefused(RuntimeError):
 # --- Binary objects -----------------------------------------------------------
 
 def _object_to_s3(db: Session, row) -> bool:
-    key = object_store.s3_key(row.id)
+    key = object_store.new_s3_key()
     object_store.s3_upload_file(
         io.BufferedReader(object_store.IterReader(object_store.iter_chunks(db, row.id))), key, row.content_type
     )
@@ -57,6 +57,12 @@ def _object_to_s3(db: Session, row) -> bool:
 
 
 def _object_to_db(db: Session, row) -> bool:
+    # Deletes the S3 key of a row a running export may still see as 's3'.
+    with object_store.s3_deletion_lock(db):
+        return _object_to_db_locked(db, row)
+
+
+def _object_to_db_locked(db: Session, row) -> bool:
     try:
         chunks = object_store.iter_chunks(db, row.id)
         for seq, chunk in enumerate(object_store.rechunk(chunks, row.chunk_bytes)):
@@ -77,10 +83,13 @@ def _object_to_db(db: Session, row) -> bool:
     return True
 
 
-def migrate_objects(db: Session, *, to: str, batch_size: int = 100, progress: Callable[[str], None] = print) -> int:
+def migrate_objects(
+    db: Session, *, to: str, batch_size: int = 100, progress: Callable[[str], None] = print
+) -> tuple[int, int]:
+    """Returns (moved, skipped): skipped objects have lost their bytes."""
     source = 's3' if to == 'db' else 'db'
     mover = _object_to_s3 if to == 's3' else _object_to_db
-    moved = 0
+    moved = skipped = 0
     failed: set[str] = set()
     while True:
         query = select(
@@ -90,7 +99,7 @@ def migrate_objects(db: Session, *, to: str, batch_size: int = 100, progress: Ca
             query = query.where(StoredObject.id.not_in(failed))
         batch = db.execute(query.order_by(StoredObject.created_at).limit(batch_size)).all()
         if not batch:
-            return moved
+            return moved, skipped
         for row in batch:
             db.expunge_all()  # core updates below leave loaded StoredObjects stale
             try:
@@ -101,6 +110,7 @@ def migrate_objects(db: Session, *, to: str, batch_size: int = 100, progress: Ca
             except object_store.ObjectNotFoundError as exc:
                 db.rollback()
                 failed.add(row.id)
+                skipped += 1
                 progress(f'object {row.id}: skipped, {exc}')
         progress(f'objects -> {to}: {moved} moved')
 
@@ -108,12 +118,12 @@ def migrate_objects(db: Session, *, to: str, batch_size: int = 100, progress: Ca
 # --- Markdown ---------------------------------------------------------------------
 
 def _markdown_columns():
-    for model, fields in _OFFLOADED_TEXT.items():
+    for model, fields in OFFLOADED_TEXT.items():
         for column, object_column, name in fields:
             yield model, getattr(model, column), getattr(model, object_column), f'{model.__tablename__}.{name}'
 
 
-def _markdown_to_s3(db: Session, model, column, object_column, batch_size: int) -> int:
+def _markdown_to_s3(db: Session, model, column, object_column, batch_size: int, progress) -> tuple[int, int]:
     pk = model.__mapper__.primary_key[0]
     moved = 0
     while True:
@@ -123,7 +133,7 @@ def _markdown_to_s3(db: Session, model, column, object_column, batch_size: int) 
             .limit(batch_size)
         ).all()
         if not rows:
-            return moved
+            return moved, 0
         for row_id, text in rows:
             object_id = object_store.put_text_s3_in_flush(db, text)
             # Only if nobody edited the row meanwhile; otherwise the new
@@ -137,16 +147,26 @@ def _markdown_to_s3(db: Session, model, column, object_column, batch_size: int) 
         db.commit()
 
 
-def _markdown_to_db(db: Session, model, column, object_column, batch_size: int) -> int:
+def _markdown_to_db(db: Session, model, column, object_column, batch_size: int, progress) -> tuple[int, int]:
     pk = model.__mapper__.primary_key[0]
     moved = 0
+    failed: set = set()  # rows whose object lost its bytes: reported, left as they are
     while True:
-        rows = db.execute(select(pk, object_column).where(object_column.is_not(None)).limit(batch_size)).all()
+        query = select(pk, object_column).where(object_column.is_not(None))
+        if failed:
+            query = query.where(pk.not_in(failed))
+        rows = db.execute(query.limit(batch_size)).all()
         if not rows:
-            return moved
+            return moved, len(failed)
         released = []
         for row_id, object_id in rows:
-            text = object_store.read_text(db, object_id)
+            try:
+                text = object_store.read_text(db, object_id)
+            except object_store.ObjectNotFoundError as exc:
+                db.rollback()
+                failed.add(row_id)
+                progress(f'{model.__tablename__} {row_id}: skipped, {exc}')
+                continue
             moved += db.execute(
                 update(model)
                 .where(pk == row_id, object_column == object_id)
@@ -158,14 +178,18 @@ def _markdown_to_db(db: Session, model, column, object_column, batch_size: int) 
         object_store.delete_unreferenced(db, released)
 
 
-def migrate_markdown(db: Session, *, to: str, batch_size: int = 100, progress: Callable[[str], None] = print) -> int:
+def migrate_markdown(
+    db: Session, *, to: str, batch_size: int = 100, progress: Callable[[str], None] = print
+) -> tuple[int, int]:
+    """Returns (moved, skipped) over all markdown columns."""
     mover = _markdown_to_s3 if to == 's3' else _markdown_to_db
-    total = 0
+    total = total_skipped = 0
     for model, column, object_column, label in _markdown_columns():
-        moved = mover(db, model, column, object_column, batch_size)
-        progress(f'{label} -> {to}: {moved} moved')
+        moved, skipped = mover(db, model, column, object_column, batch_size, progress)
+        progress(f'{label} -> {to}: {moved} moved, {skipped} skipped')
         total += moved
-    return total
+        total_skipped += skipped
+    return total, total_skipped
 
 
 def migrate(db: Session, *, to: str, batch_size: int = 100, progress: Callable[[str], None] = print) -> dict:
@@ -180,9 +204,15 @@ def migrate(db: Session, *, to: str, batch_size: int = 100, progress: Callable[[
         raise MigrationRefused('S3_BUCKET is not set; both directions need the S3 settings.')
     # Markdown first: moving it to 'db' releases its objects, which then need
     # no move of their own.
-    markdown = migrate_markdown(db, to=to, batch_size=batch_size, progress=progress)
-    objects = migrate_objects(db, to=to, batch_size=batch_size, progress=progress)
-    return {'markdown_moved': markdown, 'objects_moved': objects}
+    markdown, markdown_skipped = migrate_markdown(db, to=to, batch_size=batch_size, progress=progress)
+    objects, objects_skipped = migrate_objects(db, to=to, batch_size=batch_size, progress=progress)
+    # Skipped rows point at objects whose bytes are gone (see the progress
+    # lines); they stay where they are and show up in status().
+    return {
+        'markdown_moved': markdown,
+        'objects_moved': objects,
+        'skipped': markdown_skipped + objects_skipped,
+    }
 
 
 # --- Status and orphan sweep --------------------------------------------------------
@@ -205,25 +235,25 @@ def status(db: Session) -> dict:
 
 def sweep_s3_orphans(db: Session, *, min_age_seconds: int = 3600) -> int:
     """Delete S3 keys under the object prefix that no stored_objects row
-    references -- left behind by a rolled-back transaction, an interrupted
+    points to -- left behind by a rolled-back transaction, an interrupted
     migration or a backup import that replaced the database. Keys younger
-    than `min_age_seconds` may belong to a write still in flight."""
+    than `min_age_seconds` may belong to a write still in flight; exports and
+    imports block it through object_store.s3_deletion_lock. The prefix must
+    belong to this instance alone: another instance's keys look like
+    orphans from here."""
     from datetime import datetime, timedelta, timezone
 
     cutoff = datetime.now(timezone.utc) - timedelta(seconds=min_age_seconds)
-    prefix = object_store.s3_key('')
     paginator = object_store.s3_client().get_paginator('list_objects_v2')
     deleted = 0
-    for page in paginator.paginate(Bucket=settings.s3_bucket, Prefix=prefix):
-        candidates = {
-            entry['Key'][len(prefix):]: entry['Key']
-            for entry in page.get('Contents', [])
-            if entry['LastModified'] < cutoff
-        }
+    for page in paginator.paginate(Bucket=settings.s3_bucket, Prefix=object_store.s3_prefix()):
+        candidates = [entry['Key'] for entry in page.get('Contents', []) if entry['LastModified'] < cutoff]
         if not candidates:
             continue
-        known = set(db.scalars(select(StoredObject.id).where(StoredObject.id.in_(list(candidates)))).all())
-        orphans = [key for object_id, key in candidates.items() if object_id not in known]
-        object_store.delete_s3_keys(orphans)
+        with object_store.s3_deletion_lock(db):
+            known = set(db.scalars(select(StoredObject.storage_key).where(StoredObject.storage_key.in_(candidates))))
+            db.rollback()  # end the read; the next page sees fresh commits
+            orphans = [key for key in candidates if key not in known]
+            object_store.delete_s3_keys(orphans)
         deleted += len(orphans)
     return deleted

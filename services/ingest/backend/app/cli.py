@@ -35,7 +35,7 @@ from sqlalchemy import select
 
 from app.database.session import SessionLocal
 from app.models.models import User
-from app.services import backup, storage_migration
+from app.services import backup, object_store, storage_migration
 
 _PASSPHRASE_ENV_VAR = 'WEAVE_BACKUP_PASSPHRASE'
 
@@ -130,6 +130,14 @@ def run_backup_import(*, file: str, admin_username: str, force: bool) -> int:
 
 
 def run_storage(args) -> int:
+    try:
+        return _run_storage(args)
+    except object_store.ObjectStorageConfigError as exc:
+        print(f'storage {args.storage_command}: S3 is not configured ({exc})', file=sys.stderr)
+        return 1
+
+
+def _run_storage(args) -> int:
     with SessionLocal() as db:
         if args.storage_command == 'status':
             print(json.dumps(storage_migration.status(db), indent=2))
@@ -177,7 +185,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     migrate_parser.add_argument('--to', required=True, choices=storage_migration.BACKENDS)
     migrate_parser.add_argument('--batch-size', type=int, default=100)
-    sweep_parser = storage_subparsers.add_parser('sweep', help='Delete S3 keys no stored object references')
+    sweep_parser = storage_subparsers.add_parser(
+        'sweep', help='Delete S3 keys no stored object references (S3_KEY_PREFIX must belong to this instance alone)'
+    )
     sweep_parser.add_argument('--min-age-seconds', type=int, default=3600)
 
     return parser

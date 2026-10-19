@@ -1650,6 +1650,8 @@ def test_0052_markdown_objects_round_trip_and_guarded_downgrade(tmp_path, monkey
     columns = {column['name']: column for column in inspect(engine).get_columns('job_markdown_versions')}
     assert columns['content']['nullable'] is True
     assert 'content_object_id' in columns
+    checks = {check['name'] for check in inspect(engine).get_check_constraints('document_releases')}
+    assert 'ck_document_releases_markdown_present' in checks
     assert 'result_markdown_object_id' in {column['name'] for column in inspect(engine).get_columns('jobs')}
 
     with engine.begin() as conn:

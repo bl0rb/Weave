@@ -457,6 +457,7 @@ def _finalize_run(db, run: ImportRun, state: _RunState, claimed_seq: int) -> Non
             .where(Job.import_run_id == run.id)
             .where(Job.markdown_present())
         ).all()
+        object_store.preload_offloaded(db, page_jobs)
         for job in page_jobs:
             info = job.processing_info if isinstance(job.processing_info, dict) else {}
             job_settings = info.get('settings') if isinstance(info.get('settings'), dict) else {}

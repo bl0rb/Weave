@@ -60,7 +60,7 @@ def _offloaded_text(column: str, object_column: str) -> property:
 
             with SessionLocal() as own_db:
                 text = object_store.read_text(own_db, object_id)
-        self.__dict__[cache_key] = (object_id, text)
+        cache_offloaded(self, object_column, object_id, text)
         return text
 
     def fset(self, value):
@@ -71,9 +71,14 @@ def _offloaded_text(column: str, object_column: str) -> property:
     return property(fget, fset)
 
 
+def cache_offloaded(obj, object_column: str, object_id: str, text: str) -> None:
+    """Remember the loaded text of `object_id` on `obj` (see _offloaded_text)."""
+    obj.__dict__[f'_offloaded_{object_column}'] = (object_id, text)
+
+
 # Model -> ((column attribute, object id attribute, property name), ...),
 # filled below the classes.
-_OFFLOADED_TEXT: dict[type, tuple[tuple[str, str, str], ...]] = {}
+OFFLOADED_TEXT: dict[type, tuple[tuple[str, str, str], ...]] = {}
 
 
 @event.listens_for(OrmSession, 'before_flush')
@@ -88,7 +93,7 @@ def _offload_text(session, flush_context, instances) -> None:
     from app.services import object_store
 
     for obj in [*session.new, *session.dirty]:
-        for column, object_column, _name in _OFFLOADED_TEXT.get(type(obj), ()):
+        for column, object_column, _name in OFFLOADED_TEXT.get(type(obj), ()):
             state = inspect(obj)
             value = state.dict.get(column)
             if not value or (not state.pending and not state.attrs[column].history.added):
@@ -96,7 +101,7 @@ def _offload_text(session, flush_context, instances) -> None:
             object_id = object_store.put_text_s3_in_flush(session, value)
             setattr(obj, column, None)
             setattr(obj, object_column, object_id)
-            obj.__dict__[f'_offloaded_{object_column}'] = (object_id, value)
+            cache_offloaded(obj, object_column, object_id, value)
 
 
 job_tags = Table(
@@ -140,7 +145,7 @@ class StoredObject(Base):
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     content_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
     backend: Mapped[str] = mapped_column(String(8), default='db', server_default='db', nullable=False)
-    storage_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    storage_key: Mapped[str | None] = mapped_column(String(1024), nullable=True, index=True)
     chunk_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
@@ -313,6 +318,10 @@ class JobMarkdownVersion(Base):
     __tablename__ = 'job_markdown_versions'
     __table_args__ = (
         UniqueConstraint('job_id', 'version', name='uq_job_markdown_versions_job_id_version'),
+        # Text inline or offloaded, never neither (see _offloaded_text).
+        CheckConstraint(
+            'content IS NOT NULL OR content_object_id IS NOT NULL', name='ck_job_markdown_versions_content_present'
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -1609,6 +1618,13 @@ class DocumentRelease(Base):
     """
 
     __tablename__ = 'document_releases'
+    __table_args__ = (
+        # Snapshot inline or offloaded, never neither (see _offloaded_text).
+        CheckConstraint(
+            'markdown_snapshot IS NOT NULL OR markdown_object_id IS NOT NULL',
+            name='ck_document_releases_markdown_present',
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     job_id: Mapped[str] = mapped_column(
@@ -1797,7 +1813,7 @@ class BackupRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
 
-_OFFLOADED_TEXT.update({
+OFFLOADED_TEXT.update({
     Job: (('_result_markdown', 'result_markdown_object_id', 'result_markdown'),),
     JobMarkdownVersion: (('_content', 'content_object_id', 'content'),),
     DocumentRelease: (('_markdown_snapshot', 'markdown_object_id', 'markdown_snapshot'),),

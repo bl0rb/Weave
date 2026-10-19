@@ -2654,6 +2654,7 @@ def download_folder_markdown(
     if not folder_jobs:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='No finished jobs found in this folder')
 
+    object_store.preload_offloaded(db, [job for job in folder_jobs if not job.password_hash])
     archive_buffer = io.BytesIO()
     exported_files = 0
     with zipfile.ZipFile(archive_buffer, mode='w', compression=zipfile.ZIP_DEFLATED) as zip_file:

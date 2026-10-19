@@ -446,13 +446,14 @@ def _iter_object_parts(tar: tarfile.TarFile, object_id: str, parts: int) -> Iter
 def _restore_s3_object(tar: tarfile.TarFile, row: dict, parts: int | None) -> Iterator[bytes] | None:
     """Put an archived S3 object into the target's configured backend and
     point `row` at it. Returns the chunks to insert after the row for the
-    'db' backend, None when the bytes went to S3. Keys of a rolled-back
-    import stay behind for `python -m app.cli storage sweep`."""
+    'db' backend, None when the bytes went to S3. A fresh key, never the
+    source's: the source instance may use the same bucket. Keys of a
+    rolled-back import stay behind for `python -m app.cli storage sweep`."""
     if parts is None:
         raise IncompatibleArchiveError('Das Archiv ist unvollständig oder beschädigt (fehlender Objekt-Eintrag).')
     chunks = _iter_object_parts(tar, row['id'], parts)
     if settings.object_storage_backend == 's3':
-        row['storage_key'] = object_store.s3_key(row['id'])
+        row['storage_key'] = object_store.new_s3_key()
         object_store.s3_upload_file(
             io.BufferedReader(object_store.IterReader(chunks)), row['storage_key'], row.get('content_type')
         )
@@ -592,6 +593,22 @@ def _begin_consistent_snapshot(db: Session) -> None:
 
 
 def iter_export_backup(
+    db: Session,
+    *,
+    passphrase: str,
+    progress_cb: Callable[[str, int], None] | None = None,
+    manifest_out: dict | None = None,
+) -> Iterator[bytes]:
+    """See _iter_export_backup. S3 is not part of the database snapshot, so
+    the whole export holds object_store.s3_deletion_lock (shared): no S3 key
+    of a row the snapshot still sees is deleted until it is done."""
+    with object_store.s3_deletion_lock(db, shared=True):
+        yield from _iter_export_backup(
+            db, passphrase=passphrase, progress_cb=progress_cb, manifest_out=manifest_out
+        )
+
+
+def _iter_export_backup(
     db: Session,
     *,
     passphrase: str,
@@ -882,6 +899,25 @@ def requeue_collection_releases_for_reindex(db: Session, collection_id: str) -> 
 # --- Import -------------------------------------------------------------
 
 def import_backup(
+    db: Session,
+    *,
+    path: Path,
+    passphrase: str,
+    importing_admin_id: str,
+    force: bool = False,
+    progress_cb: Callable[[str, int], None] | None = None,
+) -> dict:
+    """See _import_backup. Holds object_store.s3_deletion_lock (shared) while
+    it uploads restored objects, whose rows stay uncommitted until the
+    caller commits, so `storage sweep` cannot take them for orphans."""
+    with object_store.s3_deletion_lock(db, shared=True):
+        return _import_backup(
+            db, path=path, passphrase=passphrase, importing_admin_id=importing_admin_id,
+            force=force, progress_cb=progress_cb,
+        )
+
+
+def _import_backup(
     db: Session,
     *,
     path: Path,
