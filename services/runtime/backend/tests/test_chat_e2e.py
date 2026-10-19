@@ -235,7 +235,7 @@ def test_knowledge_flow_passes_context_to_the_llm_and_returns_sources(monkeypatc
     # test_chat_service.py's own `resolve_collection_scope`/
     # `include_uncollected` tests for that function's logic in isolation.
     assert trace['retrieval'] == {
-        'candidates': 2, 'used': 2, 'collections': ['vertraege', '__none__'], 'requested_collections': None, 'rewritten_query': None,
+        'candidates': 2, 'used': 2, 'collections': ['vertraege', '__none__'], 'requested_collections': None, 'rewritten_query': None, 'focus_documents': None,
     }
     assert trace['guard'] is None
     assert 'retrieval_ms' in trace['timings_ms']
@@ -291,7 +291,7 @@ def test_guard_flow_returns_no_context_reply_when_retrieval_finds_nothing(monkey
     # nothing), not 'no_collections' (search never ran at all, see the
     # dedicated test for that below).
     assert trace['retrieval'] == {
-        'candidates': 0, 'used': 0, 'collections': ['vertraege', '__none__'], 'requested_collections': None, 'rewritten_query': None,
+        'candidates': 0, 'used': 0, 'collections': ['vertraege', '__none__'], 'requested_collections': None, 'rewritten_query': None, 'focus_documents': None,
     }
     assert trace['guard'] == {'triggered': True, 'reason': 'no_context'}
     assert trace['model'] is None  # the guard short-circuits before any LLM call
@@ -710,7 +710,7 @@ def test_guard_flow_returns_no_collections_reply_when_the_user_cannot_read_the_b
 
     trace = body['trace']
     assert trace['intent'] == 'knowledge'
-    assert trace['retrieval'] == {'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': None, 'rewritten_query': None}
+    assert trace['retrieval'] == {'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': None, 'rewritten_query': None, 'focus_documents': None}
     assert trace['guard'] == {'triggered': True, 'reason': 'no_collections'}
     assert trace['model'] is None
 
@@ -753,7 +753,7 @@ def test_collections_filter_restricts_the_effective_search_scope(monkeypatch):
 
     trace = body['trace']
     assert trace['retrieval'] == {
-        'candidates': 1, 'used': 1, 'collections': ['vertraege'], 'requested_collections': ['vertraege'], 'rewritten_query': None,
+        'candidates': 1, 'used': 1, 'collections': ['vertraege'], 'requested_collections': ['vertraege'], 'rewritten_query': None, 'focus_documents': None,
     }
     assert trace['guard'] is None
     assert sent_requests[0]['allowed_collections'] == ['vertraege']
@@ -816,7 +816,7 @@ def test_collections_filter_naming_only_foreign_slugs_triggers_its_own_guard_rea
     trace = body['trace']
     assert trace['guard'] == {'triggered': True, 'reason': 'filter_excluded_all'}
     assert trace['retrieval'] == {
-        'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': ['geheimprojekt'], 'rewritten_query': None,
+        'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': ['geheimprojekt'], 'rewritten_query': None, 'focus_documents': None,
     }
     assert trace['model'] is None
     assert body['sources'] == []
@@ -850,7 +850,7 @@ def test_no_collections_filter_is_byte_for_byte_the_pre_filter_behaviour(monkeyp
 
     trace = body['trace']
     assert trace['retrieval'] == {
-        'candidates': 1, 'used': 1, 'collections': ['vertraege', '__none__'], 'requested_collections': None, 'rewritten_query': None,
+        'candidates': 1, 'used': 1, 'collections': ['vertraege', '__none__'], 'requested_collections': None, 'rewritten_query': None, 'focus_documents': None,
     }
     assert trace['guard'] is None
 

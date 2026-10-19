@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Weave transformation, the product is called Weave Ingest. Entries below predating that
 > change are left as written and refer to the project under its former name.
 
+## [Unreleased]
+
+### Added
+- **Knowledge memory as search support** ([ADR-0009 §10](../../docs/adr/0009-wissensgedaechtnis.md)),
+  only with `KNOWLEDGE_MEMORY_MODE` ≠ `off` and for bots without `retrieval.filters`; with the memory
+  off nothing changes.
+  - Weave-Runtime: a knowledge turn first asks `POST /api/v1/memory` which documents matter and
+    focuses the chunk search on them (new `SearchFilters.document_ids` in Weave-Retrieval, retry
+    without focus when nothing is found, `RetrievalTrace.focus_documents`, `timings_ms.memory_ms`).
+    Sources stay chunks only; the summaries reach the LLM as a non-citable orientation block.
+  - Agent mode: subagents get the tool `memory_lookup(query, collection?)` (overviews and document
+    summaries within their own scope, at most two per research run, never citable) and can search a
+    single document via `search_knowledge(document_id=...)`; `SubagentTrace.memory_lookups`.
+
 ## [0.7.9] - 2026-10-18
 
 ### Added

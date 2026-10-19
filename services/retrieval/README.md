@@ -137,6 +137,7 @@ Weave-Retrieval ist die **Lese-Autorität** des "Collections"-Vertrags (siehe di
 - **`GET /api/v1/releases/{release_id}/collection`** (gleicher Service-Token) liefert `{"collection": <slug | null>}` für das aus dieser Freigabe indizierte Dokument, 404 für eine unbekannte oder inzwischen ersetzte Freigabe. Weave-API prüft damit vor dem Ausliefern von Bildern einer Freigabe, ob der Aufrufer deren Bereich lesen darf.
 
 - **`SearchFilters.collection`** ist eine reine Verfeinerung innerhalb dessen, was `allowed_collections` bereits erlaubt — sie kann die Grenze niemals erweitern.
+- **`SearchFilters.document_ids`** (ADR-0009 §10) verfeinert genauso auf einzelne `documents.id`-Werte innerhalb dieser Grenze; eine fremde oder ungültige ID liefert null Treffer, nie einen Fehler.
 
 ## Evaluation
 

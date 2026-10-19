@@ -306,7 +306,7 @@ def test_research_fanout_never_exceeds_max_parallel():
     concurrency = {'current': 0, 'max': 0}
     lock = threading.Lock()
 
-    def _fake_run_subagent(bot, subagent, question, effective_scope, llm_provider, *, model, temperature=None, allowed_teams=None, cancel=None):
+    def _fake_run_subagent(bot, subagent, question, effective_scope, llm_provider, *, model, temperature=None, allowed_teams=None, cancel=None, memory=False):
         with lock:
             concurrency['current'] += 1
             concurrency['max'] = max(concurrency['max'], concurrency['current'])

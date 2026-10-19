@@ -357,8 +357,88 @@ def test_llm_error_during_the_loop_ends_with_partial_or_failed_status():
 
 # --- schema ------------------------------------------------------------------
 
+# --- memory_lookup (ADR-0009 §10b) ---------------------------------------------
+
+_MEMORY = {
+    'collections': [{'collection': 'it-docs', 'name': 'IT Docs', 'summary': 'IT guides.', 'topics': ['VPN'],
+                     'document_count': 1, 'documents': [{'document_id': 'doc-1', 'title': 'VPN', 'document_type': 'Anleitung'}]}],
+    'documents': [{'document_id': 'doc-1', 'collection': 'it-docs', 'title': 'VPN', 'document_type': 'Anleitung',
+                   'summary': 'How to set up VPN.', 'key_points': ['WireGuard'], 'original_filename': 'vpn.pdf'}],
+}
+
+
+def _lookup_then_search_then_answer(lookup_arguments=None):
+    return [
+        LLMToolResult(content=None, tool_calls=[_tool_call('memory_lookup', lookup_arguments or {'query': 'vpn'}, '1')], model='fake-chat'),
+        LLMToolResult(content=None, tool_calls=[_tool_call(arguments={'query': 'vpn', 'document_id': 'doc-1'}, call_id='2')], model='fake-chat'),
+        LLMToolResult(
+            content=_final_answer([{'text': 'VPN uses WireGuard.', 'source_refs': [{'document_id': 'doc-1', 'chunk_id': 1}]}]),
+            tool_calls=None, model='fake-chat',
+        ),
+    ]
+
+
+def test_memory_lookup_then_per_document_search_with_the_same_scope():
+    fake_llm = FakeLLM(tool_responses=_lookup_then_search_then_answer())
+    with patch('app.services.retrieval_client.memory', return_value=_MEMORY) as mock_memory, \
+            patch('app.services.retrieval_client.search', return_value=[_chunk()]) as mock_search:
+        result = agents.run_subagent(
+            _BOT, _subagent(), 'q', ['it-docs'], fake_llm, model='fake-chat', allowed_teams=['it'], memory=True,
+        )
+
+    assert (result.status, result.searches_used, result.memory_lookups) == ('complete', 1, 1)
+    assert mock_memory.call_args.kwargs['allowed_collections'] == ['it-docs']
+    assert mock_memory.call_args.kwargs['allowed_teams'] == ['it']
+    assert mock_search.call_args.kwargs['filters'] == {'document_ids': ['doc-1']}
+    assert mock_search.call_args.kwargs['allowed_collections'] == ['it-docs']
+    assert result.facts[0].source_refs[0].document_id == 'doc-1'
+
+
+def test_memory_lookup_is_not_offered_without_memory_or_with_filters():
+    for kwargs, subagent in (({}, _subagent()), ({'memory': True}, _subagent(filters={'department': 'it'}))):
+        fake_llm = FakeLLM(tool_responses=_lookup_then_search_then_answer())
+        with patch('app.services.retrieval_client.memory') as mock_memory, \
+                patch('app.services.retrieval_client.search', return_value=[_chunk()]):
+            result = agents.run_subagent(_BOT, subagent, 'q', ['it-docs'], fake_llm, model='fake-chat', **kwargs)
+        mock_memory.assert_not_called()
+        assert result.memory_lookups == 0 and result.status == 'complete'
+
+
+def test_memory_lookup_with_an_empty_or_foreign_scope_never_reaches_retrieval():
+    for scope, arguments in (([], {'query': 'vpn'}), (['it-docs'], {'query': 'vpn', 'collection': 'hr-docs'})):
+        fake_llm = FakeLLM(tool_responses=_lookup_then_search_then_answer(arguments))
+        with patch('app.services.retrieval_client.memory') as mock_memory, \
+                patch('app.services.retrieval_client.search', return_value=[]):
+            result = agents.run_subagent(_BOT, _subagent(), 'q', scope, fake_llm, model='fake-chat', memory=True)
+        mock_memory.assert_not_called()
+        assert result.memory_lookups == 1
+
+
+def test_memory_lookup_failure_and_limit_become_tool_errors():
+    scripted = [
+        LLMToolResult(content=None, tool_calls=[_tool_call('memory_lookup', {'query': 'a'}, '1')], model='fake-chat'),
+        LLMToolResult(content=None, tool_calls=[_tool_call('memory_lookup', {'query': 'b'}, '2')], model='fake-chat'),
+        LLMToolResult(content=None, tool_calls=[_tool_call('memory_lookup', {'query': 'c'}, '3')], model='fake-chat'),
+        LLMToolResult(content=_final_answer(), tool_calls=None, model='fake-chat'),
+    ]
+    fake_llm = FakeLLM(tool_responses=scripted)
+    with patch('app.services.retrieval_client.memory', side_effect=RetrievalError('down', status_code=404)) as mock_memory, \
+            patch('app.services.retrieval_client.search', return_value=[]):
+        result = agents.run_subagent(_BOT, _subagent(), 'q', ['it-docs'], fake_llm, model='fake-chat', memory=True)
+    assert mock_memory.call_count == 2  # the third lookup hit the per-loop limit
+    assert (result.status, result.searches_used, result.memory_lookups) == ('complete', 0, 3)
+
+
+def test_memory_lookup_tool_schema_has_no_identity_or_permission_fields():
+    schema = agents.memory_lookup_tool_schema()
+    properties = schema['function']['parameters']['properties']
+    assert set(properties) == {'query', 'collection'}
+    assert schema['function']['parameters']['additionalProperties'] is False
+    assert not agents._FORBIDDEN_ARG_KEYS.intersection(properties)
+
+
 def test_search_knowledge_tool_schema_has_no_identity_or_permission_fields():
     schema = agents.search_knowledge_tool_schema()
     properties = schema['function']['parameters']['properties']
-    assert set(properties) == {'query', 'collection', 'top_k'}
+    assert set(properties) == {'query', 'collection', 'top_k', 'document_id'}
     assert schema['function']['parameters']['additionalProperties'] is False

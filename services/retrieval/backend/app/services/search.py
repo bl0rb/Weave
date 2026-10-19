@@ -39,6 +39,7 @@ import logging
 import math
 import re
 import time
+import uuid
 import httpx
 from dataclasses import dataclass
 
@@ -237,6 +238,11 @@ def apply_filters(
         stmt = stmt.where(Document.department == filters.department)
     if filters.collection is not None:
         stmt = stmt.where(Document.collection_slug == filters.collection)
+    if filters.document_ids is not None:
+        # Non-UUID values are dropped rather than raised on: an unknown or
+        # malformed id is "no such document", i.e. zero rows, never an
+        # error and never a fallback to "no document filter".
+        stmt = stmt.where(Document.id.in_(_document_uuids(filters.document_ids)))
 
     if not _is_sqlite():
         for key in _META_SCALAR_FILTERS:
@@ -258,6 +264,16 @@ def apply_filters(
             )
 
     return stmt
+
+
+def _document_uuids(values: list[str]) -> list[uuid.UUID]:
+    parsed = []
+    for value in values:
+        try:
+            parsed.append(uuid.UUID(str(value)))
+        except ValueError:
+            continue
+    return parsed
 
 
 def meta_matches(meta: dict, filters: SearchFilters | None) -> bool:

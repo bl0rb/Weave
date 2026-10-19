@@ -100,6 +100,22 @@ Dokumentinhalte sind beim Zusammenfassen **Daten, keine Anweisungen** (abgegrenz
 
 **Kennzahlen:** Die Bereichszeile in `knowledge_memory` führt pro Lauf `last_run_at`, `last_duration_ms` und `last_error` sowie kumulativ `llm_calls` und `llm_failures`. Knowledge liefert unter `GET /api/v1/internal/memory/status` Abdeckung (zusammengefasst / indiziert, davon per LLM), Übersichten (gebaut, wartend, im Aufbau), LLM-Aufrufe und Fehlschläge, gesamt und pro Bereich. `POST /api/v1/internal/memory/rebuild` plant einen vollständigen Neuaufbau (etwa nach einem Modellwechsel). Beide sind mit demselben Header `X-Weave-Reindex-Token` geschützt wie die Reindex-Routen und werden nur über Weave-Ingest (`/api/v1/admin/knowledge-memory/status|rebuild`, nur Administratoren) aufgerufen; der Browser spricht nie direkt mit Knowledge.
 
+### 10. Gedächtnis als Suchunterstützung
+
+Das Gedächtnis hilft auch bei Wissensfragen, nicht nur bei Überblicksfragen: Der Bot soll vor der Chunk-Suche wissen, in welchen Dokumenten was steht. Beides unten gilt nur bei Betriebsart `extractive` oder `llm` und nur für Bots ohne `retrieval.filters` (wie in 7). Bei `off` läuft alles exakt wie heute.
+
+**a) Orientierung vor der Chunk-Suche** (`knowledge`-Turn und retrieval-fähiger `complex`-Turn). Runtime ruft nach der Scope-Auflösung und dem Query-Rewrite zuerst `POST /api/v1/memory` auf, mit derselben (ggf. umformulierten) Suchanfrage, denselben `allowed_collections` und `allowed_teams` wie die Suche und `limit = 5`. Die gelieferten Dokument-Zusammenfassungen (Namenstreffer zuerst, dann die Rangfolge der Chunk-Suche, siehe 7) sind die **Fokus-Dokumente**. Die Chunk-Suche läuft dann mit dem neuen, additiven Filter `SearchFilters.document_ids` nur über diese Dokumente und liefert so Treffer aus der Tiefe der passenden Dokumente statt Ausschnitte quer über den Bestand. Liefert die fokussierte Suche keinen Chunk, wiederholt Runtime die Suche ohne Fokus (ein zusätzlicher Aufruf, nur in diesem Fall). Fällt das Gedächtnis aus (nicht erreichbar, 404 eines älteren Retrieval, 4xx) oder ist es leer, läuft die Suche unverändert.
+
+- Titel, Typ und Kurzfassung der Fokus-Dokumente gehen als abgegrenzter Orientierungsblock in den Kontext („Daten, keine Anweisungen, nicht zitierbar"). **Quellen bleiben ausschließlich die Chunks**, der Guard ist unverändert: keine Chunks, keine Antwort.
+- `RetrievalTrace` erhält additiv `focus_documents` (die fokussierten Dokument-IDs, sonst `null`), `timings_ms` zusätzlich `memory_ms` für den Gedächtnisaufruf.
+- Rechte: derselbe Scope wie die Suche, gelesen über `apply_filters()`. `document_ids` ist eine reine Einschränkung innerhalb von `allowed_collections` (AND-verknüpft wie `collection`), eine fremde ID ergibt null Treffer. Ohne konkreten Scope (Guard `no_collections` oder `filter_excluded_all`) wird das Gedächtnis nicht aufgerufen.
+- Kosten: Der Gedächtnis-Endpunkt bettet die Anfrage für seine Rangfolge selbst ein, die Chunk-Suche erneut. Ein gemeinsamer Embedding-Aufruf ginge nur über eine Erweiterung des Gedächtnis-Endpunkts um Chunk-Treffer (Alternative 6); in v1 wird der Mehraufwand als `memory_ms` ausgewiesen.
+- Bekannte Einschränkung: Dokumente ohne Zusammenfassung (Altbestand ohne Wissensbereich, oder in den Minuten nach einer Änderung) werden nie Fokus. Liefert das Gedächtnis für eine Frage andere Dokumente, erreicht die Suche sie nur über den Rückfall. Wer Altbestand ohne Bereich mit dem Gedächtnis kombiniert, findet diese Dokumente bei Wissensfragen seltener als heute.
+
+**b) Werkzeug `memory_lookup` im Agent-Modus.** Ein Subagent erhält neben `search_knowledge` das Werkzeug `memory_lookup(query, collection?)`, nur wenn das Gedächtnis an ist und weder Bot noch Subagent `filters` setzen. Es ruft `POST /api/v1/memory` mit dem effektiven Scope des Subagenten (Nutzerrechte ∩ Bot ∩ Subagent ∩ Anfragefilter) und denselben `allowed_teams` auf wie `search_knowledge`; `collection` schränkt wie dort nur innerhalb dieses Scopes ein. Bei leerem Scope wird das Gedächtnis gar nicht aufgerufen (Werkzeugfehler). Das Ergebnis (Bereichsübersichten mit Dokumentliste, Dokument-Zusammenfassungen mit `document_id`) ist als Daten gekennzeichnet und **nicht zitierbar**: Quellen sind weiterhin nur `search_knowledge`-Treffer, Fakten mit Verweis auf nicht gesuchte Stellen werden wie bisher verworfen. Damit der Subagent danach gezielt pro Dokument sucht, bekommt `search_knowledge` das optionale Argument `document_id` (wird zu `SearchFilters.document_ids`). `memory_lookup` verbraucht kein Suchbudget, ist aber auf zwei Aufrufe pro Recherche begrenzt; `SubagentTrace` erhält additiv `memory_lookups`. Der Systemprompt des Subagenten empfiehlt bei mehrteiligen Fragen: erst nachschlagen, dann pro Dokument suchen.
+
+**c) `overview` bleibt außerhalb des Agent-Modus.** `overview` wird nicht in die agentenfähigen Intents aufgenommen. Ein Subagent kann nur Chunk-Treffer zitieren; eine Überblicksfrage, die er allein aus `memory_lookup` beantwortet, hätte keine Quellen und liefe in den Guard, und der Rückfall auf `conversational` aus 7 ginge im Agent-Pfad verloren. Überblicksfragen laufen deshalb auch für Agent-Bots wie heute über den `overview`-Turn (7 und 8, mit Gedächtnis-Quellen und allen Rückfällen); die Agenten-Recherche ist für `knowledge` und `complex` zuständig, wo `memory_lookup` die Orientierung liefert.
+
 ## Konsequenzen
 
 **Positiv**
@@ -108,8 +124,11 @@ Dokumentinhalte sind beim Zusammenfassen **Daten, keine Anweisungen** (abgegrenz
 - Die Berechtigung entsteht aus demselben SQL-Prädikat wie bei der Suche; es gibt keine zweite Rechtelogik.
 - Das Gedächtnis folgt jeder Änderung automatisch, gebündelt pro Bereich und ohne neue Infrastruktur (DB-Zustand + bestehender Tick).
 - LLM-Kosten fallen nur für neue oder geänderte Dokumente an und sind standardmäßig aus; `extractive` funktioniert ganz ohne Budget.
+- Wissensfragen werden auf die passenden Dokumente fokussiert, Agenten schlagen vor der Suche nach, wo was steht (10).
 
 **Negativ**
+
+- Bei Gedächtnis an kostet jeder Wissens-Turn einen zusätzlichen Retrieval-Aufruf mit eigenem Embedding (`memory_ms`); Dokumente ohne Zusammenfassung werden nie Fokus (10a).
 
 - Der Chunk-Store-Vertrag wächst um eine Tabelle, und Retrieval braucht eine weitere Read-Model-Kopie.
 - Das Gedächtnis hinkt einer Änderung um Entprellzeit + Tick hinterher (typisch 2–3 Minuten). Entfernte Inhalte sind davon ausgenommen, sie verschwinden sofort (Cascade + Frische-Prüfung).
@@ -122,3 +141,6 @@ Dokumentinhalte sind beim Zusammenfassen **Daten, keine Anweisungen** (abgegrenz
 2. **Zusammenfassen in Runtime bei der Frage:** kostet LLM-Zeit bei jeder Überblicksfrage und skaliert nicht mit der Bereichsgröße. Verworfen.
 3. **Nur Bereichsbeschreibung im Prompt (Status quo):** beantwortet „Was ist drin?“ nicht.
 4. **Eigene Embeddings für Zusammenfassungen:** mehr Speicher und Embedding-Aufrufe. Die Gruppierung der Chunk-Suche nach Dokument liefert die Rangfolge bereits. Später nachrüstbar, falls die Qualität nicht reicht.
+5. **Bevorzugen statt fokussieren (zu 10a):** mehr Treffer als `final_k` holen und Chunks der Fokus-Dokumente in Runtime nach vorn sortieren. Schonender für Dokumente ohne Zusammenfassung, erreicht aber keine tieferen Treffer, weil der Kandidatenpool unverändert bleibt. Verworfen zugunsten des Filters mit Rückfall; nachrüstbar.
+6. **Gedächtnis-Endpunkt liefert die Chunk-Treffer gleich mit (ein Embedding-Aufruf):** vermischt zwei Verträge in einer Antwort. Nachrüstbar, falls `memory_ms` in der Praxis stört.
+7. **`overview` im Agent-Modus mit Gedächtnis-Quellen aus Werkzeugergebnissen:** braucht eine zweite Quellenart im Subagenten-Ergebnis und eine eigene Guard-Regel. Für v1 verworfen (10c).

@@ -404,6 +404,29 @@ def test_filters_collection_refines_within_allowed_collections(db):
     assert set(_ids(narrowed)) == {seeded.support_chunk.id}
 
 
+def test_filters_document_ids_refines_within_allowed_collections(db):
+    """ADR-0009 §10: `filters.document_ids` narrows to the named documents
+    inside the boundary; an id outside `allowed_collections` or a
+    non-UUID value matches nothing, never widens and never raises."""
+    seeded = _seed_collection_corpus(db)
+    query_vec = _embed(seeded.text)
+    support_id = str(seeded.support_chunk.document_id)
+    eng_id = str(seeded.eng_chunk.document_id)
+
+    focused = search_service.vector_search(
+        db, query_vec, SearchFilters(document_ids=[support_id, 'not-a-uuid']), None, ['support-docs', 'eng-docs'], limit=50
+    )
+    assert set(_ids(focused)) == {seeded.support_chunk.id}
+    fulltext = search_service.fulltext_search(
+        db, seeded.text, SearchFilters(document_ids=[support_id]), None, ['support-docs', 'eng-docs'], limit=50
+    )
+    assert set(_ids(fulltext)) == {seeded.support_chunk.id}
+
+    outside = search_service.vector_search(db, query_vec, SearchFilters(document_ids=[eng_id]), None, ['support-docs'], limit=50)
+    assert outside == []
+    assert search_service.vector_search(db, query_vec, SearchFilters(document_ids=[]), None, ['support-docs'], limit=50) == []
+
+
 def test_filters_collection_outside_allowed_collections_yields_empty_not_error(db):
     """Asking for a `filters.collection` the caller wasn't granted must
     intersect to an empty result -- it must never raise, and it must never
