@@ -12,9 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Knowledge memory as search support** ([ADR-0009 §10](../../docs/adr/0009-wissensgedaechtnis.md)),
+  only with `KNOWLEDGE_MEMORY_MODE` ≠ `off` and for bots without `retrieval.filters`; with the memory
+  off nothing changes.
+  - Weave-Runtime: a knowledge turn first asks `POST /api/v1/memory` which documents matter and
+    focuses the chunk search on them (new `SearchFilters.document_ids` in Weave-Retrieval, retry
+    without focus when nothing is found, `RetrievalTrace.focus_documents`, `timings_ms.memory_ms`).
+    Sources stay chunks only; the summaries reach the LLM as a non-citable orientation block.
+  - Agent mode: subagents get the tool `memory_lookup(query, collection?)` (overviews and document
+    summaries within their own scope, at most two per research run, never citable) and can search a
+    single document via `search_knowledge(document_id=...)`; `SubagentTrace.memory_lookups`.
 - **Desktop app setup from Weave-Chat:** the chat rail's new "Desktop-App einrichten" dialog opens
   `weave://setup?server=<API address>` (the browser-reachable `WEAVE_API_PUBLIC_BASE_URL`, via
-  `GET /api/desktop`) plus a download link. The desktop app (0.1.6) registers the `weave://`
+  `GET /api/desktop`) plus a download link. The desktop app registers the `weave://`
   scheme (`tauri-plugin-deep-link`), shows the proposed address in its settings window and saves it
   only after the user accepts; only the address travels in the link, never a credential, and an
   IT-managed `ServerUrl` stays unchanged.

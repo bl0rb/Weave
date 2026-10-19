@@ -179,6 +179,105 @@ def test_memory_off_leaves_routing_and_retrieval_unchanged(monkeypatch):
     assert body['trace']['intent'] == 'knowledge'
 
 
+# --- knowledge turn: orientation before the chunk search (ADR-0009 §10a) ----
+
+KNOWLEDGE_QUESTION = 'Wie lang ist die Kündigungsfrist im Arbeitsvertrag?'
+KNOWLEDGE_BODY = {**BODY, 'message': KNOWLEDGE_QUESTION}
+
+
+def test_knowledge_turn_focuses_the_chunk_search_on_the_memory_documents(memory_on, monkeypatch):
+    calls = _retrieval(monkeypatch, _FakeResponse(200, MEMORY))
+    body = client.post('/internal/chat', json=KNOWLEDGE_BODY, headers=AUTH_HEADERS).json()
+
+    assert [name for name, _ in calls] == ['memory', 'search']
+    memory_payload, search_payload = calls[0][1], calls[1][1]
+    # Same question, same scope and team axis for both calls -- the memory
+    # is read with exactly the chunk search's permission inputs.
+    assert memory_payload['query'] == search_payload['query'] == KNOWLEDGE_QUESTION
+    assert memory_payload['allowed_collections'] == search_payload['allowed_collections'] == ['vertraege', '__none__']
+    assert memory_payload['allowed_teams'] == search_payload['allowed_teams']
+    assert memory_payload['limit'] == 5
+    assert search_payload['filters'] == {'document_ids': ['doc-1']}
+
+    trace = body['trace']
+    assert trace['intent'] == 'knowledge' and trace['guard'] is None
+    assert trace['retrieval']['focus_documents'] == ['doc-1']
+    assert 'memory_ms' in trace['timings_ms'] and 'retrieval_ms' in trace['timings_ms']
+    # Sources are the chunks only, never the summaries.
+    assert [source['memory_kind'] for source in body['sources']] == [None]
+    assert body['sources'][0]['chunk_id'] == 1
+    assert '[context:1]' in body['answer']
+
+
+def test_focused_search_without_hits_retries_unfocused(memory_on, monkeypatch):
+    calls = []
+
+    def _post(url, headers=None, json=None, timeout=None):
+        calls.append((url.rsplit('/', 1)[-1], json))
+        if url.endswith('/memory'):
+            return _FakeResponse(200, MEMORY)
+        return _FakeResponse(200, _search_response() if json['filters'] else _search_response(_chunk(document_id='doc-9')))
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _post)
+    body = client.post('/internal/chat', json=KNOWLEDGE_BODY, headers=AUTH_HEADERS).json()
+    assert [name for name, _ in calls] == ['memory', 'search', 'search']
+    assert calls[1][1]['filters'] == {'document_ids': ['doc-1']} and calls[2][1]['filters'] is None
+    assert body['trace']['retrieval']['focus_documents'] is None
+    assert body['sources'][0]['document_id'] == 'doc-9' and body['trace']['guard'] is None
+
+
+@pytest.mark.parametrize('memory_response', [
+    _FakeResponse(200, {'collections': [], 'documents': []}),
+    _FakeResponse(404, {'detail': 'Not Found'}),
+    _FakeResponse(503, {'detail': 'down'}),
+])
+def test_empty_or_unavailable_memory_searches_exactly_as_before(memory_on, monkeypatch, memory_response):
+    calls = _retrieval(monkeypatch, memory_response)
+    body = client.post('/internal/chat', json=KNOWLEDGE_BODY, headers=AUTH_HEADERS).json()
+    assert [name for name, _ in calls] == ['memory', 'search']
+    assert calls[1][1]['filters'] is None
+    assert body['trace']['retrieval']['focus_documents'] is None and body['trace']['guard'] is None
+
+
+def test_guard_stays_when_the_focused_and_unfocused_search_find_nothing(memory_on, monkeypatch):
+    calls = []
+
+    def _post(url, headers=None, json=None, timeout=None):
+        calls.append(url.rsplit('/', 1)[-1])
+        return _FakeResponse(200, MEMORY if url.endswith('/memory') else _search_response())
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _post)
+    body = client.post('/internal/chat', json=KNOWLEDGE_BODY, headers=AUTH_HEADERS).json()
+    assert calls == ['memory', 'search', 'search']
+    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_context'}
+    assert body['answer'] == real_load_bot('legal-support').guard.no_context_reply and body['sources'] == []
+
+
+def test_knowledge_turn_without_a_scope_never_reads_the_memory(memory_on, monkeypatch):
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', lambda *a, **k: _readable_collections_response(
+        {'slug': 'other', 'name': 'Other', 'description': None, 'public': True},
+    ))
+    calls = _retrieval(monkeypatch, _FakeResponse(200, MEMORY))
+    body = client.post('/internal/chat', json=KNOWLEDGE_BODY, headers=AUTH_HEADERS).json()
+    assert calls == []
+    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_collections'}
+
+
+def test_knowledge_turn_with_memory_off_or_bot_filters_is_unchanged(monkeypatch):
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', lambda *a, **k: _readable_collections_response())
+    monkeypatch.setattr('app.services.chat.load_bot', _bot_without_filters)
+    calls = _retrieval(monkeypatch, _FakeResponse(200, MEMORY))
+    body = client.post('/internal/chat', json=KNOWLEDGE_BODY, headers=AUTH_HEADERS).json()  # mode off
+    assert [name for name, _ in calls] == ['search'] and calls[0][1]['filters'] is None
+    assert body['trace']['retrieval']['focus_documents'] is None and 'memory_ms' not in body['trace']['timings_ms']
+
+    monkeypatch.setattr(settings, 'knowledge_memory_mode', 'llm')
+    monkeypatch.setattr('app.services.chat.load_bot', real_load_bot)  # legal-support filters department: legal
+    calls.clear()
+    client.post('/internal/chat', json=KNOWLEDGE_BODY, headers=AUTH_HEADERS)
+    assert [name for name, _ in calls] == ['search'] and calls[0][1]['filters'] == {'department': 'legal'}
+
+
 def test_mode_saved_in_ingest_wins_over_the_environment(monkeypatch):
     from app.services.chat_config_client import ChatProviderSnapshot
 

@@ -157,7 +157,7 @@ def test_stream_knowledge_flow_reconstructs_the_context_marked_answer_and_sends_
     trace = events[0]['trace']
     assert trace['intent'] == 'knowledge'
     assert trace['retrieval'] == {
-        'candidates': 2, 'used': 2, 'collections': ['vertraege', '__none__'], 'requested_collections': None, 'rewritten_query': None,
+        'candidates': 2, 'used': 2, 'collections': ['vertraege', '__none__'], 'requested_collections': None, 'rewritten_query': None, 'focus_documents': None,
     }
     assert 'retrieval_ms' in trace['timings_ms']
 
@@ -258,7 +258,7 @@ def test_stream_guard_flow_streams_the_guard_text_with_empty_sources_no_collecti
 
     trace = events[0]['trace']
     assert trace['guard'] == {'triggered': True, 'reason': 'no_collections'}
-    assert trace['retrieval'] == {'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': None, 'rewritten_query': None}
+    assert trace['retrieval'] == {'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': None, 'rewritten_query': None, 'focus_documents': None}
 
     sources_event = next(event for event in events if event['type'] == 'sources')
     assert sources_event['sources'] == []

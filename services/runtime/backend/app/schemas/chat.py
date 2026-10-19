@@ -194,6 +194,12 @@ class RetrievalTrace(BaseModel):
     # rewrite failed or came back identical/implausible). Lets a caller see
     # exactly what was searched when a follow-up question was expanded.
     rewritten_query: str | None = None
+    # ADR-0009 §10a: the document ids the knowledge memory ranked for this
+    # question and the chunk search was then focused on
+    # (`SearchFilters.document_ids`). `None` whenever the search ran
+    # unfocused -- memory off, bot filters, memory empty or unavailable,
+    # or the focused search found nothing and the unfocused retry ran.
+    focus_documents: list[str] | None = None
 
 
 class ClarificationOption(BaseModel):
@@ -304,6 +310,9 @@ class SubagentTrace(BaseModel):
     status: str
     searches_used: int
     hits: int
+    # ADR-0009 §10b: how many `memory_lookup` tool calls this subagent
+    # made (0 whenever the memory is off or the tool was not offered).
+    memory_lookups: int = 0
 
 
 class AgentTrace(BaseModel):
