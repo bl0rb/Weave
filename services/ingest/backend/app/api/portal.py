@@ -572,7 +572,7 @@ def list_portal_documents(
     can_release_expr = and_(
         ~select(KnowledgeWithdrawal.job_id).where(KnowledgeWithdrawal.job_id == Job.id).exists(),
         Job.status == JobStatus.FINISHED,
-        func.length(func.coalesce(Job.result_markdown, '')) > 0,
+        Job.markdown_nonempty(),
         Job.password_hash.is_(None),
         control_expr,
         or_(Job.import_run_id.is_(None), ImportRun.status == ImportRunStatus.FINISHED),
@@ -592,8 +592,8 @@ def list_portal_documents(
         .outerjoin(ImportRun, ImportRun.id == Job.import_run_id)
         .outerjoin(DocumentRelease, DocumentRelease.job_id == Job.id)
         .options(
-            defer(Job.result_markdown),
-            defer(DocumentRelease.markdown_snapshot),
+            defer(Job._result_markdown),
+            defer(DocumentRelease._markdown_snapshot),
             defer(DocumentRelease.payload),
         )
         .order_by(Job.created_at.desc())

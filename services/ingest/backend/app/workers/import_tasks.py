@@ -428,7 +428,7 @@ def _detect_missing_pages(db, run: ImportRun, state: _RunState) -> None:
         page_ids.update((previous.state or {}).get('visited', {}))
     previous_ids = [previous.id for previous in previous_runs]
     for job in db.scalars(select(Job).where(Job.import_run_id.in_(previous_ids)).options(
-        defer(Job.result_markdown),
+        defer(Job._result_markdown),
     )).all():
         job_settings = (job.processing_info or {}).get('settings') or {}
         if job_settings.get('mode') == 'import':
@@ -455,7 +455,7 @@ def _finalize_run(db, run: ImportRun, state: _RunState, claimed_seq: int) -> Non
         page_jobs = db.scalars(
             select(Job)
             .where(Job.import_run_id == run.id)
-            .where(Job.result_markdown.is_not(None))
+            .where(Job.markdown_present())
         ).all()
         for job in page_jobs:
             info = job.processing_info if isinstance(job.processing_info, dict) else {}
@@ -731,7 +731,7 @@ def _seed_page_states_if_empty(db, run: ImportRun, claimed_seq: int) -> None:
         select(Job)
         .where(Job.import_run_id.in_(source_run_ids))
         .order_by(Job.created_at.asc())
-        .options(defer(Job.result_markdown))
+        .options(defer(Job._result_markdown))
     ).all()
 
     latest_by_page: dict[str, Job] = {}

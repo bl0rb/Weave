@@ -246,6 +246,15 @@ DEVIATIONS: dict[str, dict[str, Deviation]] = {
             "RERANK_PROVIDER",
             "SECRET_KEY",
             "SERVICE_NAME",
+            # Objektspeicher (PostgreSQL/S3): nur Backend und Worker.
+            "OBJECT_STORAGE_BACKEND",
+            "S3_ACCESS_KEY_ID",
+            "S3_ADDRESSING_STYLE",
+            "S3_BUCKET",
+            "S3_ENDPOINT_URL",
+            "S3_KEY_PREFIX",
+            "S3_REGION",
+            "S3_SECRET_ACCESS_KEY",
             "WEBHOOK_PRIVATE_HOST_ALLOWLIST",
             "SYSTEM_STATUS_TARGETS",
             # Aus dem chat-Block: die liest die Chat-Oberflaeche selbst.

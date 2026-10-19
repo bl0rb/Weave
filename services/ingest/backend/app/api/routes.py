@@ -120,7 +120,7 @@ _JOB_LIST_PAGE_LIMIT_MAX = 500
 # Job.result_markdown can be large and most listing/administrative queries
 # never read it. Deferring it keeps those queries cheap. (Original bytes are
 # not on the row at all: see app/services/object_store.py.)
-_JOB_BLOB_DEFER_OPTIONS = (defer(Job.result_markdown),)
+_JOB_BLOB_DEFER_OPTIONS = (defer(Job._result_markdown),)
 # Artifact content types allowed to render inline in the browser; everything
 # else (notably SVG, which is never stored as kind='image' anyway) is served
 # as an attachment download.
@@ -994,7 +994,7 @@ def _database_size_bytes() -> int | None:
 
 def _estimate_database_payload_bytes(db: Session) -> int:
     upload_total = db.scalar(select(func.coalesce(func.sum(Job.upload_size_bytes), 0))) or 0
-    markdown_total = db.scalar(select(func.coalesce(func.sum(func.length(Job.result_markdown)), 0))) or 0
+    markdown_total = db.scalar(select(func.coalesce(func.sum(func.length(Job._result_markdown)), 0))) or 0
     artifact_total = db.scalar(select(func.coalesce(func.sum(JobArtifact.size_bytes), 0))) or 0
     return int(upload_total) + int(markdown_total) + int(artifact_total)
 
@@ -2592,7 +2592,7 @@ def list_markdown_files(db: Session = Depends(get_db), user: User = Depends(get_
     jobs = db.scalars(
         _apply_visible_filter(
             select(Job)
-            .where(Job.status == JobStatus.FINISHED, Job.result_markdown.isnot(None), Job.password_hash.is_(None)),
+            .where(Job.status == JobStatus.FINISHED, Job.markdown_present(), Job.password_hash.is_(None)),
             user, db=db,
         )
     ).all()

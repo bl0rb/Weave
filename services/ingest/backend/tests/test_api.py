@@ -1527,7 +1527,7 @@ def test_list_jobs_defers_blob_columns(tmp_path):
     jobs = _job_query(query_db, _TEST_ADMIN_USER)
     target = next(job for job in jobs if job.id == 'job-defer-check')
     unloaded = sa_inspect(target).unloaded
-    assert 'result_markdown' in unloaded
+    assert '_result_markdown' in unloaded
     query_db.close()
 
 

@@ -7,7 +7,10 @@ re-encrypted under a passphrase-derived key instead of the server's own
 `SECRET_KEY` (see `ENCRYPTED_COLUMNS`), and every large binary column as
 its own `blobs/<table>/<pk>.bin` archive entry (see `LargeBinary` handling
 below) -- which includes every original upload and artifact, stored as
-`stored_object_chunks` rows. There is no file tree to export: Ingest keeps
+`stored_object_chunks` rows. Objects in S3 (backend 's3', see
+app/services/object_store.py) are exported as `objects/<id>/<n>.bin` parts
+and restored into the target's configured backend, so an archive is
+self-contained either way. There is no file tree to export: Ingest keeps
 no data on disk.
 
 Deliberately NOT exported: the knowledge/retrieval index itself (there is
@@ -88,7 +91,7 @@ from app.models.models import (
     User,
     UserRole,
 )
-from app.services import security
+from app.services import object_store, security
 from app.services.collection_access import backfill_legacy_grants
 from app.services.import_syncs import backfill_import_syncs
 from app.workers import publication_tasks
@@ -424,6 +427,41 @@ def _add_bytes(tar: tarfile.TarFile, arcname: str, data: bytes) -> None:
     tar.addfile(info, io.BytesIO(data))
 
 
+# --- Objects in S3 ---------------------------------------------------------------
+
+_OBJECT_PARTS_KEY = '$object_parts'
+
+
+def _iter_object_parts(tar: tarfile.TarFile, object_id: str, parts: int) -> Iterator[bytes]:
+    for seq in range(parts):
+        try:
+            extracted = tar.extractfile(f'objects/{object_id}/{seq}.bin')
+        except KeyError as exc:
+            raise IncompatibleArchiveError(
+                'Das Archiv ist unvollständig oder beschädigt (fehlender Objekt-Eintrag).'
+            ) from exc
+        yield extracted.read() if extracted is not None else b''
+
+
+def _restore_s3_object(tar: tarfile.TarFile, row: dict, parts: int | None) -> Iterator[bytes] | None:
+    """Put an archived S3 object into the target's configured backend and
+    point `row` at it. Returns the chunks to insert after the row for the
+    'db' backend, None when the bytes went to S3. Keys of a rolled-back
+    import stay behind for `python -m app.cli storage sweep`."""
+    if parts is None:
+        raise IncompatibleArchiveError('Das Archiv ist unvollständig oder beschädigt (fehlender Objekt-Eintrag).')
+    chunks = _iter_object_parts(tar, row['id'], parts)
+    if settings.object_storage_backend == 's3':
+        row['storage_key'] = object_store.s3_key(row['id'])
+        object_store.s3_upload_file(
+            io.BufferedReader(object_store.IterReader(chunks)), row['storage_key'], row.get('content_type')
+        )
+        return None
+    row['backend'] = 'db'
+    row['storage_key'] = None
+    return object_store.rechunk(chunks, row['chunk_bytes'])
+
+
 # --- Row <-> JSONL encoding ---------------------------------------------------
 
 def _encode_row(table: Table, mapping, tar: tarfile.TarFile, export_fernet: Fernet) -> dict:
@@ -615,6 +653,16 @@ def iter_export_backup(
                     result = db.execute(select(table), execution_options={'yield_per': _ROW_BATCH_SIZE})
                     for mapping in result.mappings():
                         data = _encode_row(table, mapping, tar, export_fernet)
+                        if table.name == 'stored_objects' and mapping['backend'] == 's3':
+                            # Part by part, handing out the sink in between,
+                            # so a large object is never buffered whole.
+                            parts = 0
+                            for part in object_store.s3_iter(mapping['storage_key'], mapping['chunk_bytes']):
+                                _add_bytes(tar, f"objects/{mapping['id']}/{parts}.bin", part)
+                                parts += 1
+                                if sink.size >= _STREAM_CHUNK_BYTES:
+                                    yield sink.take()
+                            data[_OBJECT_PARTS_KEY] = parts
                         handle.write(json.dumps(data, ensure_ascii=False))
                         handle.write('\n')
                         rows_done += 1
@@ -1026,7 +1074,11 @@ def import_backup(
                         teams = data.pop('teams', None) or []
                         legacy_bot_teams[data.get('id')] = teams
                         data.setdefault('public', not teams)
+                    object_parts = data.pop(_OBJECT_PARTS_KEY, None)
                     row = _decode_row(table, data, tar, archive_fernet, report['warnings'])
+                    restore_chunks = None
+                    if table.name == 'stored_objects' and row.get('backend') == 's3':
+                        restore_chunks = _restore_s3_object(tar, row, object_parts)
                     if table.name == 'collections' and 'visibility' not in row:
                         # Archive from before 0032_collection_visibility: same
                         # derivation as that migration's backfill, never the
@@ -1040,6 +1092,9 @@ def import_backup(
                             deferred_updates.append((_pk_values(table, row), {column_name: row[column_name]}))
                             row[column_name] = None
                     db.execute(table.insert().values(**row))
+                    if restore_chunks is not None:
+                        for seq, chunk in enumerate(restore_chunks):
+                            object_store.insert_chunk(db, row['id'], seq, chunk)
                     rows_done += 1
                     if rows_done % _ROW_BATCH_SIZE == 0:
                         progress_cb(table.name, rows_done)

@@ -540,6 +540,54 @@ services:
         env_var: WEAVE_BOOTSTRAP_ADMIN_PASSWORD
         required: false
         comment: "Set all three bootstrap fields to create the first admin once; existing users are never overwritten."
+      OBJECT_STORAGE_BACKEND:
+        secret: false
+        value: db
+        type: string
+        required: false
+        comment: >
+          Where new originals, artifacts and generated markdown go: db
+          (PostgreSQL) or s3 (any S3-compatible store: AWS, MinIO, Ceph).
+          Existing data keeps its backend and stays readable; switching
+          moves nothing by itself -- run `python -m app.cli storage migrate
+          --to <backend>` in an ingest container afterwards (docs/betrieb.md).
+      S3_BUCKET:
+        secret: false
+        value: ""
+        type: string
+        required: false
+      S3_ENDPOINT_URL:
+        secret: false
+        value: ""
+        type: string
+        required: false
+        comment: "Empty = AWS. MinIO/Ceph: e.g. http://minio:9000 (usually with S3_ADDRESSING_STYLE=path)."
+      S3_REGION:
+        secret: false
+        value: ""
+        type: string
+        required: false
+      S3_ACCESS_KEY_ID:
+        secret: false
+        value: ""
+        type: string
+        required: false
+        comment: "Empty = the default AWS credential chain (IAM role / IRSA)."
+      S3_SECRET_ACCESS_KEY:
+        secret: true
+        env_var: WEAVE_INGEST_S3_SECRET_ACCESS_KEY
+        required: false
+      S3_KEY_PREFIX:
+        secret: false
+        value: weave-ingest/
+        type: string
+        required: false
+        comment: "Objects go to <prefix>objects/<id>; `storage sweep` only touches that prefix."
+      S3_ADDRESSING_STYLE:
+        secret: false
+        value: auto
+        type: string
+        required: false
       SECRET_KEY:
         secret: true
         env_var: WEAVE_INGEST_SECRET_KEY

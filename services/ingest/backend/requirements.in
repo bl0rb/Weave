@@ -31,3 +31,4 @@ email-validator==2.3.0
 markdownify==1.2.3
 beautifulsoup4==4.15.0
 PyYAML==6.0.3
+boto3==1.43.114

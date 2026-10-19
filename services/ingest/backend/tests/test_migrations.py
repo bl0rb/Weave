@@ -1637,3 +1637,37 @@ def test_0050_turns_each_imported_scope_into_a_sync(tmp_path, monkeypatch) -> No
     with engine.connect() as conn:
         assert 'sync_id' not in {row[1] for row in conn.execute(text('PRAGMA table_info(import_runs)'))}
     engine.dispose()
+
+
+def test_0052_markdown_objects_round_trip_and_guarded_downgrade(tmp_path, monkeypatch):
+    db_url = f'sqlite:///{tmp_path / "markdown_objects.db"}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+    engine = create_engine(db_url, future=True)
+    _build_legacy_metadata().create_all(bind=engine)
+    cfg = _alembic_config()
+    command.stamp(cfg, '0003_job_markdown_versions')
+    command.upgrade(cfg, 'head')
+    columns = {column['name']: column for column in inspect(engine).get_columns('job_markdown_versions')}
+    assert columns['content']['nullable'] is True
+    assert 'content_object_id' in columns
+    assert 'result_markdown_object_id' in {column['name'] for column in inspect(engine).get_columns('jobs')}
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO stored_objects (id, sha256, size_bytes, backend, storage_key, chunk_bytes, created_at) "
+            "VALUES ('obj-1', 'x', 1, 's3', 'k', 65536, '2026-01-01')"
+        ))
+        conn.execute(text(
+            "INSERT INTO jobs (id, original_filename, upload_path, status, created_at, updated_at, "
+            "result_markdown_object_id) VALUES ('job-1', 'a.pdf', 'inbox/a.pdf', 'FINISHED', "
+            "'2026-01-01', '2026-01-01', 'obj-1')"
+        ))
+    with pytest.raises(RuntimeError, match='storage migrate --to db'):
+        command.downgrade(cfg, '0051_knowledge_memory_config')
+
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE jobs SET result_markdown = '# x', result_markdown_object_id = NULL"))
+    command.downgrade(cfg, '0051_knowledge_memory_config')
+    assert 'result_markdown_object_id' not in {column['name'] for column in inspect(engine).get_columns('jobs')}
+    command.upgrade(cfg, 'head')
+    engine.dispose()

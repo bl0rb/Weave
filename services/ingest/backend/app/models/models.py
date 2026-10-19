@@ -19,14 +19,84 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    event,
     func,
+    inspect,
+    or_,
 )
 from sqlalchemy import text as sql_text
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, object_session, relationship
+from sqlalchemy.orm import Session as OrmSession
 
 
 class Base(DeclarativeBase):
     pass
+
+
+def _offloaded_text(column: str, object_column: str) -> property:
+    """Python property for a large text column (generated markdown) that
+    lives either inline in `column` or -- with object_storage_backend='s3'
+    -- in a StoredObject referenced by `object_column`. Reads load the
+    object on first access and cache it on the instance; writes always go to
+    the column, and _offload_text moves them to S3 on flush. A plain
+    property on purpose: SQL must use the column and object id explicitly
+    (e.g. Job.markdown_present()), never this attribute."""
+    cache_key = f'_offloaded_{object_column}'
+
+    def fget(self):
+        object_id = getattr(self, object_column)
+        if object_id is None:
+            return getattr(self, column)
+        cached = self.__dict__.get(cache_key)
+        if cached is not None and cached[0] == object_id:
+            return cached[1]
+        from app.services import object_store
+
+        db = object_session(self)
+        if db is not None:
+            text = object_store.read_text(db, object_id)
+        else:
+            from app.database.session import SessionLocal
+
+            with SessionLocal() as own_db:
+                text = object_store.read_text(own_db, object_id)
+        self.__dict__[cache_key] = (object_id, text)
+        return text
+
+    def fset(self, value):
+        setattr(self, column, value)
+        setattr(self, object_column, None)
+        self.__dict__.pop(cache_key, None)
+
+    return property(fget, fset)
+
+
+# Model -> ((column attribute, object id attribute, property name), ...),
+# filled below the classes.
+_OFFLOADED_TEXT: dict[type, tuple[tuple[str, str, str], ...]] = {}
+
+
+@event.listens_for(OrmSession, 'before_flush')
+def _offload_text(session, flush_context, instances) -> None:
+    """With the S3 backend, move markdown written in this flush from its
+    column into an S3 object. Empty and unchanged values stay where they
+    are; existing inline rows move with app/services/storage_migration.py."""
+    from app.core.config import settings
+
+    if settings.object_storage_backend != 's3':
+        return
+    from app.services import object_store
+
+    for obj in [*session.new, *session.dirty]:
+        for column, object_column, _name in _OFFLOADED_TEXT.get(type(obj), ()):
+            state = inspect(obj)
+            value = state.dict.get(column)
+            if not value or (not state.pending and not state.attrs[column].history.added):
+                continue
+            object_id = object_store.put_text_s3_in_flush(session, value)
+            setattr(obj, column, None)
+            setattr(obj, object_column, object_id)
+            obj.__dict__[f'_offloaded_{object_column}'] = (object_id, value)
 
 
 job_tags = Table(
@@ -58,8 +128,9 @@ class StoredObject(Base):
     Rows are referenced (jobs.upload_object_id, job_artifacts.object_id)
     and never updated; copies of a document share one object. Unreferenced
     objects are removed by the garbage collection in
-    app/services/object_store.py. `backend` and `storage_key` let a later
-    object-storage backend (S3) take new objects without migrating old ones.
+    app/services/object_store.py. `backend` 's3' keeps the bytes in S3 under
+    `storage_key` instead (settings.object_storage_backend); both kinds
+    coexist, app/services/storage_migration.py moves them.
     """
 
     __tablename__ = 'stored_objects'
@@ -123,7 +194,26 @@ class Job(Base):
     )
     upload_mime_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
     upload_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    result_markdown: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Generated markdown: inline, or (S3 backend) a StoredObject. Read and
+    # write it as Job.result_markdown (see _offloaded_text).
+    _result_markdown: Mapped[str | None] = mapped_column('result_markdown', Text, nullable=True)
+    result_markdown_object_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('stored_objects.id'), nullable=True, index=True
+    )
+    result_markdown = _offloaded_text('_result_markdown', 'result_markdown_object_id')
+
+    @classmethod
+    def markdown_present(cls):
+        """SQL for `result_markdown is not None`, inline or offloaded."""
+        return or_(cls._result_markdown.is_not(None), cls.result_markdown_object_id.is_not(None))
+
+    @classmethod
+    def markdown_nonempty(cls):
+        """SQL for non-empty result_markdown (only non-empty text is offloaded)."""
+        return or_(
+            func.length(func.coalesce(cls._result_markdown, '')) > 0, cls.result_markdown_object_id.is_not(None)
+        )
+
     status: Mapped[JobStatus] = mapped_column(Enum(JobStatus), default=JobStatus.PENDING, nullable=False)
     # Ownership of a RUNNING job (app/workers/tasks.py's process_job): each
     # claim stamps a fresh claim_token, the worker refreshes heartbeat_at
@@ -228,7 +318,12 @@ class JobMarkdownVersion(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     job_id: Mapped[str] = mapped_column(String(36), ForeignKey('jobs.id', ondelete='CASCADE'), nullable=False, index=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
+    # Inline or (S3 backend) a StoredObject; use .content (see _offloaded_text).
+    _content: Mapped[str | None] = mapped_column('content', Text, nullable=True)
+    content_object_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('stored_objects.id'), nullable=True, index=True
+    )
+    content = _offloaded_text('_content', 'content_object_id')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     job: Mapped[Job] = relationship(back_populates='markdown_versions')
@@ -1525,7 +1620,13 @@ class DocumentRelease(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )
-    markdown_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    # Inline or (S3 backend) a StoredObject; use .markdown_snapshot (see
+    # _offloaded_text).
+    _markdown_snapshot: Mapped[str | None] = mapped_column('markdown_snapshot', Text, nullable=True)
+    markdown_object_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('stored_objects.id'), nullable=True, index=True
+    )
+    markdown_snapshot = _offloaded_text('_markdown_snapshot', 'markdown_object_id')
     markdown_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     status: Mapped[str] = mapped_column(String(16), default='pending', server_default='pending', nullable=False)
@@ -1694,3 +1795,10 @@ class BackupRun(Base):
     )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+
+_OFFLOADED_TEXT.update({
+    Job: (('_result_markdown', 'result_markdown_object_id', 'result_markdown'),),
+    JobMarkdownVersion: (('_content', 'content_object_id', 'content'),),
+    DocumentRelease: (('_markdown_snapshot', 'markdown_object_id', 'markdown_snapshot'),),
+})
