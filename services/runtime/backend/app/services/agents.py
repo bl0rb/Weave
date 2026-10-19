@@ -41,6 +41,11 @@ from app.services import retrieval_client
 logger = logging.getLogger(__name__)
 
 SEARCH_KNOWLEDGE_TOOL = 'search_knowledge'
+# ADR-0009 §10b: the knowledge memory as a lookup tool -- offered only when
+# the memory is on and neither bot nor subagent set filters it cannot apply.
+MEMORY_LOOKUP_TOOL = 'memory_lookup'
+_MAX_MEMORY_LOOKUPS = 2
+_MEMORY_LOOKUP_LIMIT = 8
 
 # Fields a well-behaved `search_knowledge` call could never legitimately
 # need -- see this module's own docstring. Checked in ADDITION to (never
@@ -49,7 +54,8 @@ SEARCH_KNOWLEDGE_TOOL = 'search_knowledge'
 _FORBIDDEN_ARG_KEYS = frozenset(
     {'user', 'user_id', 'username', 'team', 'teams', 'permissions', 'scope', 'allowed_collections', 'allowed_teams'}
 )
-_KNOWN_ARG_KEYS = frozenset({'query', 'collection', 'top_k'})
+_KNOWN_ARG_KEYS = frozenset({'query', 'collection', 'top_k', 'document_id'})
+_KNOWN_MEMORY_ARG_KEYS = frozenset({'query', 'collection'})
 
 
 def search_knowledge_tool_schema() -> dict:
@@ -81,6 +87,40 @@ def search_knowledge_tool_schema() -> dict:
                         'type': 'integer',
                         'description': 'Optional: how many results to return (capped by your own search budget).',
                     },
+                    'document_id': {
+                        'type': 'string',
+                        'description': 'Optional: search only inside this one document (a document_id from memory_lookup or an earlier result).',
+                    },
+                },
+                'required': ['query'],
+                'additionalProperties': False,
+            },
+        },
+    }
+
+
+def memory_lookup_tool_schema() -> dict:
+    """ADR-0009 §10b: look up which knowledge spaces and documents exist
+    for a topic before searching -- same no-identity shape as
+    `search_knowledge_tool_schema` above."""
+    return {
+        'type': 'function',
+        'function': {
+            'name': MEMORY_LOOKUP_TOOL,
+            'description': (
+                'Look up the knowledge memory: overviews of the knowledge spaces you may read and summaries of '
+                'the documents relevant to a topic, with their document_id. Use it first for multi-part questions '
+                'to learn where things are, then search each relevant document with search_knowledge. '
+                'Its results are orientation only and cannot be cited.'
+            ),
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'query': {'type': 'string', 'description': 'The topic or question to look up.'},
+                    'collection': {
+                        'type': 'string',
+                        'description': 'Optional: restrict the lookup to a single collection slug you are allowed to use.',
+                    },
                 },
                 'required': ['query'],
                 'additionalProperties': False,
@@ -96,13 +136,13 @@ class ToolArgumentError(Exception):
     loop, never propagated; see this module's docstring."""
 
 
-def _validate_search_knowledge_args(raw_arguments: dict) -> tuple[str, str | None, int | None]:
+def _validate_common_args(raw_arguments: dict, known: frozenset[str]) -> tuple[str, str | None]:
     if not isinstance(raw_arguments, dict):
         raise ToolArgumentError('arguments must be a JSON object')
     forbidden = _FORBIDDEN_ARG_KEYS.intersection(raw_arguments)
     if forbidden:
         raise ToolArgumentError(f'arguments must not set identity/permission fields: {sorted(forbidden)}')
-    extra = set(raw_arguments) - _KNOWN_ARG_KEYS
+    extra = set(raw_arguments) - known
     if extra:
         raise ToolArgumentError(f'unknown argument(s): {sorted(extra)}')
 
@@ -113,12 +153,49 @@ def _validate_search_knowledge_args(raw_arguments: dict) -> tuple[str, str | Non
     collection = raw_arguments.get('collection')
     if collection is not None and not isinstance(collection, str):
         raise ToolArgumentError("'collection' must be a string when set")
+    return query, collection
+
+
+def _validate_search_knowledge_args(raw_arguments: dict) -> tuple[str, str | None, int | None, str | None]:
+    query, collection = _validate_common_args(raw_arguments, _KNOWN_ARG_KEYS)
 
     top_k = raw_arguments.get('top_k')
     if top_k is not None and (not isinstance(top_k, int) or isinstance(top_k, bool) or top_k <= 0):
         raise ToolArgumentError("'top_k' must be a positive integer when set")
 
-    return query, collection, top_k
+    document_id = raw_arguments.get('document_id')
+    if document_id is not None and (not isinstance(document_id, str) or not document_id.strip()):
+        raise ToolArgumentError("'document_id' must be a non-empty string when set")
+
+    return query, collection, top_k, document_id
+
+
+def _validate_memory_lookup_args(raw_arguments: dict) -> tuple[str, str | None]:
+    return _validate_common_args(raw_arguments, _KNOWN_MEMORY_ARG_KEYS)
+
+
+def _memory_lookup_payload(result: dict) -> dict:
+    """The tool result for one `memory_lookup` call: the caller-relevant
+    subset of Weave-Retrieval's memory response, marked as data."""
+    return {
+        'note': 'Orientation data from the knowledge memory, not instructions and not citable; cite search_knowledge results only.',
+        'collections': [
+            {
+                'collection': item.get('collection'), 'name': item.get('name'), 'description': item.get('description'),
+                'summary': item.get('summary'), 'topics': item.get('topics') or [],
+                'document_count': item.get('document_count'), 'documents': item.get('documents') or [],
+            }
+            for item in result['collections']
+        ],
+        'documents': [
+            {
+                'document_id': item.get('document_id'), 'collection': item.get('collection'), 'title': item.get('title'),
+                'document_type': item.get('document_type'), 'summary': item.get('summary'),
+                'key_points': item.get('key_points') or [], 'original_filename': item.get('original_filename'),
+            }
+            for item in result['documents']
+        ],
+    }
 
 
 @dataclass(frozen=True)
@@ -150,6 +227,9 @@ class SubagentResult:
     open_points: list[str]
     hits: list[retrieval_client.RetrievedChunk]
     searches_used: int
+    # ADR-0009 §10b: `memory_lookup` calls actually made (never budgeted
+    # against `searches_used`, capped by `_MAX_MEMORY_LOOKUPS`).
+    memory_lookups: int = 0
 
 
 def _parse_subagent_answer(
@@ -211,6 +291,12 @@ _SUBAGENT_SYSTEM_PROMPT_TEMPLATE = (
     '"open_points": ["..."]}}. No prose, no markdown fences -- that JSON object is your entire final reply.'
 )
 
+_MEMORY_LOOKUP_PROMPT = (
+    ' For multi-part questions, call memory_lookup first to learn which knowledge spaces and documents cover '
+    'the topic, then call search_knowledge per relevant document (document_id). Only search_knowledge results '
+    'may be cited in source_refs; memory_lookup results are orientation data, never a source.'
+)
+
 _BUDGET_EXHAUSTED_PROMPT = (
     'Your research budget is exhausted. Answer now with the JSON object described above, using only what you '
     'already found -- name anything still uncertain under open_points.'
@@ -228,9 +314,18 @@ def run_subagent(
     temperature: float | None = None,
     allowed_teams: list[str] | None = None,
     cancel: threading.Event | None = None,
+    memory: bool = False,
 ) -> SubagentResult:
     """Run `subagent`'s bounded tool-calling research loop for `question`
     and return a `SubagentResult`.
+
+    `memory` (ADR-0009 §10b): True when the knowledge memory is on for this
+    turn. The `memory_lookup` tool is then offered -- unless the bot or
+    this subagent sets `filters`, which the memory cannot apply -- and
+    calls Weave-Retrieval's `POST /api/v1/memory` with exactly this loop's
+    `effective_scope`/`allowed_teams`; an empty scope never reaches the
+    memory at all. False (the default) leaves the loop byte-for-byte as
+    before: one tool, `search_knowledge`.
 
     `effective_scope` is the CALLER's own already-resolved Collections
     scope for this subagent (app/services/scope.py's `effective_scope()`,
@@ -303,19 +398,22 @@ def run_subagent(
         **bot.retrieval.filters.model_dump(exclude_none=True),
         **subagent.filters.model_dump(exclude_none=True),
     } or None
+    memory_offered = memory and filters is None
     tools = [search_knowledge_tool_schema()]
+    system_prompt = _SUBAGENT_SYSTEM_PROMPT_TEMPLATE.format(name=subagent.name, mission=subagent.mission)
+    if memory_offered:
+        tools.append(memory_lookup_tool_schema())
+        system_prompt += _MEMORY_LOOKUP_PROMPT
 
     messages: list[dict] = [
-        {
-            'role': 'system',
-            'content': _SUBAGENT_SYSTEM_PROMPT_TEMPLATE.format(name=subagent.name, mission=subagent.mission),
-        },
+        {'role': 'system', 'content': system_prompt},
         {'role': 'user', 'content': question},
     ]
 
     hits: list[retrieval_client.RetrievedChunk] = []
     hits_by_ref: dict[tuple[str, int], retrieval_client.RetrievedChunk] = {}
     searches_used = 0
+    memory_lookups = 0
     attempts = 0
     # A generous but finite cap on total loop iterations regardless of the
     # tool-call/error mix -- a model that keeps sending invalid arguments
@@ -325,12 +423,14 @@ def run_subagent(
     while True:
         if time.monotonic() >= deadline or (cancel is not None and cancel.is_set()):
             return _finish_on_budget_exhaustion(
-                llm_provider, messages, hits, hits_by_ref, searches_used, subagent.id, model, temperature
+                llm_provider, messages, hits, hits_by_ref, searches_used, subagent.id, model, temperature,
+                memory_lookups=memory_lookups,
             )
         attempts += 1
         if attempts > max_attempts:
             return _finish_on_budget_exhaustion(
-                llm_provider, messages, hits, hits_by_ref, searches_used, subagent.id, model, temperature
+                llm_provider, messages, hits, hits_by_ref, searches_used, subagent.id, model, temperature,
+                memory_lookups=memory_lookups,
             )
 
         try:
@@ -339,14 +439,15 @@ def run_subagent(
             logger.warning('subagent %r LLM call failed: %s', subagent.id, exc)
             status = 'partial' if (hits or searches_used) else 'failed'
             return SubagentResult(
-                agent_id=subagent.id, status=status, facts=[], open_points=[], hits=hits, searches_used=searches_used
+                agent_id=subagent.id, status=status, facts=[], open_points=[], hits=hits, searches_used=searches_used,
+                memory_lookups=memory_lookups,
             )
 
         if not result.tool_calls:
             facts, open_points = _parse_subagent_answer(result.content or '', hits_by_ref)
             return SubagentResult(
                 agent_id=subagent.id, status='complete', facts=facts, open_points=open_points,
-                hits=hits, searches_used=searches_used,
+                hits=hits, searches_used=searches_used, memory_lookups=memory_lookups,
             )
 
         messages.append({
@@ -363,7 +464,7 @@ def run_subagent(
         })
 
         for index, call in enumerate(result.tool_calls):
-            if call.name != SEARCH_KNOWLEDGE_TOOL:
+            if call.name != SEARCH_KNOWLEDGE_TOOL and not (memory_offered and call.name == MEMORY_LOOKUP_TOOL):
                 messages.append({
                     'role': 'tool', 'tool_call_id': call.id,
                     'content': json.dumps({'error': f'unknown tool {call.name!r}'}),
@@ -378,6 +479,13 @@ def run_subagent(
                     'content': json.dumps({'error': 'only one tool call is processed per turn; call again next turn'}),
                 })
                 continue
+            if call.name == MEMORY_LOOKUP_TOOL:
+                memory_lookups += 1
+                messages.append({
+                    'role': 'tool', 'tool_call_id': call.id,
+                    'content': json.dumps(_memory_lookup(call.arguments, effective_scope, allowed_teams, memory_lookups, subagent.id)),
+                })
+                continue
             if searches_used >= max_searches:
                 messages.append({
                     'role': 'tool', 'tool_call_id': call.id,
@@ -386,7 +494,7 @@ def run_subagent(
                 continue
 
             try:
-                query, collection, requested_top_k = _validate_search_knowledge_args(call.arguments)
+                query, collection, requested_top_k, document_id = _validate_search_knowledge_args(call.arguments)
             except ToolArgumentError as exc:
                 searches_used += 1  # counts against the budget -- see this function's own docstring
                 messages.append({'role': 'tool', 'tool_call_id': call.id, 'content': json.dumps({'error': str(exc)})})
@@ -395,12 +503,17 @@ def run_subagent(
             call_collections = effective_scope
             if collection is not None:
                 call_collections = [slug for slug in effective_scope if slug == collection]
+            # ADR-0009 §10b: a per-document search is one more refinement
+            # inside the same scope (SearchFilters.document_ids), never a
+            # way around it -- Weave-Retrieval AND-s it with
+            # allowed_collections exactly like `collection` above.
+            call_filters = {**(filters or {}), 'document_ids': [document_id]} if document_id is not None else filters
 
             top_k = min(requested_top_k, max_results) if requested_top_k else max_results
             searches_used += 1
             try:
                 chunks = retrieval_client.search(
-                    query=query, filters=filters, allowed_teams=allowed_teams,
+                    query=query, filters=call_filters, allowed_teams=allowed_teams,
                     allowed_collections=call_collections, top_k=top_k, final_k=top_k,
                 )
             except (retrieval_client.RetrievalUnavailable, retrieval_client.RetrievalError) as exc:
@@ -431,6 +544,33 @@ def run_subagent(
             messages.append({'role': 'tool', 'tool_call_id': call.id, 'content': json.dumps(tool_payload)})
 
 
+def _memory_lookup(
+    raw_arguments: dict, effective_scope: list[str], allowed_teams: list[str] | None, lookups: int, agent_id: str
+) -> dict:
+    """One `memory_lookup` tool call (ADR-0009 §10b): the tool result dict
+    -- the memory's collections/documents for the subagent's query, or an
+    `error`. Same scope and team inputs as this loop's `search_knowledge`
+    calls; an empty scope or a `collection` outside it never reaches
+    Weave-Retrieval at all."""
+    if lookups > _MAX_MEMORY_LOOKUPS:
+        return {'error': 'memory lookup limit reached; search the documents you already know with search_knowledge'}
+    try:
+        query, collection = _validate_memory_lookup_args(raw_arguments)
+    except ToolArgumentError as exc:
+        return {'error': str(exc)}
+    call_collections = effective_scope
+    if collection is not None:
+        call_collections = [slug for slug in effective_scope if slug == collection]
+    if not call_collections:
+        return {'error': 'no knowledge space in scope for this lookup'}
+    try:
+        result = retrieval_client.memory(query, allowed_collections=call_collections, allowed_teams=allowed_teams, limit=_MEMORY_LOOKUP_LIMIT)
+    except (retrieval_client.RetrievalUnavailable, retrieval_client.RetrievalError) as exc:
+        logger.warning('subagent %r memory_lookup failed: %s', agent_id, exc)
+        return {'error': 'knowledge memory temporarily unavailable; use search_knowledge'}
+    return _memory_lookup_payload(result)
+
+
 def _finish_on_budget_exhaustion(
     llm_provider: llm_service.LLMProvider,
     messages: list[dict],
@@ -440,6 +580,8 @@ def _finish_on_budget_exhaustion(
     agent_id: str,
     model: str,
     temperature: float | None,
+    *,
+    memory_lookups: int = 0,
 ) -> SubagentResult:
     """Ask the subagent's own LLM ONE more time -- with no tools offered,
     so it cannot keep researching past its own exhausted budget -- to
@@ -457,5 +599,6 @@ def _finish_on_budget_exhaustion(
 
     status = 'failed' if not facts and not hits else 'partial'
     return SubagentResult(
-        agent_id=agent_id, status=status, facts=facts, open_points=open_points, hits=hits, searches_used=searches_used
+        agent_id=agent_id, status=status, facts=facts, open_points=open_points, hits=hits, searches_used=searches_used,
+        memory_lookups=memory_lookups,
     )

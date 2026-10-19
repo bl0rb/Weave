@@ -166,6 +166,50 @@ def test_agent_turn_searches_then_answers_with_combined_sources_and_trace(tmp_pa
     assert '[context:1]' in body['answer']
 
 
+def test_agent_turn_with_memory_offers_memory_lookup_in_the_subagents_scope(tmp_path, monkeypatch):
+    """ADR-0009 §10b: with the memory on, the subagent may look up the
+    memory first (same scope/teams as its searches, counted in the trace)
+    and then search one document; with the memory off the tool does not
+    exist and the identical script just gets an unknown-tool error."""
+    _write_bot(tmp_path, monkeypatch)
+    lookup = ToolCall(id='call-0', name='memory_lookup', arguments={'query': 'vpn'})
+    focused = ToolCall(id='call-1', name='search_knowledge', arguments={'query': 'vpn setup', 'document_id': 'doc-1'})
+    script = [
+        LLMToolResult(content=None, tool_calls=[lookup], model='fake-chat'),
+        LLMToolResult(content=None, tool_calls=[focused], model='fake-chat'),
+        LLMToolResult(content=_FINAL_ANSWER_JSON, tool_calls=None, model='fake-chat'),
+    ]
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _readable_collections())
+    calls = []
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        calls.append((url.rsplit('/', 1)[-1], json))
+        if url.endswith('/memory'):
+            return _FakeResponse(200, {'collections': [], 'documents': [
+                {'document_id': 'doc-1', 'collection': 'it-docs', 'title': 'VPN', 'document_version': 1},
+            ]})
+        return _FakeResponse(200, _search_response(_chunk()))
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _fake_post)
+
+    monkeypatch.setattr(settings, 'knowledge_memory_mode', 'extractive')
+    _script_fake_llm(monkeypatch, script)
+    body = client.post('/internal/chat', json=_BODY, headers=AUTH_HEADERS).json()
+    assert [name for name, _ in calls] == ['memory', 'search']
+    assert calls[0][1]['allowed_collections'] == calls[1][1]['allowed_collections'] == ['it-docs']
+    assert calls[0][1]['allowed_teams'] == calls[1][1]['allowed_teams'] == ['it']
+    assert calls[1][1]['filters'] == {'document_ids': ['doc-1']}
+    assert body['trace']['agent']['subagents'][0]['memory_lookups'] == 1
+    assert body['sources'][0]['memory_kind'] is None and body['trace']['guard'] is None
+
+    calls.clear()
+    monkeypatch.setattr(settings, 'knowledge_memory_mode', 'off')
+    _script_fake_llm(monkeypatch, script)
+    body = client.post('/internal/chat', json=_BODY, headers=AUTH_HEADERS).json()
+    assert [name for name, _ in calls] == ['search']
+    assert body['trace']['agent']['subagents'][0]['memory_lookups'] == 0
+
+
 def test_agent_turn_search_forwards_the_callers_allowed_teams(tmp_path, monkeypatch):
     # Mirrors _run_knowledge_turn's own allowed_teams=_allowed_teams(bot,
     # user) -- a subagent's search_knowledge call must carry the SAME

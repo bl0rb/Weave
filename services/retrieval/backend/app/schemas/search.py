@@ -32,6 +32,13 @@ class SearchFilters(BaseModel):
     # yields an empty result, never an error and never a bypass (Collections
     # contract point 5).
     collection: str | None = None
+    # ADR-0009 §10: restrict the search to these `documents.id` values -- a
+    # refinement WITHIN `allowed_collections` exactly like `collection`
+    # above (AND-ed, never widening): an id outside the caller's scope, or
+    # one that is not a UUID at all, simply matches nothing. Weave-Runtime
+    # sets it to the documents the knowledge memory ranked for a question
+    # (the "focus"), and a subagent's `search_knowledge(document_id=...)`.
+    document_ids: list[str] | None = None
 
 
 class SearchRequest(BaseModel):

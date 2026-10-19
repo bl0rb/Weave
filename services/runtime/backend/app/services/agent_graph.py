@@ -284,6 +284,7 @@ def _research(
     subagent_llm_providers: dict[str, llm_service.LLMProvider],
     cancel: threading.Event | None,
     progress_cb: ProgressCallback | None = None,
+    memory: bool = False,
 ) -> dict:
     """One `Send('research', ...)` worker invocation -- Schritt 2's own
     `agents.run_subagent`, for exactly one planned subquestion. Runs however
@@ -335,7 +336,7 @@ def _research(
         bot, capped_subagent, payload['subquestion'], payload['effective_scope'],
         subagent_llm_providers[agent_id],
         model=model_cfg.model, temperature=model_cfg.temperature,
-        allowed_teams=payload['allowed_teams'], cancel=cancel,
+        allowed_teams=payload['allowed_teams'], cancel=cancel, memory=memory,
     )
     _emit(progress_cb, 'status', ChatStreamStatusEvent(
         stage='researching', agent_id=agent_id, agent_name=subagent.name,
@@ -552,6 +553,7 @@ def _build_graph(
     main_llm_provider: llm_service.LLMProvider,
     cancel: threading.Event | None,
     progress_cb: ProgressCallback | None = None,
+    memory: bool = False,
 ):
     graph = StateGraph(GraphState)
     graph.add_node('plan', lambda state: _plan(
@@ -559,7 +561,7 @@ def _build_graph(
     ))
     graph.add_node('research', lambda payload: _research(
         payload, bot=bot, subagents_by_id=subagents_by_id,
-        subagent_llm_providers=subagent_llm_providers, cancel=cancel, progress_cb=progress_cb,
+        subagent_llm_providers=subagent_llm_providers, cancel=cancel, progress_cb=progress_cb, memory=memory,
     ))
     graph.add_node('merge', lambda state: _merge(
         state, limits=bot.agent.limits, cancel=cancel, progress_cb=progress_cb,
@@ -604,6 +606,7 @@ def run_graph(
     *,
     cancel: threading.Event | None = None,
     progress_cb: ProgressCallback | None = None,
+    memory: bool = False,
 ) -> GraphOutcome:
     """Build and run this turn's own graph, once, and reduce its final state
     to a `GraphOutcome`. `RunnableConfig(max_concurrency=bot.agent.limits.
@@ -624,10 +627,13 @@ def run_graph(
     docstring above. `None` (the default, `handle_chat`'s own blocking
     path) means every node's own `_emit(...)` call is a no-op, exactly
     reproducing this function's pre-Schritt-4 behaviour.
+
+    `memory` (ADR-0009 §10b) is forwarded to every `research` worker's
+    `agents.run_subagent` call -- see that parameter's own docstring.
     """
     limits = bot.agent.limits
     deadline = time.monotonic() + max(1, limits.timeout_seconds)
-    compiled = _build_graph(bot, subagents_by_id, subagent_llm_providers, main_llm_provider, cancel, progress_cb)
+    compiled = _build_graph(bot, subagents_by_id, subagent_llm_providers, main_llm_provider, cancel, progress_cb, memory)
 
     initial_state: GraphState = {
         'question': message,
@@ -647,7 +653,10 @@ def run_graph(
 
     results: list[agents_service.SubagentResult] = final_state['results']
     subagent_traces = [
-        SubagentTrace(id=result.agent_id, status=result.status, searches_used=result.searches_used, hits=len(result.hits))
+        SubagentTrace(
+            id=result.agent_id, status=result.status, searches_used=result.searches_used, hits=len(result.hits),
+            memory_lookups=result.memory_lookups,
+        )
         for result in _final_results_per_agent(results).values()
     ]
     budget_used = max(0, limits.budget_searches - int(final_state['budget']['searches_left']))
