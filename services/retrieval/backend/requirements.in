@@ -15,7 +15,7 @@
 # chunk-store contract, never the writer).
 fastapi==0.142.4
 uvicorn[standard]==0.54.0
-pydantic==2.13.5
+pydantic==2.14.1
 pydantic-settings==2.15.0
 sqlalchemy==2.1.4
 psycopg[binary]==3.3.6
