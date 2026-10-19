@@ -24,6 +24,17 @@ export const chat = {
   'rail.signedIn': 'Angemeldet',
   'rail.logout': 'Abmelden',
   'rail.apiAccess': 'API-Zugang',
+  'rail.desktop': 'Desktop-App einrichten',
+  // components/chat/desktop-setup-dialog.tsx
+  'desktop.title': 'Desktop-App einrichten',
+  'desktop.close': 'Desktop-App-Einrichtung schließen',
+  'desktop.intro': 'Weave für den Desktop fragt aus der Menüleiste bzw. dem Infobereich. Der Knopf übergibt der installierten App die Adresse dieses Servers; die App fragt vor dem Übernehmen nach, danach meldest du dich dort wie hier an.',
+  'desktop.open': 'Desktop-App öffnen',
+  'desktop.download': 'Desktop-App herunterladen',
+  'desktop.opened': 'Der Browser fragt jetzt, ob Weave geöffnet werden darf. Passiert nichts, ist die App noch nicht installiert.',
+  'desktop.manual': 'Zum manuellen Eintragen in den Einstellungen der App (API-Adresse):',
+  'desktop.safety': 'Es wird nur die Server-Adresse übergeben, nie ein Zugangsdatum. Übernimm in der App nur Vorschläge, die du selbst ausgelöst hast.',
+  'desktop.loadFailed': 'Die Server-Adresse konnte nicht ermittelt werden.',
   // components/chat/api-access-dialog.tsx
   'apiAccess.title': 'API-Zugang',
   'apiAccess.close': 'API-Zugang schließen',

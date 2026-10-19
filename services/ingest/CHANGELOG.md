@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Weave transformation, the product is called Weave Ingest. Entries below predating that
 > change are left as written and refer to the project under its former name.
 
+## [Unreleased]
+
+### Added
+- **Desktop app setup from Weave-Chat:** the chat rail's new "Desktop-App einrichten" dialog opens
+  `weave://setup?server=<API address>` (the browser-reachable `WEAVE_API_PUBLIC_BASE_URL`, via
+  `GET /api/desktop`) plus a download link. The desktop app (0.1.6) registers the `weave://`
+  scheme (`tauri-plugin-deep-link`), shows the proposed address in its settings window and saves it
+  only after the user accepts; only the address travels in the link, never a credential, and an
+  IT-managed `ServerUrl` stays unchanged.
+
 ## [0.7.9] - 2026-10-18
 
 ### Added

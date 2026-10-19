@@ -44,8 +44,37 @@ async function signIn() {
   refresh();
 }
 
+// A `weave://setup` link from Weave-Chat proposed a server address; the user
+// decides. Accepting saves it, tests the connection and leaves "Anmelden".
+async function resolveSetup(accept) {
+  saveResult = null;
+  try {
+    await invoke('resolve_setup', { accept });
+    if (accept) { form.server_url = state.setup_server; saveResult = { ok: true }; }
+  } catch (error) {
+    saveResult = { error: String(error) };
+  }
+  await refresh();
+  if (accept && !saveResult?.error) testConnection();
+}
+
 function managedBadge(managed) {
   return managed && h('span', { class: 'badge managed' }, t('Von der IT vorgegeben'));
+}
+
+function renderSetupProposal() {
+  if (!state.setup_server) return null;
+  const ignored = state.server_managed;
+  return h('section', { class: 'card setup-proposal' },
+    h('div', { class: 'card-head' }, h('h2', null, t('Einrichtung aus Weave-Chat'))),
+    h('p', null, ignored
+      ? t('Ein Link aus Weave-Chat schlägt einen Server vor; die Adresse ist aber von der IT vorgegeben und bleibt unverändert.')
+      : t('Ein Link aus Weave-Chat schlägt diesen Server vor. Nur übernehmen, wenn Sie den Link selbst geöffnet haben.')),
+    h('code', { class: 'mono selectable' }, state.setup_server),
+    h('div', { class: 'actions' },
+      h('span', { class: 'spacer' }),
+      h('button', { onclick: () => resolveSetup(false) }, ignored ? t('Schließen') : t('Ablehnen')),
+      !ignored && h('button', { class: 'primary', onclick: () => resolveSetup(true) }, t('Übernehmen'))));
 }
 
 function field(label, control, note) {
@@ -123,7 +152,7 @@ function render() {
     saveResult?.error && h('span', { class: 'error-text' }, saveResult.error),
     h('button', { class: 'primary', onclick: save }, t('Speichern')));
 
-  document.getElementById('main').replaceChildren(server, account, usage, actions, renderAbout());
+  document.getElementById('main').replaceChildren(renderSetupProposal(), server, account, usage, actions, renderAbout());
 }
 
 listen('state-changed', () => refresh());

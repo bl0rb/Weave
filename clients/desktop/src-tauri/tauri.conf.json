@@ -61,6 +61,11 @@
     }
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["weave"]
+      }
+    },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRDMkMwNUI4OTA2NTQ0Q0EKUldUS1JHV1F1QVVzVEkxTFJ3ZXFURVVXbnBWSVBxb1pvSzJhSUJFUDNZeWFMRlJPZ2c5c28zblkK",
       "endpoints": [
