@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Weave transformation, the product is called Weave Ingest. Entries below predating that
 > change are left as written and refer to the project under its former name.
 
+## [0.7.11] - 2026-10-19
+
+### Added
+- **S3 as alternative object storage** ([betrieb.md §6.1](../../docs/betrieb.md)): with
+  `OBJECT_STORAGE_BACKEND=s3` (default `db`), new originals, imported images/attachments and
+  generated markdown (job result, editor versions, release snapshots) go to an S3-compatible
+  bucket (AWS S3, MinIO, Ceph RGW). The bucket is configured with `S3_BUCKET`, `S3_ENDPOINT_URL`,
+  `S3_REGION`, `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` (empty = IAM role/IRSA), `S3_KEY_PREFIX`
+  and `S3_ADDRESSING_STYLE`. Each object keeps its own backend, so mixed data stays readable.
+  - Migration in both directions while the services run, interruptible and repeatable:
+    `python -m app.cli storage migrate --to s3|db`, plus `storage status` and `storage sweep`
+    (deletes S3 keys without a database row; the prefix must belong to this instance alone).
+  - Backups include S3 objects and restore them into whichever backend the target is configured
+    for, under fresh keys. While an export or import runs, nothing deletes S3 keys (a PostgreSQL
+    advisory lock); garbage collection catches up afterwards.
+  - Migration `0052_markdown_objects`: object references for the three markdown columns, CHECK
+    constraints instead of NOT NULL, an index on `stored_objects.storage_key`. The downgrade refuses
+    while any markdown is still in S3.
+  - New dependency `boto3`.
+- **Desktop app:** the agent list reloads every time the window or overlay opens; "Verlauf leeren"
+  replaces "Neue Unterhaltung", and after 30 minutes away the app starts a fresh conversation; "Im
+  Web öffnen" opens the conversation in the web chat (Weave-API returns `chat_url` on `GET /v1/me`
+  from the new `CHAT_PUBLIC_URL`; the web chat opens `?conversation=<id>`). A new question scrolls to
+  the top and the answer streams in below it without pulling the view down.
+- **Bot administration:** an active managed bot that Weave-Runtime did not load (typically an n8n
+  webhook outside `N8N_ALLOWED_BASE_URLS`) is marked "Nicht im Chat", with the likely cause.
+- User-flow diagram `docs/diagrams/user-flow.{html,svg}` (VS Code/MCP, desktop app, browser chat).
+
 ## [0.7.10] - 2026-10-19
 
 ### Added
