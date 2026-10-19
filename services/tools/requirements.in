@@ -21,7 +21,7 @@
 # 1.x FastMCP API most existing tutorials still show.
 fastapi==0.142.4
 uvicorn[standard]==0.54.0
-pydantic==2.13.5
+pydantic==2.14.1
 pydantic-settings==2.15.0
 httpx==0.28.1
 pytest==9.1.1
