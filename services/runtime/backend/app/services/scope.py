@@ -10,10 +10,10 @@ dependency on `BotConfig`/`ChatUser`/`retrieval_client` at all -- every
 input is already a plain, resolved `list[str]` (or `None`), which is
 exactly what makes it trivially unit-testable and safe to call from a
 future subagent-scope resolver without pulling in the whole chat pipeline.
-`NO_COLLECTION_SENTINEL` is imported from chat.py rather than redefined
-here, so there is exactly one copy of that string in this codebase (see
-chat.py's own docstring on why it can't just import it from Weave-
-Retrieval instead).
+`NO_COLLECTION_SENTINEL` is imported from app.services.chat_common rather
+than redefined here, so there is exactly one copy of that string in this
+codebase (see that module's own note on why it can't just import it from
+Weave-Retrieval instead).
 
 This function is NOT wired into `_run_knowledge_turn`/`resolve_collection_
 scope` (chat.py) by this change -- those keep working exactly as before,
@@ -23,7 +23,7 @@ turn's own subagent-scope resolution is the first real caller.
 
 from __future__ import annotations
 
-from app.services.chat import NO_COLLECTION_SENTINEL
+from app.services.chat_common import NO_COLLECTION_SENTINEL
 
 
 def effective_scope(

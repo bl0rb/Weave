@@ -2,9 +2,9 @@
 (rollout plan "Schritt 3 -- LangGraph mit mehreren Subagenten") -- the
 successor to Schritt 2's own single-subagent `agents.run_subagent`, used by
 app/services/chat.py exactly when a bot's agent mode has MORE than one
-configured subagent (see that module's own `_prepare_turn`, the
+configured subagent (see that module's own `_prepare_context`, the
 `len(bot.agent.subagents) > 1` branch); a bot with exactly one subagent keeps
-using Schritt 2's own `_run_agent_turn_blocking`/`_stream_deferred_agent`
+using Schritt 2's own bot_graph.py's `agent_single` node
 completely unchanged.
 
 Pipeline (docs.langchain.com/oss/python/langgraph/workflows-agents' own
@@ -44,16 +44,10 @@ transcripts) never reaches `GraphOutcome` -- only the resolved plan (`{
 'agent_id', 'subquestion'}` pairs, for `AgentTrace.plan`), each subagent's
 own already-public `SubagentResult` fields, and the final answer text do.
 
-`_to_source`/`NO_COLLECTION_SENTINEL` are imported LAZILY from
-app.services.chat (inside the functions that need them, never at this
-module's own top level) because chat.py imports THIS module at its own top
-level (`agent_graph_service`, alongside its existing `agents_service`
-import) -- an eager import in both directions would be a genuine cycle; see
-chat.py's own top-of-file note on the identical, longer-standing
-scope.py<->chat.py relationship (there, the two modules are reversed: scope.py
-imports chat.py eagerly, chat.py imports scope.py lazily -- the same
-principle, applied here with the eager/lazy roles swapped to match which
-module chat.py itself imports first).
+`_to_source` comes from app.services.chat_common, the leaf module shared
+with chat.py -- chat.py imports THIS module at its own top level
+(`agent_graph_service`), so importing chat.py back from here would be a
+genuine cycle; the leaf module is what makes an eager import possible.
 """
 
 import logging
@@ -66,10 +60,12 @@ from typing import Annotated, Callable, TypedDict
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
+from langgraph.runtime import Runtime
 from langgraph.types import Send
 
 from app.schemas.bot import BotConfig, SubagentConfig
 from app.schemas.chat import AgentTrace, ChatStreamStatusEvent, Source, SubagentTrace
+from app.services.chat_common import _to_source
 from app.services import agents as agents_service
 from app.services import llm as llm_service
 
@@ -79,7 +75,7 @@ RESEARCH_AREA_TOOL = 'research_area'
 
 # `progress_cb`, threaded through `run_graph` -> `_build_graph` -> every node
 # below, is the graph's own analogue of app/services/chat.py's
-# `_stream_deferred_agent`/`_stream_deferred_multi_agent` worker functions
+# `bot_graph._agent_single`/`bot_graph._agent_multi` worker functions
 # `result_queue.put((kind, payload))` calls: `kind` is `'status'` (a
 # `ChatStreamStatusEvent`, rollout plan "Schritt 4") or `'delta'` (one
 # incremental piece of the final answer's own text, `_answer`'s own
@@ -97,6 +93,24 @@ ProgressCallback = Callable[[str, object], None]
 def _emit(progress_cb: ProgressCallback | None, kind: str, payload: object) -> None:
     if progress_cb is not None:
         progress_cb(kind, payload)
+
+
+@dataclass(frozen=True)
+class AgentContext:
+    """Per-turn inputs every node reads through LangGraph's run-scoped
+    `Runtime.context` (`StateGraph(..., context_schema=AgentContext)`) --
+    what used to be closed over by `_build_graph`'s per-turn lambdas. The
+    graph itself is therefore compiled exactly once at import time
+    (`COMPILED` below) and `run_graph` only supplies this context per call.
+    """
+
+    bot: BotConfig
+    subagents_by_id: dict[str, SubagentConfig]
+    subagent_llm_providers: dict[str, llm_service.LLMProvider]
+    main_llm_provider: llm_service.LLMProvider
+    cancel: threading.Event | None = None
+    progress_cb: ProgressCallback | None = None
+    memory: bool = False
 
 
 class AvailableAgent(TypedDict):
@@ -492,7 +506,6 @@ def _answer(
     main_llm_provider: llm_service.LLMProvider,
     progress_cb: ProgressCallback | None = None,
 ) -> dict:
-    from app.services.chat import _to_source  # lazy import -- see this module's own docstring
 
     results = state['results']
     sources = _dedup_sources(results, _to_source)
@@ -519,10 +532,10 @@ def _answer(
         # `chat()` call, exactly as before this rollout step.
         answer = main_llm_provider.chat(messages, model=bot.model.model, temperature=bot.model.temperature).content
     else:
-        # Streaming callers (`_stream_deferred_multi_agent`): push each
+        # Streaming callers (`bot_graph._agent_multi`): push each
         # delta onto the SAME queue as it arrives, exactly like the
         # single-subagent path's own final-answer call already does
-        # (app/services/chat.py's `_stream_deferred_agent`) -- this removes
+        # (app/services/chat.py's `bot_graph._agent_single`) -- this removes
         # this module's own previously-documented Schritt-3 simplification
         # (one blocking `chat()` call, chunked back out after the fact).
         pieces: list[str] = []
@@ -546,30 +559,39 @@ def _answer(
     return {'final_answer': answer, 'guard_triggered': False}
 
 
-def _build_graph(
-    bot: BotConfig,
-    subagents_by_id: dict[str, SubagentConfig],
-    subagent_llm_providers: dict[str, llm_service.LLMProvider],
-    main_llm_provider: llm_service.LLMProvider,
-    cancel: threading.Event | None,
-    progress_cb: ProgressCallback | None = None,
-    memory: bool = False,
-):
-    graph = StateGraph(GraphState)
-    graph.add_node('plan', lambda state: _plan(
-        state, bot=bot, main_llm_provider=main_llm_provider, progress_cb=progress_cb,
-    ))
-    graph.add_node('research', lambda payload: _research(
-        payload, bot=bot, subagents_by_id=subagents_by_id,
-        subagent_llm_providers=subagent_llm_providers, cancel=cancel, progress_cb=progress_cb, memory=memory,
-    ))
-    graph.add_node('merge', lambda state: _merge(
-        state, limits=bot.agent.limits, cancel=cancel, progress_cb=progress_cb,
-    ))
-    graph.add_node('answer', lambda state: _answer(
-        state, bot=bot, subagents_by_id=subagents_by_id, main_llm_provider=main_llm_provider,
-        progress_cb=progress_cb,
-    ))
+def _plan_node(state: GraphState, runtime: Runtime[AgentContext]) -> dict:
+    ctx = runtime.context
+    return _plan(state, bot=ctx.bot, main_llm_provider=ctx.main_llm_provider, progress_cb=ctx.progress_cb)
+
+
+def _research_node(payload: dict, runtime: Runtime[AgentContext]) -> dict:
+    ctx = runtime.context
+    return _research(
+        payload, bot=ctx.bot, subagents_by_id=ctx.subagents_by_id,
+        subagent_llm_providers=ctx.subagent_llm_providers, cancel=ctx.cancel, progress_cb=ctx.progress_cb,
+        memory=ctx.memory,
+    )
+
+
+def _merge_node(state: GraphState, runtime: Runtime[AgentContext]) -> dict:
+    ctx = runtime.context
+    return _merge(state, limits=ctx.bot.agent.limits, cancel=ctx.cancel, progress_cb=ctx.progress_cb)
+
+
+def _answer_node(state: GraphState, runtime: Runtime[AgentContext]) -> dict:
+    ctx = runtime.context
+    return _answer(
+        state, bot=ctx.bot, subagents_by_id=ctx.subagents_by_id, main_llm_provider=ctx.main_llm_provider,
+        progress_cb=ctx.progress_cb,
+    )
+
+
+def _build_graph():
+    graph = StateGraph(GraphState, context_schema=AgentContext)
+    graph.add_node('plan', _plan_node)
+    graph.add_node('research', _research_node)
+    graph.add_node('merge', _merge_node)
+    graph.add_node('answer', _answer_node)
 
     graph.add_edge(START, 'plan')
     graph.add_conditional_edges('plan', _dispatch, ['research', 'answer'])
@@ -579,15 +601,19 @@ def _build_graph(
     return graph.compile()
 
 
+# Compiled once; every per-turn input travels in `AgentContext`.
+COMPILED = _build_graph()
+
+
 @dataclass(frozen=True)
 class GraphOutcome:
     """`run_graph`'s own return shape -- everything app/services/chat.py's
-    `_run_multi_agent_turn_blocking`/`_stream_deferred_multi_agent` need to
-    build a `_PreparedTurn`, and nothing more: no internal prompts, no raw
+    bot_graph.py's `agent_multi` node need to
+    build a `bot_graph.TurnState`, and nothing more: no internal prompts, no raw
     tool-calling transcript, no per-round intermediate state (rollout plan's
     own "internal prompts/reasoning are never exposed"). `sources` is
     already `[]` whenever `guard_triggered` is True, mirroring
-    `_run_agent_turn_blocking`'s own identical convention."""
+    `bot_graph._agent_single`'s own identical convention."""
 
     final_answer: str
     sources: list[Source]
@@ -633,7 +659,10 @@ def run_graph(
     """
     limits = bot.agent.limits
     deadline = time.monotonic() + max(1, limits.timeout_seconds)
-    compiled = _build_graph(bot, subagents_by_id, subagent_llm_providers, main_llm_provider, cancel, progress_cb, memory)
+    context = AgentContext(
+        bot=bot, subagents_by_id=subagents_by_id, subagent_llm_providers=subagent_llm_providers,
+        main_llm_provider=main_llm_provider, cancel=cancel, progress_cb=progress_cb, memory=memory,
+    )
 
     initial_state: GraphState = {
         'question': message,
@@ -647,8 +676,8 @@ def run_graph(
         'final_answer': None,
         'guard_triggered': False,
     }
-    final_state = compiled.invoke(
-        initial_state, config=RunnableConfig(max_concurrency=max(1, limits.max_parallel))
+    final_state = COMPILED.invoke(
+        initial_state, config=RunnableConfig(max_concurrency=max(1, limits.max_parallel)), context=context,
     )
 
     results: list[agents_service.SubagentResult] = final_state['results']
@@ -661,7 +690,6 @@ def run_graph(
     ]
     budget_used = max(0, limits.budget_searches - int(final_state['budget']['searches_left']))
 
-    from app.services.chat import _to_source  # lazy import -- see this module's own docstring
 
     guard_triggered = bool(final_state['guard_triggered'])
     sources = [] if guard_triggered else _dedup_sources(results, _to_source)
