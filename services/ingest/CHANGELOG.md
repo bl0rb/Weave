@@ -33,6 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   import, `storage migrate`; with multipart uploads on `CreateMultipartUpload`), for bucket
   policies and SCPs that check the header in the request. Unset, behaviour is unchanged.
 
+### Changed
+- **Confluence import runs restart automatically** ([betrieb.md](../../docs/betrieb.md)): a run
+  whose worker died or whose continuation message was lost is re-sent by a stale-run reaper on
+  every publication tick (not only at worker start) and resumed from its persisted frontier,
+  the active-run cap no longer fails such a run, a failed continuation enqueue or a lost
+  DB/broker connection leaves the run running for the reaper, and transient Confluence errors
+  (HTTP 429/5xx, network) are retried with exponential backoff at chunk start and per page (up
+  to three times per page). New `IMPORT_MAX_RECOVERIES` (default 5) bounds consecutive
+  lost-worker resumptions and backoff retries per run.
+
 ## [0.7.11] - 2026-10-19
 
 ### Added

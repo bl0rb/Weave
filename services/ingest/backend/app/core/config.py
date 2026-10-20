@@ -249,6 +249,13 @@ class Settings(BaseSettings):
     # lost) -- drives the lease reclaim, requeue-on-worker-ready, force-cancel
     # and active-run-cap reaping paths.
     import_stale_run_seconds: int = 600
+    # Automatic restarts of one import run after its worker was lost, its
+    # continuation message got lost, or Confluence answered with a transient
+    # error (429/5xx/network) -- counted per run across the stale-run reaper
+    # (app/workers/tasks.py) and the worker's own transient-retry deferrals
+    # (app/workers/import_tasks.py); beyond this the run is failed with a
+    # clear message instead of looping forever.
+    import_max_recoveries: int = 5
     # DB-backed cooldown between /import/sources/{id}/test probes (429 inside
     # the window); holds even when the Redis rate limiter fails open.
     import_test_cooldown_seconds: int = 10

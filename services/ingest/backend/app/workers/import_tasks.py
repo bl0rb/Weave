@@ -25,11 +25,14 @@ _record_refresh_outcome.
 import hashlib
 import logging
 import re
+import socket
 import uuid
 from datetime import datetime, timedelta, timezone
 
 from celery.exceptions import SoftTimeLimitExceeded
+from kombu.exceptions import OperationalError as BrokerOperationalError
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import OperationalError as DbOperationalError
 from sqlalchemy.orm import defer
 
 from app.core.config import settings
@@ -50,7 +53,7 @@ from app.models.models import (
 )
 from app.services import object_store, security
 from app.services.collection_access import collection_role, role_at_least
-from app.services.confluence import AttachmentMeta, ConfluenceError, Page, PageSource, create_client
+from app.services.confluence import AttachmentMeta, ConfluenceError, Page, PageSource, create_client, is_transient
 from app.services.confluence_markdown import add_frontmatter_keys, convert_page, rewrite_cross_page_links, sanitize_filename
 from app.services.paddle_service import effective_pipeline_profile_id, vl_settings_for_worker
 from app.workers import webhook_tasks
@@ -239,6 +242,17 @@ class _RunState:
         self.children_titles: dict[str, list[str]] = {
             str(key): [str(title) for title in value] for key, value in children_titles.items() if isinstance(value, list)
         }
+        # Automatic-restart bookkeeping (see app/workers/tasks.py's
+        # reap_stale_import_runs and _defer_run below): restarts after a
+        # lost worker/message, deferrals after transient Confluence errors
+        # during setup, and per-page transient retries. All three are
+        # bounded by settings.import_max_recoveries / _PAGE_TRANSIENT_RETRIES.
+        self.recoveries = int(raw.get('recoveries') or 0)
+        requeued_at = raw.get('requeued_at')
+        self.requeued_at: str | None = requeued_at if isinstance(requeued_at, str) and requeued_at else None
+        self.transient_retries = int(raw.get('transient_retries') or 0)
+        page_retries = raw.get('page_retries') if isinstance(raw.get('page_retries'), dict) else {}
+        self.page_retries: dict[str, int] = {str(key): int(value) for key, value in page_retries.items()}
 
     def add_error(self, page_id: str, title: str, error: str, *, level: int = logging.WARNING) -> None:
         # Every recorded per-page problem also becomes a log line -- this is
@@ -281,6 +295,10 @@ class _RunState:
             'errors': [dict(entry) for entry in self.errors],
             'space_key': self.space_key,
             'children_titles': {key: list(value) for key, value in self.children_titles.items()},
+            'recoveries': self.recoveries,
+            'requeued_at': self.requeued_at,
+            'transient_retries': self.transient_retries,
+            'page_retries': dict(self.page_retries),
         }
 
 
@@ -398,6 +416,99 @@ def _cancel_run(db, run: ImportRun, state: _RunState, claimed_seq: int) -> None:
     run.current_page_title = ''
     state.persist(run)
     _commit_owned(db, run.id, claimed_seq)
+
+
+# Transient per-page failures (429/5xx/network) put the page back at the
+# END of the frontier this many times before it counts as failed.
+_PAGE_TRANSIENT_RETRIES = 3
+_TRANSIENT_BACKOFF_BASE_SECONDS = 60
+_TRANSIENT_BACKOFF_MAX_SECONDS = 600
+
+
+def _transient_backoff_seconds(attempt: int) -> int:
+    return min(_TRANSIENT_BACKOFF_MAX_SECONDS, _TRANSIENT_BACKOFF_BASE_SECONDS * (2 ** max(0, attempt - 1)))
+
+
+def _send_continuation(app, run_id: str, seq: int, *, countdown: int | None = None) -> bool:
+    """Enqueue the run's next chunk. A broker failure here must never fail
+    the run: everything up to this point is committed, the run stays
+    'running', and reap_stale_import_runs (app/workers/tasks.py) replays it
+    once its heartbeat is older than import_stale_run_seconds."""
+    try:
+        app.send_task(IMPORT_TASK_NAME, args=[run_id, seq], countdown=countdown)
+        return True
+    except Exception:
+        logger.exception(
+            'import run %s: could not enqueue chunk %s; the stale-run reaper will restart it', run_id, seq
+        )
+        return False
+
+
+def _defer_run(db, run: ImportRun, state: _RunState, message: str, claimed_seq: int, app) -> None:
+    """A transient Confluence failure during chunk setup (rate limit,
+    server error, network): keep the run 'running' and retry the SAME chunk
+    after an exponential backoff instead of failing it -- bounded by
+    settings.import_max_recoveries, beyond which _fail_run applies."""
+    state.transient_retries += 1
+    if state.transient_retries > settings.import_max_recoveries:
+        _fail_run(
+            db, run, state,
+            f'{message} (gave up after {state.transient_retries - 1} automatic retries)',
+            claimed_seq,
+        )
+        return
+    delay = _transient_backoff_seconds(state.transient_retries)
+    logger.warning(
+        'import run %s: transient failure, retry %s/%s in %ss: %s',
+        run.id, state.transient_retries, settings.import_max_recoveries, delay, message,
+    )
+    run.error_message = _truncate(f'{message} (automatic retry in {delay}s)', _ERROR_MESSAGE_MAX_CHARS)
+    state.persist(run)
+    _commit_owned(db, run.id, claimed_seq)
+    # Replayed with the CURRENT seq, exactly like an ordinary continuation:
+    # the heartbeat above is fresh, so a stale-lease reclaim (previous seq)
+    # would refuse until import_stale_run_seconds have passed. A concurrent
+    # reaper replay (previous seq) stays a no-op either way.
+    _send_continuation(app, run.id, claimed_seq, countdown=delay)
+
+
+def _is_retryable_failure(exc: BaseException) -> bool:
+    """Failures the stale-run reaper should recover from by restarting the
+    run (never a bug in this code, never a local file-system problem):
+    transient Confluence errors, a lost database or broker connection,
+    connection-level socket errors."""
+    return is_transient(exc) or isinstance(
+        exc, (DbOperationalError, BrokerOperationalError, ConnectionError, TimeoutError, socket.gaierror)
+    )
+
+
+def _note_retryable_failure(db, run_id: str, exc: BaseException) -> None:
+    """Leave the reason for an upcoming automatic restart on the run (UI and
+    the eventual give-up message) without refreshing updated_at -- the run
+    must keep looking stale so the reaper actually restarts it."""
+    try:
+        db.execute(
+            update(ImportRun)
+            .where(ImportRun.id == run_id)
+            .where(ImportRun.status.in_([ImportRunStatus.PENDING, ImportRunStatus.RUNNING]))
+            .values(
+                error_message=_truncate(f'{exc} (automatic restart pending)', _ERROR_MESSAGE_MAX_CHARS),
+                updated_at=ImportRun.updated_at,
+            )
+        )
+        db.commit()
+    except Exception:  # the database itself may be what failed
+        db.rollback()
+
+
+def _note_progress(run: ImportRun, state: _RunState) -> None:
+    """A successful Confluence round-trip: the transient-retry budget applies
+    to CONSECUTIVE failures only, and an interim "automatic retry/restart"
+    note must not outlive the recovery. Persisted by the caller's next
+    lease-guarded commit."""
+    if state.transient_retries or run.error_message:
+        state.transient_retries = 0
+        run.error_message = None
 
 
 def _run_collection_id(run: ImportRun) -> str | None:
@@ -1132,6 +1243,28 @@ def import_confluence(self, run_id: str, chunk_seq: int) -> None:
         state = _RunState(run)
         options = run.options if isinstance(run.options, dict) else {}
 
+        if claimed_seq == chunk_seq + 2:
+            # Stale-lease reclaim: the previous execution of this chunk died
+            # mid-way (worker lost, hard time limit, retryable crash). This
+            # is the ONE place a lost worker is actually observed -- the
+            # reaper only ever re-sends messages -- so the restart budget is
+            # counted here. Reset once a chunk completes (see the
+            # continuation/finalize sites), so only CONSECUTIVE losses count.
+            state.recoveries += 1
+            if state.recoveries > settings.import_max_recoveries:
+                last_error = f'; last error: {run.error_message}' if run.error_message else ''
+                _fail_run(
+                    db, run, state,
+                    f'worker was lost {state.recoveries - 1} times in a row while importing; '
+                    f'start a new run to continue{last_error}',
+                    claimed_seq,
+                )
+                return
+            logger.warning(
+                'import run %s: resuming after a lost worker (restart %s/%s)',
+                run.id, state.recoveries, settings.import_max_recoveries,
+            )
+
         if run.cancel_requested:
             _cancel_run(db, run, state, claimed_seq)
             return
@@ -1180,7 +1313,10 @@ def import_confluence(self, run_id: str, chunk_seq: int) -> None:
                 max_attachment_bytes=settings.import_attachment_max_bytes,
             )
         except ConfluenceError as exc:
-            _fail_run(db, run, state, str(exc), claimed_seq)
+            if is_transient(exc):
+                _defer_run(db, run, state, str(exc), claimed_seq, self.app)
+            else:
+                _fail_run(db, run, state, str(exc), claimed_seq)
             return
 
         # Re-clamped here even though the API already clamps at run creation:
@@ -1216,8 +1352,13 @@ def import_confluence(self, run_id: str, chunk_seq: int) -> None:
                 try:
                     root_id = client.resolve_space_root(run.scope_value)
                 except ConfluenceError as exc:
-                    _fail_run(db, run, state, f'could not resolve space {run.scope_value!r}: {exc}', claimed_seq)
+                    message = f'could not resolve space {run.scope_value!r}: {exc}'
+                    if is_transient(exc):
+                        _defer_run(db, run, state, message, claimed_seq, self.app)
+                    else:
+                        _fail_run(db, run, state, message, claimed_seq)
                     return
+                _note_progress(run, state)
                 state.frontier = [[str(root_id), 0, [], None]]
             if state.frontier:
                 # Root context (spec AUFGABE 1): resolved once, here, for the
@@ -1283,6 +1424,19 @@ def import_confluence(self, run_id: str, chunk_seq: int) -> None:
                     run = db.get(ImportRun, run_id)
                     if run is None:
                         return
+                    if is_transient(exc) and state.page_retries.get(page_id, 0) < _PAGE_TRANSIENT_RETRIES:
+                        # Rate limit / server error / network blip: the page
+                        # goes back to the END of the frontier and this chunk
+                        # ends with a backed-off continuation -- retrying
+                        # immediately is exactly what a 429 forbids.
+                        state.page_retries[page_id] = state.page_retries.get(page_id, 0) + 1
+                        state.frontier.append([page_id, int(depth), list(path_titles), parent_page_id])
+                        logger.warning(
+                            'import run %s, page %s: transient failure, retry %s/%s queued: %s',
+                            run.id, page_id, state.page_retries[page_id], _PAGE_TRANSIENT_RETRIES, exc,
+                        )
+                        _defer_run(db, run, state, f'page {page_id}: {exc}', claimed_seq, self.app)
+                        return
                     run.pages_failed += 1
                     if isinstance(exc, ConfluenceError) and exc.status_code in (404, 410):
                         state.unavailable_pages.add(page_id)
@@ -1293,6 +1447,7 @@ def import_confluence(self, run_id: str, chunk_seq: int) -> None:
                     in_flight = None
                     continue
 
+                _note_progress(run, state)
                 if byte_cap_hit:
                     state.discovery_complete = False
                     state.frontier = []
@@ -1335,18 +1490,20 @@ def import_confluence(self, run_id: str, chunk_seq: int) -> None:
                         run.current_page_title,
                         'chunk time limit hit while processing this page; some attachments or child pages may be missing',
                     )
+            state.recoveries = 0  # this chunk got through; losses are counted consecutively
             state.persist(run)
             _commit_owned(db, run.id, claimed_seq)
-            self.app.send_task(IMPORT_TASK_NAME, args=[run_id, claimed_seq])
+            _send_continuation(self.app, run_id, claimed_seq)
             return
 
         if cancelled:
             _cancel_run(db, run, state, claimed_seq)
             return
+        state.recoveries = 0  # this chunk got through; losses are counted consecutively
         if state.frontier and run.pages_imported < max_pages and not byte_cap_hit:
             state.persist(run)
             _commit_owned(db, run.id, claimed_seq)
-            self.app.send_task(IMPORT_TASK_NAME, args=[run_id, claimed_seq])
+            _send_continuation(self.app, run_id, claimed_seq)
             return
 
         _finalize_run(db, run, state, claimed_seq)
@@ -1355,9 +1512,21 @@ def import_confluence(self, run_id: str, chunk_seq: int) -> None:
         # now; this execution must neither write nor flip anything terminal.
         db.rollback()
         return
-    except Exception as exc:  # pragma: no cover - defensive terminal transition
-        logger.exception('import run %s failed: %s', run_id, exc)
+    except Exception as exc:
         db.rollback()
+        if _is_retryable_failure(exc):
+            # Lost DB/broker connection, network error, transient Confluence
+            # failure outside the handled sites: leave the run 'running' --
+            # its heartbeat goes stale, reap_stale_import_runs re-sends it,
+            # and the stale-lease reclaim resumes it from the last committed
+            # frontier (the reclaim counts the restart against
+            # import_max_recoveries). Only the reason is noted on the run.
+            logger.warning(
+                'import run %s: retryable failure, the stale-run reaper will restart it: %s', run_id, exc, exc_info=True
+            )
+            _note_retryable_failure(db, run_id, exc)
+            return
+        logger.exception('import run %s failed: %s', run_id, exc)
         run = db.get(ImportRun, run_id)
         if run is not None and run.status in (ImportRunStatus.PENDING, ImportRunStatus.RUNNING):
             run.status = ImportRunStatus.FAILED

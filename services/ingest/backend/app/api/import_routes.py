@@ -612,25 +612,20 @@ def create_import_run(
             )
 
     now = datetime.now(timezone.utc)
-    # Active-run cap with stale-run reaping: a wedged (worker-lost) 'running'
-    # run is flipped to failed here rather than counted, so it can never lock
-    # its owner out of importing.
-    candidate_runs = db.scalars(
-        select(ImportRun).where(
+    # Active-run cap. A wedged (worker-lost) 'running'/'pending' run still
+    # counts: the stale-run reaper (app/workers/tasks.py's
+    # reap_stale_import_runs, every publication tick and at worker start)
+    # resumes it from its persisted frontier within about
+    # import_stale_run_seconds, and two runs of one owner must never crawl
+    # the same space at once. Cancelling it (POST /runs/{id}/cancel, which
+    # force-terminates a stale run) frees the slot immediately.
+    active_count = db.scalar(
+        select(func.count()).select_from(ImportRun).where(
             ImportRun.owner_id == user.id,
             ImportRun.status.in_([ImportRunStatus.PENDING, ImportRunStatus.RUNNING]),
         )
-    ).all()
-    active_count = 0
-    for candidate in candidate_runs:
-        if _is_stale_active(candidate, now):
-            candidate.status = ImportRunStatus.FAILED
-            candidate.error_message = 'worker lost; run stalled'
-            candidate.finished_at = now
-            continue
-        active_count += 1
+    )
     if active_count >= settings.import_max_active_runs_per_user:
-        db.commit()  # persist any stale-run reaping even when refusing
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail='An import run is already active; wait for it to finish or cancel it first',
