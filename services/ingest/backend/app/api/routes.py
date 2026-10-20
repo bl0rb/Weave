@@ -103,7 +103,7 @@ from app.services.paddle_service import (
 )
 from app.services.markdown_edit import record_markdown_version
 from app.services.security import DUMMY_PASSWORD_HASH, enforce_rate_limit, hash_password, verify_password
-from app.services import object_store
+from app.services import object_store, transcript_refine
 from app.services.storage import inspect_upload
 from app.workers import publication_tasks
 from app.workers.celery_app import celery_app
@@ -1454,11 +1454,20 @@ def upload_document_to_collection(
     folder: str = Form(''),
     subfolder: str = Form(''),
     tags: str = Form(''),
+    # Free-text clean-up instructions for a .vtt meeting transcript, applied
+    # by the central chat provider after conversion (app/services/
+    # transcript_refine.py). Stored in processing_info.settings so a restart
+    # applies them again; ignored for every other file type.
+    transcript_instructions: str = Form(''),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> UploadResponse:
     # Intentionally skip per-file rate limiting here so large collection
     # uploads (100+ files) are not blocked mid-batch.
+    try:
+        instructions = transcript_refine.normalize_instructions(transcript_instructions)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     collection = db.get(Collection, collection_id)
     if collection is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
@@ -1491,6 +1500,7 @@ def upload_document_to_collection(
                 'collection_id': collection_id,
                 'collection_slug': collection.slug,
                 'collection_name': collection.name,
+                **({'transcript_instructions': instructions} if instructions else {}),
             },
             password_hash=collection.password_hash,
         )

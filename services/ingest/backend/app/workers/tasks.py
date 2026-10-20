@@ -24,7 +24,7 @@ from app.services.paddle_service import (
 # from-import: matches import_tasks.py's late-binding convention for
 # security.decrypt_import_credential, keeping the helper monkeypatchable in
 # tests.
-from app.services import object_store, security
+from app.services import object_store, security, transcript_refine
 from app.workers import webhook_tasks
 from app.workers.celery_app import celery_app
 
@@ -656,11 +656,24 @@ def process_job(
         # transaction" (and its table locks, which would block migrations).
         db.commit()
 
+        # Clean-up instructions for a .vtt transcript (POST /collections/
+        # {id}/upload's transcript_instructions): resolve the central chat
+        # provider here, where there is a session, and hand paddle_service
+        # the ready-to-use configuration. A missing/disabled provider fails
+        # the job with load_refinement's message rather than silently
+        # skipping what the uploader asked for.
+        transcript_instructions = existing_settings.get('transcript_instructions')
+        refinement = None
+        if isinstance(transcript_instructions, str) and transcript_instructions.strip() and upload_path.suffix.lower() == '.vtt':
+            refinement = transcript_refine.load_refinement(db, transcript_instructions.strip())
+            db.commit()
+
         markdown, details = convert_to_markdown_with_details(
             str(upload_path),
             profile_id=effective_profile_id,
             vl_override=vl_override,
             metadata=metadata,
+            transcript_refinement=refinement,
         )
         details = _normalize_execution_page_count(details, upload_path)
         if not _owns_claim(db, job_id, token):
