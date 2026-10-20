@@ -60,6 +60,24 @@ def _drain_run(sent: list, run_id: str, max_rounds: int = 20) -> None:
         import_confluence(*mine[0][1])
 
 
+@pytest.fixture(autouse=True)
+def _no_stale_runs_left_behind():
+    """Every test here leaves deliberately stale runs in the shared DB; a
+    later module calling requeue_running_jobs_after_restart (test_api) would
+    otherwise re-send them through the real broker."""
+    yield
+    db = _db()
+    try:
+        db.execute(
+            update(ImportRun)
+            .where(ImportRun.status.in_([ImportRunStatus.PENDING, ImportRunStatus.RUNNING]))
+            .values(status=ImportRunStatus.CANCELLED)
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
 @pytest.fixture()
 def sent_with_kwargs(monkeypatch):
     """Like `sent`, but keeps the send_task kwargs (countdown)."""

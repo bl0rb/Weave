@@ -1799,6 +1799,9 @@ def test_worker_restart_requeues_running_jobs(monkeypatch, tmp_path):
 
     delayed: list[tuple] = []
     monkeypatch.setattr(tasks.process_job, 'delay', lambda *args: delayed.append(args))
+    # Startup recovery also re-sends stale import runs other modules may have
+    # left in the shared DB -- capture those instead of reaching a broker.
+    monkeypatch.setattr(tasks.celery_app, 'send_task', lambda *args, **kwargs: None)
 
     restarted = tasks.requeue_running_jobs_after_restart()
     assert restarted >= 1
