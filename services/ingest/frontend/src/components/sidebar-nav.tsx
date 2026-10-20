@@ -34,6 +34,7 @@ import { resolveChatPublicUrl } from '@/lib/api-base';
 import { loadDocuments } from '@/lib/portal';
 import { listOwnedBots } from '@/lib/bots';
 import { loadFailedJobs } from '@/lib/jobs-search';
+import { useActiveWork } from '@/lib/activity';
 import { SystemStatusIndicator } from '@/components/system-status-indicator';
 
 type NavItem = { href: string; label: string; icon: typeof Home; badge?: number };
@@ -90,6 +91,8 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
   const [chatUrl] = useState<string | null>(() => resolveChatPublicUrl());
   const isAdminArea = pathname.startsWith('/admin');
   const isBotAdmin = user?.role === 'bot_admin';
+  // The mark weaves while any job or import run is in progress (lib/activity.ts).
+  const activeWork = useActiveWork(Boolean(user), pathname);
   const adminHome = isBotAdmin ? '/admin/ki' : '/admin';
   const navItems: NavItem[] = isAdminArea ? adminNav(t, isBotAdmin) : portalNav(t, ownsBots).map((item) => (item.href === '/aufgaben' ? { ...item, badge: tasksBadge ?? undefined } : item));
 
@@ -141,7 +144,7 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
         className={`fixed left-0 top-0 z-40 flex h-full w-64 flex-col gap-3.5 overflow-y-auto border-r border-[var(--line)] bg-[var(--surface)] p-3.5 shadow-2xl transition-transform duration-200 lg:translate-x-0 lg:shadow-none ${open ? 'translate-x-0' : '-translate-x-full'}`}
       >
         <Link href={isAdminArea ? adminHome : '/'} onClick={() => onOpenChange(false)} className="flex items-center gap-2.5 px-1.5 pb-1.5 pt-0.5 text-[var(--ink)] no-underline">
-          <WeaveIngestLogo className="h-8 w-8 flex-shrink-0" />
+          <WeaveIngestLogo className="h-8 w-8 flex-shrink-0" animation={activeWork ? 'loop' : undefined} />
           <span>
             <span className="block text-[19px] font-bold leading-tight tracking-tight">Weave</span>
             <span className="block text-[11.5px] font-medium text-[var(--muted)]">{isAdminArea ? t('portal.chrome.adminSubtitle') : t('portal.chrome.portalSubtitle')}</span>

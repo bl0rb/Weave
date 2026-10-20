@@ -1,5 +1,5 @@
 // App window (panel.html) and quick overlay (quick.html; tray click or hotkey): ask an agent or search Weave.
-import { invoke, Channel, listen, t, h, icon, spinner, markdown, wireLinks } from './common.js';
+import { invoke, Channel, listen, t, h, icon, spinner, markdown, wireLinks, nextWeaveMotion, weaveLogo } from './common.js';
 
 let state = null;
 let loginError = null;
@@ -78,7 +78,9 @@ async function submit(text) {
   lastActive = Date.now();
   const answer = { role: 'answer', text: '', status: t('Weave denkt nach …'), sources: [], options: [], fresh: true };
   messages.push(answer);
+  startBusy();
   streaming = true;
+  syncTrayBusy();
   render();
 
   const channel = new Channel();
@@ -111,11 +113,14 @@ async function submit(text) {
   answer.done = true;
   streaming = false;
   lastActive = Date.now();
+  syncTrayBusy();
   render();
 }
 
 async function runSearch(query) {
+  startBusy();
   searchView = { query, loading: true };
+  syncTrayBusy();
   render();
   try {
     const response = await invoke('search', { query, collection: collection || null });
@@ -123,6 +128,7 @@ async function runSearch(query) {
   } catch (error) {
     searchView = { query, error: error === 'unauthorized' ? t('Sitzung abgelaufen – bitte neu anmelden.') : String(error) };
   }
+  syncTrayBusy();
   render();
 }
 
@@ -177,9 +183,36 @@ function renderMessage(m) {
   return el;
 }
 
-/** Busy: an answer is streaming or a search is running -- the logo turns. */
+/** Busy: an answer is streaming or a search is running -- the logo moves,
+    each time in one of its four motions (common.js), and the tray icon
+    weaves along (`set_busy`). The motion is picked once when work starts and
+    kept until it ends, so a full re-render mid-answer never switches it. A
+    click on the mark switches to the next motion; when idle it runs one
+    short round of it. */
 const isBusy = () => streaming || Boolean(searchView?.loading);
-const logo = () => h('img', { src: 'weave.svg', alt: '', class: isBusy() ? 'logo busy' : 'logo' });
+let busyMotion = null;
+let idleRound = null;
+function startBusy() {
+  if (!isBusy()) busyMotion = nextWeaveMotion();
+}
+/** Mirror the busy state to the tray icon (main.rs `set_busy`); call after
+    every streaming/search transition. Best-effort: the UI never waits on it. */
+function syncTrayBusy() {
+  invoke('set_busy', { busy: isBusy() }).catch(() => {});
+}
+function cycleMotion() {
+  busyMotion = nextWeaveMotion();
+  if (!isBusy()) idleRound = busyMotion;
+  render();
+}
+const logo = () => weaveLogo(
+  isBusy() ? busyMotion : idleRound,
+  'logo',
+  isBusy() ? 'loop' : 'finite',
+  { onCycle: cycleMotion, onSettled: () => { idleRound = null; } },
+);
+// The empty state's mark weaves five rounds once per window, in a motion of its own.
+const welcomeMotion = nextWeaveMotion();
 
 /** `previousScrollTop`: where the #content that a full render just replaced was scrolled to. */
 function renderMessages(previousScrollTop) {
@@ -192,7 +225,7 @@ function renderMessages(previousScrollTop) {
     content.replaceChildren(...(messages.length
       ? messages.map(renderMessage)
       : [h('div', { class: 'empty compact' },
-        h('img', { src: 'weave.svg', alt: '' }),
+        weaveLogo(welcomeMotion, '', 'finite', { onCycle: cycleMotion }),
         h('h2', null, t('Was möchten Sie wissen?')),
         h('p', null, t(ASK_INFO)),
         state.chat_url && h('button', { class: 'link', onclick: openWeb }, icon('external'), t('Frühere Fragen im Web')))]));
@@ -353,7 +386,7 @@ function render() {
   const settingsButton = h('button', { class: 'icon-only plain', title: t('Einstellungen'), 'aria-label': t('Einstellungen'), onclick: () => invoke('open_settings') }, icon('gear'));
   if (!state.signed_in) {
     panel.replaceChildren(
-      h('header', { class: 'panel-head' }, h('img', { src: 'weave.svg', alt: '' }), h('strong', null, 'Weave'), h('span', { class: 'spacer' }), settingsButton),
+      h('header', { class: 'panel-head' }, logo(), h('strong', null, 'Weave'), h('span', { class: 'spacer' }), settingsButton),
       renderSignedOut());
     return;
   }

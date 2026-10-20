@@ -375,14 +375,69 @@ body {
 .weave-logo [data-row='2'] {
   --weave-row-delay: 0.36s;
 }
-.weave-logo:is(.weave-logo--loop, .weave-logo--finite) .weave-weft > * {
+/* Three motions alternate from start to start (lib/weave-motion.ts):
+   'weave' moves the weft rows, 'turn' (the desktop app's half turn) and
+   'flip' (a half turn around the vertical axis) move the whole mark -- it is
+   mirror-symmetric, so 180° looks exactly like 0° and every round ends on
+   the full mark. */
+.weave-logo--motion-weave:is(.weave-logo--loop, .weave-logo--finite) .weave-weft > * {
   animation: weave-weft 2s ease-in-out var(--weave-row-delay, 0s) infinite both;
 }
-.weave-logo:is(.weave-logo--loop, .weave-logo--finite) .weave-knots > * {
+.weave-logo--motion-weave:is(.weave-logo--loop, .weave-logo--finite) .weave-knots > * {
   animation: weave-knot 2s ease-in-out var(--weave-row-delay, 0s) infinite both;
 }
-.weave-logo.weave-logo--finite :is(.weave-weft, .weave-knots) > * {
+.weave-logo--motion-weave.weave-logo--finite :is(.weave-weft, .weave-knots) > * {
   animation-iteration-count: 5;
+}
+.weave-logo--motion-turn:is(.weave-logo--loop, .weave-logo--finite) {
+  animation: weave-turn 1.8s cubic-bezier(0.65, 0, 0.35, 1) infinite both;
+}
+.weave-logo--motion-flip:is(.weave-logo--loop, .weave-logo--finite) {
+  animation: weave-flip 1.8s cubic-bezier(0.65, 0, 0.35, 1) infinite both;
+}
+.weave-logo--finite:is(.weave-logo--motion-turn, .weave-logo--motion-flip) {
+  animation-iteration-count: 5;
+}
+.weave-logo--motion-shuttle:is(.weave-logo--loop, .weave-logo--finite) {
+  animation: weave-sway 2s ease-in-out infinite both;
+}
+.weave-logo--motion-shuttle:is(.weave-logo--loop, .weave-logo--finite) .weave-weft > * {
+  animation: weave-shuttle 2s ease-in-out var(--weave-row-delay, 0s) infinite both;
+}
+.weave-logo--motion-shuttle.weave-logo--finite,
+.weave-logo--motion-shuttle.weave-logo--finite .weave-weft > * {
+  animation-iteration-count: 5;
+}
+.weave-logo .weave-weft > [data-row='1'] {
+  --weave-shuttle-dir: -1;
+}
+/* After the last finite round: one soft settle instead of a hard stop. */
+.weave-logo.weave-logo--settle {
+  animation: weave-settle 0.45s ease-out 1 both;
+}
+@keyframes weave-sway {
+  0%, 100% { transform: rotate(0); }
+  25% { transform: rotate(-5deg); }
+  75% { transform: rotate(5deg); }
+}
+@keyframes weave-shuttle {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(calc(6px * var(--weave-shuttle-dir, 1))); }
+}
+@keyframes weave-settle {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+@keyframes weave-turn {
+  0%, 10% { transform: rotate(0); }
+  45%, 55% { transform: rotate(90deg); }
+  90%, 100% { transform: rotate(180deg); }
+}
+@keyframes weave-flip {
+  0%, 10% { transform: perspective(160px) rotateY(0); }
+  45%, 55% { transform: perspective(160px) rotateY(90deg); }
+  90%, 100% { transform: perspective(160px) rotateY(180deg); }
 }
 @keyframes weave-weft {
   0%, 12% { transform: scaleX(1); }
@@ -396,6 +451,7 @@ body {
 }
 /* The static mark, not a frozen mid-weave frame. */
 @media (prefers-reduced-motion: reduce) {
+  .weave-logo,
   .weave-logo * {
     animation: none !important;
   }

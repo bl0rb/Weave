@@ -1,0 +1,10 @@
+/* Canonical keyframes of the Weave mark's motions. Copies live in
+   services/chat/src/app/globals.css, services/ingest/frontend/src/app/globals.css
+   and clients/desktop/ui/style.css; scripts/check_weave_mark.py keeps them equal. */
+@keyframes weave-weft { 0%, 12% { transform: scaleX(1); } 42%, 58% { transform: scaleX(0); } 88%, 100% { transform: scaleX(1); } }
+@keyframes weave-knot { 0%, 12% { opacity: 1; } 30%, 70% { opacity: 0; } 90%, 100% { opacity: 1; } }
+@keyframes weave-turn { 0%, 10% { transform: rotate(0); } 45%, 55% { transform: rotate(90deg); } 90%, 100% { transform: rotate(180deg); } }
+@keyframes weave-flip { 0%, 10% { transform: perspective(160px) rotateY(0); } 45%, 55% { transform: perspective(160px) rotateY(90deg); } 90%, 100% { transform: perspective(160px) rotateY(180deg); } }
+@keyframes weave-sway { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-5deg); } 75% { transform: rotate(5deg); } }
+@keyframes weave-shuttle { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(calc(6px * var(--weave-shuttle-dir, 1))); } }
+@keyframes weave-settle { 0% { transform: scale(1); } 40% { transform: scale(1.06); } 100% { transform: scale(1); } }

@@ -173,3 +173,57 @@ export function wireLinks(root) {
     if (link) { event.preventDefault(); invoke('open_url', { url: link.dataset.href }); }
   });
 }
+
+/* --- The Weave mark and its motions ----------------------------------------
+   The same inline SVG as the web apps' WeaveLogo (the weft rows and knots
+   need class hooks, so a plain <img src="weave.svg"> can only turn or flip).
+   While Weave works, one of four motions runs -- 'weave' (the weft rows
+   unweave and shuttle back in), 'turn' (a half turn; the mark is symmetric,
+   so 180° looks like 0°), 'flip' (a half turn around the vertical axis) or
+   'shuttle' (the mark sways while the weft rows slide through) -- picked at
+   random, never the one that ran last, remembered across windows and
+   restarts through localStorage. Mirrors services/chat/src/lib/weave-motion.ts;
+   the canonical mark and keyframes live in packages/weave-mark. */
+export const WEAVE_MOTIONS = ['weave', 'turn', 'flip', 'shuttle'];
+const MOTION_KEY = 'weave-motion-last';
+let motionLast = null;
+
+export function nextWeaveMotion(random = Math.random) {
+  let last = motionLast;
+  try {
+    const stored = localStorage.getItem(MOTION_KEY);
+    if (WEAVE_MOTIONS.includes(stored)) last = stored;
+  } catch { /* storage blocked: the in-memory memory still prevents repeats */ }
+  const candidates = WEAVE_MOTIONS.filter((motion) => motion !== last);
+  const next = candidates[Math.min(candidates.length - 1, Math.floor(random() * candidates.length))];
+  motionLast = next;
+  try { localStorage.setItem(MOTION_KEY, next); } catch { /* ignore */ }
+  return next;
+}
+
+const WEAVE_MARK = `
+  <rect width="64" height="64" rx="15" fill="#0f8a64"/>
+  <g fill="#bfe7d4"><rect x="12" y="8" width="8" height="48" rx="4"/><rect x="28" y="8" width="8" height="48" rx="4"/><rect x="44" y="8" width="8" height="48" rx="4"/></g>
+  <g fill="#f7fcf9" class="weave-weft"><rect data-row="0" x="8" y="12" width="48" height="8" rx="4"/><rect data-row="1" x="8" y="28" width="48" height="8" rx="4"/><rect data-row="2" x="8" y="44" width="48" height="8" rx="4"/></g>
+  <g fill="#bfe7d4" class="weave-knots"><rect data-row="0" x="12" y="12" width="8" height="8"/><rect data-row="0" x="44" y="12" width="8" height="8"/><rect data-row="1" x="28" y="28" width="8" height="8"/><rect data-row="2" x="12" y="44" width="8" height="8"/><rect data-row="2" x="44" y="44" width="8" height="8"/></g>
+  <g stroke="#0b6f52" stroke-width="1" opacity=".28" class="weave-knots"><path data-row="0" d="M12 11.5h8M12 20.5h8M44 11.5h8M44 20.5h8"/><path data-row="1" d="M28 27.5h8M28 36.5h8"/><path data-row="2" d="M12 43.5h8M12 52.5h8M44 43.5h8M44 52.5h8"/></g>`;
+
+/** The mark as an inline <svg class="weave-logo ...">. `motion` (one of
+    WEAVE_MOTIONS) makes it move -- `mode` 'loop' until re-rendered without a
+    motion, 'finite' for five rounds that end in a soft settle; null renders
+    the static mark. `onCycle` runs on a click (the easter egg: switch to the
+    next motion); `onSettled` once a finite run has come to rest. */
+export function weaveLogo(motion, extraClass = '', mode = 'loop', { onCycle, onSettled } = {}) {
+  const holder = document.createElement('span');
+  const classes = ['weave-logo', motion && `weave-logo--${mode}`, motion && `weave-logo--motion-${motion}`, extraClass].filter(Boolean).join(' ');
+  holder.innerHTML = `<svg viewBox="0 0 64 64" class="${classes}" aria-hidden="true">${WEAVE_MARK}</svg>`;
+  const svg = holder.firstElementChild;
+  if (onCycle) svg.addEventListener('click', onCycle);
+  // The settle class stays once applied: removing it would re-apply (and so
+  // restart) the run's own animation. Every render builds a fresh element.
+  svg.addEventListener('animationend', (event) => {
+    if (event.animationName === 'weave-settle') { onSettled?.(); return; }
+    if (mode === 'finite' && motion) svg.classList.add('weave-logo--settle');
+  });
+  return svg;
+}

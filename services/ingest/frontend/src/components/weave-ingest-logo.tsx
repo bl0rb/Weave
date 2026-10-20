@@ -1,4 +1,9 @@
+'use client';
+
 import { cn } from '@/lib/utils';
+import { useState, type AnimationEvent } from 'react';
+
+import { useWeaveMotion } from '@/lib/weave-motion';
 
 /**
  * The Weave mark is a small woven swatch. Alternating crossings make the
@@ -9,8 +14,37 @@ import { cn } from '@/lib/utils';
  * the static mark under prefers-reduced-motion.
  */
 export function WeaveIngestLogo({ className, animation }: { className?: string; animation?: 'loop' | 'finite' }) {
+  // One of four motions (weave / turn / flip / shuttle), picked when the
+  // animation starts and kept until it stops -- see lib/weave-motion.ts. A
+  // click on the mark switches to the next motion (and, when idle, runs one
+  // short round of it); the last round ends with a soft settle.
+  const { motion, kicked, cycle, settle } = useWeaveMotion(Boolean(animation));
+  const mode = animation ?? (kicked ? 'finite' : undefined);
+  // The settle belongs to one run (mode + motion): it stays applied once that
+  // run has ended -- removing it would restart the run's own animation -- and
+  // simply stops matching when the next run starts.
+  const runKey = mode && motion ? `${mode}-${motion}` : null;
+  const [settledRun, setSettledRun] = useState<string | null>(null);
+  const onAnimationEnd = (event: AnimationEvent<SVGSVGElement>) => {
+    if (event.animationName === 'weave-settle' || mode !== 'finite') return;
+    setSettledRun(runKey);
+    settle();
+  };
+  const settling = settledRun !== null && settledRun === runKey;
   return (
-    <svg viewBox="0 0 64 64" className={cn('weave-logo', animation && `weave-logo--${animation}`, className)} aria-hidden="true">
+    <svg
+      viewBox="0 0 64 64"
+      className={cn(
+        'weave-logo',
+        mode && `weave-logo--${mode}`,
+        motion && `weave-logo--motion-${motion}`,
+        settling && 'weave-logo--settle',
+        className,
+      )}
+      aria-hidden="true"
+      onClick={cycle}
+      onAnimationEnd={onAnimationEnd}
+    >
       <rect width="64" height="64" rx="15" fill="#0f8a64" />
       <g fill="#bfe7d4">
         <rect x="12" y="8" width="8" height="48" rx="4" />

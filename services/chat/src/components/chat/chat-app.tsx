@@ -13,6 +13,7 @@ import { useI18n } from '@/i18n/provider';
 import { deleteJson, getJson, postJson } from '@/lib/api-client';
 import { errorForInterruptedStream, errorForNetworkFailure, errorForStreamEvent, mappedError, type MappedError } from '@/lib/errors';
 import { consumeChatStream } from '@/lib/run-chat-stream';
+import { useBusyTabIndicator } from '@/lib/busy-tab';
 import {
   applyAgentStatus,
   buildChatRequestBody,
@@ -47,6 +48,8 @@ export function ChatApp() {
   const [selectedEndpointId, setSelectedEndpointId] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<UiMessage[]>([]);
+  // Title prefix + weaving favicon while an answer streams (lib/busy-tab.ts).
+  useBusyTabIndicator(messages.some((m) => m.streaming));
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
 
