@@ -5,13 +5,16 @@ import hmac
 import httpx
 import logging
 from datetime import datetime, timezone
+from typing import Literal
+
 from pydantic import ValidationError
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import BOT_ADMIN_ROLES, get_current_user, origin_guard, require_bot_admin
+from app.api.http_utils import _content_disposition
 from app.core.config import settings
 from app.database.session import get_db
 from app.models.models import (
@@ -20,6 +23,8 @@ from app.models.models import (
 from app.schemas.managed_bots import (
     BotGrantInput,
     BotGrantResponse,
+    BotImportReport,
+    BotImportWarningItem,
     ManagedBotAdminResponse,
     ManagedBotCreate,
     ManagedBotInternalListResponse,
@@ -29,6 +34,15 @@ from app.schemas.managed_bots import (
     ManagedBotOwnerResponse,
     ManagedBotOwnerUpdate,
     ManagedBotUpdate,
+)
+from app.services.bot_document import (
+    MAX_DOCUMENT_BYTES,
+    BotDocumentError,
+    document_to_payload,
+    dump_document,
+    parse_document,
+    row_to_document,
+    runtime_dict_to_document,
 )
 from app.services.collection_access import collection_role
 from app.services.security import (
@@ -88,6 +102,7 @@ def _admin_response(row: ManagedBot) -> ManagedBotAdminResponse:
         require_sources=row.require_sources,
         no_context_reply=row.no_context_reply,
         agent=dict(row.agent_config) if row.agent_config else None,
+        config_extras=dict(row.config_extras) if row.config_extras else None,
         min_score=row.min_score,
         clarify_below=row.clarify_below,
         weak_context_below=row.weak_context_below,
@@ -106,10 +121,12 @@ def _runtime_bots(db: Session | None = None) -> list[ManagedBotAdminResponse]:
     return _runtime_roster(db) or []
 
 
-def _runtime_roster(db: Session | None = None) -> list[ManagedBotAdminResponse] | None:
-    """Runtime's validated roster, or ``None`` when it is unknown (no
-    token configured or Runtime unreachable) -- unlike an empty roster, that
-    says nothing about which managed bots Runtime rejected."""
+def _runtime_configs() -> list[dict] | None:
+    """The raw BotConfig dicts of Runtime's validated roster, or ``None``
+    when it is unknown (no token configured or Runtime unreachable) --
+    unlike an empty roster, that says nothing about which managed bots
+    Runtime rejected. The export route reads these directly; the admin
+    list goes through `_runtime_roster`'s projection."""
     if not settings.runtime_api_token:
         return None
     base_url = settings.runtime_bots_base_url.rstrip('/')
@@ -148,6 +165,17 @@ def _runtime_roster(db: Session | None = None) -> list[ManagedBotAdminResponse] 
         # Ingest's own bots.
         logger.warning('Runtime bot roster unavailable; only managed bots are known', exc_info=True)
         return None
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _runtime_config(bot_id: str) -> dict | None:
+    return next((config for config in _runtime_configs() or [] if str(config.get('id')) == bot_id), None)
+
+
+def _runtime_roster(db: Session | None = None) -> list[ManagedBotAdminResponse] | None:
+    items = _runtime_configs()
+    if items is None:
+        return None
     # YAML bots name teams. Known ones become ordinary user grants; unknown
     # names are still shown (without an id) so the list doesn't claim the
     # bot is closed, and are dropped once an admin saves an override.
@@ -155,8 +183,6 @@ def _runtime_roster(db: Session | None = None) -> list[ManagedBotAdminResponse] 
     result = []
     for item in items:
         try:
-            if not isinstance(item, dict):
-                continue
             config = item
             bot_id = str(config['id'])
             name = str(config['name'])
@@ -337,6 +363,8 @@ def _apply(row: ManagedBot, payload: ManagedBotCreate | ManagedBotUpdate, admin:
     row.query_rewrite = payload.query_rewrite
     row.uncertainty_hint = payload.uncertainty_hint
     row.agent_config = payload.agent.model_dump() if payload.agent else None
+    extras = payload.config_extras.model_dump(exclude_none=True) if payload.config_extras else {}
+    row.config_extras = extras or None
     row.llm_endpoint = payload.llm_endpoint
     row.llm_endpoints = list(payload.llm_endpoints)
     row.updated_by_id = admin.id
@@ -365,14 +393,7 @@ def list_managed_bots(request: Request, db: Session = Depends(get_db)) -> Manage
     return ManagedBotListResponse(items=sorted(managed + runtime, key=lambda item: (item.name, item.id)))
 
 
-@router_admin.post('', response_model=ManagedBotAdminResponse, status_code=status.HTTP_201_CREATED)
-def create_managed_bot(
-    payload: ManagedBotCreate,
-    request: Request,
-    admin: User = Depends(require_bot_admin),
-    db: Session = Depends(get_db),
-) -> ManagedBotAdminResponse:
-    enforce_rate_limit(request)
+def _create(db: Session, admin: User, payload: ManagedBotCreate) -> ManagedBotAdminResponse:
     if db.get(ManagedBot, payload.id) is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Diese Bot-ID wird bereits verwendet.')
     grants = _validated_grants(db, payload.grants)
@@ -391,15 +412,7 @@ def create_managed_bot(
     return _admin_response(row)
 
 
-@router_admin.put('/{bot_id}', response_model=ManagedBotAdminResponse)
-def update_managed_bot(
-    bot_id: str,
-    payload: ManagedBotUpdate,
-    request: Request,
-    admin: User = Depends(require_bot_admin),
-    db: Session = Depends(get_db),
-) -> ManagedBotAdminResponse:
-    enforce_rate_limit(request)
+def _update(db: Session, admin: User, bot_id: str, payload: ManagedBotUpdate) -> ManagedBotAdminResponse:
     row = db.get(ManagedBot, bot_id)
     previous_scope = _row_scope_slugs(row) if row is not None else set()
     if row is None:
@@ -424,6 +437,156 @@ def update_managed_bot(
     db.commit()
     db.refresh(row)
     return _admin_response(row)
+
+
+@router_admin.post('', response_model=ManagedBotAdminResponse, status_code=status.HTTP_201_CREATED)
+def create_managed_bot(
+    payload: ManagedBotCreate,
+    request: Request,
+    admin: User = Depends(require_bot_admin),
+    db: Session = Depends(get_db),
+) -> ManagedBotAdminResponse:
+    enforce_rate_limit(request)
+    return _create(db, admin, payload)
+
+
+@router_admin.post('/import', response_model=BotImportReport)
+async def import_managed_bot(
+    request: Request,
+    response: Response,
+    file: UploadFile = File(...),
+    dry_run: bool = Form(True),
+    on_conflict: Literal['fail', 'overwrite'] = Form('fail'),
+    bot_id: str | None = Form(None),
+    admin: User = Depends(require_bot_admin),
+    db: Session = Depends(get_db),
+) -> BotImportReport:
+    """Import a bot document (contracts/bot-document.md). The dry run
+    always answers 200 with the report; an applied import answers 409 when
+    an existing bot blocks it and 422 when the document itself does."""
+    enforce_rate_limit(request)
+    filename = file.filename or 'bot.yaml'
+    raw = await file.read(MAX_DOCUMENT_BYTES + 1)
+    try:
+        doc = parse_document(raw, filename)
+    except BotDocumentError as exc:
+        if not dry_run:
+            response.status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+        return BotImportReport(action='blocked', errors=exc.errors)
+    target_id = (bot_id or '').strip().lower() or doc.id
+    try:
+        target_id = ManagedBotCreate.validate_id(target_id)
+    except ValueError as exc:
+        if not dry_run:
+            response.status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+        return BotImportReport(schema_version=doc.schema_version, bot_id=target_id, name=doc.name,
+                               action='blocked', errors=[f'bot_id: {exc}'])
+    row = db.get(ManagedBot, target_id)
+    conflict: Literal['managed', 'runtime', 'tombstoned'] | None = None
+    if row is not None:
+        conflict = 'managed'
+    elif db.get(BotTombstone, target_id) is not None:
+        conflict = 'tombstoned'
+    elif target_id in {item.id for item in _runtime_bots()}:
+        conflict = 'runtime'
+    action: Literal['create', 'overwrite', 'blocked'] = 'create' if conflict is None else 'overwrite'
+    errors: list[str] = []
+    if conflict is not None and on_conflict != 'overwrite':
+        action = 'blocked'
+        errors.append({
+            'managed': f'Ein verwalteter Bot mit der ID {target_id!r} existiert bereits.',
+            'runtime': f'Ein Konfigurationsbot mit der ID {target_id!r} existiert bereits in Weave-Runtime.',
+            'tombstoned': f'Ein Bot mit der ID {target_id!r} wurde gelöscht; Überschreiben stellt ihn wieder her.',
+        }[conflict] + ' Wähle „Bestehenden Bot überschreiben“ oder eine andere ID.')
+    warnings: list[BotImportWarningItem] = []
+    payload = None
+    try:
+        payload, raw_warnings = document_to_payload(
+            doc, bot_id=target_id, existing_row=row, as_update=conflict in ('managed', 'runtime'),
+        )
+        warnings = [BotImportWarningItem(code=item.code, detail=item.detail) for item in raw_warnings]
+    except BotDocumentError as exc:
+        errors.extend(exc.errors)
+    if payload is not None:
+        previous_scope = _row_scope_slugs(row) if row is not None else set()
+        for check in (
+            lambda: _validate_collections(db, _scope_slugs(payload)),
+            lambda: _require_readable_scope(db, admin, _scope_slugs(payload), previous_scope),
+            lambda: _validate_llm_endpoints(db, payload),
+        ):
+            try:
+                check()
+            except HTTPException as exc:
+                errors.append(str(exc.detail))
+    if errors:
+        action = 'blocked'
+    report = BotImportReport(
+        schema_version=doc.schema_version, bot_id=target_id, name=doc.name,
+        kind='n8n' if doc.model.provider == 'n8n' else 'llm',
+        conflict=conflict, action=action, warnings=warnings, errors=errors,
+    )
+    if dry_run:
+        return report
+    if action == 'blocked':
+        response.status_code = (
+            status.HTTP_409_CONFLICT if conflict is not None and on_conflict != 'overwrite'
+            else status.HTTP_422_UNPROCESSABLE_CONTENT
+        )
+        return report
+    assert payload is not None
+    if isinstance(payload, ManagedBotUpdate):
+        report.bot = _update(db, admin, target_id, payload)
+    else:
+        report.bot = _create(db, admin, payload)
+    report.applied = True
+    return report
+
+
+@router_admin.get('/{bot_id}/export')
+def export_managed_bot(
+    bot_id: str,
+    request: Request,
+    fmt: Literal['yaml', 'json'] = Query('yaml', alias='format'),
+    db: Session = Depends(get_db),
+) -> Response:
+    """The bot as a portable bot document (contracts/bot-document.md):
+    a managed row, else Runtime's YAML bot. Never contains the secret or
+    the grants."""
+    enforce_rate_limit(request)
+    row = db.get(ManagedBot, bot_id)
+    if row is not None:
+        doc = row_to_document(row)
+    else:
+        config = _runtime_config(bot_id)
+        if config is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bot nicht gefunden.')
+        try:
+            doc = runtime_dict_to_document(config)
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail='Die Bot-Konfiguration aus Weave-Runtime entspricht nicht dem Bot-Dokument-Schema.',
+            ) from exc
+    return Response(
+        content=dump_document(doc, fmt),
+        media_type='application/yaml' if fmt == 'yaml' else 'application/json',
+        headers={
+            'Content-Disposition': _content_disposition('attachment', f'{bot_id}.bot.{fmt}'),
+            'Cache-Control': 'no-store',
+        },
+    )
+
+
+@router_admin.put('/{bot_id}', response_model=ManagedBotAdminResponse)
+def update_managed_bot(
+    bot_id: str,
+    payload: ManagedBotUpdate,
+    request: Request,
+    admin: User = Depends(require_bot_admin),
+    db: Session = Depends(get_db),
+) -> ManagedBotAdminResponse:
+    enforce_rate_limit(request)
+    return _update(db, admin, bot_id, payload)
 
 
 @router_admin.delete('/{bot_id}')
@@ -498,6 +661,7 @@ def internal_managed_bots(response: Response, db: Session = Depends(get_db)) -> 
             uncertainty_hint=row.uncertainty_hint,
             llm_endpoint=row.llm_endpoint,
             llm_endpoints=list(row.llm_endpoints or []),
+            **{key: value for key, value in (row.config_extras or {}).items() if value is not None},
         ))
     return ManagedBotInternalListResponse(items=items, disabled_ids=sorted(disabled_ids))
 

@@ -621,6 +621,12 @@ class ManagedBot(Base):
     # persist one at all. `None` (the default) means "agent mode off",
     # matching Runtime's own `agent: AgentConfig | None = None` default.
     agent_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Guard tuning without a column of its own (Runtime's GuardConfig
+    # clarify_max_options/clarify_question/clarify_ambiguous_margin/
+    # clarify_ambiguous_question; app/schemas/managed_bots.py's
+    # BotConfigExtras). Only keys an admin or an imported bot document set
+    # are stored; None = every one at its Runtime default.
+    config_extras: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # LLM endpoint (chat_provider_config.id) for an LLM bot; None = 'default'.
     # `llm_endpoints` are further endpoint ids the user may pick in the chat
     # ('*' = every enabled endpoint).

@@ -186,7 +186,7 @@ Weave-Dokumente/Collections ausgerichtet. Ein Jira-Link ist nicht automatisch
 eine gültige Weave-Quelle. Mit `require_sources: true` kann sogar die Antwort
 auf eine bereits erfolgreich ausgeführte Aktion durch den Quellen-Guard
 ersetzt werden. Quelle:
-[_run_n8n_turn und Quellenfilter](../../services/runtime/backend/app/services/chat.py).
+[n8n-Aufruf (`bot_graph._n8n_call`) und Quellenfilter (`chat._filter_n8n_sources_by_scope`)](../../services/runtime/backend/app/services/bot_graph.py).
 
 Für einen abgegrenzten Jira-Aktionsbot im Pilot `require_sources: false`
 setzen und den Flow nur aus tatsächlichen Tool-Ergebnissen antworten lassen.

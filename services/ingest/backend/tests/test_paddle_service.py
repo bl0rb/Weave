@@ -774,6 +774,73 @@ def test_xml_upload_is_rendered_as_an_outline(tmp_path, monkeypatch):
     assert details['engine'] == 'text-xml'
 
 
+def test_vtt_upload_is_rendered_as_a_meeting_transcript(tmp_path, monkeypatch):
+    _no_paddle(monkeypatch)
+    vtt_file = tmp_path / 'upload-uuid.vtt'
+    vtt_file.write_text(
+        'WEBVTT\n\n'
+        '00:00:00.000 --> 00:00:02.000\n<v Max>Recording has started.</v>\n\n'
+        '00:00:02.000 --> 00:00:04.000\n<v Max>Wir beginnen.</v>\n\n'
+        '00:00:04.000 --> 00:00:06.000\n<v Anna>Einverstanden.</v>\n',
+        encoding='utf-8',
+    )
+
+    markdown, details = paddle_service.convert_to_markdown_with_details(
+        str(vtt_file), profile_id='ppocrv6_tiny', metadata={'original_filename': 'Jour fixe 2026-10-20.vtt'}
+    )
+
+    assert 'engine: text-vtt' in markdown
+    body = markdown.split('---\n', 2)[2]
+    assert body.lstrip('\n').startswith('# Jour fixe 2026-10-20\n')
+    assert '**Teilnehmende:** Max, Anna' in body
+    assert 'Recording has started' not in body
+    assert '**Max** [00:00:02]: Wir beginnen.' in body
+    assert '**Anna** [00:00:04]: Einverstanden.' in body
+    assert details['engine'] == 'text-vtt'
+    assert details['page_count'] == 1
+
+
+def test_vtt_upload_applies_transcript_instructions_through_the_refiner(tmp_path, monkeypatch):
+    from app.services import transcript_refine
+
+    _no_paddle(monkeypatch)
+    vtt_file = tmp_path / 'upload-uuid.vtt'
+    vtt_file.write_text('WEBVTT\n\n00:00:00.000 --> 00:00:02.000\n<v Max Mustermann>Wir beginnen.</v>\n', encoding='utf-8')
+    refinement = transcript_refine.TranscriptRefinement(
+        instructions='Kürze Max Mustermann zu Max', base_url='https://llm.example.com', model='m', api_key='',
+        timeout_seconds=10.0, temperature=None, provider_name='Zentral',
+    )
+    seen: dict[str, object] = {}
+
+    def fake_refine(body: str, passed):
+        seen['body'] = body
+        seen['refinement'] = passed
+        return body.replace('Max Mustermann', 'Max')
+
+    monkeypatch.setattr(transcript_refine, 'refine_transcript', fake_refine)
+
+    markdown, details = paddle_service.convert_to_markdown_with_details(
+        str(vtt_file), profile_id='ppocrv6_tiny', transcript_refinement=refinement
+    )
+
+    assert seen['refinement'] is refinement
+    assert '**Max Mustermann** [00:00:00]: Wir beginnen.' in seen['body']  # refiner sees the rendered transcript
+    assert '**Max** [00:00:00]: Wir beginnen.' in markdown
+    assert 'Mustermann' not in markdown.split('---\n', 2)[2]
+    assert details['transcript_instructions_applied'] is True
+
+    # Instructions never touch other text uploads.
+    md_file = tmp_path / 'notes.md'
+    md_file.write_text('# Max Mustermann\n', encoding='utf-8')
+    seen.clear()
+    markdown, details = paddle_service.convert_to_markdown_with_details(
+        str(md_file), profile_id='ppocrv6_tiny', transcript_refinement=refinement
+    )
+    assert not seen
+    assert '# Max Mustermann' in markdown
+    assert 'transcript_instructions_applied' not in details
+
+
 def test_malformed_xml_upload_fails_loudly(tmp_path, monkeypatch):
     _no_paddle(monkeypatch)
     xml_file = tmp_path / 'broken.xml'

@@ -112,7 +112,7 @@ class Source(BaseModel):
     # flow's own `sources` entry claims (contracts/n8n-flow.md) -- and
     # UNLIKE a retrieval-backed Source, that claim is never pre-verified by
     # anything on this side before it reaches this model: n8n's flow could
-    # be misconfigured, buggy, or compromised, so `_run_n8n_turn` checks
+    # be misconfigured, buggy, or compromised, so `bot_graph._n8n_call` checks
     # every reported source's `collection` against the exact scope signed
     # into that turn's own delegation token AFTER parsing (see that
     # function's own docstring and contracts/n8n-flow.md's "Quellen sind
@@ -273,7 +273,7 @@ class GuardTrace(BaseModel):
 
 class N8nTrace(BaseModel):
     """Diagnostics for an n8n-provider bot's turn (contracts/n8n-flow.md,
-    app/services/chat.py's `_run_n8n_turn`) -- currently just the one
+    app/services/chat.py's `bot_graph._n8n_call`) -- currently just the one
     security-relevant counter this pipeline has reason to surface: how many
     of the `sources` an n8n flow reported back were DROPPED because their
     `collection` fell outside the exact scope signed into that turn's own
@@ -317,11 +317,11 @@ class SubagentTrace(BaseModel):
 
 class AgentTrace(BaseModel):
     """Diagnostics for an agent-mode bot's turn (rollout plan's
-    `trace.agent`, app/services/chat.py's `_run_agent_turn_blocking`) --
+    `trace.agent`, app/services/chat.py's `bot_graph._agent_single`) --
     present on `ChatTrace.agent` ONLY for a turn that actually ran the
     agent-mode research loop (never for a non-agent-mode bot, and never for
     the STREAMING `trace` event of a deferred agent turn -- see
-    `_PreparedTurn.agent_trace`'s own docstring for why that mirrors
+    `bot_graph.TurnState.agent_trace`'s own docstring for why that mirrors
     `N8nTrace`'s identical "not yet known at trace-emission time"
     posture). `mode` is always `'single'` in this rollout round (one
     subagent researched per turn -- see app/services/chat.py's own

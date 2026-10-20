@@ -7,15 +7,15 @@ retrieval (app/services/retrieval_client.py), LLM generation
 tied together into one ChatResponse (app/schemas/chat.py) -- or, for the
 streaming route, the equivalent sequence of ChatStreamEvents.
 
-Two public entry points share every one of the steps below up to (never
-including) the actual LLM-generation call: `handle_chat` (blocking, one
-`ChatResponse`) and `handle_chat_stream` (an iterator of `ChatStreamEvent`,
-app/schemas/chat.py) -- both built on the same `_prepare_turn`, which runs
-steps 1-5 below in full and stops exactly at the point a caller would call
-the LLM. See `_PreparedTurn`/`_prepare_turn`/`handle_chat_stream`'s own
-docstrings for how that split keeps `handle_chat` itself byte-for-byte
-unchanged while letting the streaming route commit to `200 OK`/
-`text/event-stream` only once steps 1-5 have already succeeded.
+Two public entry points, `handle_chat` (blocking, one `ChatResponse`) and
+`handle_chat_stream` (an iterator of `ChatStreamEvent`, app/schemas/chat.py),
+share `_prepare_context` (steps 1-2 below plus provider resolution) and
+then run ONE compiled LangGraph turn graph -- app/services/bot_graph.py,
+which sequences the step functions this module still owns (steps 3-5, the
+n8n and agent-mode paths) as nodes. The streaming route commits to `200
+OK`/`text/event-stream` only once the graph's `trace` node has run, i.e.
+once every step that can still fail with an HTTP status has succeeded (see
+app/services/stream_bridge.py).
 
 Pipeline, in order:
 
@@ -43,7 +43,8 @@ Pipeline, in order:
 
 3a. `bot.model.provider == 'n8n'` (see app/schemas/bot.py's N8nConfig,
    app/services/n8n_client.py, contracts/n8n-flow.md): this bot's ENTIRE
-   turn is handled by `_run_n8n_turn` instead of steps 4-5 below --
+   turn is handled by bot_graph.py's `n8n_scope`/`n8n_call` nodes instead of
+   steps 4-5 below --
    permissions (step 2) and Collections-scope resolution (step 5a's
    `resolve_collection_scope`, reused UNCHANGED) still run exactly as they
    do for any other bot, since the resolved scope is exactly what gets
@@ -54,8 +55,8 @@ Pipeline, in order:
    authenticated with that token, entirely outside this process. The
    router (step 3) still runs first and its intent decides whether this
    turn is worth an n8n round-trip AT ALL: a deliberate, documented choice
-   -- see `_run_n8n_turn`'s own docstring for exactly which intents do
-   and don't, and why. When it does run, n8n's own returned `sources` are
+   -- see `_N8N_SMALLTALK_REPLY`'s own docstring for exactly which intents
+   do and don't, and why. When it does run, n8n's own returned `sources` are
    FIRST checked against the exact scope signed into that turn's own
    delegation token (`_filter_n8n_sources_by_scope` -- a reported source
    whose `collection` falls outside that scope is dropped, never trusted
@@ -188,7 +189,7 @@ which never raises by construction, and a real provider's failure handling
 (retry-elsewhere, a fallback provider, ...) is a later stage's concern, not
 something to half-implement here speculatively.
 
-An n8n-provider bot's turn (step 3a above, `_run_n8n_turn`) fails the same
+An n8n-provider bot's turn (step 3a above) fails the same
 two ways, mapped the same two ways: `n8n_client.N8nUnavailable` (n8n
 unreachable, timed out, or 5xx) propagates uncaught out of this module to
 app/api/internal.py, mapped to `503` exactly like `RetrievalUnavailable` --
@@ -210,8 +211,6 @@ request-shaped failure" reasoning.
 """
 
 import logging
-import queue
-import re
 import threading
 import time
 from collections.abc import Iterator
@@ -225,13 +224,8 @@ from app.schemas.chat import (
     AgentTrace,
     ChatRequest,
     ChatResponse,
-    ChatStreamDeltaEvent,
-    ChatStreamDoneEvent,
     ChatStreamErrorEvent,
     ChatStreamEvent,
-    ChatStreamSourcesEvent,
-    ChatStreamStatusEvent,
-    ChatStreamTraceEvent,
     ChatTrace,
     ChatUser,
     GuardTrace,
@@ -254,61 +248,20 @@ from app.services import retrieval_client
 from app.services import router as router_service
 from app.services.botconfig import load_bot
 from app.services.retrieval_client import RetrievedChunk
-
-# Imported lazily (inside `_resolve_agent_scope`), not at module load time
-# here: app/services/scope.py itself imports `NO_COLLECTION_SENTINEL` FROM
-# this module (see that module's own docstring for why it isn't redefined
-# there) -- a top-level `from app.services import scope` here would be a
-# genuine import cycle (this module partially initialized, `scope`
-# importing back from it, before `NO_COLLECTION_SENTINEL` below even
-# exists yet).
+from app.services import scope as scope_service
+from app.services.chat_common import (  # noqa: F401 -- re-exported for tests/app.api.internal
+    KEEPALIVE,
+    NO_COLLECTION_SENTINEL,
+    Keepalive,
+    _elapsed_ms,
+    _images_for,
+    _score_for,
+    _to_source,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class Keepalive:
-    """A transport-level marker `_stream_prepared_turn` yields in place of a
-    `ChatStreamEvent` (app/schemas/chat.py) while a deferred n8n-provider
-    bot turn (`_DeferredN8nTurn`, `_stream_deferred_n8n`) is still waiting
-    for its next event from n8n -- app/api/internal.py's own `_iter_sse`
-    recognises this EXACT singleton (`KEEPALIVE` below, never a fresh
-    instance -- callers compare with `is`, not `==`) and turns it into the
-    literal SSE comment line `': keepalive\\n\\n'` instead of a `data: ...`
-    line.
-
-    Deliberately NOT a member of the `ChatStreamEvent` union: it carries no
-    `type` field and is never JSON-serialized, so an existing consumer that
-    only ever parses `'data:'`-prefixed lines (Weave-Chat's own
-    src/lib/sse.ts, contracts/internal-chat.md's own reading of the SSE
-    spec) ignores it by construction, exactly like it already ignores any
-    other SSE comment. Exists because a bot's own `n8n.timeout_seconds`
-    (app/schemas/bot.py's N8nConfig) is an IDLE budget for the n8n call
-    itself -- possibly hours long, for a genuinely long-running agent flow,
-    per contracts/n8n-flow.md's "Streaming" section -- not a promise that
-    this response's own wire stays busy that whole time; without this
-    marker, a reverse proxy or gateway between here and an eventual browser
-    would be free to decide a silent connection is dead and close it long
-    before n8n's own flow actually finishes. See
-    `app/core/config.py`'s `stream_keepalive_seconds` for how often
-    `_stream_deferred_n8n` emits one.
-    """
-
-    __slots__ = ()
-
-
-KEEPALIVE = Keepalive()
-
-# Mirrors Weave-Retrieval's own NO_COLLECTION_SENTINEL (app/services/search.py
-# in that service) byte-for-byte -- there is no shared Python module to import
-# this from (a different service, reached only over HTTP; see
-# app/services/retrieval_client.py's own docstring), so the exact string is
-# duplicated here instead. Never a real collection slug (Weave-Ingest's
-# Collections contract reserves it system-wide for this sentinel meaning);
-# `resolve_collection_scope` below appends it to mean "documents with NO
-# collection at all (`Document.collection_slug IS NULL` -- pre-Collections
-# legacy content) are ALSO allowed", exactly as Weave-Retrieval's
-# apply_filters() interprets it on the other end of this HTTP call.
-NO_COLLECTION_SENTINEL = '__none__'
 
 # Kept in this stage's own module rather than app/schemas/bot.py or
 # app/services/botconfig.py: this is a chat-pipeline-level authorization
@@ -402,7 +355,7 @@ _V1_UNSUPPORTED_REPLY = (
 )
 
 # German, user-facing -- see this module's own docstring note on why (same
-# reasoning as _V1_UNSUPPORTED_REPLY above). Used ONLY by `_run_n8n_turn`,
+# reasoning as _V1_UNSUPPORTED_REPLY above). Used ONLY by `bot_graph._n8n_call`,
 # for an n8n-provider bot's 'conversational' intent -- see that function's
 # own docstring for why small talk deliberately never reaches n8n at all.
 _N8N_SMALLTALK_REPLY = (
@@ -425,10 +378,6 @@ _FILTER_EXCLUDED_ALL_REPLY = (
     'Deine Collections-Auswahl für diese Anfrage enthält keine Collection, auf die du bei diesem Bot Zugriff hast '
     '-- passe deine Auswahl an und versuche es erneut.'
 )
-
-
-def _elapsed_ms(start: float) -> float:
-    return (time.perf_counter() - start) * 1000
 
 
 def _check_permissions(bot: BotConfig, user: ChatUser) -> None:
@@ -503,7 +452,7 @@ def _allowed_teams(bot: BotConfig, user: ChatUser) -> list[str] | None:
 
 def _readable_collections(user: ChatUser) -> list[retrieval_client.Collection]:
     """Every Collection `user` may read, per Weave-Retrieval (the one
-    `list_collections()` call a turn makes -- see `_prepare_turn`)."""
+    `list_collections()` call a turn makes -- see `_prepare_context`)."""
     return retrieval_client.list_collections(user.teams if user.teams is not None else user.team, user=user.subject)
 
 
@@ -585,7 +534,7 @@ def _resolve_rights_scope(bot: BotConfig, user: ChatUser, readable: list[str] | 
     wasn't but the caller's filter excluded everything anyway
     (`'filter_excluded_all'`) -- see that function's own docstring. Every
     other caller of Collections scope (`resolve_collection_scope` itself,
-    hence indirectly `_run_n8n_turn` too) never needs that distinction and
+    hence indirectly `bot_graph._n8n_call` too) never needs that distinction and
     calls the public wrapper instead.
 
     Unlike `_allowed_teams`, this NEVER returns `None`. Weave-Retrieval
@@ -738,7 +687,7 @@ def resolve_collection_scope(
     never before, and never adds anything rights didn't already grant (see
     both of those functions' own docstrings for exactly how). Callers that
     only need the final, already-filtered scope (this function, and hence
-    `_run_n8n_turn`) use this wrapper directly; `_run_knowledge_turn` calls
+    `bot_graph._n8n_call`) use this wrapper directly; `_run_knowledge_turn` calls
     the two steps separately instead, since it additionally needs to tell
     apart the two distinct ways the result can come back empty (`rights_
     scope` itself was empty, vs. the filter is what emptied it) to pick the
@@ -767,7 +716,7 @@ def _filter_n8n_sources_by_scope(
 ) -> tuple[list[Source], int]:
     """Enforce contracts/n8n-flow.md's "Quellen sind eine Behauptung, keine
     Berechtigung" against n8n's OWN reported `sources`, once the webhook
-    call has already returned (called from `_run_n8n_turn`, see its own
+    call has already returned (called from `bot_graph._n8n_call`, see its own
     docstring for exactly where) -- `n8n_client.run_flow` itself makes no
     such check (see that function's own docstring: it only signs and
     forwards `scope`, never re-examines what n8n hands back). This call
@@ -782,7 +731,7 @@ def _filter_n8n_sources_by_scope(
     catch it otherwise.
 
     `scope` must be the EXACT list `resolve_collection_scope` resolved for
-    THIS turn -- the same one `_run_n8n_turn` also hands to `n8n_client.
+    THIS turn -- the same one `bot_graph._n8n_call` also hands to `n8n_client.
     run_flow`, which signs it into the delegation token n8n's flow
     received. Never re-derived here, never widened.
 
@@ -832,9 +781,9 @@ def _filter_n8n_sources_by_scope(
 def _run_n8n_flow_blocking(
     bot: BotConfig, message: str, history: list[dict[str, str]], user: ChatUser, scope: list[str]
 ) -> n8n_client.N8nResult:
-    """The n8n webhook call `_run_n8n_turn` performs -- i.e. `handle_chat`'s
+    """The n8n webhook call `bot_graph._n8n_call` performs -- i.e. `handle_chat`'s
     own blocking POST /internal/chat, which never defers anything into a
-    stream phase (see `_prepare_turn`'s own docstring on `defer_n8n`) --
+    stream phase (see `_prepare_context`'s own docstring on `defer_n8n`) --
     picking `n8n_client.run_flow` or `run_flow_stream` by `bot.n8n.
     streaming`, so a bot's choice to enable contract-v2 streaming for its
     STREAMING route never has to mean choosing a second, streaming-only
@@ -846,7 +795,7 @@ def _run_n8n_flow_blocking(
     `bot.n8n.streaming=True`: `run_flow_stream` instead, but every one of
     its events is consumed to completion RIGHT HERE, assembled into the
     identical `N8nResult` shape `run_flow` itself returns, before this
-    function's own caller (`_run_n8n_turn`) ever sees anything -- this
+    function's own caller (`bot_graph._n8n_call`) ever sees anything -- this
     route's own contract (one blocking `ChatResponse`, see
     app/api/internal.py's `chat`) is completely unaffected by which wire
     protocol happened to talk to n8n underneath it. Every `N8nStreamDelta.
@@ -880,151 +829,6 @@ def _run_n8n_flow_blocking(
         elif isinstance(event, n8n_client.N8nStreamDone):
             break
     return n8n_client.N8nResult(answer=''.join(parts), sources=sources)
-
-
-def _run_n8n_turn(
-    bot: BotConfig,
-    request: ChatRequest,
-    decision: router_service.RouterDecision,
-    timings_ms: dict[str, float],
-    total_start: float,
-) -> '_PreparedTurn':
-    """The entire turn for a `bot.model.provider == 'n8n'` bot -- called
-    once `_prepare_turn` has already resolved `decision` (the router's own
-    step 3) and checked permissions (step 2); this function is the whole of
-    this module's own docstring step 3a.
-
-    Deliberate, documented routing choice for WHICH intents actually reach
-    n8n at all (contracts/n8n-flow.md's own worked example covers this too):
-
-    - `'conversational'` (greetings/small talk, see router.py's own RULES
-      patterns): answered directly with the fixed `_N8N_SMALLTALK_REPLY`
-      text, exactly like `_V1_UNSUPPORTED_REPLY` is for an unsupported
-      intent elsewhere in this module -- NO n8n call, no Collections-scope
-      resolution, no delegation token minted. Rationale: an n8n agent flow
-      exists to do tool/search WORK (this bot's whole reason to prefer n8n
-      over a plain LLMProvider); paying for a webhook round-trip -- with
-      its own latency budget and its own failure surface, N8nUnavailable
-      included -- to answer "Hallo" would make every greeting as slow and
-      as fragile as a full agentic turn, for zero benefit to the caller.
-    - Every other intent (`'knowledge'`, `'document'`, `'action'`,
-      `'complex'`): sent to n8n. This deliberately LIFTS
-      `_V1_UNSUPPORTED_INTENTS` for an n8n-provider bot specifically:
-      `'document'`/`'action'`/`'complex'` are exactly the intents an n8n
-      agent flow's own tool access exists to handle, which is the entire
-      point of offering n8n as a bot provider at all -- an n8n bot that
-      could only ever receive `'knowledge'` turns would be strictly less
-      capable than what this provider is FOR.
-
-    Permissions (`_check_permissions`, step 2) already ran in `_prepare_turn`
-    before this function was ever called, identically to every other bot --
-    this function does not re-check them. Collections-scope resolution
-    (`resolve_collection_scope`, step 5a) DOES run again here, for every
-    intent that reaches n8n, via the exact same function every retrieval-
-    backed bot's knowledge turn uses -- its result becomes the delegation
-    token's own signed scope (`n8n_client.run_flow` mints that token
-    internally, see its own docstring), independent of `bot.retrieval.
-    enabled` (which this function never even reads: n8n bots do not need
-    Weave-Runtime's own direct `retrieval_client.search()` at all, they get
-    their OWN Weave-Tools-mediated search via that token instead).
-
-    Unlike the retrieval path's own `_run_knowledge_turn`, an EMPTY resolved
-    scope here does NOT by itself trigger the `'no_collections'` guard or
-    skip the n8n call -- that guard exists specifically because
-    `_run_knowledge_turn` is about to make ONE PARTICULAR call
-    (`retrieval_client.search()`) that must never run without a concrete
-    Collections boundary. An n8n flow is not limited to that one call: it
-    may perform actions or searches unrelated to Collections entirely, so
-    an empty scope here still faithfully means "this token grants no
-    Collections read access" (enforced on the Weave-Tools side per
-    contracts/n8n-flow.md's "Grundregel Rechte") without this function
-    itself presuming nothing useful could possibly happen. The ONE guard
-    this function does enforce, unconditionally for every non-conversational
-    n8n turn, is `bot.guard.require_sources` against n8n's OWN returned
-    `sources`, exactly as this module's own docstring, step 3a, documents.
-
-    Every branch below always ends with `final_answer` set (never `None`)
-    -- an n8n-provider bot's turn is, by construction, always fully decided
-    by the time this function returns; see `_PreparedTurn`'s own docstring
-    for why that matters (neither `handle_chat` nor `_stream_prepared_turn`
-    ever needs an `llm_provider` for such a bot).
-
-    Once n8n actually answers, `_filter_n8n_sources_by_scope` (see its own
-    docstring) checks n8n's OWN reported `sources` against `allowed_
-    collections` -- the exact scope THIS turn's own delegation token was
-    signed with -- and drops any source whose `collection` falls outside
-    it, BEFORE the `require_sources` guard below ever looks at the list:
-    n8n's reported sources are a claim from an external, only-signature-
-    verified flow, never a proof of what the asking human was actually
-    entitled to see (contracts/n8n-flow.md's "Quellen sind eine
-    Behauptung, keine Berechtigung"). `bot.guard.require_sources` is
-    therefore checked against the FILTERED list, not n8n's raw one -- a
-    flow that reported sources entirely outside its own granted scope must
-    trigger the guard exactly as if it had reported none at all, per this
-    module's own docstring, step 3a.
-    """
-    if decision.intent == 'conversational':
-        return _PreparedTurn(
-            bot=bot,
-            llm_provider=None,
-            decision=decision,
-            timings_ms=timings_ms,
-            total_start=total_start,
-            sources=[],
-            retrieval_trace=None,
-            guard=None,
-            final_answer=_N8N_SMALLTALK_REPLY,
-            messages=None,
-            n8n_single_delta=False,
-        )
-
-    # `request.collections` (the per-request Collection-Filter, see
-    # ChatRequest's own docstring) is threaded through exactly like it is
-    # for the retrieval path's own `_run_knowledge_turn` -- a filter must
-    # give an n8n agent flow LESS than its unfiltered rights scope would
-    # have, via the exact same `resolve_collection_scope` (never MORE), so
-    # whatever the caller filtered out never gets signed into this turn's
-    # own delegation token either.
-    allowed_collections = resolve_collection_scope(bot, request.user, request.collections)
-    history = [{'role': turn.role, 'content': turn.content} for turn in request.history]
-
-    n8n_start = time.perf_counter()
-    result = _run_n8n_flow_blocking(bot, request.message, history, request.user, allowed_collections)
-    timings_ms['n8n_ms'] = _elapsed_ms(n8n_start)
-
-    kept_sources, dropped_count = _filter_n8n_sources_by_scope(result.sources, allowed_collections, bot_id=bot.id)
-    n8n_trace = N8nTrace(dropped_sources=dropped_count)
-
-    if bot.guard.require_sources and not kept_sources:
-        return _PreparedTurn(
-            bot=bot,
-            llm_provider=None,
-            decision=decision,
-            timings_ms=timings_ms,
-            total_start=total_start,
-            sources=[],
-            retrieval_trace=None,
-            guard=GuardTrace(triggered=True, reason='no_context'),
-            final_answer=bot.guard.no_context_reply,
-            messages=None,
-            n8n_single_delta=False,
-            n8n_trace=n8n_trace,
-        )
-
-    return _PreparedTurn(
-        bot=bot,
-        llm_provider=None,
-        decision=decision,
-        timings_ms=timings_ms,
-        total_start=total_start,
-        sources=kept_sources,
-        retrieval_trace=None,
-        guard=None,
-        final_answer=result.answer,
-        messages=None,
-        n8n_single_delta=True,
-        n8n_trace=n8n_trace,
-    )
 
 
 def _router_llm_call(provider: llm_service.LLMProvider) -> router_service.LLMCallable:
@@ -1074,59 +878,6 @@ def _context_block(chunks: list[RetrievedChunk]) -> str:
             location = f'{location}, {page}'
         sections.append(f'[source {index}] {location}\n{chunk.text}')
     return '\n\n'.join(sections)
-
-
-def _score_for(chunk: RetrievedChunk) -> float | None:
-    """The single `Source.score` (app/schemas/chat.py) for `chunk`, chosen
-    per `RetrievedChunkScores`' own docstring (app/services/retrieval_client.py):
-    "which signal -- rerank if present, else rrf -- becomes 'the' score on a
-    chat response" is explicitly left to THIS stage to decide. `rerank` when
-    a reranker actually scored this chunk, `rrf` (the fused vector+fulltext
-    rank, always present whenever there is a result at all) otherwise.
-    """
-    scores = chunk.scores
-    return scores.rerank if scores.rerank is not None else scores.rrf
-
-
-_IMAGE_MARKDOWN_RE = re.compile(r'!\[[^\]]*\]\((https?://[^)\s]+)\)')
-_MAX_IMAGES_PER_SOURCE = 8
-
-
-def _images_for(chunk: RetrievedChunk) -> list[str]:
-    """Absolute http(s) image URLs found in `chunk.text`'s own markdown,
-    deduplicated (order preserved) and capped at `_MAX_IMAGES_PER_SOURCE`.
-    """
-    urls = dict.fromkeys(_IMAGE_MARKDOWN_RE.findall(chunk.text or ''))
-    return list(urls)[:_MAX_IMAGES_PER_SOURCE]
-
-
-def _to_source(chunk: RetrievedChunk) -> Source:
-    return Source(
-        # chunk.source is optional at the retrieval layer (a chunk whose
-        # document was never tagged with a source system) but Source.source
-        # is a required str on this contract -- '' is the least-surprising
-        # fill-in for "no source label", keeping every caller's `Source`
-        # object uniformly a plain str instead of forcing an extra optional
-        # case downstream for what is, for both of this repo's example
-        # bots' documents, a case that never actually occurs.
-        source=chunk.source or '',
-        original_filename=chunk.original_filename,
-        page_start=chunk.page_start,
-        page_end=chunk.page_end,
-        document_version=chunk.document_version,
-        document_id=chunk.document_id,
-        chunk_id=chunk.chunk_id,
-        score=_score_for(chunk),
-        # Same rerank-if-present-else-rrf choice _score_for makes, just
-        # naming which one it picked -- see Source.score_kind's docstring.
-        score_kind='rerank' if chunk.scores.rerank is not None else 'rrf',
-        collection=chunk.collection,
-        images=_images_for(chunk),
-        source_kind=chunk.source_kind,
-        source_url=chunk.source_url,
-        uploaded_by=chunk.uploaded_by,
-        uploaded_at=chunk.uploaded_at,
-    )
 
 
 @dataclass(frozen=True)
@@ -1436,10 +1187,10 @@ def _run_overview_turn(
 # search()` call, then hands the gathered facts to the main bot's own LLM
 # for the final answer. A bot configured with EXACTLY one subagent uses
 # Schritt 2's own single-subagent path unchanged (`_select_subagent` below,
-# `_run_agent_turn_blocking`/`_stream_deferred_agent`); more than one always
-# goes through Schritt 3's LangGraph orchestrator-worker flow instead
-# (app/services/agent_graph.py's `run_graph`, `_run_multi_agent_turn_
-# blocking`/`_stream_deferred_multi_agent` below) -- which can itself still
+# bot_graph.py's `agent_single` node); more than one always goes through
+# Schritt 3's LangGraph orchestrator-worker flow instead
+# (app/services/agent_graph.py's `run_graph`, bot_graph.py's `agent_multi`
+# node) -- which can itself still
 # choose to research with just one agent per turn (its own planner's
 # "simple path").
 _QUERY_REWRITE_SYSTEM_PROMPT = (
@@ -1694,8 +1445,6 @@ def _resolve_agent_scope(
     combined_include_uncollected = bot.retrieval.include_uncollected and subagent.include_uncollected
 
     if subagent.collections:
-        from app.services import scope as scope_service  # see this module's own top-of-file note
-
         return scope_service.effective_scope(
             user_readable=user_readable,
             bot_collections=bot.retrieval.collections,
@@ -1733,7 +1482,7 @@ def _available_agents_for_graph(
     (`user_readable`, then threaded through every `_resolve_agent_scope`
     call below via that function's own `user_readable` parameter) rather
     than once per subagent -- see that parameter's own docstring -- and not
-    at all when `_prepare_turn` already fetched the list for this turn and
+    at all when `_prepare_context` already fetched the list for this turn and
     passes it in as `user_readable`.
     """
     if user_readable is None:
@@ -1747,170 +1496,6 @@ def _available_agents_for_graph(
         if scope:
             available.append({'agent_id': subagent.id, 'effective_scope': scope, 'allowed_teams': allowed_teams})
     return available
-
-
-@dataclass(frozen=True)
-class _DeferredMultiAgentTurn:
-    """Everything `_stream_deferred_multi_agent` needs to run a
-    multi-subagent turn's LangGraph orchestrator-worker flow
-    (app/services/agent_graph.py's `run_graph`) from inside the stream
-    phase -- the graph-mode analogue of `_DeferredAgentTurn`, used
-    (`_prepare_turn`) exactly when `len(bot.agent.subagents) > 1`. Every
-    Collections-scope resolution this turn will ever need
-    (`_available_agents_for_graph`, called once, up front) already ran
-    synchronously before this dataclass is even built -- see
-    `_DeferredAgentTurn`'s own docstring for why that part specifically
-    cannot move into the deferred work itself (RetrievalUnavailable/
-    RetrievalError must still surface as a pre-stream HTTP status).
-
-    `subagent_llm_providers` resolves ONE `LLMProvider` instance per
-    subagent in `available`, ALWAYS via a fresh `llm_service.get_llm(...)`
-    call -- even for a subagent with no `model` override of its own, i.e.
-    one that would otherwise share the main bot's own model/provider --
-    deliberately never reusing `llm_provider` itself the way Schritt 2's
-    single-subagent path does: `agent_graph.run_graph` can run several
-    subagents' own tool-calling loops CONCURRENTLY (`RunnableConfig(
-    max_concurrency=...)`), and two of them sharing one mutable
-    `FakeLLM.tool_responses` queue (or, for a real provider, simply
-    resolving to the very same connection-pool-owning object from two
-    threads with no reason to) is never a well-scoped thing to allow.
-    `llm_service.get_llm()` itself already makes this cheap: neither
-    provider caches anything across calls (see that function's own
-    docstring).
-    """
-
-    bot: BotConfig
-    message: str
-    history: list[dict[str, str]]
-    available: list[agent_graph_service.AvailableAgent]
-    subagents_by_id: dict[str, SubagentConfig]
-    subagent_llm_providers: dict[str, llm_service.LLMProvider]
-    main_llm_provider: llm_service.LLMProvider
-    cancel: threading.Event
-    # See `_DeferredAgentTurn.memory`.
-    memory: bool = False
-
-
-def _run_multi_agent_graph(deferred: '_DeferredMultiAgentTurn') -> agent_graph_service.GraphOutcome:
-    return agent_graph_service.run_graph(
-        deferred.bot, deferred.message, deferred.history, deferred.available,
-        deferred.subagents_by_id, deferred.subagent_llm_providers, deferred.main_llm_provider,
-        cancel=deferred.cancel, memory=deferred.memory,
-    )
-
-
-def _run_multi_agent_turn_blocking(
-    deferred: '_DeferredMultiAgentTurn',
-    decision: router_service.RouterDecision,
-    timings_ms: dict[str, float],
-    total_start: float,
-) -> '_PreparedTurn':
-    """`handle_chat`'s own blocking path for a multi-subagent (graph-mode)
-    turn -- runs the ENTIRE LangGraph orchestrator-worker flow
-    synchronously, exactly like `_run_agent_turn_blocking` does for the
-    single-subagent case, and returns an already-fully-decided
-    `_PreparedTurn` for the identical reason that function's own docstring
-    gives."""
-    agent_start = time.perf_counter()
-    outcome = _run_multi_agent_graph(deferred)
-    timings_ms['agent_ms'] = _elapsed_ms(agent_start)
-
-    return _PreparedTurn(
-        bot=deferred.bot, llm_provider=deferred.main_llm_provider, decision=decision, timings_ms=timings_ms,
-        total_start=total_start, sources=outcome.sources, retrieval_trace=None,
-        guard=GuardTrace(triggered=True, reason='no_context') if outcome.guard_triggered else None,
-        final_answer=outcome.final_answer, messages=None, agent_trace=outcome.agent_trace,
-    )
-
-
-def _stream_deferred_multi_agent(deferred: '_DeferredMultiAgentTurn') -> Iterator[ChatStreamEvent | Keepalive]:
-    """The graph-mode analogue of `_stream_deferred_agent` -- same
-    thread+queue+keepalive mechanics (see that function's own docstring),
-    but the worker thread here runs the ENTIRE LangGraph flow as a single
-    call (`agent_graph.run_graph`) rather than two separate phases. The
-    graph's own `answer` node streams genuine incremental token deltas by
-    calling `llm_service.iter_chat_stream` and forwarding each chunk to
-    `progress_cb('delta', ...)` (see `agent_graph.py`'s `_answer`); this
-    function simply relays those `('delta', payload)` messages off the
-    queue as `ChatStreamDeltaEvent`s as they arrive. `outcome.final_answer`
-    is only ever re-chunked via `llm_service.iter_text_deltas` for the
-    guard-triggered fallback case below, where no deltas were streamed by
-    the graph at all.
-
-    On `GeneratorExit` (client disconnect, or this generator closed early
-    for any other reason) `deferred.cancel` is set before re-raising --
-    `agent_graph.run_graph`'s own graph checks it inside every `research`
-    worker (via `agents.run_subagent`'s own `cancel` parameter) and before
-    starting any follow-up round (`agent_graph._merge`), stopping further
-    work and letting the `answer` node produce a result from whatever was
-    already gathered -- the identical best-effort posture
-    `_stream_deferred_n8n`'s own docstring describes for its own `cancel`
-    Event.
-    """
-    result_queue: queue.Queue = queue.Queue()
-
-    def _progress_cb(kind: str, payload: object) -> None:
-        result_queue.put((kind, payload))
-
-    def _worker() -> None:
-        try:
-            outcome = agent_graph_service.run_graph(
-                deferred.bot, deferred.message, deferred.history, deferred.available,
-                deferred.subagents_by_id, deferred.subagent_llm_providers, deferred.main_llm_provider,
-                cancel=deferred.cancel, progress_cb=_progress_cb, memory=deferred.memory,
-            )
-            result_queue.put(('outcome', outcome))
-        except Exception as exc:  # noqa: BLE001 -- forwarded to the reader thread, never raised on this one
-            result_queue.put(('error', exc))
-
-    thread = threading.Thread(target=_worker, name='multi-agent-stream-turn', daemon=True)
-    thread.start()
-
-    try:
-        while True:
-            try:
-                kind, payload = result_queue.get(timeout=settings.stream_keepalive_seconds)
-            except queue.Empty:
-                yield KEEPALIVE
-                continue
-
-            if kind == 'error':
-                logger.warning('multi-agent stream turn failed for bot %s: %s', deferred.bot.id, payload)
-                yield ChatStreamErrorEvent(detail='Die Recherche der Agenten ist unerwartet fehlgeschlagen.')
-                return
-            if kind == 'status':
-                yield payload
-                continue
-            if kind == 'delta':
-                # A genuine incremental piece of the `answer` node's own
-                # streamed final-answer text (see agent_graph.py's `_answer`,
-                # the `progress_cb is not None` branch) -- pushed as it is
-                # generated, never re-chunked here.
-                yield ChatStreamDeltaEvent(text=payload)
-                continue
-
-            # `outcome` -- the graph's own final, reduced state. When the
-            # response guard fired, `_answer` returned before ever
-            # streaming anything (rollout plan's failure semantics: no
-            # evidence at all means the fixed guard reply, not a call to
-            # the LLM), so `outcome.final_answer` here is that fixed reply,
-            # not yet sent as any `delta` -- chunk it out now, exactly like
-            # `_stream_deferred_agent`'s own `guard` branch does. Every
-            # other outcome already had its full answer streamed via
-            # `progress_cb`'s own `'delta'` events above, so re-emitting it
-            # here would duplicate the answer.
-            outcome: agent_graph_service.GraphOutcome = payload
-            if outcome.guard_triggered:
-                for text_delta in llm_service.iter_text_deltas(outcome.final_answer):
-                    yield ChatStreamDeltaEvent(text=text_delta)
-            yield ChatStreamSourcesEvent(sources=outcome.sources)
-            yield ChatStreamDoneEvent()
-            return
-    finally:
-        # Best-effort only -- see this function's own docstring; a no-op
-        # when reached on ordinary completion, after `outcome` already
-        # arrived.
-        deferred.cancel.set()
 
 
 def _facts_context_block(subagent: SubagentConfig, result: agents_service.SubagentResult) -> str:
@@ -1963,370 +1548,32 @@ def _agent_trace_for(bot: BotConfig, result: agents_service.SubagentResult) -> A
     )
 
 
-@dataclass(frozen=True)
-class _DeferredAgentTurn:
-    """Everything `_stream_deferred_agent` needs to run one agent-mode
-    turn's subagent research plus the main bot's own final-answer LLM call
-    from inside the stream phase -- the agent-mode analogue of
-    `_DeferredN8nTurn` above; see that dataclass's own docstring for why
-    Collections-scope resolution (`_resolve_agent_scope`, which can itself
-    raise `retrieval_client.RetrievalUnavailable`/`RetrievalError`) runs
-    synchronously in `_prepare_turn`, BEFORE this dataclass is even built,
-    rather than inside the deferred work itself.
+def _prepare_context(
+    request: ChatRequest, *, streaming: bool, cancel: threading.Event | None = None,
+) -> tuple['bot_graph.TurnContext', 'bot_graph.TurnState']:
+    """Everything a turn needs BEFORE the graph runs: bot lookup,
+    permissions, the knowledge overview folded into the system prompt, the
+    central-provider override and the main bot's own LLM provider. Raises
+    BotNotFoundError/BotPermissionDenied/ChatConfigUnavailable straight to
+    app/api/internal.py for the status-code mapping; both routes call this
+    synchronously, never from inside a generator.
     """
+    from app.services import bot_graph  # the graph imports this module's helpers; see bot_graph.py
 
-    bot: BotConfig
-    message: str
-    history: list[dict[str, str]]
-    subagent: SubagentConfig
-    agent_scope: list[str]
-    allowed_teams: list[str] | None
-    llm_provider: llm_service.LLMProvider
-    subagent_llm_provider: llm_service.LLMProvider
-    # ADR-0009 §10b: knowledge memory on for this turn (same flag the
-    # router got) -- offers the subagent its `memory_lookup` tool.
-    memory: bool = False
-
-
-def _run_subagent(deferred: '_DeferredAgentTurn') -> agents_service.SubagentResult:
-    subagent_model = deferred.subagent.model or deferred.bot.model
-    return agents_service.run_subagent(
-        deferred.bot, deferred.subagent, deferred.message, deferred.agent_scope, deferred.subagent_llm_provider,
-        model=subagent_model.model, temperature=subagent_model.temperature, allowed_teams=deferred.allowed_teams,
-        memory=deferred.memory,
-    )
-
-
-def _final_agent_messages(deferred: '_DeferredAgentTurn', result: agents_service.SubagentResult) -> list[dict[str, str]]:
-    return [
-        {'role': 'system', 'content': deferred.bot.system_prompt},
-        *deferred.history,
-        {'role': 'system', 'content': _facts_context_block(deferred.subagent, result)},
-        {'role': 'user', 'content': deferred.message},
-    ]
-
-
-def _run_agent_turn_blocking(
-    deferred: '_DeferredAgentTurn',
-    decision: router_service.RouterDecision,
-    timings_ms: dict[str, float],
-    total_start: float,
-) -> '_PreparedTurn':
-    """`handle_chat`'s own blocking path for an agent-mode turn -- runs the
-    subagent research AND the final-answer LLM call synchronously, exactly
-    like `_run_n8n_turn` runs an n8n-provider bot's entire turn
-    synchronously for the same caller. Every branch ends with
-    `final_answer` set (never `None`) for the identical reason
-    `_run_n8n_turn`'s own docstring gives: `handle_chat` must never itself
-    call the LLM again for a turn this function already fully decided.
-    """
-    agent_start = time.perf_counter()
-    result = _run_subagent(deferred)
-    timings_ms['agent_ms'] = _elapsed_ms(agent_start)
-
-    sources = _sources_from_result(result)
-    agent_trace = _agent_trace_for(deferred.bot, result)
-
-    if deferred.bot.guard.require_sources and not sources:
-        return _PreparedTurn(
-            bot=deferred.bot, llm_provider=deferred.llm_provider, decision=decision, timings_ms=timings_ms,
-            total_start=total_start, sources=[], retrieval_trace=None,
-            guard=GuardTrace(triggered=True, reason='no_context'), final_answer=deferred.bot.guard.no_context_reply,
-            messages=None, agent_trace=agent_trace,
-        )
-
-    llm_start = time.perf_counter()
-    answer = deferred.llm_provider.chat(
-        _final_agent_messages(deferred, result), model=deferred.bot.model.model, temperature=deferred.bot.model.temperature
-    ).content
-    timings_ms['llm_ms'] = _elapsed_ms(llm_start)
-
-    return _PreparedTurn(
-        bot=deferred.bot, llm_provider=deferred.llm_provider, decision=decision, timings_ms=timings_ms,
-        total_start=total_start, sources=sources, retrieval_trace=None, guard=None, final_answer=answer,
-        messages=None, agent_trace=agent_trace,
-    )
-
-
-def _stream_deferred_agent(deferred: '_DeferredAgentTurn') -> Iterator[ChatStreamEvent | Keepalive]:
-    """The agent-mode analogue of `_stream_deferred_n8n` -- see that
-    function's own docstring for the shared thread+queue+keepalive
-    mechanics this reuses verbatim: a background thread does the actual
-    work, a `queue.Queue` carries results back to this generator, and
-    `settings.stream_keepalive_seconds` of silence yields a `Keepalive`
-    marker instead of blocking this generator's own `next()` on it.
-
-    Unlike an n8n turn, the worker thread here has two sequential phases:
-    first `agents.run_subagent` (one or more blocking `chat_with_tools`/
-    `retrieval_client.search()` calls -- exactly why this needs the
-    keepalive machinery at all), then, ONLY once sources are known and the
-    guard decision is already made, the main bot's own final-answer LLM
-    call -- streamed incrementally via `llm_service.iter_chat_stream`, each
-    delta pushed onto the SAME queue as it arrives, so a caller sees
-    genuine incremental generation for the final answer exactly like the
-    ordinary (non-agent) knowledge-turn streaming path does. This is
-    simpler than `_stream_deferred_n8n`'s own require_sources-dependent
-    buffering: here the guard decision depends only on the subagent's own
-    retrieved hits, never on the final answer text itself, so the final
-    answer never needs to be buffered at all.
-
-    `ChatStreamTraceEvent.trace.agent` stays `None` for this turn (see
-    `AgentTrace`'s own docstring) -- exactly like `N8nTrace` stays `None`
-    on a deferred n8n turn's own initial `trace` event: the research loop
-    has not run yet by the time that event already went out, so there is
-    nothing about it to report there.
-    """
-    result_queue: queue.Queue = queue.Queue()
-
-    def _worker() -> None:
-        try:
-            result_queue.put(('status', ChatStreamStatusEvent(
-                stage='researching', agent_id=deferred.subagent.id, agent_name=deferred.subagent.name,
-                message=f'{deferred.subagent.name} wird durchsucht',
-            )))
-            result = _run_subagent(deferred)
-            result_queue.put(('status', ChatStreamStatusEvent(
-                stage='researching', agent_id=deferred.subagent.id, agent_name=deferred.subagent.name,
-                state=result.status, message=f'{deferred.subagent.name} abgeschlossen',
-            )))
-            sources = _sources_from_result(result)
-
-            if deferred.bot.guard.require_sources and not sources:
-                result_queue.put(('guard', deferred.bot.guard.no_context_reply))
-                return
-
-            result_queue.put(('status', ChatStreamStatusEvent(stage='answering', message='Antwort wird formuliert')))
-            for delta in llm_service.iter_chat_stream(
-                deferred.llm_provider, _final_agent_messages(deferred, result),
-                model=deferred.bot.model.model, temperature=deferred.bot.model.temperature,
-            ):
-                result_queue.put(('delta', delta))
-            result_queue.put(('sources', sources))
-        except Exception as exc:  # noqa: BLE001 -- forwarded to the reader thread, never raised on this one
-            result_queue.put(('error', exc))
-
-    thread = threading.Thread(target=_worker, name='agent-stream-turn', daemon=True)
-    thread.start()
-
-    while True:
-        try:
-            kind, payload = result_queue.get(timeout=settings.stream_keepalive_seconds)
-        except queue.Empty:
-            yield KEEPALIVE
-            continue
-
-        if kind == 'error':
-            logger.warning('agent stream turn failed for bot %s: %s', deferred.bot.id, payload)
-            yield ChatStreamErrorEvent(detail='Die Recherche des Agenten ist unerwartet fehlgeschlagen.')
-            return
-        if kind == 'status':
-            yield payload
-            continue
-        if kind == 'guard':
-            for text_delta in llm_service.iter_text_deltas(payload):
-                yield ChatStreamDeltaEvent(text=text_delta)
-            yield ChatStreamSourcesEvent(sources=[])
-            yield ChatStreamDoneEvent()
-            return
-        if kind == 'delta':
-            yield ChatStreamDeltaEvent(text=payload)
-            continue
-        if kind == 'sources':
-            yield ChatStreamSourcesEvent(sources=payload)
-            yield ChatStreamDoneEvent()
-            return
-
-
-@dataclass(frozen=True)
-class _DeferredN8nTurn:
-    """Everything `_stream_deferred_n8n` needs to perform an n8n-provider
-    bot's webhook call ITSELF, from inside the stream phase, instead of
-    `_prepare_turn` performing it up front the way `_run_n8n_turn` still
-    does for `handle_chat`'s own blocking path (see `_prepare_turn`'s own
-    docstring for why the two routes deliberately differ here). Built by
-    `_prepare_turn` only when it is called with `defer_n8n=True` (i.e. only
-    from `handle_chat_stream`) and only for a non-conversational n8n-
-    provider bot turn -- a conversational one never reaches n8n at all (see
-    `_run_n8n_turn`'s own docstring) and is represented by an ordinary
-    `final_answer` on `_PreparedTurn` instead, streamed exactly like the
-    blocking path's identical smalltalk reply.
-
-    `scope` is already the FULLY RESOLVED Collections scope
-    (`resolve_collection_scope`'s return value) -- resolving it can itself
-    raise `retrieval_client.RetrievalUnavailable`/`RetrievalError`, which
-    must still surface as a pre-stream HTTP status exactly like every other
-    `_prepare_turn` failure (see that function's own docstring), so it runs
-    synchronously in `_prepare_turn`, BEFORE this dataclass is even built --
-    never deferred into the stream phase alongside the webhook call itself.
-    """
-
-    bot: BotConfig
-    message: str
-    history: list[dict[str, str]]
-    user: ChatUser
-    scope: list[str]
-
-
-@dataclass(frozen=True)
-class _PreparedTurn:
-    """Output of `_prepare_turn` -- the bot-load/permission/router/
-    retrieval/guard pipeline stage `handle_chat` and `handle_chat_stream`
-    BOTH build on, stopping just short of the one remaining step neither
-    caller can share: actually generating the answer text, since one wants
-    a single blocking `llm_provider.chat(...)` call and the other an
-    incremental `llm_service.iter_chat_stream(...)` (see this module's own
-    docstring for the full pipeline `_prepare_turn` runs in full before
-    either caller sees it).
-
-    Exactly one of `final_answer`/`messages` is meaningful, discriminated by
-    whether `final_answer` is None:
-
-    - `final_answer is not None`: generation is ALREADY decided -- a V1-
-      unsupported intent (`_V1_UNSUPPORTED_REPLY`), a guard-triggered
-      knowledge turn (`bot.guard.no_context_reply`), or ANY turn at all for
-      an n8n-provider bot (`_run_n8n_turn` -- see its own docstring for why
-      such a bot's turn is always fully decided by the time this dataclass
-      is built, never leaving generation for `handle_chat`/
-      `_stream_prepared_turn` to still perform) -- and neither caller is
-      meant to invoke an LLM for this turn at all. `messages` is None in
-      this case; `llm_provider` is `None` too whenever this outcome came
-      from `_run_n8n_turn` (there is no LLMProvider for such a bot -- see
-      `_prepare_turn`'s own docstring), though it may still be a real
-      provider for a V1-unsupported/guard-triggered outcome from an
-      ordinary bot, simply unused by either caller in that case. `sources`
-      is `[]` for every one of these EXCEPT a successful (non-guard-
-      triggered) n8n answer, which carries n8n's own returned sources
-      instead; `guard`/`retrieval` are whatever this outcome's own trace
-      fields should be (see `ChatTrace`/`GuardTrace`'s own docstrings).
-    - `final_answer is None`: the ordinary case -- `messages` is the fully
-      assembled, ready-to-send transcript (system prompt + history +
-      optional numbered context block + the user's own message, in that
-      order) for the caller to hand to the LLM itself, exactly once, by
-      whichever means (blocking or streaming) it needs. `llm_provider` is
-      always a real provider here (never `None`) -- this branch is never
-      reached for an n8n-provider bot at all.
-
-    `n8n_single_delta` is meaningful only alongside a `final_answer` that
-    came from a SUCCESSFUL n8n call (`_run_n8n_turn`'s own last branch) --
-    `False` (the default) for every other outcome, including an n8n bot's
-    OWN guard-triggered/smalltalk replies, which stream chunked exactly
-    like any other fixed text (see `_stream_prepared_turn`'s own docstring
-    for why only a genuine n8n answer gets the single-delta treatment).
-
-    `timings_ms` already carries `router_ms`, and `retrieval_ms`/`n8n_ms`
-    when a knowledge turn/n8n turn actually ran, respectively --
-    `llm_ms`/`total_ms` are each caller's own concern to add once ITS OWN
-    generation step (blocking or streaming) finishes, which is exactly why
-    neither key is present here yet (an n8n turn's `final_answer` needs no
-    further generation step at all -- see above -- so `llm_ms` is never
-    added for one, by either caller; `n8n_ms` already stands in its place).
-
-    `n8n_trace` is set (never `None`) for every `_run_n8n_turn` outcome that
-    actually called n8n at all -- i.e. every branch except the
-    conversational-smalltalk one, see that function's own docstring -- and
-    stays at its own default (`None`) for every non-n8n bot and for that one
-    conversational exception, exactly mirroring `N8nTrace`'s own docstring.
-
-    `deferred_n8n` is the one exception to "`final_answer is not None` XOR
-    `messages is not None`" above: set (never `None`) ONLY when
-    `_prepare_turn` was called with `defer_n8n=True` (`handle_chat_stream`)
-    for a non-conversational n8n-provider bot -- in that one case BOTH
-    `final_answer` and `messages` stay `None`, since neither the answer NOR
-    the LLM-ready transcript exists yet; `_stream_deferred_n8n` is what
-    finally performs the webhook call this field describes, from inside
-    `_stream_prepared_turn`, once the `trace` event has already gone out.
-    `n8n_single_delta`/`n8n_trace`/`sources` stay at their own defaults
-    here -- there is no n8n RESULT yet to report any of the three from; the
-    streaming trace event's own `timings_ms` therefore never carries
-    `n8n_ms` for such a turn (see `ChatStreamTraceEvent`'s own docstring:
-    that event already only ever carries what is known at trace-TIME, and
-    for a deferred n8n turn nothing about the n8n call itself is, yet).
-    """
-
-    bot: BotConfig
-    llm_provider: llm_service.LLMProvider | None
-    decision: router_service.RouterDecision
-    timings_ms: dict[str, float]
-    total_start: float
-    sources: list[Source]
-    retrieval_trace: RetrievalTrace | None
-    guard: GuardTrace | None
-    final_answer: str | None
-    messages: list[dict[str, str]] | None
-    n8n_single_delta: bool = False
-    n8n_trace: N8nTrace | None = None
-    deferred_n8n: _DeferredN8nTurn | None = None
-    # See AgentTrace's own docstring (app/schemas/chat.py) -- set (never
-    # None) for every outcome of an agent-mode turn that actually ran the
-    # research loop (`_run_agent_turn_blocking`), None for every other
-    # turn, including a DEFERRED agent turn (the loop hasn't run yet by the
-    # time this dataclass is built for one -- see `deferred_agent` below).
-    agent_trace: AgentTrace | None = None
-    # Set exactly when guard.reason == 'clarify' -- forwarded onto ChatTrace.clarification.
-    clarification: Clarification | None = None
-    # The agent-mode analogue of `deferred_n8n` -- set (never None) ONLY
-    # when `_prepare_turn` was called with `defer_n8n=True` for a bot in
-    # agent mode (`bot.agent.enabled`) whose intent is eligible
-    # (`_AGENT_ELIGIBLE_INTENTS`). See `_DeferredAgentTurn`'s own docstring;
-    # `_stream_deferred_agent` is what finally runs the research loop and
-    # the final-answer LLM call this field describes.
-    deferred_agent: _DeferredAgentTurn | None = None
-    # The MULTI-subagent (graph-mode, `len(bot.agent.subagents) > 1`)
-    # analogue of `deferred_agent` -- set (never None) ONLY when
-    # `_prepare_turn` was called with `defer_n8n=True` for such a turn. See
-    # `_DeferredMultiAgentTurn`'s own docstring; `_stream_deferred_multi_agent`
-    # is what finally runs the LangGraph orchestrator-worker flow this field
-    # describes.
-    deferred_multi_agent: _DeferredMultiAgentTurn | None = None
-
-
-def _prepare_turn(request: ChatRequest, *, defer_n8n: bool = False) -> _PreparedTurn:
-    """Bot lookup through the response guard -- everything this module's own
-    docstring describes EXCEPT the final LLM-generation call itself, and
-    (see `defer_n8n` below) except the n8n webhook call itself for a
-    streaming turn. Raises exactly what that docstring says `handle_chat`
-    raises/propagates (BotNotFoundError, BotPermissionDenied,
-    retrieval_client.RetrievalUnavailable/RetrievalError, and -- for an
-    n8n-provider bot with `defer_n8n=False`, see step 3a --
-    n8n_client.N8nUnavailable/N8nError/delegation.DelegationConfigError);
-    both `handle_chat` and `handle_chat_stream` call this directly (not
-    from inside a generator) so those exceptions surface to
-    app/api/internal.py exactly the same way for either route, before
-    either one has produced so much as its first byte of response.
-
-    `defer_n8n=True` (passed only by `handle_chat_stream`) changes exactly
-    one thing: a non-conversational n8n-provider bot's turn is NOT run to
-    completion here -- Collections-scope resolution still happens
-    synchronously (see `_DeferredN8nTurn`'s own docstring for why that part
-    specifically cannot move), but the webhook call itself is handed to the
-    returned `_PreparedTurn.deferred_n8n` instead of being made right here,
-    for `_stream_deferred_n8n` to perform once the stream's own `trace`
-    event has already gone out. `handle_chat`'s blocking path always calls
-    with the default `defer_n8n=False`: it has no `trace` event to emit
-    early and nothing to gain from delaying a call it is about to block on
-    regardless, so it keeps using `_run_n8n_turn` exactly as before this
-    field existed. A conversational n8n-bot turn is UNAFFECTED by
-    `defer_n8n` either way -- it never reaches n8n at all (see
-    `_run_n8n_turn`'s own docstring), so there is nothing to defer.
-    """
-    timings_ms: dict[str, float] = {}
     total_start = time.perf_counter()
-
     bot = load_bot(request.bot_id)
     _check_permissions(bot, request.user)
 
     # One `list_collections()` call per turn, for two uses: the knowledge
     # overview the bot answers "what do you know about?" from (folded into
-    # the system prompt here, so every LLM path below -- direct RAG and
-    # agent mode alike -- sees it), and `_run_knowledge_turn`'s own scope
-    # resolution (`readable_slugs`, so it need not fetch again). A
-    # retrieval outage here only costs the overview: a conversational turn
-    # never depended on Weave-Retrieval and still must not, while a
-    # knowledge turn refetches (`readable_slugs=None`) and raises exactly as
-    # before -- see this module's docstring for how internal.py maps that.
-    # An n8n-provider bot is skipped: its system prompt never reaches an
-    # LLM here, and its conversational turn must not touch Weave-Retrieval
-    # at all (see `_run_n8n_turn`).
+    # the system prompt here, so every LLM path -- direct RAG and agent
+    # mode alike -- sees it), and the knowledge node's own scope resolution
+    # (`readable_slugs`, so it need not fetch again). A retrieval outage
+    # here only costs the overview: a conversational turn never depended on
+    # Weave-Retrieval and still must not, while a knowledge turn refetches
+    # (`readable_slugs=None`) and raises exactly as before. An n8n-provider
+    # bot is skipped: its system prompt never reaches an LLM here, and its
+    # conversational turn must not touch Weave-Retrieval at all.
     readable_slugs: list[str] | None = None
     if bot.retrieval.enabled and bot.model.provider != 'n8n':
         try:
@@ -2338,13 +1585,10 @@ def _prepare_turn(request: ChatRequest, *, defer_n8n: bool = False) -> _Prepared
             overview = _knowledge_overview_block(bot, readable, request.collections)
             bot = bot.model_copy(update={'system_prompt': f'{bot.system_prompt}\n\n{overview}'})
 
-    # An n8n-provider bot has no LLMProvider at all (see this module's own
-    # docstring, step 3a) -- `llm_provider` stays None for one rather than
-    # calling `llm_service.get_llm('n8n')`, which would raise ValueError
-    # ('n8n' is not a provider name app/services/llm.py's own get_llm()
-    # knows, deliberately: n8n is not a chat-completion API, it is a
-    # completely different generation mechanism this module has to
-    # special-case BEFORE ever reaching that factory).
+    # An n8n-provider bot has no LLMProvider at all -- `llm_provider` stays
+    # None rather than calling `llm_service.get_llm('n8n')` (not a provider
+    # name that factory knows, deliberately: n8n is not a chat-completion
+    # API but a different generation mechanism the graph special-cases).
     is_n8n_bot = bot.model.provider == 'n8n'
     central_provider = None if is_n8n_bot else fetch_chat_provider(_resolve_llm_endpoint(bot, request.llm_endpoint))
     if central_provider is not None and central_provider.enabled:
@@ -2358,11 +1602,9 @@ def _prepare_turn(request: ChatRequest, *, defer_n8n: bool = False) -> _Prepared
                 'provider': 'openai',
                 'model': central_provider.model,
                 'temperature': resolved_temperature,
-                # The effective (post-override) model's tool-call support
-                # is whatever the central provider itself declares -- never
-                # inherited from the original, now-replaced model, whose
-                # `supports_tools` describes a completely different model
-                # name. See `agent_mode_supported` below, the sole reader.
+                # The effective model's tool-call support is whatever the
+                # central provider itself declares -- never inherited from
+                # the now-replaced YAML-time model.
                 'supports_tools': central_provider.supports_tools,
             })
         })
@@ -2377,303 +1619,42 @@ def _prepare_turn(request: ChatRequest, *, defer_n8n: bool = False) -> _Prepared
     # configured `get_llm('openai')` default.
     llm_provider = None if is_n8n_bot else main_llm_factory()
 
-    router_start = time.perf_counter()
-    # `llm_call` stays None whenever there is no real LLMProvider to build
-    # one from (an n8n bot, see above) even if settings.router_mode ==
-    # 'llm' -- router.route() already treats that combination (mode='llm',
-    # llm_call=None) as any other 'llm'-mode failure, falling back to RULES
-    # with `router_fallback=True` (see router.py's own docstring), exactly
-    # the behaviour an n8n bot needs here.
-    llm_call = _router_llm_call(llm_provider) if (settings.router_mode == 'llm' and llm_provider is not None) else None
     memory_mode = (
         central_provider.knowledge_memory_mode
         if central_provider is not None and central_provider.knowledge_memory_mode
         else settings.knowledge_memory_mode
     )
     memory = memory_mode in ('extractive', 'llm') and not is_n8n_bot
-    decision = router_service.route(request.message, bot, settings.router_mode, llm_call, memory=memory)
-    timings_ms['router_ms'] = _elapsed_ms(router_start)
 
-    if is_n8n_bot:
-        if defer_n8n and decision.intent != 'conversational':
-            # See `_DeferredN8nTurn`'s own docstring: scope resolution
-            # still runs here, synchronously (it can itself raise
-            # retrieval_client.RetrievalUnavailable/RetrievalError, which
-            # must still surface pre-stream) -- only the webhook call is
-            # handed off.
-            allowed_collections = resolve_collection_scope(bot, request.user, request.collections)
-            history = [{'role': turn.role, 'content': turn.content} for turn in request.history]
-            return _PreparedTurn(
-                bot=bot,
-                llm_provider=None,
-                decision=decision,
-                timings_ms=timings_ms,
-                total_start=total_start,
-                sources=[],
-                retrieval_trace=None,
-                guard=None,
-                final_answer=None,
-                messages=None,
-                deferred_n8n=_DeferredN8nTurn(
-                    bot=bot, message=request.message, history=history, user=request.user, scope=allowed_collections
-                ),
-            )
-        return _run_n8n_turn(bot, request, decision, timings_ms, total_start)
-
-    # `BotConfig`'s own `_agent_mode_is_valid` validator (app/schemas/bot.py)
-    # already guarantees `model.provider != 'n8n'` and tool-call support for
-    # the bot's own YAML-time `model` -- but the central-provider override
-    # just above (`bot.model.model_copy(update={...})`) can swap `bot.model`
-    # to an entirely different provider/model AFTER that validator already
-    # ran. That override now sets its own `supports_tools` from the central
-    # provider's own declaration (see above), so re-checking the same
-    # predicate against the now-effective `bot.model` here is safe and
-    # correct whether or not an override happened -- a centrally managed
-    # model whose admin declared tool support can run agent mode, and one
-    # that didn't falls back to RAG, exactly like an un-overridden bot.
-    agent_mode_supported = bot.model.provider == 'fake' or bool(bot.model.supports_tools)
-    if (
-        bot.agent is not None
-        and bot.agent.enabled
-        and agent_mode_supported
-        and decision.intent in _AGENT_ELIGIBLE_INTENTS
-    ):
-        # `llm_provider` here is always a real provider -- never the
-        # n8n-only `None` case above (agent mode is never valid for an
-        # n8n-provider bot, enforced both at load time and by
-        # `agent_mode_supported`/`is_n8n_bot` here).
-        history = [{'role': turn.role, 'content': turn.content} for turn in request.history]
-
-        if len(bot.agent.subagents) > 1:
-            # Rollout plan "Schritt 3 -- LangGraph mit mehreren Subagenten":
-            # Schritt 2's own single-subagent path (below) is only ever used
-            # for a bot configured with EXACTLY one subagent -- more than
-            # one always goes through the LangGraph orchestrator-worker flow
-            # instead, which can itself still choose to research with just
-            # one agent per turn (the planner's own "simple path", see
-            # app/services/agent_graph.py's `_plan`).
-            allowed_teams = _allowed_teams(bot, request.user)
-            available = _available_agents_for_graph(
-                bot, request.user, request.collections, allowed_teams, user_readable=readable_slugs,
-            )
-            resolved_subagents = {
-                subagent.id: _subagent_endpoint_llm(subagent, bot)
-                for subagent in bot.agent.subagents
-                if subagent.id in {agent['agent_id'] for agent in available}
-            }
-            subagents_by_id = {subagent_id: resolved[0] for subagent_id, resolved in resolved_subagents.items()}
-            # See `_DeferredMultiAgentTurn`'s own docstring for why every
-            # subagent gets its OWN provider instance here, always, even one
-            # with no `model` override of its own.
-            subagent_llm_providers = {
-                subagent_id: (
-                    endpoint_llm
-                    or (llm_service.get_llm(subagent.model.provider) if subagent.model is not None else main_llm_factory())
-                )
-                for subagent_id, (subagent, endpoint_llm) in resolved_subagents.items()
-            }
-            deferred_multi_agent = _DeferredMultiAgentTurn(
-                bot=bot, message=request.message, history=history, available=available,
-                subagents_by_id=subagents_by_id, subagent_llm_providers=subagent_llm_providers,
-                main_llm_provider=llm_provider, cancel=threading.Event(), memory=memory,
-            )
-            if defer_n8n:
-                return _PreparedTurn(
-                    bot=bot, llm_provider=llm_provider, decision=decision, timings_ms=timings_ms,
-                    total_start=total_start, sources=[], retrieval_trace=None, guard=None, final_answer=None,
-                    messages=None, deferred_multi_agent=deferred_multi_agent,
-                )
-            return _run_multi_agent_turn_blocking(deferred_multi_agent, decision, timings_ms, total_start)
-
-        subagent, endpoint_llm = _subagent_endpoint_llm(_select_subagent(bot, request.user), bot)
-        agent_scope = _resolve_agent_scope(
-            bot, subagent, request.user, request.collections, user_readable=readable_slugs,
-        )
-        subagent_model = subagent.model
-        subagent_llm_provider = endpoint_llm or (
-            llm_provider
-            if subagent_model is None or subagent_model.provider == bot.model.provider
-            else llm_service.get_llm(subagent_model.provider)
-        )
-        deferred_agent = _DeferredAgentTurn(
-            bot=bot, message=request.message, history=history, subagent=subagent, agent_scope=agent_scope,
-            allowed_teams=_allowed_teams(bot, request.user),
-            llm_provider=llm_provider, subagent_llm_provider=subagent_llm_provider, memory=memory,
-        )
-        if defer_n8n:
-            # See `_DeferredAgentTurn`'s own docstring -- Collections-scope
-            # resolution (`_resolve_agent_scope`, above) already ran
-            # synchronously; only the research loop + final LLM call are
-            # deferred into the stream phase.
-            return _PreparedTurn(
-                bot=bot, llm_provider=llm_provider, decision=decision, timings_ms=timings_ms, total_start=total_start,
-                sources=[], retrieval_trace=None, guard=None, final_answer=None, messages=None,
-                deferred_agent=deferred_agent,
-            )
-        return _run_agent_turn_blocking(deferred_agent, decision, timings_ms, total_start)
-
-    complex_knowledge_fallback = (
-        decision.intent == 'complex' and decision.needs_retrieval and bot.retrieval.enabled
+    context = bot_graph.TurnContext(
+        bot=bot, user=request.user, requested_collections=request.collections, readable_slugs=readable_slugs,
+        llm_provider=llm_provider, main_llm_factory=main_llm_factory, memory=memory, streaming=streaming,
+        cancel=cancel or threading.Event(),
     )
-    if decision.intent in _V1_UNSUPPORTED_INTENTS and not complex_knowledge_fallback:
-        return _PreparedTurn(
-            bot=bot,
-            llm_provider=llm_provider,
-            decision=decision,
-            timings_ms=timings_ms,
-            total_start=total_start,
-            sources=[],
-            retrieval_trace=None,
-            guard=None,
-            final_answer=_V1_UNSUPPORTED_REPLY,
-            messages=None,
-        )
-
-    messages: list[dict[str, str]] = [{'role': 'system', 'content': bot.system_prompt}]
-    messages.extend({'role': turn.role, 'content': turn.content} for turn in request.history)
-
-    retrieval_trace: RetrievalTrace | None = None
-    sources: list[Source] = []
-
-    # ADR-0009: an overview question is answered from the knowledge memory
-    # first; with nothing there it continues as a regular knowledge turn.
-    overview = None
-    if decision.intent == 'overview' and bot.retrieval.enabled:
-        retrieval_start = time.perf_counter()
-        overview = _run_overview_turn(bot, request.user, request.message, messages, request.collections, readable_slugs)
-        timings_ms['memory_ms'] = _elapsed_ms(retrieval_start)
-    if overview is not None:
-        messages, sources, retrieval_trace = overview
-    elif decision.intent == 'overview' and router_service.answered_from_bot_overview(request.message):
-        # Nothing in the memory for a question the bot answers from its
-        # own overview block (already in the system prompt): the same
-        # 'conversational' turn as without the memory, never a chunk search
-        # that ends in the guard -- ADR-0009 §7, "never worse than today".
-        decision = replace(decision, intent='conversational', needs_retrieval=False)
-    # Both conditions required -- see this module's own docstring, step 5,
-    # for why `needs_retrieval` alone is not enough.
-    elif decision.needs_retrieval and bot.retrieval.enabled:
-        retrieval_start = time.perf_counter()
-        result = _run_knowledge_turn(
-            bot, request.user, request.message, messages, request.collections,
-            history=messages[1:], llm_provider=llm_provider, readable=readable_slugs,
-            # An overview turn that found nothing in the memory has already
-            # asked it for this question -- no second orientation call.
-            memory=memory and decision.intent != 'overview',
-        )
-        timings_ms['retrieval_ms'] = _elapsed_ms(retrieval_start)
-        if result.memory_ms is not None:
-            timings_ms['memory_ms'] = result.memory_ms
-
-        retrieval_trace = result.retrieval_trace
-        if result.guard_triggered:
-            # `'filter_excluded_all'` gets its OWN fixed reply
-            # (_FILTER_EXCLUDED_ALL_REPLY), never `bot.guard.no_context_reply`
-            # -- see that constant's own docstring for why the two must stay
-            # visibly distinct to whatever's showing this reply to a human.
-            if result.clarification is not None:
-                guard_reply = result.clarification.question
-            elif result.guard_reason == 'filter_excluded_all':
-                guard_reply = _FILTER_EXCLUDED_ALL_REPLY
-            else:
-                guard_reply = bot.guard.no_context_reply
-            return _PreparedTurn(
-                bot=bot,
-                llm_provider=llm_provider,
-                decision=decision,
-                timings_ms=timings_ms,
-                total_start=total_start,
-                sources=[],
-                retrieval_trace=retrieval_trace,
-                guard=GuardTrace(triggered=True, reason=result.guard_reason),
-                final_answer=guard_reply,
-                messages=None,
-                clarification=result.clarification,
-            )
-        messages = result.messages
-        sources = result.sources
-
-    messages.append({'role': 'user', 'content': request.message})
-
-    return _PreparedTurn(
-        bot=bot,
-        llm_provider=llm_provider,
-        decision=decision,
-        timings_ms=timings_ms,
-        total_start=total_start,
-        sources=sources,
-        retrieval_trace=retrieval_trace,
-        guard=None,
-        final_answer=None,
-        messages=messages,
-    )
+    history = [{'role': turn.role, 'content': turn.content} for turn in request.history]
+    return context, bot_graph.initial_state(request.message, history, total_start)
 
 
 def handle_chat(request: ChatRequest) -> ChatResponse:
     """The one entry point app/api/internal.py's POST /internal/chat calls.
     See this module's own docstring for the full pipeline and every
     exception this raises/propagates (BotNotFoundError, BotPermissionDenied,
-    retrieval_client.RetrievalUnavailable/RetrievalError) for that route to
-    map to a status code -- `_prepare_turn` below performs that entire
-    pipeline up to (never including) the LLM-generation step this function
-    itself still owns, exactly once, as its own single blocking
-    `llm_provider.chat(...)` call.
+    retrieval_client.RetrievalUnavailable/RetrievalError, and for an
+    n8n-provider bot n8n_client.N8nUnavailable/N8nError/delegation.
+    DelegationConfigError) for that route to map to a status code --
+    `_prepare_context` plus one blocking run of app/services/bot_graph.py's
+    compiled turn graph.
     """
-    prepared = _prepare_turn(request)
-    timings_ms = prepared.timings_ms
+    from app.services import bot_graph
 
-    if prepared.final_answer is not None:
-        timings_ms['total_ms'] = _elapsed_ms(prepared.total_start)
-        return ChatResponse(
-            answer=prepared.final_answer,
-            sources=prepared.sources,
-            trace=ChatTrace(
-                intent=prepared.decision.intent,
-                confidence=prepared.decision.confidence,
-                needs_retrieval=prepared.decision.needs_retrieval,
-                needs_tool=prepared.decision.needs_tool,
-                retrieval=prepared.retrieval_trace,
-                clarification=prepared.clarification,
-                model=None,
-                router_mode=settings.router_mode,
-                timings_ms=timings_ms,
-                guard=prepared.guard,
-                n8n=prepared.n8n_trace,
-                agent=prepared.agent_trace,
-            ),
-        )
+    context, state = _prepare_context(request, streaming=False)
+    final = bot_graph.COMPILED.invoke(state, config=bot_graph.run_config(), context=context)
 
-    assert prepared.messages is not None  # see _PreparedTurn's own docstring
-    # An n8n-provider bot's `final_answer` is never None (see _PreparedTurn's
-    # own docstring), so reaching this line already means `llm_provider` is
-    # a real provider, not the n8n-only None case.
-    assert prepared.llm_provider is not None
-    llm_start = time.perf_counter()
-    llm_result = prepared.llm_provider.chat(
-        prepared.messages, model=prepared.bot.model.model, temperature=prepared.bot.model.temperature
-    )
-    timings_ms['llm_ms'] = _elapsed_ms(llm_start)
-    timings_ms['total_ms'] = _elapsed_ms(prepared.total_start)
-
+    final_answer = final.get('final_answer')
     return ChatResponse(
-        answer=llm_result.content,
-        sources=prepared.sources,
-        trace=ChatTrace(
-            intent=prepared.decision.intent,
-            confidence=prepared.decision.confidence,
-            needs_retrieval=prepared.decision.needs_retrieval,
-            needs_tool=prepared.decision.needs_tool,
-            retrieval=prepared.retrieval_trace,
-            clarification=prepared.clarification,
-            model=llm_result.model,
-            router_mode=settings.router_mode,
-            timings_ms=timings_ms,
-            # `guard` stays at its own default (None) here -- reaching this
-            # final return already means the guard did NOT fire (the
-            # triggered case returns its own ChatTrace earlier, with
-            # guard=GuardTrace(triggered=True, ...)), matching GuardTrace's
-            # own docstring: "False/None for every other outcome".
-        ),
+        answer=final_answer if final_answer is not None else final['answer'],
+        sources=final.get('sources') or [],
+        trace=bot_graph._build_trace(final, model=final.get('answer_model')),
     )
 
 
@@ -2685,351 +1666,28 @@ def handle_chat_stream(request: ChatRequest) -> Iterator[ChatStreamEvent | Keepa
     `Keepalive`'s own docstring for the one non-`ChatStreamEvent` marker
     that can also come out of this iterator.
 
-    Deliberately NOT a generator function itself (nothing in this function's
-    own body uses `yield`): `_prepare_turn(request, defer_n8n=True)` -- bot
-    lookup, permissions, intent routing, retrieval, the Collections scope,
-    and the response guard, ALL of it, per this module's own docstring --
-    runs to completion right here, synchronously, before this function
-    returns anything at all. That is what lets app/api/internal.py catch
-    BotNotFoundError/BotPermissionDenied/retrieval_client.
-    RetrievalUnavailable from THIS call, exactly like it does for
-    `handle_chat`, and answer with a normal 401/403/404/503 -- BEFORE any
-    StreamingResponse (and the `200 OK` it commits to on its very first
-    chunk) has been constructed at all. Had this function been written as a
-    generator instead, none of `_prepare_turn`'s own body would run until
-    the route started iterating it -- i.e., after the response had already
-    started streaming as `200 OK`.
-
-    `defer_n8n=True` is the one difference from `handle_chat`'s own
-    `_prepare_turn(request)` call: for a non-conversational n8n-provider
-    bot, the webhook call itself is NOT one of the things that runs
-    synchronously here -- see `_prepare_turn`'s and `_DeferredN8nTurn`'s own
-    docstrings for exactly what still does (Collections-scope resolution,
-    with its own RetrievalUnavailable/RetrievalError surfacing pre-stream
-    exactly as before) versus what `_stream_prepared_turn` now performs
-    itself, from inside the stream phase, via `_stream_deferred_n8n`. This
-    is a deliberate, documented departure from this function's own name:
-    `n8n_client.N8nUnavailable`/`N8nError` can no longer surface as an HTTP
-    status for such a bot's STREAMING turn the way they still do for its
-    blocking one -- see `_stream_deferred_n8n`'s own docstring for why (by
-    the time the webhook call runs, `200 OK`/`text/event-stream` is already
-    committed, exactly like a real LLM provider's mid-stream `LLMError`
-    already could never become one either).
-
-    Only `_stream_prepared_turn` below -- called here, its generator handed
-    back unstarted -- ever actually yields an event; a failure from THAT
-    point on (an LLMError a real provider raises mid-generation, or an
-    n8n-provider bot's deferred webhook call failing) can no longer become
-    an HTTP status the way `_prepare_turn`'s own exceptions can, so it
-    becomes an in-band `ChatStreamErrorEvent` instead, exactly per
-    contracts/internal-chat.md's own documented distinction between "error
+    Deliberately NOT a generator function itself: `_prepare_context` runs
+    right here, and the graph is started on its own thread (app/services/
+    stream_bridge.py) and WAITED on until its `trace` node has emitted the
+    first event -- every step that can still fail with a pre-stream HTTP
+    status (bot lookup, permissions, Collections scope, retrieval, guard)
+    runs before that node, and `wait_for_trace` re-raises any such failure
+    on this thread, so app/api/internal.py can still answer with a normal
+    401/403/404/503 BEFORE any StreamingResponse (and the `200 OK` it
+    commits to) has been constructed. A failure from that point on (a real
+    provider's mid-stream `LLMError`, an n8n flow failing, a subagent
+    research error) becomes an in-band `ChatStreamErrorEvent` instead,
+    exactly per contracts/internal-chat.md's distinction between "error
     before the stream" and "error during the stream".
     """
-    prepared = _prepare_turn(request, defer_n8n=True)
-    return _stream_prepared_turn(prepared)
+    from app.services import bot_graph
+    from app.services.stream_bridge import GraphStreamBridge
 
-
-def _stream_prepared_turn(prepared: _PreparedTurn) -> Iterator[ChatStreamEvent | Keepalive]:
-    """The actual event generator behind `handle_chat_stream`, operating
-    purely on an already-fully-prepared `_PreparedTurn` -- see that
-    function's own docstring for why the two are split apart at all (so
-    `_prepare_turn`'s exceptions surface before this generator's first
-    `next()` rather than after).
-
-    `trace.model` is set to `prepared.bot.model.model` (the model this turn
-    is ABOUT to request) rather than left to whatever the provider's own
-    LLMResult/stream ultimately reports, unlike ChatResponse.trace.model on
-    the non-streaming response -- there is no way to report the latter
-    without delaying the `trace` event past the first `delta`, which
-    contracts/internal-chat.md's ordering guarantee forbids outright. This
-    is `None` instead, exactly like the non-streaming response, whenever
-    `final_answer` is already decided (no LLM call happens at all for this
-    turn) -- which, per `_PreparedTurn`'s own docstring, is ALWAYS the case
-    for an n8n-provider bot, so `trace.model` is always `None` for one here
-    too, same as on the non-streaming response.
-
-    `prepared.n8n_single_delta` (see `_PreparedTurn`'s own docstring) picks
-    between two different ways of turning `final_answer` into `delta`
-    events, documented in full where each is built below: this is the ONE
-    place streaming actually distinguishes an n8n-provider bot's turn from
-    any other, everywhere else in this function n8n's outcome is handled by
-    the exact same `final_answer is not None` branch a guard/V1-unsupported
-    outcome already uses.
-    """
-    trace = ChatTrace(
-        intent=prepared.decision.intent,
-        confidence=prepared.decision.confidence,
-        needs_retrieval=prepared.decision.needs_retrieval,
-        needs_tool=prepared.decision.needs_tool,
-        retrieval=prepared.retrieval_trace,
-        clarification=prepared.clarification,
-        # `deferred_n8n is not None` is the ONE outcome where `final_answer
-        # is not None` is false yet no LLM call is ever going to happen
-        # either (see `_DeferredN8nTurn`'s own docstring) -- `model` must
-        # stay None for it exactly like every other n8n-provider outcome.
-        # `deferred_agent is not None` is the agent-mode analogue: the
-        # research loop (and hence the final-answer LLM call) hasn't run
-        # yet either, for the identical reason.
-        model=(
-            None
-            if (
-                prepared.final_answer is not None
-                or prepared.deferred_n8n is not None
-                or prepared.deferred_agent is not None
-                or prepared.deferred_multi_agent is not None
-            )
-            else prepared.bot.model.model
-        ),
-        router_mode=settings.router_mode,
-        timings_ms=prepared.timings_ms,
-        guard=prepared.guard,
-        n8n=prepared.n8n_trace,
-        agent=prepared.agent_trace,
-    )
-    yield ChatStreamTraceEvent(trace=trace)
-
-    if prepared.deferred_multi_agent is not None:
-        # See `_DeferredMultiAgentTurn`/`_stream_deferred_multi_agent`'s own
-        # docstrings -- the multi-subagent (graph-mode) analogue of the
-        # `deferred_agent` branch immediately below: the LangGraph
-        # orchestrator-worker flow has not run yet at all.
-        yield from _stream_deferred_multi_agent(prepared.deferred_multi_agent)
-        return
-
-    if prepared.deferred_agent is not None:
-        # See `_DeferredAgentTurn`/`_stream_deferred_agent`'s own
-        # docstrings -- the agent-mode analogue of the `deferred_n8n`
-        # branch immediately below: the research loop has not happened yet
-        # at all, `_stream_deferred_agent` performs it and yields this
-        # stream's remaining events (`delta`*, then `sources`+`done` or a
-        # terminal `error`) itself.
-        yield from _stream_deferred_agent(prepared.deferred_agent)
-        return
-
-    if prepared.deferred_n8n is not None:
-        # See `_DeferredN8nTurn`/`_stream_deferred_n8n`'s own docstrings --
-        # this is the ONE outcome that reaches neither the single-delta nor
-        # the chunked-`final_answer` branch immediately below, nor the
-        # LLM-streaming `else` branch at the bottom: the webhook call this
-        # turn needs has not happened yet at all, `_stream_deferred_n8n`
-        # performs it (blocking or n8n's own streaming contract, per
-        # `prepared.deferred_n8n.bot.n8n.streaming`) and yields this
-        # stream's remaining events (`delta`*, then `sources`+`done` or a
-        # terminal `error`) itself.
-        yield from _stream_deferred_n8n(prepared.deferred_n8n)
-        return
-
-    if prepared.n8n_single_delta:
-        # A SUCCESSFUL n8n answer (`_run_n8n_turn`'s own last branch) --
-        # unlike every other `final_answer` outcome, this text did not come
-        # from this pipeline's own fixed copy, it is n8n's finished, already
-        # complete reply: n8n has no streaming contract of its own (see
-        # app/services/n8n_client.py's docstring), so there is no smaller,
-        # meaningful unit to split it into the way `iter_text_deltas` splits
-        # an LLM answer or a fixed guard/placeholder text into word-sized
-        # pieces below. Emitted as exactly ONE delta instead (zero deltas
-        # for an empty answer, matching `iter_text_deltas`' own "empty text
-        # yields nothing" contract) -- a caller sees a stream that
-        # genuinely reflects how the answer arrived, rather than this
-        # pipeline pretending to a granularity n8n never actually provided.
-        deltas: Iterator[str] = iter([prepared.final_answer] if prepared.final_answer else [])
-    elif prepared.final_answer is not None:
-        # A V1-unsupported intent, a triggered guard (retrieval-backed OR
-        # n8n-backed, see _run_n8n_turn), or an n8n bot's own smalltalk
-        # reply: every one of these is this pipeline's OWN fixed copy, never
-        # touching an LLM (or, for the guard/smalltalk cases, n8n) at all
-        # (see _PreparedTurn's own docstring) -- streamed via the exact same
-        # chunker (`llm_service.iter_text_deltas`) an LLM answer's own
-        # deltas below are built from, so a caller sees ordinary `delta`
-        # events either way. The response-guard's sourcing requirement is
-        # not weakened by streaming: `prepared.sources` is already `[]`
-        # here, same as the non-streaming response for this exact outcome.
-        deltas = llm_service.iter_text_deltas(prepared.final_answer)
-    else:
-        assert prepared.messages is not None  # see _PreparedTurn's own docstring
-        # Never an n8n-provider bot here -- see _PreparedTurn's own
-        # docstring (`final_answer` is always set for one).
-        assert prepared.llm_provider is not None
-        deltas = llm_service.iter_chat_stream(
-            prepared.llm_provider,
-            prepared.messages,
-            model=prepared.bot.model.model,
-            temperature=prepared.bot.model.temperature,
-        )
-
-    try:
-        for delta in deltas:
-            yield ChatStreamDeltaEvent(text=delta)
-    except llm_service.LLMError as exc:
-        # Mid-stream failure -- `200 OK`/`text/event-stream` is already
-        # committed to the client by now, so this is the only way left to
-        # signal it; no `sources`/`done` follow. See this module's own
-        # docstring and contracts/internal-chat.md's stream section.
-        yield ChatStreamErrorEvent(detail=str(exc))
-        return
-
-    yield ChatStreamSourcesEvent(sources=prepared.sources)
-    yield ChatStreamDoneEvent()
-
-
-def _stream_deferred_n8n(deferred: _DeferredN8nTurn) -> Iterator[ChatStreamEvent | Keepalive]:
-    """Perform `deferred`'s n8n webhook call from INSIDE the stream phase
-    (`_stream_prepared_turn`'s own caller has already emitted `trace` by
-    the time this runs) and yield this stream's remaining events -- `delta`
-    zero or more times, then either `sources`+`done` or a terminal `error`,
-    exactly the same shape `_stream_prepared_turn`'s other branches produce
-    for the exact same reason `_run_n8n_turn`'s docstring gives for the
-    blocking path: the response guard's "never a silent, unsourced answer
-    for a bot that requires one" promise must hold here too.
-
-    The call itself runs on a background THREAD, feeding a `queue.Queue`
-    this generator drains -- not because Python needs threads for
-    concurrency here, but because there is no other way to let this
-    generator ALSO emit a `Keepalive` marker (see that class's own
-    docstring) every `settings.stream_keepalive_seconds` while nothing has
-    arrived from n8n yet: a plain generator built directly on
-    `n8n_client.run_flow`/`run_flow_stream` can only ever produce its NEXT
-    value by blocking this exact call stack on the next socket read, with
-    no chance to interleave a keepalive in between. `deferred.bot.n8n.
-    streaming` picks which of the two client functions the thread calls --
-    `run_flow` (one blocking call, its whole result pushed as a single
-    delta+sources+done once it returns, exactly like `_run_n8n_turn`'s own
-    `n8n_single_delta` treatment) or `run_flow_stream` (n8n's own real,
-    incremental deltas, see that function's own docstring for the two wire
-    shapes it accepts).
-
-    Buffering mirrors `_run_n8n_turn`'s guard exactly, just spread across
-    time instead of collapsed into one return value: `bot.guard.
-    require_sources` BUFFERS every delta (never forwarding one) until
-    `sources`/`done` arrives, THEN applies `_filter_n8n_sources_by_scope`
-    and the guard -- a triggered guard discards the buffered text entirely
-    and emits `bot.guard.no_context_reply` (chunked, exactly like the
-    blocking path's identical outcome) instead; otherwise the WHOLE
-    buffered answer is emitted as one delta, never the flow's own original
-    chunking, since by the time this stream is allowed to say anything at
-    all about this answer, the guard has already had to see the whole
-    thing anyway. A bot WITHOUT `require_sources` forwards every delta the
-    instant it arrives instead -- a genuinely incremental stream for one
-    with `n8n.streaming=True` -- then still applies
-    `_filter_n8n_sources_by_scope` to whatever `sources` this call reported
-    (or `[]`, if none did -- see `N8nStreamSources`'s own docstring) before
-    emitting the final `sources`+`done`; scope-filtering never depends on
-    having seen every delta first, only on having seen every reported
-    source, so it is never a reason to buffer text this bot's own guard
-    configuration doesn't otherwise require buffering.
-
-    A transport-level failure (`n8n_client.N8nUnavailable`/`N8nError`,
-    `delegation.DelegationConfigError` -- everything `_run_n8n_turn`'s own
-    docstring maps to a status code for the BLOCKING path) or a flow-
-    reported `N8nStreamError` becomes this stream's own terminal
-    `ChatStreamErrorEvent` instead, for the exact same reason a real LLM
-    provider's mid-stream `LLMError` already does in `_stream_prepared_turn`
-    above: `200 OK`/`text/event-stream` is already committed by the time
-    ANY of this runs. Only the exception's own `str()` becomes `detail` --
-    never `deferred`'s own `message`/`history`/`user` -- so nothing beyond
-    what today's already-uncaught N8nError/N8nUnavailable messages
-    themselves carry (see n8n_client.py's own docstrings on both) reaches
-    this response's body either.
-
-    On `GeneratorExit` (the client disconnected, or `_stream_prepared_turn`
-    itself was closed early for any other reason) the background thread's
-    own `cancel` Event is set before this function re-raises -- see
-    `n8n_client.run_flow_stream`'s own docstring for exactly how far that
-    reaches: it stops the thread from forwarding any FURTHER event on its
-    next parsed line, it does not abort a read already blocked waiting for
-    one (there is no lower-level hook for that), and it has no effect at
-    all on a `bot.n8n.streaming=False` turn's single blocking `run_flow`
-    call, which was never interruptible mid-flight even before this
-    function existed.
-    """
-    require_sources = deferred.bot.guard.require_sources
-    result_queue: queue.Queue = queue.Queue()
     cancel = threading.Event()
-
-    def _worker() -> None:
-        try:
-            if deferred.bot.n8n.streaming:
-                for stream_event in n8n_client.run_flow_stream(
-                    deferred.bot, deferred.message, deferred.history, deferred.user, deferred.scope, cancel=cancel
-                ):
-                    result_queue.put(stream_event)
-                    if cancel.is_set():
-                        return
-            else:
-                result = n8n_client.run_flow(deferred.bot, deferred.message, deferred.history, deferred.user, deferred.scope)
-                if result.answer:
-                    result_queue.put(n8n_client.N8nStreamDelta(text=result.answer))
-                result_queue.put(n8n_client.N8nStreamSources(sources=result.sources))
-                result_queue.put(n8n_client.N8nStreamDone())
-        except Exception as exc:  # noqa: BLE001 -- forwarded to the reader thread, never raised on this one
-            result_queue.put(exc)
-
-    thread = threading.Thread(target=_worker, name='n8n-stream-turn', daemon=True)
-    thread.start()
-
-    buffered_text: list[str] = []
-    sources: list[Source] = []
-    error_detail: str | None = None
-
-    try:
-        while True:
-            try:
-                item = result_queue.get(timeout=settings.stream_keepalive_seconds)
-            except queue.Empty:
-                yield KEEPALIVE
-                continue
-
-            if isinstance(item, BaseException):
-                # The exception text names the webhook_url and may quote raw
-                # n8n response fragments (see n8n_client's error classes) --
-                # fine for the server log, never for a browser: unlike the
-                # blocking route, this `detail` travels through Weave-API's
-                # stream passthrough verbatim to the end user.
-                logger.warning('n8n stream turn failed for bot %s: %s', deferred.bot.id, item)
-                if isinstance(item, n8n_client.N8nUnavailable):
-                    error_detail = 'Der n8n-Agentenflow ist derzeit nicht erreichbar oder hat nicht rechtzeitig geantwortet.'
-                elif isinstance(item, n8n_client.N8nError):
-                    error_detail = 'Der n8n-Agentenflow hat eine ungültige Antwort geliefert.'
-                else:
-                    error_detail = 'Der n8n-Agentenflow ist unerwartet fehlgeschlagen.'
-                break
-            if isinstance(item, n8n_client.N8nStreamDelta):
-                if item.text:
-                    if require_sources:
-                        buffered_text.append(item.text)
-                    else:
-                        yield ChatStreamDeltaEvent(text=item.text)
-            elif isinstance(item, n8n_client.N8nStreamSources):
-                sources = item.sources
-            elif isinstance(item, n8n_client.N8nStreamError):
-                # Authored by the flow itself (like its answer text), so it
-                # may be shown -- capped, and never empty.
-                error_detail = (item.detail or '').strip()[:500] or 'Der n8n-Agentenflow hat einen Fehler gemeldet.'
-                break
-            elif isinstance(item, n8n_client.N8nStreamDone):
-                break
-    finally:
-        # See this function's own docstring's last paragraph -- best-effort
-        # only, reached on ordinary completion too (a no-op at that point).
-        cancel.set()
-
-    if error_detail is not None:
-        yield ChatStreamErrorEvent(detail=error_detail)
-        return
-
-    kept_sources, _dropped_count = _filter_n8n_sources_by_scope(sources, deferred.scope, bot_id=deferred.bot.id)
-
-    if require_sources and not kept_sources:
-        for delta in llm_service.iter_text_deltas(deferred.bot.guard.no_context_reply):
-            yield ChatStreamDeltaEvent(text=delta)
-        yield ChatStreamSourcesEvent(sources=[])
-        yield ChatStreamDoneEvent()
-        return
-
-    if require_sources:
-        full_text = ''.join(buffered_text)
-        if full_text:
-            yield ChatStreamDeltaEvent(text=full_text)
-
-    yield ChatStreamSourcesEvent(sources=kept_sources)
-    yield ChatStreamDoneEvent()
+    context, state = _prepare_context(request, streaming=True, cancel=cancel)
+    bridge = GraphStreamBridge(
+        bot_graph.COMPILED, state, context=context, config=bot_graph.run_config(), bot_id=context.bot.id, cancel=cancel,
+    )
+    bridge.start()
+    bridge.wait_for_trace()
+    return bridge.events()

@@ -268,7 +268,7 @@ def _iter_sse(events: Iterator[ChatStreamEvent | chat_service.Keepalive]) -> Ite
     `ChatStreamEvent`, or the literal comment line `': keepalive\\n\\n'` for
     `chat_service.KEEPALIVE` (see that sentinel's own docstring for why it
     is never one of the five JSON event shapes `_sse_event` itself handles,
-    and app/services/chat.py's `_stream_deferred_n8n` for the one caller
+    and app/services/chat.py's `bot_graph._n8n_call` for the one caller
     that ever actually yields it). Compared with `is`, not `==` --
     `Keepalive` carries no data of its own to equal-compare, and `is`
     matches this module's own singleton-sentinel style elsewhere.

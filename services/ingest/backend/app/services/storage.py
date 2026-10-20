@@ -10,7 +10,7 @@ from fastapi import HTTPException, UploadFile, status
 
 from app.core.config import settings
 
-ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.pptx', '.xlsx', '.xls', '.png', '.jpg', '.jpeg', '.eml', '.md', '.xml'}
+ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.pptx', '.xlsx', '.xls', '.png', '.jpg', '.jpeg', '.eml', '.md', '.xml', '.vtt'}
 ALLOWED_MIME_TYPES = {
     'application/pdf',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -25,6 +25,7 @@ ALLOWED_MIME_TYPES = {
     'text/plain',
     'application/xml',
     'text/xml',
+    'text/vtt',
 }
 
 _EXTENSION_TO_MIME_TYPES: dict[str, set[str]] = {
@@ -39,9 +40,11 @@ _EXTENSION_TO_MIME_TYPES: dict[str, set[str]] = {
     '.eml': {'message/rfc822'},
     # Plain-text formats: converted without OCR (see paddle_service's
     # `_text_document_to_markdown`); browsers announce .md as text/markdown
-    # or text/plain, .xml as application/xml or text/xml.
+    # or text/plain, .xml as application/xml or text/xml, .vtt (WebVTT
+    # meeting transcripts from Teams/Zoom/Meet) as text/vtt or text/plain.
     '.md': {'text/markdown', 'text/x-markdown', 'text/plain'},
     '.xml': {'application/xml', 'text/xml'},
+    '.vtt': {'text/vtt', 'text/plain'},
 }
 
 _GENERIC_MIME_TYPES = {'', 'application/octet-stream', 'binary/octet-stream'}

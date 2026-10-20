@@ -58,6 +58,13 @@ class Settings(BaseSettings):
     s3_secret_access_key: str = ''
     s3_key_prefix: str = 'weave-ingest/'
     s3_addressing_style: Literal['auto', 'path', 'virtual'] = 'auto'
+    # Server-side encryption header on every write (PutObject and
+    # CreateMultipartUpload): empty = none (bucket default applies), 'AES256'
+    # or 'aws:kms'. Needed when a bucket policy or SCP checks the header in
+    # the request. S3_KMS_KEY_ID (key ID or ARN) requires 'aws:kms'; empty =
+    # the AWS managed key aws/s3.
+    s3_sse: Literal['', 'AES256', 'aws:kms'] = ''
+    s3_kms_key_id: str = ''
     # Where backup archives are written (app/services/backup.py).
     backup_dir: Path = Path('backend/storage/backups')
     paddle_default_profile: str = 'ppocrv6_tiny'

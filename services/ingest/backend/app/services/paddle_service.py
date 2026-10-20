@@ -11,7 +11,7 @@ import time
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from celery.exceptions import TimeoutError as CeleryTimeoutError
 from fastapi import HTTPException, status
@@ -31,6 +31,9 @@ from app.services.mail_ingest import (
     _walk_tree,
     _extract_envelope,
 )
+
+if TYPE_CHECKING:
+    from app.services.transcript_refine import TranscriptRefinement
 
 logger = logging.getLogger(__name__)
 
@@ -1835,9 +1838,9 @@ def _fallback_convert_with_frontmatter(
 
 
 
-# --- Plain-text documents (.md / .xml): no OCR, no PaddleOCR dependency ---
+# --- Plain-text documents (.md / .xml / .vtt): no OCR, no PaddleOCR dependency ---
 
-_TEXT_DOCUMENT_ENGINES: dict[str, str] = {'.md': 'text-md', '.xml': 'text-xml'}
+_TEXT_DOCUMENT_ENGINES: dict[str, str] = {'.md': 'text-md', '.xml': 'text-xml', '.vtt': 'text-vtt'}
 
 
 def _decode_text_upload(data: bytes) -> str:
@@ -1900,14 +1903,30 @@ def _xml_element_to_markdown(element, depth: int, lines: list[str]) -> None:
         lines.append(f'{indent}- {tail}' if depth >= 2 else tail)
 
 
-def _text_document_to_markdown(source: Path, suffix: str) -> str:
-    """Body markdown for a .md (passed through, own frontmatter stripped) or
-    .xml (parsed with the stdlib parser -- expat's built-in entity-expansion
-    limits apply, external entities are never fetched -- and rendered as a
-    heading/bullet outline) upload."""
+def _text_document_to_markdown(
+    source: Path,
+    suffix: str,
+    original_title: str | None = None,
+    transcript_refinement: 'TranscriptRefinement | None' = None,
+) -> str:
+    """Body markdown for a .md (passed through, own frontmatter stripped),
+    .vtt (WebVTT meeting transcript rendered as speaker turns, boilerplate
+    removed -- see app/services/vtt_transcript.py) or .xml (parsed with
+    the stdlib parser -- expat's built-in entity-expansion limits apply,
+    external entities are never fetched -- and rendered as a heading/bullet
+    outline) upload."""
     text = _decode_text_upload(source.read_bytes())
     if suffix == '.md':
         return _strip_markdown_frontmatter(text).strip() + '\n'
+    if suffix == '.vtt':
+        from app.services.vtt_transcript import vtt_to_markdown
+
+        body = vtt_to_markdown(text, title=original_title)
+        if transcript_refinement is not None:
+            from app.services import transcript_refine
+
+            body = transcript_refine.refine_transcript(body, transcript_refinement)
+        return body
     import xml.etree.ElementTree as ElementTree
 
     root = ElementTree.fromstring(text)
@@ -1970,6 +1989,7 @@ def convert_to_markdown_with_details(
     profile_id: str | None = None,
     metadata: dict[str, object] | None = None,
     vl_override: dict[str, str] | None = None,
+    transcript_refinement: 'TranscriptRefinement | None' = None,
 ) -> tuple[str, dict]:
     source = Path(input_path).resolve()
     if not source.exists():
@@ -2006,12 +2026,19 @@ def convert_to_markdown_with_details(
         except Exception as exc:
             raise RuntimeError(f'Failed to convert .eml file: {exc}') from exc
 
-    # .md / .xml are text already: pass through (md) or render an outline
-    # (xml) and skip OCR entirely, same first-class handling as .eml above.
+    # .md / .xml / .vtt are text already: pass through (md), render an
+    # outline (xml) or a speaker-turn transcript (vtt) and skip OCR
+    # entirely, same first-class handling as .eml above.
     if suffix in _TEXT_DOCUMENT_ENGINES:
         engine = _TEXT_DOCUMENT_ENGINES[suffix]
+        original_filename = str((metadata or {}).get('original_filename') or '')
         try:
-            body = _text_document_to_markdown(source, suffix)
+            body = _text_document_to_markdown(
+                source,
+                suffix,
+                original_title=Path(original_filename).stem if original_filename else None,
+                transcript_refinement=transcript_refinement if suffix == '.vtt' else None,
+            )
         except Exception as exc:
             raise RuntimeError(f'Failed to convert {suffix} file: {exc}') from exc
         frontmatter_metadata = {
@@ -2030,6 +2057,7 @@ def convert_to_markdown_with_details(
             'profile_label': selected_profile['label'],
             'page_count': 1,
             'quality_gate': quality_gate,
+            **({'transcript_instructions_applied': True} if transcript_refinement is not None and suffix == '.vtt' else {}),
             **capability,
         }
 

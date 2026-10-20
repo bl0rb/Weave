@@ -1,12 +1,13 @@
 'use client';
 
 import { useEffect, useState, type FormEvent } from 'react';
-import { Bot, KeyRound, Pencil, Plus, Trash2, Workflow } from 'lucide-react';
+import { Bot, Download, KeyRound, Pencil, Plus, Trash2, Upload, Workflow } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { apiJson } from '@/lib/api';
+import { ApiError, apiFetch, apiJson } from '@/lib/api';
 import type { Team } from '@/lib/auth-types';
 import { BotSharing } from '@/components/bot-sharing';
+import { BotImportDialog } from './bot-import-dialog';
 import { toGrantInputs, type BotGrant } from '@/lib/bots';
 import type { KnowledgeSpace } from '@/lib/portal';
 import {
@@ -110,6 +111,8 @@ type ManagedBot = {
   query_rewrite?: boolean | null;
   uncertainty_hint?: boolean;
   agent?: AgentConfig | null;
+  // Guard fields without a column of their own (clarify_*), only the set ones.
+  config_extras?: Record<string, number | string> | null;
   llm_endpoint?: string | null;
   llm_endpoints?: string[];
   created_at: string;
@@ -239,7 +242,33 @@ export function BotsTab() {
   const spaces = useAdminList<KnowledgeSpace>('/api/v1/collections');
   const [editing, setEditing] = useState<ManagedBot | 'new' | null>(null);
   const [deleting, setDeleting] = useState<ManagedBot | null>(null);
+  const [importing, setImporting] = useState(false);
   const [notice, setNotice] = useState('');
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  /** Downloads the bot as a portable bot document (contracts/bot-document.md); also for Runtime's YAML bots. */
+  async function exportBot(item: ManagedBot) {
+    setExportError(null);
+    try {
+      const response = await apiFetch(`/api/v1/auth/admin/bots/${encodeURIComponent(item.id)}/export?format=yaml`);
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { detail?: unknown } | null;
+        throw new ApiError(response.status, typeof body?.detail === 'string' ? body.detail : t('admin.bots.exportFailed'));
+      }
+      const blob = await response.blob();
+      const fileName = /filename="([^"]+)"/.exec(response.headers.get('content-disposition') ?? '')?.[1] ?? `${item.id}.bot.yaml`;
+      const href = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = href;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(href);
+    } catch (err) {
+      setExportError(errorMessage(err));
+    }
+  }
 
   const loading = bots.loading || teams.loading || spaces.loading;
   const error = bots.error || teams.error || spaces.error;
@@ -250,9 +279,9 @@ export function BotsTab() {
     <SectionCard
       title={t('admin.bots.title')}
       description={t('admin.bots.description')}
-      actions={<Button variant="outline" size="sm" onClick={() => { setEditing('new'); setNotice(''); }}><Plus size={15} />{t('admin.bots.add')}</Button>}
+      actions={<div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => { setImporting(true); setNotice(''); }}><Upload size={15} />{t('admin.bots.import')}</Button><Button variant="outline" size="sm" onClick={() => { setEditing('new'); setNotice(''); }}><Plus size={15} />{t('admin.bots.add')}</Button></div>}
     >
-      <ErrorNotice message={error} />
+      <ErrorNotice message={error || exportError} />
       {notice && <p role="status" className="mb-4 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</p>}
       {loading ? <LoadingState label={t('admin.bots.loading')} /> : bots.items.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-10 text-center">
@@ -269,12 +298,13 @@ export function BotsTab() {
             {item.webhook_url && <p className="mt-2 break-all text-xs text-slate-400">{item.webhook_url}</p>}
             <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-500"><span>{t('admin.bots.teamsLabel', { teams: item.public ? t('admin.bots.teamsAll') : item.grants.filter(grant => grant.role === 'user').map(grant => grant.name).join(', ') || t('admin.bots.teamsNone') })}</span><span>{t('admin.bots.ownersLabel', { owners: item.grants.filter(grant => grant.role === 'owner').map(grant => grant.name).join(', ') || '—' })}</span><span>{t('admin.bots.spacesLabel', { value: item.collections.length ? item.collections.length : t('admin.bots.spacesAllAuthorized') })}</span></div>
           </div>
-          {item.editable !== false && <div className="flex gap-1"><Button variant="ghost" size="sm" onClick={() => setEditing(item)} aria-label={t('admin.bots.editAria', { name: item.name })}><Pencil size={15} />{t('common.edit')}</Button><Button variant="ghost" size="sm" onClick={() => setDeleting(item)} aria-label={t('admin.bots.deleteAria', { name: item.name })}><Trash2 size={15} /></Button></div>}
+          <div className="flex gap-1"><Button variant="ghost" size="sm" onClick={() => void exportBot(item)} aria-label={t('admin.bots.exportAria', { name: item.name })}><Download size={15} />{t('admin.bots.export')}</Button>{item.editable !== false && <><Button variant="ghost" size="sm" onClick={() => setEditing(item)} aria-label={t('admin.bots.editAria', { name: item.name })}><Pencil size={15} />{t('common.edit')}</Button><Button variant="ghost" size="sm" onClick={() => setDeleting(item)} aria-label={t('admin.bots.deleteAria', { name: item.name })}><Trash2 size={15} /></Button></>}</div>
         </li>)}
       </ul>}
     </SectionCard>
 
     {editing && <BotEditor bot={editing === 'new' ? null : editing} teams={teams.items} spaces={spaces.items} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); setNotice(t('admin.bots.saved')); await bots.reload(); }} />}
+    {importing && <BotImportDialog onClose={() => setImporting(false)} onImported={async () => { setNotice(t('admin.bots.imported')); await bots.reload(); }} />}
     {deleting && <ConfirmDialog title={t('admin.bots.delete.title')} body={<p>{deleteBodyBefore}<strong className="text-slate-950">{deleting.name}</strong>{deleteBodyAfter}</p>} confirmLabel={t('admin.bots.delete.title')} onClose={() => setDeleting(null)} onConfirm={async () => { await apiSend(`/api/v1/auth/admin/bots/${encodeURIComponent(deleting.id)}`, { method: 'DELETE' }); setDeleting(null); setNotice(t('admin.bots.deleted')); await bots.reload(); }} />}
   </div>;
 }
