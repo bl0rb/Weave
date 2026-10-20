@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Meeting transcripts (`.vtt`) as knowledge**: WebVTT exports from Teams, Zoom, Webex and
+  Google Meet can be uploaded like `.md`/`.xml` (no OCR, engine `text-vtt`). The converter
+  (`app/services/vtt_transcript.py`) drops NOTE/STYLE/REGION blocks, platform boilerplate
+  ("Recording has started", "X joined the meeting", caption notices) and non-speech
+  annotations (`[Musik]`, `(unverständlich)`), merges consecutive cues of one speaker into a
+  turn (de-duplicating roll-up captions) and renders participants, duration and one
+  `**Speaker** [hh:mm:ss]: …` paragraph per turn. Speakers come from `<v Name>` voice tags or,
+  for Zoom, a recurring `Name:` prefix.
+  - Optional free-text **clean-up instructions** per upload (`transcript_instructions` form field
+    on `POST /collections/{id}/upload`, textarea in the portal upload form when a `.vtt` is
+    selected): "Entferne den Smalltalk am Anfang", "kürze Max Mustermann zu Max", … are applied
+    by the central chat provider (`default` endpoint under Administration › AI endpoints) to the
+    rendered transcript in turn-aligned chunks (`app/services/transcript_refine.py`). The job
+    fails with a clear message when no provider is enabled or the provider returns an empty
+    transcript; the instructions are kept in `processing_info.settings` and survive restarts.
+- **S3 server-side encryption headers** ([betrieb.md §6.1](../../docs/betrieb.md)): optional
+  `S3_SSE` (`AES256` or `aws:kms`) and `S3_KMS_KEY_ID` set `x-amz-server-side-encryption` and
+  `x-amz-server-side-encryption-aws-kms-key-id` on every S3 write (originals, markdown, backup
+  import, `storage migrate`; with multipart uploads on `CreateMultipartUpload`), for bucket
+  policies and SCPs that check the header in the request. Unset, behaviour is unchanged.
+
 ### Changed
 - **Confluence import runs restart automatically** ([betrieb.md](../../docs/betrieb.md)): a run
   whose worker died or whose continuation message was lost is re-sent by a stale-run reaper on

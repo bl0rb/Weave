@@ -408,6 +408,8 @@ def test_upload_allows_missing_email(monkeypatch, tmp_path):
         ('notes.md', 'text/plain', b'# Titel\n'),
         ('data.xml', 'application/xml', b'<a><b>1</b></a>'),
         ('data.xml', 'text/xml', b'<a/>'),
+        ('meeting.vtt', 'text/vtt', b'WEBVTT\n\n00:00:00.000 --> 00:00:01.000\n<v A>Hi</v>\n'),
+        ('meeting.vtt', 'text/plain', b'WEBVTT\n'),
     ],
 )
 def test_md_and_xml_uploads_are_accepted(monkeypatch, tmp_path, filename, content_type, content):
@@ -427,6 +429,47 @@ def test_md_and_xml_uploads_are_accepted(monkeypatch, tmp_path, filename, conten
     assert job.upload_path.endswith(Path(filename).suffix)
     assert stored_bytes(job.upload_object_id) == content
     db.close()
+
+
+def test_collection_upload_stores_transcript_instructions(monkeypatch, tmp_path):
+    from app.api import routes
+    from app.core.config import settings
+
+    settings.worker_tmp_dir = tmp_path / 'work'
+    monkeypatch.setattr(routes.process_job, 'delay', lambda *args, **kwargs: None)
+    collection_id = client.post('/api/v1/collections', json={'description': 'Meetings'}).json()['collection_id']
+    vtt = b'WEBVTT\n\n00:00:00.000 --> 00:00:01.000\n<v A>Hi</v>\n'
+
+    response = client.post(
+        f'/api/v1/collections/{collection_id}/upload',
+        files={'file': ('jour-fixe.vtt', vtt, 'text/vtt')},
+        data={'transcript_instructions': '  Entferne den Smalltalk.  '},
+    )
+    assert response.status_code == 200, response.text
+    db = TestingSessionLocal()
+    job = db.get(Job, response.json()['job_id'])
+    assert job.processing_info['settings']['transcript_instructions'] == 'Entferne den Smalltalk.'
+    db.close()
+
+    # Empty/whitespace instructions leave no trace in the settings.
+    response = client.post(
+        f'/api/v1/collections/{collection_id}/upload',
+        files={'file': ('standup.vtt', vtt + b'x', 'text/vtt')},
+        data={'transcript_instructions': '   '},
+    )
+    assert response.status_code == 200, response.text
+    db = TestingSessionLocal()
+    job = db.get(Job, response.json()['job_id'])
+    assert 'transcript_instructions' not in job.processing_info['settings']
+    db.close()
+
+    response = client.post(
+        f'/api/v1/collections/{collection_id}/upload',
+        files={'file': ('retro.vtt', vtt + b'y', 'text/vtt')},
+        data={'transcript_instructions': 'x' * 4001},
+    )
+    assert response.status_code == 422
+    assert 'höchstens 4000 Zeichen' in response.json()['detail']
 
 
 def test_xml_upload_with_contradicting_mime_type_is_rejected(monkeypatch, tmp_path):

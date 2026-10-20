@@ -588,6 +588,21 @@ services:
         value: auto
         type: string
         required: false
+      S3_SSE:
+        secret: false
+        value: ""
+        type: string
+        required: false
+        comment: >
+          Server-side encryption header on every write: empty (none, the
+          bucket default applies), AES256 or aws:kms. Needed when a bucket
+          policy or SCP checks the header in the request.
+      S3_KMS_KEY_ID:
+        secret: false
+        value: ""
+        type: string
+        required: false
+        comment: "KMS key ID or ARN for S3_SSE=aws:kms; empty = the AWS managed key aws/s3."
       SECRET_KEY:
         secret: true
         env_var: WEAVE_INGEST_SECRET_KEY

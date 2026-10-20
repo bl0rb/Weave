@@ -314,8 +314,17 @@ def _managed_bot(raw: dict) -> BotConfig:
                 # Optional until Ingest's ManagedBot grows the column; absent = None = runtime default.
                 'min_score': raw.get('min_score'),
                 'clarify_below': raw.get('clarify_below'),
-                # Absent (older Ingest) = runtime default margin.
-                **({'clarify_ambiguous_margin': raw['clarify_ambiguous_margin']} if 'clarify_ambiguous_margin' in raw else {}),
+                # Absent (older Ingest) = runtime default. Ingest keeps these
+                # four in `ManagedBot.config_extras` and only projects the
+                # ones an admin (or an imported bot document) actually set.
+                **{
+                    key: raw[key]
+                    for key in (
+                        'clarify_max_options', 'clarify_question',
+                        'clarify_ambiguous_margin', 'clarify_ambiguous_question',
+                    )
+                    if raw.get(key) is not None
+                },
                 'uncertainty_hint': bool(raw.get('uncertainty_hint', True)),
                 'weak_context_below': raw.get('weak_context_below'),
                 'no_context_reply': raw.get('no_context_reply') or 'Ich habe dazu keine belegten Informationen gefunden.',

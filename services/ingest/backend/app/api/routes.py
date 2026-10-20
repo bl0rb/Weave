@@ -4,7 +4,6 @@ import uuid
 from datetime import date, datetime, time, timezone
 import io
 from pathlib import Path
-from urllib.parse import quote
 import zipfile
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
@@ -14,6 +13,7 @@ from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.orm import Session, aliased, defer, selectinload
 
 from app.api.deps import get_current_user, require_admin, require_knowledge_registry_reader
+from app.api.http_utils import _content_disposition  # noqa: F401 -- re-exported for app.api.portal
 from app.api.managed_bots import _runtime_bots
 from app.core.config import settings
 from app.database.session import get_db
@@ -103,7 +103,7 @@ from app.services.paddle_service import (
 )
 from app.services.markdown_edit import record_markdown_version
 from app.services.security import DUMMY_PASSWORD_HASH, enforce_rate_limit, hash_password, verify_password
-from app.services import object_store
+from app.services import object_store, transcript_refine
 from app.services.storage import inspect_upload
 from app.workers import publication_tasks
 from app.workers.celery_app import celery_app
@@ -649,13 +649,6 @@ def _reject_benchmark_child_job(job: Job) -> None:
             status_code=status.HTTP_409_CONFLICT,
             detail='This job is part of a benchmark run; manage it via the benchmark.',
         )
-
-
-def _content_disposition(disposition: str, filename: str) -> str:
-    """RFC 6266/5987 Content-Disposition: ASCII-safe quoted fallback plus a
-    UTF-8 filename* parameter for everything else."""
-    fallback = ''.join(ch if 32 <= ord(ch) < 127 and ch not in '"\\' else '_' for ch in filename) or 'download'
-    return f'{disposition}; filename="{fallback}"; filename*=UTF-8\'\'{quote(filename, safe="")}'
 
 
 def _base_processing_info(
@@ -1461,11 +1454,20 @@ def upload_document_to_collection(
     folder: str = Form(''),
     subfolder: str = Form(''),
     tags: str = Form(''),
+    # Free-text clean-up instructions for a .vtt meeting transcript, applied
+    # by the central chat provider after conversion (app/services/
+    # transcript_refine.py). Stored in processing_info.settings so a restart
+    # applies them again; ignored for every other file type.
+    transcript_instructions: str = Form(''),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> UploadResponse:
     # Intentionally skip per-file rate limiting here so large collection
     # uploads (100+ files) are not blocked mid-batch.
+    try:
+        instructions = transcript_refine.normalize_instructions(transcript_instructions)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     collection = db.get(Collection, collection_id)
     if collection is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
@@ -1498,6 +1500,7 @@ def upload_document_to_collection(
                 'collection_id': collection_id,
                 'collection_slug': collection.slug,
                 'collection_name': collection.name,
+                **({'transcript_instructions': instructions} if instructions else {}),
             },
             password_hash=collection.password_hash,
         )

@@ -37,6 +37,8 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
     catch { return 'files'; }
   });
   const [files, setFiles] = useState<File[]>([]);
+  const [transcriptInstructions, setTranscriptInstructions] = useState('');
+  const hasTranscripts = files.some(file => file.name.toLowerCase().endsWith('.vtt'));
   const [sourceId, setSourceId] = useState(() => {
     if (initialSourceId) return initialSourceId;
     if (typeof window === 'undefined') return '';
@@ -151,6 +153,7 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
           let jobId: string | undefined;
           try {
             const body = new FormData(); body.append('file', file);
+            if (file.name.toLowerCase().endsWith('.vtt') && transcriptInstructions.trim()) body.append('transcript_instructions', transcriptInstructions.trim());
             const upload = await apiJson<{ job_id: string }>(`/api/v1/collections/${encodeURIComponent(collectionId)}/upload`, { method: 'POST', body });
             jobId = upload.job_id;
             // Start only the newly uploaded document, never reprocess the
@@ -185,7 +188,8 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
         {selected && <p className="portal-field-hint">{t('portal.spaces.authorizedLabel')} {accessSummary(selected, locale)}.</p>}
       </fieldset>
       <fieldset disabled={saving || Boolean(run)}><legend><span className="portal-step">02</span> {t('portal.sourceForm.step2Legend')}</legend><div className="portal-source-types"><label className={kind === 'files' ? 'selected' : ''}><input type="radio" name="kind" value="files" checked={kind === 'files'} onChange={() => setKind('files')} /><FileUp size={23} /><span><strong>{t('portal.sourceForm.filesOption')}</strong><small>{t('portal.sourceForm.filesHint')}</small></span></label><label className={kind === 'confluence' ? 'selected' : ''}><input type="radio" name="kind" value="confluence" checked={kind === 'confluence'} onChange={() => setKind('confluence')} /><Globe size={23} /><span><strong>{t('portal.sourceForm.confluenceOption')}</strong><small>{t('portal.sourceForm.confluenceHint')}</small></span></label></div>
-        {kind === 'files' ? <label className="portal-upload">{t('portal.sourceForm.chooseFiles')}<RequiredMark /><input type="file" multiple required accept=".pdf,.docx,.pptx,.xlsx,.xls,.png,.jpg,.jpeg,.eml,.md,.xml" onChange={event => setFiles(Array.from(event.target.files || []))} /><span>{files.length ? t('portal.sourceForm.filesSelectedCount', { count: files.length }) : t('portal.sourceForm.filesPlaceholder')}</span><span>{t('portal.sourceForm.emailAttachmentsHint')}</span></label> : <div className="portal-form">
+        {kind === 'files' ? <><label className="portal-upload">{t('portal.sourceForm.chooseFiles')}<RequiredMark /><input type="file" multiple required accept=".pdf,.docx,.pptx,.xlsx,.xls,.png,.jpg,.jpeg,.eml,.md,.xml,.vtt" onChange={event => setFiles(Array.from(event.target.files || []))} /><span>{files.length ? t('portal.sourceForm.filesSelectedCount', { count: files.length }) : t('portal.sourceForm.filesPlaceholder')}</span><span>{t('portal.sourceForm.emailAttachmentsHint')}</span></label>
+          {hasTranscripts && <div className="portal-form"><label>{t('portal.sourceForm.transcriptInstructionsLabel')}<textarea rows={4} maxLength={4000} value={transcriptInstructions} placeholder={t('portal.sourceForm.transcriptInstructionsPlaceholder')} onChange={event => setTranscriptInstructions(event.target.value)} /></label><p className="portal-field-hint">{t('portal.sourceForm.transcriptInstructionsHint')}</p></div>}</> : <div className="portal-form">
           {sourceError && <Notice error action={loadSources}>{sourceError}</Notice>}
           {sourcesLoaded && !sources.length && <p className="portal-field-hint">{t('portal.sourceForm.noConnectionHint')}</p>}
           <label>{t('portal.sourceForm.connectionLabel')}<RequiredMark /><select required value={sourceId} onChange={event => { setSourceId(event.target.value); setAutomatic(false); setTestMessage(''); }}><option value="">{t('portal.sourceForm.chooseConnection')}</option>{sources.map(source => <option key={source.id} value={source.id}>{source.name}</option>)}</select></label>

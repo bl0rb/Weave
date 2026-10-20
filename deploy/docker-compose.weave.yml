@@ -301,6 +301,8 @@ services:
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
       S3_KEY_PREFIX: ${S3_KEY_PREFIX:-weave-ingest/}
       S3_ADDRESSING_STYLE: ${S3_ADDRESSING_STYLE:-auto}
+      S3_SSE: ${S3_SSE:-}
+      S3_KMS_KEY_ID: ${S3_KMS_KEY_ID:-}
       PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
       CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:3000"]}
       # --- Identity provider for the rest of the platform (OPTIONAL).
@@ -409,6 +411,8 @@ services:
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
       S3_KEY_PREFIX: ${S3_KEY_PREFIX:-weave-ingest/}
       S3_ADDRESSING_STYLE: ${S3_ADDRESSING_STYLE:-auto}
+      S3_SSE: ${S3_SSE:-}
+      S3_KMS_KEY_ID: ${S3_KMS_KEY_ID:-}
       # Container reads CELERY_WORKER_CONCURRENCY (worker.Dockerfile's CMD
       # default); the deploy/.env override is named INGEST_WORKER_CONCURRENCY
       # instead so it cannot collide with weave-knowledge-worker's own
