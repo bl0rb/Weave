@@ -407,9 +407,75 @@ Bearbeitungsstände, Freigabe-Snapshots) gehen:
 | `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | Leer = Standard-Credential-Kette (IAM-Rolle, IRSA). Das Secret kommt über `WEAVE_INGEST_S3_SECRET_ACCESS_KEY`. |
 | `S3_KEY_PREFIX` | Standard `weave-ingest/`. Jede Instanz braucht ihr eigenes Präfix: `storage sweep` hält fremde Schlüssel unter dem Präfix für verwaist. Schlüssel sind zufällig und nie aus der Objekt-ID abgeleitet, eine Wiederherstellung teilt also keine Schlüssel mit der Quelle. |
 | `S3_ADDRESSING_STYLE` | `auto`, `path` (meist für MinIO) oder `virtual`. |
+| `S3_SSE` | Leer (Standard) = kein Verschlüsselungs-Header, es gilt die Default-Verschlüsselung des Buckets. `aws:kms` oder `AES256` setzt `x-amz-server-side-encryption` auf jedem Schreibzugriff (Originale, Markdown, Wiederherstellung, `storage migrate`). Nötig, wenn Bucket-Policy oder SCP den Header im Request prüfen. |
+| `S3_KMS_KEY_ID` | Nur mit `S3_SSE=aws:kms`: KMS-Schlüssel für `x-amz-server-side-encryption-aws-kms-key-id`. Leer = der AWS-verwaltete Schlüssel `aws/s3`. Prüft eine Policy die Key-ID, den Wert genau so eintragen wie in der Policy (in der Regel die vollständige ARN). |
 
 Benötigte Rechte: `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` und
-`s3:ListBucket` (nur für `storage sweep`) auf dem Präfix.
+`s3:ListBucket` (nur für `storage sweep`) auf dem Präfix. Mit
+`S3_SSE=aws:kms` zusätzlich `kms:GenerateDataKey` (Schreiben) und
+`kms:Decrypt` (Lesen und mehrteilige Uploads) auf dem Schlüssel.
+
+Den Header setzt die Anfrage, die ein Objekt anlegt: `PutObject` bzw. bei
+Objekten über der Part-Größe (8 MiB)
+`CreateMultipartUpload`. Die einzelnen Parts erben die Verschlüsselung.
+
+#### Verschlüsselungszwang nachbauen (AWS)
+
+So lässt sich eine Bucket-Policy, die jeden Upload ohne SSE-KMS-Header und
+passende Key-ID ablehnt, selbst prüfen. Eine SCP mit denselben
+Condition-Keys verhält sich gleich.
+
+```bash
+REGION=eu-central-1
+BUCKET=weave-sse-test-$RANDOM
+KEY_ARN=$(aws kms create-key --region $REGION --query KeyMetadata.Arn --output text)
+aws s3api create-bucket --bucket $BUCKET --region $REGION \
+    --create-bucket-configuration LocationConstraint=$REGION
+
+cat > policy.json <<JSON
+{"Version": "2012-10-17", "Statement": [
+  {"Sid": "DenyWithoutKms", "Effect": "Deny", "Principal": "*",
+   "Action": "s3:PutObject", "Resource": "arn:aws:s3:::$BUCKET/*",
+   "Condition": {"StringNotEquals": {"s3:x-amz-server-side-encryption": "aws:kms"}}},
+  {"Sid": "DenyOtherKey", "Effect": "Deny", "Principal": "*",
+   "Action": "s3:PutObject", "Resource": "arn:aws:s3:::$BUCKET/*",
+   "Condition": {"StringNotEquals": {"s3:x-amz-server-side-encryption-aws-kms-key-id": "$KEY_ARN"}}}
+]}
+JSON
+aws s3api put-bucket-policy --bucket $BUCKET --policy file://policy.json
+
+# Gegenprobe: ohne Header AccessDenied, mit Header erfolgreich.
+echo probe > probe.txt
+aws s3api put-object --bucket $BUCKET --key probe --body probe.txt
+aws s3api put-object --bucket $BUCKET --key probe --body probe.txt \
+    --server-side-encryption aws:kms --ssekms-key-id $KEY_ARN
+```
+
+Dann Weave gegen den Bucket prüfen (`OBJECT_STORAGE_BACKEND=s3`,
+`S3_BUCKET=$BUCKET`, `S3_REGION=$REGION`, Rolle mit den Rechten oben):
+
+1. Ohne `S3_SSE`: ein Dokument hochladen. Der Upload scheitert mit
+   `AccessDenied` im Log von Backend bzw. Worker (Verhalten wie 0.7.11).
+2. `S3_SSE=aws:kms` und `S3_KMS_KEY_ID=$KEY_ARN` setzen, Backend und Worker
+   neu starten.
+3. Ein kleines Dokument **und** eine Datei über 8 MiB hochladen (die zweite
+   geht als Multipart-Upload) und bis „fertig“ verarbeiten lassen; damit ist
+   auch das Markdown geschrieben.
+4. Optional `storage migrate --to s3` aus einem `db`-Bestand und eine
+   Wiederherstellung — beide schreiben über denselben Weg.
+5. Kontrolle: jedes Objekt trägt den Schlüssel.
+
+```bash
+for key in $(aws s3api list-objects-v2 --bucket $BUCKET --prefix weave-ingest/objects/ \
+        --query 'Contents[].Key' --output text); do
+    aws s3api head-object --bucket $BUCKET --key $key \
+        --query '[ServerSideEncryption, SSEKMSKeyId]' --output text
+done
+```
+
+Aufräumen: Bucket leeren und löschen, KMS-Schlüssel mit
+`aws kms schedule-key-deletion --key-id $KEY_ARN --pending-window-in-days 7`
+zur Löschung vormerken.
 
 Jedes Objekt merkt sich sein Backend. Nach einer Umstellung bleiben alte
 Daten lesbar; ein gemischter Bestand ist ein gültiger Zustand. Umziehen
@@ -1014,6 +1080,29 @@ Das ist gewollt (nie eine halb alte, halb neue Definition), heißt aber:
 `/v1/bots` und jeder Chat-Turn hängen an der Erreichbarkeit von Ingest. Sind
 beide Werte leer, läuft Runtime eigenständig nur mit den YAML-Bots.
 
+### 9.1 Bots exportieren und importieren
+
+Jeder Bot — verwaltet oder YAML-Konfigurationsbot — lässt sich in der
+Administration → Bots über „Exportieren“ als Bot-Dokument herunterladen
+(`<id>.bot.yaml`, Format siehe `contracts/bot-document.md`; per API
+`GET /api/v1/auth/admin/bots/{id}/export?format=yaml|json`). Zwei Dinge
+stehen nie in der Datei: das n8n-Bearer-Token (ersetzt durch den Platzhalter
+`${WEAVE_SECRET}`) und die Freigaben an Personen und Teams. Die Datei eignet
+sich damit für Versionierung, Übertragung zwischen Umgebungen und Backups —
+nicht als Ersatz für `BOTS_DIR`: eine unveränderte Exportdatei dort lehnt
+Runtime beim Laden ab und nennt den Platzhalter.
+
+„Importieren“ prüft die Datei zuerst (Dry-Run) und zeigt Vorhaben
+(neu anlegen, überschreiben, blockiert), Hinweise (fehlendes Secret,
+nicht übernommene Felder, zurückgesetzte Freigaben) und Fehler (unbekannte
+Wissensbereiche oder LLM-Endpoints, Schemafehler, fremde `schema_version`).
+Erst der zweite Schritt speichert. Ein vorhandener Bot gleicher ID wird nur mit
+„Bestehenden Bot überschreiben“ ersetzt; dabei bleibt sein gespeichertes
+Bearer-Token erhalten, solange die Webhook-URL gleich bleibt. Nach dem Import
+sind Freigaben und — bei einem neuen n8n-Bot — das Token im Bot-Editor zu
+ergänzen; bis dahin können den Bot nur Besitzer und Administratoren nutzen
+(sofern er nicht `permissions.public: true` mitbringt).
+
 ---
 
 ## 10. Selbsttest
@@ -1080,29 +1169,6 @@ Die Datei kennt zwei Blöcke:
   Provider-Defaults, OIDC, …).
 
 Geheimnisse stehen **nie im Klartext** in `weave.yaml`: ein Eintrag mit
-### 9.1 Bots exportieren und importieren
-
-Jeder Bot — verwaltet oder YAML-Konfigurationsbot — lässt sich in der
-Administration → Bots über „Exportieren“ als Bot-Dokument herunterladen
-(`<id>.bot.yaml`, Format siehe `contracts/bot-document.md`; per API
-`GET /api/v1/auth/admin/bots/{id}/export?format=yaml|json`). Zwei Dinge
-stehen nie in der Datei: das n8n-Bearer-Token (ersetzt durch den Platzhalter
-`${WEAVE_SECRET}`) und die Freigaben an Personen und Teams. Die Datei eignet
-sich damit für Versionierung, Übertragung zwischen Umgebungen und Backups —
-nicht als Ersatz für `BOTS_DIR`: eine unveränderte Exportdatei dort lehnt
-Runtime beim Laden ab und nennt den Platzhalter.
-
-„Importieren“ prüft die Datei zuerst (Dry-Run) und zeigt Vorhaben
-(neu anlegen, überschreiben, blockiert), Hinweise (fehlendes Secret,
-nicht übernommene Felder, zurückgesetzte Freigaben) und Fehler (unbekannte
-Wissensbereiche oder LLM-Endpoints, Schemafehler, fremde `schema_version`).
-Erst der zweite Schritt speichert. Ein vorhandener Bot gleicher ID wird nur mit
-„Bestehenden Bot überschreiben“ ersetzt; dabei bleibt sein gespeichertes
-Bearer-Token erhalten, solange die Webhook-URL gleich bleibt. Nach dem Import
-sind Freigaben und — bei einem neuen n8n-Bot — das Token im Bot-Editor zu
-ergänzen; bis dahin können den Bot nur Besitzer und Administratoren nutzen
-(sofern er nicht `permissions.public: true` mitbringt).
-
 `secret: true` trägt nur den Namen einer Umgebungsvariable (`env_var:`), aus
 der `render`/`check` den tatsächlichen Wert zur Laufzeit lesen. Die Datei
 selbst darf bedenkenlos committet werden.

@@ -154,7 +154,16 @@ def _transfer_config():
 
 
 def _extra_args(content_type: str | None) -> dict:
-    return {'ContentType': content_type} if content_type else {}
+    """Arguments of every write (put_object, and upload_fileobj, which sends
+    them with PutObject or CreateMultipartUpload)."""
+    args = {'ContentType': content_type} if content_type else {}
+    if settings.s3_kms_key_id and settings.s3_sse != 'aws:kms':
+        raise ObjectStorageConfigError('S3_KMS_KEY_ID needs S3_SSE=aws:kms')
+    if settings.s3_sse:
+        args['ServerSideEncryption'] = settings.s3_sse
+    if settings.s3_kms_key_id:
+        args['SSEKMSKeyId'] = settings.s3_kms_key_id
+    return args
 
 
 def s3_upload_file(fileobj: BinaryIO, key: str, content_type: str | None) -> None:

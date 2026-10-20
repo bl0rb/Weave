@@ -253,8 +253,10 @@ DEVIATIONS: dict[str, dict[str, Deviation]] = {
             "S3_BUCKET",
             "S3_ENDPOINT_URL",
             "S3_KEY_PREFIX",
+            "S3_KMS_KEY_ID",
             "S3_REGION",
             "S3_SECRET_ACCESS_KEY",
+            "S3_SSE",
             "WEBHOOK_PRIVATE_HOST_ALLOWLIST",
             "SYSTEM_STATUS_TARGETS",
             # Aus dem chat-Block: die liest die Chat-Oberflaeche selbst.
