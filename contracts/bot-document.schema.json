@@ -1,0 +1,598 @@
+{
+  "$defs": {
+    "AgentConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "limits": {
+          "$ref": "#/$defs/AgentLimits"
+        },
+        "subagents": {
+          "items": {
+            "$ref": "#/$defs/SubagentConfig"
+          },
+          "title": "Subagents",
+          "type": "array"
+        }
+      },
+      "title": "AgentConfig",
+      "type": "object"
+    },
+    "AgentLimits": {
+      "additionalProperties": false,
+      "properties": {
+        "budget_searches": {
+          "default": 9,
+          "title": "Budget Searches",
+          "type": "integer"
+        },
+        "max_followups": {
+          "default": 1,
+          "title": "Max Followups",
+          "type": "integer"
+        },
+        "max_parallel": {
+          "default": 3,
+          "title": "Max Parallel",
+          "type": "integer"
+        },
+        "timeout_seconds": {
+          "default": 120,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        }
+      },
+      "title": "AgentLimits",
+      "type": "object"
+    },
+    "GuardConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "clarify_ambiguous_margin": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 0.05,
+          "title": "Clarify Ambiguous Margin"
+        },
+        "clarify_ambiguous_question": {
+          "default": "Deine Frage passt zu mehreren Dokumenten: {documents}. Welches meinst du?",
+          "title": "Clarify Ambiguous Question",
+          "type": "string"
+        },
+        "clarify_below": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Clarify Below"
+        },
+        "clarify_max_options": {
+          "default": 3,
+          "maximum": 5,
+          "minimum": 1,
+          "title": "Clarify Max Options",
+          "type": "integer"
+        },
+        "clarify_question": {
+          "default": "Ich bin mir nicht sicher, worauf sich deine Frage bezieht. Meinst du eines dieser Dokumente?",
+          "title": "Clarify Question",
+          "type": "string"
+        },
+        "min_score": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Score"
+        },
+        "no_context_reply": {
+          "default": "Ich habe dazu keine belegten Informationen gefunden.",
+          "title": "No Context Reply",
+          "type": "string"
+        },
+        "require_sources": {
+          "default": true,
+          "title": "Require Sources",
+          "type": "boolean"
+        },
+        "uncertainty_hint": {
+          "default": true,
+          "title": "Uncertainty Hint",
+          "type": "boolean"
+        },
+        "weak_context_below": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Weak Context Below"
+        }
+      },
+      "title": "GuardConfig",
+      "type": "object"
+    },
+    "ModelConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Endpoint"
+        },
+        "endpoints": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Endpoints",
+          "type": "array"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "provider": {
+          "default": "fake",
+          "title": "Provider",
+          "type": "string"
+        },
+        "supports_tools": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Supports Tools"
+        },
+        "temperature": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Temperature"
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "title": "ModelConfig",
+      "type": "object"
+    },
+    "N8nConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "auth_token": {
+          "anyOf": [
+            {
+              "format": "password",
+              "type": "string",
+              "writeOnly": true
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Auth Token"
+        },
+        "streaming": {
+          "default": false,
+          "title": "Streaming",
+          "type": "boolean"
+        },
+        "timeout_seconds": {
+          "default": 120,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        },
+        "webhook_url": {
+          "title": "Webhook Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "webhook_url"
+      ],
+      "title": "N8nConfig",
+      "type": "object"
+    },
+    "PermissionsConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "public": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Public"
+        },
+        "teams": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Teams",
+          "type": "array"
+        },
+        "users": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Users",
+          "type": "array"
+        }
+      },
+      "title": "PermissionsConfig",
+      "type": "object"
+    },
+    "RetrievalConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "collections": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Collections",
+          "type": "array"
+        },
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "filters": {
+          "$ref": "#/$defs/RetrievalFilters"
+        },
+        "final_k": {
+          "default": 5,
+          "title": "Final K",
+          "type": "integer"
+        },
+        "include_uncollected": {
+          "default": true,
+          "title": "Include Uncollected",
+          "type": "boolean"
+        },
+        "query_rewrite": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Query Rewrite"
+        },
+        "rerank": {
+          "default": true,
+          "title": "Rerank",
+          "type": "boolean"
+        },
+        "top_k": {
+          "default": 20,
+          "title": "Top K",
+          "type": "integer"
+        }
+      },
+      "title": "RetrievalConfig",
+      "type": "object"
+    },
+    "RetrievalFilters": {
+      "additionalProperties": false,
+      "properties": {
+        "department": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Department"
+        },
+        "document_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Document Type"
+        },
+        "language": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Language"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "tags": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tags"
+        },
+        "team": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Team"
+        }
+      },
+      "title": "RetrievalFilters",
+      "type": "object"
+    },
+    "SubagentConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "collections": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Collections",
+          "type": "array"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Endpoint"
+        },
+        "filters": {
+          "$ref": "#/$defs/RetrievalFilters"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "include_uncollected": {
+          "default": false,
+          "title": "Include Uncollected",
+          "type": "boolean"
+        },
+        "limits": {
+          "$ref": "#/$defs/SubagentLimits"
+        },
+        "mission": {
+          "title": "Mission",
+          "type": "string"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "tools": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tools",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "mission"
+      ],
+      "title": "SubagentConfig",
+      "type": "object"
+    },
+    "SubagentLimits": {
+      "additionalProperties": false,
+      "properties": {
+        "max_results": {
+          "default": 5,
+          "title": "Max Results",
+          "type": "integer"
+        },
+        "max_searches": {
+          "default": 3,
+          "title": "Max Searches",
+          "type": "integer"
+        },
+        "timeout_seconds": {
+          "default": 60,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        }
+      },
+      "title": "SubagentLimits",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "agent": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AgentConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "guard": {
+      "$ref": "#/$defs/GuardConfig"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "model": {
+      "$ref": "#/$defs/ModelConfig"
+    },
+    "n8n": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/N8nConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "permissions": {
+      "$ref": "#/$defs/PermissionsConfig"
+    },
+    "retrieval": {
+      "$ref": "#/$defs/RetrievalConfig"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "system_prompt": {
+      "title": "System Prompt",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "model",
+    "system_prompt"
+  ],
+  "title": "BotConfig",
+  "type": "object"
+}

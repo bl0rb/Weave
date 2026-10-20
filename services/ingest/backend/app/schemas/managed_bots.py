@@ -8,157 +8,40 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models.models import BotRole
+from app.schemas.bot_document import (  # noqa: F401 -- AgentLimits is re-exported for the admin API's wording
+    AgentConfig,
+    AgentLimits,
+    ModelConfig,
+    RetrievalFilters,
+    SubagentConfig,
+    SubagentLimits,
+)
 
 
 _BOT_ID_RE = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
 _UNSAFE_URL_CHARS = re.compile(r'[\\\x00-\x1f\x7f]')
-_SLUG_RE = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
 
 
-class AgentSubagentFilters(BaseModel):
-    """Mirrors Weave-Runtime's `RetrievalFilters` (app/schemas/bot.py) --
-    field names and defaults kept identical on purpose so a saved payload
-    here is byte-for-byte what Runtime's own `AgentConfig` will accept when
-    it next loads this bot."""
-
-    model_config = ConfigDict(extra='forbid')
-
-    team: str | None = None
-    department: str | None = None
-    tags: list[str] | None = None
-    source: str | None = None
-    language: str | None = None
-    document_type: str | None = None
+# The agent-mode shape (Runtime's `BotConfig.agent`) is validated with the
+# portable bot document's mirror classes (app/schemas/bot_document.py);
+# the `Agent*` names stay as aliases for the admin API's own wording.
+AgentSubagentFilters = RetrievalFilters
+AgentSubagentModel = ModelConfig
+AgentSubagentLimits = SubagentLimits
+AgentSubagent = SubagentConfig
 
 
-class AgentSubagentModel(BaseModel):
-    """Mirrors Weave-Runtime's `ModelConfig` (app/schemas/bot.py) -- a
-    subagent's own model override. `supports_tools` only matters for a
-    non-'fake' provider; 'unknown' (`None`) means 'assume no tool support',
-    exactly like Runtime -- see AgentConfig.validate_subagent_models_support_tools."""
+class BotConfigExtras(BaseModel):
+    """Guard fields of Runtime's `GuardConfig` that have no column of their
+    own (`ManagedBot.config_extras`): every one optional, an omitted key
+    means "Runtime default" and is not projected at all."""
 
     model_config = ConfigDict(extra='forbid')
 
-    provider: str = 'fake'
-    model: str = Field(min_length=1)
-    temperature: float | None = Field(default=None, ge=0, le=2)
-    supports_tools: bool | None = None
-
-
-class AgentSubagentLimits(BaseModel):
-    """Mirrors Weave-Runtime's `SubagentLimits` (app/schemas/bot.py),
-    including its defaults -- rollout plan "Schritt 4" start values."""
-
-    model_config = ConfigDict(extra='forbid')
-
-    max_searches: int = Field(default=3, ge=1, le=50)
-    max_results: int = Field(default=5, ge=1, le=50)
-    timeout_seconds: int = Field(default=60, ge=1, le=3600)
-
-
-class AgentSubagent(BaseModel):
-    """Mirrors Weave-Runtime's `SubagentConfig` (app/schemas/bot.py) --
-    field names, defaults and the two cross-field rules below (unique id
-    shape, collections-or-uncollected) are kept identical to that model on
-    purpose, so a shape this validator accepts is guaranteed to be one
-    Runtime's own loader will accept too, and a shape it rejects gives a
-    readable 422 here instead of only surfacing as a Runtime-side bot-load
-    failure the next time this bot's turn runs."""
-
-    model_config = ConfigDict(extra='forbid')
-
-    id: str
-    name: str = Field(min_length=1, max_length=255)
-    description: str | None = Field(default=None, max_length=2000)
-    mission: str = Field(min_length=1, max_length=4000)
-    collections: list[str] = Field(default_factory=list, max_length=500)
-    filters: AgentSubagentFilters = Field(default_factory=AgentSubagentFilters)
-    include_uncollected: bool = False
-    tools: list[str] = Field(default_factory=lambda: ['search_knowledge'])
-    model: AgentSubagentModel | None = None
-    # Central LLM endpoint for this subagent (Runtime's `SubagentConfig.endpoint`);
-    # existence and tool support are checked against the database on save.
-    endpoint: str | None = Field(default=None, max_length=36)
-    limits: AgentSubagentLimits = Field(default_factory=AgentSubagentLimits)
-
-    @field_validator('id')
-    @classmethod
-    def validate_id(cls, value: str) -> str:
-        if not _SLUG_RE.match(value):
-            raise ValueError(
-                f"'{value}' is not a valid subagent id: expected lowercase letters, digits and hyphens "
-                "(e.g. 'it-support')"
-            )
-        return value
-
-    @model_validator(mode='after')
-    def validate_collections_or_uncollected(self) -> 'AgentSubagent':
-        if not self.collections and not self.include_uncollected:
-            raise ValueError(
-                f"subagent {self.id!r} must set at least one collection, or include_uncollected: true"
-            )
-        return self
-
-
-class AgentLimits(BaseModel):
-    """Mirrors Weave-Runtime's `AgentLimits` (app/schemas/bot.py),
-    including its defaults -- rollout plan "Schritt 4" start values
-    (3/1/9/120)."""
-
-    model_config = ConfigDict(extra='forbid')
-
-    max_parallel: int = Field(default=3, ge=1, le=20)
-    max_followups: int = Field(default=1, ge=0, le=10)
-    budget_searches: int = Field(default=9, ge=0, le=500)
-    timeout_seconds: int = Field(default=120, ge=1, le=3600)
-
-
-class AgentConfig(BaseModel):
-    """Mirrors Weave-Runtime's `AgentConfig` (app/schemas/bot.py) --
-    `BotConfig.agent`'s exact shape, so an admin-saved agent-mode
-    configuration is validated here, with a readable 422 detail on a
-    malformed shape, instead of only failing silently as an opaque dict
-    that Runtime rejects at its own next bot-load. Field names/defaults
-    are kept identical to Runtime's own model on purpose (see that
-    module's own docstring for the reasoning behind each one)."""
-
-    model_config = ConfigDict(extra='forbid')
-
-    enabled: bool = False
-    subagents: list[AgentSubagent] = Field(default_factory=list, max_length=20)
-    limits: AgentLimits = Field(default_factory=AgentLimits)
-
-    @model_validator(mode='after')
-    def validate_enabled_requires_subagents(self) -> 'AgentConfig':
-        if self.enabled and not self.subagents:
-            raise ValueError('agent.enabled is true but agent.subagents is empty -- at least one subagent is required')
-        return self
-
-    @model_validator(mode='after')
-    def validate_unique_subagent_ids(self) -> 'AgentConfig':
-        ids = [subagent.id for subagent in self.subagents]
-        duplicates = sorted({sid for sid in ids if ids.count(sid) > 1})
-        if duplicates:
-            raise ValueError(f'agent.subagents ids must be unique -- duplicated: {duplicates}')
-        return self
-
-    @model_validator(mode='after')
-    def validate_subagent_models_support_tools(self) -> 'AgentConfig':
-        """Runtime's `BotConfig._agent_mode_is_valid`, for the part Ingest
-        can see: a managed LLM bot's own model is Runtime's tool-capable
-        'fake' default, but a subagent's own model override must declare
-        tool support ('fake', or `supports_tools: true`). Runtime drops a
-        bot it rejects, so this has to fail here, at save time."""
-        if not self.enabled:
-            return self
-        for subagent in self.subagents:
-            model = subagent.model
-            if model is not None and model.provider != 'fake' and not model.supports_tools:
-                raise ValueError(
-                    f"subagent {subagent.id!r}'s own model {model.provider!r}/{model.model!r} does not declare "
-                    'tool-call support -- set supports_tools: true once the model actually supports tool calling'
-                )
-        return self
+    clarify_max_options: int | None = Field(default=None, ge=1, le=5)
+    clarify_question: str | None = Field(default=None, min_length=1, max_length=2000)
+    clarify_ambiguous_margin: float | None = Field(default=None, ge=0, le=1)
+    clarify_ambiguous_question: str | None = Field(default=None, min_length=1, max_length=2000)
 
 
 class BotGrantInput(BaseModel):
@@ -235,6 +118,9 @@ class ManagedBotWrite(BaseModel):
     # rather than only surfacing as a Runtime-side bot-load failure the
     # next time this bot's turn runs.
     agent: AgentConfig | None = Field(default=None)
+    # Guard tuning without its own column (Runtime's clarify_* fields);
+    # None = every one at its Runtime default.
+    config_extras: BotConfigExtras | None = None
     # LLM endpoint (Admin > Chat-Provider) this bot answers with; None = the
     # central 'default'. `llm_endpoints` are further endpoints users may
     # pick per chat ('*' = all enabled ones).
@@ -368,6 +254,8 @@ class ManagedBotAdminResponse(BaseModel):
     query_rewrite: bool | None = None
     uncertainty_hint: bool = True
     agent: dict | None = None
+    # Only the keys that are set (see BotConfigExtras).
+    config_extras: dict | None = None
     llm_endpoint: str | None = None
     llm_endpoints: list[str] = Field(default_factory=list)
     created_at: datetime
@@ -380,6 +268,31 @@ class ManagedBotAdminResponse(BaseModel):
 
 class ManagedBotListResponse(BaseModel):
     items: list[ManagedBotAdminResponse] = Field(default_factory=list)
+
+
+class BotImportWarningItem(BaseModel):
+    code: Literal['missing_secret', 'dropped_field', 'permissions_reset']
+    detail: str
+
+
+class BotImportReport(BaseModel):
+    """Result of `POST /api/v1/auth/admin/bots/import` (dry run or applied,
+    see contracts/bot-document.md): what the file is, what would happen to
+    it, and why not."""
+
+    schema_version: int | None = None
+    bot_id: str | None = None
+    name: str | None = None
+    kind: str | None = None
+    # An existing bot of the same id: a managed row, a Runtime/YAML bot
+    # (overwrite = managed override), or a deleted bot's tombstone.
+    conflict: Literal['managed', 'runtime', 'tombstoned'] | None = None
+    action: Literal['create', 'overwrite', 'blocked']
+    warnings: list[BotImportWarningItem] = Field(default_factory=list)
+    # Parse/schema/validation problems; any one of them blocks the import.
+    errors: list[str] = Field(default_factory=list)
+    applied: bool = False
+    bot: ManagedBotAdminResponse | None = None
 
 
 class ManagedBotInternalResponse(BaseModel):
@@ -414,6 +327,12 @@ class ManagedBotInternalResponse(BaseModel):
     query_rewrite: bool | None = None
     uncertainty_hint: bool = True
     agent: dict | None = None
+    # From `config_extras`; serialised only when set (see the route's
+    # `response_model_exclude_unset`) so Runtime keeps its own default otherwise.
+    clarify_max_options: int | None = None
+    clarify_question: str | None = None
+    clarify_ambiguous_margin: float | None = None
+    clarify_ambiguous_question: str | None = None
     llm_endpoint: str | None = None
     llm_endpoints: list[str] = Field(default_factory=list)
 

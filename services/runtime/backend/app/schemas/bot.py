@@ -12,8 +12,16 @@ quietly ignores half its author's intent.
 """
 
 import re
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+
+# What Weave-Ingest writes in place of a real `n8n.auth_token` when it
+# exports a bot document (contracts/bot-document.md): the secret itself
+# never leaves the control plane. Rejected on load (see N8nConfig's own
+# validator) so an exported file dropped unchanged into BOTS_DIR fails with a
+# message naming the placeholder instead of calling n8n with a bogus token.
+SECRET_PLACEHOLDER = '${WEAVE_SECRET}'
 
 # Lowercase letters/digits, hyphen-separated -- the same shape a URL path
 # segment or a Kubernetes resource name would require, since `id` doubles as
@@ -98,6 +106,17 @@ class N8nConfig(BaseModel):
     # meaningfully longer than a single LLM completion, hence the much
     # longer default than settings.llm_timeout_seconds' own 60s.
     timeout_seconds: int = 120
+
+    @field_validator('auth_token')
+    @classmethod
+    def _reject_secret_placeholder(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is not None and value.get_secret_value() == SECRET_PLACEHOLDER:
+            raise ValueError(
+                f'n8n.auth_token enthält den Export-Platzhalter {SECRET_PLACEHOLDER} -- das Bot-Dokument wurde '
+                'ohne Secret exportiert; trage das echte Token ein oder importiere die Datei über Weave-Ingest '
+                '(contracts/bot-document.md)'
+            )
+        return value
 
 
 class RetrievalFilters(BaseModel):
@@ -446,8 +465,17 @@ class GuardConfig(BaseModel):
 
 
 class BotConfig(BaseModel):
+    """One bot, as a YAML file in BOTS_DIR or as the portable bot document
+    Weave-Ingest exports/imports (contracts/bot-document.md,
+    contracts/bot-document.schema.json -- regenerate that file with
+    `python -m app.schemas.bot_document_schema` after any change here)."""
+
     model_config = ConfigDict(extra='forbid')
 
+    # Format version of the bot document. Bumped only for a breaking change
+    # of this schema; an unknown version is rejected on load instead of
+    # being half-read.
+    schema_version: Literal[1] = 1
     id: str
     name: str
     description: str | None = None

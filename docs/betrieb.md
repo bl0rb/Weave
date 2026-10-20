@@ -1080,6 +1080,29 @@ Die Datei kennt zwei Blöcke:
   Provider-Defaults, OIDC, …).
 
 Geheimnisse stehen **nie im Klartext** in `weave.yaml`: ein Eintrag mit
+### 9.1 Bots exportieren und importieren
+
+Jeder Bot — verwaltet oder YAML-Konfigurationsbot — lässt sich in der
+Administration → Bots über „Exportieren“ als Bot-Dokument herunterladen
+(`<id>.bot.yaml`, Format siehe `contracts/bot-document.md`; per API
+`GET /api/v1/auth/admin/bots/{id}/export?format=yaml|json`). Zwei Dinge
+stehen nie in der Datei: das n8n-Bearer-Token (ersetzt durch den Platzhalter
+`${WEAVE_SECRET}`) und die Freigaben an Personen und Teams. Die Datei eignet
+sich damit für Versionierung, Übertragung zwischen Umgebungen und Backups —
+nicht als Ersatz für `BOTS_DIR`: eine unveränderte Exportdatei dort lehnt
+Runtime beim Laden ab und nennt den Platzhalter.
+
+„Importieren“ prüft die Datei zuerst (Dry-Run) und zeigt Vorhaben
+(neu anlegen, überschreiben, blockiert), Hinweise (fehlendes Secret,
+nicht übernommene Felder, zurückgesetzte Freigaben) und Fehler (unbekannte
+Wissensbereiche oder LLM-Endpoints, Schemafehler, fremde `schema_version`).
+Erst der zweite Schritt speichert. Ein vorhandener Bot gleicher ID wird nur mit
+„Bestehenden Bot überschreiben“ ersetzt; dabei bleibt sein gespeichertes
+Bearer-Token erhalten, solange die Webhook-URL gleich bleibt. Nach dem Import
+sind Freigaben und — bei einem neuen n8n-Bot — das Token im Bot-Editor zu
+ergänzen; bis dahin können den Bot nur Besitzer und Administratoren nutzen
+(sofern er nicht `permissions.public: true` mitbringt).
+
 `secret: true` trägt nur den Namen einer Umgebungsvariable (`env_var:`), aus
 der `render`/`check` den tatsächlichen Wert zur Laufzeit lesen. Die Datei
 selbst darf bedenkenlos committet werden.
