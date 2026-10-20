@@ -14,6 +14,7 @@ use serde::Serialize;
 use serde_json::Value;
 use settings::{Managed, Settings};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::async_runtime::JoinHandle;
@@ -62,6 +63,9 @@ struct AppState {
     /// A server address proposed by a `weave://setup` link, waiting for the
     /// user's confirmation in the settings window (see `deeplink`).
     setup_server: Mutex<Option<String>>,
+    /// True while the panel reports work in progress (`set_busy`): the tray
+    /// icon weaves -- warp, full mark, weft, full mark -- until cleared.
+    tray_busy: AtomicBool,
 }
 
 impl AppState {
@@ -211,6 +215,53 @@ fn save_settings(
     }
     notify_state(&app);
     Ok(())
+}
+
+/// Tray icon frames while Weave works (macOS template glyphs, see
+/// `build_tray`): the warp alone, the full mark, the weft alone, the full
+/// mark -- the menu-bar counterpart of the panel's weaving logo. Windows
+/// keeps its coloured app icon: a frame sequence of it would just flicker.
+#[cfg(target_os = "macos")]
+const TRAY_BUSY_FRAMES: [&[u8]; 4] = [
+    include_bytes!("../icons/tray-busy-warp.png"),
+    include_bytes!("../icons/tray.png"),
+    include_bytes!("../icons/tray-busy-weft.png"),
+    include_bytes!("../icons/tray.png"),
+];
+
+#[cfg(target_os = "macos")]
+fn set_tray_frame(app: &AppHandle, bytes: &'static [u8]) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let (Some(tray), Ok(image)) = (handle.tray_by_id("weave"), Image::from_bytes(bytes)) {
+            let _ = tray.set_icon(Some(image));
+            let _ = tray.set_icon_as_template(true);
+        }
+    });
+}
+
+/// The panel mirrors its busy state (an answer streaming, a search running)
+/// here; the first `true` starts the frame loop, `false` stops it and
+/// restores the resting mark. Idempotent, so every transition may call it.
+#[tauri::command]
+fn set_busy(app: AppHandle, state: State<'_, AppState>, busy: bool) {
+    if state.tray_busy.swap(busy, Ordering::SeqCst) == busy || !busy {
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::thread::spawn(move || {
+            let mut index = 0;
+            while app.state::<AppState>().tray_busy.load(Ordering::SeqCst) {
+                set_tray_frame(&app, TRAY_BUSY_FRAMES[index]);
+                index = (index + 1) % TRAY_BUSY_FRAMES.len();
+                std::thread::sleep(Duration::from_millis(450));
+            }
+            set_tray_frame(&app, include_bytes!("../icons/tray.png"));
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    drop(app);
 }
 
 #[tauri::command]
@@ -699,6 +750,7 @@ fn main() {
                 quick_hidden_at: Mutex::new(None),
                 updates: Updates::default(),
                 update_menu_item: Mutex::new(None),
+                tray_busy: AtomicBool::new(false),
                 setup_server: Mutex::new(None),
             });
 
@@ -770,6 +822,7 @@ fn main() {
             search,
             ask,
             stop_answer,
+            set_busy,
             open_url,
             open_settings,
             hide_panel,

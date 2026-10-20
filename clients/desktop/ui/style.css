@@ -201,7 +201,7 @@ textarea.document { min-height: 300px; }
 :root { --accent: #0f8a64; --accent-soft: rgb(15 138 100 / 0.12); }
 @media (prefers-color-scheme: dark) { :root { --accent: #3cc493; --accent-soft: rgb(60 196 147 / 0.16); } }
 .empty.compact { min-height: 0; flex: 1; padding: 24px; }
-.empty img { width: 44px; height: 44px; }
+.empty :is(img, .weave-logo) { width: 44px; height: 44px; }
 
 /* Quick overlay: the card fills its transparent window with a crisp edge;
    the shadow is the system's own window shadow, like Claude's. Windows 11
@@ -214,7 +214,7 @@ textarea.document { min-height: 300px; }
 body.panel-body { height: 100vh; overflow: hidden; margin: 0; background: var(--surface); }
 .panel { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 .panel-head { display: flex; align-items: center; gap: 6px; padding: 12px 12px 4px 14px; }
-.panel-head img { width: 22px; height: 22px; }
+.panel-head :is(img, .weave-logo) { width: 22px; height: 22px; }
 .panel-head select { min-width: 0; flex: 1; max-width: 240px; border: none; background: transparent; font-weight: 600; font-size: 14px; padding-left: 2px; }
 .panel-tools { display: flex; align-items: center; gap: 8px; padding: 6px 14px 10px; border-bottom: 1px solid var(--border); }
 .panel-tools select { min-width: 0; flex: 1; border-radius: 8px; }
@@ -263,7 +263,7 @@ html:has(body.quick), body.quick { background: transparent; }
 body.quick { margin: 0; overflow: hidden; }
 .quick-shell { background: var(--surface); border: 1px solid var(--edge); border-radius: var(--card-radius); overflow: hidden; display: flex; flex-direction: column; }
 .quick-bar { display: flex; align-items: center; gap: 10px; padding: 14px 14px 14px 18px; }
-.quick-bar > img { width: 28px; height: 28px; flex: none; }
+.quick-bar > :is(img, .weave-logo) { width: 28px; height: 28px; flex: none; }
 .quick-bar textarea { flex: 1; border: none; background: transparent; font-family: inherit; font-size: 16px; resize: none; min-height: 26px; max-height: 140px; padding: 3px 0; }
 .quick-bar textarea:focus-visible { outline: none; }
 .quick-bar select { border: none; background: transparent; color: var(--muted); max-width: 190px; min-height: 0; font-size: 14px; }
@@ -273,15 +273,41 @@ body.quick { margin: 0; overflow: hidden; }
 .quick-note .text { flex: 1; display: flex; flex-direction: column; gap: 2px; }
 .quick-content { border-top: 1px solid var(--border); max-height: 460px; overflow-y: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 12px; -webkit-user-select: text; user-select: text; cursor: auto; }
 
-/* Motion: the logo turns while Weave works (the weave is symmetric, so a
-   half turn loops seamlessly), skeleton hits shimmer, new content rises in. */
-img.logo { transition: transform .2s; }
-img.logo.busy { animation: weave-turn 1.8s cubic-bezier(.65, 0, .35, 1) infinite; }
+/* Motion: while Weave works the logo moves in one of three ways, alternating
+   from start to start (common.js weaveLogo/nextWeaveMotion, same as the web
+   apps): 'weave' -- each weft row unweaves and shuttles back in like a loom;
+   'turn' -- a half turn; 'flip' -- a half turn around the vertical axis. The
+   mark is mirror-symmetric, so 180° looks exactly like 0° and every round
+   ends on the full mark. Skeleton hits shimmer, new content rises in. */
+.weave-logo { display: block; transition: transform .2s; }
+.weave-logo :is(.weave-weft, .weave-knots) > * { transform-box: fill-box; transform-origin: center; }
+.weave-logo .weave-weft > * { transform-origin: left center; }
+.weave-logo .weave-weft > [data-row='1'] { transform-origin: right center; }
+.weave-logo [data-row='1'] { --weave-row-delay: .18s; }
+.weave-logo [data-row='2'] { --weave-row-delay: .36s; }
+.weave-logo--motion-weave:is(.weave-logo--loop, .weave-logo--finite) .weave-weft > * { animation: weave-weft 2s ease-in-out var(--weave-row-delay, 0s) infinite both; }
+.weave-logo--motion-weave:is(.weave-logo--loop, .weave-logo--finite) .weave-knots > * { animation: weave-knot 2s ease-in-out var(--weave-row-delay, 0s) infinite both; }
+.weave-logo--motion-weave.weave-logo--finite :is(.weave-weft, .weave-knots) > * { animation-iteration-count: 5; }
+.weave-logo--motion-turn:is(.weave-logo--loop, .weave-logo--finite) { animation: weave-turn 1.8s cubic-bezier(.65, 0, .35, 1) infinite both; }
+.weave-logo--motion-flip:is(.weave-logo--loop, .weave-logo--finite) { animation: weave-flip 1.8s cubic-bezier(.65, 0, .35, 1) infinite both; }
+.weave-logo--finite:is(.weave-logo--motion-turn, .weave-logo--motion-flip) { animation-iteration-count: 5; }
+.weave-logo--motion-shuttle:is(.weave-logo--loop, .weave-logo--finite) { animation: weave-sway 2s ease-in-out infinite both; }
+.weave-logo--motion-shuttle:is(.weave-logo--loop, .weave-logo--finite) .weave-weft > * { animation: weave-shuttle 2s ease-in-out var(--weave-row-delay, 0s) infinite both; }
+.weave-logo--motion-shuttle.weave-logo--finite, .weave-logo--motion-shuttle.weave-logo--finite .weave-weft > * { animation-iteration-count: 5; }
+.weave-logo .weave-weft > [data-row='1'] { --weave-shuttle-dir: -1; }
+/* After the last finite round: one soft settle instead of a hard stop. */
+.weave-logo.weave-logo--settle { animation: weave-settle .45s ease-out 1 both; }
+@keyframes weave-weft { 0%, 12% { transform: scaleX(1); } 42%, 58% { transform: scaleX(0); } 88%, 100% { transform: scaleX(1); } }
+@keyframes weave-knot { 0%, 12% { opacity: 1; } 30%, 70% { opacity: 0; } 90%, 100% { opacity: 1; } }
 @keyframes weave-turn { 0%, 10% { transform: rotate(0); } 45%, 55% { transform: rotate(90deg); } 90%, 100% { transform: rotate(180deg); } }
+@keyframes weave-sway { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-5deg); } 75% { transform: rotate(5deg); } }
+@keyframes weave-shuttle { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(calc(6px * var(--weave-shuttle-dir, 1))); } }
+@keyframes weave-settle { 0% { transform: scale(1); } 40% { transform: scale(1.06); } 100% { transform: scale(1); } }
+@keyframes weave-flip { 0%, 10% { transform: perspective(160px) rotateY(0); } 45%, 55% { transform: perspective(160px) rotateY(90deg); } 90%, 100% { transform: perspective(160px) rotateY(180deg); } }
 .skeleton { gap: 8px; }
 .skeleton-line { height: 10px; border-radius: 5px; background: linear-gradient(90deg, var(--border) 20%, var(--surface) 50%, var(--border) 80%); background-size: 300% 100%; animation: shimmer 1.4s linear infinite; }
 .shimmer-text { background: linear-gradient(90deg, var(--muted) 35%, var(--text) 50%, var(--muted) 65%); background-size: 300% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 1.8s linear infinite; }
 @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -200% 0; } }
 .appear { animation: rise .2s ease-out both; }
 @keyframes rise { from { opacity: 0; transform: translateY(4px); } }
-@media (prefers-reduced-motion: reduce) { img.logo.busy, .skeleton-line, .shimmer-text, .appear { animation: none; } .shimmer-text { color: var(--muted); } }
+@media (prefers-reduced-motion: reduce) { .weave-logo, .weave-logo *, .skeleton-line, .shimmer-text, .appear { animation: none !important; } .shimmer-text { color: var(--muted); } }
