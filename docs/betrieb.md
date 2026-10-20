@@ -1260,12 +1260,17 @@ des OCR-Pools: 120 s).
 
 Confluence-Import-Runs starten ebenfalls von selbst neu: Ein Run, dessen
 Worker starb oder dessen Fortsetzungs-Nachricht verloren ging, gilt nach
-`IMPORT_STALE_RUN_SECONDS` (Standard 600 s) ohne Heartbeat als verloren und
-wird vom Reaper — beim Worker-Start und alle `PUBLICATION_TICK_SECONDS`
-(30 s) — an seiner gespeicherten Frontier fortgesetzt, nie auf `failed`
-gesetzt. Vorübergehende Confluence-Fehler (HTTP 429/5xx, Netzwerk) beim
-Chunk-Start werden mit exponentiellem Backoff (60 s bis 10 min) wiederholt,
-betroffene Einzelseiten wandern bis zu dreimal ans Ende der Frontier.
-`IMPORT_MAX_RECOVERIES` (Standard 5) begrenzt Neustarts und Backoff-Versuche
-je Run; darüber hinaus endet der Run mit einer entsprechenden Meldung. Ein
-hängender Run zählt nicht gegen das Limit aktiver Runs eines Nutzers.
+`IMPORT_STALE_RUN_SECONDS` (Standard 600 s) ohne Heartbeat als verloren; der
+Reaper — beim Worker-Start und alle `PUBLICATION_TICK_SECONDS` (30 s) —
+sendet seine Nachricht erneut, und der Worker setzt ihn an der gespeicherten
+Frontier fort, statt ihn auf `failed` zu setzen. Vorübergehende
+Confluence-Fehler (HTTP 429/5xx, Netzwerk) werden mit exponentiellem Backoff
+(60 s bis 10 min) wiederholt, sowohl beim Chunk-Start als auch pro Seite
+(eine Seite wandert dabei bis zu dreimal ans Ende der Frontier).
+`IMPORT_MAX_RECOVERIES` (Standard 5) begrenzt je Run die aufeinanderfolgenden
+Worker-Verluste (gezählt, wenn ein Chunk tatsächlich per Lease-Reclaim
+wiederaufgenommen wird, nicht pro Nachstellung — ein Run, der nur hinter
+einem Queue-Stau wartet, bleibt unberührt) und die Backoff-Versuche;
+darüber hinaus endet der Run mit einer entsprechenden Meldung samt letztem
+Fehler. Ein hängender Run zählt weiterhin gegen das Limit aktiver Runs eines
+Nutzers, bis der Reaper ihn fortsetzt oder er abgebrochen wird.

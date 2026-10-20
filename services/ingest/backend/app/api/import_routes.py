@@ -612,18 +612,19 @@ def create_import_run(
             )
 
     now = datetime.now(timezone.utc)
-    # Active-run cap: a wedged (worker-lost) 'running'/'pending' run is NOT
-    # counted, so it can never lock its owner out of importing -- but it is
-    # left exactly as it is: the stale-run reaper (app/workers/tasks.py's
+    # Active-run cap. A wedged (worker-lost) 'running'/'pending' run still
+    # counts: the stale-run reaper (app/workers/tasks.py's
     # reap_stale_import_runs, every publication tick and at worker start)
-    # restarts it from its persisted frontier instead of failing it.
-    candidate_runs = db.scalars(
-        select(ImportRun).where(
+    # resumes it from its persisted frontier within about
+    # import_stale_run_seconds, and two runs of one owner must never crawl
+    # the same space at once. Cancelling it (POST /runs/{id}/cancel, which
+    # force-terminates a stale run) frees the slot immediately.
+    active_count = db.scalar(
+        select(func.count()).select_from(ImportRun).where(
             ImportRun.owner_id == user.id,
             ImportRun.status.in_([ImportRunStatus.PENDING, ImportRunStatus.RUNNING]),
         )
-    ).all()
-    active_count = sum(1 for candidate in candidate_runs if not _is_stale_active(candidate, now))
+    )
     if active_count >= settings.import_max_active_runs_per_user:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -655,15 +656,11 @@ def create_import_run(
     # removed again. Because each racer's recheck runs after its own commit,
     # at least one of any two racers sees both rows here -- the cap holds
     # without DB-level locking, and the task is only enqueued for survivors.
-    # Stale (worker-lost) runs are excluded here exactly as in the pre-insert
-    # count above -- they wait for the reaper, never for their owner.
-    stale_cutoff = now - timedelta(seconds=settings.import_stale_run_seconds)
     surviving_ids = db.scalars(
         select(ImportRun.id)
         .where(
             ImportRun.owner_id == user.id,
             ImportRun.status.in_([ImportRunStatus.PENDING, ImportRunStatus.RUNNING]),
-            ImportRun.updated_at >= stale_cutoff,
         )
         .order_by(ImportRun.created_at.asc(), ImportRun.id.asc())
         .limit(settings.import_max_active_runs_per_user)

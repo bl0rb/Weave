@@ -311,23 +311,28 @@ def reap_stale_running_jobs() -> int:
 
 
 def reap_stale_import_runs() -> int:
-    """Restart import runs whose worker died or whose continuation message
-    was lost -- the ImportRun counterpart of reap_stale_running_jobs, run
-    from the same places (worker start, every publication tick).
+    """Re-send the task message for import runs whose worker died or whose
+    continuation/creation message was lost -- the ImportRun counterpart of
+    reap_stale_running_jobs, run from the same places (worker start, every
+    publication tick).
 
     A stale 'running' run (updated_at older than import_stale_run_seconds,
     i.e. no chunk heartbeat) is replayed with its PREVIOUS chunk_seq so
     import_confluence's stale-lease reclaim resumes it from the persisted
     frontier; a stale 'pending' run (creation message lost) is replayed with
     its current seq through the normal claim path. Both are idempotent: a
-    run that turns out to be alive after all makes the replay a no-op.
+    run that is merely queued behind a backlog, or alive after all, makes
+    the replay a no-op -- which is also why this function never counts or
+    fails anything: a lost worker is only ever OBSERVED by the reclaim in
+    import_confluence, and that is where import_max_recoveries applies.
 
-    Bookkeeping lives in ImportRun.state (`recoveries`, `requeued_at`) and
-    is written WITHOUT touching updated_at -- a refreshed updated_at would
-    make the run look alive and defeat the very reclaim this schedules. A
-    run requeued less than import_stale_run_seconds ago is skipped (the
-    message is still in flight); beyond import_max_recoveries restarts in a
-    row it is failed with a clear message instead of looping forever.
+    The only write is `requeued_at` in ImportRun.state (so a replay already
+    in flight gets the full stale window before the next one), done WITHOUT
+    touching updated_at -- a refreshed updated_at would make the run look
+    alive and defeat the very reclaim this schedules -- and guarded on the
+    row being exactly what was read (updated_at, chunk_seq, status): a
+    slow-but-alive worker committing in between keeps its newer state, and
+    a concurrent reaper (worker start vs. tick) skips the run.
     """
     db = SessionLocal()
     to_requeue: list[tuple[str, int]] = []
@@ -346,35 +351,16 @@ def reap_stale_import_runs() -> int:
             requeued_at = _parse_iso(state.get('requeued_at'))
             if requeued_at is not None and requeued_at >= stale_cutoff:
                 continue  # replay already in flight, give it the full stale window
-            recoveries = int(state.get('recoveries') or 0) + 1
-            if recoveries > settings.import_max_recoveries:
-                detail = (
-                    f'import run was restarted {recoveries - 1} times after losing its worker and has been stopped; '
-                    'start a new run to continue'
-                )
-                logger.warning('Stopping import run %s after %s lost attempts', run.id, recoveries - 1)
-                db.execute(
-                    update(ImportRun)
-                    .where(ImportRun.id == run.id)
-                    .values(
-                        status=ImportRunStatus.FAILED,
-                        error_message=detail,
-                        finished_at=now,
-                        current_page_title='',
-                        state={**state, 'recoveries': 0, 'requeued_at': None},
-                    )
-                )
-                continue
-            # Explicit updated_at=updated_at keeps the column's onupdate from
-            # firing -- see the docstring.
-            db.execute(
+            claimed = db.execute(
                 update(ImportRun)
                 .where(ImportRun.id == run.id)
-                .values(
-                    state={**state, 'recoveries': recoveries, 'requeued_at': now.isoformat()},
-                    updated_at=run.updated_at,
-                )
+                .where(ImportRun.updated_at == run.updated_at)
+                .where(ImportRun.chunk_seq == run.chunk_seq)
+                .where(ImportRun.status == run.status)
+                .values(state={**state, 'requeued_at': now.isoformat()}, updated_at=run.updated_at)
             )
+            if not claimed.rowcount:
+                continue  # the row moved under us: a live worker or another reaper owns it
             replay_seq = run.chunk_seq if run.status == ImportRunStatus.PENDING else run.chunk_seq - 1
             to_requeue.append((run.id, replay_seq))
         db.commit()

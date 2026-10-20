@@ -45,6 +45,21 @@ def _set_run(run_id: str, **values) -> None:
         db.close()
 
 
+def _drain_run(sent: list, run_id: str, max_rounds: int = 20) -> None:
+    """Replay only this run's captured continuations (other test modules
+    leave stale runs of their own in the shared DB, which the reaper picks
+    up too)."""
+    rounds = 0
+    while True:
+        mine = [entry for entry in sent if entry[0] == 'import_confluence' and entry[1][0] == run_id]
+        if not mine:
+            return
+        sent.remove(mine[0])
+        rounds += 1
+        assert rounds <= max_rounds, 'continuation loop did not terminate'
+        import_confluence(*mine[0][1])
+
+
 @pytest.fixture()
 def sent_with_kwargs(monkeypatch):
     """Like `sent`, but keeps the send_task kwargs (countdown)."""
@@ -99,15 +114,15 @@ def test_reaper_requeues_stale_runs_and_skips_live_and_in_flight_ones(sent) -> N
     assert sorted(_my_sends()) == sorted([('import_confluence', [stale_running, 1]), ('import_confluence', [stale_pending, 0])])
     requeued = _get_run(stale_running)
     assert requeued.status == ImportRunStatus.RUNNING
-    assert requeued.state['recoveries'] == 1
     assert requeued.state['requeued_at']
+    assert 'recoveries' not in requeued.state  # the reaper never counts; the reclaim does
     # updated_at must NOT be refreshed: the replay relies on the run still
     # looking stale for import_confluence's lease reclaim.
     assert requeued.updated_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc) - timedelta(
         seconds=settings.import_stale_run_seconds
     )
-    assert _get_run(live).state.get('recoveries') is None
-    assert _get_run(in_flight).state.get('recoveries') is None
+    assert 'requeued_at' not in _get_run(live).state
+    assert _get_run(in_flight).state['requeued_at'] != requeued.state['requeued_at']
 
     # The runs just requeued are now "in flight" -- a second tick leaves them alone.
     sent.clear()
@@ -115,22 +130,85 @@ def test_reaper_requeues_stale_runs_and_skips_live_and_in_flight_ones(sent) -> N
     assert _my_sends() == []
 
 
-def test_reaper_fails_a_run_beyond_max_recoveries(sent) -> None:
+def test_reaper_skips_a_run_that_moved_under_it(sent, monkeypatch) -> None:
+    # A slow-but-alive worker commits between the reaper's read and its
+    # UPDATE: the guarded UPDATE must not clobber the newer state, and no
+    # replay is sent for that run. Simulated by handing the reaper rows that
+    # are one chunk BEHIND what the database holds.
     owner = _make_owner()
     run_id = _make_run(owner.id, _make_source(owner.id))
     _set_run(
-        run_id, status=ImportRunStatus.RUNNING, chunk_seq=4, updated_at=_stale(),
-        state={'frontier': [], 'visited': {}, 'errors': [], 'recoveries': settings.import_max_recoveries},
+        run_id, status=ImportRunStatus.RUNNING, chunk_seq=3, updated_at=_stale(),
+        state={'frontier': [], 'visited': {'100': None}, 'errors': []},
     )
 
-    assert worker_tasks.reap_stale_import_runs() == 0
+    class _Rows:
+        def __init__(self, rows):
+            self._rows = rows
 
-    assert sent == []
+        def all(self):
+            return self._rows
+
+    def _session_with_stale_reads():
+        db = TestingSessionLocal()
+        real_scalars = db.scalars
+
+        def scalars(statement, *args, **kwargs):
+            rows = real_scalars(statement, *args, **kwargs).all()
+            for row in rows:
+                if isinstance(row, ImportRun) and row.id == run_id:
+                    db.expunge(row)
+                    row.chunk_seq -= 1  # what the reaper "read" before the worker moved on
+            return _Rows(rows)
+
+        db.scalars = scalars
+        return db
+
+    monkeypatch.setattr(worker_tasks, 'SessionLocal', _session_with_stale_reads)
+    sent.clear()
+    worker_tasks.reap_stale_import_runs()
+
+    assert [entry for entry in sent if entry[1][0] == run_id] == []
+    run = _get_run(run_id)
+    assert run.chunk_seq == 3
+    assert run.state['visited'] == {'100': None}
+    assert 'requeued_at' not in run.state
+
+
+def test_reclaim_fails_a_run_beyond_max_consecutive_lost_workers(sent, client_holder) -> None:
+    client_holder['client'] = _three_page_tree()
+    owner = _make_owner()
+    run_id = _make_run(owner.id, _make_source(owner.id))
+    _set_run(
+        run_id, status=ImportRunStatus.RUNNING, chunk_seq=1, updated_at=_stale(), error_message='boom (automatic restart pending)',
+        state={'frontier': [['100', 0]], 'visited': {}, 'errors': [], 'recoveries': settings.import_max_recoveries},
+    )
+
+    assert worker_tasks.reap_stale_import_runs() >= 1
+    _drain_run(sent, run_id)
+
     run = _get_run(run_id)
     assert run.status == ImportRunStatus.FAILED
-    assert f'restarted {settings.import_max_recoveries} times' in run.error_message
+    assert f'worker was lost {settings.import_max_recoveries} times in a row' in run.error_message
+    assert 'last error: boom' in run.error_message
     assert run.finished_at is not None
-    assert run.state['recoveries'] == 0
+
+
+def test_lost_worker_budget_counts_consecutive_losses_only(sent, client_holder) -> None:
+    client_holder['client'] = _three_page_tree()
+    owner = _make_owner()
+    run_id = _make_run(owner.id, _make_source(owner.id))
+    _set_run(
+        run_id, status=ImportRunStatus.RUNNING, chunk_seq=1, updated_at=_stale(),
+        state={'frontier': [['100', 0]], 'visited': {}, 'errors': [], 'recoveries': settings.import_max_recoveries - 1},
+    )
+
+    assert worker_tasks.reap_stale_import_runs() >= 1
+    _drain_run(sent, run_id)
+
+    run = _get_run(run_id)
+    assert run.status == ImportRunStatus.FINISHED
+    assert run.state['recoveries'] == 0  # the chunk got through -> budget reset
 
 
 def test_reaper_replay_resumes_a_lost_run_to_completion(sent, client_holder) -> None:
@@ -140,13 +218,14 @@ def test_reaper_replay_resumes_a_lost_run_to_completion(sent, client_holder) -> 
     # The worker claimed chunk 0 (seq -> 1) and died before importing anything.
     _set_run(run_id, status=ImportRunStatus.RUNNING, chunk_seq=1, started_at=_stale(), updated_at=_stale())
 
-    assert worker_tasks.reap_stale_import_runs() == 1
-    _drain_continuations(sent)
+    assert worker_tasks.reap_stale_import_runs() >= 1
+    _drain_run(sent, run_id)
 
     run = _get_run(run_id)
     assert run.status == ImportRunStatus.FINISHED
     assert run.pages_imported == 3
-    assert run.state['recoveries'] == 1
+    assert run.state['recoveries'] == 0  # counted at the reclaim, reset once the chunk completed
+    assert 'requeued_at' in run.state
 
 
 def test_housekeeping_runs_both_reapers(monkeypatch) -> None:
@@ -197,6 +276,7 @@ def test_transient_setup_failure_defers_the_chunk_with_backoff(sent_with_kwargs,
     assert run.status == ImportRunStatus.FINISHED
     assert run.pages_imported == 3
     assert run.error_message is None
+    assert run.state['transient_retries'] == 0  # reset by the first successful page fetch
 
 
 def test_transient_setup_failure_gives_up_after_max_recoveries(sent_with_kwargs, monkeypatch) -> None:
@@ -236,14 +316,14 @@ def test_non_transient_setup_failure_still_fails_immediately(sent, monkeypatch) 
 # --- transient per-page failures ------------------------------------------------
 
 
-def test_transient_page_failure_requeues_the_page_and_succeeds_later(sent, client_holder) -> None:
+def test_transient_page_failure_requeues_the_page_and_defers_the_chunk(sent_with_kwargs, client_holder) -> None:
     client = _three_page_tree()
     failures = {'101': 2}
 
     def _flaky(page_id: str) -> None:
         if failures.get(page_id, 0) > 0:
             failures[page_id] -= 1
-            raise ConfluenceError('Confluence API request returned HTTP 503', status_code=503)
+            raise ConfluenceError('Confluence API request returned HTTP 429', status_code=429)
 
     client.on_fetch = _flaky
     client_holder['client'] = client
@@ -251,7 +331,20 @@ def test_transient_page_failure_requeues_the_page_and_succeeds_later(sent, clien
     run_id = _make_run(owner.id, _make_source(owner.id))
 
     import_confluence(run_id, 0)
-    _drain_continuations(sent)
+    # The chunk ended at the first transient failure with a BACKED-OFF
+    # continuation (never an immediate re-pop of the same page).
+    assert sent_with_kwargs[-1][2] == {'countdown': 60}
+    mid = _get_run(run_id)
+    assert mid.status == ImportRunStatus.RUNNING
+    assert mid.state['frontier'][-1][0] == '101'
+    assert 'automatic retry in 60s' in mid.error_message
+
+    countdowns: list[int | None] = []
+    while sent_with_kwargs:
+        name, args, kwargs = sent_with_kwargs.pop(0)
+        if name == 'import_confluence':
+            countdowns.append(kwargs.get('countdown'))
+            import_confluence(*args)
 
     run = _get_run(run_id)
     assert run.status == ImportRunStatus.FINISHED
@@ -259,8 +352,12 @@ def test_transient_page_failure_requeues_the_page_and_succeeds_later(sent, clien
     assert run.pages_failed == 0
     assert run.state['page_retries'] == {'101': 2}
     assert run.state['errors'] == []
-    # Retried at the END of the frontier, after the other pending page.
+    assert run.error_message is None
+    # Retried at the END of the frontier, each time after a backoff; the
+    # successful import of 102 in between reset the deferral budget, so the
+    # second deferral starts over at 60s.
     assert client.fetched == ['100', '101', '102', '101', '101']
+    assert countdowns[:2] == [60, 60]
 
 
 def test_transient_page_failure_counts_as_failed_after_the_retry_budget(sent, client_holder) -> None:
@@ -310,8 +407,8 @@ def test_continuation_send_failure_leaves_the_run_running_for_the_reaper(sent, c
     # Once its heartbeat is stale the reaper replays it, and the run finishes.
     _set_run(run_id, updated_at=_stale())
     monkeypatch.setattr(celery_app, 'send_task', lambda name, args=None, **kw: sent.append((name, list(args or []))))
-    assert worker_tasks.reap_stale_import_runs() == 1
-    _drain_continuations(sent)
+    assert worker_tasks.reap_stale_import_runs() >= 1
+    _drain_run(sent, run_id)
     run = _get_run(run_id)
     assert run.status == ImportRunStatus.FINISHED
     assert run.pages_imported == 3
@@ -326,8 +423,20 @@ def test_retryable_crash_leaves_the_run_running_instead_of_failing_it(sent, clie
         raise OperationalError('COMMIT', {}, Exception('server closed the connection unexpectedly'))
 
     monkeypatch.setattr(import_tasks, '_finalize_run', _db_gone)
+    before = _get_run(run_id)
     import_confluence(run_id, 0)
 
     run = _get_run(run_id)
     assert run.status == ImportRunStatus.RUNNING
-    assert run.error_message is None
+    assert 'server closed the connection' in run.error_message
+    assert run.error_message.endswith('(automatic restart pending)')
+    # The note must not refresh the heartbeat the reaper waits for.
+    assert run.updated_at == _get_run(run_id).updated_at
+
+
+def test_local_os_errors_are_not_retryable() -> None:
+    assert not import_tasks._is_retryable_failure(PermissionError('read-only tmp dir'))
+    assert not import_tasks._is_retryable_failure(FileNotFoundError('gone'))
+    assert import_tasks._is_retryable_failure(ConnectionResetError('peer reset'))
+    assert import_tasks._is_retryable_failure(TimeoutError('timed out'))
+    assert import_tasks._is_retryable_failure(ConfluenceError('x', status_code=503))
