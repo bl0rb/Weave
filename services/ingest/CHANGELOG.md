@@ -9,9 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Weave transformation, the product is called Weave Ingest. Entries below predating that
 > change are left as written and refer to the project under its former name.
 
-## [Unreleased]
+## [0.7.12] - 2026-10-20
 
 ### Added
+- **Portable bot documents** ([contracts/bot-document.md](../../contracts/bot-document.md)):
+  Runtime's `BotConfig` is the canonical, versioned bot format (`schema_version: 1`, JSON
+  Schema in `contracts/bot-document.schema.json`, checked by both services' tests). The bot
+  editor exports any bot as YAML/JSON (`GET /api/v1/auth/admin/bots/{id}/export`) and imports
+  one with a dry-run report, conflict strategy and warnings (`POST /api/v1/auth/admin/bots/import`);
+  secrets are never exported (`${WEAVE_SECRET}` placeholder), grants stay with the instance.
+  Guard fields without a column live in the new `config_extras` JSON column (migration 0053).
+- **The Weave mark moves in four ways** (weave, turn, flip, shuttle), picked at random per
+  start and never twice in a row; the sidebar's mark weaves while jobs or import runs are in
+  progress, a click on the mark switches the motion. Canonical mark and keyframes in
+  `packages/weave-mark`, kept in sync with Weave-Chat and the desktop app by
+  `scripts/check_weave_mark.py`.
 - **Meeting transcripts (`.vtt`) as knowledge**: WebVTT exports from Teams, Zoom, Webex and
   Google Meet can be uploaded like `.md`/`.xml` (no OCR, engine `text-vtt`). The converter
   (`app/services/vtt_transcript.py`) drops NOTE/STYLE/REGION blocks, platform boilerplate
@@ -42,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (HTTP 429/5xx, network) are retried with exponential backoff at chunk start and per page (up
   to three times per page). New `IMPORT_MAX_RECOVERIES` (default 5) bounds consecutive
   lost-worker resumptions and backoff retries per run.
+- **Weave-Runtime runs every chat turn through one compiled LangGraph graph**
+  (`app/services/bot_graph.py`): direct RAG, n8n and agent mode (single and multi-subagent)
+  share one topology and one streaming bridge; the internal chat contract, trace contents and
+  error texts are unchanged.
 
 ## [0.7.11] - 2026-10-19
 
