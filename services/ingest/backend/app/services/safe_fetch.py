@@ -65,7 +65,13 @@ _METADATA_NETWORKS = (
 class SafeFetchError(Exception):
     """Raised for anything that makes a URL unsafe or unfetchable: bad
     scheme, DNS resolution failure, a blocked/private target address, too
-    many redirects, a response over the size cap, or a network error."""
+    many redirects, a response over the size cap, or a network error.
+    `transient` marks the failures a later retry may well succeed at (DNS
+    lookup or socket-level errors), as opposed to policy rejections."""
+
+    def __init__(self, message: str, *, transient: bool = False) -> None:
+        super().__init__(message)
+        self.transient = transient
 
 
 @dataclass
@@ -207,7 +213,7 @@ def resolve_and_pin(
     try:
         addr_infos = socket.getaddrinfo(hostname, None)
     except socket.gaierror as exc:
-        raise SafeFetchError(f'DNS resolution failed for {hostname!r}: {exc}') from exc
+        raise SafeFetchError(f'DNS resolution failed for {hostname!r}: {exc}', transient=True) from exc
 
     resolved_ips: list[str] = []
     seen: set[str] = set()
@@ -314,7 +320,7 @@ def _single_request(
             raise SafeFetchError(f'response body exceeds {max_bytes} byte cap')
         location = response_headers.get('Location') or response_headers.get('location')
     except (OSError, http.client.HTTPException) as exc:
-        raise SafeFetchError(f'request to {url!r} failed: {exc}') from exc
+        raise SafeFetchError(f'request to {url!r} failed: {exc}', transient=True) from exc
     finally:
         conn.close()
 

@@ -291,12 +291,16 @@ def _housekeeping() -> None:
     delete stored objects nothing references any more. A failure here must
     never end the tick chain."""
     # Imported lazily: app.workers.tasks imports this module at load time.
-    from app.workers.tasks import reap_stale_running_jobs
+    from app.workers.tasks import reap_stale_import_runs, reap_stale_running_jobs
 
     try:
         reap_stale_running_jobs()
     except Exception:
         logger.exception('stale job reaper failed; retrying next tick')
+    try:
+        reap_stale_import_runs()
+    except Exception:
+        logger.exception('stale import-run reaper failed; retrying next tick')
     try:
         with SessionLocal() as db:
             object_store.collect_garbage(db)

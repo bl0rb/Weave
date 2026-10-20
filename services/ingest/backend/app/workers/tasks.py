@@ -310,41 +310,116 @@ def reap_stale_running_jobs() -> int:
     return len(to_restart)
 
 
+def reap_stale_import_runs() -> int:
+    """Restart import runs whose worker died or whose continuation message
+    was lost -- the ImportRun counterpart of reap_stale_running_jobs, run
+    from the same places (worker start, every publication tick).
+
+    A stale 'running' run (updated_at older than import_stale_run_seconds,
+    i.e. no chunk heartbeat) is replayed with its PREVIOUS chunk_seq so
+    import_confluence's stale-lease reclaim resumes it from the persisted
+    frontier; a stale 'pending' run (creation message lost) is replayed with
+    its current seq through the normal claim path. Both are idempotent: a
+    run that turns out to be alive after all makes the replay a no-op.
+
+    Bookkeeping lives in ImportRun.state (`recoveries`, `requeued_at`) and
+    is written WITHOUT touching updated_at -- a refreshed updated_at would
+    make the run look alive and defeat the very reclaim this schedules. A
+    run requeued less than import_stale_run_seconds ago is skipped (the
+    message is still in flight); beyond import_max_recoveries restarts in a
+    row it is failed with a clear message instead of looping forever.
+    """
+    db = SessionLocal()
+    to_requeue: list[tuple[str, int]] = []
+    now = datetime.now(timezone.utc)
+    stale_cutoff = now - timedelta(seconds=settings.import_stale_run_seconds)
+    try:
+        stale_runs = db.scalars(
+            select(ImportRun)
+            .where(ImportRun.status.in_([ImportRunStatus.PENDING, ImportRunStatus.RUNNING]))
+            .where(ImportRun.updated_at < stale_cutoff)
+            .order_by(ImportRun.updated_at)
+            .limit(100)
+        ).all()
+        for run in stale_runs:
+            state = dict(run.state) if isinstance(run.state, dict) else {}
+            requeued_at = _parse_iso(state.get('requeued_at'))
+            if requeued_at is not None and requeued_at >= stale_cutoff:
+                continue  # replay already in flight, give it the full stale window
+            recoveries = int(state.get('recoveries') or 0) + 1
+            if recoveries > settings.import_max_recoveries:
+                detail = (
+                    f'import run was restarted {recoveries - 1} times after losing its worker and has been stopped; '
+                    'start a new run to continue'
+                )
+                logger.warning('Stopping import run %s after %s lost attempts', run.id, recoveries - 1)
+                db.execute(
+                    update(ImportRun)
+                    .where(ImportRun.id == run.id)
+                    .values(
+                        status=ImportRunStatus.FAILED,
+                        error_message=detail,
+                        finished_at=now,
+                        current_page_title='',
+                        state={**state, 'recoveries': 0, 'requeued_at': None},
+                    )
+                )
+                continue
+            # Explicit updated_at=updated_at keeps the column's onupdate from
+            # firing -- see the docstring.
+            db.execute(
+                update(ImportRun)
+                .where(ImportRun.id == run.id)
+                .values(
+                    state={**state, 'recoveries': recoveries, 'requeued_at': now.isoformat()},
+                    updated_at=run.updated_at,
+                )
+            )
+            replay_seq = run.chunk_seq if run.status == ImportRunStatus.PENDING else run.chunk_seq - 1
+            to_requeue.append((run.id, replay_seq))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+    for run_id, replay_seq in to_requeue:
+        # By name so this module keeps zero imports from import_tasks at call
+        # time; running runs replay with the PREVIOUS seq (reclaim path),
+        # pending runs with their current seq (normal claim path).
+        celery_app.send_task('import_confluence', args=[run_id, replay_seq])
+        logger.warning('Requeued stale import run %s at chunk_seq %s', run_id, replay_seq)
+    return len(to_requeue)
+
+
+def _parse_iso(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
 def requeue_running_jobs_after_restart() -> int:
     """Startup recovery: lost RUNNING jobs, stale import runs and stranded
     attachment children.
 
     This makes processing resilient across worker restarts and hard kills.
-    The lost-job part also runs periodically (reap_stale_running_jobs).
+    The lost-job and stale-import-run parts also run periodically
+    (reap_stale_running_jobs / reap_stale_import_runs on the publication
+    tick).
     """
     db = SessionLocal()
-    runs_to_requeue: list[tuple[str, int]] = []
     stranded_pending_children: list[tuple[str, str | None, str | None, str | None, str | None]] = []
     stale_run_cutoff = datetime.now(timezone.utc) - timedelta(seconds=settings.import_stale_run_seconds)
     try:
-        # Import runs whose worker died without redelivery (hard-limit kill /
-        # lost message): stale 'running' runs are replayed with their previous
-        # chunk_seq -- the stale-lease reclaim in import_confluence makes that
-        # safe, and a live run's fresh heartbeat makes the replay a no-op.
-        # Stale 'pending' runs (creation message lost / send_task failed --
-        # their updated_at is the creation time, untouched until the first
-        # claim) are replayed with their CURRENT seq: the normal claim path
-        # accepts pending status directly, and its chunk_seq guard makes a
-        # duplicate creation message a no-op.
-        stale_runs = db.scalars(
-            select(ImportRun)
-            .where(ImportRun.status.in_([ImportRunStatus.PENDING, ImportRunStatus.RUNNING]))
-            .where(ImportRun.updated_at < stale_run_cutoff)
-        ).all()
-        runs_to_requeue = [
-            (run.id, run.chunk_seq if run.status == ImportRunStatus.PENDING else run.chunk_seq - 1)
-            for run in stale_runs
-        ]
-
         # SH-04: PENDING attachment-OCR children of a run that already
         # finished (FINISHED/FAILED/CANCELLED) -- _finalize_run's backstop
         # re-send may have failed for these, or never reached them. Gated by
-        # the same staleness cutoff as the ImportRun branch above so a child
+        # the same staleness cutoff as the import-run reaper so a child
         # just committed by a still-in-progress run isn't double-sent.
         terminal_pending_jobs = db.scalars(
             select(Job)
@@ -372,6 +447,7 @@ def requeue_running_jobs_after_restart() -> int:
         db.close()
 
     restarted_jobs = reap_stale_running_jobs()
+    restarted_runs = reap_stale_import_runs()
 
     for job_id, profile_id, mode, email, department in stranded_pending_children:
         # SH-04: still PENDING, so the normal PENDING->RUNNING claim in
@@ -380,14 +456,7 @@ def requeue_running_jobs_after_restart() -> int:
         process_job.delay(job_id, profile_id, mode, email, department)
         logger.warning('Requeued stranded PENDING child job %s of a terminal import run', job_id)
 
-    for run_id, replay_seq in runs_to_requeue:
-        # By name so this module keeps zero imports from import_tasks at call
-        # time; running runs replay with the PREVIOUS seq (reclaim path),
-        # pending runs with their current seq (normal claim path).
-        celery_app.send_task('import_confluence', args=[run_id, replay_seq])
-        logger.warning('Requeued stale import run %s at chunk_seq %s', run_id, replay_seq)
-
-    return restarted_jobs + len(runs_to_requeue) + len(stranded_pending_children)
+    return restarted_jobs + restarted_runs + len(stranded_pending_children)
 
 
 @worker_ready.connect

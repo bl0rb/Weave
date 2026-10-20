@@ -144,9 +144,23 @@ class ConfluenceError(Exception):
     rejections. `status_code` carries the HTTP status when one was
     received (None for network-level failures)."""
 
-    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+    def __init__(self, message: str, *, status_code: int | None = None, transient: bool = False) -> None:
         super().__init__(message)
         self.status_code = status_code
+        # True for failures a later retry may succeed at (rate limiting,
+        # server errors, network-level errors) -- see `is_transient`.
+        self.transient = transient or status_code in TRANSIENT_STATUS_CODES
+
+
+# Confluence responses that signal a temporary condition, never a broken
+# source/credential/page: rate limiting and upstream server errors.
+TRANSIENT_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+
+
+def is_transient(exc: BaseException) -> bool:
+    """Whether `exc` is a Confluence failure worth retrying later rather
+    than failing the import run or skipping the page for good."""
+    return isinstance(exc, ConfluenceError) and exc.transient
 
 
 @dataclass(frozen=True)
@@ -342,7 +356,7 @@ class _ConfluenceClientBase:
                 allowed_private_hosts=self._allowed_private_hosts,
             )
         except SafeFetchError as exc:
-            raise ConfluenceError(f'Confluence request failed: {exc}') from exc
+            raise ConfluenceError(f'Confluence request failed: {exc}', transient=exc.transient) from exc
 
     def _http_error(self, url: str, response, *, context: str) -> ConfluenceError:
         """Build the ConfluenceError for a non-200 response, logging a

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Weave transformation, the product is called Weave Ingest. Entries below predating that
 > change are left as written and refer to the project under its former name.
 
+## [Unreleased]
+
+### Changed
+- **Confluence import runs restart automatically** ([betrieb.md](../../docs/betrieb.md)): a run
+  whose worker died or whose continuation message was lost is replayed from its persisted
+  frontier by a stale-run reaper on every publication tick (not only at worker start), the
+  active-run cap no longer fails such a run, a failed continuation enqueue leaves the run
+  running for the reaper, and transient Confluence errors (HTTP 429/5xx, network) are retried
+  with exponential backoff at chunk start and up to three times per page. New
+  `IMPORT_MAX_RECOVERIES` (default 5) bounds restarts and retries per run.
+
 ## [0.7.11] - 2026-10-19
 
 ### Added

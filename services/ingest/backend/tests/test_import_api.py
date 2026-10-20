@@ -831,28 +831,31 @@ def test_active_run_cap_and_stale_run_reaping(monkeypatch):
     second = client.post('/api/v1/import/runs', json=payload)
     assert second.status_code == 201
 
-    # A stale RUNNING run (worker lost) is reaped to FAILED instead of
-    # blocking its owner forever.
+    # A stale RUNNING run (worker lost) does not count against the cap --
+    # and is left untouched for the stale-run reaper to restart it
+    # (app/workers/tasks.py's reap_stale_import_runs), never failed here.
+    stale_at = datetime.now(timezone.utc) - timedelta(seconds=settings.import_stale_run_seconds + 60)
     db = _db()
     try:
         row = db.get(ImportRun, second.json()['id'])
         row.status = ImportRunStatus.RUNNING
-        row.updated_at = datetime.now(timezone.utc) - timedelta(seconds=settings.import_stale_run_seconds + 60)
+        row.updated_at = stale_at
         db.commit()
     finally:
         db.close()
 
     third = client.post('/api/v1/import/runs', json=payload)
     assert third.status_code == 201
-    reaped = _get_run_row(second.json()['id'])
-    assert reaped.status == ImportRunStatus.FAILED
-    assert reaped.error_message == 'worker lost; run stalled'
+    untouched = _get_run_row(second.json()['id'])
+    assert untouched.status == ImportRunStatus.RUNNING
+    assert untouched.error_message is None
 
 
-def test_stale_pending_run_is_reaped_and_does_not_block_creation(monkeypatch):
+def test_stale_pending_run_does_not_block_creation_and_is_left_for_the_reaper(monkeypatch):
     # A PENDING run whose creation message was lost (send_task 500'd) has no
-    # worker heartbeat ever coming; older than the stale window it must be
-    # reaped by the cap check instead of locking its owner out forever.
+    # worker heartbeat ever coming; older than the stale window it must not
+    # count against the cap -- and stays PENDING for reap_stale_import_runs
+    # to replay its creation message.
     user = _user('imp-run-stalepending')
     source = _make_source(user.id, server_kind='cloud')
     client = login_as(user.username)
@@ -868,9 +871,9 @@ def test_stale_pending_run_is_reaped_and_does_not_block_creation(monkeypatch):
         '/api/v1/import/runs', json={'source_id': source.id, 'scope': {'type': 'page', 'value': '123'}}
     )
     assert resp.status_code == 201, resp.text
-    reaped = _get_run_row(phantom.id)
-    assert reaped.status == ImportRunStatus.FAILED
-    assert reaped.error_message == 'worker lost; run stalled'
+    untouched = _get_run_row(phantom.id)
+    assert untouched.status == ImportRunStatus.PENDING
+    assert untouched.error_message is None
 
 
 def test_active_run_cap_recheck_rejects_loser_of_concurrent_create(monkeypatch):

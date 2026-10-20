@@ -1257,3 +1257,15 @@ Mehrere Ingest-Worker sind sicher, weil jeder Auftrag ein Übernahme-Token
 mit Heartbeat trägt; ein beim Herunterskalieren abgebrochener Auftrag wird
 nach etwa zwei Minuten neu eingestellt (`terminationGracePeriodSeconds`
 des OCR-Pools: 120 s).
+
+Confluence-Import-Runs starten ebenfalls von selbst neu: Ein Run, dessen
+Worker starb oder dessen Fortsetzungs-Nachricht verloren ging, gilt nach
+`IMPORT_STALE_RUN_SECONDS` (Standard 600 s) ohne Heartbeat als verloren und
+wird vom Reaper — beim Worker-Start und alle `PUBLICATION_TICK_SECONDS`
+(30 s) — an seiner gespeicherten Frontier fortgesetzt, nie auf `failed`
+gesetzt. Vorübergehende Confluence-Fehler (HTTP 429/5xx, Netzwerk) beim
+Chunk-Start werden mit exponentiellem Backoff (60 s bis 10 min) wiederholt,
+betroffene Einzelseiten wandern bis zu dreimal ans Ende der Frontier.
+`IMPORT_MAX_RECOVERIES` (Standard 5) begrenzt Neustarts und Backoff-Versuche
+je Run; darüber hinaus endet der Run mit einer entsprechenden Meldung. Ein
+hängender Run zählt nicht gegen das Limit aktiver Runs eines Nutzers.
