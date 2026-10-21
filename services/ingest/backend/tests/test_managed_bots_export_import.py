@@ -233,6 +233,41 @@ def test_config_extras_are_optional_and_round_trip_through_the_admin_api(monkeyp
     assert updated.json()['config_extras'] is None
 
 
+def test_chat_options_project_to_runtime_and_round_trip_through_the_bot_document(monkeypatch):
+    admin_client, team_name, collection_slug = _setup('chat-options-admin')
+    plain = _payload(team_name, collection_slug)
+    assert admin_client.post('/api/v1/auth/admin/bots', json=plain).status_code == 201
+    payload = _llm_payload(team_name, collection_slug, show_sources=False, disclaimer='  Testsystem – keine verbindlichen Aussagen ')
+    created = admin_client.post('/api/v1/auth/admin/bots', json=payload)
+    assert created.status_code == 201, created.text
+    assert created.json()['show_sources'] is False
+    assert created.json()['disclaimer'] == 'Testsystem – keine verbindlichen Aussagen'
+
+    monkeypatch.setattr(settings, 'chat_config_service_token', 'runtime-control-token')
+    projected = {item['id']: item for item in admin_client.get('/api/v1/internal/bots', headers=INTERNAL).json()['items']}
+    assert projected[payload['id']]['show_sources'] is False
+    assert projected[payload['id']]['disclaimer'] == 'Testsystem – keine verbindlichen Aussagen'
+    assert projected[plain['id']]['show_sources'] is True
+    assert projected[plain['id']]['disclaimer'] is None
+
+    exported = admin_client.get(f"/api/v1/auth/admin/bots/{payload['id']}/export").content
+    doc = yaml.safe_load(exported)
+    assert doc['show_sources'] is False
+    assert doc['disclaimer'] == 'Testsystem – keine verbindlichen Aussagen'
+    applied = _import(admin_client, exported, dry_run=False, bot_id='kopie-mit-hinweis')
+    assert applied.status_code == 200, applied.text
+    assert applied.json()['bot']['show_sources'] is False
+    assert applied.json()['bot']['disclaimer'] == 'Testsystem – keine verbindlichen Aussagen'
+
+    update_body = {key: value for key, value in payload.items() if key != 'id'}
+    update_body['disclaimer'] = 'x' * 501
+    assert admin_client.put(f"/api/v1/auth/admin/bots/{payload['id']}", json=update_body).status_code == 422
+    update_body.update(show_sources=True, disclaimer='   ')
+    updated = admin_client.put(f"/api/v1/auth/admin/bots/{payload['id']}", json=update_body)
+    assert updated.status_code == 200, updated.text
+    assert updated.json()['show_sources'] is True and updated.json()['disclaimer'] is None
+
+
 def test_bot_id_override_must_be_a_slug_and_unique_ids_are_normalised():
     admin_client, team_name, collection_slug = _setup('override-admin')
     payload = _payload(team_name, collection_slug)

@@ -109,6 +109,8 @@ def row_to_document(row: ManagedBot) -> BotDocument:
             'auth_token': SECRET_PLACEHOLDER if row.auth_token_encrypted else None,
         } if not is_llm else None,
         'agent': dict(row.agent_config) if is_llm and row.agent_config else None,
+        'show_sources': bool(row.show_sources),
+        'disclaimer': row.disclaimer,
     }
     return BotDocument.model_validate(raw)
 
@@ -262,6 +264,8 @@ def document_to_payload(
         'uncertainty_hint': doc.guard.uncertainty_hint,
         'agent': None if is_n8n else doc.agent,
         'config_extras': _extras_from_guard(doc.guard),
+        'show_sources': doc.show_sources,
+        'disclaimer': doc.disclaimer,
         'llm_endpoint': None if is_n8n else doc.model.endpoint,
         'llm_endpoints': [] if is_n8n else list(doc.model.endpoints),
     }

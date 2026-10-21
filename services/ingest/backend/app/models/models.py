@@ -647,6 +647,10 @@ class ManagedBot(Base):
     weak_context_below: Mapped[float | None] = mapped_column(Float, nullable=True)
     query_rewrite: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     uncertainty_hint: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1', nullable=False)
+    # Chat presentation (Weave-Runtime BotConfig.show_sources/disclaimer):
+    # hide the sources panel, and an optional note next to the composer.
+    show_sources: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1', nullable=False)
+    disclaimer: Mapped[str | None] = mapped_column(String(500), nullable=True)
     updated_by_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True
     )
