@@ -1304,3 +1304,69 @@ def test_portal_document_source_confluence_job_without_page_state_is_not_upload(
     listing = authed.get('/api/v1/portal/documents', params={'collection_id': collection.id}).json()
     item = next(item for item in listing['items'] if item['id'] == job.id)
     assert item['source']['kind'] != 'upload'
+
+
+def test_portal_documents_search_source_failed_and_released_by_me_filters(monkeypatch):
+    _configure(monkeypatch)
+    suffix = uuid.uuid4().hex[:8]
+    user = create_test_user(username=f'portal-filters-{suffix}', email=f'portal-filters-{suffix}@example.com')
+    other = create_test_user(username=f'portal-filters-other-{suffix}', email=f'portal-filters-other-{suffix}@example.com')
+    collection = _collection(user.id)
+    run = _import_run(ImportRunStatus.FINISHED)
+    upload = _job(user.id, collection)
+    confluence = _job(user.id, collection, import_run_id=run.id)
+    failed = _job(user.id, collection)
+    mine = _job(user.id, collection)
+    theirs = _job(user.id, collection)
+    source = _import_source(user.id)
+    _import_page_state(source.id, confluence.id, title='Reisekosten-Richtlinie.md')
+    with _db() as db:
+        db.get(Job, upload.id).original_filename = 'Handbuch_100%.pdf'
+        db.get(Job, failed.id).status = JobStatus.FAILED
+        for job, owner in ((mine, user), (theirs, other)):
+            db.add(DocumentRelease(job_id=job.id, owner_id=owner.id, markdown_snapshot='# x', markdown_sha256='0' * 64, payload={}, status='sent'))
+        db.commit()
+    authed = login_as(user.username)
+
+    def ids(**params):
+        response = authed.get('/api/v1/portal/documents', params=params)
+        assert response.status_code == 200, response.text
+        assert response.json()['total'] == len(response.json()['items'])
+        return {item['id'] for item in response.json()['items']}
+
+    assert ids(q='handbuch_100%') == {upload.id}
+    assert ids(q='reisekosten') == {confluence.id}
+    assert ids(q='100_') == set()
+    assert ids(source='confluence') == {confluence.id}
+    assert ids(source='upload') == {upload.id, failed.id, mine.id, theirs.id}
+    assert ids(review_state='failed') == {failed.id}
+    assert ids(released_by_me='true') == {mine.id}
+    assert authed.get('/api/v1/portal/documents', params={'source': 'fax'}).status_code == 422
+
+
+def test_portal_stats_counts_spaces_review_wait_and_weekly_releases(monkeypatch):
+    _configure(monkeypatch)
+    suffix = uuid.uuid4().hex[:8]
+    user = create_test_user(username=f'portal-stats-{suffix}', email=f'portal-stats-{suffix}@example.com')
+    outsider = create_test_user(username=f'portal-stats-out-{suffix}', email=f'portal-stats-out-{suffix}@example.com')
+    collection = _collection(user.id)
+    waiting_old = _job(user.id, collection)
+    _job(user.id, collection)
+    released = _job(user.id, collection)
+    failed = _job(user.id, collection)
+    now = datetime.now(timezone.utc)
+    with _db() as db:
+        db.get(Job, waiting_old.id).updated_at = now - timedelta(hours=50)
+        db.get(Job, failed.id).status = JobStatus.FAILED
+        db.add(DocumentRelease(job_id=released.id, owner_id=user.id, markdown_snapshot='# x', markdown_sha256='0' * 64, payload={}, status='sent'))
+        db.commit()
+
+    body = login_as(user.username).get('/api/v1/portal/stats').json()
+    assert body['spaces'] == [{'collection_id': collection.id, 'name': collection.name, 'slug': collection.slug, 'total': 4, 'in_chat': 1, 'review': 2, 'failed': 1}]
+    assert body['review_waiting'] == 2
+    assert body['review_wait_median_hours'] > 20
+    assert datetime.fromisoformat(body['review_oldest_since']).replace(tzinfo=timezone.utc) < now - timedelta(hours=49)
+    assert len(body['releases_per_week']) == 8
+    assert [week['count'] for week in body['releases_per_week']] == [0] * 7 + [1]
+
+    assert login_as(outsider.username).get('/api/v1/portal/stats').json()['spaces'] == []

@@ -34,21 +34,6 @@ function PageTabs({ ariaLabel, tabs }: { ariaLabel: string; tabs: PageTab[] }) {
   );
 }
 
-/** Aufgaben: overview, review inbox, processing status. */
-export function TaskTabs() {
-  const { t } = useI18n();
-  return (
-    <PageTabs
-      ariaLabel={t('portal.nav.tasks')}
-      tabs={[
-        { href: '/aufgaben', label: t('portal.tabs.overview') },
-        { href: '/reviews', label: t('portal.chrome.breadcrumb.reviews') },
-        { href: '/processing', label: t('portal.chrome.breadcrumb.processing') },
-      ]}
-    />
-  );
-}
-
 /** Dokumente: portal list and the advanced job management. */
 export function DocumentTabs() {
   const { t } = useI18n();

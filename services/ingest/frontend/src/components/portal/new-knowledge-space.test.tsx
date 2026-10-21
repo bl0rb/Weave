@@ -96,7 +96,9 @@ it('only opens an area to everyone after an explicit confirmation', async () => 
 });
 
 it('keeps the Übersicht free of a "Wissensbereich anlegen" shortcut but offers "Quelle hinzufügen" as its one header action', async () => {
-  api.mockResolvedValue({ items: [], total: 0 });
+  api.mockImplementation(async path => path === '/api/v1/portal/stats'
+    ? { spaces: [], review_waiting: 0, review_wait_median_hours: null, review_oldest_since: null, releases_per_week: [] }
+    : { items: [], total: 0 });
   const { container } = render(<PortalHome />);
   await screen.findByRole('heading', { name: /^Guten (Morgen|Tag|Abend), Ada\.$/ });
   expect(screen.queryByRole('link', { name: /Wissensbereich anlegen/ })).toBeNull();
@@ -112,17 +114,17 @@ it.each([false, true])('offers one context-specific upload action for an area (h
   const { container } = render(<KnowledgeDetail id="area" />);
   await screen.findByRole('link', { name: 'Quelle hinzufügen' });
   expect(screen.getAllByRole('link', { name: 'Quelle hinzufügen' })).toHaveLength(1);
-  expect(container.querySelector('header.portal-header a')).toBeNull();
+  // The header only links to the space's documents, and only when it has some.
+  expect([...container.querySelectorAll('header.portal-header a')].map(link => link.textContent)).toEqual(hasDocuments ? ['1 Dokument ansehen'] : []);
 });
 
-it('offers a collection ZIP and an individual Markdown download for finished documents', async () => {
+it('offers the collection ZIP under Wartung (single Markdown downloads live in the technical details)', async () => {
   api.mockImplementation(async path => path === '/api/v1/collections/area' ? area : {
     items: [{ id: 'doc', original_filename: 'Leitfaden.pdf', status: 'FINISHED', collection_id: 'area', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, release: null }],
     total: 1,
   });
   render(<KnowledgeDetail id="area" />);
   expect(await screen.findByRole('button', { name: 'Alle als ZIP' })).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Leitfaden.pdf als Markdown herunterladen' })).toBeTruthy();
 });
 
 it('uses the upload capability for entitled existing team members', async () => {

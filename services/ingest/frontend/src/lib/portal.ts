@@ -39,7 +39,11 @@ export type DocumentPage = { items: PortalDocument[]; total: number };
 /** One entry of GET /api/v1/portal/collections/{id}/import-scopes -- a distinct Confluence import scope among the space's visible documents. `edit_run_id` is the caller's own newest run of the scope (set only when can_edit), which may differ from the scope's newest run. */
 export type ImportScope = { value: string; scope_type: string; scope_value: string; label: string; count: number; latest_run_id: string; edit_run_id: string | null; can_edit: boolean };
 export type ImportScopesResponse = { items: ImportScope[]; other_count: number };
-export type ReviewStateFilter = 'review' | 'all' | 'skipped' | 'parked';
+/** 'failed': processing or delivery to the chat failed. */
+export type ReviewStateFilter = 'review' | 'all' | 'skipped' | 'parked' | 'failed';
+export type DocumentSourceFilter = '' | 'upload' | 'confluence' | 'mail';
+/** Server-side filters of GET /api/v1/portal/documents beyond space, review state and grade. */
+export type DocumentFilters = { q?: string; source?: DocumentSourceFilter; releasedByMe?: boolean };
 export type BulkAction = 'release' | 'skip' | 'park' | 'unskip' | 'delete';
 export type BulkActionResult = { done: number; errors: { job_id: string; reason: string }[] };
 export type QualityGradeFilter = '' | 'A' | 'B' | 'C' | 'none';
@@ -131,12 +135,27 @@ export function documentState(document: PortalDocument, live?: IndexingItem, loc
 }
 export const documentUrl = (document: PortalDocument) => document.status === 'FINISHED' ? `/reviews/${document.id}` : `/jobs/${document.id}`;
 export const dateLabel = (value: string, locale: Locale = DEFAULT_LOCALE) => new Intl.DateTimeFormat(INTL_LOCALE[locale], { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value));
-export function loadDocuments(collectionId?: string, offset = 0, reviewState: ReviewStateFilter = 'all', qualityGrade?: QualityGradeFilter, limit = 20, importScope?: string): Promise<DocumentPage> {
+export function loadDocuments(collectionId?: string, offset = 0, reviewState: ReviewStateFilter = 'all', qualityGrade?: QualityGradeFilter, limit = 20, importScope?: string, filters: DocumentFilters = {}): Promise<DocumentPage> {
   const params = new URLSearchParams({ offset: String(offset), limit: String(limit), review_state: reviewState });
   if (collectionId) params.set('collection_id', collectionId);
   if (qualityGrade) params.set('quality_grade', qualityGrade);
   if (importScope) params.set('import_scope', importScope);
+  if (filters.q?.trim()) params.set('q', filters.q.trim());
+  if (filters.source) params.set('source', filters.source);
+  if (filters.releasedByMe) params.set('released_by_me', 'true');
   return apiJson(`/api/v1/portal/documents?${params}`);
+}
+
+/** GET /api/v1/portal/stats -- the Übersicht metrics over every document the caller can see. */
+export type PortalSpaceStats = { collection_id: string; name: string; slug: string; total: number; in_chat: number; review: number; failed: number };
+export type PortalStats = {
+  spaces: PortalSpaceStats[];
+  review_waiting: number; review_wait_median_hours: number | null; review_oldest_since: string | null;
+  /** Oldest week first, the current week last. */
+  releases_per_week: { week_start: string; count: number }[];
+};
+export function loadPortalStats(): Promise<PortalStats> {
+  return apiJson('/api/v1/portal/stats');
 }
 
 /** Distinct Confluence import scopes among a space's visible documents -- backs the "Confluence-Bereich" filter on /knowledge/[id]. */

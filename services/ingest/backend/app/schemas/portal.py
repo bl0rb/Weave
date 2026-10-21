@@ -198,3 +198,29 @@ class PortalConfigResponse(BaseModel):
     # The same teams with their ids, for the grants and the responsible
     # team of a new knowledge space (ADR 0008).
     teams: list[CollectionTeamRef] = Field(default_factory=list)
+
+
+class PortalSpaceStats(BaseModel):
+    collection_id: str
+    name: str
+    slug: str
+    total: int
+    # Release delivered to the knowledge service; its indexing state lives there.
+    in_chat: int
+    review: int
+    failed: int
+
+
+class PortalWeekCount(BaseModel):
+    # Monday of the (UTC) week.
+    week_start: datetime
+    count: int
+
+
+class PortalStatsResponse(BaseModel):
+    spaces: list[PortalSpaceStats]
+    review_waiting: int
+    review_wait_median_hours: float | None = None
+    review_oldest_since: datetime | None = None
+    # Oldest week first, the current week last; weeks without releases count 0.
+    releases_per_week: list[PortalWeekCount]

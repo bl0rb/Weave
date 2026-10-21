@@ -10,7 +10,6 @@ import {
   FolderOpen,
   Home,
   KeyRound,
-  ListChecks,
   LogOut,
   MessageSquare,
   ArrowLeft,
@@ -33,21 +32,21 @@ import type { MessageKey } from '@/i18n/messages';
 import { resolveChatPublicUrl } from '@/lib/api-base';
 import { loadDocuments } from '@/lib/portal';
 import { listOwnedBots } from '@/lib/bots';
-import { loadFailedJobs } from '@/lib/jobs-search';
 import { useActiveWork } from '@/lib/activity';
 import { SystemStatusIndicator } from '@/components/system-status-indicator';
 
-type NavItem = { href: string; label: string; icon: typeof Home; badge?: number };
+/** `bottom`: pinned to the end of the list (Verbindungen). */
+type NavItem = { href: string; label: string; icon: typeof Home; badge?: number; bottom?: boolean };
 type T = (key: MessageKey, vars?: Record<string, string | number>) => string;
 
 function portalNav(t: T, ownsBots: boolean): Omit<NavItem, 'badge'>[] {
   return [
     { href: '/', label: t('portal.nav.overview'), icon: Home },
-    { href: '/aufgaben', label: t('portal.nav.tasks'), icon: ListChecks },
-    { href: '/knowledge', label: t('portal.nav.knowledgeSpaces'), icon: FolderOpen },
     { href: '/documents', label: t('portal.nav.documents'), icon: FileText },
+    { href: '/knowledge', label: t('portal.nav.knowledgeSpaces'), icon: FolderOpen },
     // Only for bot owners (ADR 0008); everybody else has nothing to maintain there.
     ...(ownsBots ? [{ href: '/bots', label: t('portal.nav.bots'), icon: Bot }] : []),
+    { href: '/connections', label: t('portal.chrome.breadcrumb.connections'), icon: Cloud, bottom: true },
   ];
 }
 
@@ -66,8 +65,7 @@ function adminNav(t: T, botAdminOnly: boolean): NavItem[] {
 
 // Pages shown as tabs under one sidebar entry (see components/portal/page-tabs.tsx).
 const NAV_ALIASES: Record<string, string[]> = {
-  '/aufgaben': ['/reviews', '/processing'],
-  '/documents': ['/jobs'],
+  '/documents': ['/jobs', '/reviews', '/processing'],
 };
 
 function isActive(href: string, pathname: string): boolean {
@@ -83,7 +81,7 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
   const { t } = useI18n();
   const [helpOpen, setHelpOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [tasksBadge, setTasksBadge] = useState<number | null>(null);
+  const [reviewBadge, setReviewBadge] = useState<number | null>(null);
   const [ownsBots, setOwnsBots] = useState(false);
   // Lazy initializer (not an effect): resolveChatPublicUrl() only ever reads
   // a value injected before hydration (see runtime-env.js) and never
@@ -94,18 +92,18 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
   // The mark weaves while any job or import run is in progress (lib/activity.ts).
   const activeWork = useActiveWork(Boolean(user), pathname);
   const adminHome = isBotAdmin ? '/admin/ki' : '/admin';
-  const navItems: NavItem[] = isAdminArea ? adminNav(t, isBotAdmin) : portalNav(t, ownsBots).map((item) => (item.href === '/aufgaben' ? { ...item, badge: tasksBadge ?? undefined } : item));
+  const navItems: NavItem[] = isAdminArea ? adminNav(t, isBotAdmin) : portalNav(t, ownsBots).map((item) => (item.href === '/documents' ? { ...item, badge: reviewBadge ?? undefined } : item));
 
-  // Aufgaben badge = open reviews + failed jobs. Both requests are as cheap
-  // as the APIs allow (limit 0/1, only `total` is read) and are refreshed on
-  // navigation so finishing a review or a retry clears the badge reasonably
-  // promptly without a polling loop.
+  // Dokumente badge = documents waiting for review. The request is as cheap
+  // as the API allows (limit 1, only `total` is read) and is refreshed on
+  // navigation so finishing a review clears the badge reasonably promptly
+  // without a polling loop.
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
-    Promise.all([loadDocuments(undefined, 0, 'review', undefined, 1), loadFailedJobs(0)])
-      .then(([reviews, failed]) => { if (!cancelled) setTasksBadge(reviews.total + failed.total); })
-      .catch(() => { if (!cancelled) setTasksBadge(null); });
+    loadDocuments(undefined, 0, 'review', undefined, 1)
+      .then((reviews) => { if (!cancelled) setReviewBadge(reviews.total); })
+      .catch(() => { if (!cancelled) setReviewBadge(null); });
     return () => { cancelled = true; };
   }, [user, pathname]);
 
@@ -165,7 +163,7 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
         )}
 
         <nav aria-label={isAdminArea ? t('portal.chrome.adminSubtitle') : t('portal.chrome.mainNav')} className="flex flex-1 flex-col gap-0.5">
-          {navItems.map(({ href, label, icon: Icon, badge }) => {
+          {navItems.map(({ href, label, icon: Icon, badge, bottom }) => {
             const active = isActive(href, pathname);
             return (
               <Link
@@ -173,7 +171,7 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
                 href={href}
                 aria-current={active ? 'page' : undefined}
                 onClick={() => onOpenChange(false)}
-                className="shell-nav-link flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)] no-underline transition hover:bg-[var(--hover)] hover:text-[var(--ink)]"
+                className={`shell-nav-link ${bottom ? 'mt-auto' : ''} flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)] no-underline transition hover:bg-[var(--hover)] hover:text-[var(--ink)]`}
               >
                 <Icon className="h-[18px] w-[18px] flex-shrink-0 text-[var(--muted)]" aria-hidden="true" />
                 {label}
@@ -218,10 +216,6 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
             <div ref={menuRef} className="relative border-t border-[var(--line)] pt-2.5">
               {menuOpen && (
                 <div role="menu" className="shell-profile-menu">
-                  <Link role="menuitem" href="/connections" onClick={() => { setMenuOpen(false); onOpenChange(false); }} className="flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)] no-underline hover:bg-[var(--hover)] hover:text-[var(--ink)]">
-                    <Cloud className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
-                    {t('portal.chrome.breadcrumb.connections')}
-                  </Link>
                   <Link role="menuitem" href="/settings" onClick={() => { setMenuOpen(false); onOpenChange(false); }} className="flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)] no-underline hover:bg-[var(--hover)] hover:text-[var(--ink)]">
                     <KeyRound className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
                     {t('portal.chrome.apiTokens')}

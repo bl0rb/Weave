@@ -8,7 +8,8 @@ import re
 import tempfile
 import uuid
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from statistics import median
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import PlainTextResponse, Response, StreamingResponse
@@ -73,6 +74,9 @@ from app.schemas.portal import (
     PortalReleaseSummary,
     PortalReprocessRequest,
     PortalReprocessResponse,
+    PortalSpaceStats,
+    PortalStatsResponse,
+    PortalWeekCount,
 )
 from app.services import object_store
 from app.services.backup import requeue_collection_releases_for_reindex
@@ -197,6 +201,44 @@ def _apply_import_scope_filter(query, value: str | None):
             detail="import_scope must be 'none' or '<scope_type>:<scope_value>'",
         )
     return query.where(ImportRun.scope_type == scope_type, ImportRun.scope_value == scope_value)
+
+
+_DOCUMENT_SOURCES = ('upload', 'confluence', 'mail')
+
+
+def _apply_document_filters(query, *, user: User, q: str | None, source: str | None, released_by_me: bool):
+    """Apply the Dokumente page's search ('q': filename, Confluence page
+    title/URL, upload folder), 'source' (upload/confluence/mail) and
+    'released_by_me' filters. The query must already outer-join
+    DocumentRelease."""
+    needle = (q or '').strip()
+    if needle:
+        escaped = needle.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+        pattern = f'%{escaped}%'
+        query = query.where(or_(
+            Job.original_filename.ilike(pattern, escape='\\'),
+            Job.processing_info['settings']['folder'].as_string().ilike(pattern, escape='\\'),
+            Job.processing_info['settings']['subfolder'].as_string().ilike(pattern, escape='\\'),
+            select(ImportPageState.id).where(
+                ImportPageState.job_id == Job.id,
+                or_(ImportPageState.title.ilike(pattern, escape='\\'), ImportPageState.url.ilike(pattern, escape='\\')),
+            ).exists(),
+        ))
+    if source is not None:
+        if source not in _DOCUMENT_SOURCES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="source must be 'upload', 'confluence' or 'mail'",
+            )
+        if source == 'confluence':
+            query = query.where(Job.import_run_id.is_not(None))
+        elif source == 'mail':
+            query = query.where(Job.import_run_id.is_(None), Job.mail_message_id.is_not(None))
+        else:
+            query = query.where(Job.import_run_id.is_(None), Job.mail_message_id.is_(None))
+    if released_by_me:
+        query = query.where(DocumentRelease.owner_id == user.id)
+    return query
 
 
 def _job_is_controlled(db, job: Job, collection: Collection, user: User) -> bool:
@@ -552,6 +594,9 @@ def list_portal_documents(
     review_state: str | None = Query(None),
     quality_grade: str | None = Query(None),
     import_scope: str | None = Query(None),
+    q: str | None = Query(None, max_length=200),
+    source: str | None = Query(None),
+    released_by_me: bool = Query(False),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
     db=Depends(get_db),
@@ -559,7 +604,8 @@ def list_portal_documents(
 ) -> PortalDocumentListResponse:
     # review_state: 'review' (default when review_only=true) excludes skipped
     # and parked documents from the pending-review view; 'skipped' / 'parked'
-    # show only those; 'all' (default otherwise) shows everything.
+    # show only those; 'failed' shows failed processing or delivery; 'all'
+    # (default otherwise) shows everything.
     effective_review_state = review_state or ('review' if review_only else 'all')
     collection_id_expr = Job.processing_info['settings']['collection_id'].as_string()
     quality_grade_expr = Job.processing_info['execution']['quality_gate']['grade'].as_string()
@@ -611,32 +657,39 @@ def list_portal_documents(
         query = query.where(func.lower(review_decision_expr) == effective_review_state, DocumentRelease.id.is_(None))
     elif effective_review_state == 'review':
         query = query.where(or_(review_decision_expr.is_(None), func.lower(review_decision_expr).not_in(_DECIDED_REVIEW_STATES)))
+    elif effective_review_state == 'failed':
+        query = query.where(or_(Job.status == JobStatus.FAILED, DocumentRelease.status == 'failed'))
     query = _apply_quality_grade_filter(query, quality_grade_expr, quality_grade)
     query = _apply_import_scope_filter(query, import_scope)
+    query = _apply_document_filters(query, user=user, q=q, source=source, released_by_me=released_by_me)
 
     count_query = (
         select(func.count())
         .select_from(Job)
         .join(Collection, Collection.id == collection_id_expr)
         .outerjoin(ImportRun, ImportRun.id == Job.import_run_id)
+        .outerjoin(DocumentRelease, DocumentRelease.job_id == Job.id)
     )
     count_query = _apply_visible_filter(count_query, user, db=db)
     if collection_id is not None:
         count_query = count_query.where(Collection.id == collection_id)
     if effective_review_state == 'review':
-        count_query = count_query.outerjoin(DocumentRelease, DocumentRelease.job_id == Job.id).where(
+        count_query = count_query.where(
             Job.status == JobStatus.FINISHED,
             DocumentRelease.id.is_(None),
             or_(ImportRun.id.is_(None), ImportRun.status == ImportRunStatus.FINISHED),
         )
     if effective_review_state in _DECIDED_REVIEW_STATES:
-        count_query = count_query.outerjoin(DocumentRelease, DocumentRelease.job_id == Job.id).where(
+        count_query = count_query.where(
             func.lower(review_decision_expr) == effective_review_state, DocumentRelease.id.is_(None)
         )
     elif effective_review_state == 'review':
         count_query = count_query.where(or_(review_decision_expr.is_(None), func.lower(review_decision_expr).not_in(_DECIDED_REVIEW_STATES)))
+    elif effective_review_state == 'failed':
+        count_query = count_query.where(or_(Job.status == JobStatus.FAILED, DocumentRelease.status == 'failed'))
     count_query = _apply_quality_grade_filter(count_query, quality_grade_expr, quality_grade)
     count_query = _apply_import_scope_filter(count_query, import_scope)
+    count_query = _apply_document_filters(count_query, user=user, q=q, source=source, released_by_me=released_by_me)
     total = int(db.scalar(count_query) or 0)
     rows = db.execute(query.offset(offset).limit(limit)).all()
 
@@ -685,6 +738,70 @@ def list_portal_documents(
             for row in rows
         ],
         total=total,
+    )
+
+
+_STATS_WEEKS = 8
+
+
+@router.get('/stats', response_model=PortalStatsResponse)
+def portal_stats(db=Depends(get_db), user: User = Depends(get_current_user)) -> PortalStatsResponse:
+    """Übersicht metrics over every document the caller can see: per space
+    total / in chat / to review / failed, how long documents wait for a
+    review, and releases per week. Same visibility and 'review' rule as
+    GET /documents."""
+    collection_id_expr = Job.processing_info['settings']['collection_id'].as_string()
+    review_decision_expr = Job.processing_info['portal_review']['decision'].as_string()
+    review_expr = and_(
+        Job.status == JobStatus.FINISHED,
+        DocumentRelease.id.is_(None),
+        or_(ImportRun.id.is_(None), ImportRun.status == ImportRunStatus.FINISHED),
+        or_(review_decision_expr.is_(None), func.lower(review_decision_expr).not_in(_DECIDED_REVIEW_STATES)),
+    )
+    failed_expr = or_(Job.status == JobStatus.FAILED, DocumentRelease.status == 'failed')
+
+    def visible(query):
+        query = (
+            query.join(Collection, Collection.id == collection_id_expr)
+            .outerjoin(ImportRun, ImportRun.id == Job.import_run_id)
+            .outerjoin(DocumentRelease, DocumentRelease.job_id == Job.id)
+        )
+        return _apply_visible_filter(query, user, db=db)
+
+    def count_if(condition):
+        return func.sum(case((condition, 1), else_=0))
+
+    space_rows = db.execute(
+        visible(select(
+            Collection.id, Collection.name, Collection.slug, func.count(Job.id),
+            count_if(DocumentRelease.status == 'sent'), count_if(review_expr), count_if(failed_expr),
+        ).select_from(Job))
+        .group_by(Collection.id, Collection.name, Collection.slug)
+        .order_by(Collection.name)
+    ).all()
+
+    now = datetime.now(timezone.utc)
+    waiting_since = [aware_utc(value) for value in db.scalars(visible(select(Job.updated_at).select_from(Job)).where(review_expr))]
+    week_start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    first_week = week_start - timedelta(weeks=_STATS_WEEKS - 1)
+    weeks = [first_week + timedelta(weeks=index) for index in range(_STATS_WEEKS)]
+    per_week = dict.fromkeys(weeks, 0)
+    for released_at in db.scalars(visible(select(DocumentRelease.created_at).select_from(Job)).where(DocumentRelease.created_at >= first_week)):
+        released_at = aware_utc(released_at)
+        per_week[weeks[min((released_at - first_week).days // 7, _STATS_WEEKS - 1)]] += 1
+
+    return PortalStatsResponse(
+        spaces=[
+            PortalSpaceStats(
+                collection_id=row[0], name=row[1], slug=row[2], total=int(row[3] or 0),
+                in_chat=int(row[4] or 0), review=int(row[5] or 0), failed=int(row[6] or 0),
+            )
+            for row in space_rows
+        ],
+        review_waiting=len(waiting_since),
+        review_wait_median_hours=round(median((now - value).total_seconds() / 3600 for value in waiting_since), 1) if waiting_since else None,
+        review_oldest_since=min(waiting_since) if waiting_since else None,
+        releases_per_week=[PortalWeekCount(week_start=week, count=count) for week, count in per_week.items()],
     )
 
 

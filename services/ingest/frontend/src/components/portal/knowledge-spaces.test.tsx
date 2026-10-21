@@ -125,171 +125,85 @@ it('deletes a knowledge space with all its content only after its name is typed'
   ));
 });
 
-it('reindexes a knowledge space after confirmation and shows the requeued count', async () => {
-  const document = { id: 'd1', original_filename: 'Doc.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, release: null, source: { kind: 'upload', label: 'Hochgeladen', path: null, url: null } };
+const sync = { id: 's1', source_id: 'src', source_name: 'Firmen-Wiki', scope_type: 'space', scope_value: 'DOCS', root_page_title: 'Handbuch', collection_id: 'area-1', collection_name: 'Servicewissen', options: {}, enabled: true, interval_seconds: 86400, last_success_at: '2026-10-20T06:00:00Z', last_error: 'Seite 12 nicht erreichbar', next_refresh_at: '2099-01-01T06:00:00Z', last_run: { id: 'run-9', status: 'finished', is_refresh: true, created_at: '2026-10-20T06:00:00Z', finished_at: '2026-10-20T06:05:00Z', pages_imported: 4, pages_failed: 0 }, created_at: '2026-09-01T12:00:00Z' };
+
+function mockDetail({ total = 3, scopes = { items: [], other_count: 0 } as unknown, syncs = [] as unknown[], space = area as unknown } = {}) {
   json.mockImplementation(async (path, init) => {
-    if (typeof path === 'string' && path.startsWith('/api/v1/portal/documents')) return { items: [document], total: 1 };
+    if (typeof path !== 'string') return space;
+    if (path.startsWith('/api/v1/portal/documents')) return { items: [], total };
+    if (path === '/api/v1/portal/collections/area-1/import-scopes') return scopes;
+    if (path === '/api/v1/import/syncs') return { items: syncs };
     if (path === '/api/v1/portal/collections/area-1/reindex' && init?.method === 'POST') return { requeued: 1 };
-    return area;
+    if (path === '/api/v1/import/syncs/s1/run' && init?.method === 'POST') return { id: 'run', status: 'pending' };
+    return space;
   });
+}
+
+it('links a space card and the detail header to the space\'s filtered documents instead of a document table', async () => {
+  render(<KnowledgeSpaces />);
+  expect((await screen.findByRole('link', { name: 'Dokumente ansehen' })).getAttribute('href')).toBe('/documents?bereich=servicewissen');
+  cleanup();
+
+  mockDetail();
   render(<KnowledgeDetail id="area-1" />);
-  await screen.findByText('Doc.pdf');
+  expect((await screen.findByRole('link', { name: /3 Dokumente ansehen/ })).getAttribute('href')).toBe('/documents?bereich=servicewissen');
+  expect(screen.getByText(/Deine Rolle:/).textContent).toContain('Besitzer');
+  expect(screen.getByRole('heading', { name: 'Quellen' })).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Zugriff' })).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Wartung' })).toBeTruthy();
+  expect(screen.queryByRole('table')).toBeNull();
+  expect(screen.getByRole('link', { name: 'Verbindungen' }).getAttribute('href')).toBe('/connections');
+});
+
+it('reindexes a knowledge space after confirmation, explaining that nothing is re-imported', async () => {
+  mockDetail({ total: 1 });
+  render(<KnowledgeDetail id="area-1" />);
+  await screen.findByRole('link', { name: /1 Dokument ansehen/ });
+  expect(screen.getByText(/Es wird nichts neu importiert/)).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Wissensbereich neu indizieren' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Neu indizieren' }));
   await waitFor(() => expect(json.mock.calls.some(([path]) => path === '/api/v1/portal/collections/area-1/reindex')).toBe(true));
   expect(await screen.findByText('1 Dokument wird neu indiziert.')).toBeTruthy();
 });
 
-it('starts a Confluence sync for the space\'s own imports instead of only reloading', async () => {
-  const document = { id: 'd1', original_filename: 'Doc.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: null, quality_recommendation: null, can_release: true, release: null, source: { kind: 'confluence', label: 'Confluence', path: null, url: 'https://wiki.example/page' } };
-  json.mockImplementation(async (path, init) => {
-    if (typeof path === 'string' && path.startsWith('/api/v1/portal/documents')) return { items: [document], total: 1 };
-    if (path === '/api/v1/import/syncs') return { items: [{ id: 's1', collection_id: 'area-1' }, { id: 's2', collection_id: 'other' }] };
-    if (path === '/api/v1/import/syncs/s1/run' && init?.method === 'POST') return { id: 'run', status: 'pending' };
-    return area;
-  });
+it('lists the space\'s Confluence imports with schedule, last run and error, and syncs only its own', async () => {
+  mockDetail({ syncs: [sync, { ...sync, id: 's2', collection_id: 'other' }] });
   render(<KnowledgeDetail id="area-1" />);
-  await screen.findByText('Doc.pdf');
-  expect(screen.queryByRole('button', { name: 'Aktualisieren' })).toBeNull();
-  fireEvent.click(await screen.findByRole('button', { name: 'Jetzt synchronisieren' }));
+  const list = await screen.findByRole('list', { name: 'Confluence-Synchronisierungen' });
+  expect(list.textContent).toContain('Handbuch');
+  expect(list.textContent).toContain('Firmen-Wiki · Alle 24 Std.');
+  expect(list.textContent).toContain('4 Seiten geändert');
+  expect(list.textContent).toContain('Seite 12 nicht erreichbar');
+  fireEvent.click(screen.getByRole('button', { name: 'Jetzt synchronisieren' }));
   expect(await screen.findByText('Synchronisierung gestartet.')).toBeTruthy();
   const runs = json.mock.calls.filter(([path, init]) => init?.method === 'POST' && String(path).startsWith('/api/v1/import/syncs/'));
   expect(runs.map(([path]) => path)).toEqual(['/api/v1/import/syncs/s1/run']);
 });
 
 it('offers no sync button for a space without own Confluence imports', async () => {
-  json.mockImplementation(async path => typeof path === 'string' && path.startsWith('/api/v1/portal/documents')
-    ? { items: [], total: 0 } : path === '/api/v1/import/syncs' ? { items: [] } : area);
+  mockDetail();
   render(<KnowledgeDetail id="area-1" />);
-  await waitFor(() => expect(json.mock.calls.some(([path]) => path === '/api/v1/import/syncs')).toBe(true));
+  await screen.findByText(/Noch keine Confluence-Importe/);
   expect(screen.queryByRole('button', { name: 'Jetzt synchronisieren' })).toBeNull();
 });
 
-it('hides Wissensbereich neu indizieren for non-managers', async () => {
-  const document = { id: 'd1', original_filename: 'Doc.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, release: null, source: { kind: 'upload', label: 'Hochgeladen', path: null, url: null } };
-  json.mockImplementation(async path => typeof path === 'string' && path.startsWith('/api/v1/portal/documents')
-    ? { items: [document], total: 1 } : { ...area, role: 'reader', can_manage: false, can_upload: false });
+it('shows only the reader hint, no management cards, to a reader', async () => {
+  mockDetail({ space: { ...area, role: 'reader', can_manage: false, can_upload: false } });
   render(<KnowledgeDetail id="area-1" />);
-  await screen.findByText('Doc.pdf');
+  await screen.findByText(/Nur Lesezugriff/);
   expect(screen.queryByRole('button', { name: 'Wissensbereich neu indizieren' })).toBeNull();
+  expect(screen.queryByRole('link', { name: /Dokumente ansehen/ })).toBeNull();
 });
 
-it('filters a knowledge space\'s documents by quality grade and resets pagination', async () => {
-  const document = { id: 'd1', original_filename: 'Doc.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'B', quality_recommendation: 'warn', can_release: true, release: null, source: { kind: 'upload', label: 'Hochgeladen', path: null, url: null } };
-  json.mockImplementation(async path => typeof path === 'string' && path.startsWith('/api/v1/portal/documents')
-    ? { items: [document], total: 1 } : area);
+it('lists the space\'s Confluence-Bereiche with view, edit and filtered-documents links', async () => {
+  mockDetail({ scopes: { items: [
+    { value: 'space:DOCS', scope_type: 'space', scope_value: 'DOCS', label: 'Handbuch', count: 3, latest_run_id: 'run-other', edit_run_id: 'run-mine', can_edit: true },
+    { value: 'page:1', scope_type: 'page', scope_value: '1', label: 'Reisekosten', count: 1, latest_run_id: 'run-2', edit_run_id: null, can_edit: false },
+  ], other_count: 2 } });
   render(<KnowledgeDetail id="area-1" />);
-  await screen.findByText('Doc.pdf');
-
-  fireEvent.click(screen.getByRole('button', { name: 'B' }));
-  expect(screen.getByRole('button', { name: 'B' }).getAttribute('aria-pressed')).toBe('true');
-  await waitFor(() => {
-    const call = json.mock.calls.filter(([path]) => typeof path === 'string' && path.startsWith('/api/v1/portal/documents')).at(-1);
-    const params = new URL(call?.[0] as string, 'http://localhost').searchParams;
-    expect(params.get('quality_grade')).toBe('B');
-    expect(params.get('offset')).toBe('0');
-    expect(params.get('collection_id')).toBe('area-1');
-  });
-});
-
-it('shows the Confluence-Bereich filter when import scopes exist and filters by the selected scope', async () => {
-  const document = { id: 'd1', original_filename: 'Handbuch.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, release: null, source: { kind: 'confluence', label: 'Confluence', path: null, url: null } };
-  const scopes = { items: [{ value: 'space:DOCS', scope_type: 'space', scope_value: 'DOCS', label: 'Handbuch', count: 3, latest_run_id: 'run-1', edit_run_id: 'run-1', can_edit: true }], other_count: 2 };
-  json.mockImplementation(async path => {
-    if (typeof path !== 'string') return area;
-    if (path.startsWith('/api/v1/portal/documents')) return { items: [document], total: 1 };
-    if (path === '/api/v1/portal/collections/area-1/import-scopes') return scopes;
-    return area;
-  });
-  render(<KnowledgeDetail id="area-1" />);
-  await screen.findByText('Handbuch.pdf');
-  const select = await screen.findByRole('combobox', { name: 'Confluence-Bereich' });
-  expect(screen.getByRole('option', { name: 'Handbuch · DOCS (3)' })).toBeTruthy();
-  expect(screen.getByRole('option', { name: 'Ohne Confluence (Uploads, Mail)' })).toBeTruthy();
-  // Without a selected scope the space offers a discoverable edit link per editable import.
-  expect(screen.getByRole('link', { name: 'Handbuch' }).getAttribute('href')).toBe('/imports/new?from=run-1');
-  expect(screen.queryByRole('link', { name: 'Import ansehen' })).toBeNull();
-
-  fireEvent.change(select, { target: { value: 'space:DOCS' } });
-  await waitFor(() => {
-    const call = json.mock.calls.filter(([path]) => typeof path === 'string' && path.startsWith('/api/v1/portal/documents')).at(-1);
-    const params = new URL(call?.[0] as string, 'http://localhost').searchParams;
-    expect(params.get('import_scope')).toBe('space:DOCS');
-    expect(params.get('offset')).toBe('0');
-  });
-  expect(screen.getByRole('link', { name: 'Import ansehen' }).getAttribute('href')).toBe('/imports/run-1');
-  expect(screen.getByRole('link', { name: 'Import bearbeiten' }).getAttribute('href')).toBe('/imports/new?from=run-1');
-  expect(screen.queryByRole('link', { name: 'Handbuch' })).toBeNull();
-});
-
-it('offers no edit link for a Confluence-Bereich the user may not edit', async () => {
-  const document = { id: 'd1', original_filename: 'Handbuch.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, release: null, source: { kind: 'confluence', label: 'Confluence', path: null, url: null } };
-  const scopes = { items: [{ value: 'space:DOCS', scope_type: 'space', scope_value: 'DOCS', label: 'Handbuch', count: 3, latest_run_id: 'run-1', edit_run_id: null, can_edit: false }], other_count: 0 };
-  json.mockImplementation(async path => {
-    if (typeof path !== 'string') return area;
-    if (path.startsWith('/api/v1/portal/documents')) return { items: [document], total: 1 };
-    if (path === '/api/v1/portal/collections/area-1/import-scopes') return scopes;
-    return area;
-  });
-  render(<KnowledgeDetail id="area-1" />);
-  await screen.findByText('Handbuch.pdf');
-  const select = await screen.findByRole('combobox', { name: 'Confluence-Bereich' });
-  expect(screen.queryByText('Imports bearbeiten:')).toBeNull();
-
-  fireEvent.change(select, { target: { value: 'space:DOCS' } });
-  expect((await screen.findByRole('link', { name: 'Import ansehen' })).getAttribute('href')).toBe('/imports/run-1');
-  expect(screen.queryByRole('link', { name: 'Import bearbeiten' })).toBeNull();
-});
-
-it('edits the caller\'s own import of a Confluence-Bereich when someone else imported it later', async () => {
-  const document = { id: 'd1', original_filename: 'Handbuch.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, release: null, source: { kind: 'confluence', label: 'Confluence', path: null, url: null } };
-  const scopes = { items: [{ value: 'space:DOCS', scope_type: 'space', scope_value: 'DOCS', label: 'Handbuch', count: 3, latest_run_id: 'run-other', edit_run_id: 'run-mine', can_edit: true }], other_count: 0 };
-  json.mockImplementation(async path => {
-    if (typeof path !== 'string') return area;
-    if (path.startsWith('/api/v1/portal/documents')) return { items: [document], total: 1 };
-    if (path === '/api/v1/portal/collections/area-1/import-scopes') return scopes;
-    return area;
-  });
-  render(<KnowledgeDetail id="area-1" />);
-  await screen.findByText('Handbuch.pdf');
-  const select = await screen.findByRole('combobox', { name: 'Confluence-Bereich' });
-  expect(screen.getByRole('link', { name: 'Handbuch' }).getAttribute('href')).toBe('/imports/new?from=run-mine');
-
-  fireEvent.change(select, { target: { value: 'space:DOCS' } });
-  expect((await screen.findByRole('link', { name: 'Import ansehen' })).getAttribute('href')).toBe('/imports/run-other');
-  expect(screen.getByRole('link', { name: 'Import bearbeiten' }).getAttribute('href')).toBe('/imports/new?from=run-mine');
-});
-
-it('drops a Confluence-Bereich filter whose scope no longer exists', async () => {
-  const document = { id: 'd1', original_filename: 'Handbuch.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, release: null, source: { kind: 'confluence', label: 'Confluence', path: null, url: null } };
-  let scopes = { items: [{ value: 'space:DOCS', scope_type: 'space', scope_value: 'DOCS', label: 'Handbuch', count: 3, latest_run_id: 'run-1', edit_run_id: 'run-1', can_edit: true }], other_count: 0 };
-  json.mockImplementation(async path => {
-    if (typeof path !== 'string') return area;
-    if (path.startsWith('/api/v1/portal/documents')) return { items: [document], total: 1 };
-    if (path === '/api/v1/portal/collections/area-1/import-scopes') return scopes;
-    return area;
-  });
-  render(<KnowledgeDetail id="area-1" />);
-  const select = await screen.findByRole('combobox', { name: 'Confluence-Bereich' });
-  // The scope's documents are gone by the time the filtered list loads.
-  scopes = { items: [], other_count: 0 };
-  fireEvent.change(select, { target: { value: 'space:DOCS' } });
-  await waitFor(() => {
-    const call = json.mock.calls.filter(([path]) => typeof path === 'string' && path.startsWith('/api/v1/portal/documents')).at(-1);
-    const params = new URL(call?.[0] as string, 'http://localhost').searchParams;
-    expect(params.get('import_scope')).toBeNull();
-  });
-});
-
-it('hides the Confluence-Bereich filter when the space has no import scopes', async () => {
-  const document = { id: 'd1', original_filename: 'Doc.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, release: null, source: { kind: 'upload', label: 'Hochgeladen', path: null, url: null } };
-  json.mockImplementation(async path => {
-    if (typeof path !== 'string') return area;
-    if (path.startsWith('/api/v1/portal/documents')) return { items: [document], total: 1 };
-    if (path === '/api/v1/portal/collections/area-1/import-scopes') return { items: [], other_count: 0 };
-    return area;
-  });
-  render(<KnowledgeDetail id="area-1" />);
-  await screen.findByText('Doc.pdf');
-  expect(screen.queryByRole('combobox', { name: 'Confluence-Bereich' })).toBeNull();
+  expect((await screen.findByRole('link', { name: 'Handbuch · DOCS (3)' })).getAttribute('href')).toBe('/documents?bereich=servicewissen&q=Handbuch');
+  const views = screen.getAllByRole('link', { name: 'Import ansehen' }).map(link => link.getAttribute('href'));
+  expect(views).toEqual(['/imports/run-other', '/imports/run-2']);
+  // Only the caller's own import may be edited, even when someone else imported the scope later.
+  expect(screen.getAllByRole('link', { name: 'Import bearbeiten' }).map(link => link.getAttribute('href'))).toEqual(['/imports/new?from=run-mine']);
 });

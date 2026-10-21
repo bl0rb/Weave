@@ -22,13 +22,17 @@ it('renders English labels when the locale is English', async () => {
   );
 
   expect(await screen.findByText('Overview')).toBeTruthy();
-  expect(screen.getByText('Tasks')).toBeTruthy();
+  expect(screen.queryByText('Tasks')).toBeNull();
   expect(screen.getByText('Knowledge spaces')).toBeTruthy();
   expect(screen.getByText('Documents')).toBeTruthy();
   expect(screen.queryByText('Wissensbereiche')).toBeNull();
+  // Verbindungen is its own entry at the end of the list, no longer in the profile menu.
+  const links = screen.getAllByRole('link').filter(link => link.closest('nav'));
+  expect(links.map(link => link.getAttribute('href'))).toEqual(['/', '/documents', '/knowledge', '/connections']);
 
   fireEvent.click(screen.getByRole('button', { name: /ada/i }));
   expect(screen.getByRole('button', { name: 'English' })).toBeTruthy();
   expect(screen.getByText('API tokens')).toBeTruthy();
   expect(screen.getByText('Sign out')).toBeTruthy();
+  expect(screen.getAllByText('Connections')).toHaveLength(1);
 });

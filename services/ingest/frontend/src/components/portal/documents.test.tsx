@@ -47,7 +47,7 @@ it('shows no page description and lets documents be selected for a bulk action',
 });
 
 it('offers no release-all and no header links; several documents are released through the selection', async () => {
-  render(<PortalDocuments initialBereich="servicewissen" />);
+  render(<PortalDocuments initial={{ bereich: 'servicewissen' }} />);
   await screen.findByText('Handbuch.pdf');
   expect(screen.queryByRole('button', { name: /Dokumente freigeben/ })).toBeNull();
   expect(screen.queryByRole('link', { name: /Verarbeitung|Importe/ })).toBeNull();
@@ -91,7 +91,7 @@ it('deletes a single released document from its row, withdrawing it first', asyn
   });
 });
 
-it('does not count or list a parked document under the review stage, but keeps it under "Alle"', async () => {
+it('filters by Stand client-side and tells parked documents apart from those to review', async () => {
   const parked = { ...document, id: 'd2', original_filename: 'Geparkt.pdf', review_decision: 'parked' };
   json.mockImplementation(async path => {
     if (typeof path === 'string' && path.startsWith('/api/v1/portal/documents')) return { items: [document, parked], total: 2 };
@@ -100,11 +100,59 @@ it('does not count or list a parked document under the review stage, but keeps i
   });
   render(<PortalDocuments />);
   await screen.findByText('Geparkt.pdf');
-  const review = screen.getByRole('button', { name: /Prüfung/ });
-  expect(review.querySelector('b')?.textContent).toBe('1');
-  fireEvent.click(review);
+  const stand = screen.getByRole('combobox', { name: 'Stand' });
+  fireEvent.change(stand, { target: { value: 'review' } });
   expect(screen.getByText('Handbuch.pdf')).toBeTruthy();
   expect(screen.queryByText('Geparkt.pdf')).toBeNull();
+  fireEvent.change(stand, { target: { value: 'parked' } });
+  expect(screen.getByText('Geparkt.pdf')).toBeTruthy();
+  expect(screen.queryByText('Handbuch.pdf')).toBeNull();
+  expect(window.location.search).toContain('stand=parked');
+});
+
+it('opens "Zu prüfen" by default and falls back to "Alle" when nothing waits for review', async () => {
+  json.mockImplementation(async path => {
+    if (typeof path === 'string' && path.startsWith('/api/v1/portal/documents')) return String(path).includes('review_state=review') ? { items: [], total: 0 } : { items: [document], total: 1 };
+    if (typeof path === 'string' && path.startsWith('/api/v1/portal/indexing-status')) return { items: [] };
+    return { items: [area] };
+  });
+  render(<PortalDocuments />);
+  await screen.findByText('Handbuch.pdf');
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Alle' }).getAttribute('aria-pressed')).toBe('true'));
+  expect(screen.getByRole('button', { name: /Zu prüfen/ }).textContent).toBe('Zu prüfen0');
+});
+
+it('maps the view presets and the filter bar to the server-side filters and the URL', async () => {
+  render(<PortalDocuments />);
+  await screen.findByText('Handbuch.pdf');
+  const lastListCall = () => String(json.mock.calls.map(([path]) => String(path)).filter(path => path.startsWith('/api/v1/portal/documents?') && path.includes('limit=200')).at(-1));
+
+  fireEvent.click(screen.getByRole('button', { name: /Geparkt/ }));
+  await waitFor(() => expect(lastListCall()).toContain('review_state=parked'));
+  fireEvent.click(screen.getByRole('button', { name: /^Fehler/ }));
+  await waitFor(() => expect(lastListCall()).toContain('review_state=failed'));
+  fireEvent.click(screen.getByRole('button', { name: 'Von mir freigegeben' }));
+  await waitFor(() => expect(lastListCall()).toContain('released_by_me=true'));
+
+  fireEvent.change(screen.getByRole('combobox', { name: 'Bewertung' }), { target: { value: 'none' } });
+  fireEvent.change(screen.getByRole('combobox', { name: 'Quelle' }), { target: { value: 'confluence' } });
+  fireEvent.change(screen.getByRole('searchbox', { name: 'Suche' }), { target: { value: 'Reise' } });
+  await waitFor(() => expect(lastListCall()).toMatch(/quality_grade=none.*q=Reise.*source=confluence/));
+  expect(window.location.search).toBe('?bewertung=none&quelle=confluence&q=Reise&ansicht=mine');
+});
+
+it('links every row to its technical details and explains the statuses and "Ohne Bewertung"', async () => {
+  render(<PortalDocuments />);
+  await screen.findByText('Handbuch.pdf');
+  expect(screen.getByRole('link', { name: 'Technische Details' }).getAttribute('href')).toBe('/jobs/d1');
+  expect(screen.getByRole('link', { name: 'Prüfen' }).getAttribute('href')).toBe('/reviews/d1');
+
+  const standHelp = screen.getByRole('button', { name: 'Was bedeuten die Stände?' });
+  fireEvent.click(standHelp);
+  expect(screen.getByRole('tooltip').textContent).toContain('Bewusst zurückgestellt');
+  fireEvent.blur(standHelp);
+  fireEvent.click(screen.getByRole('button', { name: 'Was bedeuten die Qualitätsstufen?' }));
+  expect(screen.getByRole('tooltip').textContent).toContain('Keine automatische Prüfung durchgeführt');
 });
 
 it('hints that only the newest documents are loaded when the space holds more', async () => {

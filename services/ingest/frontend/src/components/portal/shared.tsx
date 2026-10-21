@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import Link from 'next/link';
-import { ArrowRight, Download, FileText, RefreshCw } from 'lucide-react';
+import { ArrowRight, Download, FileText, Info, RefreshCw } from 'lucide-react';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { bulkPortalAction, dateLabel, documentState, documentUrl, portalError, type PortalDocument } from '@/lib/portal';
 import { useIndexingStatus } from '@/lib/use-indexing-status';
@@ -150,4 +150,22 @@ export function QualityGradeLegend() {
       <dt>{t('portal.documents.noGrade')}</dt><dd>{t('portal.documents.qualityLegend.none')}</dd>
     </dl>
   </details>;
+}
+
+/** Where the document came from: a link to the original (Confluence) page, otherwise its folder path. */
+export function SourceOrigin({ document }: { document: PortalDocument }) {
+  const { source } = document;
+  if (source?.url) return <> · <a href={source.url} target="_blank" rel="noopener noreferrer">{source.label}</a></>;
+  if (source?.path) return <> · {source.label}: {source.path}</>;
+  return null;
+}
+
+/** Small (i) button that shows an explanation on hover, focus or tap. Keep it outside a <label> so the control's name stays clean. */
+export function InfoTip({ label, children }: { label: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return <span className="portal-infotip" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+    <button type="button" aria-label={label} aria-expanded={open} aria-describedby={open ? id : undefined} onClick={() => setOpen(value => !value)} onBlur={() => setOpen(false)} onKeyDown={event => { if (event.key === 'Escape') setOpen(false); }}><Info size={15} aria-hidden="true" /></button>
+    {open && <span role="tooltip" id={id} className="portal-infotip-body">{children}</span>}
+  </span>;
 }

@@ -2,19 +2,20 @@
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from 'react';
 import Link from 'next/link';
-import { AlertTriangle, Archive, CheckCheck, Pencil, Plus, RefreshCw, Trash2, Users } from 'lucide-react';
+import { AlertTriangle, Archive, ArrowRight, CheckCheck, Pencil, Plus, RefreshCw, Trash2, Users } from 'lucide-react';
 import { ApiError, apiJson } from '@/lib/api';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { apiSend, ConfirmDialog, Modal, inputClass } from '@/components/admin/admin-shared';
 import { AccessDialog } from './access-dialog';
 import { AccessLine } from './access-line';
-import { accessSummary, ownerSummary } from '@/lib/access-summary';
+import { ownerSummary } from '@/lib/access-summary';
 import { spaceColorVar, spaceMark } from '@/lib/space-color';
 import { useIndexingStatus } from '@/lib/use-indexing-status';
-import { collectionDownloadName, downloadPortalFile, jsonBody, loadDirectoryTeams, loadDocuments, loadImportScopes, markdownDownloadName, pipelineStage, portalDownloadError, portalError, reindexKnowledgeSpace, type DirectoryTeam, type DocumentPage, type ImportScopesResponse, type KnowledgeSpace, type PortalDocument, type QualityGradeFilter } from '@/lib/portal';
+import { collectionDownloadName, downloadPortalFile, jsonBody, loadDirectoryTeams, loadDocuments, loadImportScopes, pipelineStage, portalDownloadError, portalError, reindexKnowledgeSpace, type DirectoryTeam, type ImportScope, type ImportScopesResponse, type KnowledgeSpace, type PortalDocument } from '@/lib/portal';
 import { type ImportRun, type ImportSyncListResponse, type ImportSync } from '@/lib/imports';
 import { useI18n } from '@/i18n/provider';
-import { BulkActionBar, DocumentTable, EmptyState, Notice, Pagination, PortalPage, QualityGradeFilterRow, QualityGradeLegend, RequiredMark, useBulkSelection } from './shared';
+import { EmptyState, Notice, PortalPage, RequiredMark } from './shared';
+import { ImportSyncSummary } from './import-sync';
 
 /** Bounds the "Im Chat verfügbar" counts and state chips below to the most recent N documents visible to the user. */
 const SPACE_STATS_SCAN_LIMIT = 200;
@@ -86,7 +87,7 @@ export function KnowledgeSpaces() {
           {!readOnly && <p className="portal-space-state">{chips.length ? chips : <span className="portal-chip portal-chip-ok"><CheckCheck aria-hidden="true" />{t('portal.spaces.allCurrent')}</span>}</p>}
           <div className="portal-space-actions">
             {!readOnly && <div className="flex flex-wrap gap-2">
-              <Link className={buttonVariants({ variant: 'outline', size: 'sm' })} href={`/knowledge/${space.collection_id}`}>{t('portal.spaces.viewDocuments')}</Link>
+              <Link className={buttonVariants({ variant: 'outline', size: 'sm' })} href={`/documents?${new URLSearchParams({ bereich: space.slug })}`}>{t('portal.spaces.viewDocuments')}</Link>
               <Link className={buttonVariants({ size: 'sm' })} href={`/sources/new?collection=${encodeURIComponent(space.collection_id)}`}><Plus size={15} aria-hidden="true" />{t('portal.chrome.addSource')}</Link>
             </div>}
             {space.can_manage && <div className="portal-space-management"><Button variant="ghost" size="sm" onClick={() => { setEditing(space); setNotice(''); }} aria-label={t('portal.spaces.renameAria', { name: space.name })}><Pencil size={14} aria-hidden="true" />{t('common.edit')}</Button><Button variant="ghost" size="sm" onClick={() => { setDeleting(space); setNotice(''); }} aria-label={t('portal.spaces.deleteAria', { name: space.name })}><Trash2 size={14} aria-hidden="true" />{t('common.delete')}</Button></div>}
@@ -161,43 +162,42 @@ function KnowledgeSpaceEditor({ space, onClose, onSaved }: { space: KnowledgeSpa
   </Modal>;
 }
 
+/** Readable label of a Confluence import scope ("Handbuch · DOCS"). */
+function scopeLabel(scope: ImportScope): string {
+  return scope.scope_type === 'space' && scope.label !== scope.scope_value ? `${scope.label} · ${scope.scope_value}` : scope.label;
+}
+
+/**
+ * /knowledge/[id] — managing one space: where its documents come from
+ * (Quellen), who may use it (Zugriff) and maintenance (Wartung). The
+ * documents themselves live in /documents?bereich=<slug>.
+ */
 export function KnowledgeDetail({ id }: { id: string }) {
   const { t, locale } = useI18n();
   const [space, setSpace] = useState<KnowledgeSpace | null>(null);
-  const [documents, setDocuments] = useState<DocumentPage | null>(null);
-  const [offset, setOffset] = useState(0);
-  const [qualityGrade, setQualityGrade] = useState<QualityGradeFilter>('');
-  const [importScope, setImportScope] = useState('');
+  const [documentTotal, setDocumentTotal] = useState<number | null>(null);
   const [importScopes, setImportScopes] = useState<ImportScopesResponse | null>(null);
   const [error, setError] = useState('');
   const [downloadError, setDownloadError] = useState('');
-  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
   const [notice, setNotice] = useState('');
   const [reindexing, setReindexing] = useState(false);
+  const [accessEditing, setAccessEditing] = useState(false);
   // Confluence imports into this space that the current user owns and can therefore sync on demand.
   const [syncs, setSyncs] = useState<ImportSync[]>([]);
   const [syncing, setSyncing] = useState(false);
+  const loadSyncs = useCallback(() => apiJson<ImportSyncListResponse>('/api/v1/import/syncs', { cache: 'no-store' })
+    .then(response => setSyncs(response.items.filter(sync => sync.collection_id === id)))
+    .catch(() => setSyncs([])), [id]);
   const load = useCallback(() => Promise.all([
     apiJson<KnowledgeSpace>(`/api/v1/collections/${encodeURIComponent(id)}`),
-    loadDocuments(id, offset, 'all', qualityGrade || undefined, undefined, importScope || undefined),
+    loadDocuments(id, 0, 'all', undefined, 1),
     loadImportScopes(id),
   ])
-    .then(([area, docs, scopes]) => {
-      setSpace(area); setDocuments(docs); setImportScopes(scopes); setError('');
-      // The filtered scope vanished (e.g. its documents were deleted): drop the filter instead of showing an empty list.
-      if (importScope && !(importScope === 'none' ? scopes.other_count > 0 : scopes.items.some(scope => scope.value === importScope))) { setImportScope(''); setOffset(0); }
-    })
-    .catch(err => setError(portalError(err, locale))), [id, offset, qualityGrade, importScope, locale]);
+    .then(([area, docs, scopes]) => { setSpace(area); setDocumentTotal(docs.total); setImportScopes(scopes); setError(''); })
+    .catch(err => setError(portalError(err, locale))), [id, locale]);
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => {
-    const timer = setInterval(() => { if (document.visibilityState === 'visible') void load(); }, 15000);
-    return () => clearInterval(timer);
-  }, [load]);
-  useEffect(() => {
-    apiJson<ImportSyncListResponse>('/api/v1/import/syncs', { cache: 'no-store' })
-      .then(response => setSyncs(response.items.filter(sync => sync.collection_id === id)))
-      .catch(() => setSyncs([]));
-  }, [id]);
+  useEffect(() => { void loadSyncs(); }, [loadSyncs]);
   const syncNow = async () => {
     setSyncing(true);
     setNotice('');
@@ -205,7 +205,7 @@ export function KnowledgeDetail({ id }: { id: string }) {
     try {
       for (const sync of syncs) await apiJson<ImportRun>(`/api/v1/import/syncs/${encodeURIComponent(sync.id)}/run`, { method: 'POST' });
       setNotice(t('portal.connections.confluence.syncNowStarted'));
-      await load();
+      await Promise.all([load(), loadSyncs()]);
     } catch (err) {
       setError(portalError(err, locale));
     } finally {
@@ -214,58 +214,69 @@ export function KnowledgeDetail({ id }: { id: string }) {
   };
   const downloadAll = async () => {
     if (!space) return;
-    setDownloadingId('collection');
+    setDownloading(true);
     setDownloadError('');
     try {
       await downloadPortalFile(`/api/v1/portal/collections/${encodeURIComponent(id)}/markdown.zip`, collectionDownloadName(space), locale);
     } catch (err) {
       setDownloadError(portalDownloadError(err, locale));
     } finally {
-      setDownloadingId(null);
+      setDownloading(false);
     }
   };
-  const downloadDocument = async (document: PortalDocument) => {
-    setDownloadingId(document.id);
-    setDownloadError('');
-    try {
-      await downloadPortalFile(`/api/v1/portal/documents/${encodeURIComponent(document.id)}/markdown`, markdownDownloadName(document.original_filename), locale);
-    } catch (err) {
-      setDownloadError(portalDownloadError(err, locale));
-    } finally {
-      setDownloadingId(null);
-    }
-  };
-  const selectedScope = importScopes?.items?.find(scope => scope.value === importScope);
-  const editableScopes = importScopes?.items?.filter(scope => scope.can_edit && scope.edit_run_id) ?? [];
-  const bulk = useBulkSelection({ documents: documents?.items ?? [], acrossPages: true, onNotice: setNotice, onError: setError, onDone: () => { setDocuments(null); return load(); } });
-  return <PortalPage title={space?.name || t('portal.documents.columnSpace')} description={space?.description || t('portal.spaces.detailDefaultDescription')} eyebrow={t('portal.spaces.detailEyebrow')}>
+  const canUpload = Boolean(space && (space.can_upload ?? space.can_manage));
+  const documentsHref = space ? `/documents?${new URLSearchParams({ bereich: space.slug })}` : '/documents';
+  return <PortalPage title={space?.name || t('portal.documents.columnSpace')} description={space?.description || t('portal.spaces.detailDefaultDescription')} eyebrow={t('portal.spaces.detailEyebrow')}
+    actions={canUpload && documentTotal ? <Link className={buttonVariants({ variant: 'outline' })} href={documentsHref}>{t('portal.spaces.viewDocumentsCount', { count: documentTotal })}<ArrowRight size={16} aria-hidden="true" /></Link> : undefined}>
     <Link className="portal-back" href="/knowledge">{t('portal.newSpace.backLink')}</Link>
     {error && <Notice error action={load}>{error}</Notice>}
     {notice && <Notice>{notice}</Notice>}
     {downloadError && <Notice error>{downloadError}</Notice>}
-    {space && <div className="portal-context-bar"><span><Users size={17} />{t('portal.spaces.authorizedLabel')} {accessSummary(space, locale)}</span><span>{t('portal.spaces.publicationHint')}</span></div>}
-    {space && !(space.can_upload ?? space.can_manage) && <Notice>{t('portal.spaces.readerHint')}</Notice>}
-    <section className="portal-panel"><div className="portal-section-heading"><div><p className="portal-eyebrow">{t('portal.spaces.contentsEyebrow')}</p><h2>{t('portal.nav.documents')}{documents ? ` · ${documents.total}` : ''}</h2><QualityGradeFilterRow value={qualityGrade} onChange={value => { setQualityGrade(value); setOffset(0); setDocuments(null); }} /><QualityGradeLegend /></div><div className="flex flex-wrap items-center gap-2">{Boolean(documents?.total) && <Button variant="outline" size="sm" disabled={downloadingId !== null} onClick={() => void downloadAll()}><Archive size={15} />{downloadingId === 'collection' ? t('portal.spaces.zipCreating') : t('portal.spaces.zipAll')}</Button>}{(space?.can_upload ?? space?.can_manage) && Boolean(documents?.total) && <Link href={`/sources/new?collection=${encodeURIComponent(id)}`} className={buttonVariants({ size: 'sm' })}><Plus size={15} />{t('portal.chrome.addSource')}</Link>}{(space?.can_upload ?? space?.can_manage) && Boolean(documents?.total) && <Button variant="outline" size="sm" onClick={() => setReindexing(true)}><RefreshCw size={15} />{t('portal.spaces.reindexSpace')}</Button>}{syncs.length > 0 && <Button variant="outline" size="sm" disabled={syncing} onClick={() => void syncNow()}><RefreshCw size={15} />{t('portal.importSync.syncNow')}</Button>}</div></div>
-      {/* Releasing several documents at once: select them in the table, the bulk bar asks for the review confirmation (and grade C explicitly). */}
-      <BulkActionBar {...bulk.barProps} />
-      {Boolean(importScopes?.items?.length) && <div className="flex flex-wrap items-end gap-3 border-b border-[var(--line)] px-5 py-4">
-        <label className="min-w-[200px] flex-1 text-sm font-semibold text-[var(--ink-2)]">
-          {t('portal.spaces.importScopeLabel')}
-          <select value={importScope} onChange={event => { setImportScope(event.target.value); setOffset(0); setDocuments(null); bulk.clear(); }}>
-            <option value="">{t('portal.spaces.importScopeAll')}</option>
-            {importScopes?.items.map(scope => <option key={scope.value} value={scope.value}>{scope.scope_type === 'space' && scope.label !== scope.scope_value ? `${scope.label} · ${scope.scope_value} (${scope.count})` : `${scope.label} (${scope.count})`}</option>)}
-            {Boolean(importScopes?.other_count) && <option value="none">{t('portal.spaces.importScopeNone')}</option>}
-          </select>
-        </label>
-        {selectedScope && <div className="flex flex-wrap items-center gap-4 pb-2 text-sm">
-          <Link className="portal-inline-link" href={`/imports/${encodeURIComponent(selectedScope.latest_run_id)}`}>{t('portal.spaces.importView')}</Link>
-          {selectedScope.can_edit && selectedScope.edit_run_id && <Link className="portal-inline-link" href={`/imports/new?from=${encodeURIComponent(selectedScope.edit_run_id)}`}>{t('portal.spaces.importEdit')}</Link>}
-        </div>}
-        {!selectedScope && editableScopes.length > 0 && <p className="basis-full text-xs text-[var(--muted)]">{t('portal.spaces.importEditHint')} {editableScopes.map((scope, index) => <span key={scope.value}>{index > 0 && ' · '}<Link className="portal-inline-link" href={`/imports/new?from=${encodeURIComponent(scope.edit_run_id ?? '')}`}>{scope.label}</Link></span>)}</p>}
-      </div>}
-      {!documents && !error ? <p className="portal-loading" role="status">{t('portal.tasks.documentsLoading')}</p> : documents?.items.length ? <><DocumentTable documents={documents.items} onDownloadMarkdown={document => void downloadDocument(document)} downloadingId={downloadingId} selectedIds={bulk.selectedIds} onToggle={bulk.toggle} onToggleAll={checked => bulk.selectAll(documents.items.map(document => document.id), checked)} /><Pagination offset={offset} total={documents.total} onChange={value => { setDocuments(null); setOffset(value); }} /></> : !error && <EmptyState title={t('portal.spaces.emptyContentTitle')} href={(space?.can_upload ?? space?.can_manage) ? `/sources/new?collection=${encodeURIComponent(id)}` : undefined} action={(space?.can_upload ?? space?.can_manage) ? t('portal.chrome.addSource') : undefined}>{t('portal.spaces.emptyContentBody')}</EmptyState>}
-    </section>
-    {bulk.bulkDeleting && <ConfirmDialog title={t('portal.spaces.deleteDocumentsTitle')} body={<><p>{t('portal.spaces.deleteDocumentsBody', { count: bulk.count })}</p><label className="mt-3 flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={bulk.withdrawReleased} onChange={event => bulk.setWithdrawReleased(event.target.checked)} />{t('portal.spaces.withdrawReleased')}</label></>} confirmLabel={t('portal.spaces.deleteDocumentsTitle')} onClose={bulk.closeDelete} onConfirm={() => bulk.runBulk('delete')} />}
+    {space && <div className="portal-context-bar"><span><Users size={17} />{t('portal.spaces.yourRole')} {space.role ? t(`portal.access.role.${space.role}`) : t('portal.chrome.admin')}</span><span>{t('portal.spaces.publicationHint')}</span></div>}
+    {space && !canUpload && <Notice>{t('portal.spaces.readerHint')}</Notice>}
+    {space && canUpload && <div className="grid gap-5">
+      <section className="portal-panel" aria-labelledby="space-sources-title">
+        <header className="portal-section-heading">
+          <h2 id="space-sources-title">{t('portal.spaces.sourcesTitle')}</h2>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {syncs.length > 0 && <Button variant="outline" size="sm" disabled={syncing} onClick={() => void syncNow()}><RefreshCw size={15} />{t('portal.importSync.syncNow')}</Button>}
+            <Link href={`/sources/new?collection=${encodeURIComponent(id)}`} className={buttonVariants({ size: 'sm' })}><Plus size={15} />{t('portal.chrome.addSource')}</Link>
+          </div>
+        </header>
+        <div className="grid gap-4 px-5 pb-5">
+          {syncs.length > 0 && <ul className="grid gap-3" aria-label={t('portal.spaces.syncsAria')}>{syncs.map(sync => <li key={sync.id}><ImportSyncSummary sync={sync} /></li>)}</ul>}
+          {Boolean(importScopes?.items?.length) && <div>
+            <h3 className="text-sm font-semibold text-[var(--ink-2)]">{t('portal.spaces.importScopeLabel')}</h3>
+            <ul className="mt-2 grid gap-2 text-sm">{importScopes?.items?.map(scope => <li key={scope.value} className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <Link className="portal-inline-link" href={`/documents?${new URLSearchParams({ bereich: space.slug, q: scope.label })}`}>{`${scopeLabel(scope)} (${scope.count})`}</Link>
+              <Link className="portal-inline-link text-xs" href={`/imports/${encodeURIComponent(scope.latest_run_id)}`}>{t('portal.spaces.importView')}</Link>
+              {scope.can_edit && scope.edit_run_id && <Link className="portal-inline-link text-xs" href={`/imports/new?from=${encodeURIComponent(scope.edit_run_id)}`}>{t('portal.spaces.importEdit')}</Link>}
+            </li>)}</ul>
+          </div>}
+          {!syncs.length && !importScopes?.items?.length && <p className="text-sm text-[var(--muted)]">{t('portal.spaces.sourcesEmpty')}</p>}
+          <p className="text-xs text-[var(--muted)]">{t('portal.spaces.sourcesConnectionsHint')} <Link className="portal-inline-link" href="/connections">{t('portal.chrome.breadcrumb.connections')}</Link></p>
+        </div>
+      </section>
+      <section className="portal-panel" aria-labelledby="space-access-title">
+        <header className="portal-section-heading"><h2 id="space-access-title">{t('portal.spaces.accessTitle')}</h2></header>
+        <div className="grid gap-2 px-5 pb-5">
+          <AccessLine collection={space} name={space.name} canManage={space.can_manage} onChangeAccess={() => setAccessEditing(true)} />
+          <p className="text-xs text-[var(--muted)]">{t('portal.spaces.ownersLine', { owners: ownerSummary(space.grants, locale) })}{space.responsible_team && ` · ${t('portal.spaces.responsibleLine', { team: space.responsible_team.name })}`}</p>
+        </div>
+      </section>
+      <section className="portal-panel" aria-labelledby="space-maintenance-title">
+        <header className="portal-section-heading"><h2 id="space-maintenance-title">{t('portal.spaces.maintenanceTitle')}</h2></header>
+        <div className="grid gap-4 px-5 pb-5 text-sm">
+          <div className="flex flex-wrap items-center gap-3"><Button variant="outline" size="sm" disabled={!documentTotal} onClick={() => setReindexing(true)}><RefreshCw size={15} />{t('portal.spaces.reindexSpace')}</Button><span className="text-[var(--muted)]">{t('portal.spaces.reindexExplanation')}</span></div>
+          <div className="flex flex-wrap items-center gap-3"><Button variant="outline" size="sm" disabled={downloading || !documentTotal} onClick={() => void downloadAll()}><Archive size={15} />{downloading ? t('portal.spaces.zipCreating') : t('portal.spaces.zipAll')}</Button><span className="text-[var(--muted)]">{t('portal.spaces.zipExplanation')}</span></div>
+        </div>
+      </section>
+    </div>}
+    {accessEditing && space && <AccessDialog collection={space} onClose={() => setAccessEditing(false)} onSaved={updated => {
+      setSpace(current => current ? { ...current, ...updated } : current);
+      setAccessEditing(false);
+      setNotice(t('portal.spaces.accessSavedNotice'));
+    }} />}
     {reindexing && <ConfirmDialog title={t('portal.spaces.reindexSpace')} body={<p>{t('portal.spaces.reindexBodyPrefix')} <strong className="text-slate-950">{space?.name}</strong> {t('portal.spaces.reindexBodySuffix')}</p>} confirmLabel={t('portal.spaces.reindexConfirm')} onClose={() => setReindexing(false)} onConfirm={async () => {
       const result = await reindexKnowledgeSpace(id);
       setReindexing(false);
