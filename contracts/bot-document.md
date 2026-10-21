@@ -18,7 +18,10 @@ JSON Schema ist daraus erzeugt. Konsument ist `services/ingest`
   beides an, höchstens 256 KiB, UTF-8.
 - `schema_version: 1` (Pflicht im Schema, Default 1 beim Laden). Alle übrigen
   Felder sind die von `BotConfig`: `id`, `name`, `description`, `model`,
-  `system_prompt`, `retrieval`, `permissions`, `guard`, `n8n`, `agent`.
+  `system_prompt`, `retrieval`, `permissions`, `guard`, `n8n`, `agent`,
+  `show_sources` (Default `true`; `false` blendet im Chat Quellenleiste und
+  Quellen-Knöpfe aus) und `disclaimer` (optionaler Hinweistext, höchstens 500
+  Zeichen, den der Chat beim Eingabefeld zeigt).
   Unbekannte Schlüssel sind überall ein Fehler (`additionalProperties: false`).
 - Ein Export schreibt jedes gesetzte Feld inklusive der Runtime-Defaults aus
   (`exclude_none`); Felder mit dem Wert `null` fehlen.

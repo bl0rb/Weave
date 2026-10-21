@@ -213,6 +213,8 @@ class BotConfig(BaseModel):
     guard: GuardConfig = Field(default_factory=GuardConfig)
     n8n: N8nConfig | None = None
     agent: AgentConfig | None = None
+    show_sources: bool = True
+    disclaimer: str | None = Field(default=None, max_length=500)
 
     @field_validator('id')
     @classmethod

@@ -530,3 +530,78 @@ describe('ChatApp conversation link', () => {
     expect(window.location.search).toBe('');
   });
 });
+
+describe('ChatApp sources panel and bot notices', () => {
+  const SOURCE = {
+    source: '', original_filename: 'fk-info.pdf', page_start: 2, page_end: 2, document_version: 1,
+    document_id: 'doc-1', chunk_id: 1, score: null, collection: 'fk', ref: 3,
+  };
+
+  beforeEach(() => {
+    window.matchMedia =
+      window.matchMedia ??
+      ((() => ({
+        matches: false, media: '', onchange: null, addListener: () => {}, removeListener: () => {},
+        addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
+      })) as unknown as typeof window.matchMedia);
+    Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? vi.fn();
+    window.history.replaceState(null, '', '/?conversation=conv-1');
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    window.localStorage.clear();
+    window.history.replaceState(null, '', '/');
+  });
+
+  function stubFetch(bot: Record<string, unknown>) {
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/api/bots')) {
+        return Promise.resolve(jsonResponse([{ id: 'bot-a', name: 'Bot A', description: null, retrieval: { enabled: true }, ...bot }]));
+      }
+      if (url.endsWith('/api/conversations/conv-1')) {
+        return Promise.resolve(jsonResponse({
+          id: 'conv-1', bot_id: 'bot-a', title: 'Alt',
+          messages: [
+            { id: 'm1', role: 'user', content: 'Frage', sources: [], trace: null },
+            { id: 'm2', role: 'assistant', content: 'Antwort [3]', sources: [SOURCE], trace: null },
+          ],
+        }));
+      }
+      return Promise.resolve(jsonResponse([]));
+    }));
+  }
+
+  it('starts collapsed, opens for the answer via "Quellen anzeigen" and remembers the choice', async () => {
+    stubFetch({});
+    render(<I18nProvider initialLocale="de"><ChatApp /></I18nProvider>);
+
+    const showForAnswer = await screen.findByRole('button', { name: 'Quellen anzeigen', pressed: false });
+    expect(screen.queryByRole('complementary', { name: 'Quellen' })).toBeNull();
+
+    fireEvent.click(showForAnswer);
+    const panel = await screen.findByRole('complementary', { name: 'Quellen' });
+    expect(panel.textContent).toContain('fk-info.pdf');
+    // The cited number, not the position, so it matches "[3]" in the answer.
+    expect(panel.querySelector('li span')?.textContent).toBe('3');
+    expect(window.localStorage.getItem('weave-chat.sources-panel-open')).toBe('true');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Quellenleiste ausblenden' }));
+    expect(screen.queryByRole('complementary', { name: 'Quellen' })).toBeNull();
+    expect(window.localStorage.getItem('weave-chat.sources-panel-open')).toBe('false');
+  });
+
+  it('hides every source control for a show_sources: false bot and shows its disclaimer', async () => {
+    stubFetch({ show_sources: false, disclaimer: 'Testsystem – keine verbindlichen Aussagen' });
+    window.localStorage.setItem('weave-chat.sources-panel-open', 'true');
+    render(<I18nProvider initialLocale="de"><ChatApp /></I18nProvider>);
+
+    expect((await screen.findByRole('note', { name: 'Hinweis' })).textContent).toBe('Testsystem – keine verbindlichen Aussagen');
+    await screen.findByText('Antwort [3]');
+    expect(screen.queryByRole('button', { name: 'Quellen anzeigen' })).toBeNull();
+    expect(screen.queryByRole('complementary', { name: 'Quellen' })).toBeNull();
+    expect(screen.queryByText('fk-info.pdf')).toBeNull();
+  });
+});

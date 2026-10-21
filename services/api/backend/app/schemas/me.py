@@ -13,6 +13,9 @@ class MeResponse(BaseModel):
     locale: Literal['de', 'en'] | None = None
     # Web chat origin (settings.chat_public_url); None when not configured.
     chat_url: str | None = None
+    # Whether GET/POST/DELETE /v1/me/tokens are available
+    # (settings.self_service_api_tokens_enabled).
+    api_tokens_enabled: bool = False
 
 
 class LocaleUpdateRequest(BaseModel):

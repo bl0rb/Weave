@@ -262,6 +262,68 @@ def test_knowledge_flow_passes_context_to_the_llm_and_returns_sources(monkeypatc
     assert sent_json['final_k'] == 5
 
 
+# --- only the sources the answer cites -----------------------------------------
+
+
+def _two_chunks_and_reply(monkeypatch, reply: str):
+    from app.services.llm import FakeLLM, LLMResult
+
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        return _readable_collections_response()
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        return _FakeResponse(200, _search_response(
+            _chunk(chunk_id=1, document_id='doc-1', text='erster Auszug'),
+            _chunk(chunk_id=2, document_id='doc-2', text='zweiter Auszug'),
+        ))
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _fake_get)
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _fake_post)
+    monkeypatch.setattr(FakeLLM, 'chat', lambda self, messages, model=None, temperature=None: LLMResult(
+        content=reply, model='fake-chat',
+    ))
+
+
+@pytest.mark.parametrize('stream', [False, True])
+def test_knowledge_turn_reports_only_the_cited_sources_with_their_number(monkeypatch, stream):
+    import json
+
+    _two_chunks_and_reply(monkeypatch, 'Drei Monate zum Quartalsende [2].')
+    if stream:
+        resp = client.post('/internal/chat/stream', json=_LEGAL_BODY, headers=AUTH_HEADERS)
+        events = [json.loads(line[len('data: '):]) for line in resp.text.split('\n') if line.startswith('data: ')]
+        sources = next(event['sources'] for event in events if event['type'] == 'sources')
+    else:
+        resp = client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS)
+        sources = resp.json()['sources']
+
+    assert resp.status_code == 200
+    assert [(source['document_id'], source['ref']) for source in sources] == [('doc-2', 2)]
+
+
+def test_knowledge_turn_keeps_every_source_when_the_answer_cites_none(monkeypatch):
+    _two_chunks_and_reply(monkeypatch, 'Drei Monate zum Quartalsende.')
+
+    sources = client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS).json()['sources']
+
+    assert [(source['document_id'], source['ref']) for source in sources] == [('doc-1', None), ('doc-2', None)]
+
+
+@pytest.mark.parametrize(('answer', 'expected'), [
+    ('A [1] und B [3].', [1, 3]),
+    ('Siehe [source 2] sowie [1, 3].', [1, 2, 3]),
+    ('Nur [9] ausserhalb.', [None, None, None]),
+    ('Gar keine Angabe.', [None, None, None]),
+])
+def test_cited_sources_parses_the_numbered_markers(answer, expected):
+    from app.schemas.chat import Source
+    from app.services.chat import cited_sources
+
+    sources = [Source(source='', document_id=f'doc-{n}', chunk_id=n) for n in (1, 2, 3)]
+
+    assert [source.ref for source in cited_sources(answer, sources)] == expected
+
+
 # --- guard flow: retrieval finds nothing -------------------------------------
 
 
