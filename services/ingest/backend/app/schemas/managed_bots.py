@@ -121,6 +121,9 @@ class ManagedBotWrite(BaseModel):
     # Guard tuning without its own column (Runtime's clarify_* fields);
     # None = every one at its Runtime default.
     config_extras: BotConfigExtras | None = None
+    # Chat presentation: hide the sources panel; a note next to the composer.
+    show_sources: bool = True
+    disclaimer: str | None = Field(default=None, max_length=500)
     # LLM endpoint (Admin > Chat-Provider) this bot answers with; None = the
     # central 'default'. `llm_endpoints` are further endpoints users may
     # pick per chat ('*' = all enabled ones).
@@ -146,7 +149,7 @@ class ManagedBotWrite(BaseModel):
             raise ValueError('value cannot be empty')
         return cleaned
 
-    @field_validator('description')
+    @field_validator('description', 'disclaimer')
     @classmethod
     def strip_optional(cls, value: str | None) -> str | None:
         cleaned = value.strip() if value else ''
@@ -256,6 +259,8 @@ class ManagedBotAdminResponse(BaseModel):
     agent: dict | None = None
     # Only the keys that are set (see BotConfigExtras).
     config_extras: dict | None = None
+    show_sources: bool = True
+    disclaimer: str | None = None
     llm_endpoint: str | None = None
     llm_endpoints: list[str] = Field(default_factory=list)
     created_at: datetime
@@ -333,6 +338,8 @@ class ManagedBotInternalResponse(BaseModel):
     clarify_question: str | None = None
     clarify_ambiguous_margin: float | None = None
     clarify_ambiguous_question: str | None = None
+    show_sources: bool = True
+    disclaimer: str | None = None
     llm_endpoint: str | None = None
     llm_endpoints: list[str] = Field(default_factory=list)
 

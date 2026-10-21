@@ -113,6 +113,9 @@ type ManagedBot = {
   agent?: AgentConfig | null;
   // Guard fields without a column of their own (clarify_*), only the set ones.
   config_extras?: Record<string, number | string> | null;
+  // Chat presentation: hide the sources panel; a note next to the composer.
+  show_sources?: boolean;
+  disclaimer?: string | null;
   llm_endpoint?: string | null;
   llm_endpoints?: string[];
   created_at: string;
@@ -165,6 +168,8 @@ const emptyDraft = (noContextReply: string): BotDraft => ({
   weak_context_below: null,
   query_rewrite: null,
   uncertainty_hint: true,
+  show_sources: true,
+  disclaimer: null,
   agent: null,
   llm_endpoint: null,
   llm_endpoints: [],
@@ -371,6 +376,8 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
       query_rewrite: draft.query_rewrite ?? null,
       uncertainty_hint: draft.uncertainty_hint ?? true,
       config_extras: draft.config_extras ?? null,
+      show_sources: draft.show_sources ?? true,
+      disclaimer: draft.disclaimer?.trim() || null,
       agent: draft.kind === 'llm' && draft.agent?.enabled ? draft.agent : null,
       llm_endpoint: draft.kind === 'llm' ? draft.llm_endpoint || null : null,
       llm_endpoints: draft.kind === 'llm' ? draft.llm_endpoints ?? [] : [],
@@ -476,6 +483,8 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
         <Toggle checked={draft.require_sources} onChange={value => set('require_sources', value)} label={t('admin.bots.toggle.requireSources')} />
         {draft.require_sources && <Toggle checked={draft.uncertainty_hint !== false} onChange={value => set('uncertainty_hint', value)} label={t('admin.bots.toggle.uncertaintyHint')} />}
         {draft.require_sources && <Field label={t('admin.bots.field.noContextReply.label')}><textarea className={inputClass} rows={2} value={draft.no_context_reply} onChange={event => set('no_context_reply', event.target.value)} /></Field>}
+        <Toggle checked={draft.show_sources !== false} onChange={value => set('show_sources', value)} label={t('admin.bots.toggle.showSources')} />
+        <Field label={t('admin.bots.field.disclaimer.label')} hint={t('admin.bots.field.disclaimer.hint')}><input className={inputClass} maxLength={500} value={draft.disclaimer ?? ''} onChange={event => set('disclaimer', event.target.value)} placeholder={t('admin.bots.field.disclaimer.placeholder')} /></Field>
       </section>}
 
       {step === 'agents' && draft.kind === 'llm' && <section className="space-y-4" aria-label={t('admin.bots.step.agents')}>
