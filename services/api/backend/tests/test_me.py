@@ -78,7 +78,7 @@ def test_get_me_returns_username_and_locale() -> None:
     resp = client.get('/v1/me', headers=auth_headers(token))
 
     assert resp.status_code == 200
-    assert resp.json() == {'username': 'localereader', 'locale': None, 'chat_url': None}
+    assert resp.json() == {'username': 'localereader', 'locale': None, 'chat_url': None, 'api_tokens_enabled': False}
 
 
 def test_get_me_returns_the_configured_web_chat_url(monkeypatch) -> None:

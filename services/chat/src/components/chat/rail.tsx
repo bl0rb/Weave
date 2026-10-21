@@ -29,6 +29,8 @@ interface RailProps {
    * visible and these are unused. */
   open: boolean;
   onClose: () => void;
+  /** Shows the "API-Zugang" button — GET /v1/me's `api_tokens_enabled`. */
+  apiAccessEnabled?: boolean;
 }
 
 const GROUP_LABELS = ['Heute', 'Diese Woche', 'Älter'] as const;
@@ -87,6 +89,7 @@ export function Rail({
   newConversationDisabled,
   open,
   onClose,
+  apiAccessEnabled = false,
 }: RailProps) {
   const router = useRouter();
   const { t } = useI18n();
@@ -225,9 +228,11 @@ export function Rail({
             <span className="text-xs text-[var(--muted)]">{t('chat.rail.signedIn')}</span>
             <div className="flex items-center gap-1">
               <ThemeToggle />
-              <Button variant="ghost" size="sm" onClick={() => setApiAccessOpen(true)} aria-label={t('chat.rail.apiAccess')} title={t('chat.rail.apiAccess')}>
-                <KeyRound className="h-4 w-4" aria-hidden="true" />
-              </Button>
+              {apiAccessEnabled ? (
+                <Button variant="ghost" size="sm" onClick={() => setApiAccessOpen(true)} aria-label={t('chat.rail.apiAccess')} title={t('chat.rail.apiAccess')}>
+                  <KeyRound className="h-4 w-4" aria-hidden="true" />
+                </Button>
+              ) : null}
               <Button variant="ghost" size="sm" onClick={() => setDesktopSetupOpen(true)} aria-label={t('chat.rail.desktop')} title={t('chat.rail.desktop')}>
                 <Monitor className="h-4 w-4" aria-hidden="true" />
               </Button>

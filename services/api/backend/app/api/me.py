@@ -30,7 +30,10 @@ router = APIRouter(prefix='/v1', tags=['me'])
 
 @router.get('/me', response_model=MeResponse)
 def get_me(user: User = Depends(enforce_rate_limit)) -> MeResponse:
-    return MeResponse(username=user.username, locale=user.locale, chat_url=settings.chat_public_url.rstrip('/') or None)
+    return MeResponse(
+        username=user.username, locale=user.locale, chat_url=settings.chat_public_url.rstrip('/') or None,
+        api_tokens_enabled=settings.self_service_api_tokens_enabled,
+    )
 
 
 @router.put('/me/locale', response_model=LocaleResponse)
@@ -65,7 +68,10 @@ _TOKEN_MAX_PER_USER = 20
 def _require_session(authorization: str | None = Header(default=None)) -> None:
     """Token management needs a signed-in session: a stolen bearer token
     must not mint its own replacements or revoke its owner's other tokens
-    (same rule as Weave-Ingest's own token endpoints)."""
+    (same rule as Weave-Ingest's own token endpoints). And it must be
+    switched on at all (SELF_SERVICE_API_TOKENS_ENABLED)."""
+    if not settings.self_service_api_tokens_enabled:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Self-service API tokens are disabled')
     if authorization and authorization.lower().startswith('bearer '):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail='API tokens cannot manage tokens; use a signed-in session'

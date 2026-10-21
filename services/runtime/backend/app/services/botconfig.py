@@ -353,6 +353,9 @@ def _managed_bot(raw: dict) -> BotConfig:
             # n8n-provider bot (`BotConfig`'s own `_agent_mode_is_valid`
             # validator).
             'agent': raw.get('agent') if is_llm else None,
+            # Optional until Ingest's ManagedBot grows the columns; absent = runtime default.
+            'show_sources': bool(raw.get('show_sources', True)),
+            'disclaimer': raw.get('disclaimer') or None,
         })
     except (ValidationError, KeyError, TypeError) as exc:
         raise BotConfigError(f'managed bot {bot_id!r}: invalid control-plane data') from exc

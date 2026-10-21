@@ -49,7 +49,7 @@ Alle Antworten sind JSON, sofern nicht anders angegeben (Streaming-Endpunkte lie
 
 Zwei Zugangswege, die beide zur selben `Authorization`-Prüfung führen:
 
-1. **Personal-API-Token (für Maschinen/Skripte, empfohlen für Integrationen).** Jede angemeldete Person erstellt ihre Tokens selbst: in Weave-Chat über **API-Zugang** im Menü unten links, oder per API mit `POST /v1/me/tokens` (siehe unten). Ein Token hat genau die Rechte seiner Person. Betreiber können zusätzlich per Verwaltungs-CLI Tokens ausstellen (`python -m app.cli create-token --username alice [--expires-days 30]`).
+1. **Personal-API-Token (für Maschinen/Skripte, empfohlen für Integrationen).** Jede angemeldete Person erstellt ihre Tokens selbst: in Weave-Chat über **API-Zugang** im Menü unten links, oder per API mit `POST /v1/me/tokens` (siehe unten) — sofern der Betreiber das mit `api.SELF_SERVICE_API_TOKENS_ENABLED: true` freigeschaltet hat (Default: aus). Ein Token hat genau die Rechte seiner Person. Betreiber können zusätzlich per Verwaltungs-CLI Tokens ausstellen (`python -m app.cli create-token --username alice [--expires-days 30]`).
 
    Das rohe Token wird genau einmal angezeigt (nur `sha256(token)` wird gespeichert) und muss danach in jedem Request im Header mitgeschickt werden:
 
@@ -109,7 +109,7 @@ Alle folgenden Endpunkte liegen unter der Basis-URL von Weave-API und verlangen 
 
 #### `GET /v1/me`
 
-Liefert Benutzername, UI-Sprachpräferenz und die Adresse des Web-Chats (`chat_url`, aus `api.CHAT_PUBLIC_URL`; `null`, wenn nicht konfiguriert). Eine Unterhaltung öffnet sich im Web-Chat unter `<chat_url>/?conversation=<id>`.
+Liefert Benutzername, UI-Sprachpräferenz, die Adresse des Web-Chats (`chat_url`, aus `api.CHAT_PUBLIC_URL`; `null`, wenn nicht konfiguriert) und `api_tokens_enabled` (ob `/v1/me/tokens` freigeschaltet ist). Eine Unterhaltung öffnet sich im Web-Chat unter `<chat_url>/?conversation=<id>`.
 
 **curl**
 
@@ -134,7 +134,7 @@ print(resp.json())
 **Antwort (Beispiel)**
 
 ```json
-{ "username": "alice", "locale": "de", "chat_url": "https://chat.example.com" }
+{ "username": "alice", "locale": "de", "chat_url": "https://chat.example.com", "api_tokens_enabled": false }
 ```
 
 #### `PUT /v1/me/locale`
@@ -158,7 +158,7 @@ curl -s -X PUT https://weave.example.com/v1/me/locale \
 
 #### `GET /v1/me/tokens` / `POST /v1/me/tokens` / `DELETE /v1/me/tokens/{id}`
 
-Persönliche API-Tokens selbst verwalten. Die Antwort auf `POST` enthält das Token im Feld `token` — nur dieses eine Mal; `GET` listet danach nur Bezeichnung und Daten.
+Persönliche API-Tokens selbst verwalten. Nur mit `api.SELF_SERVICE_API_TOKENS_ENABLED: true` (Default: aus, dann `403` und kein **API-Zugang**-Knopf im Chat; bereits ausgestellte Tokens bleiben gültig). Die Antwort auf `POST` enthält das Token im Feld `token` — nur dieses eine Mal; `GET` listet danach nur Bezeichnung und Daten.
 
 | Feld (`POST`) | Typ | Pflicht | Bedeutung |
 |---|---|---|---|

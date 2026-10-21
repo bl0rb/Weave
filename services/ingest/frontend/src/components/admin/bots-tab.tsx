@@ -370,6 +370,7 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
       weak_context_below: draft.weak_context_below ?? null,
       query_rewrite: draft.query_rewrite ?? null,
       uncertainty_hint: draft.uncertainty_hint ?? true,
+      config_extras: draft.config_extras ?? null,
       agent: draft.kind === 'llm' && draft.agent?.enabled ? draft.agent : null,
       llm_endpoint: draft.kind === 'llm' ? draft.llm_endpoint || null : null,
       llm_endpoints: draft.kind === 'llm' ? draft.llm_endpoints ?? [] : [],

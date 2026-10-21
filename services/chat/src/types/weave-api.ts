@@ -26,6 +26,12 @@ export interface Bot {
   /** LLM endpoints the user may pick for this bot, its own first; empty
    * (or absent on an older backend) when the bot offers no choice. */
   llm_endpoints?: LlmEndpoint[];
+  /** `false` hides the sources panel and per-answer source controls for
+   * this bot (absent on an older backend = shown). */
+  show_sources?: boolean;
+  /** Short notice shown next to the composer, e.g. "Testsystem – keine
+   * verbindlichen Aussagen"; absent/null = none. */
+  disclaimer?: string | null;
 }
 
 /** Weave-Runtime's `LlmEndpointSummary` (no credentials). */
@@ -43,6 +49,9 @@ export interface LlmEndpoint {
 export interface MeResponse {
   username: string;
   locale: 'de' | 'en' | null;
+  /** Self-service API tokens switched on (SELF_SERVICE_API_TOKENS_ENABLED);
+   * absent on an older backend = off. Gates the rail's "API-Zugang". */
+  api_tokens_enabled?: boolean;
 }
 
 /** Weave-Retrieval's CollectionOut, unchanged. `public` collections are
@@ -108,6 +117,9 @@ export interface Source {
    * summary, 'collection' = a knowledge-space overview (its document_id is
    * `collection:<slug>`, not a real document). Absent/null for a chunk. */
   memory_kind?: 'document' | 'collection' | null;
+  /** The `[N]` number the answer cites this source by, set when the runtime
+   * kept only the cited sources; absent/null = its 1-based position. */
+  ref?: number | null;
 }
 
 export interface RetrievalTrace {

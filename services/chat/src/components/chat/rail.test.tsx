@@ -144,6 +144,14 @@ describe('Rail', () => {
     expect(onNewConversation).toHaveBeenCalledOnce();
   });
 
+  it('shows the "API-Zugang" button only while self-service tokens are switched on', () => {
+    const { rerender } = render(<Rail {...baseProps()} />);
+    expect(screen.queryByRole('button', { name: 'API-Zugang' })).toBeNull();
+
+    rerender(<Rail {...baseProps()} apiAccessEnabled />);
+    expect(screen.getByRole('button', { name: 'API-Zugang' })).toBeTruthy();
+  });
+
   describe('drawer (below the 900px breakpoint)', () => {
     it('calls onClose on Escape only while open', () => {
       const onClose = vi.fn();
