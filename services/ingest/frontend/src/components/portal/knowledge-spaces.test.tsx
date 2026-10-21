@@ -140,6 +140,31 @@ it('reindexes a knowledge space after confirmation and shows the requeued count'
   expect(await screen.findByText('1 Dokument wird neu indiziert.')).toBeTruthy();
 });
 
+it('starts a Confluence sync for the space\'s own imports instead of only reloading', async () => {
+  const document = { id: 'd1', original_filename: 'Doc.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: null, quality_recommendation: null, can_release: true, release: null, source: { kind: 'confluence', label: 'Confluence', path: null, url: 'https://wiki.example/page' } };
+  json.mockImplementation(async (path, init) => {
+    if (typeof path === 'string' && path.startsWith('/api/v1/portal/documents')) return { items: [document], total: 1 };
+    if (path === '/api/v1/import/syncs') return { items: [{ id: 's1', collection_id: 'area-1' }, { id: 's2', collection_id: 'other' }] };
+    if (path === '/api/v1/import/syncs/s1/run' && init?.method === 'POST') return { id: 'run', status: 'pending' };
+    return area;
+  });
+  render(<KnowledgeDetail id="area-1" />);
+  await screen.findByText('Doc.pdf');
+  expect(screen.queryByRole('button', { name: 'Aktualisieren' })).toBeNull();
+  fireEvent.click(await screen.findByRole('button', { name: 'Jetzt synchronisieren' }));
+  expect(await screen.findByText('Synchronisierung gestartet.')).toBeTruthy();
+  const runs = json.mock.calls.filter(([path, init]) => init?.method === 'POST' && String(path).startsWith('/api/v1/import/syncs/'));
+  expect(runs.map(([path]) => path)).toEqual(['/api/v1/import/syncs/s1/run']);
+});
+
+it('offers no sync button for a space without own Confluence imports', async () => {
+  json.mockImplementation(async path => typeof path === 'string' && path.startsWith('/api/v1/portal/documents')
+    ? { items: [], total: 0 } : path === '/api/v1/import/syncs' ? { items: [] } : area);
+  render(<KnowledgeDetail id="area-1" />);
+  await waitFor(() => expect(json.mock.calls.some(([path]) => path === '/api/v1/import/syncs')).toBe(true));
+  expect(screen.queryByRole('button', { name: 'Jetzt synchronisieren' })).toBeNull();
+});
+
 it('hides Wissensbereich neu indizieren for non-managers', async () => {
   const document = { id: 'd1', original_filename: 'Doc.pdf', status: 'FINISHED', collection_id: 'area-1', collection_name: 'Servicewissen', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, release: null, source: { kind: 'upload', label: 'Hochgeladen', path: null, url: null } };
   json.mockImplementation(async path => typeof path === 'string' && path.startsWith('/api/v1/portal/documents')
