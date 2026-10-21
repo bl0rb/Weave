@@ -199,6 +199,26 @@ it('sends the chosen LLM endpoint and the endpoints offered in the chat', async 
   expect(body).toMatchObject({ llm_endpoint: 'tools-llm', llm_endpoints: ['default'] });
 });
 
+it('keeps config_extras when editing an existing bot', async () => {
+  const extras = { clarify_max_options: 3, clarify_question: 'Welches Produkt?' };
+  json.mockImplementation(async (path, init) => {
+    if (init?.method === 'PUT') return savedBot;
+    if (path === '/api/v1/auth/admin/bots') return { items: [{ ...savedBot, kind: 'n8n', config_extras: extras }] };
+    if (path === '/api/v1/auth/admin/teams') return { items: [] };
+    if (path === '/api/v1/collections') return { items: [] };
+    if (path === '/api/v1/auth/admin/chat-provider/endpoints') return { items: [] };
+    throw new Error(`unexpected request: ${path}`);
+  });
+  render(<BotsTab />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Service-Assistent bearbeiten' }));
+  step(/Überprüfen/);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Bot speichern' }));
+  await waitFor(() => expect(json.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(true));
+  const body = JSON.parse(json.mock.calls.find(([, init]) => init?.method === 'PUT')?.[1]?.body as string);
+  expect(body.config_extras).toEqual(extras);
+});
+
 it('deletes an existing bot only after confirmation', async () => {
   json.mockImplementation(async path => {
     if (path === '/api/v1/auth/admin/bots') return { items: [savedBot] };
