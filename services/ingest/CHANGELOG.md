@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Weave transformation, the product is called Weave Ingest. Entries below predating that
 > change are left as written and refer to the project under its former name.
 
+## [0.7.13] - 2026-10-21
+
+### Security
+- **certifi 2026.10.19** in every Python service (api, embeddings, ingest, knowledge,
+  reranker, retrieval, runtime, tools), fixing GHSA-6q48-6c7w-9gw2 that `pip-audit`
+  flagged on 2026.7.22.
+
+### Changed
+- Ingest worker: Pillow 12.3.0 → 13.0.0 (pulled in by paddlex; OCR smoke-tested on PNG and
+  rendered PDF pages). Ingest backend: aiohttp 3.14.4, yarl 1.25.1. Ingest frontend: vite 8.3.4.
+- Docs: Claude Code and Entra steps in the MCP SSO guide, plus a platform overview diagram.
+
 ## [0.7.12] - 2026-10-20
 
 ### Added
