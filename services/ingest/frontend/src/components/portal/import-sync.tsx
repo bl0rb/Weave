@@ -5,7 +5,9 @@ import { useRouter } from 'next/navigation';
 import { LoaderCircle, RefreshCw, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiJson } from '@/lib/api';
-import { type ImportRun, type MissingConfluencePage } from '@/lib/imports';
+import { formatRefreshInterval, type ImportRun, type ImportSync, type MissingConfluencePage } from '@/lib/imports';
+import { INTL_LOCALE } from '@/i18n/config';
+import type { MessageKey } from '@/i18n/messages';
 import { useI18n } from '@/i18n/provider';
 
 export function ImportSyncButton({ runId, compact = false }: { runId: string; compact?: boolean }) {
@@ -60,4 +62,23 @@ export function MissingConfluencePages({ runId, pages, canRemove, onChanged }: {
       </Button>}
     </li>)}</ul>
   </section>;
+}
+
+/** One Confluence import at a glance: schedule, last run with its changed pages, error and next run. */
+export function ImportSyncSummary({ sync }: { sync: ImportSync }) {
+  const { t, locale } = useI18n();
+  const run = sync.last_run;
+  const when = (value: string) => new Date(value).toLocaleString(INTL_LOCALE[locale], { dateStyle: 'medium', timeStyle: 'short' });
+  const schedule = sync.enabled && sync.interval_seconds ? formatRefreshInterval(sync.interval_seconds, locale) : t('portal.importSync.manualOnly');
+  const next = sync.enabled && sync.next_refresh_at
+    ? new Date(sync.next_refresh_at) <= new Date() ? t('portal.connections.confluence.nextRefreshDue') : t('portal.connections.confluence.nextRefresh', { date: when(sync.next_refresh_at) })
+    : null;
+  return <div className="min-w-0 text-sm">
+    <strong className="block break-words text-[var(--ink)]">{sync.root_page_title || sync.scope_value}</strong>
+    <span className="block text-xs text-[var(--muted)]">{sync.source_name} · {schedule}{next && ` · ${next}`}</span>
+    <span className="block text-xs text-[var(--muted)]">{run
+      ? `${t('portal.connections.confluence.lastRun')}: ${when(run.finished_at ?? run.created_at)} · ${t(`portal.connections.confluence.runStatus.${run.status}` as MessageKey)} · ${t('portal.importSync.changedPages', { count: run.pages_imported })}`
+      : t('portal.connections.confluence.syncNeverSucceeded')}</span>
+    {sync.last_error && <span className="block break-words text-xs text-red-700">{sync.last_error}</span>}
+  </div>;
 }

@@ -498,7 +498,7 @@ function JobDetails({ jobId, openEditOnLoad }: { jobId: string; openEditOnLoad: 
         <div className="flex justify-start">
           {/* Members come from Aufgaben/Dokumente; the job list is an admin view. */}
           {isAdmin ? <Link href="/jobs"><Button variant="outline">{t('portal.jobDetail.backToJobs')}</Button></Link>
-            : <Link href="/aufgaben" className={buttonVariants({ variant: 'outline' })}>{t('portal.jobDetail.backToTasks')}</Link>}
+            : <Link href="/documents" className={buttonVariants({ variant: 'outline' })}>{t('portal.jobDetail.backToDocuments')}</Link>}
         </div>
         <h1 className="text-3xl font-semibold">{t('portal.jobDetail.title')}</h1>
         <p>{t('portal.jobDetail.filenameLabel', { name: job.original_filename })}</p>

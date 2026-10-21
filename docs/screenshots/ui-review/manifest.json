@@ -11,8 +11,8 @@
   },
   {
     "file": "03-portal-aufgaben.png",
-    "label": "portal Aufgaben",
-    "url": "/aufgaben"
+    "label": "portal Dokumente (Alle)",
+    "url": "/documents?ansicht=all"
   },
   {
     "file": "04-portal-wissensbereiche.png",

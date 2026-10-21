@@ -17,7 +17,6 @@ const ROUTE_LABELS: [string, MessageKey][] = [
   ['/knowledge/new', 'portal.chrome.breadcrumb.knowledgeNew'],
   ['/knowledge', 'portal.nav.knowledgeSpaces'],
   ['/documents', 'portal.nav.documents'],
-  ['/aufgaben', 'portal.nav.tasks'],
   ['/reviews', 'portal.chrome.breadcrumb.reviews'],
   ['/processing', 'portal.chrome.breadcrumb.processing'],
   ['/imports', 'portal.chrome.breadcrumb.imports'],

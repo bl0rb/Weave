@@ -307,6 +307,19 @@ body :is(a, button, input, select, textarea):focus-visible {
 .portal-quality-legend dl { margin: 10px 0; }
 .portal-quality-legend dt { color: var(--muted); font-size: 12px; margin-top: 8px; }
 .portal-quality-legend dd { margin-top: 2px; }
+.portal-infotip { position: relative; display: inline-flex; vertical-align: middle; }
+.portal-infotip > button { display: inline-grid; place-items: center; padding: 2px; border-radius: 999px; color: var(--muted); }
+.portal-infotip > button:hover, .portal-infotip > button[aria-expanded='true'] { color: var(--accent-ink); }
+.portal-infotip-body { position: absolute; z-index: 30; top: calc(100% + 6px); left: -8px; width: min(340px, 80vw); padding: 12px 14px; background: var(--surface); border: 1px solid var(--line-2); border-radius: 9px; box-shadow: 0 8px 24px rgb(0 0 0 / 0.12); font-size: 13px; font-weight: 400; line-height: 1.5; color: var(--ink-2); }
+.portal-infotip-body dl { margin: 0; }
+.portal-infotip-body dt { font-weight: 600; color: var(--ink); }
+.portal-infotip-body dt + dd { margin: 0 0 6px; }
+.portal-view-row button b { margin-left: 6px; font-weight: 700; color: var(--muted); }
+.portal-home-search { padding: 16px 20px; margin-bottom: 20px; }
+.portal-week-bars { list-style: none; margin: 8px 0 0; padding: 0; display: flex; align-items: flex-end; gap: 6px; height: 84px; }
+.portal-week-bars li { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 4px; }
+.portal-week-bars small { font-size: 11px; color: var(--muted); }
+.portal-week-bar { display: block; width: 100%; min-height: 2px; border-radius: 4px 4px 0 0; background: var(--ok); }
 .portal-approval { margin: 24px 0; }
 /* Publication progress remains visible without nesting another card. */
 .portal-indexing { border-top: 1px solid var(--line); margin-top: 22px; padding-top: 20px; }
