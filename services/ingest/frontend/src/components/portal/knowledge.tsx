@@ -12,6 +12,7 @@ import { accessSummary, ownerSummary } from '@/lib/access-summary';
 import { spaceColorVar, spaceMark } from '@/lib/space-color';
 import { useIndexingStatus } from '@/lib/use-indexing-status';
 import { collectionDownloadName, downloadPortalFile, jsonBody, loadDirectoryTeams, loadDocuments, loadImportScopes, markdownDownloadName, pipelineStage, portalDownloadError, portalError, reindexKnowledgeSpace, type DirectoryTeam, type DocumentPage, type ImportScopesResponse, type KnowledgeSpace, type PortalDocument, type QualityGradeFilter } from '@/lib/portal';
+import { type ImportRun, type ImportSyncListResponse, type ImportSync } from '@/lib/imports';
 import { useI18n } from '@/i18n/provider';
 import { BulkActionBar, DocumentTable, EmptyState, Notice, Pagination, PortalPage, QualityGradeFilterRow, QualityGradeLegend, RequiredMark, useBulkSelection } from './shared';
 
@@ -173,6 +174,9 @@ export function KnowledgeDetail({ id }: { id: string }) {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [notice, setNotice] = useState('');
   const [reindexing, setReindexing] = useState(false);
+  // Confluence imports into this space that the current user owns and can therefore sync on demand.
+  const [syncs, setSyncs] = useState<ImportSync[]>([]);
+  const [syncing, setSyncing] = useState(false);
   const load = useCallback(() => Promise.all([
     apiJson<KnowledgeSpace>(`/api/v1/collections/${encodeURIComponent(id)}`),
     loadDocuments(id, offset, 'all', qualityGrade || undefined, undefined, importScope || undefined),
@@ -189,6 +193,25 @@ export function KnowledgeDetail({ id }: { id: string }) {
     const timer = setInterval(() => { if (document.visibilityState === 'visible') void load(); }, 15000);
     return () => clearInterval(timer);
   }, [load]);
+  useEffect(() => {
+    apiJson<ImportSyncListResponse>('/api/v1/import/syncs', { cache: 'no-store' })
+      .then(response => setSyncs(response.items.filter(sync => sync.collection_id === id)))
+      .catch(() => setSyncs([]));
+  }, [id]);
+  const syncNow = async () => {
+    setSyncing(true);
+    setNotice('');
+    setError('');
+    try {
+      for (const sync of syncs) await apiJson<ImportRun>(`/api/v1/import/syncs/${encodeURIComponent(sync.id)}/run`, { method: 'POST' });
+      setNotice(t('portal.connections.confluence.syncNowStarted'));
+      await load();
+    } catch (err) {
+      setError(portalError(err, locale));
+    } finally {
+      setSyncing(false);
+    }
+  };
   const downloadAll = async () => {
     if (!space) return;
     setDownloadingId('collection');
@@ -222,7 +245,7 @@ export function KnowledgeDetail({ id }: { id: string }) {
     {downloadError && <Notice error>{downloadError}</Notice>}
     {space && <div className="portal-context-bar"><span><Users size={17} />{t('portal.spaces.authorizedLabel')} {accessSummary(space, locale)}</span><span>{t('portal.spaces.publicationHint')}</span></div>}
     {space && !(space.can_upload ?? space.can_manage) && <Notice>{t('portal.spaces.readerHint')}</Notice>}
-    <section className="portal-panel"><div className="portal-section-heading"><div><p className="portal-eyebrow">{t('portal.spaces.contentsEyebrow')}</p><h2>{t('portal.nav.documents')}{documents ? ` · ${documents.total}` : ''}</h2><QualityGradeFilterRow value={qualityGrade} onChange={value => { setQualityGrade(value); setOffset(0); setDocuments(null); }} /><QualityGradeLegend /></div><div className="flex flex-wrap items-center gap-2">{Boolean(documents?.total) && <Button variant="outline" size="sm" disabled={downloadingId !== null} onClick={() => void downloadAll()}><Archive size={15} />{downloadingId === 'collection' ? t('portal.spaces.zipCreating') : t('portal.spaces.zipAll')}</Button>}{(space?.can_upload ?? space?.can_manage) && Boolean(documents?.total) && <Link href={`/sources/new?collection=${encodeURIComponent(id)}`} className={buttonVariants({ size: 'sm' })}><Plus size={15} />{t('portal.chrome.addSource')}</Link>}{(space?.can_upload ?? space?.can_manage) && Boolean(documents?.total) && <Button variant="outline" size="sm" onClick={() => setReindexing(true)}><RefreshCw size={15} />{t('portal.spaces.reindexSpace')}</Button>}<Button variant="ghost" size="sm" onClick={load}>{t('common.refresh')}</Button></div></div>
+    <section className="portal-panel"><div className="portal-section-heading"><div><p className="portal-eyebrow">{t('portal.spaces.contentsEyebrow')}</p><h2>{t('portal.nav.documents')}{documents ? ` · ${documents.total}` : ''}</h2><QualityGradeFilterRow value={qualityGrade} onChange={value => { setQualityGrade(value); setOffset(0); setDocuments(null); }} /><QualityGradeLegend /></div><div className="flex flex-wrap items-center gap-2">{Boolean(documents?.total) && <Button variant="outline" size="sm" disabled={downloadingId !== null} onClick={() => void downloadAll()}><Archive size={15} />{downloadingId === 'collection' ? t('portal.spaces.zipCreating') : t('portal.spaces.zipAll')}</Button>}{(space?.can_upload ?? space?.can_manage) && Boolean(documents?.total) && <Link href={`/sources/new?collection=${encodeURIComponent(id)}`} className={buttonVariants({ size: 'sm' })}><Plus size={15} />{t('portal.chrome.addSource')}</Link>}{(space?.can_upload ?? space?.can_manage) && Boolean(documents?.total) && <Button variant="outline" size="sm" onClick={() => setReindexing(true)}><RefreshCw size={15} />{t('portal.spaces.reindexSpace')}</Button>}{syncs.length > 0 && <Button variant="outline" size="sm" disabled={syncing} onClick={() => void syncNow()}><RefreshCw size={15} />{t('portal.importSync.syncNow')}</Button>}</div></div>
       {/* Releasing several documents at once: select them in the table, the bulk bar asks for the review confirmation (and grade C explicitly). */}
       <BulkActionBar {...bulk.barProps} />
       {Boolean(importScopes?.items?.length) && <div className="flex flex-wrap items-end gap-3 border-b border-[var(--line)] px-5 py-4">
