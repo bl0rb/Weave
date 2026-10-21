@@ -64,9 +64,10 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
     catch { return ''; }
   });
   const [automatic, setAutomatic] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    try { return Boolean((JSON.parse(sessionStorage.getItem(SOURCE_DRAFT_KEY) || 'null') as SourceDraft | null)?.automatic); }
-    catch { return false; }
+    // Daily auto-sync is on by default; only an explicit opt-out in a saved draft turns it off.
+    if (typeof window === 'undefined') return true;
+    try { return (JSON.parse(sessionStorage.getItem(SOURCE_DRAFT_KEY) || 'null') as SourceDraft | null)?.automatic ?? true; }
+    catch { return true; }
   });
   const [confirmedAccess, setConfirmedAccess] = useState(() => {
     if (typeof window === 'undefined') return false;
@@ -192,7 +193,7 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
           {hasTranscripts && <div className="portal-form"><label>{t('portal.sourceForm.transcriptInstructionsLabel')}<textarea rows={4} maxLength={4000} value={transcriptInstructions} placeholder={t('portal.sourceForm.transcriptInstructionsPlaceholder')} onChange={event => setTranscriptInstructions(event.target.value)} /></label><p className="portal-field-hint">{t('portal.sourceForm.transcriptInstructionsHint')}</p></div>}</> : <div className="portal-form">
           {sourceError && <Notice error action={loadSources}>{sourceError}</Notice>}
           {sourcesLoaded && !sources.length && <p className="portal-field-hint">{t('portal.sourceForm.noConnectionHint')}</p>}
-          <label>{t('portal.sourceForm.connectionLabel')}<RequiredMark /><select required value={sourceId} onChange={event => { setSourceId(event.target.value); setAutomatic(false); setTestMessage(''); }}><option value="">{t('portal.sourceForm.chooseConnection')}</option>{sources.map(source => <option key={source.id} value={source.id}>{source.name}</option>)}</select></label>
+          <label>{t('portal.sourceForm.connectionLabel')}<RequiredMark /><select required value={sourceId} onChange={event => { setSourceId(event.target.value); setAutomatic(true); setTestMessage(''); }}><option value="">{t('portal.sourceForm.chooseConnection')}</option>{sources.map(source => <option key={source.id} value={source.id}>{source.name}</option>)}</select></label>
           {untested && <p className="portal-field-hint" role="status">{t('portal.sourceForm.untestedHint')} <button type="button" className="portal-inline-link" disabled={testingId !== null || testCooldown > 0} onClick={() => void testSelected()}>{testingId !== null ? t('portal.connections.confluence.testing') : testCooldown > 0 ? t('portal.connections.confluence.testWithCooldown', { seconds: testCooldown }) : t('portal.connections.confluence.test')}</button>{testMessage && <> {testMessage}</>}</p>}
           <div className="flex flex-wrap gap-x-6"><button type="button" className="portal-inline-link" onClick={() => setSetupOpen(true)}><Plus size={14} />{t('portal.sourceForm.setupConnectionButton')}</button><Link className="portal-inline-link" href="/connections">{t('portal.sourceForm.setupConnectionLink')} <ArrowRight size={14} /></Link></div>
           <div className="portal-filter-row" role="group" aria-label={t('portal.sourceForm.scopeLabel')}>
@@ -228,7 +229,7 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
     {/* Outside the form above: the dialog has a form of its own. */}
     {setupOpen && <ConfluenceSetupDialog onClose={() => setSetupOpen(false)} onCreated={source => {
       setSources(current => [...current, source]); setSourcesLoaded(true);
-      setSourceId(source.id); setAutomatic(false); setSetupOpen(false);
+      setSourceId(source.id); setAutomatic(true); setSetupOpen(false);
     }} />}
     {progress && <Notice>{progress}</Notice>}
     {completed && <section className="portal-panel portal-form-panel max-w-[900px]" aria-labelledby="source-completed-title">

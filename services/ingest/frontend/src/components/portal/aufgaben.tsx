@@ -35,6 +35,14 @@ type State = {
  * the user rather than the full history, to keep this page to one bounded
  * request per section.
  */
+/** Where the document came from: a link to the original (Confluence) page, otherwise its folder path. */
+function SourceOrigin({ document }: { document: PortalDocument }) {
+  const { source } = document;
+  if (source?.url) return <> · <a href={source.url} target="_blank" rel="noopener noreferrer">{source.label}</a></>;
+  if (source?.path) return <> · {source.label}: {source.path}</>;
+  return null;
+}
+
 export function Aufgaben() {
   const { user } = useAuth();
   const { t, locale } = useI18n();
@@ -91,7 +99,7 @@ export function Aufgaben() {
                 <span className="portal-task-icon"><FileText size={18} aria-hidden="true" /></span>
                 <span className="portal-task-text">
                   <strong>{document.original_filename}</strong>
-                  <small>{document.collection_name}{document.quality_grade ? ` · ${t('portal.documents.qualityGrade', { grade: document.quality_grade })}` : ''}</small>
+                  <small>{document.collection_name}{document.quality_grade ? ` · ${t('portal.documents.qualityGrade', { grade: document.quality_grade })}` : ''}<SourceOrigin document={document} /></small>
                 </span>
                 <Link className={buttonVariants({ size: 'sm' })} href={`/reviews/${document.id}`}>{t('portal.tasks.reviewAction')}</Link>
               </li>
@@ -141,7 +149,7 @@ export function Aufgaben() {
                 <span className="portal-task-icon portal-task-icon-ok"><CheckCheck size={18} aria-hidden="true" /></span>
                 <span className="portal-task-text">
                   <strong>{document.original_filename}</strong>
-                  <small>{document.collection_name}</small>
+                  <small>{document.collection_name}<SourceOrigin document={document} /></small>
                 </span>
                 <Link className={buttonVariants({ size: 'sm', variant: 'ghost' })} href={`/reviews/${document.id}`}>{t('common.view')}</Link>
               </li>
