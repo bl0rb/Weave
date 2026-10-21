@@ -1,6 +1,6 @@
 'use client';
 
-import { ExternalLink, Lock } from 'lucide-react';
+import { ExternalLink, Lock, PanelRightClose } from 'lucide-react';
 import { formatCollection, formatPages, formatScore, formatVersion, getSourceLink, MemoryBadge, SourceOrigin } from '@/components/chat/source-cards';
 import { toProxiedImageUrl } from '@/lib/portal-artifact-url';
 import { useI18n } from '@/i18n/provider';
@@ -16,6 +16,8 @@ interface SourcesPanelProps {
    * against, for the trust card at the bottom — derived from that
    * answer's own trace (see chat-app.tsx's `sourcesScopeLabel`). */
   scopeLabel: string;
+  /** Collapses the panel (chat-app.tsx keeps that choice per browser). */
+  onCollapse?: () => void;
 }
 
 /**
@@ -25,7 +27,7 @@ interface SourcesPanelProps {
  * `.chat-sources-panel`/`.chat-inline-sources`), same as the design
  * prototype (docs/design-proposals/06-loom-rc/style.css).
  */
-export function SourcesPanel({ sources, scopeLabel }: SourcesPanelProps) {
+export function SourcesPanel({ sources, scopeLabel, onCollapse }: SourcesPanelProps) {
   const { t } = useI18n();
   const images = Array.from(new Set((sources ?? []).flatMap((source) => source.images ?? [])));
 
@@ -34,11 +36,24 @@ export function SourcesPanel({ sources, scopeLabel }: SourcesPanelProps) {
       className="chat-sources-panel min-h-0 flex-col gap-4 overflow-y-auto border-l border-[var(--line)] bg-[var(--surface)] p-4"
       aria-labelledby="chat-sources-panel-title"
     >
-      <header>
-        <h2 id="chat-sources-panel-title" className="text-sm font-semibold">
-          {t('chat.sourcesPanel.title')}
-        </h2>
-        <p className="mt-0.5 text-xs text-[var(--muted)]">{t('chat.sourcesPanel.subtitle')}</p>
+      <header className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <h2 id="chat-sources-panel-title" className="text-sm font-semibold">
+            {t('chat.sourcesPanel.title')}
+          </h2>
+          <p className="mt-0.5 text-xs text-[var(--muted)]">{t('chat.sourcesPanel.subtitle')}</p>
+        </div>
+        {onCollapse ? (
+          <button
+            type="button"
+            onClick={onCollapse}
+            aria-label={t('chat.sourcesPanel.collapse')}
+            title={t('chat.sourcesPanel.collapse')}
+            className="grid h-8 w-8 flex-none place-items-center rounded-[var(--radius-control)] text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
+          >
+            <PanelRightClose className="h-4 w-4" aria-hidden="true" />
+          </button>
+        ) : null}
       </header>
 
       {images.length > 0 ? (
@@ -86,7 +101,7 @@ export function SourcesPanel({ sources, scopeLabel }: SourcesPanelProps) {
               >
                 <div className="flex items-start gap-2">
                   <span className="mt-0.5 inline-grid h-5 w-5 flex-none place-items-center rounded-[var(--radius-control)] border border-[var(--line)] text-[11px] font-bold text-[var(--accent)]">
-                    {index + 1}
+                    {source.ref ?? index + 1}
                   </span>
                   <div className="min-w-0 flex-1">
                     <strong className="block truncate text-[13px] font-semibold text-[var(--ink)]">

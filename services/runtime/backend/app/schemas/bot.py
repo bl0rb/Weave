@@ -493,6 +493,13 @@ class BotConfig(BaseModel):
     # `_agent_forbidden_for_n8n_provider` below for the two structural
     # rules this field's presence is checked against.
     agent: AgentConfig | None = None
+    # Chat UI only (passed on via BotSummary): `show_sources: false` hides
+    # the sources panel and per-answer source controls for this bot --
+    # the API response still carries `sources`. `disclaimer` is a short
+    # notice the chat shows next to the composer (e.g. "Testsystem --
+    # keine verbindlichen Aussagen"); None shows nothing.
+    show_sources: bool = True
+    disclaimer: str | None = Field(default=None, max_length=500)
 
     @field_validator('id')
     @classmethod
@@ -627,3 +634,5 @@ class BotSummary(BaseModel):
     # Selectable LLM endpoints, the bot's own first; empty when the bot
     # offers no choice.
     llm_endpoints: list[LlmEndpointSummary] = Field(default_factory=list)
+    show_sources: bool = True
+    disclaimer: str | None = None

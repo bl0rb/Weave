@@ -255,6 +255,15 @@ body {
   display: inline-flex;
 }
 
+/* The sources panel starts collapsed (and stays hidden for a bot with
+   `show_sources: false`) — see chat-app.tsx's `sourcesPanelOpen`. Scoped
+   to the wide layout so the narrower breakpoints below keep their own. */
+@media (min-width: 1181px) {
+  .chat-shell.chat-sources-collapsed {
+    grid-template-columns: 272px minmax(0, 1fr);
+  }
+}
+
 @media (max-width: 1180px) {
   .chat-shell {
     grid-template-columns: 272px minmax(0, 1fr);

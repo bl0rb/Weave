@@ -4,11 +4,19 @@ managed with a signed-in session only, never with a bearer token."""
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.core.auth import SESSION_COOKIE_NAME
+from app.core.config import settings
 from app.core.security import hash_session_token
 from app.models.models import ApiToken, User
 from app.models.models import Session as SessionModel
 from tests.conftest import auth_headers, client, make_user_with_token
+
+
+@pytest.fixture(autouse=True)
+def _self_service_tokens_enabled(monkeypatch):
+    monkeypatch.setattr(settings, 'self_service_api_tokens_enabled', True)
 
 
 def _session_headers(db_session, username: str) -> tuple[User, dict[str, str]]:
@@ -61,3 +69,13 @@ def test_tokens_of_other_users_stay_invisible_and_untouchable(db_session):
     assert client.get('/v1/me/tokens', headers=second).json()['items'] == []
     assert client.delete(f'/v1/me/tokens/{token_id}', headers=second).status_code == 404
     assert db_session.get(ApiToken, uuid.UUID(token_id)) is not None
+
+
+def test_token_endpoints_refuse_while_self_service_is_switched_off(db_session, monkeypatch):
+    monkeypatch.setattr(settings, 'self_service_api_tokens_enabled', False)
+    _, session = _session_headers(db_session, 'switched-off')
+
+    assert client.get('/v1/me', headers=session).json()['api_tokens_enabled'] is False
+    assert client.get('/v1/me/tokens', headers=session).status_code == 403
+    assert client.post('/v1/me/tokens', json={'label': 'x'}, headers=session).status_code == 403
+    assert client.delete(f'/v1/me/tokens/{uuid.uuid4()}', headers=session).status_code == 403

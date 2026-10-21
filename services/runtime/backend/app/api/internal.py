@@ -118,6 +118,8 @@ def _summary(bot: BotConfig, catalog: list[dict] | None = None) -> BotSummary:
         public=bot.permissions.is_public,
         collections=list(bot.retrieval.collections),
         llm_endpoints=_llm_endpoints(bot, catalog or []),
+        show_sources=bot.show_sources,
+        disclaimer=bot.disclaimer,
     )
 
 

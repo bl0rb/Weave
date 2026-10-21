@@ -6,6 +6,7 @@ broken/edge-case fixture files without touching the shipped examples.
 
 import pytest
 
+from app.api.internal import _summary
 from app.core.config import settings
 from app.services.botconfig import BotConfigError, BotNotFoundError, list_bots, load_bot
 
@@ -231,6 +232,24 @@ def test_centrally_managed_bot_with_no_agent_config_has_none(bots_dir, monkeypat
     }])
     managed = {bot.id: bot for bot in list_bots()}['plain-bot']
     assert managed.agent is None
+
+
+def test_centrally_managed_bot_projects_chat_ui_options(bots_dir, monkeypatch):
+    (bots_dir / 'minimal.yaml').write_text(_MINIMAL_BOT, encoding='utf-8')
+    monkeypatch.setattr('app.services.botconfig.fetch_managed_bots', lambda: [{
+        'id': 'test-bot', 'name': 'Test Bot', 'kind': 'llm', 'system_prompt': 'Answer.',
+        'teams': [], 'collections': [], 'require_sources': True, 'no_context_reply': 'Nichts.',
+        'show_sources': False, 'disclaimer': 'Testsystem – keine verbindlichen Aussagen',
+    }])
+    bots = {bot.id: bot for bot in list_bots()}
+    assert bots['test-bot'].show_sources is False
+    assert bots['test-bot'].disclaimer == 'Testsystem – keine verbindlichen Aussagen'
+    # Absent (older Ingest, plain YAML) = sources shown, no disclaimer.
+    assert bots['minimal'].show_sources is True
+    assert bots['minimal'].disclaimer is None
+
+    summary = _summary(bots['test-bot'])
+    assert (summary.show_sources, summary.disclaimer) == (False, 'Testsystem – keine verbindlichen Aussagen')
 
 
 def test_centrally_managed_n8n_bot_ignores_agent_config(monkeypatch):

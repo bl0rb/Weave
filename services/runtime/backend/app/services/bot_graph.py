@@ -599,6 +599,15 @@ def _agent_multi(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
     }
 
 
+def _cited(state: TurnState, answer: str) -> dict:
+    """A knowledge/overview turn numbered its sources for the LLM (chat.py's
+    `_context_block`/`_memory_sources`): report only the ones the answer
+    cites. Agent turns number facts, not sources, and keep theirs as is."""
+    if state['branch'] not in ('knowledge', 'overview') or not state.get('sources'):
+        return {}
+    return {'sources': chat_service.cited_sources(answer, state['sources'])}
+
+
 def _generate(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
     ctx = runtime.context
     bot = ctx.bot
@@ -623,10 +632,12 @@ def _generate(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
     assert ctx.llm_provider is not None  # never an n8n bot on this path
     llm_start = time.perf_counter()
     if ctx.streaming:
+        parts: list[str] = []
         try:
             for delta in llm_service.iter_chat_stream(
                 ctx.llm_provider, messages, model=bot.model.model, temperature=bot.model.temperature,
             ):
+                parts.append(delta)
                 writer(ChatStreamDeltaEvent(text=delta))
         except llm_service.LLMError as exc:
             if state['branch'] in _AGENT_BRANCHES:
@@ -635,10 +646,14 @@ def _generate(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
                 raise
             writer(ChatStreamErrorEvent(detail=str(exc)))
             return {'errored': True, 'streamed': True}
-        return {'timings_ms': _timing(state, 'llm_ms', llm_start), 'streamed': True}
+        return {
+            'timings_ms': _timing(state, 'llm_ms', llm_start), 'streamed': True,
+            **_cited(state, ''.join(parts)),
+        }
 
     llm_result = ctx.llm_provider.chat(messages, model=bot.model.model, temperature=bot.model.temperature)
     return {
+        **_cited(state, llm_result.content),
         'timings_ms': _timing(state, 'llm_ms', llm_start),
         'answer': llm_result.content,
         # The blocking agent path never reported the answering model

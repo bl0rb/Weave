@@ -190,6 +190,12 @@ class Settings(BaseSettings):
     # process that sees the redirect cannot use the code. Off by default.
     native_login_enabled: bool = False
 
+    # --- Self-service personal API tokens (GET/POST/DELETE /v1/me/tokens,
+    # the web chat's "API-Zugang" dialog). Off by default: the endpoints
+    # then answer 403 and GET /v1/me reports `api_tokens_enabled: false`,
+    # so the chat hides the button. Tokens issued earlier keep working.
+    self_service_api_tokens_enabled: bool = False
+
     # --- Federated login via Weave-Ingest (app/api/auth.py's
     # /v1/auth/ingest/login + /callback, app/services/ingest_identity.py).
     #

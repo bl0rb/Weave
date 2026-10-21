@@ -46,6 +46,7 @@ config:
     POSTGRES_PORT: "5432"
     POSTGRES_USER: "weave"
     RATE_LIMIT_PER_MINUTE: "30"
+    SELF_SERVICE_API_TOKENS_ENABLED: "false"
     WEAVE_API_TAG: "latest"
   chat:
     CHAT_APP_BASE_URL: "http://localhost:3001"

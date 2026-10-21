@@ -545,6 +545,19 @@
       "default": null,
       "title": "Description"
     },
+    "disclaimer": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Disclaimer"
+    },
     "guard": {
       "$ref": "#/$defs/GuardConfig"
     },
@@ -581,6 +594,11 @@
       "default": 1,
       "title": "Schema Version",
       "type": "integer"
+    },
+    "show_sources": {
+      "default": true,
+      "title": "Show Sources",
+      "type": "boolean"
     },
     "system_prompt": {
       "title": "System Prompt",

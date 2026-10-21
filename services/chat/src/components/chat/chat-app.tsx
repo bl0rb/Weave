@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Menu } from 'lucide-react';
+import { Info, Menu, PanelRight } from 'lucide-react';
 import { Rail } from '@/components/chat/rail';
 import { MessageList } from '@/components/chat/message-list';
 import { Composer } from '@/components/chat/composer';
@@ -25,6 +25,27 @@ import {
   type UiMessage,
 } from '@/lib/chat-types';
 import type { Bot, ChatRequestBody, ChatResponseBody, Collection, ConversationSummary, MeResponse, StoredConversation } from '@/types/weave-api';
+
+// Per-browser memory of whether the sources panel is expanded (it starts
+// collapsed). Storage can be unavailable (private mode, blocked site data):
+// then the panel simply starts collapsed every time.
+const SOURCES_PANEL_STORAGE_KEY = 'weave-chat.sources-panel-open';
+
+function readSourcesPanelOpen(): boolean {
+  try {
+    return window.localStorage.getItem(SOURCES_PANEL_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function writeSourcesPanelOpen(open: boolean) {
+  try {
+    window.localStorage.setItem(SOURCES_PANEL_STORAGE_KEY, String(open));
+  } catch {
+    // Not remembered — harmless.
+  }
+}
 
 export function ChatApp() {
   const router = useRouter();
@@ -62,6 +83,16 @@ export function ChatApp() {
   // conversation switch so the panel keeps following the newest answer
   // unless the caller explicitly pins an older one.
   const [selectedSourceMessageId, setSelectedSourceMessageId] = useState<string | null>(null);
+  // Collapsed by default; read from storage after mount (not during render)
+  // so the server-rendered markup and the first client render agree.
+  const [sourcesPanelOpen, setSourcesPanelOpenState] = useState(false);
+  useEffect(() => setSourcesPanelOpenState(readSourcesPanelOpen()), []);
+  function setSourcesPanelOpen(open: boolean) {
+    setSourcesPanelOpenState(open);
+    writeSourcesPanelOpen(open);
+  }
+  // GET /v1/me's `api_tokens_enabled` — gates the rail's "API-Zugang".
+  const [apiTokensEnabled, setApiTokensEnabled] = useState(false);
 
   // The rail's own off-canvas drawer state below the 900px breakpoint (see
   // globals.css's `.chat-rail`) — irrelevant, and always effectively
@@ -130,6 +161,7 @@ export function ChatApp() {
       if (meResult.ok && meResult.data.locale && meResult.data.locale !== locale) {
         applyLocale(meResult.data.locale);
       }
+      if (meResult.ok) setApiTokensEnabled(meResult.data.api_tokens_enabled === true);
 
       await refreshConversations();
 
@@ -488,6 +520,10 @@ export function ChatApp() {
   }
 
   const selectedBot = bots?.find((bot) => bot.id === selectedBotId) ?? null;
+  // A bot with `show_sources: false` gets no sources panel or source
+  // controls at all; otherwise the panel shows once the user expands it.
+  const showSources = selectedBot?.show_sources !== false;
+  const sourcesPanelShown = showSources && sourcesPanelOpen;
   const currentScopeLabel = scopeLabel(selectedCollections, collections, t);
   const conversationTitle = conversations?.find((c) => c.id === conversationId)?.title ?? t('chat.newConversation');
 
@@ -511,7 +547,7 @@ export function ChatApp() {
     requestedCollections === undefined ? currentScopeLabel : scopeLabel(requestedCollections ?? [], collections, t);
 
   return (
-    <div className="chat-shell">
+    <div className={sourcesPanelShown ? 'chat-shell' : 'chat-shell chat-sources-collapsed'}>
       <Rail
         conversations={conversations}
         conversationsError={conversationsError}
@@ -523,6 +559,7 @@ export function ChatApp() {
         newConversationDisabled={messages.length === 0}
         open={railOpen}
         onClose={closeRail}
+        apiAccessEnabled={apiTokensEnabled}
       />
 
       <main className="flex min-w-0 min-h-0 flex-col">
@@ -545,6 +582,19 @@ export function ChatApp() {
               {selectedBot?.name ?? t('chat.header.noBotSelected')} · {currentScopeLabel}
             </p>
           </div>
+
+          {showSources && !sourcesPanelOpen ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setSourcesPanelOpen(true)}
+              aria-expanded={false}
+              className="chat-sources-panel-control flex-none gap-1.5"
+            >
+              <PanelRight className="h-4 w-4" aria-hidden="true" />
+              {t('chat.sourcesPanel.open')}
+            </Button>
+          ) : null}
         </header>
 
         {/* Bots failing to load is a hard blocker (the composer has
@@ -565,9 +615,26 @@ export function ChatApp() {
           onClarifyOption={(text) => {
             void sendTurn(text, selectedCollections);
           }}
-          selectedSourceMessageId={activeSourceMessage?.id ?? null}
-          onSelectForSourcesPanel={setSelectedSourceMessageId}
+          selectedSourceMessageId={sourcesPanelShown ? (activeSourceMessage?.id ?? null) : null}
+          onSelectForSourcesPanel={(id) => {
+            setSelectedSourceMessageId(id);
+            setSourcesPanelOpen(true);
+          }}
+          showSources={showSources}
         />
+
+        {selectedBot?.disclaimer ? (
+          <div className="flex-none px-3 sm:px-6">
+            <p
+              role="note"
+              aria-label={t('chat.disclaimer.label')}
+              className="mx-auto flex max-w-[48rem] items-start gap-2 rounded-[var(--radius-control)] bg-[var(--warn-bg)] px-3 py-1.5 text-xs font-medium text-[var(--warn)]"
+            >
+              <Info className="mt-px h-3.5 w-3.5 flex-none" aria-hidden="true" />
+              <span>{selectedBot.disclaimer}</span>
+            </p>
+          </div>
+        ) : null}
 
         <Composer
           value={draft}
@@ -588,7 +655,13 @@ export function ChatApp() {
         />
       </main>
 
-      <SourcesPanel sources={activeSourceMessage?.sources ?? null} scopeLabel={sourcesScopeLabel} />
+      {sourcesPanelShown ? (
+        <SourcesPanel
+          sources={activeSourceMessage?.sources ?? null}
+          scopeLabel={sourcesScopeLabel}
+          onCollapse={() => setSourcesPanelOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

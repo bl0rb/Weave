@@ -98,6 +98,9 @@ export const chat = {
   'sourcesPanel.trustBody':
     'Nur freigegebene und indexierte Dokumente aus Bereichen, die du lesen darfst. Findet er nichts Passendes, sagt er das — statt zu raten.',
   'sourcesPanel.scopeDt': 'Bereiche',
+  'sourcesPanel.open': 'Quellen anzeigen',
+  'sourcesPanel.collapse': 'Quellenleiste ausblenden',
+  'disclaimer.label': 'Hinweis',
 
   // Shared by source-cards.tsx and sources-panel.tsx (same Source fields,
   // laid out differently — see source-cards.tsx's own docstring).
@@ -136,7 +139,7 @@ export const chat = {
     'Nicht gestreamt — als Fallback über die nicht-streamende Schnittstelle beantwortet.',
   'messageBubble.sourcedBy': 'Belegt durch {count} Quelle|Belegt durch {count} Quellen',
   'messageBubble.noMatchingSource': 'Keine passende Quelle',
-  'messageBubble.showInSourcesPanel': 'In Quellenleiste anzeigen',
+  'messageBubble.showSources': 'Quellen anzeigen',
   'messageBubble.status.complete': 'fertig',
   'messageBubble.status.partial': 'teilweise',
   'messageBubble.status.failed': 'fehlgeschlagen',

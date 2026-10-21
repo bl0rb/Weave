@@ -15,6 +15,8 @@ interface MessageListProps {
   onClarifyOption?: (message: string) => void;
   selectedSourceMessageId: string | null;
   onSelectForSourcesPanel: (id: string) => void;
+  /** The bot's `show_sources` — see `MessageBubble`'s prop of the same name. */
+  showSources?: boolean;
 }
 
 export function MessageList({
@@ -24,6 +26,7 @@ export function MessageList({
   onClarifyOption,
   selectedSourceMessageId,
   onSelectForSourcesPanel,
+  showSources,
 }: MessageListProps) {
   const { t } = useI18n();
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -55,6 +58,7 @@ export function MessageList({
           onClarifyOption={onClarifyOption}
           isSelectedForSourcesPanel={message.id === selectedSourceMessageId}
           onSelectForSourcesPanel={() => onSelectForSourcesPanel(message.id)}
+          showSources={showSources}
         />
       ))}
       <div ref={bottomRef} />

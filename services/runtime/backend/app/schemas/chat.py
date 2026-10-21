@@ -138,6 +138,11 @@ class Source(BaseModel):
     # 'collection' (a knowledge-space overview, `document_id`
     # 'collection:<slug>', `chunk_id` 0). None for every chunk source.
     memory_kind: Literal['document', 'collection'] | None = None
+    # The `[N]` number the answer cites this source by (app/services/
+    # chat.py's `cited_sources`) -- set when the answer cites by number and
+    # uncited sources were dropped, so the kept ones keep the numbers used
+    # in the text. None otherwise: the 1-based position is its number.
+    ref: int | None = None
 
     @field_validator('source_url')
     @classmethod

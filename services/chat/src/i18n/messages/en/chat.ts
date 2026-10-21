@@ -97,6 +97,9 @@ export const chat: Record<keyof typeof de, string> = {
   'sourcesPanel.trustBody':
     'Only released and indexed documents from spaces you are allowed to read. If it finds nothing suitable, it says so — instead of guessing.',
   'sourcesPanel.scopeDt': 'Spaces',
+  'sourcesPanel.open': 'Show sources',
+  'sourcesPanel.collapse': 'Hide sources panel',
+  'disclaimer.label': 'Notice',
 
   // Shared by source-cards.tsx and sources-panel.tsx
   'sources.imagesLabel': 'Images from the sources',
@@ -133,7 +136,7 @@ export const chat: Record<keyof typeof de, string> = {
   'messageBubble.viaFallback': 'Not streamed — answered as a fallback through the non-streaming interface.',
   'messageBubble.sourcedBy': 'Backed by {count} source|Backed by {count} sources',
   'messageBubble.noMatchingSource': 'No matching source',
-  'messageBubble.showInSourcesPanel': 'Show in sources panel',
+  'messageBubble.showSources': 'Show sources',
   'messageBubble.status.complete': 'done',
   'messageBubble.status.partial': 'partial',
   'messageBubble.status.failed': 'failed',

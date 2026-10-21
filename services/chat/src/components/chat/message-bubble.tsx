@@ -38,12 +38,15 @@ interface MessageBubbleProps {
    * question this answer responded to — forwarded to `GuardBanner`, which
    * only renders it as a button for `reason: 'filter_excluded_all'`. */
   onResetScopeAndRetry?: () => void;
-  /** Whether this message is the one currently shown in the right-hand
-   * sources panel (see chat-app.tsx's `selectedSourceMessageId`) — drives
-   * the pressed state of this bubble's own "In Quellenleiste anzeigen"
-   * control. */
+  /** Whether this message is the one currently shown in the (open)
+   * right-hand sources panel (see chat-app.tsx's `selectedSourceMessageId`)
+   * — drives the pressed state of this bubble's own "Quellen anzeigen"
+   * control below the answer. */
   isSelectedForSourcesPanel?: boolean;
   onSelectForSourcesPanel?: () => void;
+  /** `false` (the bot's `show_sources`) hides this answer's source cards
+   * and its "Quellen anzeigen" control. */
+  showSources?: boolean;
   /** Called with a clarification option's ready-made follow-up text when
    * the person picks one of the document chips a `guard.reason: 'clarify'`
    * answer offers (`trace.clarification`, see types/weave-api.ts). Without
@@ -58,6 +61,7 @@ export function MessageBubble({
   isSelectedForSourcesPanel,
   onSelectForSourcesPanel,
   onClarifyOption,
+  showSources = true,
 }: MessageBubbleProps) {
   const { t } = useI18n();
   const clarification =
@@ -84,8 +88,6 @@ export function MessageBubble({
             working={message.streaming}
             sourceCount={sourceCount}
             guardTriggered={message.trace?.guard?.triggered ?? false}
-            onSelectForSourcesPanel={sourceCount > 0 ? onSelectForSourcesPanel : undefined}
-            isSelectedForSourcesPanel={isSelectedForSourcesPanel}
           />
         ) : null}
 
@@ -162,7 +164,26 @@ export function MessageBubble({
             ))}
           </div>
         ) : null}
-        {!isUser && message.sources ? (
+        {/* Only on the ≥1180px layout that has a sources panel at all (see
+            globals.css's `.chat-sources-panel-control`); below it the
+            inline source cards right after carry their own toggle. */}
+        {!isUser && showSources && sourceCount > 0 && !message.streaming && onSelectForSourcesPanel ? (
+          <button
+            type="button"
+            onClick={onSelectForSourcesPanel}
+            aria-pressed={!!isSelectedForSourcesPanel}
+            className={cn(
+              'chat-sources-panel-control mt-3 min-h-[40px] items-center gap-1 rounded-[var(--radius-control)] border border-[var(--line)] px-2.5 py-1 text-xs font-medium sm:min-h-0',
+              isSelectedForSourcesPanel
+                ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                : 'text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]'
+            )}
+          >
+            <PanelRight className="h-3.5 w-3.5" aria-hidden="true" />
+            {t('chat.messageBubble.showSources')}
+          </button>
+        ) : null}
+        {!isUser && showSources && message.sources ? (
           <div className="chat-inline-sources">
             <SourceCards sources={message.sources} />
           </div>
@@ -186,27 +207,20 @@ export function MessageBubble({
  * "answer rendering" item 4): "Belegt durch N Quellen" once this turn's
  * sources are known, "Keine passende Quelle" once its guard has triggered
  * instead, or neither while both are still unknown (still streaming, or a
- * non-retrieval bot's plain reply). The optional "In Quellenleiste
- * anzeigen" control only appears once there is at least one source to
- * show, and only takes effect on the ≥1180px layout that has a sources
- * panel at all (see globals.css's `.chat-sources-panel-control`) — it is
- * harmless, if inert, to still render it below that width.
+ * non-retrieval bot's plain reply). The "Quellen anzeigen" control that
+ * opens the sources panel sits below the answer instead (see above).
  */
 function AnswerHead({
   assistantName,
   working,
   sourceCount,
   guardTriggered,
-  onSelectForSourcesPanel,
-  isSelectedForSourcesPanel,
 }: {
   assistantName: string;
   /** Still streaming: the mark keeps weaving, like a "thinking" indicator. */
   working?: boolean;
   sourceCount: number;
   guardTriggered: boolean;
-  onSelectForSourcesPanel?: () => void;
-  isSelectedForSourcesPanel?: boolean;
 }) {
   const { t } = useI18n();
   // An answer written in this session keeps weaving its five rounds after it
@@ -225,22 +239,6 @@ function AnswerHead({
         <span className="rounded-full bg-[var(--warn-bg)] px-2 py-0.5 text-[11px] font-semibold text-[var(--warn)]">
           {t('chat.messageBubble.noMatchingSource')}
         </span>
-      ) : null}
-      {onSelectForSourcesPanel ? (
-        <button
-          type="button"
-          onClick={onSelectForSourcesPanel}
-          aria-pressed={!!isSelectedForSourcesPanel}
-          className={cn(
-            'chat-sources-panel-control ml-auto min-h-[40px] items-center gap-1 rounded-[var(--radius-control)] px-2 text-[11px] font-medium sm:min-h-0',
-            isSelectedForSourcesPanel
-              ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
-              : 'text-[var(--muted)] hover:bg-[var(--surface-2)]'
-          )}
-        >
-          <PanelRight className="h-3.5 w-3.5" aria-hidden="true" />
-          {t('chat.messageBubble.showInSourcesPanel')}
-        </button>
       ) : null}
     </div>
   );
