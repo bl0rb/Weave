@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Weave transformation, the product is called Weave Ingest. Entries below predating that
 > change are left as written and refer to the project under its former name.
 
+## [0.7.14] - 2026-10-21
+
+### Added
+- **Portal redesign:** "Dokumente" now merges the former Aufgaben and Dokumente views, with
+  view presets (Zu prüfen — default, Alle, Geparkt, Fehler, Von mir freigegeben) and one
+  filter bar for all of them (search, Wissensbereich, Stand, Bewertung, Quelle). The filters
+  live in the URL, and the status and grade filters have tooltips explaining each value
+  (incl. "Ohne Bewertung"). Rows link to the original Confluence page or folder path.
+  "Verbindungen" is its own navigation entry.
+- **Übersicht** with a central search (filenames, Confluence titles, paths) and metrics:
+  per-space counts, Confluence sync status, review wait time and releases per week
+  (new `GET /api/v1/portal/stats`; `GET /api/v1/portal/documents` gains `q`, `source`,
+  `released_by_me` and `review_state=failed`).
+- **Wissensbereich detail** is management only: sources with "Jetzt synchronisieren" (starts
+  the space's own Confluence imports instead of only reloading), access, maintenance
+  (reindex with explanation, ZIP export) and a link to its filtered documents.
+- **Chat options per bot:** `show_sources` hides the sources panel, `disclaimer` shows a
+  note next to the composer (e.g. "Testsystem – keine verbindlichen Aussagen"). Both can be
+  set in the bot editor of the portal and in bot documents (migration 0054).
+- **Chat sources:** a "Quellen anzeigen" button under each answer with sources; the panel
+  starts collapsed and remembers its state per browser; only sources the answer cites as
+  `[N]` are listed (all of them if it cites none).
+
+### Changed
+- **Self-service API tokens are off by default:** `SELF_SERVICE_API_TOKENS_ENABLED` (Weave
+  API, default `false`) hides "API-Zugang" in the chat and makes `/v1/me/tokens` answer
+  `403`. Tokens issued earlier stay valid. Set it to `true` to keep the previous behavior.
+- Daily Confluence sync is pre-selected when adding a Confluence source.
+
+### Removed
+- The `/aufgaben` page (no redirect); its content lives in "Dokumente".
+
+### Fixed
+- Saving a bot in the portal's bot editor no longer wipes its `clarify_*` settings.
+
+### Security
+- pypdf 6.21.1 (CVE-2026-113786).
+
 ## [0.7.13] - 2026-10-21
 
 ### Security
