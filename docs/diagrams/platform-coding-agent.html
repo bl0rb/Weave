@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Weave mit Coding Agent als MCP-Client</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #f8fafc;
+      --color-ink:     #0f172a;
+      --color-muted:   #475569;
+      --color-accent:  #4f46e5;
+      --font-sans:     'Inter', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 1172px; width: 100%; overflow-x: auto; }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 0.5rem;
+    }
+    .sub {
+      font-size: 0.95rem;
+      line-height: 1.5;
+      color: var(--color-muted);
+      max-width: 72ch;
+      margin-bottom: 1.5rem;
+    }
+    svg { width: 100%; min-width: 1152px; display: block; }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Architektur · Gesamtbild mit MCP</p>
+    <h1>Weave mit Coding Agent als MCP-Client</h1>
+    <p class="sub">Fachbereiche bringen Wissen über das Portal oder Confluence ein. Mitarbeitende fragen im Chat, ein Coding Agent meldet sich über Entra an und sucht per MCP — beide sehen nur, was die angemeldete Person auch im Portal sehen darf.</p>
+
+    <svg viewBox="0 0 1152 672" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="platform-coding-agent-title platform-coding-agent-desc">
+<title id="platform-coding-agent-title">Weave mit Coding Agent als MCP-Client</title>
+<desc id="platform-coding-agent-desc">Fachbereiche bringen Wissen über das Wissensportal oder per Confluence-Import in Weave-Ingest ein, Weave-Knowledge indexiert es in den Chunk-Store, den nur Weave-Retrieval liest; Mitarbeitende fragen über Chat UI, Weave-API und Weave-Runtime, während ein Coding Agent sich bei Entra ID anmeldet und über Weave-Tools per MCP mit den Rechten des angemeldeten Nutzers sucht.</desc>
+
+<defs>
+  <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="#475569"/>
+  </marker>
+  <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="#4f46e5"/>
+  </marker>
+  <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/>
+  </marker>
+  <marker id="arrow-link-start" markerWidth="8" markerHeight="6" refX="1" refY="3" orient="auto">
+    <polygon points="8 0, 0 3, 8 6" fill="#2e5aa8"/>
+  </marker>
+</defs>
+
+<rect width="100%" height="100%" fill="#f8fafc"/>
+
+<!-- ============ ZONES ============ -->
+<rect x="32" y="32" width="208" height="464" rx="8" fill="rgba(15,23,42,0.02)" stroke="rgba(15,23,42,0.10)" stroke-width="0.8"/>
+<rect x="40" y="36" width="112" height="12" rx="2" fill="#f8fafc"/>
+<text x="48" y="45" fill="rgba(15,23,42,0.40)" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">NUTZER · QUELLEN</text>
+<rect x="272" y="32" width="848" height="120" rx="8" fill="rgba(15,23,42,0.02)" stroke="rgba(15,23,42,0.10)" stroke-width="0.8"/>
+<rect x="280" y="36" width="128" height="12" rx="2" fill="#f8fafc"/>
+<text x="288" y="45" fill="rgba(15,23,42,0.40)" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">INGESTION · OFFLINE</text>
+<rect x="272" y="280" width="848" height="216" rx="8" fill="rgba(15,23,42,0.02)" stroke="rgba(15,23,42,0.10)" stroke-width="0.8"/>
+<rect x="280" y="284" width="136" height="12" rx="2" fill="#f8fafc"/>
+<text x="288" y="293" fill="rgba(15,23,42,0.40)" font-size="7" font-family="'Geist Mono', monospace" letter-spacing="0.14em">ONLINE · CHAT &amp; MCP</text>
+
+<!-- ============ ARROWS (before boxes) ============ -->
+<path d="M 216,96 H 304" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="228" y="76" width="64" height="12" rx="2" fill="#f8fafc"/>
+<text x="260" y="85" fill="#64748b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">HOCHLADEN</text>
+<path d="M 464,80 H 512" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 216,216 H 468 Q 476,216 476,208 V 120 Q 476,112 484,112 H 512" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+<rect x="308" y="196" width="56" height="12" rx="2" fill="#f8fafc"/>
+<text x="336" y="205" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">IMPORT</text>
+<path d="M 672,96 H 720" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 880,96 H 928" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 800,128 V 184" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="808" y="148" width="40" height="12" rx="2" fill="#f8fafc"/>
+<text x="828" y="157" fill="#64748b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">EMBED</text>
+<path d="M 592,128 V 184" fill="none" stroke="#2e5aa8" stroke-width="1" stroke-dasharray="4,3" marker-start="url(#arrow-link-start)" marker-end="url(#arrow-link)"/>
+<rect x="600" y="148" width="72" height="12" rx="2" fill="#f8fafc"/>
+<text x="636" y="157" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SSO · JWKS</text>
+<path d="M 1008,128 V 312" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="1016" y="252" width="40" height="12" rx="2" fill="#f8fafc"/>
+<text x="1036" y="261" fill="#64748b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">LESEN</text>
+<path d="M 968,312 V 232 Q 968,224 960,224 H 880" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="892" y="204" width="48" height="12" rx="2" fill="#f8fafc"/>
+<text x="916" y="213" fill="#64748b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">RERANK</text>
+<path d="M 216,344 H 304" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="232" y="324" width="56" height="12" rx="2" fill="#f8fafc"/>
+<text x="260" y="333" fill="#64748b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">FRAGEN</text>
+<path d="M 464,344 H 512" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 672,344 H 720" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 880,344 H 928" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="884" y="324" width="40" height="12" rx="2" fill="#f8fafc"/>
+<text x="904" y="333" fill="#64748b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SUCHE</text>
+<path d="M 216,424 H 480 Q 488,424 488,416 V 352 a 8,8 0 0,1 0,-16 V 240 Q 488,232 496,232 H 512" fill="none" stroke="#2e5aa8" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-link)"/>
+<rect x="408" y="252" width="72" height="12" rx="2" fill="#f8fafc"/>
+<text x="444" y="261" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">LOGIN · PKCE</text>
+<path d="M 216,456 H 928" fill="none" stroke="#4f46e5" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+<rect x="572" y="436" width="80" height="12" rx="2" fill="#f8fafc"/>
+<text x="612" y="445" fill="#4f46e5" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">MCP · TOKEN</text>
+<path d="M 1008,408 V 376" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="1016" y="386" width="48" height="12" rx="2" fill="#f8fafc"/>
+<text x="1040" y="395" fill="#64748b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">SCOPE</text>
+<path d="M 800,376 V 448 a 8,8 0 0,1 0,16 V 528" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+<rect x="808" y="392" width="48" height="12" rx="2" fill="#f8fafc"/>
+<text x="832" y="401" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PROMPT</text>
+
+<!-- ============ NODES ============ -->
+<rect x="56" y="64" width="160" height="64" rx="6" fill="#f8fafc"/>
+<rect x="56" y="64" width="160" height="64" rx="6" fill="rgba(71,85,105,0.10)" stroke="#64748b" stroke-width="1"/>
+<rect x="64" y="72" width="32" height="12" rx="2" fill="transparent" stroke="rgba(100,116,139,0.70)" stroke-width="0.8"/>
+<text x="80" y="81" fill="rgba(100,116,139,0.70)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">TEAM</text>
+<text x="136" y="102" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Fachbereiche</text>
+<text x="136" y="117" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">hochladen · freigeben</text>
+<rect x="56" y="184" width="160" height="64" rx="6" fill="#f8fafc"/>
+<rect x="56" y="184" width="160" height="64" rx="6" fill="rgba(15,23,42,0.03)" stroke="rgba(15,23,42,0.30)" stroke-width="1"/>
+<rect x="64" y="192" width="32" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="80" y="201" fill="rgba(15,23,42,0.40)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">WIKI</text>
+<text x="136" y="222" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Confluence</text>
+<text x="136" y="237" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Seiten pflegen</text>
+<rect x="56" y="312" width="160" height="64" rx="6" fill="#f8fafc"/>
+<rect x="56" y="312" width="160" height="64" rx="6" fill="rgba(71,85,105,0.10)" stroke="#64748b" stroke-width="1"/>
+<rect x="64" y="320" width="32" height="12" rx="2" fill="transparent" stroke="rgba(100,116,139,0.70)" stroke-width="0.8"/>
+<text x="80" y="329" fill="rgba(100,116,139,0.70)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">USER</text>
+<text x="136" y="350" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Mitarbeitende</text>
+<text x="136" y="365" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">fragen im Chat</text>
+<rect x="56" y="408" width="160" height="64" rx="6" fill="#f8fafc"/>
+<rect x="56" y="408" width="160" height="64" rx="6" fill="rgba(79,70,229,0.08)" stroke="#4f46e5" stroke-width="1.2"/>
+<rect x="64" y="416" width="40" height="12" rx="2" fill="transparent" stroke="rgba(79,70,229,0.70)" stroke-width="0.8"/>
+<text x="84" y="425" fill="rgba(79,70,229,0.70)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">AGENT</text>
+<text x="136" y="446" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Coding Agent</text>
+<text x="136" y="461" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Claude Code · VS Code</text>
+<rect x="304" y="64" width="160" height="64" rx="6" fill="#f8fafc"/>
+<rect x="304" y="64" width="160" height="64" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="312" y="72" width="24" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="324" y="81" fill="rgba(15,23,42,0.40)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">UI</text>
+<text x="384" y="102" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Wissensportal</text>
+<text x="384" y="117" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Upload · Review · Admin</text>
+<rect x="512" y="64" width="160" height="64" rx="6" fill="#f8fafc"/>
+<rect x="512" y="64" width="160" height="64" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="520" y="72" width="44" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="542" y="81" fill="rgba(15,23,42,0.40)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">INGEST</text>
+<text x="592" y="102" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Ingest</text>
+<text x="592" y="117" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">OCR · Prüfung · Freigabe</text>
+<rect x="720" y="64" width="160" height="64" rx="6" fill="#f8fafc"/>
+<rect x="720" y="64" width="160" height="64" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="728" y="72" width="40" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="748" y="81" fill="rgba(15,23,42,0.40)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">INDEX</text>
+<text x="800" y="102" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Knowledge</text>
+<text x="800" y="117" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Chunking · Embeddings</text>
+<rect x="928" y="64" width="160" height="64" rx="6" fill="#f8fafc"/>
+<rect x="928" y="64" width="160" height="64" rx="6" fill="rgba(15,23,42,0.05)" stroke="#475569" stroke-width="1"/>
+<rect x="936" y="72" width="40" height="12" rx="2" fill="transparent" stroke="rgba(71,85,105,0.60)" stroke-width="0.8"/>
+<text x="956" y="81" fill="rgba(71,85,105,0.60)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">STORE</text>
+<text x="1008" y="102" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Chunk-Store</text>
+<text x="1008" y="117" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Postgres · weave_knowledge</text>
+<rect x="512" y="184" width="160" height="64" rx="6" fill="#f8fafc"/>
+<rect x="512" y="184" width="160" height="64" rx="6" fill="rgba(15,23,42,0.03)" stroke="rgba(15,23,42,0.30)" stroke-width="1"/>
+<rect x="520" y="192" width="28" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="534" y="201" fill="rgba(15,23,42,0.40)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">SSO</text>
+<text x="592" y="222" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Entra ID</text>
+<text x="592" y="237" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">OIDC · OAuth · PKCE</text>
+<rect x="720" y="184" width="160" height="64" rx="6" fill="#f8fafc"/>
+<rect x="720" y="184" width="160" height="64" rx="6" fill="rgba(15,23,42,0.05)" stroke="#475569" stroke-width="1"/>
+<rect x="728" y="192" width="40" height="12" rx="2" fill="transparent" stroke="rgba(71,85,105,0.60)" stroke-width="0.8"/>
+<text x="748" y="201" fill="rgba(71,85,105,0.60)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">MODEL</text>
+<text x="800" y="222" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Modelldienste</text>
+<text x="800" y="237" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Embeddings · Reranker</text>
+<rect x="304" y="312" width="160" height="64" rx="6" fill="#f8fafc"/>
+<rect x="304" y="312" width="160" height="64" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="312" y="320" width="24" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="324" y="329" fill="rgba(15,23,42,0.40)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">UI</text>
+<text x="384" y="350" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Chat UI</text>
+<text x="384" y="365" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Antwort mit Quelle</text>
+<rect x="512" y="312" width="160" height="64" rx="6" fill="#f8fafc"/>
+<rect x="512" y="312" width="160" height="64" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="520" y="320" width="48" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="544" y="329" fill="rgba(15,23,42,0.40)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">GATEWAY</text>
+<text x="592" y="350" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-API</text>
+<text x="592" y="365" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Tokens · Sitzungen</text>
+<rect x="720" y="312" width="160" height="64" rx="6" fill="#f8fafc"/>
+<rect x="720" y="312" width="160" height="64" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="728" y="320" width="48" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="752" y="329" fill="rgba(15,23,42,0.40)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">RUNTIME</text>
+<text x="800" y="350" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Runtime</text>
+<text x="800" y="365" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Bots · Agenten</text>
+<rect x="928" y="312" width="160" height="64" rx="6" fill="#f8fafc"/>
+<rect x="928" y="312" width="160" height="64" rx="6" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<rect x="936" y="320" width="44" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="958" y="329" fill="rgba(15,23,42,0.40)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">SEARCH</text>
+<text x="1008" y="350" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Retrieval</text>
+<text x="1008" y="365" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">hybride Suche im Scope</text>
+<rect x="928" y="408" width="160" height="64" rx="6" fill="#f8fafc"/>
+<rect x="928" y="408" width="160" height="64" rx="6" fill="rgba(79,70,229,0.08)" stroke="#4f46e5" stroke-width="1.2"/>
+<rect x="936" y="416" width="28" height="12" rx="2" fill="transparent" stroke="rgba(79,70,229,0.70)" stroke-width="0.8"/>
+<text x="950" y="425" fill="rgba(79,70,229,0.70)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">MCP</text>
+<text x="1008" y="446" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Weave-Tools</text>
+<text x="1008" y="461" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">/mcp · Rechte des Nutzers</text>
+<rect x="720" y="528" width="160" height="64" rx="6" fill="#f8fafc"/>
+<rect x="720" y="528" width="160" height="64" rx="6" fill="rgba(15,23,42,0.03)" stroke="rgba(15,23,42,0.30)" stroke-width="1"/>
+<rect x="728" y="536" width="28" height="12" rx="2" fill="transparent" stroke="rgba(15,23,42,0.40)" stroke-width="0.8"/>
+<text x="742" y="545" fill="rgba(15,23,42,0.40)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">LLM</text>
+<text x="800" y="566" fill="#0f172a" font-size="12" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">LLM-Endpunkt</text>
+<text x="800" y="581" fill="#475569" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">OpenAI-kompatibel</text>
+
+<!-- ============ LEGEND ============ -->
+<line x1="32" y1="624" x2="1120" y2="624" stroke="rgba(15,23,42,0.10)" stroke-width="0.8"/>
+<text x="32" y="644" fill="#475569" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGENDE</text>
+<rect x="112" y="636" width="14" height="10" rx="2" fill="rgba(79,70,229,0.08)" stroke="#4f46e5" stroke-width="1"/>
+<text x="132" y="644" fill="#475569" font-size="9" font-family="'Inter', sans-serif">MCP-Pfad des Coding Agents</text>
+<rect x="276" y="636" width="14" height="10" rx="2" fill="#ffffff" stroke="#0f172a" stroke-width="1"/>
+<text x="296" y="644" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Weave-Dienst</text>
+<rect x="384" y="636" width="14" height="10" rx="2" fill="rgba(15,23,42,0.05)" stroke="#475569" stroke-width="1"/>
+<text x="404" y="644" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Speicher · Modell</text>
+<rect x="512" y="636" width="14" height="10" rx="2" fill="rgba(15,23,42,0.03)" stroke="rgba(15,23,42,0.30)" stroke-width="1"/>
+<text x="532" y="644" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Extern</text>
+<rect x="600" y="636" width="14" height="10" rx="2" fill="rgba(71,85,105,0.10)" stroke="#64748b" stroke-width="1"/>
+<text x="620" y="644" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Menschen</text>
+<line x1="696" y1="641" x2="716" y2="641" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<text x="724" y="644" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Aufruf intern</text>
+<line x1="816" y1="641" x2="836" y2="641" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+<text x="844" y="644" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Aufruf nach außen</text>
+<line x1="956" y1="641" x2="976" y2="641" stroke="#2e5aa8" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-link)"/>
+<text x="984" y="644" fill="#475569" font-size="9" font-family="'Inter', sans-serif">Anmeldung</text>
+</svg>
+  </div>
+</body>
+</html>
