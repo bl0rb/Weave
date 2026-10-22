@@ -102,4 +102,30 @@ describe('MessageBubble clarification chips', () => {
     render(<MessageBubble message={clarifyMessage()} />);
     expect(screen.queryByTestId('clarification-options')).toBeNull();
   });
+
+  it('renders intake answer options without document ids and no guard banner', () => {
+    const base = clarifyMessage();
+    const trace = base.trace as unknown as Record<string, unknown>;
+    const message = {
+      ...base,
+      content: 'Um welche Beschäftigungsart geht es?',
+      trace: {
+        ...trace,
+        guard: { triggered: true, reason: 'intake', topic: null },
+        clarification: {
+          question: 'Um welche Beschäftigungsart geht es?',
+          options: [
+            { label: 'Vollzeit', message: 'Vollzeit', document_id: null, collection: null },
+            { label: 'Teilzeit', message: 'Teilzeit', document_id: null, collection: null },
+          ],
+        },
+      } as unknown as UiMessage['trace'],
+    };
+    const sent: string[] = [];
+    render(<MessageBubble message={message} onClarifyOption={(text) => sent.push(text)} />);
+    expect(screen.getByRole('group', { name: 'Antwortmöglichkeiten' }).querySelectorAll('button')).toHaveLength(2);
+    (screen.getByRole('button', { name: 'Teilzeit' }) as HTMLButtonElement).click();
+    expect(sent).toEqual(['Teilzeit']);
+    expect(screen.queryByText('Keine Belege gefunden.')).toBeNull();
+  });
 });

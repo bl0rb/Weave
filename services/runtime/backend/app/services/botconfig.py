@@ -328,6 +328,9 @@ def _managed_bot(raw: dict) -> BotConfig:
                 'uncertainty_hint': bool(raw.get('uncertainty_hint', True)),
                 'weak_context_below': raw.get('weak_context_below'),
                 'no_context_reply': raw.get('no_context_reply') or 'Ich habe dazu keine belegten Informationen gefunden.',
+                # Absent (older Ingest) = no topic block / default reply.
+                'blocked_topics': raw.get('blocked_topics') or [],
+                **({'blocked_topic_reply': raw['blocked_topic_reply']} if raw.get('blocked_topic_reply') else {}),
             },
             'n8n': {
                 'webhook_url': raw['webhook_url'],
@@ -356,6 +359,7 @@ def _managed_bot(raw: dict) -> BotConfig:
             # Optional until Ingest's ManagedBot grows the columns; absent = runtime default.
             'show_sources': bool(raw.get('show_sources', True)),
             'disclaimer': raw.get('disclaimer') or None,
+            'intake': raw.get('intake') or None if is_llm else None,
         })
     except (ValidationError, KeyError, TypeError) as exc:
         raise BotConfigError(f'managed bot {bot_id!r}: invalid control-plane data') from exc

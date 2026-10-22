@@ -249,7 +249,7 @@ def test_guard_stays_when_the_focused_and_unfocused_search_find_nothing(memory_o
     monkeypatch.setattr('app.services.retrieval_client.httpx.post', _post)
     body = client.post('/internal/chat', json=KNOWLEDGE_BODY, headers=AUTH_HEADERS).json()
     assert calls == ['memory', 'search', 'search']
-    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_context'}
+    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_context', 'topic': None}
     assert body['answer'] == real_load_bot('legal-support').guard.no_context_reply and body['sources'] == []
 
 
@@ -260,7 +260,7 @@ def test_knowledge_turn_without_a_scope_never_reads_the_memory(memory_on, monkey
     calls = _retrieval(monkeypatch, _FakeResponse(200, MEMORY))
     body = client.post('/internal/chat', json=KNOWLEDGE_BODY, headers=AUTH_HEADERS).json()
     assert calls == []
-    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_collections'}
+    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_collections', 'topic': None}
 
 
 def test_knowledge_turn_with_memory_off_or_bot_filters_is_unchanged(monkeypatch):

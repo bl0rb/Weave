@@ -20,6 +20,7 @@ from pydantic import ValidationError
 
 from app.models.models import ManagedBot
 from app.schemas.bot_document import (
+    DEFAULT_BLOCKED_TOPIC_REPLY,
     DEFAULT_NO_CONTEXT_REPLY,
     SCHEMA_VERSION,
     SECRET_PLACEHOLDER,
@@ -100,6 +101,8 @@ def row_to_document(row: ManagedBot) -> BotDocument:
             'uncertainty_hint': bool(row.uncertainty_hint),
             'weak_context_below': row.weak_context_below,
             'no_context_reply': row.no_context_reply or DEFAULT_NO_CONTEXT_REPLY,
+            'blocked_topics': list(row.blocked_topics or []),
+            'blocked_topic_reply': row.blocked_topic_reply or DEFAULT_BLOCKED_TOPIC_REPLY,
             **extras,
         },
         'n8n': {
@@ -111,6 +114,7 @@ def row_to_document(row: ManagedBot) -> BotDocument:
         'agent': dict(row.agent_config) if is_llm and row.agent_config else None,
         'show_sources': bool(row.show_sources),
         'disclaimer': row.disclaimer,
+        'intake': dict(row.intake_config) if is_llm and row.intake_config else None,
     }
     return BotDocument.model_validate(raw)
 
@@ -266,6 +270,11 @@ def document_to_payload(
         'config_extras': _extras_from_guard(doc.guard),
         'show_sources': doc.show_sources,
         'disclaimer': doc.disclaimer,
+        'intake': doc.intake,
+        'blocked_topics': list(doc.guard.blocked_topics),
+        'blocked_topic_reply': (
+            None if doc.guard.blocked_topic_reply == DEFAULT_BLOCKED_TOPIC_REPLY else doc.guard.blocked_topic_reply
+        ),
         'llm_endpoint': None if is_n8n else doc.model.endpoint,
         'llm_endpoints': [] if is_n8n else list(doc.model.endpoints),
     }

@@ -192,7 +192,7 @@ def test_action_intent_also_delegates_to_n8n(monkeypatch):
     # guard.require_sources is True but this bot's flow returned [] sources
     # -- must trigger the guard exactly like the dedicated test below, this
     # just confirms 'action' is not somehow exempt from it.
-    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_context'}
+    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_context', 'topic': None}
     assert body['answer'] == 'Der Agentenflow hat nichts gefunden.'
 
 
@@ -314,7 +314,7 @@ def test_no_sources_with_require_sources_triggers_the_guard(monkeypatch):
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_context'}
+    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_context', 'topic': None}
     assert body['answer'] == 'Der Agentenflow hat nichts gefunden.'  # bot.guard.no_context_reply, not n8n's own text
     assert body['sources'] == []
 
@@ -397,7 +397,7 @@ def test_when_every_reported_source_is_out_of_scope_the_guard_fires_anyway(monke
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_context'}
+    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_context', 'topic': None}
     assert body['answer'] == 'Der Agentenflow hat nichts gefunden.'
     assert body['sources'] == []
     assert body['trace']['n8n'] == {'dropped_sources': 1}
@@ -430,7 +430,7 @@ def test_a_source_reporting_no_collection_is_dropped_when_the_scope_grants_no_al
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_context'}
+    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_context', 'topic': None}
     assert body['trace']['n8n'] == {'dropped_sources': 1}
 
 

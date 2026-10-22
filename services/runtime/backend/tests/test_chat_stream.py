@@ -192,7 +192,7 @@ def test_stream_guard_flow_streams_the_guard_text_with_empty_sources_no_context(
     events = _parse_sse_events(resp.text)
 
     trace = events[0]['trace']
-    assert trace['guard'] == {'triggered': True, 'reason': 'no_context'}
+    assert trace['guard'] == {'triggered': True, 'reason': 'no_context', 'topic': None}
     assert trace['model'] is None  # no LLM call happens for a guard-triggered turn
 
     reconstructed = ''.join(event['text'] for event in events if event['type'] == 'delta')
@@ -230,7 +230,7 @@ def test_stream_clarify_guard_carries_the_options_in_the_trace_event(monkeypatch
     events = _parse_sse_events(resp.text)
 
     trace = events[0]['trace']
-    assert trace['guard'] == {'triggered': True, 'reason': 'clarify'}
+    assert trace['guard'] == {'triggered': True, 'reason': 'clarify', 'topic': None}
     assert trace['clarification']['question'] == (
         'Ich bin mir nicht sicher, worauf sich deine Frage bezieht. Meinst du eines dieser Dokumente?'
     )
@@ -257,7 +257,7 @@ def test_stream_guard_flow_streams_the_guard_text_with_empty_sources_no_collecti
     events = _parse_sse_events(resp.text)
 
     trace = events[0]['trace']
-    assert trace['guard'] == {'triggered': True, 'reason': 'no_collections'}
+    assert trace['guard'] == {'triggered': True, 'reason': 'no_collections', 'topic': None}
     assert trace['retrieval'] == {'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': None, 'rewritten_query': None, 'focus_documents': None}
 
     sources_event = next(event for event in events if event['type'] == 'sources')

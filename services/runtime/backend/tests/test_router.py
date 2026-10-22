@@ -206,3 +206,59 @@ def test_llm_mode_without_llm_call_falls_back_to_rules():
 
     assert decision.intent == 'conversational'
     assert decision.router_fallback is True
+
+
+# --- blocked topics (guard.blocked_topics) ------------------------------------
+
+_POLITICS = {
+    'name': 'Politische Themen',
+    'description': 'Parteien, Wahlen, politische Debatten',
+    'keywords': ['partei', 'bundestag'],
+}
+
+
+def _blocking_bot() -> BotConfig:
+    return BotConfig.model_validate({
+        **_BASE_BOT, 'retrieval': {'enabled': True}, 'guard': {'blocked_topics': [_POLITICS]},
+    })
+
+
+def test_rules_mode_blocks_by_keyword_at_a_word_start_only():
+    bot = _blocking_bot()
+    assert route('Was hältst du von den Parteien?', bot).blocked_topic == 'Politische Themen'
+    # Also for small talk -- the block is independent of the intent.
+    assert route('Hallo, wen soll ich im Bundestag wählen?', bot).blocked_topic == 'Politische Themen'
+    assert route('Wie beantrage ich Urlaub?', bot).blocked_topic is None
+    assert route('Wer ist die Gegenpartei im Vertrag?', bot).blocked_topic is None
+
+
+def test_llm_mode_reports_a_blocked_topic_from_the_same_router_call():
+    bot = _blocking_bot()
+    seen = []
+
+    def _llm(messages, model):
+        seen.append(messages)
+        return '{"intent": "knowledge", "confidence": 0.8, "blocked_topic": "Politische Themen"}'
+
+    decision = route('Wie stehst du zur Migrationsdebatte?', bot, mode='llm', llm_call=_llm)
+    assert decision.blocked_topic == 'Politische Themen'
+    assert decision.intent == 'knowledge'
+    assert len(seen) == 1
+    assert '- Politische Themen: Parteien, Wahlen, politische Debatten' in seen[0][0]['content']
+
+
+def test_llm_mode_ignores_unknown_topic_names_but_keeps_the_keyword_floor():
+    bot = _blocking_bot()
+    decision = route('Urlaub?', bot, mode='llm', llm_call=lambda m, model: '{"intent": "knowledge", "confidence": 0.8, "blocked_topic": "Sport"}')
+    assert decision.blocked_topic is None
+    decision = route('Was sagt die Partei?', bot, mode='llm', llm_call=lambda m, model: '{"intent": "knowledge", "confidence": 0.8, "blocked_topic": null}')
+    assert decision.blocked_topic == 'Politische Themen'
+    # A failed classifier falls back to RULES, keywords included.
+    decision = route('Was sagt die Partei?', bot, mode='llm', llm_call=lambda m, model: 'kaputt')
+    assert decision.router_fallback is True and decision.blocked_topic == 'Politische Themen'
+
+
+def test_classifier_prompt_is_unchanged_without_blocked_topics():
+    seen = []
+    route('Urlaub?', _bot(retrieval_enabled=True), mode='llm', llm_call=lambda m, model: seen.append(m) or '{"intent": "knowledge", "confidence": 0.8}')
+    assert 'blocked' not in seen[0][0]['content']

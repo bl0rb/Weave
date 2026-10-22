@@ -105,6 +105,9 @@ def _admin_response(row: ManagedBot) -> ManagedBotAdminResponse:
         config_extras=dict(row.config_extras) if row.config_extras else None,
         show_sources=row.show_sources,
         disclaimer=row.disclaimer,
+        intake=dict(row.intake_config) if row.intake_config else None,
+        blocked_topics=list(row.blocked_topics or []),
+        blocked_topic_reply=row.blocked_topic_reply,
         min_score=row.min_score,
         clarify_below=row.clarify_below,
         weak_context_below=row.weak_context_below,
@@ -217,6 +220,8 @@ def _runtime_roster(db: Session | None = None) -> list[ManagedBotAdminResponse] 
             uncertainty_hint=bool(guard.get('uncertainty_hint', True)),
             agent=config.get('agent'),
             show_sources=bool(config.get('show_sources', True)), disclaimer=config.get('disclaimer'),
+            intake=config.get('intake'), blocked_topics=list(guard.get('blocked_topics') or []),
+            blocked_topic_reply=guard.get('blocked_topic_reply'),
             llm_endpoint=model.get('endpoint'), llm_endpoints=list(model.get('endpoints') or []),
             created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc), source='runtime', editable=True,
         ))
@@ -370,6 +375,9 @@ def _apply(row: ManagedBot, payload: ManagedBotCreate | ManagedBotUpdate, admin:
     row.config_extras = extras or None
     row.show_sources = payload.show_sources
     row.disclaimer = payload.disclaimer
+    row.intake_config = payload.intake.model_dump() if payload.intake else None
+    row.blocked_topics = [topic.model_dump() for topic in payload.blocked_topics] or None
+    row.blocked_topic_reply = payload.blocked_topic_reply
     row.llm_endpoint = payload.llm_endpoint
     row.llm_endpoints = list(payload.llm_endpoints)
     row.updated_by_id = admin.id
@@ -666,6 +674,9 @@ def internal_managed_bots(response: Response, db: Session = Depends(get_db)) -> 
             uncertainty_hint=row.uncertainty_hint,
             show_sources=row.show_sources,
             disclaimer=row.disclaimer,
+            intake=dict(row.intake_config) if row.intake_config and row.kind == 'llm' else None,
+            blocked_topics=list(row.blocked_topics or []),
+            blocked_topic_reply=row.blocked_topic_reply,
             llm_endpoint=row.llm_endpoint,
             llm_endpoints=list(row.llm_endpoints or []),
             **{key: value for key, value in (row.config_extras or {}).items() if value is not None},

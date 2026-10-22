@@ -149,12 +149,12 @@ export function MessageBubble({
           <div
             className="mt-2 flex flex-wrap gap-2"
             role="group"
-            aria-label={t('chat.clarification.optionsLabel')}
+            aria-label={t(message.trace?.guard?.reason === 'intake' ? 'chat.clarification.intakeOptionsLabel' : 'chat.clarification.optionsLabel')}
             data-testid="clarification-options"
           >
             {clarification.options.map((option) => (
               <button
-                key={option.document_id}
+                key={option.document_id ?? option.label}
                 type="button"
                 className="rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 py-1 text-xs hover:bg-[var(--surface-hover)]"
                 onClick={() => onClarifyOption(option.message)}

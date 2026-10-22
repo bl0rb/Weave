@@ -237,6 +237,7 @@ from app.schemas.chat import (
 )
 from app.services import agent_graph as agent_graph_service
 from app.services import agents as agents_service
+from app.services import intake as intake_service
 from app.services import llm as llm_service
 from app.services.chat_config_client import (
     DEFAULT_ENDPOINT,
@@ -1654,13 +1655,26 @@ def _prepare_context(
     )
     memory = memory_mode in ('extractive', 'llm') and not is_n8n_bot
 
+    message = request.message
+    history = [{'role': turn.role, 'content': turn.content} for turn in request.history]
+    # Intake (app/services/intake.py): an answer the person already gave
+    # goes into the system prompt -- every LLM path sees it -- and a reply
+    # to the question just asked continues with the question asked before.
+    intake_state = intake_service.resolve(bot, message, history)
+    if intake_state is not None:
+        message, history = intake_state.message, intake_state.history
+        if intake_state.answer is not None:
+            line = intake_service.context_line(bot, intake_state.answer)
+            bot = bot.model_copy(update={'system_prompt': f'{bot.system_prompt}\n\n{line}'})
+
     context = bot_graph.TurnContext(
         bot=bot, user=request.user, requested_collections=request.collections, readable_slugs=readable_slugs,
         llm_provider=llm_provider, main_llm_factory=main_llm_factory, memory=memory, streaming=streaming,
         cancel=cancel or threading.Event(),
+        intake_pending=intake_state is not None and intake_state.answer is None,
+        intake_retry=intake_state is not None and intake_state.retry,
     )
-    history = [{'role': turn.role, 'content': turn.content} for turn in request.history]
-    return context, bot_graph.initial_state(request.message, history, total_start)
+    return context, bot_graph.initial_state(message, history, total_start)
 
 
 def handle_chat(request: ChatRequest) -> ChatResponse:

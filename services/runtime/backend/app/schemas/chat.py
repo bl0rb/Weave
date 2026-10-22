@@ -216,7 +216,9 @@ class ClarificationOption(BaseModel):
 
     label: str
     message: str
-    document_id: str
+    # None for an intake answer option (`GuardTrace.reason == 'intake'`),
+    # which names no document.
+    document_id: str | None = None
     collection: str | None = None
 
 
@@ -269,11 +271,21 @@ class GuardTrace(BaseModel):
       the latter is. See RetrievalTrace's own `requested_collections` field
       for how a caller can tell exactly which filter was responsible.
 
+    - `'blocked_topic'`: the message matched one of `bot.guard.
+      blocked_topics` (app/services/router.py) -- replies with `bot.guard.
+      blocked_topic_reply`, no retrieval and no answering LLM call; `topic`
+      names the matched topic.
+    - `'intake'`: the bot's intake question (`bot.intake`, app/services/
+      intake.py) is still unanswered -- the reply is that question, and
+      `ChatTrace.clarification` carries its answer options.
+
     `False`/`None` for every other outcome (guard disabled for this bot, or
     sources were found and the LLM's answer was returned as-is)."""
 
     triggered: bool = False
     reason: str | None = None
+    # Set exactly when `reason == 'blocked_topic'`.
+    topic: str | None = None
 
 
 class N8nTrace(BaseModel):
@@ -379,7 +391,8 @@ class ChatTrace(BaseModel):
     # and for a deferred (streaming) agent turn's own initial `trace` event
     # (the research loop hasn't run yet at that point).
     agent: AgentTrace | None = None
-    # Set exactly when `guard.reason == 'clarify'` -- see Clarification.
+    # Set exactly when `guard.reason` is 'clarify' or 'intake' -- see
+    # Clarification.
     clarification: Clarification | None = None
 
 

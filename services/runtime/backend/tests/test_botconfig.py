@@ -252,6 +252,23 @@ def test_centrally_managed_bot_projects_chat_ui_options(bots_dir, monkeypatch):
     assert (summary.show_sources, summary.disclaimer) == (False, 'Testsystem – keine verbindlichen Aussagen')
 
 
+def test_centrally_managed_bot_projects_intake_and_topic_block(bots_dir, monkeypatch):
+    (bots_dir / 'minimal.yaml').write_text(_MINIMAL_BOT, encoding='utf-8')
+    monkeypatch.setattr('app.services.botconfig.fetch_managed_bots', lambda: [{
+        'id': 'test-bot', 'name': 'Test Bot', 'kind': 'llm', 'system_prompt': 'Answer.',
+        'teams': [], 'collections': [], 'require_sources': True, 'no_context_reply': 'Nichts.',
+        'intake': {'question': 'Welche Beschäftigungsart?', 'options': ['Vollzeit'], 'allow_free_text': True, 'label': None},
+        'blocked_topics': [{'name': 'Politik', 'description': None, 'keywords': ['partei']}],
+        'blocked_topic_reply': 'Dazu nichts.',
+    }])
+    bots = {bot.id: bot for bot in list_bots()}
+    assert bots['test-bot'].intake.question == 'Welche Beschäftigungsart?'
+    assert [topic.name for topic in bots['test-bot'].guard.blocked_topics] == ['Politik']
+    assert bots['test-bot'].guard.blocked_topic_reply == 'Dazu nichts.'
+    # Absent (older Ingest, plain YAML) = no intake, no block, default reply.
+    assert bots['minimal'].intake is None and bots['minimal'].guard.blocked_topics == []
+
+
 def test_centrally_managed_n8n_bot_ignores_agent_config(monkeypatch):
     # `is_llm` gates the `agent` passthrough -- an n8n-kind managed bot's
     # `agent` (however it got there) must never reach BotConfig at

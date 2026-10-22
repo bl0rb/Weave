@@ -11,6 +11,8 @@ from app.models.models import BotRole
 from app.schemas.bot_document import (  # noqa: F401 -- AgentLimits is re-exported for the admin API's wording
     AgentConfig,
     AgentLimits,
+    BlockedTopic,
+    IntakeConfig,
     ModelConfig,
     RetrievalFilters,
     SubagentConfig,
@@ -124,6 +126,12 @@ class ManagedBotWrite(BaseModel):
     # Chat presentation: hide the sources panel; a note next to the composer.
     show_sources: bool = True
     disclaimer: str | None = Field(default=None, max_length=500)
+    # Intake question at conversation start (LLM bots only) and the topic
+    # block (Runtime's BotConfig.intake / guard.blocked_topics); a None
+    # reply = Runtime's default refusal text.
+    intake: IntakeConfig | None = None
+    blocked_topics: list[BlockedTopic] = Field(default_factory=list, max_length=20)
+    blocked_topic_reply: str | None = Field(default=None, max_length=2000)
     # LLM endpoint (Admin > Chat-Provider) this bot answers with; None = the
     # central 'default'. `llm_endpoints` are further endpoints users may
     # pick per chat ('*' = all enabled ones).
@@ -149,7 +157,7 @@ class ManagedBotWrite(BaseModel):
             raise ValueError('value cannot be empty')
         return cleaned
 
-    @field_validator('description', 'disclaimer')
+    @field_validator('description', 'disclaimer', 'blocked_topic_reply')
     @classmethod
     def strip_optional(cls, value: str | None) -> str | None:
         cleaned = value.strip() if value else ''
@@ -209,6 +217,8 @@ class ManagedBotWrite(BaseModel):
             raise ValueError('agent mode is not available for n8n bots')
         if self.kind == 'n8n' and (self.llm_endpoint or self.llm_endpoints):
             raise ValueError('n8n bots cannot use LLM endpoints')
+        if self.kind == 'n8n' and self.intake is not None:
+            raise ValueError('the intake question is not available for n8n bots')
         return self
 
 
@@ -261,6 +271,9 @@ class ManagedBotAdminResponse(BaseModel):
     config_extras: dict | None = None
     show_sources: bool = True
     disclaimer: str | None = None
+    intake: dict | None = None
+    blocked_topics: list[dict] = Field(default_factory=list)
+    blocked_topic_reply: str | None = None
     llm_endpoint: str | None = None
     llm_endpoints: list[str] = Field(default_factory=list)
     created_at: datetime
@@ -340,6 +353,9 @@ class ManagedBotInternalResponse(BaseModel):
     clarify_ambiguous_question: str | None = None
     show_sources: bool = True
     disclaimer: str | None = None
+    intake: dict | None = None
+    blocked_topics: list[dict] = Field(default_factory=list)
+    blocked_topic_reply: str | None = None
     llm_endpoint: str | None = None
     llm_endpoints: list[str] = Field(default_factory=list)
 

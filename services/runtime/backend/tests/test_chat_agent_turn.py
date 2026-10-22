@@ -280,7 +280,7 @@ def test_agent_turn_guard_fires_when_subagent_finds_nothing(tmp_path, monkeypatc
     body = response.json()
     assert body['sources'] == []
     assert body['answer'] == 'Nichts gefunden.'
-    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_context'}
+    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_context', 'topic': None}
 
 
 def test_agent_turn_scope_enforcement_user_cannot_read_subagent_collection(tmp_path, monkeypatch):
@@ -313,7 +313,7 @@ def test_agent_turn_scope_enforcement_user_cannot_read_subagent_collection(tmp_p
     assert response.status_code == 200
     body = response.json()
     assert body['sources'] == []
-    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_context'}
+    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_context', 'topic': None}
     assert len(captured_payloads) == 1
     assert captured_payloads[0]['allowed_collections'] == []
 

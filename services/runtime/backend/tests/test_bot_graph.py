@@ -5,6 +5,7 @@ unchanged across the switch from chat.py's hand-rolled paths to this graph.
 """
 
 import threading
+from dataclasses import replace
 
 from app.schemas.bot import BotConfig
 from app.schemas.chat import ChatUser
@@ -32,7 +33,7 @@ def test_graph_topology_matches_the_documented_pipeline():
     graph = bot_graph.COMPILED.get_graph()
     nodes = set(graph.nodes) - {'__start__', '__end__'}
     assert nodes == {
-        'route', 'n8n_smalltalk', 'n8n_scope', 'agent_prepare', 'unsupported', 'overview', 'knowledge',
+        'route', 'n8n_smalltalk', 'n8n_scope', 'agent_prepare', 'unsupported', 'blocked', 'intake', 'overview', 'knowledge',
         'conversational', 'trace', 'n8n_call', 'agent_single', 'agent_multi', 'generate', 'finish',
     }
     edges = {(edge.source, edge.target) for edge in graph.edges}
@@ -70,6 +71,22 @@ def test_branch_selection_per_bot_kind_and_intent():
     # A central-provider override without declared tool support falls back to RAG.
     no_tools = multi.model_copy(update={'model': multi.model.model_copy(update={'provider': 'openai', 'supports_tools': None})})
     assert bot_graph._choose_branch(no_tools, _decision('knowledge', needs_retrieval=True)) == 'knowledge'
+
+
+def test_topic_block_and_intake_branches_come_first():
+    blocked = replace(_decision('knowledge', needs_retrieval=True), blocked_topic='Politik')
+    plain = _bot()
+    assert bot_graph._choose_branch(plain, blocked, intake_pending=True) == 'blocked'
+    knowledge = _decision('knowledge', needs_retrieval=True)
+    assert bot_graph._choose_branch(plain, knowledge, intake_pending=True) == 'intake'
+    assert bot_graph._choose_branch(plain, _decision('complex', needs_retrieval=True), intake_pending=True) == 'intake'
+    # Small talk never triggers the intake question -- except as a re-ask.
+    smalltalk = _decision('conversational', needs_retrieval=False)
+    assert bot_graph._choose_branch(plain, smalltalk, intake_pending=True) == 'conversational'
+    assert bot_graph._choose_branch(plain, smalltalk, intake_pending=True, intake_retry=True) == 'intake'
+    # n8n bots get the topic block too.
+    n8n = _bot(model={'provider': 'n8n', 'model': 'flow'}, n8n={'webhook_url': 'https://n8n.example/hook'})
+    assert bot_graph._choose_branch(n8n, blocked) == 'blocked'
 
 
 def test_trace_node_names_the_model_only_on_the_direct_path():

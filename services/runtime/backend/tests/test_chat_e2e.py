@@ -355,7 +355,7 @@ def test_guard_flow_returns_no_context_reply_when_retrieval_finds_nothing(monkey
     assert trace['retrieval'] == {
         'candidates': 0, 'used': 0, 'collections': ['vertraege', '__none__'], 'requested_collections': None, 'rewritten_query': None, 'focus_documents': None,
     }
-    assert trace['guard'] == {'triggered': True, 'reason': 'no_context'}
+    assert trace['guard'] == {'triggered': True, 'reason': 'no_context', 'topic': None}
     assert trace['model'] is None  # the guard short-circuits before any LLM call
 
 
@@ -479,7 +479,7 @@ def test_clarify_guard_asks_instead_of_answering_when_every_hit_is_weak(monkeypa
     assert body['answer'] == 'Ich bin mir nicht sicher, worauf sich deine Frage bezieht. Meinst du eines dieser Dokumente?'
     assert body['sources'] == []
     trace = body['trace']
-    assert trace['guard'] == {'triggered': True, 'reason': 'clarify'}
+    assert trace['guard'] == {'triggered': True, 'reason': 'clarify', 'topic': None}
     assert trace['retrieval']['candidates'] == 3
     assert trace['retrieval']['used'] == 0
     assert trace['model'] is None
@@ -545,7 +545,7 @@ def test_clarify_guard_never_fires_without_rerank_scores_or_hits(monkeypatch):
     assert unreranked['trace']['clarification'] is None
 
     empty = client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS).json()
-    assert empty['trace']['guard'] == {'triggered': True, 'reason': 'no_context'}
+    assert empty['trace']['guard'] == {'triggered': True, 'reason': 'no_context', 'topic': None}
     assert empty['trace']['clarification'] is None
 
 
@@ -736,7 +736,7 @@ def test_min_score_dropping_every_hit_fires_the_no_context_guard(monkeypatch):
     assert body['sources'] == []
     assert body['trace']['retrieval']['candidates'] == 1
     assert body['trace']['retrieval']['used'] == 0
-    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_context'}
+    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_context', 'topic': None}
     assert body['trace']['model'] is None
 
 
@@ -773,7 +773,7 @@ def test_guard_flow_returns_no_collections_reply_when_the_user_cannot_read_the_b
     trace = body['trace']
     assert trace['intent'] == 'knowledge'
     assert trace['retrieval'] == {'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': None, 'rewritten_query': None, 'focus_documents': None}
-    assert trace['guard'] == {'triggered': True, 'reason': 'no_collections'}
+    assert trace['guard'] == {'triggered': True, 'reason': 'no_collections', 'topic': None}
     assert trace['model'] is None
 
 
@@ -876,7 +876,7 @@ def test_collections_filter_naming_only_foreign_slugs_triggers_its_own_guard_rea
     body = resp.json()
 
     trace = body['trace']
-    assert trace['guard'] == {'triggered': True, 'reason': 'filter_excluded_all'}
+    assert trace['guard'] == {'triggered': True, 'reason': 'filter_excluded_all', 'topic': None}
     assert trace['retrieval'] == {
         'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': ['geheimprojekt'], 'rewritten_query': None, 'focus_documents': None,
     }
@@ -1115,3 +1115,102 @@ def test_clarify_ambiguous_can_be_disabled_and_needs_clarify_below(monkeypatch):
         assert _build_clarification(bot, 'Frage?', hits) is None
     bot = _clarify_bot(monkeypatch, clarify_below=None)
     assert _build_clarification(bot, 'Frage?', hits) is None
+
+
+# --- topic block and intake question ------------------------------------------
+
+_INTAKE_QUESTION = 'Um welche Beschäftigungsart geht es?'
+
+
+def _fk_bot(monkeypatch, **updates):
+    from app.schemas.bot import BlockedTopic, IntakeConfig
+    from app.services import chat as chat_module
+    from app.services.botconfig import load_bot
+
+    bot = load_bot('legal-support')
+    patched = bot.model_copy(update={
+        'guard': bot.guard.model_copy(update={
+            'blocked_topics': [BlockedTopic(name='Politische Themen', keywords=['partei', 'wahlen'])],
+            'blocked_topic_reply': 'Zu politischen Themen gebe ich keine Auskunft.',
+        }),
+        'intake': IntakeConfig(
+            question=_INTAKE_QUESTION, options=['Festanstellung Teilzeit', 'Aushilfe'], label='Beschäftigungsart',
+        ),
+        **updates,
+    })
+    monkeypatch.setattr(chat_module, 'load_bot', lambda bot_id: patched)
+    return patched
+
+
+def test_blocked_topic_replies_fixed_text_without_retrieval_or_llm(monkeypatch):
+    _fk_bot(monkeypatch)
+
+    def _unexpected(*args, **kwargs):
+        raise AssertionError('a blocked topic must never reach retrieval or the answering LLM')
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', lambda *a, **k: _readable_collections_response())
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _unexpected)
+    monkeypatch.setattr('app.services.llm.FakeLLM.chat', _unexpected)
+
+    resp = client.post(
+        '/internal/chat', json={**_LEGAL_BODY, 'message': 'Welche Partei sollte ich bei den Wahlen wählen?'},
+        headers=AUTH_HEADERS,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body['answer'] == 'Zu politischen Themen gebe ich keine Auskunft.'
+    assert body['sources'] == []
+    assert body['trace']['guard'] == {'triggered': True, 'reason': 'blocked_topic', 'topic': 'Politische Themen'}
+    assert body['trace']['retrieval'] is None and body['trace']['model'] is None
+
+
+def test_intake_is_asked_once_then_the_original_question_is_answered_with_the_answer_as_context(monkeypatch):
+    _fk_bot(monkeypatch)
+    searches = []
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        searches.append(json['query'])
+        return _FakeResponse(200, _search_response(_chunk()))
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', lambda *a, **k: _readable_collections_response())
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _fake_post)
+    seen = _spy_fake_llm(monkeypatch)
+
+    # Small talk never triggers the intake question.
+    hello = client.post('/internal/chat', json={**_LEGAL_BODY, 'message': 'Hallo!'}, headers=AUTH_HEADERS).json()
+    assert hello['trace']['guard'] is None
+    seen.clear()
+
+    asked = client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS).json()
+    assert asked['answer'] == _INTAKE_QUESTION
+    assert asked['trace']['guard'] == {'triggered': True, 'reason': 'intake', 'topic': None}
+    assert asked['trace']['clarification'] == {
+        'question': _INTAKE_QUESTION,
+        'options': [
+            {'label': 'Festanstellung Teilzeit', 'message': 'Festanstellung Teilzeit', 'document_id': None, 'collection': None},
+            {'label': 'Aushilfe', 'message': 'Aushilfe', 'document_id': None, 'collection': None},
+        ],
+    }
+    assert searches == [] and seen == []
+
+    history = [
+        {'role': 'user', 'content': _KNOWLEDGE_QUESTION},
+        {'role': 'assistant', 'content': _INTAKE_QUESTION},
+    ]
+    answered = client.post(
+        '/internal/chat', json={**_LEGAL_BODY, 'message': 'Aushilfe', 'history': history}, headers=AUTH_HEADERS,
+    ).json()
+    assert answered['trace']['guard'] is None
+    assert searches == [_KNOWLEDGE_QUESTION]
+    assert seen[-1][0]['content'].endswith('Beschäftigungsart: Aushilfe')
+    assert seen[-1][-1] == {'role': 'user', 'content': _KNOWLEDGE_QUESTION}
+    assert _INTAKE_QUESTION not in [turn['content'] for turn in seen[-1]]
+
+    # Later turns keep the answer as context and never ask again.
+    history += [{'role': 'user', 'content': 'Aushilfe'}, {'role': 'assistant', 'content': answered['answer']}]
+    later = client.post(
+        '/internal/chat', json={**_LEGAL_BODY, 'message': 'Und die Probezeit?', 'history': history},
+        headers=AUTH_HEADERS,
+    ).json()
+    assert later['trace']['guard'] is None
+    assert seen[-1][0]['content'].endswith('Beschäftigungsart: Aushilfe')

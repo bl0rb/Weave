@@ -82,6 +82,10 @@ type AgentConfig = {
   limits: AgentLimits;
 };
 
+// Runtime's BotConfig.intake / guard.blocked_topics (bot document shape).
+type IntakeConfig = { question: string; options: string[]; allow_free_text: boolean; label: string | null };
+type BlockedTopic = { name: string; description: string | null; keywords: string[] };
+
 type ManagedBot = {
   id: string;
   kind: 'n8n' | 'llm';
@@ -116,6 +120,9 @@ type ManagedBot = {
   // Chat presentation: hide the sources panel; a note next to the composer.
   show_sources?: boolean;
   disclaimer?: string | null;
+  intake?: IntakeConfig | null;
+  blocked_topics?: BlockedTopic[];
+  blocked_topic_reply?: string | null;
   llm_endpoint?: string | null;
   llm_endpoints?: string[];
   created_at: string;
@@ -170,6 +177,9 @@ const emptyDraft = (noContextReply: string): BotDraft => ({
   uncertainty_hint: true,
   show_sources: true,
   disclaimer: null,
+  intake: null,
+  blocked_topics: [],
+  blocked_topic_reply: null,
   agent: null,
   llm_endpoint: null,
   llm_endpoints: [],
@@ -178,6 +188,9 @@ const emptyDraft = (noContextReply: string): BotDraft => ({
 type LlmEndpointOption = { id: string; name: string; model: string; enabled: boolean; supports_tools?: boolean };
 
 type BotStep = 'basics' | 'behavior' | 'knowledge' | 'agents' | 'sharing' | 'review';
+
+const emptyIntake = (): IntakeConfig => ({ question: '', options: [], allow_free_text: true, label: null });
+const cleanList = (values: string[]) => values.map(value => value.trim()).filter(Boolean);
 
 const emptyAgentLimits = (): AgentLimits => ({ max_parallel: 3, max_followups: 1, budget_searches: 9, timeout_seconds: 120 });
 const emptyAgent = (): AgentConfig => ({ enabled: true, subagents: [], limits: emptyAgentLimits() });
@@ -337,10 +350,16 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
   ];
   const toggleValue = (key: 'collections', value: string) => set(key, draft[key].includes(value) ? draft[key].filter(item => item !== value) : [...draft[key], value]);
   const agentErrors = draft.kind === 'llm' ? validateAgent(draft.agent ?? null, t) : [];
+  const intake = draft.kind === 'llm' ? draft.intake ?? null : null;
+  const guardRuleErrors = [
+    ...(intake && !intake.question.trim() ? [t('admin.bots.problem.intakeQuestion')] : []),
+    ...(intake && !intake.allow_free_text && cleanList(intake.options).length === 0 ? [t('admin.bots.problem.intakeOptions')] : []),
+    ...((draft.blocked_topics ?? []).some(topic => !topic.name.trim()) ? [t('admin.bots.problem.blockedTopicName')] : []),
+  ];
   const canSave = Boolean(
     draft.id.trim() && draft.name.trim() &&
     (draft.kind === 'llm' ? draft.system_prompt?.trim() : draft.webhook_url?.trim()) &&
-    agentErrors.length === 0 && !saving
+    agentErrors.length === 0 && guardRuleErrors.length === 0 && !saving
   );
 
   async function save(event: FormEvent) {
@@ -378,6 +397,9 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
       config_extras: draft.config_extras ?? null,
       show_sources: draft.show_sources ?? true,
       disclaimer: draft.disclaimer?.trim() || null,
+      intake: intake ? { ...intake, question: intake.question.trim(), options: cleanList(intake.options), label: intake.label?.trim() || null } : null,
+      blocked_topics: (draft.blocked_topics ?? []).map(topic => ({ name: topic.name.trim(), description: topic.description?.trim() || null, keywords: cleanList(topic.keywords) })),
+      blocked_topic_reply: draft.blocked_topic_reply?.trim() || null,
       agent: draft.kind === 'llm' && draft.agent?.enabled ? draft.agent : null,
       llm_endpoint: draft.kind === 'llm' ? draft.llm_endpoint || null : null,
       llm_endpoints: draft.kind === 'llm' ? draft.llm_endpoints ?? [] : [],
@@ -404,9 +426,12 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
       ...(!draft.id.trim() ? [t('admin.bots.problem.id')] : []),
       ...(!draft.name.trim() ? [t('admin.bots.problem.name')] : []),
     ],
-    behavior: draft.kind === 'llm'
-      ? (!draft.system_prompt?.trim() ? [t('admin.bots.problem.systemPrompt')] : [])
-      : (!draft.webhook_url?.trim() ? [t('admin.bots.problem.webhook')] : []),
+    behavior: [
+      ...(draft.kind === 'llm'
+        ? (!draft.system_prompt?.trim() ? [t('admin.bots.problem.systemPrompt')] : [])
+        : (!draft.webhook_url?.trim() ? [t('admin.bots.problem.webhook')] : [])),
+      ...guardRuleErrors,
+    ],
     agents: agentErrors,
   };
   const goTo = (next: BotStep) => setStep(next);
@@ -466,7 +491,18 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
             selected={draft.llm_endpoints ?? []}
             onToggle={value => set('llm_endpoints', (draft.llm_endpoints ?? []).includes(value) ? (draft.llm_endpoints ?? []).filter(item => item !== value) : [...(draft.llm_endpoints ?? []), value])}
           />
+          <Toggle checked={Boolean(intake)} onChange={value => set('intake', value ? emptyIntake() : null)} label={t('admin.bots.toggle.intake')} />
+          {intake && <div className="space-y-4 rounded-xl border border-[var(--line-2)] p-4">
+            <p className="text-sm text-[var(--muted)]">{t('admin.bots.intake.hint')}</p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label={t('admin.bots.field.intakeQuestion.label')}><input className={inputClass} maxLength={500} value={intake.question} onChange={event => set('intake', { ...intake, question: event.target.value })} placeholder={t('admin.bots.field.intakeQuestion.placeholder')} /></Field>
+              <Field label={t('admin.bots.field.intakeLabel.label')} hint={t('admin.bots.field.intakeLabel.hint')}><input className={inputClass} maxLength={100} value={intake.label ?? ''} onChange={event => set('intake', { ...intake, label: event.target.value || null })} placeholder={t('admin.bots.field.intakeLabel.placeholder')} /></Field>
+            </div>
+            <Field label={t('admin.bots.field.intakeOptions.label')} hint={t('admin.bots.field.intakeOptions.hint')}><textarea className={inputClass} rows={4} value={intake.options.join('\n')} onChange={event => set('intake', { ...intake, options: event.target.value.split('\n') })} /></Field>
+            <Toggle checked={intake.allow_free_text} onChange={value => set('intake', { ...intake, allow_free_text: value })} label={t('admin.bots.toggle.intakeFreeText')} />
+          </div>}
         </>}
+        <BlockedTopicsEditor topics={draft.blocked_topics ?? []} onChange={value => set('blocked_topics', value)} reply={draft.blocked_topic_reply ?? ''} onReplyChange={value => set('blocked_topic_reply', value || null)} />
       </section>}
 
       {step === 'knowledge' && <section className="space-y-4" aria-label={t('admin.bots.step.knowledge')}>
@@ -676,5 +712,25 @@ function SubagentEditor({
       <Toggle checked={Boolean(subagent.model?.supports_tools)} onChange={value => setModel({ supports_tools: value })} label={t('admin.bots.subagent.toggle.supportsTools')} />
       <Button type="button" variant="ghost" size="sm" className="mt-2" onClick={() => onChange({ ...subagent, model: null })}>{t('admin.bots.subagent.removeOverride')}</Button>
     </details>
+  </div>;
+}
+
+function BlockedTopicsEditor({ topics, onChange, reply, onReplyChange }: { topics: BlockedTopic[]; onChange: (topics: BlockedTopic[]) => void; reply: string; onReplyChange: (reply: string) => void }) {
+  const { t } = useI18n();
+  const update = (index: number, patch: Partial<BlockedTopic>) => onChange(topics.map((topic, i) => i === index ? { ...topic, ...patch } : topic));
+  return <div className="space-y-3">
+    <div><h4 className="text-sm font-semibold text-[var(--ink)]">{t('admin.bots.blockedTopics.title')}</h4><p className="text-sm text-[var(--muted)]">{t('admin.bots.blockedTopics.hint')}</p></div>
+    {topics.map((topic, index) => <div key={index} className="space-y-3 rounded-xl border border-[var(--line-2)] p-4">
+      <div className="flex items-start gap-2">
+        <div className="grid flex-1 gap-3 sm:grid-cols-2">
+          <Field label={t('admin.bots.field.blockedTopicName')}><input className={inputClass} maxLength={100} value={topic.name} onChange={event => update(index, { name: event.target.value })} /></Field>
+          <Field label={t('admin.bots.field.blockedTopicKeywords.label')} hint={t('admin.bots.field.blockedTopicKeywords.hint')}><input className={inputClass} value={topic.keywords.join(',')} onChange={event => update(index, { keywords: event.target.value.split(',') })} /></Field>
+        </div>
+        <Button type="button" variant="ghost" size="sm" onClick={() => onChange(topics.filter((_, i) => i !== index))} aria-label={t('admin.bots.blockedTopics.remove', { name: topic.name })}><Trash2 size={15} /></Button>
+      </div>
+      <Field label={t('admin.bots.field.blockedTopicDescription.label')} hint={t('admin.bots.field.blockedTopicDescription.hint')}><textarea className={inputClass} rows={2} maxLength={500} value={topic.description ?? ''} onChange={event => update(index, { description: event.target.value || null })} /></Field>
+    </div>)}
+    <Button type="button" variant="outline" size="sm" onClick={() => onChange([...topics, { name: '', description: null, keywords: [] }])}><Plus size={15} />{t('admin.bots.blockedTopics.add')}</Button>
+    {topics.length > 0 && <Field label={t('admin.bots.field.blockedTopicReply.label')} hint={t('admin.bots.field.blockedTopicReply.hint')}><textarea className={inputClass} rows={2} maxLength={2000} value={reply} onChange={event => onReplyChange(event.target.value)} placeholder={t('admin.bots.field.blockedTopicReply.placeholder')} /></Field>}
   </div>;
 }

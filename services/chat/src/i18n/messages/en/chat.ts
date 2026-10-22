@@ -145,6 +145,7 @@ export const chat: Record<keyof typeof de, string> = {
   'guard.headline': 'No evidence found.',
   // components/chat/message-bubble.tsx (clarification chips)
   'clarification.optionsLabel': 'Possible documents',
+  'clarification.intakeOptionsLabel': 'Answer options',
   'guard.reason.noContext': 'No matching evidence was found in the searchable collections.',
   'guard.reason.noCollections':
     'No collection is available for this request that this assistant is allowed to search.',
