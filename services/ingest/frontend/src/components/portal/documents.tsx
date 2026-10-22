@@ -306,7 +306,7 @@ export function PortalDocuments({ initial = {} }: { initial?: DocumentsInitialFi
                         <td><span aria-live="polite" className={`portal-badge portal-badge-${state.tone}`}>{state.label}</span>{state.hint && <span className="mt-1 block max-w-[280px] text-xs leading-5 text-[var(--muted)]">{state.hint}</span>}</td>
                         <td>{document.quality_grade ? document.quality_grade.toUpperCase() : <span className="text-[var(--muted)]" title={t('portal.documents.noGrade')}>–</span>}</td>
                         <td className="portal-date">{dateLabel(document.release?.created_at ?? document.created_at, locale)}</td>
-                        <td><div className="portal-row-actions">{actionFor(document, rowStand, t)}<Link className="portal-inline-link whitespace-nowrap text-xs" href={`/jobs/${document.id}`}>{t('portal.documents.technicalDetails')}</Link><button type="button" className="portal-open" onClick={() => setRowDeleting(document)} aria-label={t('portal.documents.deleteAria', { filename: document.original_filename })} title={t('common.delete')}><Trash2 size={16} aria-hidden="true" /></button></div></td>
+                        <td><div className="portal-row-actions">{actionFor(document, rowStand, t)}<button type="button" className="portal-open" onClick={() => setRowDeleting(document)} aria-label={t('portal.documents.deleteAria', { filename: document.original_filename })} title={t('common.delete')}><Trash2 size={16} aria-hidden="true" /></button></div></td>
                       </tr>
                     );
                   })}

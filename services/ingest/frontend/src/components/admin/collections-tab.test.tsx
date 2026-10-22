@@ -57,6 +57,7 @@ it('renames a collection without touching its access', async () => {
 it('opens the access dialog and saves the selected teams with their roles', async () => {
   await edit();
   fireEvent.click(screen.getByRole('button', { name: 'Zugriff ändern' }));
+  fireEvent.click(await screen.findByRole('button', { name: /Gruppen/ }));
   fireEvent.click(await screen.findByRole('checkbox', { name: /^Recht/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Freigabe speichern' }));
   await waitFor(() => expect(api.mock.calls.some(([, options]) => options?.method === 'PATCH')).toBe(true));

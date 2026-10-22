@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { FileInput, FilePlus, Inbox, LoaderCircle, RefreshCcw, RotateCcw } from 'lucide-react';
 
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { PortalPage } from '@/components/portal/shared';
 import { ImportSyncButton } from '@/components/portal/import-sync';
 import { ApiError, apiJson } from '@/lib/api';
 import { formatBytes } from '@/components/dashboard/shared';
@@ -48,33 +49,21 @@ export default function ImportsPage() {
   };
 
   return (
-    <main className="min-h-screen">
-      <div className="mx-auto w-full max-w-6xl px-4 py-8 text-slate-950 sm:px-6 lg:px-8">
-        <section className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h1 className="text-3xl font-semibold">{t('portal.importsList.title')}</h1>
-            <p className="mt-2 text-slate-600">
-              {t('portal.importsList.subtitle')}
-            </p>
-          </div>
-          <Button variant="outline" onClick={() => void loadAll()} disabled={loading}>
-            <RefreshCcw className="mr-2 h-4 w-4" /> {t('common.refresh')}
-          </Button>
-        </section>
-
-        <section className="mb-6 flex flex-wrap items-center justify-center gap-3">
-          <Link href="/sources/new">
-            <Button variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 hover:text-emerald-900">
-              <FilePlus className="mr-2 h-4 w-4" /> {t('portal.importsList.newFileTask')}
-            </Button>
-          </Link>
-          <Link href="/imports/new">
-            <Button variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 hover:text-emerald-900">
-              <FileInput className="mr-2 h-4 w-4" /> {t('portal.importsList.newImport')}
-            </Button>
-          </Link>
-        </section>
-
+    <PortalPage
+      title={t('portal.importsList.title')}
+      description={t('portal.importsList.subtitle')}
+      actions={<>
+        <Button variant="outline" onClick={() => void loadAll()} disabled={loading}>
+          <RefreshCcw className="mr-2 h-4 w-4" /> {t('common.refresh')}
+        </Button>
+        <Link href="/sources/new" className={buttonVariants({ variant: 'outline' })}>
+          <FilePlus className="mr-2 h-4 w-4" /> {t('portal.importsList.newFileTask')}
+        </Link>
+        <Link href="/imports/new" className={buttonVariants()}>
+          <FileInput className="mr-2 h-4 w-4" /> {t('portal.importsList.newImport')}
+        </Link>
+      </>}
+    >
         {loadError && (
           <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {loadError}
@@ -149,17 +138,13 @@ export default function ImportsPage() {
                 <Inbox className="h-8 w-8 text-slate-300" />
                 <p className="text-sm text-slate-500">{t('portal.importsList.emptyBody')}</p>
                 <div className="flex flex-wrap items-center justify-center gap-2">
-                  <Link href="/sources/new">
-                    <Button variant="outline" size="sm" className="border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 hover:text-emerald-900">
-                      <FilePlus className="h-4 w-4" />
-                      {t('portal.importsList.newFileTask')}
-                    </Button>
+                  <Link href="/sources/new" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+                    <FilePlus className="h-4 w-4" />
+                    {t('portal.importsList.newFileTask')}
                   </Link>
-                  <Link href="/imports/new">
-                    <Button variant="outline" size="sm" className="border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 hover:text-emerald-900">
-                      <FileInput className="h-4 w-4" />
-                      {t('portal.importsList.newImport')}
-                    </Button>
+                  <Link href="/imports/new" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+                    <FileInput className="h-4 w-4" />
+                    {t('portal.importsList.newImport')}
                   </Link>
                 </div>
               </div>
@@ -179,7 +164,6 @@ export default function ImportsPage() {
           </Link>
           .
         </p>
-      </div>
-    </main>
+    </PortalPage>
   );
 }

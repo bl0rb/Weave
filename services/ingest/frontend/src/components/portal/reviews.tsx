@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Ban, CheckCheck, Download, PauseCircle, Pencil, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
+import { Ban, CheckCheck, Download, PauseCircle, Pencil, RefreshCw, ShieldCheck, Trash2, TriangleAlert } from 'lucide-react';
 import { ApiError, apiJson } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -14,6 +14,10 @@ import { BulkActionBar, DocumentTable, EmptyState, Notice, Pagination, PortalPag
 import { ReprocessForm } from './reprocess-form';
 import { MarkdownEditor } from './markdown-editor';
 import { IndexingProgress } from './indexing-progress';
+import { BackLink } from '@/components/back-link';
+import { TechnicalDetailsButton } from './technical-details';
+import { FindingsList, HighlightedMarkdown } from './quality-highlights';
+import { DocumentAnalysisPanel } from './document-analysis';
 import { useIndexingStatus } from '@/lib/use-indexing-status';
 import { currentReleaseStatus } from '@/lib/indexing-status';
 import { useI18n } from '@/i18n/provider';
@@ -103,11 +107,11 @@ function provenance(preview: DocumentPreview, t: (key: MessageKey, vars?: Record
   return lines;
 }
 
-export function ReviewDocument({ id }: { id: string }) {
-  return <ReviewDocumentContent key={id} id={id} />;
+export function ReviewDocument({ id, initialEdit = false }: { id: string; initialEdit?: boolean }) {
+  return <ReviewDocumentContent key={id} id={id} initialEdit={initialEdit} />;
 }
 
-function ReviewDocumentContent({ id }: { id: string }) {
+function ReviewDocumentContent({ id, initialEdit }: { id: string; initialEdit: boolean }) {
   const router = useRouter();
   const { user } = useAuth();
   const { t, locale, formatNumber } = useI18n();
@@ -123,6 +127,10 @@ function ReviewDocumentContent({ id }: { id: string }) {
   const [deciding, setDeciding] = useState<'skip' | 'park' | 'unskip' | null>(null);
   const [confirmReindex, setConfirmReindex] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [highlight, setHighlight] = useState(false);
+  const [jumpTick, setJumpTick] = useState(0);
+  const jumpTo = useRef<string | null>(null);
+  const editOpened = useRef(false);
   const [artifacts, setArtifacts] = useState<JobArtifact[] | null>(null);
   const [queue, setQueue] = useState<{ ids: string[]; total: number } | null>(null);
   const startedHeading = useRef<HTMLHeadingElement>(null);
@@ -131,9 +139,14 @@ function ReviewDocumentContent({ id }: { id: string }) {
   const localeRef = useRef(locale);
   useEffect(() => { localeRef.current = locale; }, [locale]);
   const load = useCallback(() => Promise.all([apiJson<DocumentPreview>(`/api/v1/portal/documents/${encodeURIComponent(id)}`), apiJson<PortalConfig>('/api/v1/portal/config')])
-    .then(([content, configuration]) => { setPreview(content); setConfig(configuration); setError(''); setConfirmed(false); setReprocessOpen(false); })
-    .catch(err => { setPreview(null); setError(portalError(err, localeRef.current)); }), [id]);
+    .then(([content, configuration]) => { setPreview(content); setConfig(configuration);
+      // `?edit=1` (from the old job page): open the editor once, as soon as the document may be edited.
+      if (initialEdit && !editOpened.current && content.can_edit) { editOpened.current = true; setEditing(true); }
+      setError(''); setConfirmed(false); setReprocessOpen(false); })
+    .catch(err => { setPreview(null); setError(portalError(err, localeRef.current)); }), [id, initialEdit]);
   useEffect(() => { void load(); }, [load]);
+  // A finding picked in the release panel scrolls to its line once the line view is rendered.
+  useEffect(() => { if (highlight && jumpTo.current) { document.getElementById(jumpTo.current)?.scrollIntoView?.({ block: 'center' }); jumpTo.current = null; } }, [highlight, jumpTick]);
   // Opened from a scrolled list (or via previous/next): start at the top of the document.
   useEffect(() => { document.documentElement.scrollTop = 0; }, []);
   // Images (artifacts/…) and the open review queue for previous/next; both are optional extras.
@@ -212,14 +225,15 @@ function ReviewDocumentContent({ id }: { id: string }) {
   const previousId = queueIds && position > 0 ? queueIds[position - 1] : null;
   // Outside the queue (already decided, or opened from "all"): continue with the first open document.
   const nextId = queueIds ? (position >= 0 ? queueIds[position + 1] : queueIds[0]) ?? null : null;
+  const findings = preview?.quality?.findings ?? [];
   const decided = Boolean(preview?.release) || preview?.review_decision === 'skipped' || preview?.review_decision === 'parked';
   return <PortalPage title={preview?.original_filename || t('portal.reviews.detailTitleFallback')} description={t('portal.reviews.detailDescription')} eyebrow={t('portal.reviews.detailEyebrow')} actions={!reprocessStarted && <Button variant="outline" disabled={saving} onClick={load}>{t('portal.reviews.reloadAction')}</Button>}>
     <div className="portal-review-nav">
-      <Link className="portal-back" href="/reviews">{t('portal.reviews.backLink')}</Link>
+      <BackLink fallbackHref="/reviews" fallbackLabel={t('portal.reviews.backLink')} className="portal-back" />
       {Boolean(queueIds?.length) && <nav aria-label={t('portal.reviews.queueAria')}>
         {position >= 0 && <span>{t('portal.reviews.queuePosition', { current: position + 1, total: queue!.total })}</span>}
-        {previousId && <Link className={buttonVariants({ variant: 'outline', size: 'sm' })} href={`/reviews/${encodeURIComponent(previousId)}`}>{t('portal.reviews.previous')}</Link>}
-        {nextId && nextId !== id && <Link className={buttonVariants({ variant: 'outline', size: 'sm' })} href={`/reviews/${encodeURIComponent(nextId)}`}>{t('portal.reviews.next')}</Link>}
+        {previousId && <Link replace className={buttonVariants({ variant: 'outline', size: 'sm' })} href={`/reviews/${encodeURIComponent(previousId)}`}>{t('portal.reviews.previous')}</Link>}
+        {nextId && nextId !== id && <Link replace className={buttonVariants({ variant: 'outline', size: 'sm' })} href={`/reviews/${encodeURIComponent(nextId)}`}>{t('portal.reviews.next')}</Link>}
       </nav>}
     </div>
     {error && <Notice error action={load}>{error}</Notice>}
@@ -232,15 +246,15 @@ function ReviewDocumentContent({ id }: { id: string }) {
       <div className="portal-form-actions"><Link href="/documents?stand=processing" className={buttonVariants()}>{t('portal.reviews.viewProcessing')}</Link><Link href="/reviews" className={buttonVariants({ variant: 'ghost' })}>{t('portal.reviews.backToReview')}</Link></div>
     </section>}
     {preview && !reprocessStarted && <><div className="portal-context-bar"><Link href={`/knowledge/${preview.collection_id}`}>{preview.collection_name}</Link><span aria-live="polite" className={`portal-badge portal-badge-${state?.tone}`}>{state?.label}</span></div>
-      <div className="portal-review-grid"><article className="portal-panel portal-preview"><div className="flex flex-wrap items-start justify-between gap-3"><h2>{editing ? t('portal.reviews.editHeading') : preview.release ? t('portal.reviews.releasedHeading') : t('portal.reviews.processedHeading')}</h2>{preview.can_edit && !editing && <Button variant="outline" size="sm" onClick={() => { setEditing(true); setError(''); }}><Pencil size={15} />{t('portal.reviews.editAction')}</Button>}</div>
+      <div className="portal-review-grid"><article className="portal-panel portal-preview"><div className="flex flex-wrap items-start justify-between gap-3"><h2>{editing ? t('portal.reviews.editHeading') : preview.release ? t('portal.reviews.releasedHeading') : t('portal.reviews.processedHeading')}</h2><div className="flex flex-wrap gap-2">{findings.length > 0 && !editing && <Button variant="outline" size="sm" aria-pressed={highlight} onClick={() => setHighlight(value => !value)}><TriangleAlert size={15} />{t('portal.reviews.highlight.toggle', { count: findings.length })}</Button>}{preview.can_edit && !editing && <Button variant="outline" size="sm" onClick={() => { setEditing(true); setError(''); }}><Pencil size={15} />{t('portal.reviews.editAction')}</Button>}</div></div>
         {editing ? <MarkdownEditor preview={preview} artifacts={artifacts} onCancel={() => setEditing(false)} onSaved={result => {
           setEditing(false);
           // A released document gets a new version: continue on that one.
           if (result.document_id !== preview.id) router.push(`/reviews/${encodeURIComponent(result.document_id)}`);
           else void load();
-        }} /> : <><p className="portal-field-hint">{t('portal.reviews.previewHint')}</p><MarkdownView markdown={preview.markdown} jobId={preview.id} artifacts={artifacts} /></>}</article>
+        }} /> : <><p className="portal-field-hint">{t('portal.reviews.previewHint')}</p>{highlight && findings.length > 0 ? <HighlightedMarkdown markdown={preview.markdown} findings={findings} /> : <MarkdownView markdown={preview.markdown} jobId={preview.id} artifacts={artifacts} />}</>}</article>
       <aside className="portal-panel portal-release-panel"><ShieldCheck size={27} /><h2>{reprocessOpen ? t('portal.reviews.reprocessHeading') : t('portal.reviews.releaseHeading')}</h2>
-        {decided && nextId && nextId !== id && <Link className={buttonVariants({ className: 'mb-5 w-full' })} href={`/reviews/${encodeURIComponent(nextId)}`}>{t('portal.reviews.nextAfterDecision')}</Link>}
+        {decided && nextId && nextId !== id && <Link replace className={buttonVariants({ className: 'mb-5 w-full' })} href={`/reviews/${encodeURIComponent(nextId)}`}>{t('portal.reviews.nextAfterDecision')}</Link>}
         <dl><dt>{t('portal.reviews.qualityLabel')}</dt><dd>{preview.quality_grade ? t('portal.documents.grade', { grade: preview.quality_grade }) : t('portal.reviews.noAutoRating')}</dd><dt>{t('portal.reviews.originLabel')}</dt><dd>{preview.source?.url ? <a href={preview.source.url} target="_blank" rel="noopener noreferrer">{preview.source.label}</a> : preview.source?.path ? `${preview.source.label}: ${preview.source.path}` : preview.source?.label}{provenance(preview, t, locale).map(line => <span key={line} className="block text-[13px] text-[var(--muted)]">{line}</span>)}</dd><dt>{t('portal.documents.columnAdded')}</dt><dd>{dateLabel(preview.created_at, locale)}</dd></dl>
         <details className="portal-quality-reason"><summary>{preview.quality_grade ? t('portal.reviews.whyGrade', { grade: preview.quality_grade }) : t('portal.reviews.whyNoGrade')}</summary>
           {preview.quality ? <>
@@ -255,9 +269,11 @@ function ReviewDocumentContent({ id }: { id: string }) {
           </> : <p>{t('portal.reviews.quality.noAutoRatingReason', { reason: qualityMissingReasonText(preview.quality_missing_reason, locale) })}</p>}
           <QualityGradeLegend />
         </details>
+        <FindingsList markdown={preview.markdown} findings={findings} onJump={anchor => { jumpTo.current = anchor; setHighlight(true); setJumpTick(value => value + 1); }} />
+        <DocumentAnalysisPanel id={id} configured={Boolean(config?.analysis_configured)} />
         {preview.quality_grade?.trim().toUpperCase() === 'C' ? <Notice>{t('portal.reviews.noticeGradeC')}</Notice> : preview.quality_recommendation?.trim().toLowerCase() === 'block' && <Notice error>{t('portal.reviews.noticeBlocked')}</Notice>}
         {(!preview.quality_recommendation || preview.quality_recommendation.trim().toLowerCase() === 'warn') && <Notice>{t('portal.reviews.noticeWarn')}</Notice>}
-        {preview.release ? <><div className="portal-release-receipt"><CheckCheck size={23} /><strong>{t('portal.reviews.releaseSaved')}</strong><span>{dateLabel(preview.release.created_at, locale)}</span>{preview.release.released_by && <span>{t('portal.documents.releasedBy', { name: preview.release.released_by })}</span>}</div><p>{t('portal.reviews.releaseImmutable')}</p>{delivery === 'failed' && <><Notice error>{t('portal.reviews.deliveryFailedNotice')}</Notice>{preview.can_release && <Button disabled={saving} onClick={retry}>{t('portal.reviews.retryDelivery')}</Button>}</>}<IndexingProgress release={preview.release} live={live} />{preview.can_release && (confirmReindex ? <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={saving} onClick={() => setConfirmReindex(false)}>{t('common.cancel')}</Button><Button variant={indexingFailed ? 'default' : 'outline'} disabled={saving} onClick={() => void reindex()}><RefreshCw size={16} />{saving ? t('portal.reviews.reindexTriggering') : t('portal.reviews.reindexConfirmYes')}</Button></div> : <Button className="w-full" variant={indexingFailed ? 'default' : 'outline'} disabled={saving} onClick={() => setConfirmReindex(true)}><RefreshCw size={16} />{t('portal.spaces.reindexConfirm')}</Button>)}{user?.role === 'admin' && <Button className="w-full whitespace-normal h-auto py-3" variant="outline" disabled={downloadingDiagnostics} onClick={() => void downloadDiagnostics()}><Download size={16} />{downloadingDiagnostics ? t('portal.reviews.diagnosticsDownloading') : t('portal.reviews.diagnosticsDownload')}</Button>}</> : preview.review_decision === 'skipped' ? <>
+        {preview.release ? <><div className="portal-release-receipt"><CheckCheck size={23} /><strong>{t('portal.reviews.releaseSaved')}</strong><span>{dateLabel(preview.release.created_at, locale)}</span>{preview.release.released_by && <span>{t('portal.documents.releasedBy', { name: preview.release.released_by })}</span>}</div><p>{t('portal.reviews.releaseImmutable')}</p>{delivery === 'failed' && <><Notice error>{t('portal.reviews.deliveryFailedNotice')}</Notice>{preview.can_release && <Button disabled={saving} onClick={retry}>{t('portal.reviews.retryDelivery')}</Button>}</>}<IndexingProgress release={preview.release} live={live} />{preview.can_release && (confirmReindex ? <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={saving} onClick={() => setConfirmReindex(false)}>{t('common.cancel')}</Button><Button variant={indexingFailed ? 'default' : 'outline'} disabled={saving} onClick={() => void reindex()}><RefreshCw size={16} />{saving ? t('portal.reviews.reindexTriggering') : t('portal.reviews.reindexConfirmYes')}</Button></div> : <Button className="w-full" variant={indexingFailed ? 'default' : 'outline'} disabled={saving} onClick={() => setConfirmReindex(true)}><RefreshCw size={16} />{t('portal.spaces.reindexConfirm')}</Button>)}</> : preview.review_decision === 'skipped' ? <>
           <p className="portal-field-hint">{t('portal.reviews.skippedHint')}</p>
           <Button className="w-full" variant="outline" disabled={saving || Boolean(deciding)} onClick={() => void decide('unskip')}>{deciding === 'unskip' ? t('portal.reviews.unskipping') : t('portal.reviews.unskip')}</Button>
         </> : reprocessOpen ? <ReprocessForm currentProfileId={preview.profile_id} busy={saving} onSubmit={reprocess} onCancel={() => { setReprocessOpen(false); setError(''); }} /> : <>
@@ -277,6 +293,7 @@ function ReviewDocumentContent({ id }: { id: string }) {
             {!deleting && <Button className="w-full" variant="ghost" disabled={saving} onClick={() => setDeleting(true)}><Trash2 size={16} />{t('portal.reviews.deleteDocument')}</Button>}
           </div>}
         </>}
+        <TechnicalDetailsButton jobId={id} className="w-full" onJobChanged={load} extraActions={preview.release && user?.role === 'admin' ? <Button className="w-full whitespace-normal h-auto py-3" variant="outline" disabled={downloadingDiagnostics} onClick={() => void downloadDiagnostics()}><Download size={16} />{downloadingDiagnostics ? t('portal.reviews.diagnosticsDownloading') : t('portal.reviews.diagnosticsDownload')}</Button> : undefined} />
       </aside></div></>}
     {deleting && preview && <ConfirmDialog title={t('portal.reviews.deleteDocument')} body={<p>{t('portal.reviews.deleteDialogBodyPrefix')} <strong className="text-slate-950">{preview.original_filename}</strong> {t('portal.reviews.deleteDialogBodySuffix')}</p>} confirmLabel={t('portal.reviews.deleteDocument')} onClose={() => setDeleting(false)} onConfirm={async () => { await apiSend(`/api/v1/jobs/${encodeURIComponent(id)}`, { method: 'DELETE' }); router.push('/reviews'); router.refresh(); }} />}
   </PortalPage>;

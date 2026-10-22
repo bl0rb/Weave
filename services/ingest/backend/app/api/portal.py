@@ -54,6 +54,8 @@ from app.models.models import (
 )
 from app.schemas.jobs import CollectionTeamRef, JobRestartRequest
 from app.schemas.portal import (
+    PortalAnalysisRequest,
+    PortalAnalysisResponse,
     PortalBulkActionRequest,
     PortalBulkActionResponse,
     PortalBulkErrorItem,
@@ -69,6 +71,7 @@ from app.schemas.portal import (
     PortalImportScopeItem,
     PortalImportScopesResponse,
     PortalQualityDetail,
+    PortalQualityFinding,
     PortalReindexCollectionResponse,
     PortalReleaseRequest,
     PortalReleaseSummary,
@@ -78,7 +81,7 @@ from app.schemas.portal import (
     PortalStatsResponse,
     PortalWeekCount,
 )
-from app.services import object_store
+from app.services import document_analysis, object_store
 from app.services.backup import requeue_collection_releases_for_reindex
 from app.services.markdown_edit import record_markdown_version
 from app.services.publications import (
@@ -134,6 +137,28 @@ def _quality(job: Job) -> tuple[str | None, str | None]:
     return grade, recommendation
 
 
+_MAX_FINDINGS = 500
+
+
+def _quality_findings(quality: dict) -> list[dict]:
+    """Well-formed gate findings only (a malformed entry never fails the detail view)."""
+    raw = quality.get('findings')
+    found: list[dict] = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        line, column, kind, text = item.get('line'), item.get('column'), item.get('kind'), item.get('text')
+        if (
+            isinstance(line, int) and not isinstance(line, bool)
+            and isinstance(column, int) and not isinstance(column, bool)
+            and isinstance(kind, str) and isinstance(text, str)
+        ):
+            found.append({'line': line, 'column': column, 'kind': kind, 'text': text})
+            if len(found) >= _MAX_FINDINGS:
+                break
+    return found
+
+
 def _quality_detail(job: Job) -> tuple[PortalQualityDetail | None, str | None]:
     """Full quality-gate payload for the detail view, plus a reason key when absent.
 
@@ -156,6 +181,7 @@ def _quality_detail(job: Job) -> tuple[PortalQualityDetail | None, str | None]:
                 thresholds=quality.get('thresholds') or {'A': 0.9, 'B': 0.75},
                 signals=quality.get('signals') or {},
                 issues=quality.get('issues') or [],
+                findings=[PortalQualityFinding(**item) for item in _quality_findings(quality)],
             ),
             None,
         )
@@ -581,6 +607,7 @@ def portal_config(db=Depends(get_db), user: User = Depends(get_current_user)) ->
     teams = list(db.scalars(select(Team).where(Team.id.in_(user.team_ids)).order_by(Team.name))) if user.team_ids else []
     return PortalConfigResponse(
         publication_configured=publication_configured(),
+        analysis_configured=document_analysis.analysis_configured(db),
         team_name=team.name if team is not None else None,
         team_names=[member_team.name for member_team in teams],
         teams=[CollectionTeamRef(id=member_team.id, name=member_team.name) for member_team in teams],
@@ -865,6 +892,85 @@ def get_portal_document(job_id: str, db=Depends(get_db), user: User = Depends(ge
         quality=quality,
         quality_missing_reason=quality_missing_reason,
         can_edit=can_edit,
+    )
+
+
+@router.post('/documents/{job_id}/analysis', response_model=PortalAnalysisResponse)
+def analyze_portal_document(
+    job_id: str,
+    payload: PortalAnalysisRequest | None = None,
+    db=Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> PortalAnalysisResponse:
+    """LLM recommendation for the review page, cached per markdown hash and locale."""
+    payload = payload or PortalAnalysisRequest()
+    job = _load_visible_job(db, job_id, user)
+    collection = _collection_for_job(db, job)
+    if collection is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Document collection not found')
+    _protected(job)
+    release = db.scalar(select(DocumentRelease).where(DocumentRelease.job_id == job.id))
+    if release is not None:
+        markdown = restore_relative_image_urls(release.markdown_snapshot, release.id)
+        digest = release.markdown_sha256
+    else:
+        try:
+            markdown, digest, _ = canonical_snapshot(db, job, collection)
+        except PublicationValidationError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    info = dict(job.processing_info) if isinstance(job.processing_info, dict) else {}
+    cache = info.get('portal_analysis') if isinstance(info.get('portal_analysis'), dict) else {}
+    key = f'{digest}:{payload.locale}'
+    entry = cache.get(key)
+    if not payload.refresh and isinstance(entry, dict):
+        try:
+            return PortalAnalysisResponse(
+                markdown_sha256=digest,
+                generated_at=entry['generated_at'],
+                cached=True,
+                summary=entry['summary'],
+                recommendations=entry['recommendations'],
+            )
+        except (KeyError, ValueError):
+            pass
+    execution = info.get('execution') if isinstance(info.get('execution'), dict) else {}
+    quality = execution.get('quality_gate') if isinstance(execution.get('quality_gate'), dict) else {}
+    # The LLM call can take up to the provider timeout: don't hold the read
+    # transaction open across it (the write below re-reads the row).
+    db.rollback()
+    try:
+        result = document_analysis.analyze_document(
+            db, quality=quality, findings=_quality_findings(quality), markdown=markdown, locale=payload.locale
+        )
+    except document_analysis.AnalysisNotConfigured:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='analysis_not_configured')
+    except document_analysis.AnalysisFailed:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='analysis_failed')
+    generated_at = datetime.now(timezone.utc)
+    # Re-read under lock and merge only the cache, so a skip/park/reprocess
+    # that landed during the LLM call is not overwritten with the stale copy.
+    job = db.get(Job, job_id, with_for_update=True, populate_existing=True)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Document not found')
+    info = dict(job.processing_info) if isinstance(job.processing_info, dict) else {}
+    cache = info.get('portal_analysis') if isinstance(info.get('portal_analysis'), dict) else {}
+    # Only the current hash is kept, so the cache cannot grow with every edit.
+    info['portal_analysis'] = {
+        **{k: v for k, v in cache.items() if k.startswith(f'{digest}:')},
+        key: {
+            'generated_at': generated_at.isoformat(),
+            'summary': result.summary,
+            'recommendations': result.recommendations,
+        },
+    }
+    job.processing_info = info
+    db.commit()
+    return PortalAnalysisResponse(
+        markdown_sha256=digest,
+        generated_at=generated_at,
+        cached=False,
+        summary=result.summary,
+        recommendations=result.recommendations,
     )
 
 

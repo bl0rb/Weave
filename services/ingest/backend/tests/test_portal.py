@@ -217,6 +217,7 @@ def test_portal_config_returns_authenticated_team_name(monkeypatch):
     assert response.status_code == 200
     assert response.json() == {
         'publication_configured': False,
+        'analysis_configured': False,
         'team_name': team.name,
         'team_names': [team.name],
         'teams': [{'id': team.id, 'name': team.name}],

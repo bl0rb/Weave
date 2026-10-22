@@ -7,6 +7,8 @@ import { CheckCircle2, LoaderCircle, XCircle } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 import { Button } from '@/components/ui/button';
+import { BackLink } from '@/components/back-link';
+import { PortalPage } from '@/components/portal/shared';
 import { Toggle } from '@/components/admin/admin-shared';
 import { ApiError, apiJson } from '@/lib/api';
 import { type PaddleCapabilities } from '@/components/dashboard/shared';
@@ -51,7 +53,7 @@ const DEFAULT_SYNC_INTERVAL_SECONDS = 86400;
 
 export default function NewImportPage() {
   return (
-    <Suspense fallback={<main className="min-h-screen" />}>
+    <Suspense fallback={<main className="portal-page" />}>
       <NewImportPageInner />
     </Suspense>
   );
@@ -457,18 +459,11 @@ function NewImportPageInner() {
   const testDisabled = !selectedSourceId || testBusy || cooldownSeconds > 0 || !sourcesLoaded;
 
   return (
-    <main className="min-h-screen">
-      <div className="mx-auto w-full max-w-6xl px-4 py-8 text-slate-950 sm:px-6 lg:px-8">
-        <section className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h1 className="text-3xl font-semibold">{editingSync ? t('portal.importWizard.editTitle') : t('portal.importWizard.title')}</h1>
-            <p className="mt-2 text-slate-600">{editingSync ? t('portal.importWizard.editSubtitle') : t('portal.importWizard.subtitle')}</p>
-          </div>
-          <Link href="/imports" className="text-sm text-emerald-700 hover:text-emerald-800">
-            {t('portal.importWizard.backToImports')}
-          </Link>
-        </section>
-
+    <PortalPage
+      title={editingSync ? t('portal.importWizard.editTitle') : t('portal.importWizard.title')}
+      description={editingSync ? t('portal.importWizard.editSubtitle') : t('portal.importWizard.subtitle')}
+    >
+      <BackLink fallbackHref="/imports" fallbackLabel={t('portal.importWizard.backToImports')} />
         {prefillNotice && (
           <p className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
             {prefillNotice}
@@ -1030,7 +1025,6 @@ function NewImportPageInner() {
             )}
           </AnimatePresence>
         </section>
-      </div>
-    </main>
+    </PortalPage>
   );
 }

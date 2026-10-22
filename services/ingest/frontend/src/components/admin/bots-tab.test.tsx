@@ -227,7 +227,8 @@ it('deletes an existing bot only after confirmation', async () => {
     throw new Error(`unexpected request: ${path}`);
   });
   render(<BotsTab />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Service-Assistent löschen' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Weitere Aktionen für Service-Assistent' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Service-Assistent löschen' }));
   fireEvent.click(screen.getByRole('button', { name: 'Bot löschen' }));
   await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
     '/api/v1/auth/admin/bots/service-assistent',
@@ -243,7 +244,8 @@ it('allows deleting a bundled Runtime bot after confirmation', async () => {
     throw new Error(`unexpected request: ${path}`);
   });
   render(<BotsTab />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Service-Assistent löschen' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Weitere Aktionen für Service-Assistent' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Service-Assistent löschen' }));
   fireEvent.click(screen.getByRole('button', { name: 'Bot löschen' }));
   await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
     '/api/v1/auth/admin/bots/service-assistent',
@@ -291,4 +293,17 @@ it('warns when Runtime did not load a managed n8n bot', async () => {
   expect(await screen.findByText('Nicht im Chat')).toBeTruthy();
   expect(screen.getAllByText('Nicht im Chat')).toHaveLength(1);
   expect(screen.getByRole('status').textContent).toContain('N8N_ALLOWED_BASE_URLS');
+});
+
+it('closes the bot actions menu with Escape', async () => {
+  json.mockImplementation(async path => {
+    if (path === '/api/v1/auth/admin/bots') return { items: [savedBot] };
+    return { items: [] };
+  });
+  render(<BotsTab />);
+  const trigger = await screen.findByRole('button', { name: 'Weitere Aktionen für Service-Assistent' });
+  fireEvent.click(trigger);
+  expect(trigger.getAttribute('aria-expanded')).toBe('true');
+  fireEvent.keyDown(document, { key: 'Escape' });
+  expect(trigger.getAttribute('aria-expanded')).toBe('false');
 });
