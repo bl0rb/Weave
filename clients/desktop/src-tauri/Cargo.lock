@@ -5152,6 +5152,7 @@ dependencies = [
  "core-foundation-sys",
  "futures-util",
  "keyring",
+ "objc2",
  "objc2-app-kit",
  "rand",
  "reqwest 0.12.28",

@@ -16,6 +16,9 @@ pub struct Settings {
     pub server_url: String,
     pub hotkey: String,
     pub default_agent: String,
+    /// Where the user last dragged the quick overlay (physical pixels,
+    /// top-left); `None` = centred on the pointer's screen.
+    pub quick_position: Option<[i32; 2]>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -198,7 +201,7 @@ mod tests {
 
     #[test]
     fn managed_values_win() {
-        let settings = Settings { server_url: "https://mine/".into(), hotkey: "Alt+W".into(), default_agent: String::new() };
+        let settings = Settings { server_url: "https://mine/".into(), hotkey: "Alt+W".into(), default_agent: String::new(), quick_position: None };
         let managed = Managed { server_url: Some("https://it.example".into()), ..Default::default() };
         let effective = settings.effective(&managed);
         assert_eq!(effective.server_url, "https://it.example");

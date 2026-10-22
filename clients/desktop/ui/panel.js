@@ -27,8 +27,13 @@ document.documentElement.classList.add(navigator.userAgent.includes('Windows') ?
 /** The Spotlight-like overlay: one bar, answers expand below it. */
 const QUICK = document.body.classList.contains('quick');
 /** What the two modes do -- shown as tooltip on their switches and in search mode. */
-const ASK_INFO = 'Ein Agent beantwortet Ihre Frage aus den freigegebenen Dokumenten – mit Quellen. Folgefragen bauen aufeinander auf.';
-const SEARCH_INFO = 'Zeigt passende Textstellen aus allen Wissensräumen, die Sie lesen dürfen – ohne KI-Antwort. Schneller, und Sie bewerten die Treffer selbst.';
+const ASK_INFO = 'Ein Agent liest die passenden Dokumente und antwortet in eigenen Worten – mit Quellen. Gut für Erklärungen, Abläufe und Zusammenfassungen; Folgefragen bauen aufeinander auf.';
+const SEARCH_INFO = 'Findet passende Textstellen direkt in allen Wissensräumen, die Sie lesen dürfen – ohne KI-Antwort. Gut, um ein Dokument, einen Begriff oder eine Nummer schnell wiederzufinden.';
+const setMode = (value) => { if (mode !== value) { mode = value; render(); } };
+/** Fragen | Suchen -- the explanation of each sits in its tooltip and below the bar. */
+const modeSwitch = () => h('div', { class: 'segmented', role: 'group', 'aria-label': t('Modus') },
+  [['ask', t('Fragen'), ASK_INFO], ['search', t('Suchen'), SEARCH_INFO]].map(([value, label, info]) =>
+    h('button', { 'aria-pressed': String(mode === value), title: t(info), onclick: () => setMode(value) }, label)));
 wireLinks(panel);
 
 async function refresh(reloadLists = false) {
@@ -339,17 +344,20 @@ function renderQuick() {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(e.target.value); }
     },
   });
-  const bar = h('div', { class: 'quick-bar' },
+  // Drag the bar by its grip (or any empty spot) -- Weave reopens it there;
+  // a double-click on the grip puts it back in the middle (main.rs).
+  const bar = h('div', { class: 'quick-bar', 'data-tauri-drag-region': true },
+    h('span', {
+      class: 'grip',
+      'data-tauri-drag-region': true,
+      title: t('Ziehen zum Verschieben · Doppelklick: zurück zur Mitte'),
+      ondblclick: () => invoke('reset_quick_position').catch(() => {}),
+    }, icon('grip')),
     logo(),
     input,
     state.signed_in && mode === 'ask' && h('select', { 'aria-label': 'Agent', disabled: !bots?.length, onchange: (e) => setAgent(e.target.value) },
       bots?.length ? bots.map((b) => h('option', { value: b.id, selected: b.id === agent, title: b.description ?? '' }, b.name ?? b.id)) : h('option', null, t('Kein Agent verfügbar'))),
-    state.signed_in && h('button', {
-      class: 'icon-only plain',
-      title: mode === 'ask' ? `${t('Suchen statt fragen')}: ${t(SEARCH_INFO)}` : `${t('Fragen statt suchen')}: ${t(ASK_INFO)}`,
-      'aria-label': mode === 'ask' ? t('Suchen statt fragen') : t('Fragen statt suchen'),
-      onclick: () => { mode = mode === 'ask' ? 'search' : 'ask'; render(); },
-    }, icon(mode === 'ask' ? 'search' : 'send')),
+    state.signed_in && modeSwitch(),
     state.signed_in && mode === 'ask' && webButton(),
     state.signed_in && mode === 'ask' && messages.length > 0 && clearButton(),
     streaming
@@ -369,7 +377,11 @@ function renderQuick() {
     parts.push(quickNote(t('Version %@ ist verfügbar.', update.available), update.installing ? t('Update wird installiert – Weave startet danach neu …') : null,
       !update.installing && h('button', { onclick: () => invoke('install_update').catch(() => {}) }, t('Jetzt installieren'))));
   }
-  if (state.signed_in && mode === 'search' && !searchView) parts.push(quickNote(t('Suchen'), t(SEARCH_INFO)));
+  // Until there is something to show, say what the chosen mode does.
+  if (state.signed_in && (mode === 'ask' ? !messages.length : !searchView)) {
+    parts.push(h('div', { class: 'mode-hint' },
+      h('strong', null, mode === 'ask' ? t('Fragen') : t('Suchen')), ' – ', t(mode === 'ask' ? ASK_INFO : SEARCH_INFO)));
+  }
   const content = h('section', { class: 'quick-content', id: 'content', onwheel: () => { pinQuestion = false; } });
   const previousScrollTop = document.getElementById('content')?.scrollTop;
   if (state.signed_in && mode === 'ask' && messages.length) parts.push(content);
@@ -401,9 +413,8 @@ function render() {
     mode === 'ask' && messages.length > 0 && clearButton(),
     settingsButton);
 
-  const modeButton = (value, label, info) => h('button', { 'aria-pressed': String(mode === value), title: t(info), onclick: () => { mode = value; render(); } }, label);
   const tools = h('div', { class: 'panel-tools' },
-    h('div', { class: 'segmented', role: 'group' }, modeButton('ask', t('Fragen'), ASK_INFO), modeButton('search', t('Suchen'), SEARCH_INFO)),
+    modeSwitch(),
     collections.length > 0 && h('select', { 'aria-label': t('Alle Wissensräume'), onchange: (e) => { collection = e.target.value; } },
       h('option', { value: '' }, t('Alle Wissensräume')),
       collections.map((c) => h('option', { value: c.slug, selected: c.slug === collection }, c.name ?? c.slug))));

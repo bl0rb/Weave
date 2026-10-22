@@ -39,7 +39,7 @@ const AUTOSTART_ARG: &str = "--autostart";
 const UPDATE_FIRST_CHECK: Duration = Duration::from_secs(20);
 const UPDATE_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60);
 /// Logical width of the quick overlay window.
-const QUICK_WIDTH: f64 = 720.0;
+const QUICK_WIDTH: f64 = 780.0;
 
 #[derive(Clone)]
 struct Session {
@@ -58,6 +58,11 @@ struct AppState {
     login_task: Mutex<Option<JoinHandle<()>>>,
     chat_abort: Mutex<Option<tokio::task::AbortHandle>>,
     quick_hidden_at: Mutex<Option<Instant>>,
+    /// Where `show_quick` last put the overlay -- a `Moved` event there is
+    /// ours, not a drag by the user.
+    quick_placed_at: Mutex<Option<PhysicalPosition<i32>>>,
+    /// The user dragged the overlay since the position was last saved.
+    quick_moved: AtomicBool,
     updates: Updates,
     update_menu_item: Mutex<Option<MenuItem<Wry>>>,
     /// A server address proposed by a `weave://setup` link, waiting for the
@@ -546,26 +551,91 @@ fn update_dock(app: &AppHandle) {
     let _ = app;
 }
 
-/// Opens the quick overlay centred on the screen with the mouse pointer,
-/// a little above the middle -- where Spotlight and Claude put theirs.
+/// Opens the quick overlay where the user last dragged it, else centred on
+/// the screen with the mouse pointer, a little above the middle -- where
+/// Spotlight and Claude put theirs.
 fn show_quick(app: &AppHandle) {
     let Some(quick) = app.get_webview_window("quick") else { return };
-    let monitor = app
-        .cursor_position()
-        .ok()
-        .and_then(|p| app.monitor_from_point(p.x, p.y).ok().flatten())
-        .or_else(|| quick.primary_monitor().ok().flatten());
-    if let Some(monitor) = monitor {
-        let (origin, size) = (monitor.position(), monitor.size());
-        let width = (QUICK_WIDTH * monitor.scale_factor()) as i32;
-        let x = origin.x + (size.width as i32 - width) / 2;
-        let y = origin.y + (size.height as f64 * 0.22) as i32;
-        let _ = quick.set_position(PhysicalPosition::new(x, y));
-    }
-    let _ = quick.show();
+    place_quick(app, &quick);
+    show_without_activating(&quick);
     refresh_shadow(&quick);
-    let _ = quick.set_focus();
     let _ = quick.emit("panel-shown", ());
+}
+
+fn place_quick(app: &AppHandle, quick: &WebviewWindow) {
+    let state = app.state::<AppState>();
+    let saved = state.settings.lock().unwrap().quick_position;
+    let position = saved
+        .map(|[x, y]| PhysicalPosition::new(x, y))
+        // A screen that is gone (laptop undocked) must not strand the bar off-screen.
+        .filter(|p| grip_on_screen(quick, *p))
+        .or_else(|| {
+            let monitor = app
+                .cursor_position()
+                .ok()
+                .and_then(|p| app.monitor_from_point(p.x, p.y).ok().flatten())
+                .or_else(|| quick.primary_monitor().ok().flatten())?;
+            let (origin, size) = (monitor.position(), monitor.size());
+            let width = (QUICK_WIDTH * monitor.scale_factor()) as i32;
+            let x = origin.x + (size.width as i32 - width) / 2;
+            let y = origin.y + (size.height as f64 * 0.22) as i32;
+            Some(PhysicalPosition::new(x, y))
+        });
+    if let Some(position) = position {
+        *state.quick_placed_at.lock().unwrap() = Some(position);
+        let _ = quick.set_position(position);
+    }
+}
+
+/// True if the overlay's top-left corner (its drag grip) lies on a screen.
+fn grip_on_screen(quick: &WebviewWindow, p: PhysicalPosition<i32>) -> bool {
+    let (x, y) = (p.x + 20, p.y + 20);
+    quick.available_monitors().unwrap_or_default().iter().any(|m| {
+        let (origin, size) = (m.position(), m.size());
+        x >= origin.x && y >= origin.y && x < origin.x + size.width as i32 && y < origin.y + size.height as i32
+    })
+}
+
+/// The user dragged the overlay: remember the spot (written to disk when the
+/// overlay hides, not on every step of the drag).
+fn quick_moved(app: &AppHandle, position: PhysicalPosition<i32>) {
+    let state = app.state::<AppState>();
+    let ours = state
+        .quick_placed_at
+        .lock()
+        .unwrap()
+        .is_some_and(|at| (at.x - position.x).abs() <= 2 && (at.y - position.y).abs() <= 2);
+    if ours {
+        return;
+    }
+    state.settings.lock().unwrap().quick_position = Some([position.x, position.y]);
+    state.quick_moved.store(true, Ordering::Relaxed);
+}
+
+fn save_quick_position(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    if state.quick_moved.swap(false, Ordering::Relaxed) {
+        let settings = state.settings.lock().unwrap();
+        if let Err(error) = settings.save(&state.settings_path) {
+            eprintln!("quick position not saved: {error}");
+        }
+    }
+}
+
+/// Double-click on the grip: forget the dragged position, back to the centre.
+#[tauri::command]
+fn reset_quick_position(app: AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    state.quick_moved.store(false, Ordering::Relaxed);
+    {
+        let mut settings = state.settings.lock().unwrap();
+        settings.quick_position = None;
+        settings.save(&state.settings_path)?;
+    }
+    if let Some(quick) = app.get_webview_window("quick") {
+        place_quick(&app, &quick);
+    }
+    Ok(())
 }
 
 fn toggle_quick(app: &AppHandle) {
@@ -586,14 +656,47 @@ fn toggle_quick(app: &AppHandle) {
 }
 
 /// macOS: show the window on every Space and above full-screen apps, like a
-/// menu-bar popover; otherwise it would open on the desktop Space instead.
+/// menu-bar popover or Spotlight. Only a non-activating panel can do that:
+/// activating Weave would switch to the Space of its own windows instead.
+/// So the overlay's NSWindow becomes an NSPanel subclass that takes key focus
+/// (typing) without activating the app.
 #[cfg(target_os = "macos")]
 fn float_over_full_screen(window: &WebviewWindow) {
-    use objc2_app_kit::{NSStatusWindowLevel, NSWindow, NSWindowCollectionBehavior};
+    use objc2::runtime::{AnyClass, AnyObject, Bool, ClassBuilder, Sel};
+    use objc2::{sel, ClassType};
+    use objc2_app_kit::{NSPanel, NSStatusWindowLevel, NSWindowCollectionBehavior, NSWindowStyleMask};
+    use std::sync::OnceLock;
+
+    extern "C-unwind" fn yes(_: &AnyObject, _: Sel) -> Bool {
+        Bool::YES
+    }
+    extern "C-unwind" fn no(_: &AnyObject, _: Sel) -> Bool {
+        Bool::NO
+    }
+    static PANEL_CLASS: OnceLock<&'static AnyClass> = OnceLock::new();
+    let class = PANEL_CLASS.get_or_init(|| {
+        let mut builder = ClassBuilder::new(c"WeaveQuickPanel", NSPanel::class()).expect("WeaveQuickPanel registered twice");
+        // Same layout as tao's TaoWindow (NSWindow + `focusable`), so the
+        // class swap keeps the object's size and tao's ivar stays readable.
+        builder.add_ivar::<Bool>(c"focusable");
+        // SAFETY: the signatures match the overridden NSWindow getters.
+        unsafe {
+            builder.add_method(sel!(canBecomeKeyWindow), yes as extern "C-unwind" fn(_, _) -> _);
+            builder.add_method(sel!(canBecomeMainWindow), no as extern "C-unwind" fn(_, _) -> _);
+        }
+        builder.register()
+    });
     let Ok(pointer) = window.ns_window() else { return };
     // SAFETY: called on the main thread (setup); the pointer is the live
-    // NSWindow behind this Tauri window.
-    let ns_window = unsafe { &*(pointer as *const NSWindow) };
+    // NSWindow behind this Tauri window. NSPanel adds no state the window
+    // lacks, and the class carries tao's one ivar at the same offset.
+    let ns_window = unsafe {
+        AnyObject::set_class(&*(pointer as *const AnyObject), class);
+        &*(pointer as *const NSPanel)
+    };
+    ns_window.setStyleMask(ns_window.styleMask() | NSWindowStyleMask::NonactivatingPanel);
+    ns_window.setFloatingPanel(true);
+    ns_window.setHidesOnDeactivate(false);
     ns_window.setCollectionBehavior(
         NSWindowCollectionBehavior::CanJoinAllSpaces
             | NSWindowCollectionBehavior::FullScreenAuxiliary
@@ -604,6 +707,27 @@ fn float_over_full_screen(window: &WebviewWindow) {
 
 #[cfg(not(target_os = "macos"))]
 fn float_over_full_screen(_window: &WebviewWindow) {}
+
+/// Shows the overlay with keyboard focus. macOS: without activating Weave
+/// (`set_focus` would), so a full-screen app stays where it is.
+fn show_without_activating(window: &WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    {
+        let target = window.clone();
+        let _ = window.run_on_main_thread(move || {
+            if let Ok(pointer) = target.ns_window() {
+                // SAFETY: on the main thread; the pointer is the live NSWindow.
+                let ns_window = unsafe { &*(pointer as *const objc2_app_kit::NSWindow) };
+                ns_window.makeKeyAndOrderFront(None);
+            }
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
 
 fn show_settings(app: &AppHandle) -> tauri::Result<()> {
     if let Some(quick) = app.get_webview_window("quick") {
@@ -748,6 +872,8 @@ fn main() {
                 login_task: Mutex::new(None),
                 chat_abort: Mutex::new(None),
                 quick_hidden_at: Mutex::new(None),
+                quick_placed_at: Mutex::new(None),
+                quick_moved: AtomicBool::new(false),
                 updates: Updates::default(),
                 update_menu_item: Mutex::new(None),
                 tray_busy: AtomicBool::new(false),
@@ -798,7 +924,9 @@ fn main() {
             ("quick", WindowEvent::Focused(false)) => {
                 *window.app_handle().state::<AppState>().quick_hidden_at.lock().unwrap() = Some(Instant::now());
                 let _ = window.hide();
+                save_quick_position(window.app_handle());
             }
+            ("quick", WindowEvent::Moved(position)) => quick_moved(window.app_handle(), *position),
             // Closing the app window keeps Weave in the tray.
             ("quick" | "panel", WindowEvent::CloseRequested { api, .. }) => {
                 api.prevent_close();
@@ -827,6 +955,7 @@ fn main() {
             open_settings,
             hide_panel,
             fit_quick,
+            reset_quick_position,
             get_update_state,
             check_for_updates,
             install_update,
