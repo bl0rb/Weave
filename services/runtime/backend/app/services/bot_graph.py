@@ -10,7 +10,7 @@ graph nodes and edges, and where stream events are written.
 Topology (`_build_graph`):
 
     START -> route -> {n8n_smalltalk | n8n_scope | agent_prepare | unsupported
-                       | overview | knowledge | conversational}
+                       | blocked | intake | overview | knowledge | conversational}
           -> trace -> {n8n_call | agent_single | agent_multi | generate}
           -> generate -> finish -> END
 
@@ -54,6 +54,7 @@ from app.core.config import settings
 from app.schemas.bot import BotConfig, SubagentConfig
 from app.schemas.chat import (
     AgentTrace,
+    ClarificationOption,
     ChatStreamDeltaEvent,
     ChatStreamDoneEvent,
     ChatStreamErrorEvent,
@@ -94,6 +95,11 @@ class TurnContext:
     memory: bool
     streaming: bool
     cancel: threading.Event
+    # app/services/intake.py: the bot's intake question is still unanswered
+    # (asked before a knowledge answer), and the current message was a
+    # rejected answer to it (asked again whatever the intent).
+    intake_pending: bool = False
+    intake_retry: bool = False
 
 
 class TurnState(TypedDict, total=False):
@@ -138,6 +144,8 @@ _AGENT_BRANCHES = frozenset({'agent', 'multi_agent'})
 # every other branch's answer is either already decided (no LLM call) or
 # produced later by n8n/agent work the trace event cannot know about yet.
 _DIRECT_BRANCHES = frozenset({'overview', 'knowledge', 'conversational'})
+# Intents the intake question is asked before -- never small talk.
+_INTAKE_INTENTS = frozenset({'knowledge', 'complex'})
 
 
 def _timing(state: TurnState, key: str, start: float) -> dict[str, float]:
@@ -147,7 +155,16 @@ def _timing(state: TurnState, key: str, start: float) -> dict[str, float]:
 # --- route ------------------------------------------------------------------
 
 
-def _choose_branch(bot: BotConfig, decision: router_service.RouterDecision) -> str:
+def _choose_branch(
+    bot: BotConfig, decision: router_service.RouterDecision, *, intake_pending: bool = False, intake_retry: bool = False,
+) -> str:
+    # The topic block comes first, before any retrieval, n8n or LLM work,
+    # and before the intake question (a blocked question is never asked
+    # back).
+    if decision.blocked_topic is not None:
+        return 'blocked'
+    if intake_pending and (intake_retry or decision.intent in _INTAKE_INTENTS):
+        return 'intake'
     if bot.model.provider == 'n8n':
         return 'n8n_smalltalk' if decision.intent == 'conversational' else 'n8n'
     # `BotConfig`'s own `_agent_mode_is_valid` validator guarantees tool
@@ -188,7 +205,7 @@ def _route(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
     decision = router_service.route(state['message'], bot, settings.router_mode, llm_call, memory=ctx.memory)
     return {
         'decision': decision,
-        'branch': _choose_branch(bot, decision),
+        'branch': _choose_branch(bot, decision, intake_pending=ctx.intake_pending, intake_retry=ctx.intake_retry),
         'timings_ms': _timing(state, 'router_ms', router_start),
     }
 
@@ -220,6 +237,31 @@ def _n8n_scope(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
 
 def _unsupported(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
     return {'final_answer': chat_service._V1_UNSUPPORTED_REPLY, 'sources': []}
+
+
+def _blocked(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
+    guard = runtime.context.bot.guard
+    return {
+        'final_answer': guard.blocked_topic_reply,
+        'sources': [],
+        'guard': GuardTrace(triggered=True, reason='blocked_topic', topic=state['decision'].blocked_topic),
+    }
+
+
+def _intake(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
+    # Reuses the clarify mechanism: the chat renders the options as
+    # one-click replies that send the option text verbatim.
+    intake = runtime.context.bot.intake
+    assert intake is not None
+    return {
+        'final_answer': intake.question,
+        'sources': [],
+        'guard': GuardTrace(triggered=True, reason='intake'),
+        'clarification': Clarification(
+            question=intake.question,
+            options=[ClarificationOption(label=option, message=option) for option in intake.options],
+        ),
+    }
 
 
 def _base_messages(bot: BotConfig, history: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -672,7 +714,10 @@ def _finish(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
 
 # --- graph ----------------------------------------------------------------------
 
-_PRE_TRACE_NODES = ('n8n_smalltalk', 'n8n_scope', 'agent_prepare', 'unsupported', 'overview', 'knowledge', 'conversational')
+_PRE_TRACE_NODES = (
+    'n8n_smalltalk', 'n8n_scope', 'agent_prepare', 'unsupported', 'blocked', 'intake', 'overview', 'knowledge',
+    'conversational',
+)
 _POST_TRACE_NODES = ('n8n_call', 'agent_single', 'agent_multi', 'generate')
 
 
@@ -683,6 +728,8 @@ def _build_graph():
     graph.add_node('n8n_scope', _n8n_scope)
     graph.add_node('agent_prepare', _agent_prepare)
     graph.add_node('unsupported', _unsupported)
+    graph.add_node('blocked', _blocked)
+    graph.add_node('intake', _intake)
     graph.add_node('overview', _overview)
     graph.add_node('knowledge', _knowledge)
     graph.add_node('conversational', _conversational)

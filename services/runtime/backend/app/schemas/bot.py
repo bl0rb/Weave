@@ -403,6 +403,27 @@ _DEFAULT_CLARIFY_AMBIGUOUS_QUESTION = (
     'Deine Frage passt zu mehreren Dokumenten: {documents}. Welches meinst du?'
 )
 
+_DEFAULT_BLOCKED_TOPIC_REPLY = 'Zu diesem Thema kann ich keine Auskunft geben.'
+
+
+class BlockedTopic(BaseModel):
+    """One topic this bot refuses outright (`GuardConfig.blocked_topics`,
+    app/services/router.py): `name`/`description` go into the router's LLM
+    classification prompt (ROUTER_MODE=llm); `keywords` are a deterministic
+    floor matched in BOTH router modes -- case-insensitive, at a word start
+    ('partei' also matches 'Parteien')."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    name: str = Field(min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=500)
+    keywords: list[str] = Field(default_factory=list)
+
+    @field_validator('keywords')
+    @classmethod
+    def _non_empty_keywords(cls, value: list[str]) -> list[str]:
+        return [keyword.strip() for keyword in value if keyword.strip()]
+
 
 class GuardConfig(BaseModel):
     """The response guard (see README's "Zweck") that keeps a
@@ -462,6 +483,50 @@ class GuardConfig(BaseModel):
     # below 0.5").
     uncertainty_hint: bool = True
     weak_context_below: float | None = Field(default=None, ge=0.0, le=1.0)
+    # Topic block, checked on every message before retrieval or the
+    # answering LLM (app/services/bot_graph.py's 'blocked' branch): a match
+    # returns `blocked_topic_reply` verbatim with `guard.reason=
+    # 'blocked_topic'` and the topic's name in `guard.topic`.
+    blocked_topics: list[BlockedTopic] = Field(default_factory=list)
+    blocked_topic_reply: str = _DEFAULT_BLOCKED_TOPIC_REPLY
+
+    @model_validator(mode='after')
+    def _unique_blocked_topic_names(self) -> 'GuardConfig':
+        names = [topic.name for topic in self.blocked_topics]
+        duplicates = sorted({name for name in names if names.count(name) > 1})
+        if duplicates:
+            raise ValueError(f'guard.blocked_topics names must be unique -- duplicated: {duplicates}')
+        return self
+
+
+class IntakeConfig(BaseModel):
+    """`BotConfig.intake` -- one mandatory question asked once per
+    conversation, before the first knowledge answer (app/services/intake.py):
+    the reply is kept for the whole conversation, derived from its history,
+    and handed to the LLM as `<label>: <answer>`; the question that was
+    asked first is answered right after it. `options` become one-click
+    replies in the chat; with `allow_free_text: false` only an option is
+    accepted and anything else re-asks."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    question: str = Field(min_length=1, max_length=500)
+    options: list[str] = Field(default_factory=list, max_length=10)
+    allow_free_text: bool = True
+    # How the answer is named for the LLM ('Beschäftigungsart'); None uses
+    # the question itself.
+    label: str | None = Field(default=None, max_length=100)
+
+    @field_validator('options')
+    @classmethod
+    def _non_empty_options(cls, value: list[str]) -> list[str]:
+        return [option.strip() for option in value if option.strip()]
+
+    @model_validator(mode='after')
+    def _options_or_free_text(self) -> 'IntakeConfig':
+        if not self.options and not self.allow_free_text:
+            raise ValueError('intake.allow_free_text is false but intake.options is empty -- nothing could be answered')
+        return self
 
 
 class BotConfig(BaseModel):
@@ -500,6 +565,9 @@ class BotConfig(BaseModel):
     # keine verbindlichen Aussagen"); None shows nothing.
     show_sources: bool = True
     disclaimer: str | None = Field(default=None, max_length=500)
+    # None (the default): no intake question -- see IntakeConfig. Not valid
+    # for an n8n-provider bot (its flow never sees this pipeline's prompt).
+    intake: IntakeConfig | None = None
 
     @field_validator('id')
     @classmethod
@@ -539,6 +607,8 @@ class BotConfig(BaseModel):
                 f"an 'n8n:' block is configured but model.provider is {self.model.provider!r}, not 'n8n' -- "
                 "either set model.provider to 'n8n' or remove the 'n8n:' block"
             )
+        if is_n8n_provider and self.intake is not None:
+            raise ValueError("an 'intake:' block is configured but model.provider is 'n8n' -- n8n bots run their own flow")
         return self
 
     @model_validator(mode='after')

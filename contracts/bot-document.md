@@ -20,8 +20,17 @@ JSON Schema ist daraus erzeugt. Konsument ist `services/ingest`
   Felder sind die von `BotConfig`: `id`, `name`, `description`, `model`,
   `system_prompt`, `retrieval`, `permissions`, `guard`, `n8n`, `agent`,
   `show_sources` (Default `true`; `false` blendet im Chat Quellenleiste und
-  Quellen-Knöpfe aus) und `disclaimer` (optionaler Hinweistext, höchstens 500
-  Zeichen, den der Chat beim Eingabefeld zeigt).
+  Quellen-Knöpfe aus), `disclaimer` (optionaler Hinweistext, höchstens 500
+  Zeichen, den der Chat beim Eingabefeld zeigt) und `intake` (optionale
+  Einstiegsfrage: `question`, `options` (höchstens 10), `allow_free_text`
+  (Default `true`), `label`; nicht für n8n-Bots). Die Einstiegsfrage stellt
+  der Bot einmal vor der ersten Wissensfrage eines Gesprächs, merkt sich die
+  Antwort (aus der History abgeleitet) und gibt sie dem LLM in jedem weiteren
+  Turn als `<label>: <Antwort>` mit; danach beantwortet er die zuerst
+  gestellte Frage. `guard.blocked_topics` (`[{name, description, keywords}]`)
+  und `guard.blocked_topic_reply` sperren Themen technisch: Treffer (Router-
+  Klassifikation bei `ROUTER_MODE=llm`, Stichwörter immer) erhalten den festen
+  Text ohne Retrieval und ohne Antwort-LLM.
   Unbekannte Schlüssel sind überall ein Fehler (`additionalProperties: false`).
 - Ein Export schreibt jedes gesetzte Feld inklusive der Runtime-Defaults aus
   (`exclude_none`); Felder mit dem Wert `null` fehlen.

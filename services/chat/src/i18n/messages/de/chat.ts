@@ -148,6 +148,7 @@ export const chat = {
   'guard.headline': 'Keine Belege gefunden.',
   // components/chat/message-bubble.tsx (Rückfrage-Chips)
   'clarification.optionsLabel': 'Mögliche Dokumente',
+  'clarification.intakeOptionsLabel': 'Antwortmöglichkeiten',
   'guard.reason.noContext': 'Es wurden keine passenden Belege in den durchsuchbaren Collections gefunden.',
   'guard.reason.noCollections':
     'Für diese Anfrage steht keine Collection zur Verfügung, die dieser Bot durchsuchen darf.',

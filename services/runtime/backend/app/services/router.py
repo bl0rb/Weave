@@ -80,6 +80,9 @@ class RouterDecision:
     # including when mode='rules' was requested outright (there is nothing
     # to fall back FROM in that case). See this module's docstring.
     router_fallback: bool = False
+    # The `bot.guard.blocked_topics` name this message falls under, else
+    # None -- see `_blocked_by_keywords` and `_decide_llm`.
+    blocked_topic: str | None = None
 
 
 class LLMCallable(Protocol):
@@ -263,12 +266,27 @@ def _matched_rules_intent(message: str, memory: bool = False) -> Intent | None:
     return None
 
 
+def _blocked_by_keywords(message: str, bot: BotConfig) -> str | None:
+    """The first `bot.guard.blocked_topics` entry one of whose `keywords`
+    occurs at a word start in `message` (case-insensitive), else None. The
+    deterministic floor of the topic block: applied in both modes, also
+    when the LLM classifier says nothing or fails."""
+    lowered = message.lower()
+    for topic in bot.guard.blocked_topics:
+        if any(re.search(rf'\b{re.escape(keyword.lower())}', lowered) for keyword in topic.keywords):
+            return topic.name
+    return None
+
+
 def _decide_rules(message: str, bot: BotConfig, memory: bool = False) -> RouterDecision:
     matched = _matched_rules_intent(message.lower(), memory)
     intent = matched if matched is not None else ('knowledge' if bot.retrieval.enabled else 'conversational')
     needs_retrieval, needs_tool = _flags_for_intent(intent, bot)
     confidence = _CONFIDENT if matched is not None else _DEFAULT
-    return RouterDecision(intent=intent, confidence=confidence, needs_retrieval=needs_retrieval, needs_tool=needs_tool)
+    return RouterDecision(
+        intent=intent, confidence=confidence, needs_retrieval=needs_retrieval, needs_tool=needs_tool,
+        blocked_topic=_blocked_by_keywords(message, bot),
+    )
 
 
 # --- LLM mode ----------------------------------------------------------------
@@ -312,7 +330,7 @@ def _strip_code_fence(text: str) -> str:
     return match.group(1) if match else text
 
 
-def _parse_llm_classification(raw: str, memory: bool = False) -> tuple[Intent, float]:
+def _parse_llm_classification(raw: str, memory: bool = False) -> tuple[Intent, float, str | None]:
     """Parse `raw` (an LLMCallable's return value) as
     `{"intent": ..., "confidence": ...}`. Raises ValueError for anything
     that doesn't yield a valid (Intent, float) pair -- malformed JSON, a
@@ -337,26 +355,51 @@ def _parse_llm_classification(raw: str, memory: bool = False) -> tuple[Intent, f
     if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
         raise ValueError(f'router LLM response has a non-numeric confidence: {confidence!r}')
 
-    return intent, float(confidence)
+    # Optional: only asked for when the bot blocks topics; anything but a
+    # string is "none" (an unknown name is dropped by `_decide_llm`).
+    blocked = data.get('blocked_topic')
+    return intent, float(confidence), blocked if isinstance(blocked, str) else None
 
 
-def _classification_messages(message: str, memory: bool = False) -> list[dict[str, str]]:
+def _blocked_topics_instruction(bot: BotConfig) -> str:
+    """Appended to the classifier prompt when the bot blocks topics -- the
+    topic check rides on the same single router call, no second one."""
+    topics = '\n'.join(
+        f'- {topic.name}' + (f': {topic.description}' if topic.description else '')
+        for topic in bot.guard.blocked_topics
+    )
+    return (
+        '\n\nThese topics are blocked for this bot:\n'
+        f'{topics}\n'
+        'If the message asks about, or for an opinion on, one of them, add "blocked_topic": "<the exact topic name '
+        'above>" to the JSON; otherwise add "blocked_topic": null.'
+    )
+
+
+def _classification_messages(message: str, memory: bool = False, bot: BotConfig | None = None) -> list[dict[str, str]]:
+    system = _LLM_MEMORY_SYSTEM_PROMPT if memory else _LLM_SYSTEM_PROMPT
+    if bot is not None and bot.guard.blocked_topics:
+        system += _blocked_topics_instruction(bot)
     return [
-        {'role': 'system', 'content': _LLM_MEMORY_SYSTEM_PROMPT if memory else _LLM_SYSTEM_PROMPT},
+        {'role': 'system', 'content': system},
         {'role': 'user', 'content': message},
     ]
 
 
 def _decide_llm(message: str, bot: BotConfig, llm_call: LLMCallable, memory: bool = False) -> RouterDecision:
     try:
-        raw = llm_call(_classification_messages(message, memory), bot.model.model)
-        intent, confidence = _parse_llm_classification(raw, memory)
+        raw = llm_call(_classification_messages(message, memory, bot), bot.model.model)
+        intent, confidence, blocked = _parse_llm_classification(raw, memory)
     except Exception as exc:  # noqa: BLE001 -- any provider/parse failure falls back, see module docstring
         logger.warning('router LLM classification failed, falling back to RULES: %s', exc)
         return replace(_decide_rules(message, bot, memory), router_fallback=True)
 
+    names = {topic.name for topic in bot.guard.blocked_topics}
     needs_retrieval, needs_tool = _flags_for_intent(intent, bot)
-    return RouterDecision(intent=intent, confidence=confidence, needs_retrieval=needs_retrieval, needs_tool=needs_tool)
+    return RouterDecision(
+        intent=intent, confidence=confidence, needs_retrieval=needs_retrieval, needs_tool=needs_tool,
+        blocked_topic=(blocked if blocked in names else None) or _blocked_by_keywords(message, bot),
+    )
 
 
 # --- Entry point ---------------------------------------------------------

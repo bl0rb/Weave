@@ -49,9 +49,57 @@
       "title": "AgentLimits",
       "type": "object"
     },
+    "BlockedTopic": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "keywords": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Keywords",
+          "type": "array"
+        },
+        "name": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "BlockedTopic",
+      "type": "object"
+    },
     "GuardConfig": {
       "additionalProperties": false,
       "properties": {
+        "blocked_topic_reply": {
+          "default": "Zu diesem Thema kann ich keine Auskunft geben.",
+          "title": "Blocked Topic Reply",
+          "type": "string"
+        },
+        "blocked_topics": {
+          "items": {
+            "$ref": "#/$defs/BlockedTopic"
+          },
+          "title": "Blocked Topics",
+          "type": "array"
+        },
         "clarify_ambiguous_margin": {
           "anyOf": [
             {
@@ -142,6 +190,48 @@
         }
       },
       "title": "GuardConfig",
+      "type": "object"
+    },
+    "IntakeConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_free_text": {
+          "default": true,
+          "title": "Allow Free Text",
+          "type": "boolean"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "options": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "title": "Options",
+          "type": "array"
+        },
+        "question": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Question",
+          "type": "string"
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "title": "IntakeConfig",
       "type": "object"
     },
     "ModelConfig": {
@@ -564,6 +654,17 @@
     "id": {
       "title": "Id",
       "type": "string"
+    },
+    "intake": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/IntakeConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "model": {
       "$ref": "#/$defs/ModelConfig"

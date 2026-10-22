@@ -268,6 +268,50 @@ def test_chat_options_project_to_runtime_and_round_trip_through_the_bot_document
     assert updated.json()['show_sources'] is True and updated.json()['disclaimer'] is None
 
 
+_INTAKE = {
+    'question': 'Um welche Beschäftigungsart geht es?', 'options': ['Vollzeit', 'Teilzeit'],
+    'allow_free_text': False, 'label': 'Beschäftigungsart',
+}
+_TOPICS = [{'name': 'Politische Themen', 'description': 'Parteien, Wahlen', 'keywords': ['partei']}]
+
+
+def test_intake_and_topic_block_project_to_runtime_and_round_trip_through_the_bot_document(monkeypatch):
+    admin_client, team_name, collection_slug = _setup('intake-admin')
+    plain = _payload(team_name, collection_slug)
+    assert admin_client.post('/api/v1/auth/admin/bots', json=plain).status_code == 201
+    payload = _llm_payload(
+        team_name, collection_slug, intake=_INTAKE, blocked_topics=_TOPICS, blocked_topic_reply='  Dazu nichts. ',
+    )
+    created = admin_client.post('/api/v1/auth/admin/bots', json=payload)
+    assert created.status_code == 201, created.text
+    assert created.json()['intake'] == _INTAKE
+    assert created.json()['blocked_topics'] == _TOPICS
+    assert created.json()['blocked_topic_reply'] == 'Dazu nichts.'
+
+    monkeypatch.setattr(settings, 'chat_config_service_token', 'runtime-control-token')
+    projected = {item['id']: item for item in admin_client.get('/api/v1/internal/bots', headers=INTERNAL).json()['items']}
+    assert projected[payload['id']]['intake'] == _INTAKE
+    assert projected[payload['id']]['blocked_topics'] == _TOPICS
+    assert projected[payload['id']]['blocked_topic_reply'] == 'Dazu nichts.'
+    assert projected[plain['id']]['intake'] is None and projected[plain['id']]['blocked_topics'] == []
+
+    exported = admin_client.get(f"/api/v1/auth/admin/bots/{payload['id']}/export").content
+    doc = yaml.safe_load(exported)
+    assert doc['intake'] == _INTAKE
+    assert doc['guard']['blocked_topics'] == _TOPICS and doc['guard']['blocked_topic_reply'] == 'Dazu nichts.'
+    applied = _import(admin_client, exported, dry_run=False, bot_id='kopie-mit-intake')
+    assert applied.status_code == 200, applied.text
+    assert applied.json()['bot']['intake'] == _INTAKE
+    assert applied.json()['bot']['blocked_topics'] == _TOPICS
+
+    plain_doc = yaml.safe_load(admin_client.get(f"/api/v1/auth/admin/bots/{plain['id']}/export").content)
+    assert plain_doc.get('intake') is None and plain_doc['guard'].get('blocked_topics', []) == []
+
+    assert admin_client.post('/api/v1/auth/admin/bots', json={**plain, 'id': 'n8n-mit-intake', 'intake': _INTAKE}).status_code == 422
+    invalid = {**_INTAKE, 'options': [], 'allow_free_text': False}
+    assert admin_client.post('/api/v1/auth/admin/bots', json={**payload, 'id': 'kaputt', 'intake': invalid}).status_code == 422
+
+
 def test_bot_id_override_must_be_a_slug_and_unique_ids_are_normalised():
     admin_client, team_name, collection_slug = _setup('override-admin')
     payload = _payload(team_name, collection_slug)

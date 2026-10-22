@@ -199,6 +199,30 @@ it('sends the chosen LLM endpoint and the endpoints offered in the chat', async 
   expect(body).toMatchObject({ llm_endpoint: 'tools-llm', llm_endpoints: ['default'] });
 });
 
+it('sends the intake question and blocked topics', async () => {
+  render(<BotsTab />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Bot hinzufügen' }));
+
+  fireEvent.change(screen.getByRole('textbox', { name: /^Bot-ID/ }), { target: { value: 'fk-bot' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Anzeigename' }), { target: { value: 'FK Bot' } });
+  step(/Verhalten/);
+  fireEvent.change(screen.getByRole('textbox', { name: 'System-Prompt' }), { target: { value: 'Antworte normal.' } });
+  fireEvent.click(screen.getByRole('switch', { name: 'Einstiegsfrage zu Gesprächsbeginn stellen' }));
+  fireEvent.change(screen.getByRole('textbox', { name: /^Frage/ }), { target: { value: ' Welche Beschäftigungsart? ' } });
+  fireEvent.change(screen.getByRole('textbox', { name: /^Antwortmöglichkeiten/ }), { target: { value: 'Vollzeit\n\nTeilzeit ' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Thema hinzufügen' }));
+  fireEvent.change(screen.getByRole('textbox', { name: /^Name/ }), { target: { value: 'Politik' } });
+  fireEvent.change(screen.getByRole('textbox', { name: /^Stichwörter/ }), { target: { value: 'partei, wahlen,' } });
+  step(/Überprüfen/);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Bot speichern' }));
+  await waitFor(() => expect(json.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true));
+  const body = JSON.parse(json.mock.calls.find(([, init]) => init?.method === 'POST')?.[1]?.body as string);
+  expect(body.intake).toEqual({ question: 'Welche Beschäftigungsart?', options: ['Vollzeit', 'Teilzeit'], allow_free_text: true, label: null });
+  expect(body.blocked_topics).toEqual([{ name: 'Politik', description: null, keywords: ['partei', 'wahlen'] }]);
+  expect(body.blocked_topic_reply).toBeNull();
+});
+
 it('keeps config_extras when editing an existing bot', async () => {
   const extras = { clarify_max_options: 3, clarify_question: 'Welches Produkt?' };
   json.mockImplementation(async (path, init) => {

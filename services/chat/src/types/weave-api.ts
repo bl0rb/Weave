@@ -150,8 +150,14 @@ export interface GuardTrace {
    * `RetrievalTrace.requested_collections` above) narrowed it to nothing
    * — a situation the caller can fix by lifting their own filter, unlike
    * "no_collections" which no selection change can fix.
+   * "intake": the bot's intake question, asked before the first knowledge
+   * answer — `ChatTrace.clarification` carries its answer options.
+   * "blocked_topic": the question matched a blocked topic (`topic`); the
+   * answer is the bot's fixed refusal.
    */
-  reason: 'no_context' | 'no_collections' | 'filter_excluded_all' | 'clarify' | null;
+  reason: 'no_context' | 'no_collections' | 'filter_excluded_all' | 'clarify' | 'intake' | 'blocked_topic' | null;
+  /** Set exactly when `reason === 'blocked_topic'`. Optional: older traces lack it. */
+  topic?: string | null;
 }
 
 /**
@@ -221,20 +227,21 @@ export interface ChatTrace {
    * initial `trace` event (the research loop hasn't run yet at that
    * point) — see `AgentTrace` above. */
   agent: AgentTrace | null;
-  /** Set exactly when `guard.reason === 'clarify'` — the clarifying
+  /** Set exactly when `guard.reason` is 'clarify' or 'intake' — the clarifying
    * question the bot asked instead of answering, plus the candidate
    * documents to offer as one-click follow-ups (see `Clarification`).
    * Optional: traces persisted before this field existed lack it. */
   clarification?: Clarification | null;
 }
 
-/** One candidate document behind a clarifying question. `message` is the
- * ready-made follow-up the UI sends verbatim as the next user message when
- * the option is picked (original question + document). */
+/** One candidate document behind a clarifying question, or one answer to
+ * the intake question (`document_id` null). `message` is the ready-made
+ * follow-up the UI sends verbatim as the next user message when the option
+ * is picked (original question + document, or the intake answer). */
 export interface ClarificationOption {
   label: string;
   message: string;
-  document_id: string;
+  document_id: string | null;
   collection: string | null;
 }
 

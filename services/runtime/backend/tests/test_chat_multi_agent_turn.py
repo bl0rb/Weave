@@ -205,7 +205,7 @@ def test_multi_agent_turn_guard_fires_when_no_subagent_finds_anything(tmp_path, 
     body = response.json()
     assert body['sources'] == []
     assert body['answer'] == 'Nichts gefunden.'
-    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_context'}
+    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_context', 'topic': None}
 
 
 # --- streaming POST /internal/chat/stream ------------------------------------

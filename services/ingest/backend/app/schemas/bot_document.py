@@ -182,6 +182,20 @@ DEFAULT_CLARIFY_QUESTION = (
 DEFAULT_CLARIFY_AMBIGUOUS_QUESTION = (
     'Deine Frage passt zu mehreren Dokumenten: {documents}. Welches meinst du?'
 )
+DEFAULT_BLOCKED_TOPIC_REPLY = 'Zu diesem Thema kann ich keine Auskunft geben.'
+
+
+class BlockedTopic(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    name: str = Field(min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=500)
+    keywords: list[str] = Field(default_factory=list)
+
+    @field_validator('keywords')
+    @classmethod
+    def _non_empty_keywords(cls, value: list[str]) -> list[str]:
+        return [keyword.strip() for keyword in value if keyword.strip()]
 
 
 class GuardConfig(BaseModel):
@@ -197,6 +211,36 @@ class GuardConfig(BaseModel):
     clarify_ambiguous_question: str = DEFAULT_CLARIFY_AMBIGUOUS_QUESTION
     uncertainty_hint: bool = True
     weak_context_below: float | None = Field(default=None, ge=0.0, le=1.0)
+    blocked_topics: list[BlockedTopic] = Field(default_factory=list)
+    blocked_topic_reply: str = DEFAULT_BLOCKED_TOPIC_REPLY
+
+    @model_validator(mode='after')
+    def _unique_blocked_topic_names(self) -> 'GuardConfig':
+        names = [topic.name for topic in self.blocked_topics]
+        duplicates = sorted({name for name in names if names.count(name) > 1})
+        if duplicates:
+            raise ValueError(f'guard.blocked_topics names must be unique -- duplicated: {duplicates}')
+        return self
+
+
+class IntakeConfig(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    question: str = Field(min_length=1, max_length=500)
+    options: list[str] = Field(default_factory=list, max_length=10)
+    allow_free_text: bool = True
+    label: str | None = Field(default=None, max_length=100)
+
+    @field_validator('options')
+    @classmethod
+    def _non_empty_options(cls, value: list[str]) -> list[str]:
+        return [option.strip() for option in value if option.strip()]
+
+    @model_validator(mode='after')
+    def _options_or_free_text(self) -> 'IntakeConfig':
+        if not self.options and not self.allow_free_text:
+            raise ValueError('intake.allow_free_text is false but intake.options is empty -- nothing could be answered')
+        return self
 
 
 class BotConfig(BaseModel):
@@ -215,6 +259,7 @@ class BotConfig(BaseModel):
     agent: AgentConfig | None = None
     show_sources: bool = True
     disclaimer: str | None = Field(default=None, max_length=500)
+    intake: IntakeConfig | None = None
 
     @field_validator('id')
     @classmethod
@@ -240,6 +285,8 @@ class BotConfig(BaseModel):
                 f"an 'n8n:' block is configured but model.provider is {self.model.provider!r}, not 'n8n' -- "
                 "either set model.provider to 'n8n' or remove the 'n8n:' block"
             )
+        if is_n8n_provider and self.intake is not None:
+            raise ValueError("an 'intake:' block is configured but model.provider is 'n8n' -- n8n bots run their own flow")
         return self
 
     @model_validator(mode='after')
