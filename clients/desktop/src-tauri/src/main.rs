@@ -126,7 +126,19 @@ fn keyring_entry(server: &str) -> Option<keyring::Entry> {
 }
 
 fn notify_state(app: &AppHandle) {
-    let _ = app.emit("state-changed", ());
+    emit_to_visible(app, "state-changed");
+}
+
+/// Tells the open windows that something changed. A window waiting hidden in
+/// the tray is left alone: after an event, WebKit keeps a hidden window on the
+/// display link for good (~1.5 % CPU while Weave idles). It catches up anyway
+/// when shown (`panel-shown` refreshes everything).
+fn emit_to_visible(app: &AppHandle, event: &str) {
+    for (label, window) in app.webview_windows() {
+        if window.is_visible().unwrap_or(false) {
+            let _ = app.emit_to(label.as_str(), event, ());
+        }
+    }
 }
 
 /// Drops the session after weave-api rejected it, so the UI offers sign-in.
@@ -428,9 +440,9 @@ async fn check_for_updates(app: AppHandle) {
 
 #[tauri::command]
 async fn install_update(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    let _ = app.emit("update-changed", ());
+    emit_to_visible(&app, "update-changed");
     let result = state.updates.install(&app).await;
-    let _ = app.emit("update-changed", ());
+    emit_to_visible(&app, "update-changed");
     result
 }
 
@@ -439,9 +451,7 @@ async fn run_update_check(app: &AppHandle) {
     if !state.updates_enabled() {
         return;
     }
-    let notify = |app: &AppHandle| {
-        let _ = app.emit("update-changed", ());
-    };
+    let notify = |app: &AppHandle| emit_to_visible(app, "update-changed");
     let feed = state.managed.update_url.clone();
     let task = state.updates.check(app, feed.as_deref());
     notify(app);
@@ -532,7 +542,8 @@ fn show_main(app: &AppHandle) {
     let _ = panel.show();
     update_dock(app);
     let _ = panel.set_focus();
-    let _ = panel.emit("panel-shown", ());
+    // Only to this window: the other one stays hidden and untouched.
+    let _ = panel.emit_to("panel", "panel-shown", ());
 }
 
 /// macOS: Weave is a menu-bar app; it shows in the Dock and Cmd+Tab only
@@ -559,7 +570,7 @@ fn show_quick(app: &AppHandle) {
     place_quick(app, &quick);
     show_without_activating(&quick);
     refresh_shadow(&quick);
-    let _ = quick.emit("panel-shown", ());
+    let _ = quick.emit_to("quick", "panel-shown", ());
 }
 
 fn place_quick(app: &AppHandle, quick: &WebviewWindow) {
@@ -809,9 +820,9 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 let app = app.clone();
                 if app.state::<AppState>().updates.available_version().is_some() {
                     tauri::async_runtime::spawn(async move {
-                        let _ = app.emit("update-changed", ());
+                        emit_to_visible(&app, "update-changed");
                         let _ = app.state::<AppState>().updates.install(&app).await;
-                        let _ = app.emit("update-changed", ());
+                        emit_to_visible(&app, "update-changed");
                     });
                 } else {
                     let _ = show_settings(&app);
