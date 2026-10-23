@@ -237,7 +237,6 @@
       },
       "AgentConfig": {
         "additionalProperties": false,
-        "description": "Mirrors Weave-Runtime's `AgentConfig` (app/schemas/bot.py) --\n`BotConfig.agent`'s exact shape, so an admin-saved agent-mode\nconfiguration is validated here, with a readable 422 detail on a\nmalformed shape, instead of only failing silently as an opaque dict\nthat Runtime rejects at its own next bot-load. Field names/defaults\nare kept identical to Runtime's own model on purpose (see that\nmodule's own docstring for the reasoning behind each one).",
         "properties": {
           "enabled": {
             "default": false,
@@ -249,9 +248,8 @@
           },
           "subagents": {
             "items": {
-              "$ref": "#/components/schemas/AgentSubagent"
+              "$ref": "#/components/schemas/SubagentConfig"
             },
-            "maxItems": 20,
             "title": "Subagents",
             "type": "array"
           }
@@ -261,278 +259,29 @@
       },
       "AgentLimits": {
         "additionalProperties": false,
-        "description": "Mirrors Weave-Runtime's `AgentLimits` (app/schemas/bot.py),\nincluding its defaults -- rollout plan \"Schritt 4\" start values\n(3/1/9/120).",
         "properties": {
           "budget_searches": {
             "default": 9,
-            "maximum": 500.0,
-            "minimum": 0.0,
             "title": "Budget Searches",
             "type": "integer"
           },
           "max_followups": {
             "default": 1,
-            "maximum": 10.0,
-            "minimum": 0.0,
             "title": "Max Followups",
             "type": "integer"
           },
           "max_parallel": {
             "default": 3,
-            "maximum": 20.0,
-            "minimum": 1.0,
             "title": "Max Parallel",
             "type": "integer"
           },
           "timeout_seconds": {
             "default": 120,
-            "maximum": 3600.0,
-            "minimum": 1.0,
             "title": "Timeout Seconds",
             "type": "integer"
           }
         },
         "title": "AgentLimits",
-        "type": "object"
-      },
-      "AgentSubagent": {
-        "additionalProperties": false,
-        "description": "Mirrors Weave-Runtime's `SubagentConfig` (app/schemas/bot.py) --\nfield names, defaults and the two cross-field rules below (unique id\nshape, collections-or-uncollected) are kept identical to that model on\npurpose, so a shape this validator accepts is guaranteed to be one\nRuntime's own loader will accept too, and a shape it rejects gives a\nreadable 422 here instead of only surfacing as a Runtime-side bot-load\nfailure the next time this bot's turn runs.",
-        "properties": {
-          "collections": {
-            "items": {
-              "type": "string"
-            },
-            "maxItems": 500,
-            "title": "Collections",
-            "type": "array"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "maxLength": 2000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "endpoint": {
-            "anyOf": [
-              {
-                "maxLength": 36,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Endpoint"
-          },
-          "filters": {
-            "$ref": "#/components/schemas/AgentSubagentFilters"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "include_uncollected": {
-            "default": false,
-            "title": "Include Uncollected",
-            "type": "boolean"
-          },
-          "limits": {
-            "$ref": "#/components/schemas/AgentSubagentLimits"
-          },
-          "mission": {
-            "maxLength": 4000,
-            "minLength": 1,
-            "title": "Mission",
-            "type": "string"
-          },
-          "model": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AgentSubagentModel"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "name": {
-            "maxLength": 255,
-            "minLength": 1,
-            "title": "Name",
-            "type": "string"
-          },
-          "tools": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Tools",
-            "type": "array"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "mission"
-        ],
-        "title": "AgentSubagent",
-        "type": "object"
-      },
-      "AgentSubagentFilters": {
-        "additionalProperties": false,
-        "description": "Mirrors Weave-Runtime's `RetrievalFilters` (app/schemas/bot.py) --\nfield names and defaults kept identical on purpose so a saved payload\nhere is byte-for-byte what Runtime's own `AgentConfig` will accept when\nit next loads this bot.",
-        "properties": {
-          "department": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Department"
-          },
-          "document_type": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Document Type"
-          },
-          "language": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Language"
-          },
-          "source": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source"
-          },
-          "tags": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tags"
-          },
-          "team": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Team"
-          }
-        },
-        "title": "AgentSubagentFilters",
-        "type": "object"
-      },
-      "AgentSubagentLimits": {
-        "additionalProperties": false,
-        "description": "Mirrors Weave-Runtime's `SubagentLimits` (app/schemas/bot.py),\nincluding its defaults -- rollout plan \"Schritt 4\" start values.",
-        "properties": {
-          "max_results": {
-            "default": 5,
-            "maximum": 50.0,
-            "minimum": 1.0,
-            "title": "Max Results",
-            "type": "integer"
-          },
-          "max_searches": {
-            "default": 3,
-            "maximum": 50.0,
-            "minimum": 1.0,
-            "title": "Max Searches",
-            "type": "integer"
-          },
-          "timeout_seconds": {
-            "default": 60,
-            "maximum": 3600.0,
-            "minimum": 1.0,
-            "title": "Timeout Seconds",
-            "type": "integer"
-          }
-        },
-        "title": "AgentSubagentLimits",
-        "type": "object"
-      },
-      "AgentSubagentModel": {
-        "additionalProperties": false,
-        "description": "Mirrors Weave-Runtime's `ModelConfig` (app/schemas/bot.py) -- a\nsubagent's own model override. `supports_tools` only matters for a\nnon-'fake' provider; 'unknown' (`None`) means 'assume no tool support',\nexactly like Runtime -- see AgentConfig.validate_subagent_models_support_tools.",
-        "properties": {
-          "model": {
-            "minLength": 1,
-            "title": "Model",
-            "type": "string"
-          },
-          "provider": {
-            "default": "fake",
-            "title": "Provider",
-            "type": "string"
-          },
-          "supports_tools": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Supports Tools"
-          },
-          "temperature": {
-            "anyOf": [
-              {
-                "maximum": 2.0,
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Temperature"
-          }
-        },
-        "required": [
-          "model"
-        ],
-        "title": "AgentSubagentModel",
         "type": "object"
       },
       "ApiTokenCreateRequest": {
@@ -866,411 +615,39 @@
         "title": "BackupRunResponse",
         "type": "object"
       },
-      "BenchmarkDeleteResponse": {
+      "BlockedTopic": {
+        "additionalProperties": false,
         "properties": {
-          "deleted_jobs": {
-            "default": 0,
-            "title": "Deleted Jobs",
-            "type": "integer"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id"
-        ],
-        "title": "BenchmarkDeleteResponse",
-        "type": "object"
-      },
-      "BenchmarkReportResponse": {
-        "properties": {
-          "all_terminal": {
-            "title": "All Terminal",
-            "type": "boolean"
-          },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "original_filename": {
-            "title": "Original Filename",
-            "type": "string"
-          },
-          "status": {
-            "$ref": "#/components/schemas/BenchmarkRunStatus"
-          },
-          "summary": {
-            "$ref": "#/components/schemas/BenchmarkReportSummary"
-          },
-          "variants": {
-            "items": {
-              "$ref": "#/components/schemas/BenchmarkVariantMetrics"
-            },
-            "title": "Variants",
-            "type": "array"
-          }
-        },
-        "required": [
-          "id",
-          "original_filename",
-          "status",
-          "all_terminal",
-          "created_at",
-          "summary"
-        ],
-        "title": "BenchmarkReportResponse",
-        "type": "object"
-      },
-      "BenchmarkReportSummary": {
-        "properties": {
-          "fastest_variant_job_id": {
+          "description": {
             "anyOf": [
               {
+                "maxLength": 500,
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Fastest Variant Job Id"
+            "title": "Description"
           },
-          "highest_quality_variant_job_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Highest Quality Variant Job Id"
-          }
-        },
-        "title": "BenchmarkReportSummary",
-        "type": "object"
-      },
-      "BenchmarkRunDetailResponse": {
-        "properties": {
-          "content_sha256": {
-            "title": "Content Sha256",
-            "type": "string"
-          },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "original_filename": {
-            "title": "Original Filename",
-            "type": "string"
-          },
-          "owner": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/BenchmarkRunOwner"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "status": {
-            "$ref": "#/components/schemas/BenchmarkRunStatus"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "title": "Updated At",
-            "type": "string"
-          },
-          "variant_count": {
-            "title": "Variant Count",
-            "type": "integer"
-          },
-          "variants": {
-            "items": {
-              "$ref": "#/components/schemas/BenchmarkVariantResponse"
-            },
-            "title": "Variants",
-            "type": "array"
-          }
-        },
-        "required": [
-          "id",
-          "original_filename",
-          "content_sha256",
-          "status",
-          "variant_count",
-          "created_at",
-          "updated_at"
-        ],
-        "title": "BenchmarkRunDetailResponse",
-        "type": "object"
-      },
-      "BenchmarkRunListResponse": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/BenchmarkRunSummaryResponse"
-            },
-            "title": "Items",
-            "type": "array"
-          }
-        },
-        "required": [
-          "items"
-        ],
-        "title": "BenchmarkRunListResponse",
-        "type": "object"
-      },
-      "BenchmarkRunOwner": {
-        "properties": {
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "username": {
-            "title": "Username",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "username"
-        ],
-        "title": "BenchmarkRunOwner",
-        "type": "object"
-      },
-      "BenchmarkRunStatus": {
-        "enum": [
-          "pending",
-          "running",
-          "completed",
-          "failed"
-        ],
-        "title": "BenchmarkRunStatus",
-        "type": "string"
-      },
-      "BenchmarkRunSummaryResponse": {
-        "properties": {
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "original_filename": {
-            "title": "Original Filename",
-            "type": "string"
-          },
-          "owner": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/BenchmarkRunOwner"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "status": {
-            "$ref": "#/components/schemas/BenchmarkRunStatus"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "title": "Updated At",
-            "type": "string"
-          },
-          "variant_count": {
-            "title": "Variant Count",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "id",
-          "original_filename",
-          "status",
-          "variant_count",
-          "created_at",
-          "updated_at"
-        ],
-        "title": "BenchmarkRunSummaryResponse",
-        "type": "object"
-      },
-      "BenchmarkVariantMetrics": {
-        "properties": {
-          "duration_seconds": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Duration Seconds"
-          },
-          "error": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Error"
-          },
-          "job_id": {
-            "title": "Job Id",
-            "type": "string"
-          },
-          "kind": {
-            "title": "Kind",
-            "type": "string"
-          },
-          "label": {
-            "title": "Label",
-            "type": "string"
-          },
-          "output_chars": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Output Chars"
-          },
-          "page_count": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Page Count"
-          },
-          "quality_grade": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Quality Grade"
-          },
-          "status": {
-            "$ref": "#/components/schemas/JobStatus"
-          },
-          "used_fallback": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Used Fallback"
-          }
-        },
-        "required": [
-          "job_id",
-          "label",
-          "kind",
-          "status"
-        ],
-        "title": "BenchmarkVariantMetrics",
-        "type": "object"
-      },
-      "BenchmarkVariantResponse": {
-        "properties": {
-          "error_message": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Error Message"
-          },
-          "job_id": {
-            "title": "Job Id",
-            "type": "string"
-          },
-          "kind": {
-            "title": "Kind",
-            "type": "string"
-          },
-          "label": {
-            "title": "Label",
-            "type": "string"
-          },
-          "status": {
-            "$ref": "#/components/schemas/JobStatus"
-          }
-        },
-        "required": [
-          "job_id",
-          "label",
-          "kind",
-          "status"
-        ],
-        "title": "BenchmarkVariantResponse",
-        "type": "object"
-      },
-      "Body_create_benchmark_api_v1_benchmarks_post": {
-        "properties": {
-          "file": {
-            "contentMediaType": "application/octet-stream",
-            "title": "File",
-            "type": "string"
-          },
-          "profile_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Profile Id"
-          },
-          "vl_connection_ids": {
+          "keywords": {
             "items": {
               "type": "string"
             },
-            "title": "Vl Connection Ids",
+            "title": "Keywords",
             "type": "array"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
           }
         },
         "required": [
-          "file"
+          "name"
         ],
-        "title": "Body_create_benchmark_api_v1_benchmarks_post",
+        "title": "BlockedTopic",
         "type": "object"
       },
       "Body_create_import_api_v1_admin_backup_imports_post": {
@@ -1295,6 +672,45 @@
           "passphrase"
         ],
         "title": "Body_create_import_api_v1_admin_backup_imports_post",
+        "type": "object"
+      },
+      "Body_import_managed_bot_api_v1_auth_admin_bots_import_post": {
+        "properties": {
+          "bot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bot Id"
+          },
+          "dry_run": {
+            "default": true,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "on_conflict": {
+            "default": "fail",
+            "enum": [
+              "fail",
+              "overwrite"
+            ],
+            "title": "On Conflict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_managed_bot_api_v1_auth_admin_bots_import_post",
         "type": "object"
       },
       "Body_upload_document_api_v1_upload_post": {
@@ -1372,12 +788,77 @@
             "default": "",
             "title": "Tags",
             "type": "string"
+          },
+          "transcript_instructions": {
+            "default": "",
+            "title": "Transcript Instructions",
+            "type": "string"
           }
         },
         "required": [
           "file"
         ],
         "title": "Body_upload_document_to_collection_api_v1_collections__collection_id__upload_post",
+        "type": "object"
+      },
+      "BotConfigExtras": {
+        "additionalProperties": false,
+        "description": "Guard fields of Runtime's `GuardConfig` that have no column of their\nown (`ManagedBot.config_extras`): every one optional, an omitted key\nmeans \"Runtime default\" and is not projected at all.",
+        "properties": {
+          "clarify_ambiguous_margin": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clarify Ambiguous Margin"
+          },
+          "clarify_ambiguous_question": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clarify Ambiguous Question"
+          },
+          "clarify_max_options": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clarify Max Options"
+          },
+          "clarify_question": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clarify Question"
+          }
+        },
+        "title": "BotConfigExtras",
         "type": "object"
       },
       "BotGrantInput": {
@@ -1470,6 +951,137 @@
           "name"
         ],
         "title": "BotGrantResponse",
+        "type": "object"
+      },
+      "BotImportReport": {
+        "description": "Result of `POST /api/v1/auth/admin/bots/import` (dry run or applied,\nsee contracts/bot-document.md): what the file is, what would happen to\nit, and why not.",
+        "properties": {
+          "action": {
+            "enum": [
+              "create",
+              "overwrite",
+              "blocked"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "applied": {
+            "default": false,
+            "title": "Applied",
+            "type": "boolean"
+          },
+          "bot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManagedBotAdminResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "bot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bot Id"
+          },
+          "conflict": {
+            "anyOf": [
+              {
+                "enum": [
+                  "managed",
+                  "runtime",
+                  "tombstoned"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conflict"
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "schema_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schema Version"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/BotImportWarningItem"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "BotImportReport",
+        "type": "object"
+      },
+      "BotImportWarningItem": {
+        "properties": {
+          "code": {
+            "enum": [
+              "missing_secret",
+              "dropped_field",
+              "permissions_reset"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "detail"
+        ],
+        "title": "BotImportWarningItem",
         "type": "object"
       },
       "BotRole": {
@@ -1620,6 +1232,17 @@
           "enabled": {
             "title": "Enabled",
             "type": "boolean"
+          },
+          "knowledge_memory_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledge Memory Mode"
           },
           "model": {
             "default": "",
@@ -2738,6 +2361,16 @@
             "minLength": 1,
             "title": "Source Id",
             "type": "string"
+          },
+          "sync": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ImportSyncSchedule"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -2941,6 +2574,17 @@
           },
           "status": {
             "$ref": "#/components/schemas/ImportRunStatus"
+          },
+          "sync_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sync Id"
           },
           "updated_at": {
             "format": "date-time",
@@ -3250,6 +2894,17 @@
           "status": {
             "$ref": "#/components/schemas/ImportRunStatus"
           },
+          "sync_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sync Id"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -3386,29 +3041,6 @@
             "title": "Id",
             "type": "string"
           },
-          "last_refresh_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Refresh At"
-          },
-          "last_refresh_error": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Refresh Error"
-          },
           "last_validated_at": {
             "anyOf": [
               {
@@ -3425,26 +3057,15 @@
             "title": "Name",
             "type": "string"
           },
-          "refresh_enabled": {
-            "default": false,
-            "title": "Refresh Enabled",
-            "type": "boolean"
-          },
-          "refresh_interval_seconds": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Refresh Interval Seconds"
-          },
           "server_kind": {
             "default": "",
             "title": "Server Kind",
             "type": "string"
+          },
+          "sync_count": {
+            "default": 0,
+            "title": "Sync Count",
+            "type": "integer"
           }
         },
         "required": [
@@ -3553,19 +3174,217 @@
               }
             ],
             "title": "Name"
+          }
+        },
+        "title": "ImportSourceUpdateRequest",
+        "type": "object"
+      },
+      "ImportSyncLastRun": {
+        "description": "The configuration's most recent run of any status.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
           },
-          "refresh_enabled": {
+          "finished_at": {
             "anyOf": [
               {
-                "type": "boolean"
+                "format": "date-time",
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Refresh Enabled"
+            "title": "Finished At"
           },
-          "refresh_interval_seconds": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "is_refresh": {
+            "default": false,
+            "title": "Is Refresh",
+            "type": "boolean"
+          },
+          "pages_failed": {
+            "default": 0,
+            "title": "Pages Failed",
+            "type": "integer"
+          },
+          "pages_imported": {
+            "default": 0,
+            "title": "Pages Imported",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ImportRunStatus"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "created_at"
+        ],
+        "title": "ImportSyncLastRun",
+        "type": "object"
+      },
+      "ImportSyncListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ImportSyncResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ImportSyncListResponse",
+        "type": "object"
+      },
+      "ImportSyncResponse": {
+        "properties": {
+          "collection_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection Id"
+          },
+          "collection_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection Name"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "interval_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interval Seconds"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "last_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ImportSyncLastRun"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_success_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Success At"
+          },
+          "next_refresh_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Refresh At"
+          },
+          "options": {
+            "$ref": "#/components/schemas/ImportRunOptions"
+          },
+          "root_page_title": {
+            "default": "",
+            "title": "Root Page Title",
+            "type": "string"
+          },
+          "scope_type": {
+            "title": "Scope Type",
+            "type": "string"
+          },
+          "scope_value": {
+            "title": "Scope Value",
+            "type": "string"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_name": {
+            "default": "",
+            "title": "Source Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "source_id",
+          "scope_type",
+          "scope_value",
+          "created_at"
+        ],
+        "title": "ImportSyncResponse",
+        "type": "object"
+      },
+      "ImportSyncSchedule": {
+        "description": "Auto-sync of an import configuration. interval_seconds is\nserver-clamped to >= settings.confluence_refresh_min_interval_seconds.",
+        "properties": {
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "interval_seconds": {
             "anyOf": [
               {
                 "minimum": 1.0,
@@ -3575,10 +3394,49 @@
                 "type": "null"
               }
             ],
-            "title": "Refresh Interval Seconds"
+            "title": "Interval Seconds"
           }
         },
-        "title": "ImportSourceUpdateRequest",
+        "title": "ImportSyncSchedule",
+        "type": "object"
+      },
+      "ImportSyncUpdateRequest": {
+        "properties": {
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "interval_seconds": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interval Seconds"
+          },
+          "options": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ImportRunOptions"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "ImportSyncUpdateRequest",
         "type": "object"
       },
       "ImportWithdrawalRequest": {
@@ -3590,6 +3448,47 @@
           }
         },
         "title": "ImportWithdrawalRequest",
+        "type": "object"
+      },
+      "IntakeConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_free_text": {
+            "default": true,
+            "title": "Allow Free Text",
+            "type": "boolean"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "options": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Options",
+            "type": "array"
+          },
+          "question": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "title": "IntakeConfig",
         "type": "object"
       },
       "IntrospectionRequest": {
@@ -4012,6 +3911,197 @@
         "title": "JobVersionsResponse",
         "type": "object"
       },
+      "KnowledgeMemoryAdminResponse": {
+        "properties": {
+          "debounce_seconds": {
+            "default": 120,
+            "maximum": 86400.0,
+            "minimum": 10.0,
+            "title": "Debounce Seconds",
+            "type": "integer"
+          },
+          "llm_endpoint": {
+            "default": "default",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Llm Endpoint",
+            "type": "string"
+          },
+          "managed": {
+            "title": "Managed",
+            "type": "boolean"
+          },
+          "max_documents_per_run": {
+            "default": 25,
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Max Documents Per Run",
+            "type": "integer"
+          },
+          "max_input_chars": {
+            "default": 12000,
+            "maximum": 200000.0,
+            "minimum": 1000.0,
+            "title": "Max Input Chars",
+            "type": "integer"
+          },
+          "mode": {
+            "default": "off",
+            "enum": [
+              "off",
+              "extractive",
+              "llm"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "managed"
+        ],
+        "title": "KnowledgeMemoryAdminResponse",
+        "type": "object"
+      },
+      "KnowledgeMemoryInternalResponse": {
+        "properties": {
+          "debounce_seconds": {
+            "default": 120,
+            "maximum": 86400.0,
+            "minimum": 10.0,
+            "title": "Debounce Seconds",
+            "type": "integer"
+          },
+          "llm_endpoint": {
+            "default": "default",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Llm Endpoint",
+            "type": "string"
+          },
+          "managed": {
+            "title": "Managed",
+            "type": "boolean"
+          },
+          "max_documents_per_run": {
+            "default": 25,
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Max Documents Per Run",
+            "type": "integer"
+          },
+          "max_input_chars": {
+            "default": 12000,
+            "maximum": 200000.0,
+            "minimum": 1000.0,
+            "title": "Max Input Chars",
+            "type": "integer"
+          },
+          "mode": {
+            "default": "off",
+            "enum": [
+              "off",
+              "extractive",
+              "llm"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "managed"
+        ],
+        "title": "KnowledgeMemoryInternalResponse",
+        "type": "object"
+      },
+      "KnowledgeMemoryRebuildRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "collection": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection"
+          }
+        },
+        "title": "KnowledgeMemoryRebuildRequest",
+        "type": "object"
+      },
+      "KnowledgeMemoryRebuildResponse": {
+        "properties": {
+          "queued": {
+            "title": "Queued",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "queued"
+        ],
+        "title": "KnowledgeMemoryRebuildResponse",
+        "type": "object"
+      },
+      "KnowledgeMemoryUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "debounce_seconds": {
+            "default": 120,
+            "maximum": 86400.0,
+            "minimum": 10.0,
+            "title": "Debounce Seconds",
+            "type": "integer"
+          },
+          "llm_endpoint": {
+            "default": "default",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Llm Endpoint",
+            "type": "string"
+          },
+          "max_documents_per_run": {
+            "default": 25,
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Max Documents Per Run",
+            "type": "integer"
+          },
+          "max_input_chars": {
+            "default": 12000,
+            "maximum": 200000.0,
+            "minimum": 1000.0,
+            "title": "Max Input Chars",
+            "type": "integer"
+          },
+          "mode": {
+            "default": "off",
+            "enum": [
+              "off",
+              "extractive",
+              "llm"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "title": "KnowledgeMemoryUpdateRequest",
+        "type": "object"
+      },
       "KnowledgeOrphanCleanupRequest": {
         "description": "`dry_run` defaults to true. Applying requires the orphan count of the\ndry run the admin reviewed, so nothing is withdrawn that was not shown.",
         "properties": {
@@ -4262,6 +4352,25 @@
             ],
             "title": "Agent"
           },
+          "blocked_topic_reply": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked Topic Reply"
+          },
+          "blocked_topics": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Blocked Topics",
+            "type": "array"
+          },
           "clarify_below": {
             "anyOf": [
               {
@@ -4280,6 +4389,18 @@
             "title": "Collections",
             "type": "array"
           },
+          "config_extras": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Extras"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -4295,6 +4416,17 @@
               }
             ],
             "title": "Description"
+          },
+          "disclaimer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disclaimer"
           },
           "editable": {
             "default": true,
@@ -4329,6 +4461,18 @@
             "default": true,
             "title": "Include Uncollected",
             "type": "boolean"
+          },
+          "intake": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intake"
           },
           "kind": {
             "title": "Kind",
@@ -4405,6 +4549,16 @@
             "additionalProperties": true,
             "title": "Retrieval Filters",
             "type": "object"
+          },
+          "runtime_rejected": {
+            "default": false,
+            "title": "Runtime Rejected",
+            "type": "boolean"
+          },
+          "show_sources": {
+            "default": true,
+            "title": "Show Sources",
+            "type": "boolean"
           },
           "source": {
             "default": "managed",
@@ -4523,6 +4677,26 @@
             ],
             "title": "Auth Token"
           },
+          "blocked_topic_reply": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked Topic Reply"
+          },
+          "blocked_topics": {
+            "items": {
+              "$ref": "#/components/schemas/BlockedTopic"
+            },
+            "maxItems": 20,
+            "title": "Blocked Topics",
+            "type": "array"
+          },
           "clarify_below": {
             "anyOf": [
               {
@@ -4549,6 +4723,16 @@
             "title": "Collections",
             "type": "array"
           },
+          "config_extras": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotConfigExtras"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "description": {
             "anyOf": [
               {
@@ -4560,6 +4744,18 @@
               }
             ],
             "title": "Description"
+          },
+          "disclaimer": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disclaimer"
           },
           "enabled": {
             "default": true,
@@ -4591,6 +4787,16 @@
             "default": false,
             "title": "Include Uncollected",
             "type": "boolean"
+          },
+          "intake": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IntakeConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "kind": {
             "default": "n8n",
@@ -4682,6 +4888,11 @@
             "additionalProperties": true,
             "title": "Retrieval Filters",
             "type": "object"
+          },
+          "show_sources": {
+            "default": true,
+            "title": "Show Sources",
+            "type": "boolean"
           },
           "streaming": {
             "default": false,
@@ -4804,6 +5015,47 @@
             "title": "Auth Token",
             "type": "string"
           },
+          "blocked_topic_reply": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked Topic Reply"
+          },
+          "blocked_topics": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Blocked Topics",
+            "type": "array"
+          },
+          "clarify_ambiguous_margin": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clarify Ambiguous Margin"
+          },
+          "clarify_ambiguous_question": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clarify Ambiguous Question"
+          },
           "clarify_below": {
             "anyOf": [
               {
@@ -4814,6 +5066,28 @@
               }
             ],
             "title": "Clarify Below"
+          },
+          "clarify_max_options": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clarify Max Options"
+          },
+          "clarify_question": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clarify Question"
           },
           "collections": {
             "items": {
@@ -4833,6 +5107,17 @@
             ],
             "title": "Description"
           },
+          "disclaimer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disclaimer"
+          },
           "final_k": {
             "default": 5,
             "title": "Final K",
@@ -4846,6 +5131,18 @@
             "default": true,
             "title": "Include Uncollected",
             "type": "boolean"
+          },
+          "intake": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intake"
           },
           "kind": {
             "default": "n8n",
@@ -4923,6 +5220,11 @@
             "additionalProperties": true,
             "title": "Retrieval Filters",
             "type": "object"
+          },
+          "show_sources": {
+            "default": true,
+            "title": "Show Sources",
+            "type": "boolean"
           },
           "streaming": {
             "title": "Streaming",
@@ -5366,6 +5668,26 @@
             ],
             "title": "Auth Token"
           },
+          "blocked_topic_reply": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked Topic Reply"
+          },
+          "blocked_topics": {
+            "items": {
+              "$ref": "#/components/schemas/BlockedTopic"
+            },
+            "maxItems": 20,
+            "title": "Blocked Topics",
+            "type": "array"
+          },
           "clarify_below": {
             "anyOf": [
               {
@@ -5392,6 +5714,16 @@
             "title": "Collections",
             "type": "array"
           },
+          "config_extras": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotConfigExtras"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "description": {
             "anyOf": [
               {
@@ -5403,6 +5735,18 @@
               }
             ],
             "title": "Description"
+          },
+          "disclaimer": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disclaimer"
           },
           "enabled": {
             "default": true,
@@ -5428,6 +5772,16 @@
             "default": false,
             "title": "Include Uncollected",
             "type": "boolean"
+          },
+          "intake": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IntakeConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "kind": {
             "default": "n8n",
@@ -5519,6 +5873,11 @@
             "additionalProperties": true,
             "title": "Retrieval Filters",
             "type": "object"
+          },
+          "show_sources": {
+            "default": true,
+            "title": "Show Sources",
+            "type": "boolean"
           },
           "streaming": {
             "default": false,
@@ -5649,6 +6008,65 @@
           "updated_at"
         ],
         "title": "MarkdownFileEntry",
+        "type": "object"
+      },
+      "ModelConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint"
+          },
+          "endpoints": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Endpoints",
+            "type": "array"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "default": "fake",
+            "title": "Provider",
+            "type": "string"
+          },
+          "supports_tools": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supports Tools"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          }
+        },
+        "required": [
+          "model"
+        ],
+        "title": "ModelConfig",
         "type": "object"
       },
       "OwnedItem": {
@@ -6030,6 +6448,102 @@
         "title": "PortalActivityListResponse",
         "type": "object"
       },
+      "PortalAnalysisRecommendation": {
+        "properties": {
+          "action": {
+            "enum": [
+              "release",
+              "edit",
+              "reprocess",
+              "skip",
+              "check"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "info",
+              "warning",
+              "critical"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "severity",
+          "action",
+          "title",
+          "detail"
+        ],
+        "title": "PortalAnalysisRecommendation",
+        "type": "object"
+      },
+      "PortalAnalysisRequest": {
+        "properties": {
+          "locale": {
+            "default": "de",
+            "enum": [
+              "de",
+              "en"
+            ],
+            "title": "Locale",
+            "type": "string"
+          },
+          "refresh": {
+            "default": false,
+            "title": "Refresh",
+            "type": "boolean"
+          }
+        },
+        "title": "PortalAnalysisRequest",
+        "type": "object"
+      },
+      "PortalAnalysisResponse": {
+        "properties": {
+          "cached": {
+            "title": "Cached",
+            "type": "boolean"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "markdown_sha256": {
+            "title": "Markdown Sha256",
+            "type": "string"
+          },
+          "recommendations": {
+            "items": {
+              "$ref": "#/components/schemas/PortalAnalysisRecommendation"
+            },
+            "title": "Recommendations",
+            "type": "array"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "markdown_sha256",
+          "generated_at",
+          "cached",
+          "summary"
+        ],
+        "title": "PortalAnalysisResponse",
+        "type": "object"
+      },
       "PortalBulkActionRequest": {
         "properties": {
           "accept_quality_warnings": {
@@ -6270,6 +6784,11 @@
       },
       "PortalConfigResponse": {
         "properties": {
+          "analysis_configured": {
+            "default": false,
+            "title": "Analysis Configured",
+            "type": "boolean"
+          },
           "publication_configured": {
             "title": "Publication Configured",
             "type": "boolean"
@@ -6918,6 +7437,13 @@
       },
       "PortalQualityDetail": {
         "properties": {
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/PortalQualityFinding"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
           "grade": {
             "anyOf": [
               {
@@ -6968,6 +7494,34 @@
           "signals"
         ],
         "title": "PortalQualityDetail",
+        "type": "object"
+      },
+      "PortalQualityFinding": {
+        "properties": {
+          "column": {
+            "title": "Column",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "line": {
+            "title": "Line",
+            "type": "integer"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "line",
+          "column",
+          "kind",
+          "text"
+        ],
+        "title": "PortalQualityFinding",
         "type": "object"
       },
       "PortalQualitySignals": {
@@ -7155,6 +7709,120 @@
           "profile_id"
         ],
         "title": "PortalReprocessResponse",
+        "type": "object"
+      },
+      "PortalSpaceStats": {
+        "properties": {
+          "collection_id": {
+            "title": "Collection Id",
+            "type": "string"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "in_chat": {
+            "title": "In Chat",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "review": {
+            "title": "Review",
+            "type": "integer"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "collection_id",
+          "name",
+          "slug",
+          "total",
+          "in_chat",
+          "review",
+          "failed"
+        ],
+        "title": "PortalSpaceStats",
+        "type": "object"
+      },
+      "PortalStatsResponse": {
+        "properties": {
+          "releases_per_week": {
+            "items": {
+              "$ref": "#/components/schemas/PortalWeekCount"
+            },
+            "title": "Releases Per Week",
+            "type": "array"
+          },
+          "review_oldest_since": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Oldest Since"
+          },
+          "review_wait_median_hours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Wait Median Hours"
+          },
+          "review_waiting": {
+            "title": "Review Waiting",
+            "type": "integer"
+          },
+          "spaces": {
+            "items": {
+              "$ref": "#/components/schemas/PortalSpaceStats"
+            },
+            "title": "Spaces",
+            "type": "array"
+          }
+        },
+        "required": [
+          "spaces",
+          "review_waiting",
+          "releases_per_week"
+        ],
+        "title": "PortalStatsResponse",
+        "type": "object"
+      },
+      "PortalWeekCount": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "week_start": {
+            "format": "date-time",
+            "title": "Week Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "week_start",
+          "count"
+        ],
+        "title": "PortalWeekCount",
         "type": "object"
       },
       "ProviderAdminResponse": {
@@ -7723,6 +8391,82 @@
         "title": "ReindexStatusResponse",
         "type": "object"
       },
+      "RetrievalFilters": {
+        "additionalProperties": false,
+        "properties": {
+          "department": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Department"
+          },
+          "document_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Type"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          },
+          "team": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team"
+          }
+        },
+        "title": "RetrievalFilters",
+        "type": "object"
+      },
       "RetrievalProviderAdminResponse": {
         "properties": {
           "embedding_base_url": {
@@ -8105,6 +8849,218 @@
         "title": "RuntimeCapabilityInfo",
         "type": "object"
       },
+      "S3BackupArchive": {
+        "properties": {
+          "file_name": {
+            "title": "File Name",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "last_modified": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Modified"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Bytes"
+          }
+        },
+        "required": [
+          "key",
+          "file_name",
+          "size_bytes",
+          "last_modified"
+        ],
+        "title": "S3BackupArchive",
+        "type": "object"
+      },
+      "S3BackupImportRequest": {
+        "properties": {
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          },
+          "key": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Key",
+            "type": "string"
+          },
+          "passphrase": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Passphrase",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "passphrase"
+        ],
+        "title": "S3BackupImportRequest",
+        "type": "object"
+      },
+      "S3BackupListResponse": {
+        "properties": {
+          "archives": {
+            "items": {
+              "$ref": "#/components/schemas/S3BackupArchive"
+            },
+            "title": "Archives",
+            "type": "array"
+          },
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          }
+        },
+        "required": [
+          "configured",
+          "location",
+          "archives"
+        ],
+        "title": "S3BackupListResponse",
+        "type": "object"
+      },
+      "S3CheckOverrides": {
+        "description": "Form values for the S3 check; omitted fields keep the running value,\nan empty secret too.",
+        "properties": {
+          "s3_access_key_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "S3 Access Key Id"
+          },
+          "s3_addressing_style": {
+            "anyOf": [
+              {
+                "enum": [
+                  "auto",
+                  "path",
+                  "virtual"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "S3 Addressing Style"
+          },
+          "s3_bucket": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "S3 Bucket"
+          },
+          "s3_endpoint_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "S3 Endpoint Url"
+          },
+          "s3_key_prefix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "S3 Key Prefix"
+          },
+          "s3_kms_key_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "S3 Kms Key Id"
+          },
+          "s3_region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "S3 Region"
+          },
+          "s3_secret_access_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "S3 Secret Access Key"
+          },
+          "s3_sse": {
+            "anyOf": [
+              {
+                "enum": [
+                  "",
+                  "AES256",
+                  "aws:kms"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "S3 Sse"
+          }
+        },
+        "title": "S3CheckOverrides",
+        "type": "object"
+      },
       "SetupRequest": {
         "properties": {
           "email": {
@@ -8144,6 +9100,109 @@
           "needs_setup"
         ],
         "title": "SetupStatusResponse",
+        "type": "object"
+      },
+      "SubagentConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "collections": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Collections",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/RetrievalFilters"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "include_uncollected": {
+            "default": false,
+            "title": "Include Uncollected",
+            "type": "boolean"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/SubagentLimits"
+          },
+          "mission": {
+            "title": "Mission",
+            "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "tools": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tools",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "mission"
+        ],
+        "title": "SubagentConfig",
+        "type": "object"
+      },
+      "SubagentLimits": {
+        "additionalProperties": false,
+        "properties": {
+          "max_results": {
+            "default": 5,
+            "title": "Max Results",
+            "type": "integer"
+          },
+          "max_searches": {
+            "default": 3,
+            "title": "Max Searches",
+            "type": "integer"
+          },
+          "timeout_seconds": {
+            "default": 60,
+            "title": "Timeout Seconds",
+            "type": "integer"
+          }
+        },
+        "title": "SubagentLimits",
         "type": "object"
       },
       "SystemStatusResponse": {
@@ -10006,6 +11065,145 @@
         ]
       }
     },
+    "/api/v1/admin/backup/s3": {
+      "get": {
+        "operationId": "list_s3_backups_api_v1_admin_backup_s3_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/S3BackupListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List S3 Backups",
+        "tags": [
+          "backup-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/backup/s3/archives": {
+      "delete": {
+        "operationId": "delete_s3_backup_api_v1_admin_backup_s3_archives_delete",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "title": "Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete S3 Backup",
+        "tags": [
+          "backup-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/backup/s3/exports": {
+      "post": {
+        "description": "Write a new archive to <S3_KEY_PREFIX>backups/ in the background.",
+        "operationId": "create_s3_export_api_v1_admin_backup_s3_exports_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackupExportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create S3 Export",
+        "tags": [
+          "backup-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/backup/s3/imports": {
+      "post": {
+        "operationId": "create_s3_import_api_v1_admin_backup_s3_imports_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/S3BackupImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create S3 Import",
+        "tags": [
+          "backup-admin"
+        ]
+      }
+    },
     "/api/v1/admin/backup/target-state": {
       "get": {
         "operationId": "get_target_state_api_v1_admin_backup_target_state_get",
@@ -10025,6 +11223,194 @@
         "tags": [
           "backup-admin"
         ]
+      }
+    },
+    "/api/v1/admin/config": {
+      "get": {
+        "operationId": "get_config_api_v1_admin_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Config Api V1 Admin Config Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Config",
+        "tags": [
+          "config-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/config/checks/{name}": {
+      "post": {
+        "operationId": "run_check_api_v1_admin_config_checks__name__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/S3CheckOverrides"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Overrides"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Run Check Api V1 Admin Config Checks  Name  Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Check",
+        "tags": [
+          "config-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/config/export": {
+      "get": {
+        "operationId": "export_config_api_v1_admin_config_export_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "env",
+              "enum": [
+                "env",
+                "json"
+              ],
+              "title": "Format",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Config",
+        "tags": [
+          "config-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/knowledge-memory/rebuild": {
+      "post": {
+        "operationId": "knowledge_memory_rebuild_api_v1_admin_knowledge_memory_rebuild_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeMemoryRebuildRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeMemoryRebuildResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Knowledge Memory Rebuild"
+      }
+    },
+    "/api/v1/admin/knowledge-memory/status": {
+      "get": {
+        "description": "Knowledge's memory metrics (coverage, pending work, model usage),\nproxied for the admin UI.",
+        "operationId": "knowledge_memory_status_api_v1_admin_knowledge_memory_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Knowledge Memory Status Api V1 Admin Knowledge Memory Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Knowledge Memory Status"
       }
     },
     "/api/v1/admin/knowledge/orphans": {
@@ -10199,6 +11585,48 @@
         ]
       }
     },
+    "/api/v1/auth/admin/bots/import": {
+      "post": {
+        "description": "Import a bot document (contracts/bot-document.md). The dry run\nalways answers 200 with the report; an applied import answers 409 when\nan existing bot blocks it and 422 when the document itself does.",
+        "operationId": "import_managed_bot_api_v1_auth_admin_bots_import_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_managed_bot_api_v1_auth_admin_bots_import_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotImportReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Managed Bot",
+        "tags": [
+          "managed-bots-admin"
+        ]
+      }
+    },
     "/api/v1/auth/admin/bots/{bot_id}": {
       "delete": {
         "operationId": "delete_managed_bot_api_v1_auth_admin_bots__bot_id__delete",
@@ -10290,6 +11718,61 @@
           }
         },
         "summary": "Update Managed Bot",
+        "tags": [
+          "managed-bots-admin"
+        ]
+      }
+    },
+    "/api/v1/auth/admin/bots/{bot_id}/export": {
+      "get": {
+        "description": "The bot as a portable bot document (contracts/bot-document.md):\na managed row, else Runtime's YAML bot. Never contains the secret or\nthe grants.",
+        "operationId": "export_managed_bot_api_v1_auth_admin_bots__bot_id__export_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bot_id",
+            "required": true,
+            "schema": {
+              "title": "Bot Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "yaml",
+              "enum": [
+                "yaml",
+                "json"
+              ],
+              "title": "Format",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Managed Bot",
         "tags": [
           "managed-bots-admin"
         ]
@@ -10564,6 +12047,60 @@
         "tags": [
           "auth-admin"
         ]
+      }
+    },
+    "/api/v1/auth/admin/knowledge-memory": {
+      "get": {
+        "operationId": "get_knowledge_memory_api_v1_auth_admin_knowledge_memory_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeMemoryAdminResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Knowledge Memory"
+      },
+      "put": {
+        "operationId": "update_knowledge_memory_api_v1_auth_admin_knowledge_memory_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeMemoryUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeMemoryAdminResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Knowledge Memory"
       }
     },
     "/api/v1/auth/admin/providers": {
@@ -12500,230 +14037,6 @@
         ]
       }
     },
-    "/api/v1/benchmarks": {
-      "get": {
-        "operationId": "list_benchmarks_api_v1_benchmarks_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BenchmarkRunListResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "List Benchmarks",
-        "tags": [
-          "benchmarks"
-        ]
-      },
-      "post": {
-        "operationId": "create_benchmark_api_v1_benchmarks_post",
-        "requestBody": {
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_create_benchmark_api_v1_benchmarks_post"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BenchmarkRunDetailResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Create Benchmark",
-        "tags": [
-          "benchmarks"
-        ]
-      }
-    },
-    "/api/v1/benchmarks/{run_id}": {
-      "delete": {
-        "operationId": "delete_benchmark_api_v1_benchmarks__run_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "run_id",
-            "required": true,
-            "schema": {
-              "title": "Run Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BenchmarkDeleteResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Delete Benchmark",
-        "tags": [
-          "benchmarks"
-        ]
-      },
-      "get": {
-        "operationId": "get_benchmark_api_v1_benchmarks__run_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "run_id",
-            "required": true,
-            "schema": {
-              "title": "Run Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BenchmarkRunDetailResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Benchmark",
-        "tags": [
-          "benchmarks"
-        ]
-      }
-    },
-    "/api/v1/benchmarks/{run_id}/export.json": {
-      "get": {
-        "operationId": "export_benchmark_json_api_v1_benchmarks__run_id__export_json_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "run_id",
-            "required": true,
-            "schema": {
-              "title": "Run Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Export Benchmark Json",
-        "tags": [
-          "benchmarks"
-        ]
-      }
-    },
-    "/api/v1/benchmarks/{run_id}/report": {
-      "get": {
-        "operationId": "get_benchmark_report_api_v1_benchmarks__run_id__report_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "run_id",
-            "required": true,
-            "schema": {
-              "title": "Run Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BenchmarkReportResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Benchmark Report",
-        "tags": [
-          "benchmarks"
-        ]
-      }
-    },
     "/api/v1/bots": {
       "get": {
         "description": "The managed bots the caller owns. Admins use the admin surface for\nevery bot; here they too only see their own.",
@@ -13664,6 +14977,7 @@
     },
     "/api/v1/import/runs/{run_id}/sync": {
       "post": {
+        "description": "\"Sync now\" from a run: starts a run of that run's import configuration.",
         "operationId": "sync_import_run_api_v1_import_runs__run_id__sync_post",
         "parameters": [
           {
@@ -13884,6 +15198,219 @@
         "summary": "Test Import Source"
       }
     },
+    "/api/v1/import/syncs": {
+      "get": {
+        "operationId": "list_import_syncs_api_v1_import_syncs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "source_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportSyncListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Import Syncs"
+      }
+    },
+    "/api/v1/import/syncs/{sync_id}": {
+      "delete": {
+        "description": "Remove the configuration: no further syncs. Runs keep their history\n(sync_id goes NULL) and imported documents stay in their space.",
+        "operationId": "delete_import_sync_api_v1_import_syncs__sync_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sync_id",
+            "required": true,
+            "schema": {
+              "title": "Sync Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Delete Import Sync Api V1 Import Syncs  Sync Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Import Sync"
+      },
+      "get": {
+        "operationId": "get_import_sync_api_v1_import_syncs__sync_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sync_id",
+            "required": true,
+            "schema": {
+              "title": "Sync Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportSyncResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Import Sync"
+      },
+      "patch": {
+        "operationId": "update_import_sync_api_v1_import_syncs__sync_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sync_id",
+            "required": true,
+            "schema": {
+              "title": "Sync Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportSyncUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportSyncResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Import Sync"
+      }
+    },
+    "/api/v1/import/syncs/{sync_id}/run": {
+      "post": {
+        "operationId": "run_import_sync_api_v1_import_syncs__sync_id__run_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sync_id",
+            "required": true,
+            "schema": {
+              "title": "Sync Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Import Sync"
+      }
+    },
     "/api/v1/internal/bots": {
       "get": {
         "operationId": "internal_managed_bots_api_v1_internal_bots_get",
@@ -13968,6 +15495,24 @@
         "tags": [
           "chat-provider-internal"
         ]
+      }
+    },
+    "/api/v1/internal/knowledge-memory": {
+      "get": {
+        "operationId": "internal_knowledge_memory_api_v1_internal_knowledge_memory_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeMemoryInternalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Internal Knowledge Memory"
       }
     },
     "/api/v1/internal/mcp-oauth/introspect": {
@@ -15466,6 +17011,49 @@
           },
           {
             "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "in": "query",
+            "name": "released_by_me",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Released By Me",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
             "name": "offset",
             "required": false,
             "schema": {
@@ -15588,6 +17176,63 @@
           }
         },
         "summary": "Get Portal Document"
+      }
+    },
+    "/api/v1/portal/documents/{job_id}/analysis": {
+      "post": {
+        "description": "LLM recommendation for the review page, cached per markdown hash and locale.",
+        "operationId": "analyze_portal_document_api_v1_portal_documents__job_id__analysis_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PortalAnalysisRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalAnalysisResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Analyze Portal Document"
       }
     },
     "/api/v1/portal/documents/{job_id}/edit": {
@@ -16145,6 +17790,25 @@
         "summary": "Retry Release"
       }
     },
+    "/api/v1/portal/stats": {
+      "get": {
+        "description": "\u00dcbersicht metrics over every document the caller can see: per space\ntotal / in chat / to review / failed, how long documents wait for a\nreview, and releases per week. Same visibility and 'review' rule as\nGET /documents.",
+        "operationId": "portal_stats_api_v1_portal_stats_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalStatsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Portal Stats"
+      }
+    },
     "/api/v1/ready": {
       "get": {
         "operationId": "readiness_api_v1_ready_get",
@@ -16402,7 +18066,7 @@
         },
         "summary": "List Vl Connections",
         "tags": [
-          "benchmarks"
+          "vl-connections"
         ]
       }
     },
