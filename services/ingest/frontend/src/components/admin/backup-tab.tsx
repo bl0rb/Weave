@@ -178,7 +178,7 @@ export function BackupTab() {
       >
         <ExportForm disabled={isRunActive(activeRun)} s3Configured={s3?.configured ?? false} onStarted={reloadRuns} />
 
-        <h3 className="mt-6 mb-2 text-sm font-semibold text-slate-800">{t('admin.backup.existingHeading')}</h3>
+        <h3 className="mt-6 mb-2 font-semibold text-slate-950">{t('admin.backup.existingHeading')}</h3>
         <ErrorNotice message={runsError} />
         {runsLoading ? (
           <LoadingState label={t('admin.backup.loadingRuns')} />
@@ -470,7 +470,7 @@ function ExportRunRow({ run, onDelete }: { run: BackupRun; onDelete: () => void 
         <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-500">
           <span>{formatDate(run.created_at, { dateStyle: 'medium', timeStyle: 'short' })}</span>
           <span>{formatBytes(run.size_bytes, formatNumber)}</span>
-          {report?.location && <span className="font-mono">{report.location}</span>}
+          {report?.location && <span className="break-all">{report.location}</span>}
           {report && (
             <span>{t('admin.backup.rowsInTables', { rows: rowTotal(report.tables), tables: Object.keys(report.tables).length })}</span>
           )}

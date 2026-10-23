@@ -108,7 +108,7 @@ export function ConfigTab() {
 function StepList({ result }: { result: CheckResult }) {
   const { t } = useI18n();
   return (
-    <ul className="mt-2 space-y-1 text-xs">
+    <ul className="mt-2 space-y-1 text-xs sm:text-sm">
       {result.steps.map((step) => (
         <li key={step.id} className="flex items-start gap-2">
           {step.ok ? (
@@ -298,13 +298,13 @@ function S3TestCard({ env }: { env: EnvSetting[] }) {
 
       <div className="mt-6">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-sm font-semibold text-slate-800">{t('admin.config.s3.snippetTitle')}</h3>
+          <h3 className="font-semibold text-slate-950">{t('admin.config.s3.snippetTitle')}</h3>
           <Button variant="ghost" size="sm" onClick={() => void copy()}>
             <ClipboardCopy size={15} />
             {copied ? t('admin.config.copied') : t('admin.config.copy')}
           </Button>
         </div>
-        <p className="mb-2 text-xs text-[var(--muted)]">{t('admin.config.s3.snippetHint')}</p>
+        <p className="mb-2 text-sm text-slate-500">{t('admin.config.s3.snippetHint')}</p>
         <pre className="overflow-x-auto rounded-lg bg-slate-950 px-4 py-3 text-xs text-slate-100">{snippet}</pre>
       </div>
     </SectionCard>
@@ -371,14 +371,14 @@ function EnvSettingsCard({ env }: { env: EnvSetting[] }) {
       </div>
       {groups.map(([group, items]) => (
         <div key={group} className="mb-5">
-          <h3 className="mb-1 text-sm font-semibold text-slate-800">{t(`admin.config.group.${group}` as MessageKey)}</h3>
+          <h3 className="mb-1 font-semibold text-slate-950">{t(`admin.config.group.${group}` as MessageKey)}</h3>
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
+            <table className="w-full table-auto text-left text-xs sm:text-sm">
               <tbody className="divide-y divide-slate-100">
                 {items.map((item) => (
                   <tr key={item.name}>
-                    <td className="w-1/3 py-1.5 pr-3 font-mono text-slate-700">{item.name}</td>
-                    <td className="py-1.5 pr-3 font-mono break-all text-slate-950">{formatValue(item.value)}</td>
+                    <td className="w-1/3 py-1.5 pr-3 font-medium text-slate-700">{item.name}</td>
+                    <td className="py-1.5 pr-3 break-all text-slate-950">{formatValue(item.value)}</td>
                     <td className="py-1.5 text-right whitespace-nowrap">
                       {item.secret && <Badge tone="amber">{t('admin.config.secret')}</Badge>}{' '}
                       {item.customized ? (
@@ -404,18 +404,18 @@ function ManualSettingsCard({ sections }: { sections: ManualSection[] }) {
     <SectionCard title={t('admin.config.manualTitle')} description={t('admin.config.manualDescription')}>
       {sections.map((section) => (
         <div key={section.section} className="mb-5">
-          <h3 className="mb-1 text-sm font-semibold text-slate-800">{t(`admin.config.manual.${section.section}` as MessageKey)}</h3>
+          <h3 className="mb-1 font-semibold text-slate-950">{t(`admin.config.manual.${section.section}` as MessageKey)}</h3>
           {section.items.length === 0 ? (
-            <p className="text-xs text-slate-500">{t('admin.config.manualEmpty')}</p>
+            <p className="text-sm text-slate-500">{t('admin.config.manualEmpty')}</p>
           ) : (
             section.items.map((item) => (
               <details key={item.id} className="rounded-lg border border-slate-100 px-3 py-2">
-                <summary className="cursor-pointer font-mono text-xs font-medium text-slate-800">{item.id}</summary>
-                <dl className="mt-2 grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-x-3 gap-y-1 text-xs">
+                <summary className="cursor-pointer text-sm font-medium text-slate-950">{item.id}</summary>
+                <dl className="mt-2 grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-x-3 gap-y-1 text-xs sm:text-sm">
                   {Object.entries(item.values).map(([key, value]) => (
                     <div key={key} className="contents">
-                      <dt className="font-mono text-slate-600">{key}</dt>
-                      <dd className="font-mono break-all text-slate-950">{formatValue(value)}</dd>
+                      <dt className="font-medium text-slate-700">{key}</dt>
+                      <dd className="break-all text-slate-950">{formatValue(value)}</dd>
                     </div>
                   ))}
                 </dl>
