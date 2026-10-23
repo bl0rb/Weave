@@ -156,7 +156,15 @@ def _wait_for_run(run_id: str) -> BackupRun:
     raise AssertionError('run did not finish')
 
 
-def test_backup_to_s3_lists_validates_and_deletes(fake_s3):
+def test_backup_to_s3_lists_validates_and_deletes(fake_s3, monkeypatch):
+    # The archive content is covered by test_backup_engine.py; a real full
+    # export here would depend on what other tests left in the shared DB.
+    def fake_export(db, *, passphrase, manifest_out=None, progress_cb=None):
+        manifest_out.update({'tables': {'jobs': 0}})
+        yield b'\x1f\x8b' + b'a' * 9000
+        yield b'b' * 9000
+
+    monkeypatch.setattr(backup_api, 'iter_export_backup', fake_export)
     admin = _admin()
     started = admin.post('/api/v1/admin/backup/s3/exports', json={'passphrase': 'a-decent-passphrase-1234'})
     assert started.status_code == 202, started.text
