@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Weave transformation, the product is called Weave Ingest. Entries below predating that
 > change are left as written and refer to the project under its former name.
 
+## [Unreleased]
+
+### Added
+- **Running configuration in the admin UI** (Betrieb & Sicherheit → Konfiguration): every
+  environment setting with secrets masked and a customized/default flag, the settings saved
+  in the UI, connection checks for database, Redis, S3 and the backup directory, and an
+  export as `.env` (secrets left out) or JSON (`GET /api/v1/admin/config`,
+  `POST /api/v1/admin/config/checks/{name}`, `GET /api/v1/admin/config/export`).
+- **S3 connection test** with form values that are not saved: head bucket, write/read/delete
+  a probe object with SSE/KMS if set; a passing test shows a copyable env block.
+- **Backups to S3:** "In S3 speichern" writes the archive to `<S3_KEY_PREFIX>backups/`;
+  archives in the bucket can be listed, restored and deleted from the admin UI
+  (`/api/v1/admin/backup/s3*`).
+
 ## [0.7.15] - 2026-10-23
 
 ### Added
