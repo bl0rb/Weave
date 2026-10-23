@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense } from 'react';
-import { DatabaseBackup, ShieldCheck, Wrench } from 'lucide-react';
+import { DatabaseBackup, ShieldCheck, SlidersHorizontal, Wrench } from 'lucide-react';
 
 import {
   AdminPageShell,
@@ -11,11 +11,12 @@ import {
   useBereich,
 } from '@/components/admin/admin-page-shared';
 import { BackupTab } from '@/components/admin/backup-tab';
+import { ConfigTab } from '@/components/admin/config-tab';
 import { TechnicalIdentitiesTab } from '@/components/admin/technical-identities-tab';
 import { IndexMaintenanceSection } from '@/components/admin/retrieval-provider-tab';
 import { useI18n } from '@/i18n/provider';
 
-type Bereich = 'sicherung' | 'identitaeten' | 'werkzeuge';
+type Bereich = 'sicherung' | 'konfiguration' | 'identitaeten' | 'werkzeuge';
 
 export default function AdminBetriebPage() {
   return (
@@ -29,6 +30,7 @@ function AdminBetriebPageInner() {
   const { t } = useI18n();
   const TABS: { id: Bereich; label: string; icon: typeof DatabaseBackup }[] = [
     { id: 'sicherung', label: t('admin.operations.tab.backup'), icon: DatabaseBackup },
+    { id: 'konfiguration', label: t('admin.operations.tab.config'), icon: SlidersHorizontal },
     { id: 'identitaeten', label: t('admin.operations.tab.identities'), icon: ShieldCheck },
     { id: 'werkzeuge', label: t('admin.operations.tab.tools'), icon: Wrench },
   ];
@@ -44,6 +46,11 @@ function AdminBetriebPageInner() {
       {bereich === 'sicherung' && (
         <SectionPanel idPrefix="betrieb" id="sicherung">
           <BackupTab />
+        </SectionPanel>
+      )}
+      {bereich === 'konfiguration' && (
+        <SectionPanel idPrefix="betrieb" id="konfiguration">
+          <ConfigTab />
         </SectionPanel>
       )}
       {bereich === 'identitaeten' && (

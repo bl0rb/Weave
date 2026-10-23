@@ -47,3 +47,22 @@ class BackupRunListResponse(BaseModel):
 class TargetStateResponse(BaseModel):
     fresh: bool
     reasons: list[str]
+
+
+class S3BackupImportRequest(BaseModel):
+    key: str = Field(min_length=1, max_length=1024)
+    passphrase: str = Field(min_length=1, max_length=256)
+    force: bool = False
+
+
+class S3BackupArchive(BaseModel):
+    key: str
+    file_name: str
+    size_bytes: int | None
+    last_modified: datetime | None
+
+
+class S3BackupListResponse(BaseModel):
+    configured: bool
+    location: str
+    archives: list[S3BackupArchive]

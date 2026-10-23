@@ -14,6 +14,7 @@ from app.api.auth import bootstrap_admin
 from app.api.auth import router_authenticated as auth_authenticated_router
 from app.api.auth import router_public as auth_public_router
 from app.api.backup import router as backup_admin_router
+from app.api.runtime_config import router as runtime_config_admin_router
 from app.api.chat_provider import router_admin as chat_provider_admin_router
 from app.api.chat_provider import router_bot_admin as chat_provider_bot_admin_router
 from app.api.chat_provider import router_internal as chat_provider_internal_router
@@ -122,6 +123,7 @@ app.include_router(technical_identities_admin_router)
 app.include_router(technical_identities_internal_router)
 app.include_router(mcp_oauth_router)
 app.include_router(backup_admin_router)
+app.include_router(runtime_config_admin_router)
 app.include_router(knowledge_registry_router)
 app.include_router(knowledge_release_router)
 

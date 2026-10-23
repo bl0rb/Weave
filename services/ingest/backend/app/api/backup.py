@@ -28,6 +28,7 @@ failed so it stops blocking new runs.
 
 from __future__ import annotations
 
+import io
 import logging
 import threading
 import uuid
@@ -43,7 +44,15 @@ from app.api.deps import origin_guard, require_admin
 from app.core.config import settings
 from app.database.session import SessionLocal, get_db
 from app.models.models import BackupRun, BackupRunKind, BackupRunStatus, User
-from app.schemas.backup import BackupExportRequest, BackupRunListResponse, BackupRunResponse, TargetStateResponse
+from app.schemas.backup import (
+    BackupExportRequest,
+    BackupRunListResponse,
+    BackupRunResponse,
+    S3BackupImportRequest,
+    S3BackupListResponse,
+    TargetStateResponse,
+)
+from app.services import object_store
 from app.services.backup import (
     BackupError,
     backups_dir,
@@ -174,6 +183,43 @@ def _stream_export(run_id: str, passphrase: str):
         db.close()
 
 
+def _run_s3_export(run_id: str, passphrase: str, key: str) -> None:
+    """Generate the archive straight into a multipart upload; nothing is
+    spooled on the pod."""
+    db = SessionLocal()
+    manifest: dict = {}
+    counted = {'bytes': 0}
+
+    def chunks():
+        for chunk in iter_export_backup(db, passphrase=passphrase, manifest_out=manifest):
+            counted['bytes'] += len(chunk)
+            yield chunk
+
+    stream = chunks()
+    try:
+        object_store.s3_upload_file(io.BufferedReader(object_store.IterReader(stream)), key, 'application/gzip')
+        db.rollback()  # end the read-only snapshot
+        with SessionLocal() as run_db:
+            run = run_db.get(BackupRun, run_id)
+            if run is not None:
+                run.status = BackupRunStatus.FINISHED
+                run.finished_at = datetime.now(timezone.utc)
+                run.size_bytes = counted['bytes']
+                run.report = {
+                    'tables': manifest.get('tables', {}),
+                    'location': f's3://{settings.s3_bucket}/{key}',
+                }
+                run_db.commit()
+    except Exception as exc:  # noqa: BLE001 -- any failure must still flip the run to FAILED
+        logger.exception('backup s3 export run %s failed', run_id)
+        db.rollback()
+        with SessionLocal() as run_db:
+            _fail_run(run_db, run_id, exc)
+    finally:
+        stream.close()  # releases the snapshot and the S3 deletion lock on failure
+        db.close()
+
+
 def _run_import(run_id: str, path: Path, passphrase: str, importing_admin_id: str, force: bool) -> None:
     db = SessionLocal()
     try:
@@ -239,6 +285,128 @@ def create_export(
             'Cache-Control': 'no-store',
         },
     )
+
+
+def _require_s3() -> None:
+    if not settings.s3_bucket:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='S3 ist nicht konfiguriert (S3_BUCKET fehlt).',
+        )
+
+
+def _s3_error(exc: Exception) -> HTTPException:
+    logger.warning('backup s3 request failed: %s', exc)
+    return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f'S3-Zugriff fehlgeschlagen: {exc}')
+
+
+def _checked_backup_key(key: str) -> str:
+    if not key.startswith(object_store.s3_backup_prefix()) or not key.endswith('.weave-backup.tar.gz'):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Sicherung nicht gefunden.')
+    return key
+
+
+@router.post('/s3/exports', status_code=status.HTTP_202_ACCEPTED, response_model=BackupRunResponse)
+def create_s3_export(
+    payload: BackupExportRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+) -> BackupRun:
+    """Write a new archive to <S3_KEY_PREFIX>backups/ in the background."""
+    _require_s3()
+    run_id = str(uuid.uuid4())
+    timestamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    file_name = f'{timestamp}-{run_id[:8]}.weave-backup.tar.gz'
+    run = _start_run(db, BackupRun(
+        id=run_id,
+        kind=BackupRunKind.EXPORT,
+        status=BackupRunStatus.RUNNING,
+        created_by=user.id,
+        file_name=file_name,
+        started_at=datetime.now(timezone.utc),
+    ))
+    key = f'{object_store.s3_backup_prefix()}{file_name}'
+    threading.Thread(target=_run_s3_export, args=(run_id, payload.passphrase, key), daemon=True).start()
+    return run
+
+
+@router.get('/s3', response_model=S3BackupListResponse)
+def list_s3_backups() -> S3BackupListResponse:
+    if not settings.s3_bucket:
+        return S3BackupListResponse(configured=False, location='', archives=[])
+    prefix = object_store.s3_backup_prefix()
+    archives = []
+    try:
+        # Own client with short timeouts: an unreachable endpoint must not
+        # keep the admin page waiting through the full retry budget.
+        client = object_store.build_s3_client(
+            endpoint_url=settings.s3_endpoint_url,
+            region=settings.s3_region,
+            access_key_id=settings.s3_access_key_id,
+            secret_access_key=settings.s3_secret_access_key,
+            addressing_style=settings.s3_addressing_style,
+            max_attempts=2,
+            timeout_seconds=5,
+        )
+        paginator = client.get_paginator('list_objects_v2')
+        for page in paginator.paginate(Bucket=settings.s3_bucket, Prefix=prefix):
+            for item in page.get('Contents', []):
+                if item['Key'].endswith('.weave-backup.tar.gz'):
+                    archives.append({
+                        'key': item['Key'],
+                        'file_name': item['Key'].removeprefix(prefix),
+                        'size_bytes': item.get('Size'),
+                        'last_modified': item.get('LastModified'),
+                    })
+    except Exception as exc:  # noqa: BLE001
+        raise _s3_error(exc) from exc
+    archives.sort(key=lambda item: item['key'], reverse=True)
+    return S3BackupListResponse(configured=True, location=f's3://{settings.s3_bucket}/{prefix}', archives=archives)
+
+
+@router.post('/s3/imports', status_code=status.HTTP_202_ACCEPTED, response_model=BackupRunResponse)
+def create_s3_import(
+    payload: S3BackupImportRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+) -> BackupRun:
+    _require_s3()
+    key = _checked_backup_key(payload.key)
+    incoming_dir = backups_dir() / 'incoming'
+    incoming_dir.mkdir(parents=True, exist_ok=True)
+    incoming_path = incoming_dir / f'{uuid.uuid4()}.weave-backup.tar.gz'
+    total_bytes = 0
+    try:
+        with incoming_path.open('wb') as handle:
+            for chunk in object_store.s3_iter(key, 1024 * 1024):
+                total_bytes += len(chunk)
+                if total_bytes > settings.backup_max_upload_bytes:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail='Das Archiv ist zu groß für die Wiederherstellung über die Oberfläche.',
+                    )
+                handle.write(chunk)
+    except HTTPException:
+        incoming_path.unlink(missing_ok=True)
+        raise
+    except object_store.ObjectNotFoundError as exc:
+        incoming_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Sicherung nicht gefunden.') from exc
+    except Exception as exc:  # noqa: BLE001
+        incoming_path.unlink(missing_ok=True)
+        raise _s3_error(exc) from exc
+    return _validate_and_start_import(db, user, incoming_path, total_bytes, payload.passphrase, payload.force)
+
+
+@router.delete('/s3/archives', status_code=status.HTTP_204_NO_CONTENT)
+def delete_s3_backup(key: str) -> None:
+    _require_s3()
+    try:
+        object_store.s3_client().delete_object(Bucket=settings.s3_bucket, Key=_checked_backup_key(key))
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise _s3_error(exc) from exc
 
 
 @router.get('/runs', response_model=BackupRunListResponse)
@@ -307,6 +475,13 @@ def create_import(
         incoming_path.unlink(missing_ok=True)
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='Der Upload ist fehlgeschlagen.') from exc
 
+    return _validate_and_start_import(db, user, incoming_path, total_bytes, passphrase, force)
+
+
+def _validate_and_start_import(
+    db: Session, user: User, incoming_path: Path, total_bytes: int, passphrase: str, force: bool
+) -> BackupRun:
+    """Shared by the upload and the S3 import once the archive is on disk."""
     # 2. Validate format + passphrase synchronously, BEFORE touching any
     # data or starting a background run -- fast, specific failure instead
     # of a run the admin has to poll just to learn the passphrase was wrong.

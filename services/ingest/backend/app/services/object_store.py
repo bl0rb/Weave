@@ -77,28 +77,52 @@ def s3_client():
         if _client is None or _client[0] != pid:
             if not settings.s3_bucket:
                 raise ObjectStorageConfigError('S3_BUCKET is not set')
-            import boto3
-            from botocore.config import Config
-
-            kwargs: dict = {
-                'config': Config(
-                    s3={'addressing_style': settings.s3_addressing_style},
-                    retries={'max_attempts': 5, 'mode': 'standard'},
-                ),
-            }
-            if settings.s3_endpoint_url:
-                kwargs['endpoint_url'] = settings.s3_endpoint_url
-            if settings.s3_region:
-                kwargs['region_name'] = settings.s3_region
-            if settings.s3_access_key_id:
-                kwargs['aws_access_key_id'] = settings.s3_access_key_id
-                kwargs['aws_secret_access_key'] = settings.s3_secret_access_key
-            _client = (pid, boto3.client('s3', **kwargs))
+            _client = (pid, build_s3_client(
+                endpoint_url=settings.s3_endpoint_url,
+                region=settings.s3_region,
+                access_key_id=settings.s3_access_key_id,
+                secret_access_key=settings.s3_secret_access_key,
+                addressing_style=settings.s3_addressing_style,
+            ))
     return _client[1]
+
+
+def build_s3_client(
+    *, endpoint_url: str, region: str, access_key_id: str, secret_access_key: str, addressing_style: str,
+    max_attempts: int = 5, timeout_seconds: float | None = None,
+):
+    """A fresh boto3 client; s3_client() caches one built from settings, the
+    admin connection test (app/services/runtime_config.py) builds one from
+    form values without touching that cache."""
+    import boto3
+    from botocore.config import Config
+
+    timeouts = {'connect_timeout': timeout_seconds, 'read_timeout': timeout_seconds} if timeout_seconds else {}
+    kwargs: dict = {
+        'config': Config(
+            s3={'addressing_style': addressing_style},
+            retries={'max_attempts': max_attempts, 'mode': 'standard'},
+            **timeouts,
+        ),
+    }
+    if endpoint_url:
+        kwargs['endpoint_url'] = endpoint_url
+    if region:
+        kwargs['region_name'] = region
+    if access_key_id:
+        kwargs['aws_access_key_id'] = access_key_id
+        kwargs['aws_secret_access_key'] = secret_access_key
+    return boto3.client('s3', **kwargs)
 
 
 def s3_prefix() -> str:
     return f'{settings.s3_key_prefix}objects/'
+
+
+def s3_backup_prefix() -> str:
+    """Backup archives (app/api/backup.py); outside s3_prefix(), so the
+    orphan sweep never touches them."""
+    return f'{settings.s3_key_prefix}backups/'
 
 
 def new_s3_key() -> str:
