@@ -116,6 +116,36 @@ Das Gedächtnis hilft auch bei Wissensfragen, nicht nur bei Überblicksfragen: D
 
 **c) `overview` bleibt außerhalb des Agent-Modus.** `overview` wird nicht in die agentenfähigen Intents aufgenommen. Ein Subagent kann nur Chunk-Treffer zitieren; eine Überblicksfrage, die er allein aus `memory_lookup` beantwortet, hätte keine Quellen und liefe in den Guard, und der Rückfall auf `conversational` aus 7 ginge im Agent-Pfad verloren. Überblicksfragen laufen deshalb auch für Agent-Bots wie heute über den `overview`-Turn (7 und 8, mit Gedächtnis-Quellen und allen Rückfällen); die Agenten-Recherche ist für `knowledge` und `complex` zuständig, wo `memory_lookup` die Orientierung liefert.
 
+### 11. Gedächtnis für MCP-Clients (Weave-Tools)
+
+*Ergänzung vom 2026-10-23.* Weave-Tools bietet externen Clients (Claude Code, VS Code, n8n, eigene Integrationen) heute nur `list_collections` (Name, Slug, Beschreibung) und `search`. Ein Client, der nicht weiß, was in einem Bereich liegt, sucht blind oder stellt dieselben Überblicksfragen, die Runtime seit 7 aus dem Gedächtnis beantwortet. Das Gedächtnis wird deshalb über dieselbe Tool-Surface zugänglich, mit exakt der Rechtelogik, die `search_for_scope` schon anwendet (`app/services/tools.py`): `scope.allowed_collections` ist die einzige Grenze, geprüft im eigenen Code vor jedem Aufruf, und Weave-Retrieval prüft sie darunter ein zweites Mal.
+
+**a) `list_collections` liefert die Bereichs-Übersicht mit.** Zusätzlich zu `slug`, `name`, `description` additiv: `summary`, `topics`, `document_count`, `document_types` (Dokumentart → Anzahl, siehe 12) und `memory_built_at`. Die Werte stammen aus `POST /api/v1/memory` von Weave-Retrieval, aufgerufen mit `scope.allowed_collections` und `allowed_teams` genau wie bei der Suche, ohne `query`: Dafür wird `MemoryRequest.query` optional. Ohne `query` liefert Retrieval nur `collections` (kein Embedding, keine Chunk-Suche, keine `documents`) und wendet dieselbe Frische-Prüfung an wie bisher (`stale` → `summary = null`, nur die live ermittelte Dokumentliste). Ist das Gedächtnis aus oder noch nicht gebaut, bleiben die neuen Felder `null` bzw. leer, die Liste selbst ist unverändert. Ein Fehler beim Gedächtnisaufruf (nicht erreichbar, 404 eines älteren Retrieval) degradiert `list_collections` auf die heutige Antwort und bricht sie nie ab.
+
+**b) Neues Tool `memory_lookup(query, collection?, document_type?)`** als MCP-Tool und REST-Spiegel `POST /api/v1/tools/memory`, mit derselben Antwortform wie das Runtime-Werkzeug aus 10b: `collections` (Übersicht, Themen, Dokumentliste mit `document_id`, Titel und Dokumentart) und `documents` (Zusammenfassung, Kernpunkte, `document_id`, Dateiname, Bereich). Die Tool-Beschreibung sagt dem Client dasselbe wie der Subagenten-Prompt: erst nachschlagen, dann pro Dokument suchen, und die Ergebnisse sind Orientierung, keine zitierfähige Quelle. Erzwingen kann Weave-Tools das bei einem fremden Client nicht; was es erzwingt, sind die Rechte.
+
+- `collection` ist wie bei `search` eine reine Verfeinerung innerhalb von `scope.allowed_collections`; ein Slug außerhalb des Scopes liefert ein leeres Ergebnis, keinen Fehler und keinen Hinweis auf dessen Existenz (Grundregel Rechte). Das unterscheidet sich bewusst vom Runtime-Werkzeug (10b, Werkzeugfehler bei leerem Scope): Ein Subagent ist ein eigener Prozess, ein MCP-Client ein Fremder.
+- `allowed_teams` wird genau wie bei `search_for_scope` gebildet: `None` für technische Identitäten, sonst `scope.effective_teams`. Der `MemoryRequest` verlangt weiterhin eine konkrete `allowed_collections`-Liste.
+- Kein Suchbudget, keine Aufrufgrenze: Ein MCP-Client unterliegt dem bestehenden Rate-Limit der Tool-Surface, nicht dem Budget eines Bot-Turns.
+- Jeder Aufruf schreibt dieselbe Audit-Zeile wie die beiden bestehenden Tools (`tool=memory_lookup`, `collection`, `result_count`, `denied`), ohne Zusammenfassungstext.
+
+**c) `search` erhält `document_id?` und `document_type?`.** `document_id` wird zu `SearchFilters.document_ids = [document_id]` (10a), `document_type` zu `SearchFilters.document_type` (12). Beides sind Verfeinerungen innerhalb des Scopes: eine fremde oder unbekannte ID ergibt null Treffer. Damit kann ein Client den Dreischritt des Subagenten nachbilden: `memory_lookup` → `search(query, document_id=…)` → zitieren.
+
+**Rechte in einem Satz:** Weave-Tools gibt aus dem Gedächtnis nie etwas aus, was derselbe Aufrufer nicht auch über `search` erreichen könnte, weil beide Wege dieselbe `allowed_collections`-Liste an denselben Retrieval-Dienst schicken und Retrieval beide über `apply_filters()` liest (4).
+
+### 12. Dokumentart als Suchfilter
+
+*Ergänzung vom 2026-10-23.* `SearchFilters.document_type` existiert bereits, trifft aber nur `chunks.meta['document_type']`, also einen Frontmatter-Schlüssel, den das Schema nicht einmal vorschreibt und der in der Praxis fast nie gesetzt ist. Das Gedächtnis bestimmt seit 1 für jedes Dokument eine Dokumentart (Vertrag, Richtlinie, Anleitung, Protokoll, E-Mail, …), per LLM oder extraktiv aus dem Frontmatter. Diese Dokumentart wird zur zweiten Quelle des Filters.
+
+- **Semantik:** `filters.document_type` trifft ein Dokument, wenn der Frontmatter-Wert **oder** die Dokumentart seiner Gedächtniszeile übereinstimmt (`knowledge_memory.kind = 'document'`, per `document_id`). Verglichen wird nach Kleinschreibung und Trimmen, ohne Synonyme: Wer „Vertrag" filtert, bekommt keine „contracts". Die Normalisierung der Werte ist Sache des Zusammenfassers (6), nicht des Filters.
+- **SQL in beiden Dialekten:** Die Gedächtnis-Klausel ist ein `EXISTS` auf eine reguläre Tabelle und läuft auf Postgres und SQLite gleich; nur die Frontmatter-Klausel bleibt wie heute auf SQLite ein Python-Nachfilter (`meta_matches()`). Beide Klauseln werden mit `OR` verknüpft und wie jeder andere Filter vor dem Ranking angewendet.
+- **Kein Rechteeffekt:** Die Gedächtniszeile wird nur für Dokumente gelesen, die `apply_filters()` ohnehin zugelassen hat; ein Dokument ohne Zusammenfassung ist über den Filter weiterhin nur per Frontmatter erreichbar. Der Filter kann nie etwas sichtbar machen, nur einschränken.
+- **Auffindbarkeit der Werte:** `MemoryCollection` erhält additiv `document_types: dict[str, int]`, gezählt über die live ermittelte Dokumentliste des Bereichs (dieselben Zeilen, die `document_count` zählen). Weave-Tools reicht es in `list_collections` durch (11a), Runtime zeigt es im `overview`-Turn als Teil der Übersicht. Ein Client erfährt so, welche Werte der Filter überhaupt annehmen kann, ohne eine zweite Facetten-Abfrage.
+- **Gedächtnis-Endpunkt:** `MemoryRequest` erhält additiv `document_type`; `_documents()` filtert danach, `_ranked_document_ids()` reicht es in die Chunk-Suche durch.
+- **Bots:** Die Regel aus 7 und 10, dass ein Bot mit `retrieval.filters` das Gedächtnis überspringt, wird präzisiert: Übersprungen wird nur bei Filtern, die das Gedächtnis nicht abbilden kann (`team`, `department`, `source`, `language`, `tags`). `collection`, `document_ids` und `document_type` bildet es ab und reicht sie durch. Ein Bot „nur Verträge" behält damit Fokus und `memory_lookup`.
+
+**Verträge (bei Umsetzung, alle additiv, kein Versionssprung):** `contracts/internal-chat.md` (Bot-Filterregel, `document_types` in Übersichtsquellen), Weave-Tools-README und `contracts/openapi.json` (neues Tool, neue Argumente, neue Felder in `CollectionOut`), Retrieval-Schemas (`MemoryRequest.query` optional, `MemoryRequest.document_type`, `MemoryCollection.document_types`). Der Chunk-Store-Vertrag ändert sich nicht: Es kommt keine Spalte und kein Index hinzu, `knowledge_memory.document_type` wird lediglich zusätzlich gelesen.
+
 ## Konsequenzen
 
 **Positiv**
@@ -125,6 +155,7 @@ Das Gedächtnis hilft auch bei Wissensfragen, nicht nur bei Überblicksfragen: D
 - Das Gedächtnis folgt jeder Änderung automatisch, gebündelt pro Bereich und ohne neue Infrastruktur (DB-Zustand + bestehender Tick).
 - LLM-Kosten fallen nur für neue oder geänderte Dokumente an und sind standardmäßig aus; `extractive` funktioniert ganz ohne Budget.
 - Wissensfragen werden auf die passenden Dokumente fokussiert, Agenten schlagen vor der Suche nach, wo was steht (10).
+- Externe MCP-Clients bekommen dieselbe Orientierung wie die Subagenten, über dieselbe Rechtegrenze und ohne zweite Rechtelogik (11); die Dokumentart wird vom Nebenprodukt zum nutzbaren Filter mit sichtbaren Werten (12).
 
 **Negativ**
 
@@ -134,6 +165,8 @@ Das Gedächtnis hilft auch bei Wissensfragen, nicht nur bei Überblicksfragen: D
 - Das Gedächtnis hinkt einer Änderung um Entprellzeit + Tick hinterher (typisch 2–3 Minuten). Entfernte Inhalte sind davon ausgenommen, sie verschwinden sofort (Cascade + Frische-Prüfung).
 - Ein großer Erstimport verbraucht im Modus `llm` einmalig einen LLM-Aufruf pro Dokument, gestreckt über mehrere Ticks.
 - LLM-Zusammenfassungen können ungenau sein. Gegenmaßnahme: Sie zitieren immer das Quelldokument, Detailfragen laufen weiter über die Chunk-Suche.
+- Ein MCP-Client kann Gedächtnis-Ergebnisse als Quelle ausgeben, obwohl sie nur Orientierung sind; Weave-Tools kann das nur in der Tool-Beschreibung verlangen, nicht erzwingen (11b).
+- Die Dokumentart ist eine LLM-Klassifikation ohne feste Werteliste; zwei Dokumente derselben Art können verschieden benannt sein, bis der Zusammenfasser die Werte normalisiert (12). `list_collections` kostet mit Gedächtnis einen zusätzlichen Retrieval-Aufruf (11a).
 
 ## Alternativen
 
@@ -144,3 +177,7 @@ Das Gedächtnis hilft auch bei Wissensfragen, nicht nur bei Überblicksfragen: D
 5. **Bevorzugen statt fokussieren (zu 10a):** mehr Treffer als `final_k` holen und Chunks der Fokus-Dokumente in Runtime nach vorn sortieren. Schonender für Dokumente ohne Zusammenfassung, erreicht aber keine tieferen Treffer, weil der Kandidatenpool unverändert bleibt. Verworfen zugunsten des Filters mit Rückfall; nachrüstbar.
 6. **Gedächtnis-Endpunkt liefert die Chunk-Treffer gleich mit (ein Embedding-Aufruf):** vermischt zwei Verträge in einer Antwort. Nachrüstbar, falls `memory_ms` in der Praxis stört.
 7. **`overview` im Agent-Modus mit Gedächtnis-Quellen aus Werkzeugergebnissen:** braucht eine zweite Quellenart im Subagenten-Ergebnis und eine eigene Guard-Regel. Für v1 verworfen (10c).
+8. **Übersicht nur über ein eigenes Tool statt in `list_collections` (zu 11a):** hält `list_collections` unverändert, aber jeder Client müsste zwei Aufrufe machen, um zu erfahren, was ein Bereich enthält. Die Felder sind additiv und `null`, solange kein Gedächtnis existiert; verworfen.
+9. **Dokumentart als eigene Spalte auf `documents` (zu 12):** sauberer zu indizieren, aber Knowledge müsste `documents` aus dem Gedächtnis zurückschreiben und der Chunk-Store-Vertrag bekäme eine Spalte mit zwei Schreibpfaden (Pipeline und Gedächtnis). Das `EXISTS` auf `knowledge_memory` reicht bei der Zahl der Dokumente pro Bereich; nachrüstbar.
+10. **Feste Werteliste für die Dokumentart (zu 12):** verlässliche Filterwerte, aber jeder Bestand hat andere Arten. Stattdessen zeigt `document_types` die tatsächlich vergebenen Werte; eine Normalisierungsliste im Zusammenfasser bleibt möglich.
+11. **Dokumentart als `Source`-Feld in jedem Suchtreffer (zu 12):** nützlich für Quellenkarten, kostet aber einen Join pro Treffer in der heißen Suche. Für jetzt verworfen; `memory_lookup` liefert die Art pro Dokument.
