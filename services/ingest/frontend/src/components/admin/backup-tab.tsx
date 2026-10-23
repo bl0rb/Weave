@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { AlertTriangle, Archive, HardDriveDownload, RotateCcw, Trash2, Upload } from 'lucide-react';
+import { AlertTriangle, Archive, CloudUpload, HardDriveDownload, RotateCcw, Trash2, Upload } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { ApiError, apiFetch, apiJson, loginUrl } from '@/lib/api';
@@ -36,7 +36,7 @@ type ImportReport = {
   indexing_note: string;
 };
 
-type ExportReport = { tables: Record<string, number> };
+type ExportReport = { tables: Record<string, number>; location?: string };
 
 type BackupRun = {
   id: string;
@@ -55,6 +55,9 @@ type BackupRun = {
 };
 
 type TargetState = { fresh: boolean; reasons: string[] };
+
+type S3Archive = { key: string; file_name: string; size_bytes: number | null; last_modified: string | null };
+type S3Listing = { configured: boolean; location: string; archives: S3Archive[] };
 
 function isRunActive(run: BackupRun | null | undefined): boolean {
   return run != null && (run.status === 'queued' || run.status === 'running');
@@ -85,6 +88,9 @@ export function BackupTab() {
   const [targetState, setTargetState] = useState<TargetState | null>(null);
   const [targetStateError, setTargetStateError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<BackupRun | null>(null);
+  const [s3, setS3] = useState<S3Listing | null>(null);
+  const [s3Error, setS3Error] = useState<string | null>(null);
+  const [deletingS3, setDeletingS3] = useState<S3Archive | null>(null);
   // A finished import wipes-and-reinserts `users`, which cascades onto the
   // importing admin's own session row (see backup.py's module docstring on
   // requires_relogin). The very next poll after that commit gets a 401, so
@@ -123,13 +129,24 @@ export function BackupTab() {
     }
   }, []);
 
+  const reloadS3 = useCallback(async () => {
+    try {
+      setS3(await apiJson<S3Listing>(`${BASE_PATH}/s3`, { skipAuthRedirect: true }));
+      setS3Error(null);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) return;
+      setS3Error(errorMessage(err));
+    }
+  }, []);
+
   useEffect(() => {
-    // Both loaders only set state after their first await, so nothing
+    // The loaders only set state after their first await, so nothing
     // cascades synchronously; the rule can't see through the async call.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void reloadRuns();
     void reloadTargetState();
-  }, [reloadRuns, reloadTargetState]);
+    void reloadS3();
+  }, [reloadRuns, reloadTargetState, reloadS3]);
 
   const activeRun = runs.find(isRunActive) ?? null;
 
@@ -146,8 +163,9 @@ export function BackupTab() {
     } else if (hadActiveRun.current) {
       hadActiveRun.current = false;
       void reloadTargetState();
+      void reloadS3();
     }
-  }, [activeRun, reloadTargetState]);
+  }, [activeRun, reloadTargetState, reloadS3]);
 
   const exportRuns = runs.filter((run) => run.kind === 'export');
   const latestImportRun = runs.find((run) => run.kind === 'import') ?? null;
@@ -158,9 +176,9 @@ export function BackupTab() {
         title={t('admin.backup.createTitle')}
         description={t('admin.backup.createDescription')}
       >
-        <ExportForm disabled={isRunActive(activeRun)} onStarted={reloadRuns} />
+        <ExportForm disabled={isRunActive(activeRun)} s3Configured={s3?.configured ?? false} onStarted={reloadRuns} />
 
-        <h3 className="mt-6 mb-2 text-sm font-semibold text-slate-800">{t('admin.backup.existingHeading')}</h3>
+        <h3 className="mt-6 mb-2 font-semibold text-slate-950">{t('admin.backup.existingHeading')}</h3>
         <ErrorNotice message={runsError} />
         {runsLoading ? (
           <LoadingState label={t('admin.backup.loadingRuns')} />
@@ -195,6 +213,47 @@ export function BackupTab() {
           </>
         )}
       </SectionCard>
+
+      <SectionCard
+        title={t('admin.backup.s3Title')}
+        description={
+          !s3 ? undefined : s3.configured ? t('admin.backup.s3Location', { location: s3.location }) : t('admin.backup.s3NotConfigured')
+        }
+      >
+        <ErrorNotice message={s3Error} />
+        {!s3 ? (
+          !s3Error && <LoadingState label={t('admin.backup.loadingRuns')} />
+        ) : s3.configured && s3.archives.length === 0 ? (
+          <p className="py-4 text-sm text-slate-500">{t('admin.backup.noBackupsYet')}</p>
+        ) : (
+          <ul className="divide-y divide-slate-100">
+            {s3.archives.map((archive) => (
+              <S3ArchiveRow
+                key={archive.key}
+                archive={archive}
+                disabled={isRunActive(activeRun) || sessionExpired}
+                allowForce={targetState ? !targetState.fresh : false}
+                onStarted={reloadRuns}
+                onDelete={() => setDeletingS3(archive)}
+              />
+            ))}
+          </ul>
+        )}
+      </SectionCard>
+
+      {deletingS3 && (
+        <ConfirmDialog
+          title={t('admin.backup.deleteDialogTitle')}
+          body={<p>{t('admin.backup.s3DeleteBody', { fileName: deletingS3.file_name })}</p>}
+          confirmLabel={t('admin.backup.deleteDialogTitle')}
+          onClose={() => setDeletingS3(null)}
+          onConfirm={async () => {
+            await apiSend(`${BASE_PATH}/s3/archives?key=${encodeURIComponent(deletingS3.key)}`, { method: 'DELETE' });
+            setDeletingS3(null);
+            await reloadS3();
+          }}
+        />
+      )}
 
       {deleting && (
         <ConfirmDialog
@@ -262,8 +321,17 @@ function TargetStateBadge({ state, error }: { state: TargetState | null; error: 
   );
 }
 
-function ExportForm({ disabled, onStarted }: { disabled: boolean; onStarted: () => Promise<void> }) {
+function ExportForm({
+  disabled,
+  s3Configured,
+  onStarted,
+}: {
+  disabled: boolean;
+  s3Configured: boolean;
+  onStarted: () => Promise<void>;
+}) {
   const { t } = useI18n();
+  const [target, setTarget] = useState<'download' | 's3'>('download');
   const [passphrase, setPassphrase] = useState('');
   const [confirmPassphrase, setConfirmPassphrase] = useState('');
   const [starting, setStarting] = useState(false);
@@ -280,6 +348,18 @@ function ExportForm({ disabled, onStarted }: { disabled: boolean; onStarted: () 
     setStarting(true);
     setError(null);
     try {
+      if (target === 's3') {
+        // Runs in the background on the server; the run list polls it.
+        await apiJson<BackupRun>(`${BASE_PATH}/s3/exports`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ passphrase }),
+        });
+        setPassphrase('');
+        setConfirmPassphrase('');
+        await onStarted();
+        return;
+      }
       // The server streams the archive straight into this response -- it
       // keeps no copy, so there is nothing to download later.
       const response = await apiFetch(`${BASE_PATH}/exports`, {
@@ -350,8 +430,24 @@ function ExportForm({ disabled, onStarted }: { disabled: boolean; onStarted: () 
           {mismatch && <span className="mt-1 block text-xs text-red-600">{t('admin.backup.passphraseMismatch')}</span>}
         </Field>
       </div>
+      <div className="flex flex-wrap gap-4 text-sm text-slate-700">
+        <label className="flex items-center gap-2">
+          <input type="radio" name="backup-target" checked={target === 'download'} onChange={() => setTarget('download')} />
+          {t('admin.backup.targetDownload')}
+        </label>
+        <label className={`flex items-center gap-2 ${s3Configured ? '' : 'opacity-50'}`}>
+          <input
+            type="radio"
+            name="backup-target"
+            disabled={!s3Configured}
+            checked={target === 's3'}
+            onChange={() => setTarget('s3')}
+          />
+          {t('admin.backup.targetS3')}
+        </label>
+      </div>
       <Button type="submit" disabled={!canStart}>
-        <HardDriveDownload size={15} />
+        {target === 's3' ? <CloudUpload size={15} /> : <HardDriveDownload size={15} />}
         {starting ? t('admin.backup.starting') : disabled ? t('admin.backup.runActive') : t('admin.backup.createTitle')}
       </Button>
     </form>
@@ -374,6 +470,7 @@ function ExportRunRow({ run, onDelete }: { run: BackupRun; onDelete: () => void 
         <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-500">
           <span>{formatDate(run.created_at, { dateStyle: 'medium', timeStyle: 'short' })}</span>
           <span>{formatBytes(run.size_bytes, formatNumber)}</span>
+          {report?.location && <span className="break-all">{report.location}</span>}
           {report && (
             <span>{t('admin.backup.rowsInTables', { rows: rowTotal(report.tables), tables: Object.keys(report.tables).length })}</span>
           )}
@@ -561,4 +658,103 @@ function ImportRunStatusPanel({ run }: { run: BackupRun }) {
     );
   }
   return null;
+}
+
+function S3ArchiveRow({
+  archive,
+  disabled,
+  allowForce,
+  onStarted,
+  onDelete,
+}: {
+  archive: S3Archive;
+  disabled: boolean;
+  allowForce: boolean;
+  onStarted: () => Promise<void>;
+  onDelete: () => void;
+}) {
+  const { t, formatDate, formatNumber } = useI18n();
+  const [open, setOpen] = useState(false);
+  const [passphrase, setPassphrase] = useState('');
+  const [force, setForce] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const canStart = !disabled && !starting && passphrase.length > 0 && (allowForce ? force : true);
+
+  async function start(event: FormEvent) {
+    event.preventDefault();
+    if (!canStart) return;
+    setStarting(true);
+    setError(null);
+    try {
+      await apiJson<BackupRun>(`${BASE_PATH}/s3/imports`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: archive.key, passphrase, force }),
+      });
+      setOpen(false);
+      setPassphrase('');
+      setForce(false);
+      await onStarted();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  return (
+    <li className="py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <Archive size={15} className="text-emerald-700" />
+            <span className="font-medium text-slate-950">{archive.file_name}</span>
+          </div>
+          <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-500">
+            {archive.last_modified && (
+              <span>{formatDate(archive.last_modified, { dateStyle: 'medium', timeStyle: 'short' })}</span>
+            )}
+            <span>{formatBytes(archive.size_bytes, formatNumber)}</span>
+          </div>
+        </div>
+        <div className="flex gap-1">
+          <Button variant="ghost" size="sm" disabled={disabled} onClick={() => setOpen((value) => !value)}>
+            <RotateCcw size={15} />
+            {t('admin.backup.startRestore')}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onDelete}>
+            <Trash2 size={15} />
+            {t('common.delete')}
+          </Button>
+        </div>
+      </div>
+      {open && (
+        <form className="mt-3 space-y-3 rounded-xl border border-slate-100 p-4" onSubmit={start}>
+          <ErrorNotice message={error} />
+          <Field label={t('admin.backup.archivePassphraseLabel')} hint={t('admin.backup.archivePassphraseHint')}>
+            <input
+              className={inputClass}
+              type="password"
+              required
+              value={passphrase}
+              onChange={(event) => setPassphrase(event.target.value)}
+              autoComplete="current-password"
+            />
+          </Field>
+          {allowForce && (
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" checked={force} onChange={(event) => setForce(event.target.checked)} />
+              {t('admin.backup.overwriteExisting')}
+            </label>
+          )}
+          <Button type="submit" disabled={!canStart}>
+            <Upload size={15} />
+            {starting ? t('admin.backup.starting') : t('admin.backup.startRestore')}
+          </Button>
+        </form>
+      )}
+    </li>
+  );
 }

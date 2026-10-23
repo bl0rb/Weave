@@ -85,7 +85,7 @@ it('lets the member teams be narrowed and adds a newly chosen responsible team',
   fireEvent.change(screen.getByRole('combobox', { name: /Zuständige Gruppe/ }), { target: { value: 't-sales' } });
   step(/Gruppen/);
   // Directory closed for a first-time creator: own teams only, without member counts.
-  expect(screen.getByText(/deine eigenen Gruppen/)).toBeTruthy();
+  expect(await screen.findByText(/deine eigenen Gruppen/)).toBeTruthy();
   expect((screen.getByRole('checkbox', { name: 'Vertrieb' }) as HTMLInputElement).checked).toBe(true);
   fireEvent.click(screen.getByRole('checkbox', { name: 'Service' }));
   step(/Überprüfen/);

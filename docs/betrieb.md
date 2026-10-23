@@ -411,9 +411,25 @@ Bearbeitungsstände, Freigabe-Snapshots) gehen:
 | `S3_KMS_KEY_ID` | Nur mit `S3_SSE=aws:kms`: KMS-Schlüssel für `x-amz-server-side-encryption-aws-kms-key-id`. Leer = der AWS-verwaltete Schlüssel `aws/s3`. Prüft eine Policy die Key-ID, den Wert genau so eintragen wie in der Policy (in der Regel die vollständige ARN). |
 
 Benötigte Rechte: `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` und
-`s3:ListBucket` (nur für `storage sweep`) auf dem Präfix. Mit
+`s3:ListBucket` (für `storage sweep`, den Verbindungstest und die Liste der
+Sicherungen in S3) auf dem Präfix. Mit
 `S3_SSE=aws:kms` zusätzlich `kms:GenerateDataKey` (Schreiben) und
 `kms:Decrypt` (Lesen und mehrteilige Uploads) auf dem Schlüssel.
+
+**Vor dem Umstellen in der Oberfläche testen:** Admin → „Betrieb & Sicherheit“
+→ „Konfiguration“ → „S3-Verbindung testen“. Die Werte im Formular werden nicht
+gespeichert; der Test prüft den Bucket (`HeadBucket`) und schreibt, liest und
+löscht ein Testobjekt unter `<S3_KEY_PREFIX>healthcheck/` — mit
+`S3_SSE`/`S3_KMS_KEY_ID`, falls gesetzt. Ein leeres Secret-Feld nimmt das
+gerade konfigurierte Secret. Jeder Schritt zeigt seine Fehlermeldung
+(z. B. `AccessDenied` beim Schreiben, wenn eine Policy den SSE-Header
+verlangt). Läuft der Test durch, steht darunter ein `.env`-Block mit
+`OBJECT_STORAGE_BACKEND=s3` und den getesteten Werten zum Kopieren. Er nutzt
+die Variablennamen des Ingest-Dienstes: in `weave.yaml` gehören die Werte in
+den Ingest-Block, das Secret über `WEAVE_INGEST_S3_SECRET_ACCESS_KEY` (Abschnitt 11),
+in Helm in die Values. Ein eingetipptes Secret steht im Block im Klartext —
+in den Secret-Store, nicht ins Repository. Danach Backend und Worker neu
+starten; bestehende Daten ziehen erst mit `storage migrate` um (unten).
 
 Den Header setzt die Anfrage, die ein Objekt anlegt: `PutObject` bzw. bei
 Objekten über der Part-Größe (8 MiB)
@@ -514,6 +530,10 @@ Transaktionen, ersetzte Datenbank nach einer Wiederherstellung) entfernt:
 ```bash
 python -m app.cli storage sweep    # nur Schlüssel älter als 1 h unter dem Präfix
 ```
+
+`sweep` betrachtet nur `<S3_KEY_PREFIX>objects/`. Sicherungsarchive unter
+`<S3_KEY_PREFIX>backups/` (Abschnitt 12) und Testobjekte unter
+`healthcheck/` fasst er nicht an.
 
 Ein Downgrade der Datenbank unter `0052_markdown_objects` verweigert, solange
 Markdown in S3 liegt — vorher `storage migrate --to db`.
@@ -1218,12 +1238,43 @@ keine Abhängigkeit zu einem der neun Dienste):
 services/tools/.venv/bin/python -m pytest scripts/tests -q
 ```
 
+### 11.1 Laufende Konfiguration in der Oberfläche
+
+Admin → „Betrieb & Sicherheit“ → „Konfiguration“ zeigt, womit Weave Ingest
+gerade tatsächlich läuft — nützlich, wenn unklar ist, ob ein Wert aus
+`weave.yaml` beim Container angekommen ist:
+
+- **Verbindungstests** für Datenbank (inklusive Migrationsstand), Redis,
+  S3 (mit der laufenden Konfiguration) und das Sicherungsverzeichnis
+  (`BACKUP_DIR` beschreibbar, freier Platz). Jeder Schritt mit Ergebnis,
+  Fehlermeldung und Dauer.
+- **S3-Verbindung testen** mit anderen Werten, ohne etwas zu speichern
+  (Abschnitt 6.1).
+- **Laufende Konfiguration (Umgebung):** jede Einstellung aus
+  `app/core/config.py`, nach Bereichen gruppiert, mit Markierung
+  „Angepasst“ (weicht vom Standard ab) oder „Standard“. Secrets (Passwörter,
+  Tokens, API-Schlüssel, `SECRET_KEY`) erscheinen nur maskiert,
+  `DATABASE_URL` ohne Passwort.
+- **Manuelle Einstellungen:** was Administratoren in der Oberfläche
+  gespeichert haben (Laufzeit-Einstellungen, Chat-Provider, Embeddings &
+  Reranking, Wissensgedächtnis, VL-Verbindungen, OIDC-Anbieter).
+  Verschlüsselte Schlüssel erscheinen nur als `has_…`.
+- **Export** als `.env` (nur Werte, die vom Standard abweichen; Secrets als
+  auskommentierte Zeilen ohne Wert) oder als JSON (Umgebung und manuelle
+  Einstellungen). Kein Export enthält ein Secret im Klartext.
+
+Die Seite ändert nichts: Die Konfiguration bleibt bei `weave.yaml` bzw. den
+Helm-Values. Gilt nur für Weave Ingest; die anderen Dienste zeigt sie nicht.
+API: `GET /api/v1/admin/config`, `POST /api/v1/admin/config/checks/{database|redis|s3|backup_dir}`,
+`GET /api/v1/admin/config/export?format=env|json` (nur Administratoren).
+
 ## 12. Desaster-Recovery
 
 Weave Ingest exportiert und importiert alle bestehenden Daten (Nutzer,
 Wissensbereiche, Aufträge, Verbindungen samt Zugangsdaten, Dateien) in ein
 einzelnes, passphrase-verschlüsseltes Archiv — über Admin →
-„Sicherung & Wiederherstellung" oder gleichwertig per CLI
+„Sicherung & Wiederherstellung" (als Download oder in einen S3-Bucket) oder
+gleichwertig per CLI
 (`python -m app.cli backup export|import`, siehe `app/cli.py`).
 
 **Nicht enthalten:** Chat-Unterhaltungen (Weave-API), lokale, dateibasierte
@@ -1260,6 +1311,32 @@ kubectl exec -it -n <namespace> <ingest-backend-pod> -- sh -c 'read -rs WEAVE_BA
 Der zweite Befehl wartet auf die Passphrase (Eingabe unsichtbar); sie landet
 so weder in der Shell-Historie noch in einer Prozessliste.
 
+### Sicherung in S3
+
+Ist `S3_BUCKET` gesetzt (Abschnitt 6.1), lässt sich beim Erstellen statt
+„Als Datei herunterladen“ auch „In S3 speichern“ wählen — unabhängig davon,
+ob `OBJECT_STORAGE_BACKEND` `db` oder `s3` ist. Der Server erzeugt das
+Archiv im Hintergrund und lädt es direkt als mehrteiligen Upload nach
+`<S3_KEY_PREFIX>backups/<Zeitstempel>-<ID>.weave-backup.tar.gz`; auf dem
+Pod wird nichts zwischengespeichert. Fortschritt und Ablageort
+(`s3://…`) stehen im Verlauf. Es gelten dieselben S3-Einstellungen
+(Endpoint, Zugangsdaten, `S3_SSE`/`S3_KMS_KEY_ID`) und Rechte wie für den
+Objektspeicher. Das Archiv ist mit der Passphrase verschlüsselt wie ein
+heruntergeladenes; die Passphrase gehört auch hier nicht in denselben
+Bucket.
+
+Der Bereich „Sicherungen in S3“ listet die Archive direkt aus dem Bucket —
+also auch solche einer anderen Installation mit demselben Bucket und Präfix.
+Von dort lässt sich ein Archiv wiederherstellen (Passphrase, bei nicht
+frischem Ziel „Vorhandene Daten überschreiben“) oder endgültig löschen.
+Zum Wiederherstellen lädt der Pod das Archiv zuerst in sein
+Sicherungsverzeichnis (`BACKUP_DIR`); dafür gilt dieselbe Grenze
+`BACKUP_MAX_UPLOAD_BYTES` wie beim Hochladen. Größere Archive mit
+`aws s3 cp` holen und per CLI importieren (oben). Aufbewahrung und Löschung
+alter Archive regelt am besten eine Lifecycle-Regel auf
+`<S3_KEY_PREFIX>backups/`. Einen Eintrag im Verlauf zu löschen, entfernt
+das Archiv im Bucket nicht — das geht nur in der Liste „Sicherungen in S3“.
+
 Ein Sicherungs- oder Wiederherstellungslauf, dessen Pod unterwegs beendet
 wurde, gilt nach `BACKUP_RUN_STALE_SECONDS` (Standard 6 h) als abgebrochen und
 blockiert danach keine neuen Läufe mehr.
@@ -1275,7 +1352,10 @@ blockiert danach keine neuen Läufe mehr.
    Zutun als solche erkannt; ist das Ziel nicht frisch (z. B. ein zweiter
    Wiederherstellungsversuch), muss „Vorhandene Daten überschreiben"
    explizit gesetzt werden.
-4. Archivdatei und Passphrase angeben, Wiederherstellung starten.
+4. Archivdatei und Passphrase angeben, Wiederherstellung starten. Liegt das
+   Archiv in S3: zuerst `S3_*` der neuen Installation auf denselben Bucket
+   und dasselbe Präfix setzen, dann unter „Sicherungen in S3“ beim Archiv
+   „Wiederherstellung starten“.
 5. Warten, bis der Bericht erscheint. Alle exportierten Nutzer (inklusive
    ehemaliger Administratoren) werden mit ihren ursprünglichen Rollen und
    Passwort-Hashes wiederhergestellt. Stimmt Benutzername oder E-Mail-Adresse
