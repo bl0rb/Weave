@@ -29,6 +29,22 @@ export function errorMessage(err: unknown): string {
  * Like apiJson but for endpoints whose success body we do not need
  * (e.g. DELETE, which may return an empty body).
  */
+/** Save a successful download response as a file through the browser,
+ * named by its Content-Disposition header or `fallbackName`. */
+export async function saveResponseAsFile(response: Response, fallbackName: string): Promise<void> {
+  const blob = await response.blob();
+  const fileName =
+    /filename="([^"]+)"/.exec(response.headers.get('content-disposition') ?? '')?.[1] ?? fallbackName;
+  const href = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = href;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(href);
+}
+
 export async function apiSend(path: string, init?: ApiFetchInit): Promise<void> {
   const res = await apiFetch(path, init);
   if (!res.ok) {

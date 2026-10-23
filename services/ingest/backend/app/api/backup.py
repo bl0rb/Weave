@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -75,6 +76,9 @@ _run_lock = threading.Lock()
 _RUN_LOCK_KEY = 7302000101
 _ACTIVE_RUN_DETAIL = (
     'Es läuft bereits eine Sicherung oder Wiederherstellung. Bitte warten Sie, bis dieser Vorgang abgeschlossen ist.'
+)
+_TARGET_POPULATED_DETAIL = (
+    'Das Ziel enthält bereits Daten. Setzen Sie "Vorhandene Daten überschreiben", um fortzufahren.'
 )
 
 # See module docstring's "Progress is kept in-memory" section.
@@ -149,6 +153,33 @@ def _fail_run(db: Session, run_id: str, exc: Exception) -> None:
         db.commit()
 
 
+def _finish_run(run_id: str, size_bytes: int, report: dict) -> None:
+    """Mark an export FINISHED through its own session, once the exporter's
+    snapshot transaction has ended."""
+    with SessionLocal() as run_db:
+        run = run_db.get(BackupRun, run_id)
+        if run is not None:
+            run.status = BackupRunStatus.FINISHED
+            run.finished_at = datetime.now(timezone.utc)
+            run.size_bytes = size_bytes
+            run.report = report
+            run_db.commit()
+
+
+def _check_import_allowed(db: Session, force: bool) -> None:
+    """Cheap refusals before an archive is fetched or validated: an active
+    run, or a populated target without `force`. Advisory only -- _start_run
+    re-checks the run under its lock."""
+    with _run_lock:
+        _fail_stale_runs(db)
+        active = _active_run(db)
+        db.commit()
+    if active is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_ACTIVE_RUN_DETAIL)
+    if not force and not target_state(db)['fresh']:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_TARGET_POPULATED_DETAIL)
+
+
 # --- Background thread runners ----------------------------------------------
 
 def _stream_export(run_id: str, passphrase: str):
@@ -163,14 +194,7 @@ def _stream_export(run_id: str, passphrase: str):
             size_bytes += len(chunk)
             yield chunk
         db.rollback()  # end the read-only snapshot
-        with SessionLocal() as run_db:
-            run = run_db.get(BackupRun, run_id)
-            if run is not None:
-                run.status = BackupRunStatus.FINISHED
-                run.finished_at = datetime.now(timezone.utc)
-                run.size_bytes = size_bytes
-                run.report = {'tables': manifest.get('tables', {})}
-                run_db.commit()
+        _finish_run(run_id, size_bytes, {'tables': manifest.get('tables', {})})
     except BaseException as exc:  # GeneratorExit included: the download was aborted
         db.rollback()
         if not isinstance(exc, GeneratorExit):
@@ -199,17 +223,10 @@ def _run_s3_export(run_id: str, passphrase: str, key: str) -> None:
     try:
         object_store.s3_upload_file(io.BufferedReader(object_store.IterReader(stream)), key, 'application/gzip')
         db.rollback()  # end the read-only snapshot
-        with SessionLocal() as run_db:
-            run = run_db.get(BackupRun, run_id)
-            if run is not None:
-                run.status = BackupRunStatus.FINISHED
-                run.finished_at = datetime.now(timezone.utc)
-                run.size_bytes = counted['bytes']
-                run.report = {
-                    'tables': manifest.get('tables', {}),
-                    'location': f's3://{settings.s3_bucket}/{key}',
-                }
-                run_db.commit()
+        _finish_run(run_id, counted['bytes'], {
+            'tables': manifest.get('tables', {}),
+            'location': f's3://{settings.s3_bucket}/{key}',
+        })
     except Exception as exc:  # noqa: BLE001 -- any failure must still flip the run to FAILED
         logger.exception('backup s3 export run %s failed', run_id)
         db.rollback()
@@ -300,6 +317,30 @@ def _s3_error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f'S3-Zugriff fehlgeschlagen: {exc}')
 
 
+_listing_client_lock = threading.Lock()
+_listing_client: tuple[int, object] | None = None
+
+
+def _listing_s3_client():
+    """Like object_store.s3_client(), cached per process, but with short
+    timeouts and one retry: an unreachable endpoint must not keep the admin
+    page waiting through the full retry budget."""
+    global _listing_client
+    pid = os.getpid()
+    with _listing_client_lock:
+        if _listing_client is None or _listing_client[0] != pid:
+            _listing_client = (pid, object_store.build_s3_client(
+                endpoint_url=settings.s3_endpoint_url,
+                region=settings.s3_region,
+                access_key_id=settings.s3_access_key_id,
+                secret_access_key=settings.s3_secret_access_key,
+                addressing_style=settings.s3_addressing_style,
+                max_attempts=2,
+                timeout_seconds=5,
+            ))
+    return _listing_client[1]
+
+
 def _checked_backup_key(key: str) -> str:
     if not key.startswith(object_store.s3_backup_prefix()) or not key.endswith('.weave-backup.tar.gz'):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Sicherung nicht gefunden.')
@@ -337,18 +378,7 @@ def list_s3_backups() -> S3BackupListResponse:
     prefix = object_store.s3_backup_prefix()
     archives = []
     try:
-        # Own client with short timeouts: an unreachable endpoint must not
-        # keep the admin page waiting through the full retry budget.
-        client = object_store.build_s3_client(
-            endpoint_url=settings.s3_endpoint_url,
-            region=settings.s3_region,
-            access_key_id=settings.s3_access_key_id,
-            secret_access_key=settings.s3_secret_access_key,
-            addressing_style=settings.s3_addressing_style,
-            max_attempts=2,
-            timeout_seconds=5,
-        )
-        paginator = client.get_paginator('list_objects_v2')
+        paginator = _listing_s3_client().get_paginator('list_objects_v2')
         for page in paginator.paginate(Bucket=settings.s3_bucket, Prefix=prefix):
             for item in page.get('Contents', []):
                 if item['Key'].endswith('.weave-backup.tar.gz'):
@@ -372,6 +402,7 @@ def create_s3_import(
 ) -> BackupRun:
     _require_s3()
     key = _checked_backup_key(payload.key)
+    _check_import_allowed(db, payload.force)  # before fetching up to backup_max_upload_bytes
     incoming_dir = backups_dir() / 'incoming'
     incoming_dir.mkdir(parents=True, exist_ok=True)
     incoming_path = incoming_dir / f'{uuid.uuid4()}.weave-backup.tar.gz'
@@ -497,15 +528,8 @@ def _validate_and_start_import(
             detail='Das Archiv ist beschädigt oder kein gültiges Sicherungsarchiv.',
         ) from exc
 
-    if not force:
-        state = target_state(db)
-        if not state['fresh']:
-            incoming_path.unlink(missing_ok=True)
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail='Das Ziel enthält bereits Daten. Setzen Sie "Vorhandene Daten überschreiben", um fortzufahren.',
-            )
     try:
+        _check_import_allowed(db, force)
         run = _start_run(db, BackupRun(
             kind=BackupRunKind.IMPORT,
             status=BackupRunStatus.QUEUED,

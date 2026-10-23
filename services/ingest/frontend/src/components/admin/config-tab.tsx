@@ -7,7 +7,16 @@ import { Button } from '@/components/ui/button';
 import { ApiError, apiFetch, apiJson } from '@/lib/api';
 import type { MessageKey } from '@/i18n/messages';
 import { useI18n } from '@/i18n/provider';
-import { Badge, ErrorNotice, Field, LoadingState, SectionCard, errorMessage, inputClass } from './admin-shared';
+import {
+  Badge,
+  ErrorNotice,
+  Field,
+  LoadingState,
+  SectionCard,
+  errorMessage,
+  inputClass,
+  saveResponseAsFile,
+} from './admin-shared';
 
 const BASE_PATH = '/api/v1/admin/config';
 
@@ -59,17 +68,7 @@ function formatValue(value: unknown): string {
 async function downloadExport(format: 'env' | 'json') {
   const response = await apiFetch(`${BASE_PATH}/export?format=${format}`);
   if (!response.ok) throw new ApiError(response.status, `Export failed (${response.status})`);
-  const blob = await response.blob();
-  const fileName =
-    /filename="([^"]+)"/.exec(response.headers.get('content-disposition') ?? '')?.[1] ?? `weave-ingest.${format}`;
-  const href = window.URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = href;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.URL.revokeObjectURL(href);
+  await saveResponseAsFile(response, `weave-ingest.${format}`);
 }
 
 export function ConfigTab() {
@@ -185,10 +184,16 @@ function ChecksCard({ checks }: { checks: string[] }) {
   );
 }
 
+// The KMS key field is only shown for aws:kms; a value left over from the
+// running configuration must neither be tested nor exported with another SSE.
+function effectiveForm(form: S3Form): S3Form {
+  return { ...form, S3_KMS_KEY_ID: form.S3_SSE === 'aws:kms' ? form.S3_KMS_KEY_ID : '' };
+}
+
 function envSnippet(form: S3Form): string {
   const lines = ['OBJECT_STORAGE_BACKEND=s3'];
   for (const field of S3_FIELDS) {
-    const value = form[field];
+    const value = effectiveForm(form)[field];
     if (field === 'S3_SECRET_ACCESS_KEY') {
       lines.push(value ? `${field}=${value}` : `# ${field}=`);
     } else if (value) {
@@ -223,7 +228,8 @@ function S3TestCard({ env }: { env: EnvSetting[] }) {
     setTesting(true);
     setError(null);
     try {
-      const body = Object.fromEntries(S3_FIELDS.map((field) => [field.toLowerCase(), form[field]]));
+      const values = effectiveForm(form);
+      const body = Object.fromEntries(S3_FIELDS.map((field) => [field.toLowerCase(), values[field]]));
       setResult(
         await apiJson<CheckResult>(`${BASE_PATH}/checks/s3`, {
           method: 'POST',

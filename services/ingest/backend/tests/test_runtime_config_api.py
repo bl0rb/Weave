@@ -77,10 +77,12 @@ def fake_s3(monkeypatch, tmp_path):
     fake = FakeS3()
     monkeypatch.setattr(settings, 's3_bucket', 'test-bucket')
     monkeypatch.setattr(settings, 's3_secret_access_key', 'running-secret')
+    monkeypatch.setattr(settings, 'redis_url', 'redis://:redis-secret@redis:6379/0')
     monkeypatch.setattr(settings, 'backup_dir', tmp_path / 'backups')
     monkeypatch.setattr(object_store, 's3_client', lambda: fake)
     monkeypatch.setattr(object_store, 'build_s3_client', lambda **kwargs: fake.__setattr__('built', kwargs) or fake)
     monkeypatch.setattr(backup_api, 'SessionLocal', TestingSessionLocal)
+    monkeypatch.setattr(backup_api, '_listing_client', None)
     return fake
 
 
@@ -104,6 +106,8 @@ def test_overview_masks_secrets(fake_s3):
     assert by_name['S3_BUCKET'] == {**by_name['S3_BUCKET'], 'value': 'test-bucket', 'customized': True}
     assert by_name['S3_BUCKET']['group'] == 'object_storage'
     assert 'running-secret' not in str(data)
+    assert by_name['REDIS_URL']['value'] == 'redis://:***@redis:6379/0'
+    assert 'redis-secret' not in str(data)
     assert {section['section'] for section in data['manual']} >= {'chat_providers', 'runtime_settings'}
     assert data['checks'] == ['database', 'redis', 's3', 'backup_dir']
 
@@ -115,7 +119,10 @@ def test_env_export_leaves_secrets_out(fake_s3):
     assert 'S3_BUCKET=test-bucket' in resp.text
     assert '# S3_SECRET_ACCESS_KEY=\n' in resp.text
     assert 'running-secret' not in resp.text
-    assert 'running-secret' not in _admin().get('/api/v1/admin/config/export?format=json').text
+    assert '# REDIS_URL=\n' in resp.text
+    assert 'redis-secret' not in resp.text
+    exported = _admin().get('/api/v1/admin/config/export?format=json').text
+    assert 'running-secret' not in exported and 'redis-secret' not in exported
 
 
 def test_s3_check_uses_form_values_and_keeps_the_running_secret(fake_s3):
@@ -178,7 +185,10 @@ def test_backup_to_s3_lists_validates_and_deletes(fake_s3, monkeypatch):
     assert fake_s3.objects[archive['key']][:2] == b'\x1f\x8b'
     assert archive['size_bytes'] == run.size_bytes
 
-    wrong = admin.post('/api/v1/admin/backup/s3/imports', json={'key': archive['key'], 'passphrase': 'wrong-passphrase'})
+    # force: a populated target is refused before the archive is even fetched.
+    wrong = admin.post(
+        '/api/v1/admin/backup/s3/imports', json={'key': archive['key'], 'passphrase': 'wrong-passphrase', 'force': True}
+    )
     assert wrong.status_code == 422, wrong.text
     outside = admin.post('/api/v1/admin/backup/s3/imports', json={'key': 'weave-ingest/objects/x', 'passphrase': 'x'})
     assert outside.status_code == 404

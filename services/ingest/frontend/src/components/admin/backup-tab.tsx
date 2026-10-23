@@ -17,6 +17,7 @@ import {
   apiSend,
   errorMessage,
   inputClass,
+  saveResponseAsFile,
 } from './admin-shared';
 
 const BASE_PATH = '/api/v1/admin/backup';
@@ -374,17 +375,7 @@ function ExportForm({
           typeof body?.detail === 'string' ? body.detail : t('admin.backup.exportFailed'),
         );
       }
-      const blob = await response.blob();
-      const fileName =
-        /filename="([^"]+)"/.exec(response.headers.get('content-disposition') ?? '')?.[1] ?? 'weave-backup.tar.gz';
-      const href = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = href;
-      link.download = fileName;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(href);
+      await saveResponseAsFile(response, 'weave-backup.tar.gz');
       setPassphrase('');
       setConfirmPassphrase('');
       await onStarted();
