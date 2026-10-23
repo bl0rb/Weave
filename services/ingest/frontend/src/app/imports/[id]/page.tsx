@@ -5,7 +5,9 @@ import Link from 'next/link';
 import { ChevronDown, ChevronRight, LoaderCircle, RotateCcw } from 'lucide-react';
 import { useParams } from 'next/navigation';
 
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { BackLink } from '@/components/back-link';
+import { PortalPage } from '@/components/portal/shared';
 import { ImportSyncButton, MissingConfluencePages } from '@/components/portal/import-sync';
 import { WeaveIngestLogo } from '@/components/weave-ingest-logo';
 import { ApiError, apiJson } from '@/lib/api';
@@ -128,27 +130,19 @@ export default function ImportRunPage() {
 
   if (notFound) {
     return (
-      <main className="min-h-screen">
-        <div className="mx-auto w-full max-w-4xl px-4 py-8 text-slate-950 sm:px-6 lg:px-8">
-          <h1 className="text-3xl font-semibold">{t('portal.importDetail.notFoundTitle')}</h1>
-          <p className="mt-2 text-sm text-slate-600">{t('portal.importDetail.notFoundBody')}</p>
-          <Link href="/imports" className="mt-4 inline-block text-sm text-emerald-700 hover:text-emerald-800">
-            {t('portal.importDetail.backToImports')}
-          </Link>
-        </div>
-      </main>
+      <PortalPage title={t('portal.importDetail.notFoundTitle')} description={t('portal.importDetail.notFoundBody')}>
+        <BackLink fallbackHref="/imports" fallbackLabel={t('portal.importDetail.backToImports')} />
+      </PortalPage>
     );
   }
 
   if (!run) {
     return (
-      <main className="min-h-screen">
-        <div className="mx-auto w-full max-w-4xl px-4 py-8 text-slate-950 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-2 py-6 text-sm text-slate-600">
-            <LoaderCircle className="h-4 w-4 animate-spin" /> {t('portal.importDetail.loading')}
-          </div>
-          {loadError && <p className="text-sm text-red-600">{loadError}</p>}
+      <main id="main-content" className="portal-page">
+        <div className="flex items-center gap-2 py-6 text-[15px] text-slate-600">
+          <LoaderCircle className="h-4 w-4 animate-spin" /> {t('portal.importDetail.loading')}
         </div>
+        {loadError && <p className="text-[15px] text-red-600">{loadError}</p>}
       </main>
     );
   }
@@ -161,36 +155,26 @@ export default function ImportRunPage() {
   const totalBytes = run.artifact_bytes + run.content_bytes;
 
   return (
-    <main className="min-h-screen">
-      <div className="mx-auto w-full max-w-4xl px-4 py-8 text-slate-950 sm:px-6 lg:px-8">
-        <section className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <p className="text-xs uppercase tracking-[0.16em] text-slate-500">{t('portal.importDetail.eyebrow')}</p>
-            <h1 className="mt-1 truncate text-3xl font-semibold">{runTitle(run, locale)}</h1>
-            <p className="mt-1 text-sm text-slate-600">
-              {run.scope_type === 'space' ? t('portal.importDetail.scopeSpaceLabel', { value: run.scope_value }) : t('portal.importDetail.scopePageLabel', { value: run.scope_value })}
-              {run.owner ? ` · ${t('portal.importDetail.startedBy', { name: run.owner.username })}` : ''}
-              {` · ${new Date(run.created_at).toLocaleString()}`}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {run.can_sync && <ImportSyncButton runId={run.id} />}
-            <span className={`rounded px-2 py-1 text-xs ${runStatusChip[run.status]}`}>{run.status}</span>
-            {!active && run.can_edit !== false && (
-              <Link href={`/imports/new?from=${run.id}`}>
-                <Button variant="outline" size="sm">
-                  <RotateCcw className="mr-2 h-4 w-4" /> {t('portal.importDetail.editRerun')}
-                </Button>
-              </Link>
-            )}
-            {active && (
-              <Button variant="outline" size="sm" onClick={() => void cancelRun()} disabled={cancelBusy || run.cancel_requested}>
-                {cancelBusy ? t('portal.importDetail.cancelling') : run.cancel_requested ? t('portal.importDetail.cancellingLabel') : t('portal.importDetail.cancel')}
-              </Button>
-            )}
-          </div>
-        </section>
-
+    <PortalPage
+      eyebrow={t('portal.importDetail.eyebrow')}
+      title={runTitle(run, locale)}
+      description={`${run.scope_type === 'space' ? t('portal.importDetail.scopeSpaceLabel', { value: run.scope_value }) : t('portal.importDetail.scopePageLabel', { value: run.scope_value })}${run.owner ? ` · ${t('portal.importDetail.startedBy', { name: run.owner.username })}` : ''} · ${new Date(run.created_at).toLocaleString()}`}
+      actions={<>
+        {run.can_sync && <ImportSyncButton runId={run.id} />}
+        <span className={`rounded px-2 py-1 text-[13px] ${runStatusChip[run.status]}`}>{run.status}</span>
+        {!active && run.can_edit !== false && (
+          <Link href={`/imports/new?from=${run.id}`} className={buttonVariants({ variant: 'outline' })}>
+            <RotateCcw className="mr-2 h-4 w-4" /> {t('portal.importDetail.editRerun')}
+          </Link>
+        )}
+        {active && (
+          <Button variant="outline" onClick={() => void cancelRun()} disabled={cancelBusy || run.cancel_requested}>
+            {cancelBusy ? t('portal.importDetail.cancelling') : run.cancel_requested ? t('portal.importDetail.cancellingLabel') : t('portal.importDetail.cancel')}
+          </Button>
+        )}
+      </>}
+    >
+      <BackLink fallbackHref="/imports" fallbackLabel={t('portal.importDetail.backToImports')} />
         {loadError && <p className="mb-4 text-sm text-amber-700">{loadError} {t('portal.importDetail.retrying')}</p>}
         {cancelMessage && <p className="mb-4 text-sm text-slate-600">{cancelMessage}</p>}
         <MissingConfluencePages runId={run.id} pages={run.missing_pages ?? []} canRemove={run.can_remove_missing ?? false} onChanged={async () => setRun(await apiJson<ImportRunDetail>(`/api/v1/import/runs/${run.id}`, { cache: 'no-store' }))} />
@@ -247,9 +231,7 @@ export default function ImportRunPage() {
           </div>
           {run.status === 'finished' && (
             <div className="mt-4">
-              <Link href={jobsHref}>
-                <Button>{t('portal.importDetail.viewInJobs')}</Button>
-              </Link>
+              <Link href={jobsHref} className={buttonVariants()}>{t('portal.importDetail.viewInJobs')}</Link>
             </div>
           )}
         </section>
@@ -316,12 +298,6 @@ export default function ImportRunPage() {
           )}
         </section>
 
-        <p className="mt-6">
-          <Link href="/imports" className="text-sm text-emerald-700 hover:text-emerald-800">
-            {t('portal.importDetail.backToImports')}
-          </Link>
-        </p>
-      </div>
-    </main>
+    </PortalPage>
   );
 }

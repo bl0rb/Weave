@@ -1,16 +1,23 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { AuthProvider, useAuth } from '@/lib/auth-context';
 import { SidebarNav } from '@/components/sidebar-nav';
 import { Topbar } from '@/components/topbar';
+import { useNavigationRecorder } from '@/lib/navigation-history';
 import { useI18n } from '@/i18n/provider';
 
 const AUTH_PAGES = ['/login', '/setup'];
 
 function isAuthPage(pathname: string): boolean {
   return AUTH_PAGES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
+
+/** Renders nothing; isolated so useSearchParams' Suspense bailout cannot blank the app. */
+function NavigationRecorder() {
+  useNavigationRecorder();
+  return null;
 }
 
 /** Sidebar + topbar + auth-gated content for protected routes. */
@@ -34,6 +41,7 @@ function ProtectedShell({ children }: { children: React.ReactNode }) {
 
   return (
     <>
+      <Suspense fallback={null}><NavigationRecorder /></Suspense>
       <SidebarNav open={navOpen} onOpenChange={setNavOpen} />
       <div className="lg:pl-64">
         <Topbar onMenuClick={() => setNavOpen(true)} />

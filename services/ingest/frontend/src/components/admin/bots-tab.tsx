@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
-import { Bot, Download, KeyRound, Pencil, Plus, Trash2, Upload, Workflow } from 'lucide-react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { Bot, Download, KeyRound, MoreHorizontal, Pencil, Plus, Trash2, Upload, Workflow } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { ApiError, apiFetch, apiJson } from '@/lib/api';
@@ -253,6 +253,35 @@ function validateAgent(agent: AgentConfig | null, t: Translate): string[] {
   return errors;
 }
 
+/** Host of the webhook for the tile; the full URL stays in the title. */
+function webhookHost(url: string) {
+  try { return new URL(url).host; } catch { return url; }
+}
+
+/** "More actions" menu of a bot tile: Escape and an outside click close it. */
+function BotMenu({ name, onExport, onDelete }: { name: string; onExport: () => void; onDelete?: () => void }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: MouseEvent) => { if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { setOpen(false); triggerRef.current?.focus(); } };
+    document.addEventListener('mousedown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onPointer); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+  const itemClass = 'flex w-full items-center gap-2 px-3 py-2 text-left text-[15px] hover:bg-[var(--hover)] focus-visible:bg-[var(--hover)] focus-visible:outline-none';
+  return <div ref={rootRef} className="relative flex-none">
+    <Button ref={triggerRef} variant="ghost" size="icon" className="h-8 w-8" aria-label={t('admin.bots.moreAria', { name })} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(value => !value)}><MoreHorizontal size={18} aria-hidden="true" /></Button>
+    {open && <div role="menu" className="absolute right-0 z-20 mt-1 min-w-44 overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface)] py-1 shadow-lg">
+      <button type="button" role="menuitem" className={itemClass} aria-label={t('admin.bots.exportAria', { name })} onClick={() => { setOpen(false); onExport(); }}><Download size={15} aria-hidden="true" />{t('admin.bots.export')}</button>
+      {onDelete && <button type="button" role="menuitem" className={`${itemClass} text-red-700`} aria-label={t('admin.bots.deleteAria', { name })} onClick={() => { setOpen(false); onDelete(); }}><Trash2 size={15} aria-hidden="true" />{t('common.delete')}</button>}
+    </div>}
+  </div>;
+}
+
 export function BotsTab() {
   const { t } = useI18n();
   const bots = useAdminList<ManagedBot>('/api/v1/auth/admin/bots');
@@ -297,7 +326,7 @@ export function BotsTab() {
     <SectionCard
       title={t('admin.bots.title')}
       description={t('admin.bots.description')}
-      actions={<div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => { setImporting(true); setNotice(''); }}><Upload size={15} />{t('admin.bots.import')}</Button><Button variant="outline" size="sm" onClick={() => { setEditing('new'); setNotice(''); }}><Plus size={15} />{t('admin.bots.add')}</Button></div>}
+      actions={<div className="flex gap-2"><Button variant="outline" onClick={() => { setImporting(true); setNotice(''); }}><Upload size={15} />{t('admin.bots.import')}</Button><Button onClick={() => { setEditing('new'); setNotice(''); }}><Plus size={15} />{t('admin.bots.add')}</Button></div>}
     >
       <ErrorNotice message={error || exportError} />
       {notice && <p role="status" className="mb-4 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</p>}
@@ -307,16 +336,23 @@ export function BotsTab() {
           <div><p className="font-medium text-slate-800">{t('admin.bots.empty.title')}</p><p className="mt-1 text-sm text-slate-500">{t('admin.bots.empty.body')}</p></div>
           <Button variant="outline" size="sm" onClick={() => setEditing('new')}><Plus size={15} />{t('admin.bots.addFirst')}</Button>
         </div>
-      ) : <ul className={bots.items.length > 3 ? 'grid gap-3 md:grid-cols-2 xl:grid-cols-3' : 'divide-y divide-slate-100'}>
-        {bots.items.map(item => <li key={item.id} className={`flex flex-wrap items-start justify-between gap-4 ${bots.items.length > 3 ? 'min-w-0 rounded-xl border border-slate-200 p-3' : 'py-4'}`}>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2"><Bot size={18} className="text-emerald-700" /><h3 className="font-semibold text-slate-950">{item.name}</h3><Badge tone={item.enabled ? 'emerald' : 'slate'}>{item.enabled ? t('admin.bots.status.active') : t('admin.bots.status.inactive')}</Badge><Badge tone={item.source === 'runtime' ? 'slate' : 'emerald'}>{item.source === 'runtime' ? t('admin.bots.kind.configBot') : t('admin.bots.kind.managed')}</Badge>{item.streaming && <Badge tone="amber">{t('admin.bots.badge.streaming')}</Badge>}{item.has_auth_token && <Badge tone="amber">{t('admin.bots.badge.bearerToken')}</Badge>}{item.runtime_rejected && <Badge tone="red">{t('admin.bots.badge.notInChat')}</Badge>}</div>
-            <p className="mt-1 text-sm text-slate-600">{item.description || item.id}</p>
-            {item.runtime_rejected && <p role="status" className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{item.kind === 'n8n' ? t('admin.bots.runtimeRejected.n8n') : t('admin.bots.runtimeRejected.other')}</p>}
-            {item.webhook_url && <p className="mt-2 break-all text-xs text-slate-400">{item.webhook_url}</p>}
-            <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-500"><span>{t('admin.bots.teamsLabel', { teams: item.public ? t('admin.bots.teamsAll') : item.grants.filter(grant => grant.role === 'user').map(grant => grant.name).join(', ') || t('admin.bots.teamsNone') })}</span><span>{t('admin.bots.ownersLabel', { owners: item.grants.filter(grant => grant.role === 'owner').map(grant => grant.name).join(', ') || '—' })}</span><span>{t('admin.bots.spacesLabel', { value: item.collections.length ? item.collections.length : t('admin.bots.spacesAllAuthorized') })}</span></div>
+      ) : <ul className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {bots.items.map(item => <li key={item.id} className="flex min-w-0 flex-col gap-3 rounded-xl border border-[var(--line)] p-4">
+          <div className="flex items-start gap-2">
+            <Bot size={18} className="mt-0.5 flex-none text-emerald-700" aria-hidden="true" />
+            <h3 className="min-w-0 flex-1 line-clamp-2 text-[15px] font-semibold text-slate-950">{item.name}</h3>
+            <BotMenu name={item.name} onExport={() => void exportBot(item)} onDelete={item.editable !== false ? () => setDeleting(item) : undefined} />
           </div>
-          <div className="flex gap-1"><Button variant="ghost" size="sm" onClick={() => void exportBot(item)} aria-label={t('admin.bots.exportAria', { name: item.name })}><Download size={15} />{t('admin.bots.export')}</Button>{item.editable !== false && <><Button variant="ghost" size="sm" onClick={() => setEditing(item)} aria-label={t('admin.bots.editAria', { name: item.name })}><Pencil size={15} />{t('common.edit')}</Button><Button variant="ghost" size="sm" onClick={() => setDeleting(item)} aria-label={t('admin.bots.deleteAria', { name: item.name })}><Trash2 size={15} /></Button></>}</div>
+          <div className="flex flex-wrap items-center gap-2"><Badge tone={item.enabled ? 'emerald' : 'slate'}>{item.enabled ? t('admin.bots.status.active') : t('admin.bots.status.inactive')}</Badge><Badge tone={item.source === 'runtime' ? 'slate' : 'emerald'}>{item.source === 'runtime' ? t('admin.bots.kind.configBot') : t('admin.bots.kind.managed')}</Badge>{item.streaming && <Badge tone="amber">{t('admin.bots.badge.streaming')}</Badge>}{item.has_auth_token && <Badge tone="amber">{t('admin.bots.badge.bearerToken')}</Badge>}{item.runtime_rejected && <Badge tone="red">{t('admin.bots.badge.notInChat')}</Badge>}</div>
+          <p className="line-clamp-3 text-[15px] text-slate-600">{item.description || item.id}</p>
+          {item.runtime_rejected && <p role="status" className="rounded-lg bg-red-50 px-3 py-2 text-[13px] text-red-700">{item.kind === 'n8n' ? t('admin.bots.runtimeRejected.n8n') : t('admin.bots.runtimeRejected.other')}</p>}
+          {item.webhook_url && <p className="truncate text-[13px] text-slate-500" title={item.webhook_url}>{webhookHost(item.webhook_url)}</p>}
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-[13px]">
+            <div className="min-w-0"><dt className="text-slate-500">{t('admin.bots.meta.teams')}</dt><dd className="font-medium text-slate-800">{item.public ? t('admin.bots.teamsAll') : item.grants.filter(grant => grant.role === 'user').map(grant => grant.name).join(', ') || t('admin.bots.teamsNone')}</dd></div>
+            <div className="min-w-0"><dt className="text-slate-500">{t('admin.bots.meta.owners')}</dt><dd className="font-medium text-slate-800">{item.grants.filter(grant => grant.role === 'owner').map(grant => grant.name).join(', ') || '—'}</dd></div>
+            <div className="min-w-0"><dt className="text-slate-500">{t('admin.bots.meta.spaces')}</dt><dd className="font-medium text-slate-800">{item.collections.length ? item.collections.length : t('admin.bots.spacesAllAuthorized')}</dd></div>
+          </dl>
+          {item.editable !== false && <div className="mt-auto flex pt-1"><Button variant="outline" size="sm" onClick={() => setEditing(item)} aria-label={t('admin.bots.editAria', { name: item.name })}><Pencil size={15} />{t('common.edit')}</Button></div>}
         </li>)}
       </ul>}
     </SectionCard>

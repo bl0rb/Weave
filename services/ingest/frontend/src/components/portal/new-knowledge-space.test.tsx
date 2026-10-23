@@ -8,7 +8,7 @@ import { PortalHome } from './home';
 
 const navigation = vi.hoisted(() => ({ replace: vi.fn() }));
 vi.mock('next/navigation', () => ({ useRouter: () => navigation }));
-vi.mock('@/lib/auth-context', () => ({ useAuth: () => ({ user: { username: 'Ada' } }) }));
+vi.mock('@/lib/auth-context', () => ({ useAuth: () => ({ user: { id: 'u-ada', username: 'Ada' } }) }));
 vi.mock('@/lib/api', async importOriginal => ({ ...await importOriginal<typeof import('@/lib/api')>(), apiJson: vi.fn() }));
 const api = vi.mocked(apiJson);
 const area = {
@@ -20,18 +20,33 @@ const serviceConfig = { team_name: 'Service', team_names: ['Service'], teams: [{
 beforeEach(() => { api.mockReset(); navigation.replace.mockReset(); });
 afterEach(cleanup);
 
+/** Config first, then the directory (403 for a first-time creator unless `directory` is given), then the POST. */
+function mockApi(config: object, { directory, created = area, createError }: { directory?: object; created?: object; createError?: Error } = {}) {
+  api.mockImplementation(async (path, init) => {
+    if (path === '/api/v1/portal/config') return config;
+    if (path === '/api/v1/directory/teams') { if (directory) return directory; throw new ApiError(403, 'Only an admin or a collection owner may use the directory'); }
+    if (path === '/api/v1/collections' && init?.method === 'POST') { if (createError) throw createError; return created; }
+    throw new Error(`unexpected request: ${path}`);
+  });
+}
+const postedBody = () => JSON.parse(api.mock.calls.find(([, init]) => init?.method === 'POST')?.[1]?.body as string);
+const step = (name: RegExp) => fireEvent.click(screen.getByRole('button', { name }));
+async function fillBasics(name: string, purpose: string) {
+  await screen.findByRole('textbox', { name: 'Name' });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: name } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Details angeben' }), { target: { value: purpose } });
+}
+
 it('creates the area with purpose, responsible team and member team, then continues with it selected', async () => {
-  api.mockResolvedValueOnce(serviceConfig);
+  mockApi(serviceConfig);
   render(<NewKnowledgeSpace />);
-  await screen.findByRole('checkbox', { name: 'Service' });
+  await fillBasics('  Servicewissen  ', ' Antworten für den Service ');
   expect((screen.getByRole('combobox', { name: /Zuständige Gruppe/ }) as HTMLSelectElement).value).toBe('t-service');
-  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: '  Servicewissen  ' } });
-  fireEvent.change(screen.getByRole('textbox', { name: 'Details angeben' }), { target: { value: ' Antworten für den Service ' } });
-  api.mockResolvedValueOnce(area);
+  step(/Überprüfen/);
   fireEvent.click(screen.getByRole('button', { name: 'Anlegen und Quelle hinzufügen' }));
   // Straight on to the source form (files or Confluence are chosen there, in step 02).
   await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('/sources/new?collection=area'));
-  expect(JSON.parse(api.mock.calls[1][1]?.body as string)).toEqual({
+  expect(postedBody()).toEqual({
     name: 'Servicewissen',
     description: 'Antworten für den Service',
     responsible_team_id: 't-service',
@@ -41,58 +56,78 @@ it('creates the area with purpose, responsible team and member team, then contin
 });
 
 it('explains a name that is already taken and marks the required fields', async () => {
-  api.mockResolvedValueOnce(serviceConfig);
+  mockApi(serviceConfig, { createError: new ApiError(409, 'A knowledge space with this name already exists') });
   const { container } = render(<NewKnowledgeSpace />);
-  await screen.findByRole('checkbox', { name: 'Service' });
+  await fillBasics('Servicewissen', 'Wofür');
   expect(container.querySelectorAll('.portal-required')).toHaveLength(2);
-  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Servicewissen' } });
-  fireEvent.change(screen.getByRole('textbox', { name: 'Details angeben' }), { target: { value: 'Wofür' } });
-  api.mockRejectedValueOnce(new ApiError(409, 'A knowledge space with this name already exists'));
+  step(/Überprüfen/);
   fireEvent.click(screen.getByRole('button', { name: 'Anlegen und Quelle hinzufügen' }));
   expect(await screen.findByText(/Es gibt bereits einen Wissensbereich mit diesem Namen/)).toBeTruthy();
 });
 
-it('requires a purpose before the area can be created', async () => {
-  api.mockResolvedValueOnce(serviceConfig);
+it('requires a purpose before the area can be created and links back to the step', async () => {
+  mockApi(serviceConfig);
   render(<NewKnowledgeSpace />);
-  await screen.findByRole('checkbox', { name: 'Service' });
-  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Bereich' } });
+  await fillBasics('Bereich', '');
+  step(/Überprüfen/);
   const save = screen.getByRole('button', { name: 'Anlegen und Quelle hinzufügen' }) as HTMLButtonElement;
   expect(save.disabled).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'Zweck' }));
   fireEvent.change(screen.getByRole('textbox', { name: 'Details angeben' }), { target: { value: 'Wofür' } });
-  expect(save.disabled).toBe(false);
+  step(/Überprüfen/);
+  expect((screen.getByRole('button', { name: 'Anlegen und Quelle hinzufügen' }) as HTMLButtonElement).disabled).toBe(false);
 });
 
 it('lets the member teams be narrowed and adds a newly chosen responsible team', async () => {
-  api.mockResolvedValueOnce({ ...serviceConfig, team_names: ['Service', 'Vertrieb'], teams: [{ id: 't-service', name: 'Service' }, { id: 't-sales', name: 'Vertrieb' }] });
+  mockApi({ ...serviceConfig, team_names: ['Service', 'Vertrieb'], teams: [{ id: 't-service', name: 'Service' }, { id: 't-sales', name: 'Vertrieb' }] });
   render(<NewKnowledgeSpace />);
-  await screen.findByRole('checkbox', { name: 'Service' });
-  expect((screen.getByRole('checkbox', { name: 'Vertrieb' }) as HTMLInputElement).checked).toBe(false);
-  fireEvent.click(screen.getByRole('checkbox', { name: 'Service' }));
+  await fillBasics('Übergreifendes Wissen', 'Vertriebswissen');
   fireEvent.change(screen.getByRole('combobox', { name: /Zuständige Gruppe/ }), { target: { value: 't-sales' } });
+  step(/Gruppen/);
+  // Directory closed for a first-time creator: own teams only, without member counts.
+  expect(screen.getByText(/deine eigenen Gruppen/)).toBeTruthy();
   expect((screen.getByRole('checkbox', { name: 'Vertrieb' }) as HTMLInputElement).checked).toBe(true);
-  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Übergreifendes Wissen' } });
-  fireEvent.change(screen.getByRole('textbox', { name: 'Details angeben' }), { target: { value: 'Vertriebswissen' } });
-  api.mockResolvedValueOnce(area);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Service' }));
+  step(/Überprüfen/);
   fireEvent.click(screen.getByRole('button', { name: 'Anlegen und Quelle hinzufügen' }));
-  await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
-  const body = JSON.parse(api.mock.calls[1][1]?.body as string);
-  expect(body.grants).toEqual([{ team_id: 't-sales', role: 'member' }]);
-  expect(body.responsible_team_id).toBe('t-sales');
+  await waitFor(() => expect(navigation.replace).toHaveBeenCalled());
+  expect(postedBody().grants).toEqual([{ team_id: 't-sales', role: 'member' }]);
+  expect(postedBody().responsible_team_id).toBe('t-sales');
+});
+
+it('shows the creator as fixed owner and adds people when the directory is open', async () => {
+  mockApi(serviceConfig, { directory: { items: [{ id: 't-service', name: 'Service', member_count: 4 }] } });
+  api.mockImplementationOnce(async () => serviceConfig);
+  const base = api.getMockImplementation()!;
+  api.mockImplementation(async (path, init) => typeof path === 'string' && path.startsWith('/api/v1/directory/users')
+    ? { items: [{ id: 'u2', username: 'msmith', display_name: null, team: 'Recht' }] }
+    : base(path, init));
+  render(<NewKnowledgeSpace />);
+  await fillBasics('Bereich', 'Wofür');
+  step(/Personen/);
+  expect(screen.getByText(/wirst automatisch Besitzer/)).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Ada entfernen' })).toBeNull();
+  fireEvent.change(screen.getByPlaceholderText('Name oder Gruppe suchen …'), { target: { value: 'ms' } });
+  fireEvent.click(await screen.findByRole('button', { name: /msmith/ }));
+  step(/Überprüfen/);
+  fireEvent.click(screen.getByRole('button', { name: 'Anlegen und Quelle hinzufügen' }));
+  await waitFor(() => expect(navigation.replace).toHaveBeenCalled());
+  expect(postedBody().grants).toEqual([{ user_id: 'u2', role: 'reader' }, { team_id: 't-service', role: 'member' }]);
 });
 
 it('only opens an area to everyone after an explicit confirmation', async () => {
-  api.mockResolvedValue({ team_name: null, team_names: [], teams: [], publication_configured: true });
+  mockApi({ team_name: null, team_names: [], teams: [], publication_configured: true });
   render(<NewKnowledgeSpace />);
-  await screen.findByRole('radio', { name: 'Alle angemeldeten Nutzer' });
-  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Bereich' } });
-  fireEvent.change(screen.getByRole('textbox', { name: 'Details angeben' }), { target: { value: 'Wofür' } });
-  const save = screen.getByRole('button', { name: 'Anlegen und Quelle hinzufügen' }) as HTMLButtonElement;
-  expect(save.disabled).toBe(false);
-  fireEvent.click(screen.getByRole('radio', { name: 'Alle angemeldeten Nutzer' }));
-  expect(save.disabled).toBe(true);
+  await fillBasics('Bereich', 'Wofür');
+  step(/Zugriff/);
+  fireEvent.click(screen.getByRole('radio', { name: /^Öffentlich/ }));
+  step(/Überprüfen/);
+  expect((screen.getByRole('button', { name: 'Anlegen und Quelle hinzufügen' }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByText(/noch nicht bestätigt/)).toBeTruthy();
+  step(/^2\s*Zugriff/);
   fireEvent.click(screen.getByRole('checkbox'));
-  expect(save.disabled).toBe(false);
+  step(/Überprüfen/);
+  expect((screen.getByRole('button', { name: 'Anlegen und Quelle hinzufügen' }) as HTMLButtonElement).disabled).toBe(false);
 });
 
 it('keeps the Übersicht free of a "Wissensbereich anlegen" shortcut but offers "Quelle hinzufügen" as its one header action', async () => {

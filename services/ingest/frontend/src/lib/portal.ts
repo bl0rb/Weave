@@ -55,7 +55,11 @@ export type QualitySignals = {
 export type QualityDetail = {
   grade: string | null; score: number | null; recommendation: string | null;
   thresholds: { A: number; B: number }; signals: QualitySignals; issues: string[];
+  /** Weak spots located in the markdown (line numbers refer to the raw job markdown, so match by text). */
+  findings?: QualityFinding[];
 };
+export type QualityFindingKind = 'gibberish' | 'repeated_line' | 'symbol_heavy' | 'field_validation';
+export type QualityFinding = { line: number; column: number; kind: QualityFindingKind; text: string };
 export type QualityMissingReason = 'not_finished' | 'failed' | 'legacy' | 'import_without_gate' | 'unknown';
 export type DocumentPreview = PortalDocument & {
   markdown: string; markdown_sha256: string; profile_id: string | null; can_reprocess: boolean;
@@ -64,7 +68,9 @@ export type DocumentPreview = PortalDocument & {
   can_edit?: boolean;
 };
 export type PortalEditResult = { document_id: string; document_version: number; release: Publication };
-export type PortalConfig = { publication_configured: boolean; team_name: string | null; team_names: string[]; teams: TeamRef[] };
+export type PortalConfig = { publication_configured: boolean; analysis_configured?: boolean; team_name: string | null; team_names: string[]; teams: TeamRef[] };
+export type AnalysisRecommendation = { severity: 'info' | 'warning' | 'critical'; action: 'release' | 'edit' | 'reprocess' | 'skip' | 'check'; title: string; detail: string };
+export type DocumentAnalysis = { markdown_sha256: string; generated_at: string; cached: boolean; summary: string; recommendations: AnalysisRecommendation[] };
 export const jsonBody = (body: unknown): RequestInit => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
 export function portalError(error: unknown, locale: Locale = DEFAULT_LOCALE): string {
@@ -296,4 +302,9 @@ export async function downloadPortalFile(path: string, filename: string, locale:
   link.click();
   link.remove();
   window.URL.revokeObjectURL(href);
+}
+
+/** AI recommendation for one document; costs a model call, so only on explicit user action. */
+export function requestDocumentAnalysis(id: string, locale: Locale, refresh: boolean): Promise<DocumentAnalysis> {
+  return apiJson(`/api/v1/portal/documents/${encodeURIComponent(id)}/analysis`, jsonBody({ locale, refresh }));
 }

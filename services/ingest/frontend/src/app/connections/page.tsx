@@ -7,6 +7,7 @@ import { Cloud, ScanEye, Webhook } from 'lucide-react';
 
 import { ConfluenceConnectionsTab } from '@/components/connections/confluence-connections-tab';
 import { VlConnectionsPanel } from '@/components/connections/vl-connections-panel';
+import { PortalPage } from '@/components/portal/shared';
 import { WebhookConnectionsTab } from '@/components/connections/webhook-connections-tab';
 import { useI18n } from '@/i18n/provider';
 import type { MessageKey } from '@/i18n/messages';
@@ -39,7 +40,7 @@ function isTabId(value: string | null): value is TabId {
 
 export default function ConnectionsPage() {
   return (
-    <Suspense fallback={<main className="min-h-screen" />}>
+    <Suspense fallback={<main className="portal-page" />}>
       <ConnectionsPageInner />
     </Suspense>
   );
@@ -76,15 +77,7 @@ function ConnectionsPageInner() {
   };
 
   return (
-    <main className="min-h-screen">
-      <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        <header className="mb-6">
-          <h1 className="text-3xl font-semibold text-slate-950">{t('portal.connectionsPage.title')}</h1>
-          <p className="mt-1 text-[15px] text-slate-500">
-            {t('portal.connectionsPage.subtitle')}
-          </p>
-        </header>
-
+    <PortalPage title={t('portal.connectionsPage.title')} description={t('portal.connectionsPage.subtitle')}>
         <div
           role="tablist"
           aria-label={t('portal.connectionsPage.sectionsAria')}
@@ -152,7 +145,6 @@ function ConnectionsPageInner() {
             <VlConnectionsPanel />
           </div>
         )}
-      </div>
-    </main>
+    </PortalPage>
   );
 }

@@ -12,6 +12,8 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ push, refresh }), usePat
 vi.mock('@/lib/api', async importOriginal => ({ ...await importOriginal<typeof import('@/lib/api')>(), apiFetch: vi.fn(), apiJson: vi.fn() }));
 vi.mock('@/lib/data-cache', () => ({ useVisiblePolling: vi.fn() }));
 vi.mock('@/lib/auth-context', () => ({ useAuth: () => auth }));
+vi.mock('@/components/back-link', () => ({ BackLink: ({ fallbackLabel }: { fallbackLabel: string }) => <span>{fallbackLabel}</span> }));
+vi.mock('./technical-details', () => ({ TechnicalDetailsButton: ({ extraActions }: { extraActions?: React.ReactNode }) => <div><button>Technische Informationen</button>{extraActions}</div> }));
 vi.mock('@/components/markdown/markdown-view', () => ({ MarkdownView: ({ markdown }: { markdown: string }) => <div>{markdown}</div> }));
 const content = { id: 'doc', original_filename: 'Regelwerk.pdf', status: 'FINISHED', collection_id: 'area', collection_name: 'Service', created_at: '2026-09-01T12:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, can_reprocess: true, profile_id: 'ppocrv6_tiny_structurev3', release: null, review_decision: null, source: { kind: 'upload' as const, label: 'Hochgeladen', path: 'Kunden/Vertraege', url: null }, markdown: 'Geprüfter Text', markdown_sha256: 'a'.repeat(64),
   quality: { grade: 'A', score: 0.95, recommendation: 'allow', thresholds: { A: 0.9, B: 0.75 }, signals: { ocr_confidence: 0.92, confidence_sample_size: 1234, structure_quality: 0.8, noise_penalty: 0.05, text_quality: 0.95, field_validation: {} }, issues: [] },
@@ -423,4 +425,71 @@ it('blocks park, skip and release while another decision is in flight', async ()
   await screen.findByRole('button', { name: 'Wird geparkt …' });
   expect(release.disabled).toBe(true);
   expect((screen.getByRole('button', { name: 'Nicht freigeben' }) as HTMLButtonElement).disabled).toBe(true);
+});
+
+const findingsQuality = { ...content.quality, findings: [
+  { line: 3, column: 0, kind: 'gibberish' as const, text: 'xqzv kkrr' },
+  { line: 9, column: 0, kind: 'repeated_line' as const, text: 'nirgends im Text' },
+] };
+it('toggles weak-spot highlighting and keeps unmatched findings listed', async () => {
+  mockDocument({ markdown: 'Kopf\nxqzv kkrr hier\nEnde', quality: findingsQuality });
+  render(<ReviewDocument id="doc" />);
+  const toggle = await screen.findByRole('button', { name: /Schwachstellen markieren \(2\)/ });
+  expect(toggle.getAttribute('aria-pressed')).toBe('false');
+  expect(screen.getByText('2 Auffälligkeiten')).toBeTruthy();
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute('aria-pressed')).toBe('true');
+  expect(document.getElementById('finding-line-2')).toBeTruthy();
+  expect(document.getElementById('finding-line-1')).toBeNull();
+  expect(screen.getAllByText(/Nicht im Text zuordenbar/).length).toBeGreaterThan(0);
+});
+it('a finding in the release panel switches highlighting on', async () => {
+  mockDocument({ markdown: 'Kopf\nxqzv kkrr hier', quality: findingsQuality });
+  render(<ReviewDocument id="doc" />);
+  fireEvent.click(await screen.findByRole('button', { name: /^Unleserlicher Text: xqzv kkrr/ }));
+  expect(screen.getByRole('button', { name: /Schwachstellen markieren/ }).getAttribute('aria-pressed')).toBe('true');
+});
+it('shows the technical button in every state and puts diagnostics into it', async () => {
+  mockDocument({ release: { id: 'r', created_at: content.created_at, status: 'pending', error_message: null, released_by: 'anna' } });
+  render(<ReviewDocument id="doc" />);
+  expect(await screen.findByRole('button', { name: 'Technische Informationen' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: /diagnose/i })).toBeTruthy();
+  cleanup();
+  mockDocument({ review_decision: 'skipped' });
+  render(<ReviewDocument id="doc" />);
+  expect(await screen.findByRole('button', { name: 'Technische Informationen' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: /diagnose/i })).toBeNull();
+});
+it('requests the AI analysis only on click and renders the result', async () => {
+  api.mockImplementation(async path => path === '/api/v1/portal/config' ? { ...config, analysis_configured: true }
+    : String(path).endsWith('/analysis') ? { markdown_sha256: 'x', generated_at: '2026-09-01T12:00:00Z', cached: true, summary: 'Alles lesbar.', recommendations: [{ severity: 'warning', action: 'check', title: 'Tabelle prüfen', detail: 'Zeile 4' }] } : { ...content });
+  render(<ReviewDocument id="doc" />);
+  const button = await screen.findByRole('button', { name: 'Handlungsempfehlung anfordern' });
+  expect(api.mock.calls.some(([path]) => String(path).endsWith('/analysis'))).toBe(false);
+  fireEvent.click(button);
+  await screen.findByText('Alles lesbar.');
+  expect(screen.getByText('Warnung')).toBeTruthy();
+  expect(screen.getByText(/Prüfen: Tabelle prüfen/)).toBeTruthy();
+  expect(screen.getByText(/Gespeichertes Ergebnis/)).toBeTruthy();
+  const call = api.mock.calls.find(([path]) => String(path).endsWith('/analysis'));
+  expect(JSON.parse(call?.[1]?.body as string)).toEqual({ locale: 'de', refresh: false });
+  fireEvent.click(screen.getByRole('button', { name: 'Neu analysieren' }));
+  await waitFor(() => expect(api.mock.calls.filter(([path]) => String(path).endsWith('/analysis'))).toHaveLength(2));
+});
+it('disables the AI analysis with a reason when it is not configured', async () => {
+  render(<ReviewDocument id="doc" />);
+  const button = await screen.findByRole('button', { name: 'Handlungsempfehlung anfordern' });
+  expect((button as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByText(/nicht eingerichtet/)).toBeTruthy();
+});
+it('shows a readable error when the analysis fails', async () => {
+  api.mockImplementation(async path => { if (path === '/api/v1/portal/config') return { ...config, analysis_configured: true }; if (String(path).endsWith('/analysis')) throw new ApiError(502, 'analysis_failed'); return { ...content }; });
+  render(<ReviewDocument id="doc" />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Handlungsempfehlung anfordern' }));
+  await screen.findByText(/Die Analyse ist fehlgeschlagen/);
+});
+it('opens the editor right away with initialEdit when the document is editable', async () => {
+  mockDocument({ can_edit: true });
+  render(<ReviewDocument id="doc" initialEdit />);
+  await screen.findByRole('heading', { name: 'Markdown bearbeiten' });
 });

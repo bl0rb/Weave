@@ -141,10 +141,10 @@ it('maps the view presets and the filter bar to the server-side filters and the 
   expect(window.location.search).toBe('?bewertung=none&quelle=confluence&q=Reise&ansicht=mine');
 });
 
-it('links every row to its technical details and explains the statuses and "Ohne Bewertung"', async () => {
+it('explains the statuses and "Ohne Bewertung"', async () => {
   render(<PortalDocuments />);
   await screen.findByText('Handbuch.pdf');
-  expect(screen.getByRole('link', { name: 'Technische Details' }).getAttribute('href')).toBe('/jobs/d1');
+  expect(screen.queryByRole('link', { name: 'Technische Details' })).toBeNull();
   expect(screen.getByRole('link', { name: 'Prüfen' }).getAttribute('href')).toBe('/reviews/d1');
 
   const standHelp = screen.getByRole('button', { name: 'Was bedeuten die Stände?' });

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Check, Copy, KeyRound, Plus, Trash2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { PortalPage } from '@/components/portal/shared';
 import {
   ApiError,
   apiJson,
@@ -136,13 +137,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <main id="main-content" className="portal-page">
-      <>
-        <header className="mb-6">
-          <h1 className="text-3xl font-semibold text-slate-950">{t('portal.settingsPage.title')}</h1>
-          <p className="mt-1 text-[15px] text-slate-500">{t('portal.settingsPage.subtitle')}</p>
-        </header>
-
+    <PortalPage title={t('portal.settingsPage.title')} description={t('portal.settingsPage.subtitle')}>
         <SectionCard
           title={t('portal.settingsPage.cardTitle')}
           description={t('portal.settingsPage.cardDescription')}
@@ -286,7 +281,6 @@ export default function SettingsPage() {
             }}
           />
         )}
-      </>
-    </main>
+    </PortalPage>
   );
 }

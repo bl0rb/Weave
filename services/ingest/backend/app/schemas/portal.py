@@ -94,6 +94,13 @@ class PortalQualityThresholds(BaseModel):
     B: float
 
 
+class PortalQualityFinding(BaseModel):
+    line: int
+    column: int
+    kind: str
+    text: str
+
+
 class PortalQualityDetail(BaseModel):
     grade: str | None = None
     score: float | None = None
@@ -101,6 +108,7 @@ class PortalQualityDetail(BaseModel):
     thresholds: PortalQualityThresholds
     signals: PortalQualitySignals
     issues: list = Field(default_factory=list)
+    findings: list[PortalQualityFinding] = Field(default_factory=list)
 
 
 # Machine keys explaining an absent quality grade, mapped to German text by
@@ -186,8 +194,30 @@ class PortalBulkActionResponse(BaseModel):
     errors: list[PortalBulkErrorItem] = Field(default_factory=list)
 
 
+class PortalAnalysisRequest(BaseModel):
+    locale: Literal['de', 'en'] = 'de'
+    refresh: bool = False
+
+
+class PortalAnalysisRecommendation(BaseModel):
+    severity: Literal['info', 'warning', 'critical']
+    action: Literal['release', 'edit', 'reprocess', 'skip', 'check']
+    title: str
+    detail: str
+
+
+class PortalAnalysisResponse(BaseModel):
+    markdown_sha256: str
+    generated_at: datetime
+    cached: bool
+    summary: str
+    recommendations: list[PortalAnalysisRecommendation] = Field(default_factory=list)
+
+
 class PortalConfigResponse(BaseModel):
     publication_configured: bool
+    # A usable central chat provider exists for the on-demand analysis.
+    analysis_configured: bool = False
     team_name: str | None
     # Names of every team the caller belongs to (primary team included,
     # deduplicated) -- lets the knowledge-space form offer a real

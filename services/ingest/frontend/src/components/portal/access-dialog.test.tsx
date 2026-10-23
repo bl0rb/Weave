@@ -31,23 +31,28 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+/** The dialog is a stepper like the bot editor: jump straight to a step. */
+const step = (name: RegExp) => fireEvent.click(screen.getByRole('button', { name }));
+const teamsLoaded = async () => { step(/Gruppen/); await screen.findByRole('checkbox', { name: /^Service/ }); };
+
 it('keeps roles editable in public mode, since public only affects reading', async () => {
   render(<AccessDialog collection={collection} onClose={vi.fn()} onSaved={vi.fn()} />);
-  await screen.findByRole('checkbox', { name: /^Service/ });
   fireEvent.click(screen.getByRole('radio', { name: /^Öffentlich/ }));
-  expect(screen.getByRole('checkbox', { name: /^Service/ })).toBeTruthy();
+  await teamsLoaded();
+  step(/Personen/);
   expect(screen.getByRole('combobox', { name: 'Rolle von ada' })).toBeTruthy();
   expect(screen.getByText(/alle Mitarbeitenden können/)).toBeTruthy();
 });
 
 it('updates the summary count as teams and persons are added', async () => {
   render(<AccessDialog collection={ownerOnly} onClose={vi.fn()} onSaved={vi.fn()} />);
-  await screen.findByRole('checkbox', { name: /^Service/ });
+  await teamsLoaded();
   expect(screen.getByText(/^1 Person kann/)).toBeTruthy();
 
   fireEvent.click(screen.getByRole('checkbox', { name: /^Service/ }));
   expect(await screen.findByText(/^5 Personen können/)).toBeTruthy();
 
+  step(/Personen/);
   fireEvent.change(screen.getByPlaceholderText('Name oder Gruppe suchen …'), { target: { value: 'Max' } });
   fireEvent.click(await screen.findByRole('button', { name: /msmith/ }));
   expect(await screen.findByText(/^6 Personen können/)).toBeTruthy();
@@ -58,7 +63,8 @@ it('updates the summary count as teams and persons are added', async () => {
 
 it('adds the first search hit on Enter as a reader', async () => {
   render(<AccessDialog collection={ownerOnly} onClose={vi.fn()} onSaved={vi.fn()} />);
-  await screen.findByRole('checkbox', { name: /^Service/ });
+  await teamsLoaded();
+  step(/Personen/);
   const search = screen.getByPlaceholderText('Name oder Gruppe suchen …');
   fireEvent.change(search, { target: { value: 'Max' } });
   await waitFor(() => expect(api.mock.calls.some(([path]) => typeof path === 'string' && path.startsWith('/api/v1/directory/users'))).toBe(true));
@@ -72,8 +78,9 @@ it('adds the first search hit on Enter as a reader', async () => {
 it('saves the visibility and every grant with its role', async () => {
   const onSaved = vi.fn();
   render(<AccessDialog collection={collection} onClose={vi.fn()} onSaved={onSaved} />);
-  await screen.findByRole('checkbox', { name: /^Service/ });
+  step(/Personen/);
   fireEvent.change(screen.getByRole('combobox', { name: 'Rolle von jdoe' }), { target: { value: 'owner' } });
+  await teamsLoaded();
   fireEvent.change(screen.getByRole('combobox', { name: 'Rolle von Service' }), { target: { value: 'reader' } });
   fireEvent.click(screen.getByRole('checkbox', { name: /^Recht/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Freigabe speichern' }));
@@ -94,7 +101,8 @@ it('saves the visibility and every grant with its role', async () => {
 
 it('blocks saving without an owner', async () => {
   render(<AccessDialog collection={collection} onClose={vi.fn()} onSaved={vi.fn()} />);
-  await screen.findByRole('checkbox', { name: /^Service/ });
+  await teamsLoaded();
+  step(/Personen/);
   fireEvent.change(screen.getByRole('combobox', { name: 'Rolle von ada' }), { target: { value: 'member' } });
   expect(screen.getByRole('alert').textContent).toContain('Besitzer');
   expect((screen.getByRole('button', { name: 'Freigabe speichern' }) as HTMLButtonElement).disabled).toBe(true);
@@ -110,10 +118,32 @@ it('shows the 422 detail and keeps the dialog open', async () => {
   const onSaved = vi.fn();
   const onClose = vi.fn();
   render(<AccessDialog collection={collection} onClose={onClose} onSaved={onSaved} />);
-  await screen.findByRole('checkbox', { name: /^Service/ });
+  await teamsLoaded();
   fireEvent.click(screen.getByRole('button', { name: 'Freigabe speichern' }));
 
   expect(await screen.findByText('Unknown user or team id(s): t-recht')).toBeTruthy();
   expect(onSaved).not.toHaveBeenCalled();
   expect(onClose).not.toHaveBeenCalled();
+});
+
+it('filters groups and summarises everything on the review step', async () => {
+  render(<AccessDialog collection={collection} onClose={vi.fn()} onSaved={vi.fn()} />);
+  await teamsLoaded();
+  fireEvent.change(screen.getByRole('searchbox', { name: 'Gruppen filtern' }), { target: { value: 'rech' } });
+  expect(screen.queryByRole('checkbox', { name: /^Service/ })).toBeNull();
+  expect(screen.getByRole('checkbox', { name: /^Recht/ })).toBeTruthy();
+
+  step(/Überprüfen/);
+  expect(screen.getByText('Service (Mitglied)')).toBeTruthy();
+  expect(screen.getByText('Alles bereit zum Speichern.')).toBeTruthy();
+});
+
+it('marks the people step and lists the problem on review when no owner is left', async () => {
+  render(<AccessDialog collection={collection} onClose={vi.fn()} onSaved={vi.fn()} />);
+  step(/Personen/);
+  fireEvent.change(screen.getByRole('combobox', { name: 'Rolle von ada' }), { target: { value: 'reader' } });
+  expect(screen.getAllByRole('img', { name: 'Dieser Schritt braucht Aufmerksamkeit' })).toHaveLength(1);
+  step(/Überprüfen/);
+  fireEvent.click(screen.getByRole('button', { name: 'Personen' }));
+  expect(screen.getByRole('combobox', { name: 'Rolle von ada' })).toBeTruthy();
 });

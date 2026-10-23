@@ -51,7 +51,9 @@ it('exports a bot (also a Runtime YAML bot) from the row action', async () => {
   const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
 
   render(<BotsTab />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Legal Support als Bot-Dokument exportieren' }));
+  // Export lives in the tile's "more actions" menu.
+  fireEvent.click(await screen.findByRole('button', { name: 'Weitere Aktionen für Legal Support' }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Legal Support als Bot-Dokument exportieren' }));
 
   await waitFor(() => expect(fetcher).toHaveBeenCalledWith('/api/v1/auth/admin/bots/legal-support/export?format=yaml'));
   await waitFor(() => expect(click).toHaveBeenCalled());
