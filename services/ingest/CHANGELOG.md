@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Weave transformation, the product is called Weave Ingest. Entries below predating that
 > change are left as written and refer to the project under its former name.
 
+## [0.7.15] - 2026-10-23
+
+### Added
+- **Intake question per bot:** an optional `intake` (question, options, free text, label) is
+  asked once before the first knowledge answer of a conversation. The answer is added to the
+  system prompt as "<label>: <answer>" on every later turn, and the question asked first is
+  answered right after. The chat shows the options as chips (migration 0055).
+- **Blocked topics per bot:** `guard.blocked_topics` ({name, description, keywords}) with
+  `guard.blocked_topic_reply` are checked in the router before any retrieval, n8n or answering
+  LLM call. `ROUTER_MODE=llm` classifies the topic in the same router call; keywords apply in
+  both modes. Both features can be set in the portal's bot editor and in bot documents.
+- **Review weaknesses:** the review view highlights findings in the text, lists them, and asks
+  the chat provider for a recommendation on demand (new
+  `POST /api/v1/portal/documents/{id}/analysis`, cached per markdown version).
+
+### Changed
+- **Unified review flow:** finished documents in a knowledge space open in the review view
+  from the job details; technical information moved into a "Technische Details" dialog.
+- Access and "Neuer Wissensbereich" are guided steps with the same layout as the bot editor.
+- Bot tiles are always a grid, with export and delete in a "…" menu and readable metadata.
+- Jobs, imports, connections and settings use the same page layout; back links behave like
+  the browser's back button.
+- **Desktop app (desktop-v0.1.7):** the quick bar can be dragged and reopens where it was left
+  (double-click on the grip resets it); on macOS it appears over full-screen apps instead of
+  switching Spaces; a labelled "Fragen | Suchen" switch explains both modes; a hidden tray
+  window no longer costs CPU while idle.
+
+### Security
+- opentelemetry-api 1.45.1 (CVE-2026-114603) in api, embeddings, ingest, knowledge,
+  reranker, retrieval and tools.
+
 ## [0.7.14] - 2026-10-21
 
 ### Added
