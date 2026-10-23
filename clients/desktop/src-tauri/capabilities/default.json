@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "The tray panel, the quick overlay and the settings window call the app's own commands.",
   "windows": ["panel", "quick", "settings"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "core:window:allow-start-dragging"]
 }

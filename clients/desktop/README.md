@@ -4,7 +4,9 @@ Tray-App für macOS (Menüleiste) und Windows (Infobereich), zwei Ansichten:
 
 - **Schmale Leiste** – Klick auf das Weave-Symbol oder `Cmd/Ctrl+Shift+Space`: eine schwebende
   Eingabeleiste wie bei Claude, in der Bildschirmmitte und auch über Vollbild-Apps; die Antwort
-  klappt darunter auf.
+  klappt darunter auf. Am Griff links lässt sie sich verschieben; Weave öffnet sie danach wieder
+  dort (Doppelklick auf den Griff: zurück zur Mitte). Ein Hinweis unter der Leiste erklärt, was
+  „Fragen“ (Agent antwortet mit Quellen) und „Suchen“ (Textstellen ohne KI-Antwort) tun.
 - **App-Fenster** – beim Start der App (Dock, Launchpad, Startmenü) oder über „Weave öffnen“ im
   Tray-Menü: alles mit Agent-Auswahl, Fragen/Suchen und Wissensraum-Filter. Solange es offen
   ist, steht Weave im Dock; Schließen lässt Weave im Tray weiterlaufen. Beim Autostart nach der

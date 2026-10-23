@@ -266,9 +266,15 @@ body.quick { margin: 0; overflow: hidden; }
 .quick-bar > :is(img, .weave-logo) { width: 28px; height: 28px; flex: none; }
 .quick-bar textarea { flex: 1; border: none; background: transparent; font-family: inherit; font-size: 16px; resize: none; min-height: 26px; max-height: 140px; padding: 3px 0; }
 .quick-bar textarea:focus-visible { outline: none; }
-.quick-bar select { border: none; background: transparent; color: var(--muted); max-width: 190px; min-height: 0; font-size: 14px; }
+.quick-bar select { border: none; background: transparent; color: var(--muted); max-width: 170px; min-height: 0; font-size: 14px; }
 .quick-send { width: 38px; height: 38px; min-height: 38px; justify-content: center; border-radius: 9px; flex: none; }
 .quick-send svg.icon { width: 18px; height: 18px; }
+.grip { display: flex; flex: none; margin: 0 -6px 0 -10px; padding: 4px 0; color: var(--muted); opacity: .5; cursor: grab; }
+.grip:hover { opacity: 1; }
+.grip svg.icon { width: 16px; height: 16px; pointer-events: none; fill: currentColor; stroke: none; }
+.quick-bar .segmented button { padding: 2px 10px; font-size: 13px; }
+.mode-hint { padding: 9px 18px 11px; border-top: 1px solid var(--border); background: var(--surface-2); color: var(--muted); font-size: 12px; line-height: 1.45; }
+.mode-hint strong { color: var(--text); font-weight: 600; }
 .quick-note { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-top: 1px solid var(--border); background: var(--surface-2); }
 .quick-note .text { flex: 1; display: flex; flex-direction: column; gap: 2px; }
 .quick-content { border-top: 1px solid var(--border); max-height: 460px; overflow-y: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 12px; -webkit-user-select: text; user-select: text; cursor: auto; }
