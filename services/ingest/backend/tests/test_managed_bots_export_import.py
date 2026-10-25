@@ -312,6 +312,21 @@ def test_intake_and_topic_block_project_to_runtime_and_round_trip_through_the_bo
     assert admin_client.post('/api/v1/auth/admin/bots', json={**payload, 'id': 'kaputt', 'intake': invalid}).status_code == 422
 
 
+def test_import_without_dry_run_field_only_reports_and_creates_nothing():
+    admin_client, team_name, collection_slug = _setup('nodryrun-admin')
+    payload = _payload(team_name, collection_slug)
+    assert admin_client.post('/api/v1/auth/admin/bots', json=payload).status_code == 201
+    exported = admin_client.get(f"/api/v1/auth/admin/bots/{payload['id']}/export").content
+    for data in ({'bot_id': 'ohne-dry-run'}, {'bot_id': 'ohne-dry-run', 'dry_run': ''}):
+        response = admin_client.post(
+            '/api/v1/auth/admin/bots/import', files={'file': ('bot.bot.yaml', exported, 'application/yaml')}, data=data,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()['action'] == 'create' and response.json()['applied'] is False
+    with TestingSessionLocal() as db:
+        assert db.get(ManagedBot, 'ohne-dry-run') is None
+
+
 def test_bot_id_override_must_be_a_slug_and_unique_ids_are_normalised():
     admin_client, team_name, collection_slug = _setup('override-admin')
     payload = _payload(team_name, collection_slug)
