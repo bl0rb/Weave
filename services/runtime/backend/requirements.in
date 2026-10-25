@@ -27,7 +27,7 @@
 # pinned directly here rather than left implicit, so a future `langgraph`
 # upgrade can't silently drift it.
 langgraph==1.2.15
-langchain-core==1.6.10
+langchain-core==1.6.13
 fastapi==0.143.2
 uvicorn[standard]==0.54.0
 pydantic==2.14.1
