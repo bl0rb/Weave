@@ -26,7 +26,7 @@
 # `langchain-core` is pulled in transitively for `RunnableConfig` and is
 # pinned directly here rather than left implicit, so a future `langgraph`
 # upgrade can't silently drift it.
-langgraph==1.2.15
+langgraph==1.2.16
 langchain-core==1.6.13
 fastapi==0.143.2
 uvicorn[standard]==0.54.0
