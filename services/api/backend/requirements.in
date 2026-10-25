@@ -11,7 +11,7 @@
 # purpose (ADR-0004 / task): Weave-API has no background worker queue --
 # every request it serves is synchronous (auth/ratelimit lookup, DB read,
 # or a live proxy call to Weave-Runtime).
-fastapi==0.143.1
+fastapi==0.159.1
 uvicorn[standard]==0.54.0
 pydantic==2.14.1
 pydantic-settings==2.16.0
