@@ -46,3 +46,4 @@ docs/reviews/
 # repository -- interne Planungsnotizen zu Integrationsgrenzen bleiben
 # außerhalb des öffentlichen Repositories.
 docs/bereinigung.md
+.claude/
