@@ -12,7 +12,7 @@ annotated-types==0.8.0
 anyio==4.14.2
 certifi==2026.10.19
 click==8.5.0
-fastapi==0.142.4
+fastapi==0.159.1
 filelock==3.32.5
 flatbuffers==25.12.19
 fsspec==2026.7.0
