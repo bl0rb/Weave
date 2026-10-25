@@ -468,7 +468,7 @@ async def import_managed_bot(
     request: Request,
     response: Response,
     file: UploadFile = File(...),
-    dry_run: bool = Form(True),
+    dry_run_field: str | None = Form(None, alias='dry_run'),
     on_conflict: Literal['fail', 'overwrite'] = Form('fail'),
     bot_id: str | None = Form(None),
     admin: User = Depends(require_bot_admin),
@@ -478,6 +478,10 @@ async def import_managed_bot(
     always answers 200 with the report; an applied import answers 409 when
     an existing bot blocks it and 422 when the document itself does."""
     enforce_rate_limit(request)
+    # Read as a string on purpose: since fastapi 0.147 a missing `bool` form
+    # field parses as False whatever its default (even Form(...)), which would
+    # apply the import. Only an explicit false value leaves the dry run.
+    dry_run = (dry_run_field or '').strip().lower() not in {'false', '0', 'off', 'f', 'n', 'no'}
     filename = file.filename or 'bot.yaml'
     raw = await file.read(MAX_DOCUMENT_BYTES + 1)
     try:
