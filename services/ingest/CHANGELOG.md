@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.17] - 2026-10-27
+
 ### Added
 - **Websites and intranet pages as sources** ([docs/wissensportal.md](../../docs/wissensportal.md)):
   a website connection (`kind: website`, auth none / HTTP Basic / bearer; form logins, SSO and
