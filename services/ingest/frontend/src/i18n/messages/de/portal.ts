@@ -1319,6 +1319,7 @@ export const portal = {
   'connections.website.deleteDialogTitle': 'Website-Verbindung löschen',
   'connections.website.syncAdd': 'Quelle hinzufügen',
   'connections.website.syncNone': 'Über diese Verbindung ist noch keine Quelle eingerichtet.',
+  'imports.scopeUrl': 'Startadresse: {value}',
   'importSync.origin': 'Herkunft',
   'importSync.originConfluence': 'Confluence',
   'importSync.originWebsite': 'Website',

@@ -114,6 +114,9 @@ def update_catalog_entry(
     enforce_rate_limit(request)
     entry = _get_entry(db, entry_id)
     changes = payload.model_dump(exclude_unset=True)
+    for key in ('title', 'description', 'category', 'publisher', 'start_url', 'crawl_scope', 'include_linked_documents', 'legal_source'):
+        if key in changes and changes[key] is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f'{key} cannot be null')
     if 'start_url' in changes:
         changes['start_url'] = _validated_start_url(changes['start_url'])
     for key in ('title', 'description', 'publisher'):

@@ -1321,6 +1321,7 @@ export const portal: Record<keyof typeof de, string> = {
   'connections.website.deleteDialogTitle': 'Delete website connection',
   'connections.website.syncAdd': 'Add source',
   'connections.website.syncNone': 'No source is set up through this connection yet.',
+  'imports.scopeUrl': 'Start address: {value}',
   'importSync.origin': 'Origin',
   'importSync.originConfluence': 'Confluence',
   'importSync.originWebsite': 'Website',

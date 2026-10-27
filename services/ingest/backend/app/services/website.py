@@ -91,16 +91,22 @@ def normalize_page_url(raw: str, *, base: str | None = None) -> str | None:
     value = (raw or '').strip()
     if not value or value.startswith('#'):
         return None
-    if base and '://' not in value:
-        value = urljoin(base, value)
-    parts = urlsplit(value)
-    if parts.scheme.lower() not in ('http', 'https') or not parts.hostname:
+    try:
+        # urljoin leaves an absolute URL alone and resolves a relative one
+        # (also one whose query happens to contain '://').
+        if base:
+            value = urljoin(base, value)
+        parts = urlsplit(value)
+        hostname, port = parts.hostname, parts.port  # both raise on malformed input
+    except ValueError:
+        return None
+    if parts.scheme.lower() not in ('http', 'https') or not hostname:
         return None
     if parts.username or parts.password:
         return None
-    netloc = parts.hostname.lower()
-    if parts.port and not ((parts.scheme == 'http' and parts.port == 80) or (parts.scheme == 'https' and parts.port == 443)):
-        netloc = f'{netloc}:{parts.port}'
+    netloc = hostname.lower()
+    if port and not ((parts.scheme == 'http' and port == 80) or (parts.scheme == 'https' and port == 443)):
+        netloc = f'{netloc}:{port}'
     path = parts.path or '/'
     query = '&'.join(
         item for item in parts.query.split('&')
@@ -123,9 +129,16 @@ def host_of(url: str) -> str:
 
 def origin_of(url: str) -> tuple[str, str, int | None]:
     """(scheme, host, port) -- what a credential and a private-target
-    release are bound to."""
-    parts = urlsplit(url)
-    return parts.scheme.lower(), (parts.hostname or '').lower(), parts.port
+    release are bound to. A default port written out explicitly
+    (https://h:443) is the same origin as one left implicit."""
+    try:
+        parts = urlsplit(url)
+        scheme, host, port = parts.scheme.lower(), (parts.hostname or '').lower(), parts.port
+    except ValueError:
+        return '', '', None
+    if (scheme == 'http' and port == 80) or (scheme == 'https' and port == 443):
+        port = None
+    return scheme, host, port
 
 
 def same_origin(url: str, other: str) -> bool:
@@ -360,11 +373,15 @@ class WebsiteClient:
             raise ConfluenceError(f'{url} is not an HTML page (content type {content_type})', status_code=415)
         if _host_key(response.final_url) != _host_key(url):
             raise ConfluenceError(f'{url} redirected to another host ({host_of(response.final_url)}); not imported')
+        # Relative links resolve against where the page actually came from
+        # (a same-host redirect may have moved it to another directory) --
+        # and a page that was redirected out of the crawl scope is not
+        # imported, except the start page itself, which defines the scope.
+        final_url = normalize_page_url(response.final_url) or url
+        if final_url != url and url != self.start_url and not in_crawl_scope(final_url, start_url=self.start_url, crawl_scope=self.crawl_scope):
+            raise ConfluenceError(f'{url} redirected outside the import scope ({final_url}); not imported')
 
         soup = BeautifulSoup(response.body, 'html.parser')
-        # Relative links resolve against where the page actually came from
-        # (a same-host redirect may have moved it to another directory).
-        final_url = normalize_page_url(response.final_url) or url
         child_urls, document_urls = self._collect_links(soup, page_url=final_url)
         self._links[url] = (child_urls, document_urls)
         while len(self._links) > _LINK_CACHE_SIZE:

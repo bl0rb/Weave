@@ -402,8 +402,8 @@ def update_import_source(
     # A credentialed scheme needs a credential on file: the one just sent,
     # or the stored one (an undecryptable stored one still counts as
     # present here -- /test is where that problem is reported).
-    if payload.credential:
-        has_credential = True
+    if payload.credential or payload.auth_type is None:
+        has_credential = True  # unchanged scheme keeps whatever is on file; a rename never decrypts
     else:
         try:
             has_credential = bool(security.decrypt_import_credential(source.credential_encrypted))
@@ -1040,7 +1040,8 @@ def delete_import_sync(
     return {'status': 'deleted'}
 
 
-@router.post('/runs/{run_id}/missing/{page_id}/withdraw', status_code=202)
+# `page_id:path`: a website page is keyed by its URL, slashes included.
+@router.post('/runs/{run_id}/missing/{page_id:path}/withdraw', status_code=202)
 def withdraw_missing_page(
     run_id: str, page_id: str, payload: ImportWithdrawalRequest, request: Request,
     db: Session = Depends(get_db), user: User = Depends(get_current_user),

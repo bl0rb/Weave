@@ -96,7 +96,7 @@ export default function ImportsPage() {
                         {runTitle(run, locale)}
                       </Link>
                       <p className="mt-1 text-xs text-slate-500">
-                        {run.scope_type === 'space' ? t('portal.importsList.spaceKeyLabel', { value: run.scope_value }) : t('portal.importsList.pageIdLabel', { value: run.scope_value })}
+                        {run.scope_type === 'space' ? t('portal.importsList.spaceKeyLabel', { value: run.scope_value }) : run.scope_type === 'url' ? t('portal.imports.scopeUrl', { value: run.scope_value }) : t('portal.importsList.pageIdLabel', { value: run.scope_value })}
                         {run.owner ? ` · ${run.owner.username}` : ''}
                       </p>
                     </td>

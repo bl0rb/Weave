@@ -112,6 +112,11 @@ export function hostOf(url: string): string {
   try { return new URL(url).hostname.toLowerCase(); } catch { return ''; }
 }
 
+/** Origin (scheme://host[:port]) of a URL, lower-cased; '' when unparsable. */
+export function originOf(url: string): string {
+  try { return new URL(url).origin.toLowerCase(); } catch { return ''; }
+}
+
 /**
  * Readable version of a sync's last_error (the backend reports English
  * technical text). Known patterns get a plain-language line; anything else
@@ -261,7 +266,7 @@ export const importJobStatusChip: Record<ImportJobStatus, string> = {
 };
 
 export function runScopeLabel(run: Pick<ImportRun, 'scope_type' | 'scope_value'>, locale: Locale = DEFAULT_LOCALE): string {
-  if (run.scope_type === 'url') return run.scope_value;
+  if (run.scope_type === 'url') return translate(locale, 'portal.imports.scopeUrl', { value: run.scope_value });
   return run.scope_type === 'space'
     ? translate(locale, 'portal.imports.scopeSpace', { value: run.scope_value })
     : translate(locale, 'portal.imports.scopePage', { value: run.scope_value });

@@ -7,7 +7,7 @@ import { apiJson } from '@/lib/api';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { jsonBody, loadWritableSpaces, portalError, type KnowledgeSpace } from '@/lib/portal';
 import { accessSummary } from '@/lib/access-summary';
-import { hostOf, refreshIntervalOptions, sourceKind, type CrawlScope, type ImportSource, type ImportRun, type ImportSourceTestResponse } from '@/lib/imports';
+import { hostOf, originOf, refreshIntervalOptions, sourceKind, type CrawlScope, type ImportSource, type ImportRun, type ImportSourceTestResponse } from '@/lib/imports';
 import { loadSourceCatalog, type SourceCatalogEntry } from '@/lib/source-catalog';
 import { useImportSourceTest } from '@/lib/use-import-source-test';
 import { portalProfiles, type PortalProfile, type ProcessingProfile } from '@/lib/portal-profiles';
@@ -65,8 +65,9 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
   const catalogEntry = catalogEntries?.find(entry => entry.id === catalogEntryId);
   const websiteSources = sources.filter(source => sourceKind(source) === 'website');
   const confluenceSources = sources.filter(source => sourceKind(source) === 'confluence');
-  // The catalog entry's host decides the connection; one is created on the fly when none exists yet.
-  const catalogSource = catalogEntry ? websiteSources.find(source => hostOf(source.base_url) === catalogEntry.host) : undefined;
+  // The catalog entry's origin (scheme, host, port -- what the backend binds a run to) decides the
+  // connection; one is created on the fly when none exists yet.
+  const catalogSource = catalogEntry ? websiteSources.find(source => originOf(source.base_url) === originOf(catalogEntry.start_url)) : undefined;
   const intervalOptions = refreshIntervalOptions(locale);
   const [files, setFiles] = useState<File[]>([]);
   const [transcriptInstructions, setTranscriptInstructions] = useState('');

@@ -283,6 +283,8 @@ def test_catalog_listing_open_management_admin_only():
     resp = admin_client.patch(f"/api/v1/source-catalog/{created['id']}", json={'title': 'Satzungen der Stadt', 'legal_source': True, 'max_pages': 40})
     assert resp.status_code == 200 and resp.json()['title'] == 'Satzungen der Stadt' and resp.json()['legal_source'] is True
     assert admin_client.patch(f"/api/v1/source-catalog/{created['id']}", json={'title': '  '}).status_code == 422
+    assert admin_client.patch(f"/api/v1/source-catalog/{created['id']}", json={'category': None}).status_code == 422
+    assert admin_client.patch(f"/api/v1/source-catalog/{created['id']}", json={'max_pages': None}).status_code == 200
     assert admin_client.delete(f"/api/v1/source-catalog/{created['id']}").status_code == 200
     assert admin_client.get(f"/api/v1/source-catalog/{created['id']}").status_code == 404
     with _db() as db:
@@ -322,3 +324,31 @@ def test_update_website_source_auth_switches_need_a_credential_on_file():
     resp = client.patch(f"/api/v1/import/sources/{source['id']}", json={'auth_type': 'none'})
     assert resp.status_code == 200 and resp.json()['has_credential'] is False and resp.json()['auth_username'] == ''
     assert client.patch(f"/api/v1/import/sources/{source['id']}", json={'auth_type': 'pat_bearer', 'credential': 'x'}).status_code == 422
+
+
+def test_missing_website_page_withdraw_route_accepts_url_page_ids(monkeypatch):
+    """A website page id is its URL (slashes included): the withdraw route
+    must still resolve it. The state check inside then decides (409 here:
+    nothing tracked for that page)."""
+    from urllib.parse import quote
+
+    user = _user('web-withdraw')
+    client = login_as(user.username)
+    source = _website_source(client)
+    collection_id = _collection(user.id)
+    monkeypatch.setattr(import_routes.celery_app, 'send_task', lambda *a, **kw: None)
+    monkeypatch.setattr('app.services.publications.publication_configured', lambda: True)
+    created = client.post('/api/v1/import/runs', json={
+        'source_id': source['id'], 'scope': {'type': 'url', 'value': 'https://docs.example.com/a/'},
+        'options': {'collection_id': collection_id},
+    }).json()
+    page_url = 'https://docs.example.com/a/b.html'
+    with _db() as db:
+        run = db.get(ImportRun, created['id'])
+        run.status = 'finished'
+        run.options = {**run.options, 'is_refresh': True}
+        run.state = {'frontier': [], 'visited': {}, 'errors': [], 'missing_pages': [{'page_id': page_url, 'title': 'b', 'job_id': 'gone', 'url': page_url}]}
+        db.commit()
+    resp = client.post(f"/api/v1/import/runs/{created['id']}/missing/{quote(page_url, safe='')}/withdraw", json={'confirm': True})
+    assert resp.status_code != 404, resp.text
+    assert resp.status_code == 409 and 'changed since' in resp.json()['detail']

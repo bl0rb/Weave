@@ -31,6 +31,22 @@ def test_normalize_page_url(raw, expected):
 
 def test_normalize_page_url_resolves_relative_against_base():
     assert website.normalize_page_url('../a.html', base='https://h/x/y/index.html') == 'https://h/x/a.html'
+    # A relative link whose query contains '://' is still relative.
+    assert website.normalize_page_url('/redirect?to=https://x', base='https://h/docs/') == 'https://h/redirect?to=https://x'
+    assert website.normalize_page_url('https://other/x', base='https://h/docs/') == 'https://other/x'
+
+
+@pytest.mark.parametrize('raw', ['http://[::1', 'http://host:abc/', 'http://h:99999/x'])
+def test_normalize_page_url_tolerates_malformed_links(raw):
+    assert website.normalize_page_url(raw, base='https://h/docs/') is None
+
+
+def test_origin_of_ignores_an_explicit_default_port():
+    assert website.same_origin('https://h:443/x', 'https://h/y')
+    assert website.same_origin('http://h:80/x', 'http://h/y')
+    assert not website.same_origin('https://h:8443/x', 'https://h/y')
+    assert not website.same_origin('http://h/x', 'https://h/y')
+    assert website.origin_of('http://[::1') == ('', '', None)
 
 
 @pytest.mark.parametrize('url, scope, expected', [
@@ -208,6 +224,24 @@ def test_credential_sent_to_own_origin_only(fetch):
             client.fetch_page(other)
         _, headers = fetch.calls[-1]
         assert 'Authorization' not in headers
+
+
+def test_redirect_out_of_scope_is_not_imported(monkeypatch):
+    class RedirectingFetch(FakeFetch):
+        def __call__(self, url, **kwargs):
+            if url == 'https://docs.example.com/handbuch/alt.html':
+                return SafeFetchResponse(status_code=200, headers={'content-type': 'text/html'}, body=b'<html><title>AGB</title><body><main>x</main></body></html>', final_url='https://docs.example.com/recht/agb.html')
+            return super().__call__(url, **kwargs)
+
+    monkeypatch.setattr(website, 'safe_fetch', RedirectingFetch())
+    client = _client(crawl_scope='prefix')
+    with pytest.raises(ConfluenceError) as info:
+        client.fetch_page('https://docs.example.com/handbuch/alt.html')
+    assert 'outside the import scope' in str(info.value)
+    # The start page defines the scope: its own redirect is always followed.
+    host_client = website.create_website_client(base_url='https://docs.example.com', start_url='https://docs.example.com/handbuch/alt.html', crawl_scope='page', respect_robots=False)
+    monkeypatch.setattr(website, 'safe_fetch', RedirectingFetch())
+    assert host_client.fetch_page('https://docs.example.com/handbuch/alt.html').url == 'https://docs.example.com/recht/agb.html'
 
 
 def test_links_resolve_against_the_redirect_target(monkeypatch):

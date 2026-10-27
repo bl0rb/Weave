@@ -158,7 +158,7 @@ export default function ImportRunPage() {
     <PortalPage
       eyebrow={t('portal.importDetail.eyebrow')}
       title={runTitle(run, locale)}
-      description={`${run.scope_type === 'space' ? t('portal.importDetail.scopeSpaceLabel', { value: run.scope_value }) : t('portal.importDetail.scopePageLabel', { value: run.scope_value })}${run.owner ? ` · ${t('portal.importDetail.startedBy', { name: run.owner.username })}` : ''} · ${new Date(run.created_at).toLocaleString()}`}
+      description={`${run.scope_type === 'space' ? t('portal.importDetail.scopeSpaceLabel', { value: run.scope_value }) : run.scope_type === 'url' ? t('portal.imports.scopeUrl', { value: run.scope_value }) : t('portal.importDetail.scopePageLabel', { value: run.scope_value })}${run.owner ? ` · ${t('portal.importDetail.startedBy', { name: run.owner.username })}` : ''} · ${new Date(run.created_at).toLocaleString()}`}
       actions={<>
         {run.can_sync && <ImportSyncButton runId={run.id} />}
         <span className={`rounded px-2 py-1 text-[13px] ${runStatusChip[run.status]}`}>{run.status}</span>
