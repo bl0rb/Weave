@@ -90,8 +90,20 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
+# URL settings that may carry a password; shown with it hidden, exported
+# only when they carry none.
+_CREDENTIAL_URLS = ('database_url', 'redis_url')
+
+
+def _url_password(value: Any) -> str | None:
+    try:
+        return make_url(value).password
+    except Exception:  # noqa: BLE001 -- unparsable: treated as carrying one
+        return SECRET_MASK
+
+
 def _masked(name: str, value: Any) -> Any:
-    if name == 'database_url' and value:
+    if name in _CREDENTIAL_URLS and value:
         try:
             return make_url(value).render_as_string(hide_password=True)
         except Exception:  # noqa: BLE001 -- unparsable: show nothing of it
@@ -177,7 +189,7 @@ def export_env() -> str:
             value = getattr(settings, name)
             if value == field.get_default(call_default_factory=True):
                 continue
-            if is_secret(name) or name == 'database_url':
+            if is_secret(name) or (name in _CREDENTIAL_URLS and _url_password(value)):
                 block.append(f'# {name.upper()}=')
             else:
                 block.append(f'{name.upper()}={_env_value(value)}')
@@ -237,15 +249,18 @@ def check_redis(_: Session, __: dict | None = None) -> dict:
     import redis
 
     steps: list[dict] = []
-    client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=3, socket_timeout=3)
+    holder: dict = {}
 
     def ping() -> str:
-        client.ping()
+        # Inside the step: a malformed REDIS_URL is a check result, not a 500.
+        holder['client'] = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=3, socket_timeout=3)
+        holder['client'].ping()
         return make_url(settings.redis_url).render_as_string(hide_password=True)
 
     if _step(steps, 'ping', ping):
-        _step(steps, 'version', lambda: str(client.info('server').get('redis_version', '')))
-    client.close()
+        _step(steps, 'version', lambda: str(holder['client'].info('server').get('redis_version', '')))
+    if 'client' in holder:
+        holder['client'].close()
     return _result('redis', steps)
 
 

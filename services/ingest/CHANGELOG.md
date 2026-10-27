@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   archives in the bucket can be listed, restored and deleted from the admin UI
   (`/api/v1/admin/backup/s3*`).
 
+### Security
+- pypdf 6.21.2 (CVE-2026-115572, CVE-2026-115580, CVE-2026-115585).
+
 ## [0.7.15] - 2026-10-23
 
 ### Added
