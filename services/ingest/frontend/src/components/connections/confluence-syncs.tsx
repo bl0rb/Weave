@@ -9,6 +9,7 @@ import { ConfirmDialog, Toggle, apiSend, errorMessage } from '@/components/admin
 import { apiJson } from '@/lib/api';
 import {
   formatRefreshInterval,
+  friendlySyncError,
   refreshIntervalOptions,
   runScopeLabel,
   runStatusChip,
@@ -209,7 +210,7 @@ function SyncRow({ sync, website, onChanged, onRemove }: { sync: ImportSync; web
           </span>
         </p>
       )}
-      {sync.last_error && <p className="mt-1 text-red-600">{sync.last_error}</p>}
+      {sync.last_error && <p className="mt-1 text-red-600">{friendlySyncError(sync.last_error, locale)}</p>}
       {startedRunId && (
         <p role="status" className="mt-1 text-emerald-800">
           {t('portal.connections.confluence.syncNowStarted')}{' '}

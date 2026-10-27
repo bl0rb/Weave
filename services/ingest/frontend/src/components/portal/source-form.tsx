@@ -21,7 +21,6 @@ type UploadResult = { name: string; id?: string; ok: boolean; message: string };
 
 /** files: upload · confluence: Confluence page/space · website: a website / intranet start page · catalog: a curated catalog entry. */
 export type SourceFormKind = 'files' | 'confluence' | 'website' | 'catalog';
-export const SOURCE_FORM_KINDS: SourceFormKind[] = ['files', 'confluence', 'website', 'catalog'];
 
 const SOURCE_DRAFT_KEY = 'weave-source-form-draft';
 type SourceDraft = {

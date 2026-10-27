@@ -154,6 +154,8 @@ export function refreshIntervalOptions(locale: Locale = DEFAULT_LOCALE): { value
  * would carry a `value` matching none of its `<option>`s and render blank.
  */
 export function formatRefreshInterval(seconds: number, locale: Locale = DEFAULT_LOCALE): string {
+  const preset = refreshIntervalOptions(locale).find(option => option.value === seconds);
+  if (preset) return preset.label;
   if (seconds % 3600 === 0) return translate(locale, 'portal.imports.everyHours', { count: seconds / 3600 });
   if (seconds % 60 === 0) return translate(locale, 'portal.imports.everyMinutes', { count: seconds / 60 });
   return translate(locale, 'portal.imports.everySeconds', { count: seconds });

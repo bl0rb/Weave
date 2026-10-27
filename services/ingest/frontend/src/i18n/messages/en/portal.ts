@@ -210,7 +210,7 @@ export const portal: Record<keyof typeof de, string> = {
   'spaces.detailEyebrow': 'YOUR KNOWLEDGE BASE',
   'spaces.authorizedLabel': 'Authorized:',
   'spaces.publicationHint': 'Published after manual release',
-  'spaces.importScopeLabel': 'Confluence space',
+  'spaces.importScopeLabel': 'Imported scopes',
   'spaces.importView': 'View import',
   'spaces.importEdit': 'Edit import',
   'spaces.readerHint': 'Read-only access: you use this space in chat. Reviewing and editing its documents is not available to readers.',
@@ -468,7 +468,7 @@ export const portal: Record<keyof typeof de, string> = {
 
   // src/components/portal/source-form.tsx
   'sourceForm.title': 'Add a source',
-  'sourceForm.description': 'Bring documents or Confluence pages into a knowledge space. You decide on publication after processing.',
+  'sourceForm.description': 'Bring documents, Confluence pages or websites into a knowledge space. You decide on publication after processing.',
   'sourceForm.emptySpacesTitle': 'Create your own knowledge space',
   'sourceForm.emptySpacesBody': 'Only the owners of a knowledge space and administrators can add sources. Read access alone isn’t enough.',
   'sourceForm.step1Legend': 'Choose a knowledge space',
@@ -760,7 +760,7 @@ export const portal: Record<keyof typeof de, string> = {
 
   // src/app/connections/page.tsx
   'connectionsPage.title': 'Connections',
-  'connectionsPage.subtitle': 'Your Confluence connections and webhooks for imports. Set up once, usable in every knowledge space.',
+  'connectionsPage.subtitle': 'Your Confluence and website connections plus webhooks for imports. Set up once, usable in every knowledge space.',
   'connectionsPage.sectionsAria': 'Connection sections',
   'connectionsPage.groupExternal': 'External services',
   'connectionsPage.groupAi': 'AI models',

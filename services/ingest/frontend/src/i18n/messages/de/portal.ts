@@ -209,7 +209,7 @@ export const portal = {
   'spaces.detailEyebrow': 'DEINE WISSENSBASIS',
   'spaces.authorizedLabel': 'Berechtigte:',
   'spaces.publicationHint': 'Veröffentlichung nach manueller Freigabe',
-  'spaces.importScopeLabel': 'Confluence-Bereich',
+  'spaces.importScopeLabel': 'Importierte Bereiche',
   'spaces.importView': 'Import ansehen',
   'spaces.importEdit': 'Import bearbeiten',
   'spaces.readerHint': 'Nur Lesezugriff: Du nutzt diesen Bereich im Chat. Prüfen und Bearbeiten der Dokumente ist für Leser nicht verfügbar.',
@@ -467,7 +467,7 @@ export const portal = {
 
   // src/components/portal/source-form.tsx
   'sourceForm.title': 'Eine Quelle hinzufügen',
-  'sourceForm.description': 'Bringe Dokumente oder Confluence-Seiten in einen Wissensbereich. Die Veröffentlichung entscheidest du nach der Verarbeitung.',
+  'sourceForm.description': 'Bringe Dokumente, Confluence-Seiten oder Webseiten in einen Wissensbereich. Die Veröffentlichung entscheidest du nach der Verarbeitung.',
   'sourceForm.emptySpacesTitle': 'Lege deinen eigenen Wissensbereich an',
   'sourceForm.emptySpacesBody': 'Quellen hinzufügen können die Eigentümer eines Wissensbereichs und Administratoren. Leserechte allein reichen dafür nicht aus.',
   'sourceForm.step1Legend': 'Wissensbereich wählen',
@@ -759,7 +759,7 @@ export const portal = {
 
   // src/app/connections/page.tsx
   'connectionsPage.title': 'Verbindungen',
-  'connectionsPage.subtitle': 'Deine Confluence-Verbindungen und Webhooks für Importe. Einmal eingerichtet, in jedem Wissensbereich nutzbar.',
+  'connectionsPage.subtitle': 'Deine Confluence- und Website-Verbindungen sowie Webhooks für Importe. Einmal eingerichtet, in jedem Wissensbereich nutzbar.',
   'connectionsPage.sectionsAria': 'Verbindungsbereiche',
   'connectionsPage.groupExternal': 'Externe Dienste',
   'connectionsPage.groupAi': 'KI-Modelle',

@@ -174,7 +174,7 @@ it('lists the space\'s Confluence imports with schedule, last run and error, and
   expect(list.textContent).toContain('Handbuch');
   expect(list.textContent).toContain('Herkunft: Confluence · Firmen-Wiki');
   expect(list.textContent).toContain('Umfang: Ganzer Bereich · DOCS');
-  expect(list.textContent).toContain('Aktualisierung: Alle 24 Std.');
+  expect(list.textContent).toContain('Aktualisierung: Täglich');
   expect(list.textContent).toContain('Letzter erfolgreicher Abruf: ');
   expect(list.textContent).toContain('4 Seiten geändert');
   expect(list.textContent).toContain('Fehler: Seite 12 nicht erreichbar');
