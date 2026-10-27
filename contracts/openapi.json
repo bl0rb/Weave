@@ -688,9 +688,15 @@
             "title": "Bot Id"
           },
           "dry_run": {
-            "default": true,
-            "title": "Dry Run",
-            "type": "boolean"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dry Run"
           },
           "file": {
             "contentMediaType": "application/octet-stream",
@@ -2322,7 +2328,10 @@
       "ImportAuthType": {
         "enum": [
           "cloud_basic",
-          "pat_bearer"
+          "pat_bearer",
+          "none",
+          "http_basic",
+          "bearer"
         ],
         "title": "ImportAuthType",
         "type": "string"
@@ -2667,6 +2676,17 @@
       },
       "ImportRunOptions": {
         "properties": {
+          "catalog_entry_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Catalog Entry Id"
+          },
           "collection_id": {
             "anyOf": [
               {
@@ -2678,6 +2698,16 @@
               }
             ],
             "title": "Collection Id"
+          },
+          "crawl_scope": {
+            "default": "prefix",
+            "enum": [
+              "page",
+              "prefix",
+              "host"
+            ],
+            "title": "Crawl Scope",
+            "type": "string"
           },
           "email": {
             "default": "",
@@ -2692,6 +2722,11 @@
           "include_attachments": {
             "default": true,
             "title": "Include Attachments",
+            "type": "boolean"
+          },
+          "legal_source": {
+            "default": false,
+            "title": "Legal Source",
             "type": "boolean"
           },
           "max_depth": {
@@ -2928,7 +2963,8 @@
           "type": {
             "enum": [
               "space",
-              "page"
+              "page",
+              "url"
             ],
             "title": "Type",
             "type": "string"
@@ -2960,6 +2996,11 @@
       },
       "ImportSourceCreateRequest": {
         "properties": {
+          "allow_private_target": {
+            "default": false,
+            "title": "Allow Private Target",
+            "type": "boolean"
+          },
           "auth_type": {
             "$ref": "#/components/schemas/ImportAuthType"
           },
@@ -2976,9 +3017,18 @@
             "type": "string"
           },
           "credential": {
+            "default": "",
             "maxLength": 4096,
-            "minLength": 1,
             "title": "Credential",
+            "type": "string"
+          },
+          "kind": {
+            "default": "confluence",
+            "enum": [
+              "confluence",
+              "website"
+            ],
+            "title": "Kind",
             "type": "string"
           },
           "name": {
@@ -2991,8 +3041,7 @@
         "required": [
           "name",
           "base_url",
-          "auth_type",
-          "credential"
+          "auth_type"
         ],
         "title": "ImportSourceCreateRequest",
         "type": "object"
@@ -3015,6 +3064,11 @@
       },
       "ImportSourceResponse": {
         "properties": {
+          "allow_private_target": {
+            "default": false,
+            "title": "Allow Private Target",
+            "type": "boolean"
+          },
           "auth_type": {
             "$ref": "#/components/schemas/ImportAuthType"
           },
@@ -3039,6 +3093,11 @@
           },
           "id": {
             "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "confluence",
+            "title": "Kind",
             "type": "string"
           },
           "last_validated_at": {
@@ -3115,6 +3174,17 @@
       },
       "ImportSourceUpdateRequest": {
         "properties": {
+          "allow_private_target": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allow Private Target"
+          },
           "auth_type": {
             "anyOf": [
               {
@@ -3358,6 +3428,11 @@
           },
           "source_id": {
             "title": "Source Id",
+            "type": "string"
+          },
+          "source_kind": {
+            "default": "confluence",
+            "title": "Source Kind",
             "type": "string"
           },
           "source_name": {
@@ -9100,6 +9175,364 @@
           "needs_setup"
         ],
         "title": "SetupStatusResponse",
+        "type": "object"
+      },
+      "SourceCatalogEntryCreateRequest": {
+        "properties": {
+          "category": {
+            "enum": [
+              "internal",
+              "legal",
+              "reference"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "crawl_scope": {
+            "default": "prefix",
+            "enum": [
+              "page",
+              "prefix",
+              "host"
+            ],
+            "title": "Crawl Scope",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 4000,
+            "title": "Description",
+            "type": "string"
+          },
+          "include_linked_documents": {
+            "default": false,
+            "title": "Include Linked Documents",
+            "type": "boolean"
+          },
+          "interval_seconds": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interval Seconds"
+          },
+          "legal_source": {
+            "default": false,
+            "title": "Legal Source",
+            "type": "boolean"
+          },
+          "max_pages": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Pages"
+          },
+          "publisher": {
+            "default": "",
+            "maxLength": 255,
+            "title": "Publisher",
+            "type": "string"
+          },
+          "start_url": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Start Url",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "category",
+          "start_url"
+        ],
+        "title": "SourceCatalogEntryCreateRequest",
+        "type": "object"
+      },
+      "SourceCatalogEntryResponse": {
+        "properties": {
+          "category": {
+            "enum": [
+              "internal",
+              "legal",
+              "reference"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "crawl_scope": {
+            "default": "prefix",
+            "enum": [
+              "page",
+              "prefix",
+              "host"
+            ],
+            "title": "Crawl Scope",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 4000,
+            "title": "Description",
+            "type": "string"
+          },
+          "host": {
+            "default": "",
+            "title": "Host",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "include_linked_documents": {
+            "default": false,
+            "title": "Include Linked Documents",
+            "type": "boolean"
+          },
+          "interval_seconds": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interval Seconds"
+          },
+          "kind": {
+            "default": "website",
+            "title": "Kind",
+            "type": "string"
+          },
+          "legal_source": {
+            "default": false,
+            "title": "Legal Source",
+            "type": "boolean"
+          },
+          "max_pages": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Pages"
+          },
+          "publisher": {
+            "default": "",
+            "maxLength": 255,
+            "title": "Publisher",
+            "type": "string"
+          },
+          "start_url": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Start Url",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "category",
+          "start_url",
+          "id",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "SourceCatalogEntryResponse",
+        "type": "object"
+      },
+      "SourceCatalogEntryUpdateRequest": {
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "enum": [
+                  "internal",
+                  "legal",
+                  "reference"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "crawl_scope": {
+            "anyOf": [
+              {
+                "enum": [
+                  "page",
+                  "prefix",
+                  "host"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crawl Scope"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "include_linked_documents": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Include Linked Documents"
+          },
+          "interval_seconds": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interval Seconds"
+          },
+          "legal_source": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Legal Source"
+          },
+          "max_pages": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Pages"
+          },
+          "publisher": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publisher"
+          },
+          "start_url": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Url"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "SourceCatalogEntryUpdateRequest",
+        "type": "object"
+      },
+      "SourceCatalogListResponse": {
+        "properties": {
+          "can_manage": {
+            "default": false,
+            "title": "Can Manage",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SourceCatalogEntryResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "SourceCatalogListResponse",
         "type": "object"
       },
       "SubagentConfig": {
@@ -17970,6 +18403,247 @@
           }
         },
         "summary": "Search Documents"
+      }
+    },
+    "/api/v1/source-catalog": {
+      "get": {
+        "operationId": "list_catalog_entries_api_v1_source_catalog_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceCatalogListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Catalog Entries",
+        "tags": [
+          "source-catalog"
+        ]
+      },
+      "post": {
+        "operationId": "create_catalog_entry_api_v1_source_catalog_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SourceCatalogEntryCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceCatalogEntryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Catalog Entry",
+        "tags": [
+          "source-catalog"
+        ]
+      }
+    },
+    "/api/v1/source-catalog/{entry_id}": {
+      "delete": {
+        "description": "Removes the template only: imports created from it keep running\n(ImportSync.options.catalog_entry_id simply no longer resolves).",
+        "operationId": "delete_catalog_entry_api_v1_source_catalog__entry_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entry_id",
+            "required": true,
+            "schema": {
+              "title": "Entry Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Delete Catalog Entry Api V1 Source Catalog  Entry Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Catalog Entry",
+        "tags": [
+          "source-catalog"
+        ]
+      },
+      "get": {
+        "operationId": "get_catalog_entry_api_v1_source_catalog__entry_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entry_id",
+            "required": true,
+            "schema": {
+              "title": "Entry Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceCatalogEntryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Catalog Entry",
+        "tags": [
+          "source-catalog"
+        ]
+      },
+      "patch": {
+        "operationId": "update_catalog_entry_api_v1_source_catalog__entry_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entry_id",
+            "required": true,
+            "schema": {
+              "title": "Entry Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SourceCatalogEntryUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceCatalogEntryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Catalog Entry",
+        "tags": [
+          "source-catalog"
+        ]
       }
     },
     "/api/v1/stats": {
