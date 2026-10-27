@@ -35,6 +35,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Ingest releases through Knowledge, Retrieval and Runtime to the chat's source cards, which
   show the fetch date and a stated legal status next to the link
   ([contracts/internal-chat.md](../../contracts/internal-chat.md), frontmatter schema).
+
+### Fixed
+- Running configuration and S3 backups, review round (#372): the password of `REDIS_URL` is
+  masked in the overview and left out of the `.env` export like `DATABASE_URL`; the S3 test
+  drops `S3_KMS_KEY_ID` unless `S3_SSE` is `aws:kms`; an S3 restore refuses an active run or
+  a populated target before fetching the archive; a malformed Redis URL is a failed check,
+  not a 500.
+- `POST /api/v1/auth/admin/bots/import` applies an import only on an explicit `dry_run=false`:
+  since fastapi 0.147 a missing `bool` form field parses as `False`, which turned an omitted
+  `dry_run` into a real import (#377).
+
+### Security
+- pypdf 6.21.2 (CVE-2026-115572, CVE-2026-115580, CVE-2026-115585).
+- dnspython 2.9.0 (CVE-2026-114605; transitive via email-validator).
+
+## [0.7.16] - 2026-10-23
+
+### Added
 - **Running configuration in the admin UI** (Betrieb & Sicherheit → Konfiguration): every
   environment setting with secrets masked and a customized/default flag, the settings saved
   in the UI, connection checks for database, Redis, S3 and the backup directory, and an
@@ -45,10 +63,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Backups to S3:** "In S3 speichern" writes the archive to `<S3_KEY_PREFIX>backups/`;
   archives in the bucket can be listed, restored and deleted from the admin UI
   (`/api/v1/admin/backup/s3*`).
-
-### Security
-- pypdf 6.21.2 (CVE-2026-115572, CVE-2026-115580, CVE-2026-115585).
-- dnspython 2.9.0 (CVE-2026-114605; transitive via email-validator).
 
 ## [0.7.15] - 2026-10-23
 
