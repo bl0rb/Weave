@@ -61,6 +61,16 @@ entfernt Dokumenttext und Chunks und behält ausschließlich den Widerrufsbeleg
 zur Job-ID, damit verspätete Freigabe-Events keine Inhalte wiederherstellen.
 Details: [document.withdrawn](../contracts/events/document.withdrawn.md).
 
+## Websites, Intranet und Quellenkatalog
+
+Neben Dateien und Confluence lassen sich Webseiten anbinden. Die Begriffe sind dieselben wie bei Confluence: Eine **Verbindung** (Verbindungen › Websites) hält Basis-Adresse und Zugangsdaten (keine, HTTP Basic oder Bearer-Token; Formular-Login, SSO/OAuth, Kerberos/NTLM und rein per JavaScript gerenderte Seiten werden nicht unterstützt und sind im Dialog so gekennzeichnet). Eine **Quelle** entsteht unter **Quelle hinzufügen › Website / Intranet** aus Startadresse, erlaubtem Seitenumfang (nur diese Seite, Bereich unter der Startadresse, gesamte Website), optional verlinkten Dokumenten (PDF/Office, über das gewählte Verarbeitungsprofil) und einem Aktualisierungsrhythmus; sie ist immer genau einem Wissensbereich zugeordnet, in den nur dessen Eigentümer und Mitglieder importieren dürfen. Links auf andere Hosts werden nie verfolgt, `robots.txt` wird beachtet, und es gelten die Importgrenzen (`IMPORT_MAX_PAGES`, `IMPORT_MAX_DEPTH`, Byte-Caps) wie bei Confluence.
+
+Abrufe laufen über denselben SSRF-geschützten Fetcher wie Confluence: Adressen im privaten Netz sind gesperrt, bis ein Admin an der Verbindung **Internes Ziel freigeben** setzt; die Freigabe gilt nur für den Host dieser Verbindung. Zugangsdaten werden verschlüsselt gespeichert, nur an den eigenen Origin gesendet und erscheinen weder in importierten Inhalten noch in Fehlermeldungen oder Protokollen.
+
+Jede abgerufene Seite wird wie eine Confluence-Seite zu einem Dokument (Frontmatter `source`, `site`, `fetched_at`; bei als **Rechtsquelle** gekennzeichneten Importen zusätzlich `legal_status`, sofern die Seite einen Stand wie „Zuletzt geändert durch …“ ausweist). Der Chat zeigt zu solchen Quellen den Link, den Abrufstand und ggf. den Rechtsstand. Die Aktualisierung übernimmt nur geänderte Seiten als neue Dokumentversion; neue Stände brauchen wie immer eine Freigabe. Unter **Wissensbereich › Quellen** sind Herkunft, Umfang, Rhythmus, letzter erfolgreicher Abruf und eine lesbare Fehlermeldung je Quelle sichtbar.
+
+Der **Quellenkatalog** (Wissensbereiche › Quellenkatalog) enthält kuratierte, wiederverwendbare Einträge – etwa einzelne Gesetze auf „Gesetze im Internet“ (vier Beispiele werden mit der Migration angelegt), kommunale Satzungen oder Herstellerdokumentation – mit Kategorie, Suche und empfohlenem Umfang. Nur Admins pflegen Einträge; ein Eintrag ist eine Vorlage und gewährt keine Leserechte: **In Wissensbereich übernehmen** öffnet die Quellenauswahl, in der Umfang und Ziel-Wissensbereich bestätigt werden. Fehlt eine Verbindung für den Host des Eintrags, wird eine Verbindung ohne Zugangsdaten automatisch angelegt und geprüft. Ein Katalogeintrag importiert nie eine ganze Domain.
+
 ## Migration
 
 Vor dem Start des neuen Ingest-Images `alembic upgrade head` bis einschließlich

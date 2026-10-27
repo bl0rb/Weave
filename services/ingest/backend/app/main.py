@@ -35,6 +35,7 @@ from app.api.technical_identities import router_internal as technical_identities
 from app.api.mcp_oauth import router as mcp_oauth_router
 from app.api.deps import get_current_user, origin_guard
 from app.api.import_routes import router as import_router
+from app.api.source_catalog import router as source_catalog_router
 from app.api.portal import router as portal_router
 from app.api.portal import knowledge_router as knowledge_release_router
 from app.api.portal_management import router as portal_management_router
@@ -136,6 +137,10 @@ app.include_router(router, dependencies=[Depends(get_current_user), Depends(orig
 # Confluence import surface (/api/v1/import/...): same session + CSRF gate as
 # the main router; the module itself adds the IMPORT_ENABLED kill-switch.
 app.include_router(import_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
+
+# Shared source catalog (/api/v1/source-catalog): readable by every signed-in
+# user, managed by admins (checked inside the module).
+app.include_router(source_catalog_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
 
 # User-facing VL-connections list: same session + CSRF gate as the main
 # router, no separate kill-switch.

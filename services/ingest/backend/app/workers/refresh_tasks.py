@@ -280,12 +280,12 @@ def start_sync_run(db, sync: ImportSync) -> ImportRun | None:
     # ones) -- import_tasks.py keys its refresh path off this flag.
     options['is_refresh'] = True
 
-    frontier = [[sync.scope_value, 0]] if sync.scope_type == 'page' else []
+    frontier = [[sync.scope_value, 0]] if sync.scope_type in ('page', 'url') else []
     run = ImportRun(
         source_id=source.id,
         sync_id=sync.id,
         owner_id=source.owner_id,
-        kind='confluence',
+        kind=source.kind,
         scope_type=sync.scope_type,
         scope_value=sync.scope_value,
         options=options,

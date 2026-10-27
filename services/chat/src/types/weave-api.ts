@@ -109,10 +109,14 @@ export interface Source {
   /** Provenance (Weave-Runtime's Source, contracts/internal-chat.md): where
    * the document came from, the exact wiki link (http(s) only), who
    * uploaded it and when. Missing for documents released before. */
-  source_kind?: 'upload' | 'confluence' | 'mail' | string | null;
+  source_kind?: 'upload' | 'confluence' | 'website' | 'mail' | string | null;
   source_url?: string | null;
   uploaded_by?: string | null;
   uploaded_at?: string | null;
+  /** Website imports: when the page was fetched (ISO 8601) and, for legal
+   * sources, the 'Rechtsstand' the page stated. */
+  fetched_at?: string | null;
+  legal_status?: string | null;
   /** Set for a knowledge-memory source (ADR-0009): 'document' = a document
    * summary, 'collection' = a knowledge-space overview (its document_id is
    * `collection:<slug>`, not a real document). Absent/null for a chunk. */

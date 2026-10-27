@@ -16,6 +16,7 @@ import { type ImportRun, type ImportSyncListResponse, type ImportSync } from '@/
 import { useI18n } from '@/i18n/provider';
 import { EmptyState, Notice, PortalPage, RequiredMark } from './shared';
 import { ImportSyncSummary } from './import-sync';
+import { KnowledgeTabs } from './page-tabs';
 
 /** Bounds the "Im Chat verfügbar" counts and state chips below to the most recent N documents visible to the user. */
 const SPACE_STATS_SCAN_LIMIT = 200;
@@ -63,6 +64,7 @@ export function KnowledgeSpaces() {
   const visible = spaces?.filter(space => `${space.name} ${space.description || ''}`.toLocaleLowerCase('de').includes(search.toLocaleLowerCase('de')));
   // "Wissensbereich anlegen" lives on the last card of the grid (or in the empty state), not in the header too.
   return <PortalPage eyebrow={null} title={t('portal.nav.knowledgeSpaces')} description={t('portal.spaces.description')}>
+    <KnowledgeTabs />
     {notice && <Notice>{notice}</Notice>}
     {error && <Notice error action={load}>{error}</Notice>}
     {spaces === null && !error ? <Notice>{t('portal.spaces.loading')}</Notice> : spaces?.length ? <><label className="portal-search">{t('portal.spaces.searchLabel')}<input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder={t('portal.spaces.searchPlaceholder')} /></label><div className="portal-space-grid">
@@ -162,8 +164,9 @@ function KnowledgeSpaceEditor({ space, onClose, onSaved }: { space: KnowledgeSpa
   </Modal>;
 }
 
-/** Readable label of a Confluence import scope ("Handbuch · DOCS"). */
+/** Readable label of an import scope ("Handbuch · DOCS", or the start URL of a website import). */
 function scopeLabel(scope: ImportScope): string {
+  if (scope.scope_type === 'url') return scope.label !== scope.scope_value ? `${scope.label} · ${scope.scope_value}` : scope.label;
   return scope.scope_type === 'space' && scope.label !== scope.scope_value ? `${scope.label} · ${scope.scope_value}` : scope.label;
 }
 
@@ -183,7 +186,7 @@ export function KnowledgeDetail({ id }: { id: string }) {
   const [notice, setNotice] = useState('');
   const [reindexing, setReindexing] = useState(false);
   const [accessEditing, setAccessEditing] = useState(false);
-  // Confluence imports into this space that the current user owns and can therefore sync on demand.
+  // Confluence and website imports into this space that the current user owns and can therefore sync on demand.
   const [syncs, setSyncs] = useState<ImportSync[]>([]);
   const [syncing, setSyncing] = useState(false);
   const loadSyncs = useCallback(() => apiJson<ImportSyncListResponse>('/api/v1/import/syncs', { cache: 'no-store' })

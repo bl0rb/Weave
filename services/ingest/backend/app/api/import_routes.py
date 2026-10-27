@@ -34,6 +34,7 @@ from app.api.routes import (
 from app.core.config import settings
 from app.database.session import get_db
 from app.models.models import (
+    IMPORT_AUTH_TYPES_BY_KIND,
     Collection,
     ImportAuthType,
     ImportPageState,
@@ -45,6 +46,7 @@ from app.models.models import (
     JobArtifact,
     JobStatus,
     KnowledgeWithdrawal,
+    SourceCatalogEntry,
     User,
     UserRole,
 )
@@ -79,6 +81,7 @@ from app.services.confluence import (
 )
 from app.services.import_syncs import sync_options
 from app.services.paddle_service import resolve_profile_selection
+from app.services import website
 # Module-object access (security.encrypt_import_credential /
 # security.decrypt_import_credential) rather than from-imports: the helpers
 # live in the services slice of this feature and late binding keeps them
@@ -180,14 +183,20 @@ def _get_visible_run(db: Session, run_id: str, user: User) -> ImportRun:
     return run
 
 
-def _can_edit_run(run: ImportRun, user: User) -> bool:
-    return (settings.import_enabled and run.kind == 'confluence'
+def _run_finished_and_owned(run: ImportRun, user: User) -> bool:
+    return (settings.import_enabled
             and run.status not in (ImportRunStatus.PENDING, ImportRunStatus.RUNNING)
             and (run.owner_id == user.id or user.role == UserRole.ADMIN))
 
 
+def _can_edit_run(run: ImportRun, user: User) -> bool:
+    # "Edit & run again" is the Confluence wizard (/imports/new); website
+    # imports are edited on their sync (PATCH /import/syncs/{id}).
+    return run.kind == 'confluence' and _run_finished_and_owned(run, user)
+
+
 def _can_sync_run(db: Session, run: ImportRun, user: User) -> bool:
-    if not _can_edit_run(run, user) or not run.source_id:
+    if run.kind not in ('confluence', 'website') or not _run_finished_and_owned(run, user) or not run.source_id:
         return False
     source = db.get(ImportSource, run.source_id)
     return source is not None and source.owner_id == run.owner_id and run.sync_id is not None
@@ -247,8 +256,53 @@ def _extract_space_key(value: str) -> str | None:
 
 def _source_to_response(db: Session, source: ImportSource) -> ImportSourceResponse:
     response = ImportSourceResponse.model_validate(source)
+    response.has_credential = source.auth_type != ImportAuthType.NONE
     response.sync_count = db.scalar(select(func.count()).select_from(ImportSync).where(ImportSync.source_id == source.id)) or 0
     return response
+
+
+def _validate_source_auth(kind: str, auth_type: ImportAuthType, auth_username: str, *, has_credential: bool) -> str:
+    """The auth type must fit the connection kind (a Confluence PAT on a
+    website and vice versa are refused, as are the methods neither supports:
+    form logins, SSO/OAuth, Kerberos/NTLM never reach this enum). Returns the
+    username to store."""
+    if auth_type not in IMPORT_AUTH_TYPES_BY_KIND.get(kind, frozenset()):
+        allowed = ', '.join(sorted(item.value for item in IMPORT_AUTH_TYPES_BY_KIND.get(kind, frozenset())))
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f'auth_type {auth_type.value!r} is not supported for {kind} connections (supported: {allowed})',
+        )
+    if auth_type == ImportAuthType.CLOUD_BASIC and not auth_username:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail='auth_username (Atlassian account email) is required for cloud_basic',
+        )
+    if auth_type == ImportAuthType.HTTP_BASIC and not auth_username:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='auth_username is required for http_basic')
+    if auth_type != ImportAuthType.NONE and not has_credential:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='credential is required for this auth_type')
+    if auth_type in (ImportAuthType.PAT_BEARER, ImportAuthType.BEARER, ImportAuthType.NONE):
+        return ''
+    return auth_username
+
+
+def _require_private_target_admin(user: User) -> None:
+    # Releasing an intranet target is an explicit, per-connection admin
+    # decision (SSRF boundary) -- never something an owner grants themselves.
+    if user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Only an administrator can release an internal (private-network) target for a connection',
+        )
+
+
+def _private_hosts_for(source: ImportSource) -> frozenset[str]:
+    hosts = set(settings.import_private_host_allowlist)
+    if source.kind == 'website' and source.allow_private_target:
+        parts = urlsplit(source.base_url)
+        if parts.hostname:
+            hosts.add(f'{parts.hostname}:{parts.port}' if parts.port else parts.hostname)
+    return frozenset(hosts)
 
 
 # --- Sources ------------------------------------------------------------------
@@ -265,24 +319,26 @@ def create_import_source(
     name = payload.name.strip()
     if not name:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='name is required')
-    auth_username = payload.auth_username.strip()
-    if payload.auth_type == ImportAuthType.CLOUD_BASIC and not auth_username:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail='auth_username (Atlassian account email) is required for cloud_basic',
-        )
-    if payload.auth_type == ImportAuthType.PAT_BEARER:
-        auth_username = ''
+    auth_username = _validate_source_auth(
+        payload.kind, payload.auth_type, payload.auth_username.strip(), has_credential=bool(payload.credential),
+    )
+    if payload.allow_private_target:
+        if payload.kind != 'website':
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='allow_private_target applies to website connections only')
+        _require_private_target_admin(user)
 
     source = ImportSource(
         owner_id=user.id,
         name=name,
+        kind=payload.kind,
+        allow_private_target=bool(payload.allow_private_target),
         base_url=_normalize_base_url(payload.base_url),
         auth_type=payload.auth_type,
         auth_username=auth_username,
         # Write-only from here on: encrypted at rest, never logged, never in
-        # any response schema.
-        credential_encrypted=security.encrypt_import_credential(payload.credential),
+        # any response schema. An empty credential (auth 'none') is stored
+        # encrypted too, so the column stays uniform.
+        credential_encrypted=security.encrypt_import_credential(payload.credential or ''),
     )
     db.add(source)
     db.commit()
@@ -329,14 +385,26 @@ def update_import_source(
     if payload.credential:
         source.credential_encrypted = security.encrypt_import_credential(payload.credential)
         connection_changed = True
+    elif payload.auth_type is not None and payload.auth_type == ImportAuthType.NONE:
+        source.credential_encrypted = security.encrypt_import_credential('')
+    if payload.allow_private_target is not None and payload.allow_private_target != source.allow_private_target:
+        if source.kind != 'website':
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='allow_private_target applies to website connections only')
+        _require_private_target_admin(user)
+        source.allow_private_target = payload.allow_private_target
+        connection_changed = True
 
-    if source.auth_type == ImportAuthType.CLOUD_BASIC and not source.auth_username:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail='auth_username (Atlassian account email) is required for cloud_basic',
-        )
-    if source.auth_type == ImportAuthType.PAT_BEARER:
-        source.auth_username = ''
+    # A credentialed scheme needs a credential on file: the one just sent,
+    # or the stored one (an undecryptable stored one still counts as
+    # present here -- /test is where that problem is reported).
+    if payload.credential:
+        has_credential = True
+    else:
+        try:
+            has_credential = bool(security.decrypt_import_credential(source.credential_encrypted))
+        except ValueError:
+            has_credential = True
+    source.auth_username = _validate_source_auth(source.kind, source.auth_type, source.auth_username, has_credential=has_credential)
 
     if connection_changed:
         # A changed URL/auth invalidates the previous detection result until
@@ -415,6 +483,23 @@ def test_import_source(
             detail='Too many concurrent connection tests; try again shortly',
         )
     try:
+        if source.kind == 'website':
+            ok, detail = website.probe(
+                source.base_url,
+                auth_type=source.auth_type,
+                auth_username=source.auth_username,
+                credential=credential,
+                allowed_private_hosts=_private_hosts_for(source),
+                timeout=float(settings.import_fetch_timeout_seconds),
+                max_bytes=settings.import_fetch_max_bytes,
+            )
+            if not ok:
+                return ImportSourceTestResponse(ok=False, detail=detail, server_kind=None)
+            source.server_kind = 'website'
+            source.api_base_path = ''
+            source.last_validated_at = datetime.now(timezone.utc)
+            db.commit()
+            return ImportSourceTestResponse(ok=True, detail=detail, server_kind='website')
         server_kind, api_base_path = detect_server_kind(
             source.base_url,
             auth_type=source.auth_type,
@@ -525,8 +610,34 @@ def _validated_run_options(db: Session, user: User, requested: ImportRunOptions)
         'email': requested.email.strip(),
         'path_tags': requested.path_tags,
         'webhook_connection_id': requested.webhook_connection_id,
+        'crawl_scope': requested.crawl_scope,
+        'legal_source': requested.legal_source,
+        'catalog_entry_id': None,
     }
+    if requested.catalog_entry_id:
+        entry = db.get(SourceCatalogEntry, requested.catalog_entry_id.strip())
+        if entry is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Source catalog entry not found')
+        options['catalog_entry_id'] = entry.id
     return collection, options
+
+
+def _website_start_url(source: ImportSource, raw: str) -> str:
+    """The start page of a website import: a normalized http(s) URL on the
+    connection's own host (the credential and the private-target release
+    are bound to that host; a run never crawls another)."""
+    start_url = website.normalize_page_url(raw)
+    if start_url is None or len(start_url) > website.MAX_START_URL_CHARS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail='scope.value must be an http(s) page address of at most 512 characters',
+        )
+    if website.host_of(start_url) != website.host_of(source.base_url):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f'The start page must be on the connection\'s host ({website.host_of(source.base_url)})',
+        )
+    return start_url
 
 
 def _clamped_interval(interval_seconds: int | None) -> int:
@@ -587,7 +698,14 @@ def create_import_run(
 
     collection, options = _validated_run_options(db, user, payload.options)
 
-    if payload.scope.type == 'page':
+    if (payload.scope.type == 'url') != (source.kind == 'website'):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail='scope.type must be "url" for a website connection and "page" or "space" for Confluence',
+        )
+    if payload.scope.type == 'url':
+        scope_value = _website_start_url(source, payload.scope.value)
+    elif payload.scope.type == 'page':
         scope_value = extract_page_id(payload.scope.value)
         if scope_value is None:
             # No numeric id in the value -- try the title-only /display and
@@ -632,16 +750,16 @@ def create_import_run(
         )
 
     sync = _upsert_sync(db, source, user, payload.scope.type, scope_value, collection, options, payload.sync)
-    # Page scope seeds the frontier directly; space scope leaves it empty --
-    # run creation makes no outbound requests, so the worker resolves the
-    # space homepage (resolve_space_root) on its first chunk when the
-    # frontier is empty and nothing has been discovered yet.
-    frontier = [[scope_value, 0]] if payload.scope.type == 'page' else []
+    # Page/url scope seeds the frontier directly; space scope leaves it
+    # empty -- run creation makes no outbound requests, so the worker
+    # resolves the space homepage (resolve_space_root) on its first chunk
+    # when the frontier is empty and nothing has been discovered yet.
+    frontier = [[scope_value, 0]] if payload.scope.type in ('page', 'url') else []
     run = ImportRun(
         source_id=source.id,
         sync_id=sync.id,
         owner_id=user.id,
-        kind='confluence',
+        kind=source.kind,
         scope_type=payload.scope.type,
         scope_value=scope_value,
         options=options,
@@ -772,8 +890,8 @@ def sync_import_run(
     enforce_rate_limit(request)
     template = _get_visible_run(db, run_id, user)
     _require_run_control(db, template, user)
-    if template.kind != 'confluence' or template.status in (ImportRunStatus.PENDING, ImportRunStatus.RUNNING):
-        raise HTTPException(status_code=409, detail='Only completed Confluence runs can be synchronized')
+    if template.kind not in ('confluence', 'website') or template.status in (ImportRunStatus.PENDING, ImportRunStatus.RUNNING):
+        raise HTTPException(status_code=409, detail='Only completed import runs can be synchronized')
     source = db.get(ImportSource, template.source_id) if template.source_id else None
     if source is None or source.owner_id != template.owner_id:
         raise HTTPException(status_code=404, detail='Import source not found')
@@ -808,6 +926,7 @@ def _sync_to_response(db: Session, sync: ImportSync) -> ImportSyncResponse:
         id=sync.id,
         source_id=sync.source_id,
         source_name=sync.source.name if sync.source is not None else '',
+        source_kind=sync.source.kind if sync.source is not None else 'confluence',
         scope_type=sync.scope_type,
         scope_value=sync.scope_value,
         root_page_title=sync.root_page_title,

@@ -75,10 +75,12 @@ Collections, anschließend eingeschränkt durch Bot- und Anfragefilter.
 | `document_id` | `string` | |
 | `chunk_id` | `int` | |
 | `score` | `float \| null` | `rerank`-Score falls vorhanden, sonst `rrf` — siehe `backend/app/services/chat.py:_score_for`. |
-| `source_kind` | `string \| null` | Herkunft: `upload`, `confluence` oder `mail` (Frontmatter von Weave-Ingest). `null` bei Dokumenten, die vor Einführung der Herkunftsangaben freigegeben wurden. |
-| `source_url` | `string \| null` | Exakter Link auf die Quelle, bei Confluence die Seite. Nur `http(s)`; alles andere wird zu `null` (gilt auch für von n8n gemeldete Quellen). |
+| `source_kind` | `string \| null` | Herkunft: `upload`, `confluence`, `website` oder `mail` (Frontmatter von Weave-Ingest). `null` bei Dokumenten, die vor Einführung der Herkunftsangaben freigegeben wurden. |
+| `source_url` | `string \| null` | Exakter Link auf die Quelle, bei Confluence die Seite, bei `website` die abgerufene Seite. Nur `http(s)`; alles andere wird zu `null` (gilt auch für von n8n gemeldete Quellen). |
 | `uploaded_by` | `string \| null` | Benutzername der Person, die das Dokument hochgeladen bzw. importiert hat. |
 | `uploaded_at` | `string \| null` | Zeitpunkt des ursprünglichen Uploads bzw. Imports (ISO 8601); eine im Portal bearbeitete Version behält ihn. |
+| `fetched_at` | `string \| null` | Nur `website`: Abrufstand, der Zeitpunkt, zu dem die Seite abgerufen wurde (ISO 8601, UTC). |
+| `legal_status` | `string \| null` | Nur `website` mit Kennzeichnung als Rechtsquelle: der auf der Seite ausgewiesene Rechtsstand (z. B. „Zuletzt geändert durch …“), sonst `null`; wird nie geschätzt. |
 | `ref` | `int \| null` | Nummer, unter der die Antwort diese Quelle als `[N]` zitiert. Ein Wissens-/Überblicks-Turn nummeriert den Kontext `[source 1..n]` und bittet das LLM, genutzte Quellen als `[N]` zu zitieren; zitiert die Antwort welche, enthält `sources` nur diese, jeweils mit `ref`. Zitiert sie keine, bleiben alle Quellen mit `ref = null` (Nummer = Position). Agenten- und n8n-Turns: immer `null`. |
 | `memory_kind` | `string \| null` | Nur bei Quellen aus dem Wissensgedächtnis (ADR-0009): `document` (Dokument-Zusammenfassung, `chunk_id = 0`) oder `collection` (Bereichs-Übersicht, `document_id = "collection:<slug>"`, `chunk_id = 0`, `original_filename = "Übersicht: <Name>"`). `null` für jede Chunk-Quelle. |
 

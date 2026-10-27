@@ -167,23 +167,31 @@ it('reindexes a knowledge space after confirmation, explaining that nothing is r
 });
 
 it('lists the space\'s Confluence imports with schedule, last run and error, and syncs only its own', async () => {
-  mockDetail({ syncs: [sync, { ...sync, id: 's2', collection_id: 'other' }] });
+  const website = { ...sync, id: 's3', source_id: 'web', source_name: 'Gesetze im Internet', source_kind: 'website', scope_type: 'url', scope_value: 'https://www.gesetze-im-internet.de/vwvfg/', root_page_title: 'VwVfG', options: { crawl_scope: 'prefix', include_attachments: true, legal_source: true }, last_error: 'https://www.gesetze-im-internet.de/vwvfg/ returned HTTP 403 (access denied by the server)' };
+  mockDetail({ syncs: [sync, { ...sync, id: 's2', collection_id: 'other' }, website] });
   render(<KnowledgeDetail id="area-1" />);
-  const list = await screen.findByRole('list', { name: 'Confluence-Synchronisierungen' });
+  const list = await screen.findByRole('list', { name: 'Zugeordnete Quellen' });
   expect(list.textContent).toContain('Handbuch');
-  expect(list.textContent).toContain('Firmen-Wiki · Alle 24 Std.');
+  expect(list.textContent).toContain('Herkunft: Confluence · Firmen-Wiki');
+  expect(list.textContent).toContain('Umfang: Ganzer Bereich · DOCS');
+  expect(list.textContent).toContain('Aktualisierung: Alle 24 Std.');
+  expect(list.textContent).toContain('Letzter erfolgreicher Abruf: ');
   expect(list.textContent).toContain('4 Seiten geändert');
-  expect(list.textContent).toContain('Seite 12 nicht erreichbar');
+  expect(list.textContent).toContain('Fehler: Seite 12 nicht erreichbar');
+  // Website source: origin, start URL, scope with options and a readable error next to the raw one.
+  expect(list.textContent).toContain('Herkunft: Website · Gesetze im Internet · https://www.gesetze-im-internet.de/vwvfg/');
+  expect(list.textContent).toContain('Umfang: Bereich unter der Startadresse · inkl. verlinkter Dokumente · Rechtsquelle');
+  expect(list.textContent).toContain('Fehler: Zugriff verweigert – Zugangsdaten der Verbindung prüfen. (https://www.gesetze-im-internet.de/vwvfg/ returned HTTP 403');
   fireEvent.click(screen.getByRole('button', { name: 'Jetzt synchronisieren' }));
   expect(await screen.findByText('Synchronisierung gestartet.')).toBeTruthy();
   const runs = json.mock.calls.filter(([path, init]) => init?.method === 'POST' && String(path).startsWith('/api/v1/import/syncs/'));
-  expect(runs.map(([path]) => path)).toEqual(['/api/v1/import/syncs/s1/run']);
+  expect(runs.map(([path]) => path)).toEqual(['/api/v1/import/syncs/s1/run', '/api/v1/import/syncs/s3/run']);
 });
 
 it('offers no sync button for a space without own Confluence imports', async () => {
   mockDetail();
   render(<KnowledgeDetail id="area-1" />);
-  await screen.findByText(/Noch keine Confluence-Importe/);
+  await screen.findByText(/Noch keine Confluence- oder Website-Importe/);
   expect(screen.queryByRole('button', { name: 'Jetzt synchronisieren' })).toBeNull();
 });
 

@@ -83,14 +83,20 @@ export function getSourceLink(source: Source, t: Translator = translateDefault):
  */
 export function SourceOrigin({ source }: { source: Source }) {
   const { t, locale } = useI18n();
-  const date = source.uploaded_at && !Number.isNaN(Date.parse(source.uploaded_at))
-    ? new Date(source.uploaded_at).toLocaleDateString(locale === 'en' ? 'en-GB' : 'de-DE')
+  const formatDate = (value: string | null | undefined) => value && !Number.isNaN(Date.parse(value))
+    ? new Date(value).toLocaleDateString(locale === 'en' ? 'en-GB' : 'de-DE')
     : null;
+  const date = formatDate(source.uploaded_at);
   const link = getSourceLink(source, t);
   if (link) {
-    return <a href={link.href} target="_blank" rel="noopener noreferrer" className="font-medium text-[var(--accent)] underline-offset-2 hover:underline">
-      {link.label}
-    </a>;
+    const fetched = formatDate(source.fetched_at);
+    return <span>
+      <a href={link.href} target="_blank" rel="noopener noreferrer" className="font-medium text-[var(--accent)] underline-offset-2 hover:underline">
+        {link.label}
+      </a>
+      {fetched && <> · {t('chat.sources.fetchedOn', { date: fetched })}</>}
+      {source.legal_status && <> · {t('chat.sources.legalStatus', { value: source.legal_status })}</>}
+    </span>;
   }
   if (source.source_kind === 'mail') {
     return <span>{date ? t('chat.sources.mailOn', { date }) : t('chat.sources.mail')}</span>;

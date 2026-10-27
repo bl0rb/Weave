@@ -118,4 +118,6 @@ def _to_source(chunk: RetrievedChunk) -> Source:
         source_url=chunk.source_url,
         uploaded_by=chunk.uploaded_by,
         uploaded_at=chunk.uploaded_at,
+        fetched_at=chunk.fetched_at,
+        legal_status=chunk.legal_status,
     )

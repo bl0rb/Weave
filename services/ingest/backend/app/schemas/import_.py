@@ -8,14 +8,25 @@ from app.models.models import ImportAuthType, ImportRunStatus, JobStatus
 
 # --- Sources ------------------------------------------------------------------
 
+ImportSourceKind = Literal['confluence', 'website']
+
+
 class ImportSourceCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
+    # 'confluence' (default) or 'website' (generic website / intranet).
+    kind: ImportSourceKind = 'confluence'
     base_url: str = Field(min_length=1, max_length=1024)
+    # Must match the kind (models.IMPORT_AUTH_TYPES_BY_KIND); 'none' is the
+    # only type without a credential.
     auth_type: ImportAuthType
-    # Email for cloud_basic; ignored (kept empty) for pat_bearer.
+    # Email for cloud_basic, username for http_basic; ignored otherwise.
     auth_username: str = Field(default='', max_length=320)
     # Write-only: no response schema in this module has a credential field.
-    credential: str = Field(min_length=1, max_length=4096)
+    # Empty only for auth_type 'none'.
+    credential: str = Field(default='', max_length=4096)
+    # Website sources: release an intranet (private-address) host for this
+    # connection. Admin-only; anyone else gets a 403.
+    allow_private_target: bool = False
 
 
 class ImportSourceUpdateRequest(BaseModel):
@@ -25,15 +36,18 @@ class ImportSourceUpdateRequest(BaseModel):
     auth_username: str | None = Field(default=None, max_length=320)
     # Write-only update: omitted or empty keeps the stored credential.
     credential: str | None = Field(default=None, max_length=4096)
+    allow_private_target: bool | None = None
 
 
 class ImportSourceResponse(BaseModel):
     id: str
     name: str
+    kind: str = 'confluence'
     base_url: str
     server_kind: str = ''
     auth_type: ImportAuthType
     auth_username: str = ''
+    allow_private_target: bool = False
     # Never the credential itself -- just whether one is on file.
     has_credential: bool = True
     last_validated_at: datetime | None = None
@@ -57,7 +71,9 @@ class ImportSourceTestResponse(BaseModel):
 # --- Runs ---------------------------------------------------------------------
 
 class ImportRunScope(BaseModel):
-    type: Literal['space', 'page']
+    # 'space' / 'page' for Confluence sources, 'url' (a start page) for
+    # website sources.
+    type: Literal['space', 'page', 'url']
     # Space key, numeric page id, or a pasted Confluence page URL (the server
     # extracts the pageId before persisting, so this may exceed the stored
     # scope_value's 512 chars).
@@ -89,6 +105,14 @@ class ImportRunOptions(BaseModel):
     # create time (app/api/import_routes.py's create_import_run) -- see
     # app/workers/webhook_tasks.py's dispatch_run_event for the consumer.
     webhook_connection_id: str | None = None
+    # --- Website sources only (ignored for Confluence) ---
+    # 'page' = the start page only, 'prefix' = pages under the start page's
+    # directory, 'host' = every page on the host (see app/services/website.py).
+    crawl_scope: Literal['page', 'prefix', 'host'] = 'prefix'
+    # Extract the 'Rechtsstand' line of legal texts into frontmatter.
+    legal_source: bool = False
+    # The source-catalog entry this import was created from, if any.
+    catalog_entry_id: str | None = None
 
 
 class ImportSyncSchedule(BaseModel):
@@ -201,6 +225,8 @@ class ImportSyncResponse(BaseModel):
     id: str
     source_id: str
     source_name: str = ''
+    # The connection's kind: 'confluence' | 'website'.
+    source_kind: str = 'confluence'
     scope_type: str
     scope_value: str
     root_page_title: str = ''

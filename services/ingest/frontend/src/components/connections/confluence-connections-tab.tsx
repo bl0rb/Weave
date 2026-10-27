@@ -18,6 +18,7 @@ import {
 } from '@/components/admin/admin-shared';
 import {
   TEST_COOLDOWN_FALLBACK_MS,
+  sourceKind,
   type ImportSource,
   type ImportSourceListResponse,
   type ImportSourceTestResponse,
@@ -62,7 +63,7 @@ export function ConfluenceConnectionsTab() {
         apiJson<ImportSourceListResponse>('/api/v1/import/sources', { cache: 'no-store' }),
         apiJson<ImportSyncListResponse>('/api/v1/import/syncs', { cache: 'no-store' }),
       ]);
-      setSources(data.items);
+      setSources(data.items.filter((source) => sourceKind(source) === 'confluence'));
       setSyncs(syncData.items);
       setListError(null);
       setUnavailable(false);
@@ -88,7 +89,7 @@ export function ConfluenceConnectionsTab() {
           apiJson<ImportSyncListResponse>('/api/v1/import/syncs', { cache: 'no-store' }),
         ]);
         if (cancelled) return;
-        setSources(data.items);
+        setSources(data.items.filter((source) => sourceKind(source) === 'confluence'));
         setSyncs(syncData.items);
         setListError(null);
         setUnavailable(false);

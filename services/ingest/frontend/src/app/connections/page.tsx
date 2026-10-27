@@ -3,16 +3,17 @@
 import { Fragment, Suspense, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Cloud, ScanEye, Webhook } from 'lucide-react';
+import { Cloud, Globe, ScanEye, Webhook } from 'lucide-react';
 
 import { ConfluenceConnectionsTab } from '@/components/connections/confluence-connections-tab';
+import { WebsiteConnectionsTab } from '@/components/connections/website-connections-tab';
 import { VlConnectionsPanel } from '@/components/connections/vl-connections-panel';
 import { PortalPage } from '@/components/portal/shared';
 import { WebhookConnectionsTab } from '@/components/connections/webhook-connections-tab';
 import { useI18n } from '@/i18n/provider';
 import type { MessageKey } from '@/i18n/messages';
 
-type TabId = 'confluence' | 'webhooks' | 'vl';
+type TabId = 'confluence' | 'websites' | 'webhooks' | 'vl';
 
 type TabDef = { id: TabId; label: string; icon: typeof Cloud };
 
@@ -22,6 +23,7 @@ function tabGroups(t: (key: MessageKey) => string): { label: string; tabs: TabDe
       label: t('portal.connectionsPage.groupExternal'),
       tabs: [
         { id: 'confluence', label: t('portal.connectionsPage.tabConfluence'), icon: Cloud },
+        { id: 'websites', label: t('portal.connectionsPage.tabWebsites'), icon: Globe },
         { id: 'webhooks', label: t('portal.connectionsPage.tabWebhooks'), icon: Webhook },
       ],
     },
@@ -32,7 +34,7 @@ function tabGroups(t: (key: MessageKey) => string): { label: string; tabs: TabDe
   ];
 }
 
-const TAB_IDS: TabId[] = ['confluence', 'webhooks', 'vl'];
+const TAB_IDS: TabId[] = ['confluence', 'websites', 'webhooks', 'vl'];
 
 function isTabId(value: string | null): value is TabId {
   return value !== null && TAB_IDS.includes(value as TabId);
@@ -133,6 +135,11 @@ function ConnectionsPageInner() {
             aria-labelledby="connections-tab-confluence"
           >
             <ConfluenceConnectionsTab />
+          </div>
+        )}
+        {tab === 'websites' && (
+          <div role="tabpanel" id="connections-panel-websites" aria-labelledby="connections-tab-websites">
+            <WebsiteConnectionsTab />
           </div>
         )}
         {tab === 'webhooks' && (

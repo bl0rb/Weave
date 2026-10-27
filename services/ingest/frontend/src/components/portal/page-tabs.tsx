@@ -34,6 +34,20 @@ function PageTabs({ ariaLabel, tabs }: { ariaLabel: string; tabs: PageTab[] }) {
   );
 }
 
+/** Wissensbereiche: the spaces and the shared source catalog. */
+export function KnowledgeTabs() {
+  const { t } = useI18n();
+  return (
+    <PageTabs
+      ariaLabel={t('portal.knowledgeTabs.aria')}
+      tabs={[
+        { href: '/knowledge', label: t('portal.knowledgeTabs.spaces') },
+        { href: '/knowledge/catalog', label: t('portal.knowledgeTabs.catalog') },
+      ]}
+    />
+  );
+}
+
 /** Dokumente: portal list and the advanced job management. */
 export function DocumentTabs() {
   const { t } = useI18n();
