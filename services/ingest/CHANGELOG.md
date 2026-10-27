@@ -48,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 - pypdf 6.21.2 (CVE-2026-115572, CVE-2026-115580, CVE-2026-115585).
+- dnspython 2.9.0 (CVE-2026-114605; transitive via email-validator).
 
 ## [0.7.15] - 2026-10-23
 
