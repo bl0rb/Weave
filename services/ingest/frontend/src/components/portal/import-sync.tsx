@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { LoaderCircle, RefreshCw, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiJson } from '@/lib/api';
-import { formatRefreshInterval, type ImportRun, type ImportSync, type MissingConfluencePage } from '@/lib/imports';
+import { formatRefreshInterval, friendlySyncError, type ImportRun, type ImportSync, type MissingConfluencePage } from '@/lib/imports';
 import { INTL_LOCALE } from '@/i18n/config';
 import type { MessageKey } from '@/i18n/messages';
 import { useI18n } from '@/i18n/provider';
@@ -64,10 +64,22 @@ export function MissingConfluencePages({ runId, pages, canRemove, onChanged }: {
   </section>;
 }
 
-/** One Confluence import at a glance: schedule, last run with its changed pages, error and next run. */
+/** Readable scope of a sync: Confluence page/space, or the website crawl scope plus options. */
+export function syncScopeLabel(sync: ImportSync, t: (key: MessageKey, vars?: Record<string, string | number>) => string): string {
+  if (sync.source_kind === 'website' || sync.scope_type === 'url') {
+    const scope = sync.options.crawl_scope === 'page' ? t('portal.importSync.scopePage')
+      : sync.options.crawl_scope === 'host' ? t('portal.importSync.scopeHost') : t('portal.importSync.scopePrefix');
+    const extras = [sync.options.include_attachments ? t('portal.importSync.linkedDocs') : null, sync.options.legal_source ? t('portal.importSync.legal') : null].filter(Boolean);
+    return [scope, ...extras].join(' · ');
+  }
+  return sync.scope_type === 'space' ? `${t('portal.importSync.scopeConfluenceSpace')} · ${sync.scope_value}` : t('portal.importSync.scopeConfluencePage');
+}
+
+/** One import at a glance: origin, scope, schedule, last successful fetch, last run and a readable error. */
 export function ImportSyncSummary({ sync }: { sync: ImportSync }) {
   const { t, locale } = useI18n();
   const run = sync.last_run;
+  const website = sync.source_kind === 'website' || sync.scope_type === 'url';
   const when = (value: string) => new Date(value).toLocaleString(INTL_LOCALE[locale], { dateStyle: 'medium', timeStyle: 'short' });
   const schedule = sync.enabled && sync.interval_seconds ? formatRefreshInterval(sync.interval_seconds, locale) : t('portal.importSync.manualOnly');
   const next = sync.enabled && sync.next_refresh_at
@@ -75,10 +87,12 @@ export function ImportSyncSummary({ sync }: { sync: ImportSync }) {
     : null;
   return <div className="min-w-0 text-sm">
     <strong className="block break-words text-[var(--ink)]">{sync.root_page_title || sync.scope_value}</strong>
-    <span className="block text-xs text-[var(--muted)]">{sync.source_name} · {schedule}{next && ` · ${next}`}</span>
+    <span className="block text-xs text-[var(--muted)]">{t('portal.importSync.origin')}: {website ? t('portal.importSync.originWebsite') : t('portal.importSync.originConfluence')} · {sync.source_name}{website && ` · ${sync.scope_value}`}</span>
+    <span className="block text-xs text-[var(--muted)]">{t('portal.importSync.scopeLabel')}: {syncScopeLabel(sync, t)}</span>
+    <span className="block text-xs text-[var(--muted)]">{t('portal.importSync.schedule')}: {schedule}{next && ` · ${next}`} · {t('portal.importSync.lastSuccess')}: {sync.last_success_at ? when(sync.last_success_at) : t('portal.importSync.never')}</span>
     <span className="block text-xs text-[var(--muted)]">{run
       ? `${t('portal.connections.confluence.lastRun')}: ${when(run.finished_at ?? run.created_at)} · ${t(`portal.connections.confluence.runStatus.${run.status}` as MessageKey)} · ${t('portal.importSync.changedPages', { count: run.pages_imported })}`
       : t('portal.connections.confluence.syncNeverSucceeded')}</span>
-    {sync.last_error && <span className="block break-words text-xs text-red-700">{sync.last_error}</span>}
+    {sync.last_error && <span role="alert" className="block break-words text-xs text-red-700">{t('portal.importSync.errorLabel')}: {friendlySyncError(sync.last_error, locale)}</span>}
   </div>;
 }

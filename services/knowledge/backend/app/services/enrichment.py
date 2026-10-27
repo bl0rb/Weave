@@ -34,6 +34,9 @@ _DOCUMENT_FIELDS = (
     # Provenance for citations (set by Weave-Ingest from its own rows): where
     # the document came from, the exact wiki link, who uploaded it and when.
     'source_kind', 'source_url', 'uploaded_by', 'uploaded_at',
+    # Website imports: when the page was fetched and, for legal sources,
+    # the 'Rechtsstand' the page stated.
+    'fetched_at', 'legal_status',
 )
 
 # Confluence-only frontmatter keys (see contracts/frontmatter.schema.json)

@@ -133,6 +133,8 @@ class RetrievedChunk:
     source_url: str | None = None
     uploaded_by: str | None = None
     uploaded_at: str | None = None
+    fetched_at: str | None = None
+    legal_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -186,6 +188,8 @@ def _parse_chunk(item: dict) -> RetrievedChunk:
         source_url=item.get('source_url'),
         uploaded_by=item.get('uploaded_by'),
         uploaded_at=item.get('uploaded_at'),
+        fetched_at=item.get('fetched_at'),
+        legal_status=item.get('legal_status'),
         scores=RetrievedChunkScores(
             vector=scores_raw.get('vector'),
             fulltext=scores_raw.get('fulltext'),

@@ -2,26 +2,41 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import Link from 'next/link';
-import { ArrowRight, CheckCheck, Clock3, FileUp, Globe, Plus } from 'lucide-react';
+import { ArrowRight, BookOpenText, CheckCheck, Clock3, FileUp, Globe, Link2, Plus } from 'lucide-react';
 import { apiJson } from '@/lib/api';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { jsonBody, loadWritableSpaces, portalError, type KnowledgeSpace } from '@/lib/portal';
 import { accessSummary } from '@/lib/access-summary';
-import type { ImportSource, ImportRun } from '@/lib/imports';
+import { hostOf, originOf, refreshIntervalOptions, sourceKind, type CrawlScope, type ImportSource, type ImportRun, type ImportSourceTestResponse } from '@/lib/imports';
+import { loadSourceCatalog, type SourceCatalogEntry } from '@/lib/source-catalog';
 import { useImportSourceTest } from '@/lib/use-import-source-test';
 import { portalProfiles, type PortalProfile, type ProcessingProfile } from '@/lib/portal-profiles';
 import { ConfluenceSetupDialog } from '@/components/connections/confluence-setup-dialog';
+import { WebsiteSetupDialog } from '@/components/connections/website-setup-dialog';
+import type { MessageKey } from '@/i18n/messages';
 import { useI18n } from '@/i18n/provider';
 import { EmptyState, Notice, PortalPage, RequiredMark } from './shared';
 
 type UploadResult = { name: string; id?: string; ok: boolean; message: string };
 
-const SOURCE_DRAFT_KEY = 'weave-source-form-draft';
-type SourceDraft = { collectionId: string; kind: 'files' | 'confluence'; sourceId: string; scopeType?: 'page' | 'space'; pageUrl: string; automatic: boolean; confirmedAccess: boolean; profileId: string };
+/** files: upload · confluence: Confluence page/space · website: a website / intranet start page · catalog: a curated catalog entry. */
+export type SourceFormKind = 'files' | 'confluence' | 'website' | 'catalog';
 
-/** `initialKind`/`initialSourceId` come from /sources/new?kind=confluence&source=… (e.g. right after the
- * Confluence setup in the new knowledge space flow) and win over a saved draft. */
-export function SourceForm({ initialCollection = '', initialKind, initialSourceId }: { initialCollection?: string; initialKind?: 'files' | 'confluence'; initialSourceId?: string }) {
+const SOURCE_DRAFT_KEY = 'weave-source-form-draft';
+type SourceDraft = {
+  collectionId: string; kind: SourceFormKind; sourceId: string; scopeType?: 'page' | 'space'; pageUrl: string; automatic: boolean; confirmedAccess: boolean; profileId: string;
+  startUrl?: string; crawlScope?: CrawlScope; linkedDocuments?: boolean; legalSource?: boolean; refreshInterval?: number; catalogEntryId?: string;
+};
+const CRAWL_SCOPES: CrawlScope[] = ['page', 'prefix', 'host'];
+
+function readDraft(): SourceDraft | null {
+  if (typeof window === 'undefined') return null;
+  try { return JSON.parse(sessionStorage.getItem(SOURCE_DRAFT_KEY) || 'null') as SourceDraft | null; } catch { return null; }
+}
+
+/** `initialKind`/`initialSourceId`/`initialCatalogEntryId` come from /sources/new?kind=…&source=…&catalog=… (e.g. right after the
+ * Confluence setup in the new knowledge space flow, or from a catalog card) and win over a saved draft. */
+export function SourceForm({ initialCollection = '', initialKind, initialSourceId, initialCatalogEntryId }: { initialCollection?: string; initialKind?: SourceFormKind; initialSourceId?: string; initialCatalogEntryId?: string }) {
   const { t, locale } = useI18n();
   const [spaces, setSpaces] = useState<KnowledgeSpace[] | null>(null);
   const [sources, setSources] = useState<ImportSource[]>([]);
@@ -30,12 +45,30 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
     try { return (JSON.parse(sessionStorage.getItem(SOURCE_DRAFT_KEY) || 'null') as SourceDraft | null)?.collectionId || initialCollection; }
     catch { return initialCollection; }
   });
-  const [kind, setKind] = useState<'files' | 'confluence'>(() => {
+  const [kind, setKind] = useState<SourceFormKind>(() => {
     if (initialKind) return initialKind;
     if (typeof window === 'undefined') return 'files';
     try { return (JSON.parse(sessionStorage.getItem(SOURCE_DRAFT_KEY) || 'null') as SourceDraft | null)?.kind || 'files'; }
     catch { return 'files'; }
   });
+  // --- Website / catalog state (draft-restored like the fields above) ---
+  const [startUrl, setStartUrl] = useState(() => readDraft()?.startUrl || '');
+  const [crawlScope, setCrawlScope] = useState<CrawlScope>(() => readDraft()?.crawlScope || 'prefix');
+  const [linkedDocuments, setLinkedDocuments] = useState(() => readDraft()?.linkedDocuments ?? false);
+  const [legalSource, setLegalSource] = useState(() => readDraft()?.legalSource ?? false);
+  // 0 = manual only; otherwise the sync interval in seconds.
+  const [refreshInterval, setRefreshInterval] = useState(() => readDraft()?.refreshInterval ?? 86400);
+  const [catalogEntries, setCatalogEntries] = useState<SourceCatalogEntry[] | null>(null);
+  const [catalogError, setCatalogError] = useState('');
+  const [catalogEntryId, setCatalogEntryId] = useState(() => initialCatalogEntryId || readDraft()?.catalogEntryId || '');
+  const [websiteSetupOpen, setWebsiteSetupOpen] = useState(false);
+  const catalogEntry = catalogEntries?.find(entry => entry.id === catalogEntryId);
+  const websiteSources = sources.filter(source => sourceKind(source) === 'website');
+  const confluenceSources = sources.filter(source => sourceKind(source) === 'confluence');
+  // The catalog entry's origin (scheme, host, port -- what the backend binds a run to) decides the
+  // connection; one is created on the fly when none exists yet.
+  const catalogSource = catalogEntry ? websiteSources.find(source => originOf(source.base_url) === originOf(catalogEntry.start_url)) : undefined;
+  const intervalOptions = refreshIntervalOptions(locale);
   const [files, setFiles] = useState<File[]>([]);
   const [transcriptInstructions, setTranscriptInstructions] = useState('');
   const hasTranscripts = files.some(file => file.name.toLowerCase().endsWith('.vtt'));
@@ -104,8 +137,17 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
   const completed = !saving && (results.length > 0 || run !== null);
   const completedHeading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
-    sessionStorage.setItem(SOURCE_DRAFT_KEY, JSON.stringify({ collectionId, kind, sourceId, scopeType, pageUrl, automatic, confirmedAccess, profileId } satisfies SourceDraft));
-  }, [collectionId, kind, sourceId, scopeType, pageUrl, automatic, confirmedAccess, profileId]);
+    sessionStorage.setItem(SOURCE_DRAFT_KEY, JSON.stringify({ collectionId, kind, sourceId, scopeType, pageUrl, automatic, confirmedAccess, profileId, startUrl, crawlScope, linkedDocuments, legalSource, refreshInterval, catalogEntryId } satisfies SourceDraft));
+  }, [collectionId, kind, sourceId, scopeType, pageUrl, automatic, confirmedAccess, profileId, startUrl, crawlScope, linkedDocuments, legalSource, refreshInterval, catalogEntryId]);
+  // A chosen catalog entry prefills scope and options; the person may still change them.
+  useEffect(() => {
+    if (!catalogEntry) return;
+    setStartUrl(catalogEntry.start_url);
+    setCrawlScope(catalogEntry.crawl_scope);
+    setLinkedDocuments(catalogEntry.include_linked_documents);
+    setLegalSource(catalogEntry.legal_source);
+    setRefreshInterval(catalogEntry.interval_seconds ?? 0);
+  }, [catalogEntry]);
   useEffect(() => { if (completed) completedHeading.current?.focus(); }, [completed]);
   function addMore() {
     setResults([]); setRun(null); setFiles([]); setError(''); setSourceError(''); setProgress('');
@@ -116,14 +158,23 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
       setSpaces(await loadWritableSpaces());
     } catch (err) { setError(portalError(err, locale)); }
   }, [locale]);
-  const loadSources = useCallback(async () => {
+  const loadSources = useCallback(async (offerSetupFor: 'confluence' | 'website' | null = 'confluence') => {
     setSourceError('');
     try {
       const data = await apiJson<{ items: ImportSource[] }>('/api/v1/import/sources');
       setSources(data.items); setSourcesLoaded(true);
-      if (!data.items.length && !setupOffered.current) { setupOffered.current = true; setSetupOpen(true); }
+      const ofKind = data.items.filter(source => sourceKind(source) === offerSetupFor);
+      if (offerSetupFor && !ofKind.length && !setupOffered.current) {
+        setupOffered.current = true;
+        if (offerSetupFor === 'confluence') setSetupOpen(true); else setWebsiteSetupOpen(true);
+      }
     }
     catch (err) { setSourceError(portalError(err, locale)); }
+  }, [locale]);
+  const loadCatalog = useCallback(async () => {
+    setCatalogError('');
+    try { setCatalogEntries((await loadSourceCatalog()).items); }
+    catch (err) { setCatalogError(portalError(err, locale)); }
   }, [locale]);
   const loadProfiles = useCallback(async () => {
     setProfileError('');
@@ -140,11 +191,35 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
   }, [locale]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { void loadProfiles(); }, [loadProfiles]);
-  useEffect(() => { if (kind === 'confluence') void loadSources(); }, [kind, loadSources]);
+  useEffect(() => {
+    if (kind === 'confluence') void loadSources('confluence');
+    else if (kind === 'website') void loadSources('website');
+    else if (kind === 'catalog') { void loadSources(null); void loadCatalog(); }
+  }, [kind, loadSources, loadCatalog]);
   const selected = spaces?.find(space => space.collection_id === collectionId);
+  const websiteKind = kind === 'website' || kind === 'catalog';
+
+  /** The website connection a catalog import runs on: an existing one for the entry's host, or a
+   * fresh credential-less one that is created and tested right here. */
+  async function ensureCatalogSource(entry: SourceCatalogEntry): Promise<ImportSource> {
+    let source = catalogSource;
+    if (!source) {
+      source = await apiJson<ImportSource>('/api/v1/import/sources', jsonBody({
+        name: entry.host, kind: 'website', base_url: new URL(entry.start_url).origin, auth_type: 'none', credential: '',
+      }));
+      setSources(current => [...current, source!]);
+    }
+    if (!source.server_kind) {
+      const result = await apiJson<ImportSourceTestResponse>(`/api/v1/import/sources/${encodeURIComponent(source.id)}/test`, { method: 'POST' });
+      if (!result.ok) throw new Error(t('portal.sourceForm.connectionFailed', { detail: result.detail || '' }));
+      source = { ...source, server_kind: result.server_kind || 'website' };
+      setSources(current => current.map(entry => entry.id === source!.id ? source! : entry));
+    }
+    return source;
+  }
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!selected || !selectedProfile || saving || (kind === 'confluence' && !confirmedAccess)) return;
+    if (!selected || !selectedProfile || saving || (kind !== 'files' && !confirmedAccess)) return;
     setSaving(true); setError(''); setResults([]);
     try {
       if (kind === 'files') {
@@ -166,13 +241,29 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
           }
         }
         setFiles([]);
-      } else {
+      } else if (kind === 'confluence') {
         // The import and its daily auto-sync are saved together as one configuration.
         const created = await apiJson<ImportRun>('/api/v1/import/runs', jsonBody({
           source_id: sourceId,
           scope: { type: scopeType, value: pageUrl.trim() },
           options: { collection_id: collectionId, include_attachments: true, ocr_attachments: true, ocr_profile_id: selectedProfile.value },
           sync: { enabled: automatic, interval_seconds: 86400 },
+        }));
+        setRun(created);
+      } else {
+        // Website / catalog: the page scope, linked documents, legal-status extraction and the
+        // refresh cadence are saved with the import as one configuration (ImportSync).
+        const source = kind === 'catalog' && catalogEntry ? await ensureCatalogSource(catalogEntry) : websiteSources.find(entry => entry.id === sourceId);
+        if (!source) throw new Error(t('portal.sourceForm.chooseConnection'));
+        const created = await apiJson<ImportRun>('/api/v1/import/runs', jsonBody({
+          source_id: source.id,
+          scope: { type: 'url', value: startUrl.trim() },
+          options: {
+            collection_id: collectionId, include_attachments: linkedDocuments, ocr_attachments: linkedDocuments, ocr_profile_id: selectedProfile.value,
+            crawl_scope: crawlScope, legal_source: legalSource, catalog_entry_id: kind === 'catalog' ? catalogEntryId || null : null,
+            ...(catalogEntry?.max_pages ? { max_pages: catalogEntry.max_pages } : {}),
+          },
+          sync: { enabled: refreshInterval > 0, interval_seconds: refreshInterval > 0 ? refreshInterval : null },
         }));
         setRun(created);
       }
@@ -188,12 +279,38 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
       <fieldset disabled={saving || Boolean(run)}><legend><span className="portal-step">01</span> {t('portal.sourceForm.step1Legend')}</legend><label>{t('portal.sourceForm.spaceSelectLabel')}<RequiredMark /><select required value={collectionId} onChange={event => setCollectionId(event.target.value)}><option value="">{t('portal.sourceForm.pleaseSelect')}</option>{spaces?.map(space => <option key={space.collection_id} value={space.collection_id}>{space.name}</option>)}</select></label><Link className="portal-inline-link" href="/knowledge/new"><Plus size={14} />{t('portal.sourceForm.newSpaceLink')}</Link>
         {selected && <p className="portal-field-hint">{t('portal.spaces.authorizedLabel')} {accessSummary(selected, locale)}.</p>}
       </fieldset>
-      <fieldset disabled={saving || Boolean(run)}><legend><span className="portal-step">02</span> {t('portal.sourceForm.step2Legend')}</legend><div className="portal-source-types"><label className={kind === 'files' ? 'selected' : ''}><input type="radio" name="kind" value="files" checked={kind === 'files'} onChange={() => setKind('files')} /><FileUp size={23} /><span><strong>{t('portal.sourceForm.filesOption')}</strong><small>{t('portal.sourceForm.filesHint')}</small></span></label><label className={kind === 'confluence' ? 'selected' : ''}><input type="radio" name="kind" value="confluence" checked={kind === 'confluence'} onChange={() => setKind('confluence')} /><Globe size={23} /><span><strong>{t('portal.sourceForm.confluenceOption')}</strong><small>{t('portal.sourceForm.confluenceHint')}</small></span></label></div>
+      <fieldset disabled={saving || Boolean(run)}><legend><span className="portal-step">02</span> {t('portal.sourceForm.step2Legend')}</legend><div className="portal-source-types"><label className={kind === 'files' ? 'selected' : ''}><input type="radio" name="kind" value="files" checked={kind === 'files'} onChange={() => setKind('files')} /><FileUp size={23} /><span><strong>{t('portal.sourceForm.filesOption')}</strong><small>{t('portal.sourceForm.filesHint')}</small></span></label><label className={kind === 'confluence' ? 'selected' : ''}><input type="radio" name="kind" value="confluence" checked={kind === 'confluence'} onChange={() => setKind('confluence')} /><Globe size={23} /><span><strong>{t('portal.sourceForm.confluenceOption')}</strong><small>{t('portal.sourceForm.confluenceHint')}</small></span></label><label className={kind === 'website' ? 'selected' : ''}><input type="radio" name="kind" value="website" checked={kind === 'website'} onChange={() => setKind('website')} /><Link2 size={23} /><span><strong>{t('portal.sourceForm.websiteOption')}</strong><small>{t('portal.sourceForm.websiteHint')}</small></span></label><label className={kind === 'catalog' ? 'selected' : ''}><input type="radio" name="kind" value="catalog" checked={kind === 'catalog'} onChange={() => setKind('catalog')} /><BookOpenText size={23} /><span><strong>{t('portal.sourceForm.catalogOption')}</strong><small>{t('portal.sourceForm.catalogHint')}</small></span></label></div>
         {kind === 'files' ? <><label className="portal-upload">{t('portal.sourceForm.chooseFiles')}<RequiredMark /><input type="file" multiple required accept=".pdf,.docx,.pptx,.xlsx,.xls,.png,.jpg,.jpeg,.eml,.md,.xml,.vtt" onChange={event => setFiles(Array.from(event.target.files || []))} /><span>{files.length ? t('portal.sourceForm.filesSelectedCount', { count: files.length }) : t('portal.sourceForm.filesPlaceholder')}</span><span>{t('portal.sourceForm.emailAttachmentsHint')}</span></label>
-          {hasTranscripts && <div className="portal-form"><label>{t('portal.sourceForm.transcriptInstructionsLabel')}<textarea rows={4} maxLength={4000} value={transcriptInstructions} placeholder={t('portal.sourceForm.transcriptInstructionsPlaceholder')} onChange={event => setTranscriptInstructions(event.target.value)} /></label><p className="portal-field-hint">{t('portal.sourceForm.transcriptInstructionsHint')}</p></div>}</> : <div className="portal-form">
-          {sourceError && <Notice error action={loadSources}>{sourceError}</Notice>}
-          {sourcesLoaded && !sources.length && <p className="portal-field-hint">{t('portal.sourceForm.noConnectionHint')}</p>}
-          <label>{t('portal.sourceForm.connectionLabel')}<RequiredMark /><select required value={sourceId} onChange={event => { setSourceId(event.target.value); setAutomatic(true); setTestMessage(''); }}><option value="">{t('portal.sourceForm.chooseConnection')}</option>{sources.map(source => <option key={source.id} value={source.id}>{source.name}</option>)}</select></label>
+          {hasTranscripts && <div className="portal-form"><label>{t('portal.sourceForm.transcriptInstructionsLabel')}<textarea rows={4} maxLength={4000} value={transcriptInstructions} placeholder={t('portal.sourceForm.transcriptInstructionsPlaceholder')} onChange={event => setTranscriptInstructions(event.target.value)} /></label><p className="portal-field-hint">{t('portal.sourceForm.transcriptInstructionsHint')}</p></div>}</> : websiteKind ? <div className="portal-form">
+          {sourceError && <Notice error action={() => loadSources(kind === 'website' ? 'website' : null)}>{sourceError}</Notice>}
+          {kind === 'catalog' ? <>
+            {catalogError && <Notice error action={loadCatalog}>{catalogError}</Notice>}
+            {catalogEntries?.length === 0 && <p className="portal-field-hint">{t('portal.sourceForm.catalogEmpty')}</p>}
+            <label>{t('portal.sourceForm.catalogEntryLabel')}<RequiredMark /><select required value={catalogEntryId} onChange={event => setCatalogEntryId(event.target.value)}><option value="">{t('portal.sourceForm.chooseCatalogEntry')}</option>{catalogEntries?.map(entry => <option key={entry.id} value={entry.id}>{entry.title}{entry.publisher ? ` · ${entry.publisher}` : ''}</option>)}</select></label>
+            {catalogEntry && <p className="portal-field-hint">{catalogEntry.description && <>{catalogEntry.description} </>}<a className="portal-inline-link" href={catalogEntry.start_url} target="_blank" rel="noopener noreferrer">{catalogEntry.start_url}</a></p>}
+            {catalogEntry && <p className="portal-field-hint" role="status">{catalogSource ? t('portal.sourceForm.catalogConnectionExists', { name: catalogSource.name }) : t('portal.sourceForm.catalogAutoConnection', { host: catalogEntry.host })}</p>}
+            <Link className="portal-inline-link" href="/knowledge/catalog">{t('portal.sourceForm.catalogLink')} <ArrowRight size={14} /></Link>
+          </> : <>
+            {sourcesLoaded && !websiteSources.length && <p className="portal-field-hint">{t('portal.sourceForm.noWebsiteConnectionHint')}</p>}
+            <label>{t('portal.sourceForm.websiteConnectionLabel')}<RequiredMark /><select required value={sourceId} onChange={event => { setSourceId(event.target.value); setTestMessage(''); }}><option value="">{t('portal.sourceForm.chooseConnection')}</option>{websiteSources.map(source => <option key={source.id} value={source.id}>{source.name} · {hostOf(source.base_url)}</option>)}</select></label>
+            {untested && <p className="portal-field-hint" role="status">{t('portal.sourceForm.untestedHint')} <button type="button" className="portal-inline-link" disabled={testingId !== null || testCooldown > 0} onClick={() => void testSelected()}>{testingId !== null ? t('portal.connections.confluence.testing') : testCooldown > 0 ? t('portal.connections.confluence.testWithCooldown', { seconds: testCooldown }) : t('portal.connections.confluence.test')}</button>{testMessage && <> {testMessage}</>}</p>}
+            <div className="flex flex-wrap gap-x-6"><button type="button" className="portal-inline-link" onClick={() => setWebsiteSetupOpen(true)}><Plus size={14} />{t('portal.sourceForm.setupWebsiteConnectionButton')}</button><Link className="portal-inline-link" href="/connections?tab=websites">{t('portal.sourceForm.setupConnectionLink')} <ArrowRight size={14} /></Link></div>
+            <label>{t('portal.sourceForm.startUrlLabel')}<RequiredMark /><input required type="url" value={startUrl} onChange={event => setStartUrl(event.target.value)} placeholder="https://intranet.example.com/handbuch/" /></label><p className="portal-field-hint">{t('portal.sourceForm.startUrlHint')}</p>
+          </>}
+          {(kind === 'website' || catalogEntry) && <>
+            <div className="portal-filter-row" role="group" aria-label={t('portal.sourceForm.crawlScopeLabel')}>
+              {CRAWL_SCOPES.map(scope => <button key={scope} type="button" aria-pressed={crawlScope === scope} onClick={() => setCrawlScope(scope)}>{t(`portal.sourceForm.crawlScope${scope.charAt(0).toUpperCase()}${scope.slice(1)}` as MessageKey)}</button>)}
+            </div>
+            <p className="portal-field-hint">{kind === 'catalog' ? t('portal.sourceForm.catalogScopeHint') : t('portal.sourceForm.crawlScopeHint')}</p>
+            <label className="portal-choice"><input type="checkbox" checked={linkedDocuments} onChange={event => setLinkedDocuments(event.target.checked)} />{t('portal.sourceForm.linkedDocumentsLabel')}</label>
+            <label className="portal-choice"><input type="checkbox" checked={legalSource} onChange={event => setLegalSource(event.target.checked)} />{t('portal.sourceForm.legalSourceLabel')}</label>
+            <label>{t('portal.sourceForm.refreshLabel')}<select value={refreshInterval} onChange={event => setRefreshInterval(Number(event.target.value))}><option value={0}>{t('portal.sourceForm.refreshManual')}</option>{intervalOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><p className="portal-field-hint">{t('portal.sourceForm.refreshHint')}</p>
+          </>}
+          <label className="portal-choice portal-access-confirm"><input required type="checkbox" checked={confirmedAccess} onChange={event => setConfirmedAccess(event.target.checked)} />{t('portal.sourceForm.confirmAccessWebsiteLabel')}</label>
+        </div> : <div className="portal-form">
+          {sourceError && <Notice error action={() => loadSources('confluence')}>{sourceError}</Notice>}
+          {sourcesLoaded && !confluenceSources.length && <p className="portal-field-hint">{t('portal.sourceForm.noConnectionHint')}</p>}
+          <label>{t('portal.sourceForm.connectionLabel')}<RequiredMark /><select required value={sourceId} onChange={event => { setSourceId(event.target.value); setAutomatic(true); setTestMessage(''); }}><option value="">{t('portal.sourceForm.chooseConnection')}</option>{confluenceSources.map(source => <option key={source.id} value={source.id}>{source.name}</option>)}</select></label>
           {untested && <p className="portal-field-hint" role="status">{t('portal.sourceForm.untestedHint')} <button type="button" className="portal-inline-link" disabled={testingId !== null || testCooldown > 0} onClick={() => void testSelected()}>{testingId !== null ? t('portal.connections.confluence.testing') : testCooldown > 0 ? t('portal.connections.confluence.testWithCooldown', { seconds: testCooldown }) : t('portal.connections.confluence.test')}</button>{testMessage && <> {testMessage}</>}</p>}
           <div className="flex flex-wrap gap-x-6"><button type="button" className="portal-inline-link" onClick={() => setSetupOpen(true)}><Plus size={14} />{t('portal.sourceForm.setupConnectionButton')}</button><Link className="portal-inline-link" href="/connections">{t('portal.sourceForm.setupConnectionLink')} <ArrowRight size={14} /></Link></div>
           <div className="portal-filter-row" role="group" aria-label={t('portal.sourceForm.scopeLabel')}>
@@ -221,21 +338,25 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
             </select>
           </label>
           <p id="profile-description" className="portal-field-hint">{selectedProfile?.description}</p>
-          <p id="profile-scope" className="portal-field-hint">{kind === 'confluence' ? t('portal.sourceForm.profileScopeConfluence') : t('portal.sourceForm.profileScopeFiles')}</p>
+          <p id="profile-scope" className="portal-field-hint">{kind === 'confluence' ? t('portal.sourceForm.profileScopeConfluence') : websiteKind ? t('portal.sourceForm.profileScopeWebsite') : t('portal.sourceForm.profileScopeFiles')}</p>
         </details>}
       </fieldset>
-      <div className="portal-source-summary"><ShieldNotice /><div className="portal-form-actions"><Button type="submit" disabled={saving || !selected || !selectedProfile || Boolean(run) || (kind === 'files' ? files.length === 0 : !sourceId || untested || !pageUrl.trim() || !confirmedAccess)}>{saving ? t('common.starting') : kind === 'files' ? t('portal.sourceForm.uploadSubmit') : t('portal.sourceForm.importSubmit')}</Button><Link href={initialCollection ? `/knowledge/${encodeURIComponent(initialCollection)}` : '/knowledge'} className={buttonVariants({ variant: 'ghost' })}>{t('common.cancel')}</Link></div></div>
+      <div className="portal-source-summary"><ShieldNotice /><div className="portal-form-actions"><Button type="submit" disabled={saving || !selected || !selectedProfile || Boolean(run) || (kind === 'files' ? files.length === 0 : kind === 'catalog' ? !catalogEntry || !startUrl.trim() || !confirmedAccess : kind === 'website' ? !sourceId || untested || !startUrl.trim() || !confirmedAccess : !sourceId || untested || !pageUrl.trim() || !confirmedAccess)}>{saving ? t('common.starting') : kind === 'files' ? t('portal.sourceForm.uploadSubmit') : t('portal.sourceForm.importSubmit')}</Button><Link href={initialCollection ? `/knowledge/${encodeURIComponent(initialCollection)}` : '/knowledge'} className={buttonVariants({ variant: 'ghost' })}>{t('common.cancel')}</Link></div></div>
     </form>}
     {/* Outside the form above: the dialog has a form of its own. */}
     {setupOpen && <ConfluenceSetupDialog onClose={() => setSetupOpen(false)} onCreated={source => {
       setSources(current => [...current, source]); setSourcesLoaded(true);
       setSourceId(source.id); setAutomatic(true); setSetupOpen(false);
     }} />}
+    {websiteSetupOpen && <WebsiteSetupDialog onClose={() => setWebsiteSetupOpen(false)} onCreated={source => {
+      setSources(current => [...current, source]); setSourcesLoaded(true);
+      setSourceId(source.id); setWebsiteSetupOpen(false);
+    }} />}
     {progress && <Notice>{progress}</Notice>}
     {completed && <section className="portal-panel portal-form-panel max-w-[900px]" aria-labelledby="source-completed-title">
       <CheckCheck size={28} className="mb-4 text-emerald-700" aria-hidden="true" />
       <h2 id="source-completed-title" tabIndex={-1} ref={completedHeading}>
-        {run ? t('portal.sourceForm.importStartedHeading') : results.every(result => result.ok) ? t('portal.sourceForm.uploadCompleteHeading') : results.some(result => result.ok) ? t('portal.sourceForm.uploadPartialHeading') : t('portal.sourceForm.uploadFailedHeading')}
+        {run ? (websiteKind ? t('portal.sourceForm.websiteImportStartedHeading') : t('portal.sourceForm.importStartedHeading')) : results.every(result => result.ok) ? t('portal.sourceForm.uploadCompleteHeading') : results.some(result => result.ok) ? t('portal.sourceForm.uploadPartialHeading') : t('portal.sourceForm.uploadFailedHeading')}
       </h2>
       {(run || results.some(result => result.ok)) && <>
         <p className="mt-3 text-sm leading-7 text-slate-600">{run ? t('portal.sourceForm.pagesInBackground') : t('portal.sourceForm.filesHandedOff', { count: results.filter(result => result.ok).length })}</p>

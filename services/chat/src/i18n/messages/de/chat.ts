@@ -110,6 +110,8 @@ export const chat = {
   'sources.collectionLabel': 'Collection: {collection}',
   'sources.openWikiPage': 'Wiki-Seite öffnen',
   'sources.openSource': 'Quelle öffnen',
+  'sources.fetchedOn': 'Abgerufen am {date}',
+  'sources.legalStatus': 'Rechtsstand: {value}',
   'sources.uploadedByOn': 'Hochgeladen von {name} am {date}',
   'sources.uploadedBy': 'Hochgeladen von {name}',
   'sources.uploadedOn': 'Hochgeladen am {date}',

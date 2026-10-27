@@ -28,7 +28,7 @@ interface SourcesPanelProps {
  * prototype (docs/design-proposals/06-loom-rc/style.css).
  */
 export function SourcesPanel({ sources, scopeLabel, onCollapse }: SourcesPanelProps) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const images = Array.from(new Set((sources ?? []).flatMap((source) => source.images ?? [])));
 
   return (
@@ -91,7 +91,13 @@ export function SourcesPanel({ sources, scopeLabel, onCollapse }: SourcesPanelPr
             // The locator is what a reader needs to find the passage again:
             // the wiki page link, else the page number(s) — the rest is
             // secondary and stays small and muted.
-            const meta = [source.document_version != null ? formatVersion(source, t) : null, t('chat.sources.collectionLabel', { collection: formatCollection(source, t) }), scoreText]
+            // Website pages: the fetch date (and a stated legal status) sit
+            // next to the link, so a reader sees how current the source is.
+            const fetched = source.fetched_at && !Number.isNaN(Date.parse(source.fetched_at))
+              ? t('chat.sources.fetchedOn', { date: new Date(source.fetched_at).toLocaleDateString(locale === 'en' ? 'en-GB' : 'de-DE') })
+              : null;
+            const legal = source.legal_status ? t('chat.sources.legalStatus', { value: source.legal_status }) : null;
+            const meta = [source.document_version != null ? formatVersion(source, t) : null, t('chat.sources.collectionLabel', { collection: formatCollection(source, t) }), scoreText, link ? fetched : null, link ? legal : null]
               .filter(Boolean)
               .join(' · ');
             return (

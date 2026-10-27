@@ -161,3 +161,64 @@ it('hands an already created connection to the form even when the dialog is simp
   await waitFor(() => expect((screen.getByRole('combobox', { name: 'Deine Confluence-Verbindung' }) as HTMLSelectElement).value).toBe('new-source'));
   expect(screen.queryByRole('heading', { name: 'Confluence-Verbindung hinzufügen' })).toBeNull();
 });
+
+it('imports a catalog entry: creates and tests a credential-less website connection, then starts a url-scoped run', async () => {
+  const normal = api.getMockImplementation()!;
+  const entry = { id: 'cat-1', title: 'VwVfG', description: 'Verwaltungsverfahrensgesetz', category: 'legal', publisher: 'BMJ', kind: 'website', start_url: 'https://www.gesetze-im-internet.de/vwvfg/', crawl_scope: 'prefix', include_linked_documents: false, max_pages: 150, interval_seconds: 604800, legal_source: true, host: 'www.gesetze-im-internet.de', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' };
+  api.mockImplementation(async (path, options) => {
+    if (path.startsWith('/api/v1/source-catalog')) return { items: [entry], can_manage: false };
+    if (path === '/api/v1/import/sources' && options?.method === 'POST') return { id: 'web-1', name: 'www.gesetze-im-internet.de', kind: 'website', base_url: 'https://www.gesetze-im-internet.de', server_kind: '', auth_type: 'none' };
+    if (path === '/api/v1/import/sources') return { items: [{ id: 'wiki', name: 'Firmenwiki', kind: 'confluence', server_kind: 'server' }] };
+    if (path === '/api/v1/import/sources/web-1/test') return { ok: true, detail: 'Reachable (HTTP 200)', server_kind: 'website' };
+    if (path === '/api/v1/import/runs') return { id: 'run-1', kind: 'website', status: 'pending', scope_type: 'url', scope_value: entry.start_url };
+    return normal(path, options);
+  });
+  render(<SourceForm initialCollection="area" initialKind="catalog" initialCatalogEntryId="cat-1" />);
+  await screen.findByRole('option', { name: 'Standard – schnell' });
+  await screen.findByText(/wird beim Start automatisch eine Website-Verbindung/);
+  // The entry's recommended scope and options are prefilled.
+  expect(screen.getByRole('button', { name: 'Dieser Bereich (Unterpfad)' }).getAttribute('aria-pressed')).toBe('true');
+  expect((screen.getByRole('checkbox', { name: /Rechtsquelle/ }) as HTMLInputElement).checked).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'Nur diese Seite' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: /Ich prüfe die Berechtigten/ }));
+  fireEvent.submit(screen.getByRole('button', { name: 'Import starten' }).closest('form')!);
+  await screen.findByRole('heading', { name: 'Website-Import gestartet' });
+  const created = api.mock.calls.find(([path, init]) => path === '/api/v1/import/sources' && init?.method === 'POST');
+  expect(JSON.parse(created?.[1]?.body as string)).toMatchObject({ kind: 'website', base_url: 'https://www.gesetze-im-internet.de', auth_type: 'none' });
+  expect(api.mock.calls.some(([path]) => path === '/api/v1/import/sources/web-1/test')).toBe(true);
+  const run = api.mock.calls.find(([path]) => path === '/api/v1/import/runs');
+  expect(JSON.parse(run?.[1]?.body as string)).toEqual({
+    source_id: 'web-1',
+    scope: { type: 'url', value: entry.start_url },
+    options: { collection_id: 'area', include_attachments: false, ocr_attachments: false, ocr_profile_id: 'ppocrv6_tiny_structurev3', crawl_scope: 'page', legal_source: true, catalog_entry_id: 'cat-1', max_pages: 150 },
+    sync: { enabled: true, interval_seconds: 604800 },
+  });
+});
+
+it('imports a website through an existing tested connection with the chosen scope and refresh', async () => {
+  const normal = api.getMockImplementation()!;
+  api.mockImplementation(async (path, options) => {
+    if (path === '/api/v1/import/sources') return { items: [{ id: 'wiki', name: 'Firmenwiki', kind: 'confluence', server_kind: 'server' }, { id: 'intra', name: 'Intranet', kind: 'website', base_url: 'https://intranet.example.com', server_kind: 'website', auth_type: 'none' }] };
+    if (path === '/api/v1/import/runs') return { id: 'run-2', kind: 'website', status: 'pending', scope_type: 'url', scope_value: 'https://intranet.example.com/handbuch/' };
+    return normal(path, options);
+  });
+  render(<SourceForm initialCollection="area" initialKind="website" initialSourceId="intra" />);
+  await screen.findByRole('option', { name: 'Standard – schnell' });
+  const connection = await screen.findByRole('combobox', { name: 'Deine Website-Verbindung' }) as HTMLSelectElement;
+  expect(connection.value).toBe('intra');
+  expect(screen.queryByRole('option', { name: 'Firmenwiki' })).toBeNull();
+  fireEvent.change(screen.getByRole('textbox', { name: 'Startadresse' }), { target: { value: 'https://intranet.example.com/handbuch/' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Gesamte Website' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: /Verlinkte Dokumente/ }));
+  fireEvent.change(screen.getByRole('combobox', { name: 'Aktualisierungsrhythmus' }), { target: { value: '0' } });
+  fireEvent.click(screen.getByRole('checkbox', { name: /Ich prüfe die Berechtigten/ }));
+  fireEvent.submit(screen.getByRole('button', { name: 'Import starten' }).closest('form')!);
+  await screen.findByRole('heading', { name: 'Website-Import gestartet' });
+  const run = api.mock.calls.find(([path]) => path === '/api/v1/import/runs');
+  expect(JSON.parse(run?.[1]?.body as string)).toEqual({
+    source_id: 'intra',
+    scope: { type: 'url', value: 'https://intranet.example.com/handbuch/' },
+    options: { collection_id: 'area', include_attachments: true, ocr_attachments: true, ocr_profile_id: 'ppocrv6_tiny_structurev3', crawl_scope: 'host', legal_source: false, catalog_entry_id: null },
+    sync: { enabled: false, interval_seconds: null },
+  });
+});

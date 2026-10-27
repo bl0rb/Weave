@@ -1044,6 +1044,9 @@ def test_run_detail_exposes_source_id_and_options_ignoring_extra_keys():
         'email': 'me@example.com',
         'path_tags': False,
         'webhook_connection_id': None,
+        'crawl_scope': 'prefix',
+        'legal_source': False,
+        'catalog_entry_id': None,
     }
 
     # Deleted source -> source_id goes NULL, run keeps its history.

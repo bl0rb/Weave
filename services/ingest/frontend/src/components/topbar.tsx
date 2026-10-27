@@ -15,6 +15,7 @@ import type { KnowledgeSpace } from '@/lib/portal';
 /** Longest-prefix-wins route → breadcrumb label. Extend when a new top-level route is added. */
 const ROUTE_LABELS: [string, MessageKey][] = [
   ['/knowledge/new', 'portal.chrome.breadcrumb.knowledgeNew'],
+  ['/knowledge/catalog', 'portal.chrome.breadcrumb.sourceCatalog'],
   ['/knowledge', 'portal.nav.knowledgeSpaces'],
   ['/documents', 'portal.nav.documents'],
   ['/reviews', 'portal.chrome.breadcrumb.reviews'],

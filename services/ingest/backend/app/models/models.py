@@ -1025,6 +1025,19 @@ class CollectionSlugTombstone(Base):
 class ImportAuthType(str, enum.Enum):
     CLOUD_BASIC = 'cloud_basic'  # Confluence Cloud: Basic base64(email:api_token)
     PAT_BEARER = 'pat_bearer'    # Server/DC >= 7.9 personal access token
+    # Website / intranet connections (ImportSource.kind == 'website'). Form
+    # logins, SSO/OAuth and Kerberos/NTLM are deliberately NOT supported;
+    # the UI marks them as such.
+    NONE = 'none'                # public page, no credential
+    HTTP_BASIC = 'http_basic'    # Basic base64(username:password)
+    BEARER = 'bearer'            # Authorization: Bearer <token>
+
+
+# Auth types valid per ImportSource.kind.
+IMPORT_AUTH_TYPES_BY_KIND: dict[str, frozenset[ImportAuthType]] = {
+    'confluence': frozenset({ImportAuthType.CLOUD_BASIC, ImportAuthType.PAT_BEARER}),
+    'website': frozenset({ImportAuthType.NONE, ImportAuthType.HTTP_BASIC, ImportAuthType.BEARER}),
+}
 
 
 class ImportRunStatus(str, enum.Enum):
@@ -1055,6 +1068,14 @@ class ImportSource(Base):
         String(36), ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # 'confluence' (the original importer) or 'website' (generic website /
+    # intranet crawl through app/services/website.py). Selects the auth
+    # types (IMPORT_AUTH_TYPES_BY_KIND), the test probe and the worker client.
+    kind: Mapped[str] = mapped_column(String(16), default='confluence', server_default='confluence', nullable=False)
+    # Website sources only: exempts the connection's host from safe_fetch's
+    # private-address block (intranet targets). Admin-only to set -- an
+    # explicit release per connection, never a global switch.
+    allow_private_target: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0', nullable=False)
     # Normalized, no trailing slash, e.g. https://acme.atlassian.net
     base_url: Mapped[str] = mapped_column(String(1024), nullable=False)
     # 'cloud' | 'datacenter', resolved by POST /import/sources/{id}/test;
@@ -1130,8 +1151,8 @@ class ImportSync(Base):
     owner_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True
     )
-    scope_type: Mapped[str] = mapped_column(String(16), nullable=False)  # 'space' | 'page'
-    scope_value: Mapped[str] = mapped_column(String(512), nullable=False)  # space key or page id
+    scope_type: Mapped[str] = mapped_column(String(16), nullable=False)  # 'space' | 'page' | 'url' (website)
+    scope_value: Mapped[str] = mapped_column(String(512), nullable=False)  # space key, page id or start URL
     # Display only; refreshed from each finished run's root page.
     root_page_title: Mapped[str] = mapped_column(String(512), default='', server_default='', nullable=False)
     # NULL only for legacy imports without a knowledge space.
@@ -1261,7 +1282,9 @@ class ImportPageState(Base):
     collection_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey('collections.id', ondelete='CASCADE'), nullable=True
     )
-    page_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Confluence page id, or the normalized page URL of a website source
+    # (capped at website.MAX_PAGE_URL_CHARS, well inside this column).
+    page_id: Mapped[str] = mapped_column(String(2048), nullable=False)
     page_version: Mapped[int] = mapped_column(Integer, nullable=False)
     job_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey('jobs.id', ondelete='SET NULL'), nullable=True
@@ -1273,6 +1296,45 @@ class ImportPageState(Base):
     )
 
     source: Mapped[ImportSource] = relationship(back_populates='page_states')
+
+
+class SourceCatalogEntry(Base):
+    """A curated, reusable entry of the shared source catalog
+    (Wissensbereiche › Quellenkatalog): a website start URL with a
+    recommended scope, e.g. one law on gesetze-im-internet.de, a municipal
+    bylaw collection or a vendor's documentation. It is a template only --
+    importing it creates an ordinary website connection + ImportSync into a
+    knowledge space the user controls, with the scope the user confirms;
+    listing an entry grants no read rights on any imported content, and an
+    entry never imports a whole domain by itself (scope stays bounded by
+    crawl_scope/max_pages). Managed by admins only."""
+
+    __tablename__ = 'source_catalog_entries'
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default='', server_default='', nullable=False)
+    # 'internal' (Internes Wissen) | 'legal' (Recht & Verwaltung) | 'reference' (Fachinformationen)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    # Who publishes the content, display only (e.g. 'Bundesministerium der Justiz').
+    publisher: Mapped[str] = mapped_column(String(255), default='', server_default='', nullable=False)
+    # Source kind of the entry; 'website' is the only kind so far.
+    kind: Mapped[str] = mapped_column(String(16), default='website', server_default='website', nullable=False)
+    start_url: Mapped[str] = mapped_column(String(512), nullable=False)
+    # 'page' | 'prefix' | 'host' -- the recommended crawl scope (see website.py).
+    crawl_scope: Mapped[str] = mapped_column(String(16), default='prefix', server_default='prefix', nullable=False)
+    include_linked_documents: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0', nullable=False)
+    max_pages: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    interval_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Legal source: extract the 'Rechtsstand' line into frontmatter when found.
+    legal_source: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0', nullable=False)
+    created_by: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
 
 
 class BenchmarkRun(Base):

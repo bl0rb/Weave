@@ -46,7 +46,7 @@
         "collection",
         "import"
       ],
-      "description": "Verarbeitungsmodus: 'single' für Einzeldokument-Upload, 'collection' für einen über POST /collections/{id}/start gestarteten Sammel-Upload, 'import' für Confluence-Import"
+      "description": "Verarbeitungsmodus: 'single' für Einzeldokument-Upload, 'collection' für einen über POST /collections/{id}/start gestarteten Sammel-Upload, 'import' für Confluence- und Website-Import"
     },
     "email": {
       "type": "string",
@@ -94,13 +94,14 @@
       "enum": [
         "upload",
         "confluence",
+        "website",
         "mail"
       ],
       "description": "Herkunft des Dokuments; von Weave-Ingest aus den eigenen Datensätzen gesetzt, nicht aus dem editierbaren YAML"
     },
     "source_url": {
       "type": "string",
-      "description": "Exakter Link auf die Quelle (bei Confluence die Seite); nur http(s)"
+      "description": "Exakter Link auf die Quelle (bei Confluence die Seite, bei Website-Importen die abgerufene Seite); nur http(s)"
     },
     "team": {
       "type": "string",
@@ -154,6 +155,23 @@
     "import_run": {
       "type": "string",
       "description": "Eindeutige Kennung des Confluence-Import-Laufs"
+    },
+    "site": {
+      "type": "string",
+      "description": "Host der abgerufenen Seite (Website-Import)"
+    },
+    "fetched_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Abrufstand: Zeitpunkt des Seitenabrufs im Format ISO-8601 (UTC); von Weave-Ingest aus den Importdaten gesetzt (Website-Import)"
+    },
+    "content_hash": {
+      "type": "integer",
+      "description": "Hash des extrahierten Seiteninhalts, dient der Änderungserkennung bei der Aktualisierung (Website-Import)"
+    },
+    "legal_status": {
+      "type": "string",
+      "description": "Auf der Seite ausgewiesener Rechtsstand (z. B. „Zuletzt geändert durch …“); nur bei als Rechtsquelle gekennzeichneten Website-Importen und nur, wenn die Seite ihn ausweist"
     },
     "space": {
       "type": "string",

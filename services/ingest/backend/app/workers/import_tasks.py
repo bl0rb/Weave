@@ -56,6 +56,7 @@ from app.services.collection_access import collection_role, role_at_least
 from app.services.confluence import AttachmentMeta, ConfluenceError, Page, PageSource, create_client, is_transient
 from app.services.confluence_markdown import add_frontmatter_keys, convert_page, rewrite_cross_page_links, sanitize_filename
 from app.services.paddle_service import effective_pipeline_profile_id, vl_settings_for_worker
+from app.services.website import convert_web_page, create_website_client, private_hosts_for
 from app.workers import webhook_tasks
 from app.workers.celery_app import celery_app
 
@@ -1041,20 +1042,29 @@ def _import_one_page(
             document_version = existing_job.document_version + 1
             previous_job_id = existing_job.id
 
-    conversion = convert_page(
-        page.html,
-        base_url=run.source.base_url if run.source is not None else '',
-        title=page.title,
-        page_id=page.id,
-        page_url=page.url,
-        page_version=page.version,
-        import_run_id=run.id,
-        # include_attachments off: no artifacts will be stored, so same-host
-        # images keep their absolute URL instead of a dangling artifacts/ ref.
-        capture_attachments=bool(options.get('include_attachments', True)),
-        space_key=state.space_key,
-        path_titles=path_titles,
-    )
+    # Provenance stored on the job for release-time citations
+    # (app/services/publications.py): source_url always, plus fetched_at /
+    # legal_status / source_kind for website pages.
+    provenance: dict = {'source_url': page.url}
+    if run.kind == 'website':
+        conversion, provenance = convert_web_page(
+            page, import_run_id=run.id, legal_source=bool(options.get('legal_source')),
+        )
+    else:
+        conversion = convert_page(
+            page.html,
+            base_url=run.source.base_url if run.source is not None else '',
+            title=page.title,
+            page_id=page.id,
+            page_url=page.url,
+            page_version=page.version,
+            import_run_id=run.id,
+            # include_attachments off: no artifacts will be stored, so same-host
+            # images keep their absolute URL instead of a dangling artifacts/ ref.
+            capture_attachments=bool(options.get('include_attachments', True)),
+            space_key=state.space_key,
+            path_titles=path_titles,
+        )
     collection_slug = options.get('collection_slug')
     collection_name = options.get('collection_name')
     if collection_slug and collection_name:
@@ -1100,10 +1110,10 @@ def _import_one_page(
                 'import': {
                     'source_page_id': page.id,
                     'source_page_version': page.version,
-                    'source_url': page.url,
+                    **provenance,
                 },
             },
-            'execution': {'status': 'finished', 'engine': 'confluence-import'},
+            'execution': {'status': 'finished', 'engine': f'{run.kind}-import'},
         },
     )
     db.add(job)
@@ -1301,17 +1311,35 @@ def import_confluence(self, run_id: str, chunk_seq: int) -> None:
             )
             return
         try:
-            client: PageSource = create_client(
-                base_url=source.base_url,
-                server_kind=source.server_kind,
-                auth_type=source.auth_type,
-                auth_username=source.auth_username,
-                credential=credential,
-                allowed_private_hosts=frozenset(settings.import_private_host_allowlist),
-                timeout=float(settings.import_fetch_timeout_seconds),
-                max_response_bytes=settings.import_fetch_max_bytes,
-                max_attachment_bytes=settings.import_attachment_max_bytes,
-            )
+            if source.kind == 'website':
+                client: PageSource = create_website_client(
+                    base_url=source.base_url,
+                    start_url=run.scope_value,
+                    crawl_scope=str(options.get('crawl_scope') or 'prefix'),
+                    auth_type=source.auth_type,
+                    auth_username=source.auth_username,
+                    credential=credential,
+                    allowed_private_hosts=private_hosts_for(
+                        kind=source.kind, base_url=source.base_url, allow_private_target=source.allow_private_target,
+                        global_allowlist=settings.import_private_host_allowlist,
+                    ),
+                    timeout=float(settings.import_fetch_timeout_seconds),
+                    max_response_bytes=settings.import_fetch_max_bytes,
+                    max_attachment_bytes=settings.import_attachment_max_bytes,
+                    include_linked_documents=bool(options.get('include_attachments', True)),
+                )
+            else:
+                client = create_client(
+                    base_url=source.base_url,
+                    server_kind=source.server_kind,
+                    auth_type=source.auth_type,
+                    auth_username=source.auth_username,
+                    credential=credential,
+                    allowed_private_hosts=frozenset(settings.import_private_host_allowlist),
+                    timeout=float(settings.import_fetch_timeout_seconds),
+                    max_response_bytes=settings.import_fetch_max_bytes,
+                    max_attachment_bytes=settings.import_attachment_max_bytes,
+                )
         except ConfluenceError as exc:
             if is_transient(exc):
                 _defer_run(db, run, state, str(exc), claimed_seq, self.app)

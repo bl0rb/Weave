@@ -133,6 +133,10 @@ class Source(BaseModel):
     source_url: str | None = None
     uploaded_by: str | None = None
     uploaded_at: str | None = None
+    # Website imports ('website' source_kind): when the page was fetched
+    # (ISO 8601) and, for legal sources, the 'Rechtsstand' the page stated.
+    fetched_at: str | None = None
+    legal_status: str | None = None
     # ADR-0009: set when this source is a knowledge-memory entry rather than
     # a chunk -- 'document' (a document summary, `chunk_id` 0) or
     # 'collection' (a knowledge-space overview, `document_id`

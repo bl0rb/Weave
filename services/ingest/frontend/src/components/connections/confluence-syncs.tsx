@@ -9,13 +9,16 @@ import { ConfirmDialog, Toggle, apiSend, errorMessage } from '@/components/admin
 import { apiJson } from '@/lib/api';
 import {
   formatRefreshInterval,
+  friendlySyncError,
   refreshIntervalOptions,
   runScopeLabel,
   runStatusChip,
   runTitle,
   type ImportRun,
+  type ImportSourceKind,
   type ImportSync,
 } from '@/lib/imports';
+import { syncScopeLabel } from '@/components/portal/import-sync';
 import { useI18n } from '@/i18n/provider';
 
 /** The configured imports (syncs) of one Confluence connection: what is
@@ -25,32 +28,37 @@ export function ConfluenceSyncs({
   sourceId,
   syncs,
   onChanged,
+  kind = 'confluence',
 }: {
   sourceId: string;
   syncs: ImportSync[];
   onChanged: () => Promise<void>;
+  // Website connections: new sources start in the "add source" form, and
+  // there is no Confluence wizard to edit them with.
+  kind?: ImportSourceKind;
 }) {
   const { t } = useI18n();
   const [removing, setRemoving] = useState<ImportSync | null>(null);
+  const website = kind === 'website';
 
   return (
     <div className="mt-4 border-t border-slate-100 pt-3">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-semibold text-slate-950">{t('portal.connections.confluence.syncsHeading', { count: syncs.length })}</p>
         <Link
-          href={`/imports/new?source=${encodeURIComponent(sourceId)}`}
+          href={website ? `/sources/new?kind=website&source=${encodeURIComponent(sourceId)}` : `/imports/new?source=${encodeURIComponent(sourceId)}`}
           className="inline-flex items-center gap-1 text-sm font-medium text-emerald-700 hover:text-emerald-800"
         >
           <Plus className="h-4 w-4" aria-hidden="true" />
-          {t('portal.connections.confluence.syncAdd')}
+          {website ? t('portal.connections.website.syncAdd') : t('portal.connections.confluence.syncAdd')}
         </Link>
       </div>
       {syncs.length === 0 ? (
-        <p className="text-xs text-slate-500">{t('portal.connections.confluence.syncNone')}</p>
+        <p className="text-xs text-slate-500">{website ? t('portal.connections.website.syncNone') : t('portal.connections.confluence.syncNone')}</p>
       ) : (
         <ul className="space-y-2">
           {syncs.map((sync) => (
-            <SyncRow key={sync.id} sync={sync} onChanged={onChanged} onRemove={() => setRemoving(sync)} />
+            <SyncRow key={sync.id} sync={sync} website={website} onChanged={onChanged} onRemove={() => setRemoving(sync)} />
           ))}
         </ul>
       )}
@@ -71,7 +79,7 @@ export function ConfluenceSyncs({
   );
 }
 
-function SyncRow({ sync, onChanged, onRemove }: { sync: ImportSync; onChanged: () => Promise<void>; onRemove: () => void }) {
+function SyncRow({ sync, website, onChanged, onRemove }: { sync: ImportSync; website: boolean; onChanged: () => Promise<void>; onRemove: () => void }) {
   const { t, locale } = useI18n();
   const intervalOptions = refreshIntervalOptions(locale);
   const [busy, setBusy] = useState<'patch' | 'run' | null>(null);
@@ -118,6 +126,7 @@ function SyncRow({ sync, onChanged, onRemove }: { sync: ImportSync; onChanged: (
             {runTitle(sync, locale)}
             {sync.root_page_title.trim() && <span className="font-normal text-slate-500"> · {runScopeLabel(sync, locale)}</span>}
           </p>
+          {website && <p className="mt-0.5">{t('portal.importSync.scopeLabel')}: {syncScopeLabel(sync, t)}</p>}
           <p className="mt-0.5">
             {sync.collection_name
               ? t('portal.connections.confluence.syncTarget', { name: sync.collection_name })
@@ -129,14 +138,14 @@ function SyncRow({ sync, onChanged, onRemove }: { sync: ImportSync; onChanged: (
             {busy === 'run' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             {t('portal.connections.confluence.syncNow')}
           </Button>
-          <Link
+          {!website && <Link
             href={`/imports/new?sync=${encodeURIComponent(sync.id)}`}
             aria-label={t('portal.connections.confluence.syncEditAria', { title: runTitle(sync, locale) })}
             title={t('portal.connections.confluence.syncEdit')}
             className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-white hover:text-slate-700"
           >
             <Pencil className="h-4 w-4" />
-          </Link>
+          </Link>}
           <button
             type="button"
             onClick={onRemove}
@@ -201,7 +210,7 @@ function SyncRow({ sync, onChanged, onRemove }: { sync: ImportSync; onChanged: (
           </span>
         </p>
       )}
-      {sync.last_error && <p className="mt-1 text-red-600">{sync.last_error}</p>}
+      {sync.last_error && <p className="mt-1 text-red-600">{friendlySyncError(sync.last_error, locale)}</p>}
       {startedRunId && (
         <p role="status" className="mt-1 text-emerald-800">
           {t('portal.connections.confluence.syncNowStarted')}{' '}

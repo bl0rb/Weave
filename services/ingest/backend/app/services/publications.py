@@ -129,11 +129,24 @@ def canonical_snapshot(db, job: Job, collection: Collection) -> tuple[str, str, 
     job_settings = info.get('settings') if isinstance(info.get('settings'), dict) else {}
     import_settings = job_settings.get('import') if isinstance(job_settings.get('import'), dict) else {}
     source_url = import_settings.get('source_url') if job.import_run_id else None
-    frontmatter['source_kind'] = 'confluence' if job.import_run_id else 'mail' if job.mail_message_id else 'upload'
+    import_kind = import_settings.get('source_kind') if job.import_run_id else None
+    frontmatter['source_kind'] = (
+        (import_kind if import_kind in ('confluence', 'website') else 'confluence') if job.import_run_id
+        else 'mail' if job.mail_message_id else 'upload'
+    )
     if isinstance(source_url, str) and source_url.startswith(('https://', 'http://')):
         frontmatter['source_url'] = source_url
     else:
         frontmatter.pop('source_url', None)
+    # Website pages: when the page was fetched and, for legal sources, the
+    # 'Rechtsstand' the page stated -- both from the import rows, never the
+    # editable YAML.
+    for key in ('fetched_at', 'legal_status'):
+        value = import_settings.get(key) if job.import_run_id else None
+        if isinstance(value, str) and value:
+            frontmatter[key] = value
+        else:
+            frontmatter.pop(key, None)
     uploaded_at = info.get('source_uploaded_at')
     if not isinstance(uploaded_at, str) and job.created_at is not None:
         uploaded_at = job.created_at.isoformat()

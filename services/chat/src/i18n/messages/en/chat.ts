@@ -108,6 +108,8 @@ export const chat: Record<keyof typeof de, string> = {
   'sources.collectionLabel': 'Collection: {collection}',
   'sources.openWikiPage': 'Open wiki page',
   'sources.openSource': 'Open source',
+  'sources.fetchedOn': 'Fetched on {date}',
+  'sources.legalStatus': 'Legal status: {value}',
   'sources.uploadedByOn': 'Uploaded by {name} on {date}',
   'sources.uploadedBy': 'Uploaded by {name}',
   'sources.uploadedOn': 'Uploaded on {date}',

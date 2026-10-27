@@ -578,6 +578,8 @@ def _to_search_result(entry: FusedResult, document: Document, rerank_score: floa
         source_url=_meta_str(chunk.meta, 'source_url'),
         uploaded_by=_meta_str(chunk.meta, 'uploaded_by'),
         uploaded_at=_meta_str(chunk.meta, 'uploaded_at'),
+        fetched_at=_meta_str(chunk.meta, 'fetched_at'),
+        legal_status=_meta_str(chunk.meta, 'legal_status'),
         original_filename=document.original_filename,
         team=document.team,
         department=document.department,

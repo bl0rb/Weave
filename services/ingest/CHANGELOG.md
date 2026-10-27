@@ -12,6 +12,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Websites and intranet pages as sources** ([docs/wissensportal.md](../../docs/wissensportal.md)):
+  a website connection (`kind: website`, auth none / HTTP Basic / bearer; form logins, SSO and
+  Kerberos/NTLM are marked unsupported) plus an import with scope `url`, a crawl scope (this
+  page / its section / the whole host), linked PDF/Office documents as attachments, an optional
+  legal-source flag and the usual refresh schedule. Pages are fetched through `safe_fetch`,
+  keyed by URL, converted with `fetched_at` / `legal_status` frontmatter and crawled by the
+  unchanged chunked import task; a refresh skips unchanged pages (content hash) and chains
+  changed ones. Private-network targets stay blocked until an admin releases them per
+  connection (`allow_private_target`, bound to that host); `robots.txt` is honoured.
+  Migration `0056_source_catalog_website`.
+- **Source catalog** (Wissensbereiche › Quellenkatalog, `/api/v1/source-catalog`): curated,
+  reusable website entries with categories, search and a recommended scope, seeded with four
+  laws from gesetze-im-internet.de. Everyone may browse and import from an entry (into a space
+  they control, with a confirmed scope); only admins manage entries. An entry is a template and
+  never imports a whole domain.
+- **Portal:** "Quelle hinzufügen" gains "Website / Intranet" and "Aus Quellenkatalog" (a missing
+  connection for the entry's host is created and tested on the fly); Verbindungen gets a
+  Websites tab; a knowledge space lists origin, scope, schedule, last successful fetch and a
+  readable error per source.
+- **Provenance in the chat:** `source_kind: website`, `fetched_at` and `legal_status` flow from
+  Ingest releases through Knowledge, Retrieval and Runtime to the chat's source cards, which
+  show the fetch date and a stated legal status next to the link
+  ([contracts/internal-chat.md](../../contracts/internal-chat.md), frontmatter schema).
 - **Running configuration in the admin UI** (Betrieb & Sicherheit → Konfiguration): every
   environment setting with secrets masked and a customized/default flag, the settings saved
   in the UI, connection checks for database, Redis, S3 and the backup directory, and an
@@ -25,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 - pypdf 6.21.2 (CVE-2026-115572, CVE-2026-115580, CVE-2026-115585).
+- dnspython 2.9.0 (CVE-2026-114605; transitive via email-validator).
 
 ## [0.7.15] - 2026-10-23
 

@@ -114,6 +114,10 @@ class SearchResult(BaseModel):
     source_url: str | None = None
     uploaded_by: str | None = None
     uploaded_at: str | None = None
+    # Website imports: fetch time of the page and, for legal sources, the
+    # stated 'Rechtsstand' (both from the chunk's frontmatter).
+    fetched_at: str | None = None
+    legal_status: str | None = None
     team: str | None = None
     department: str | None = None
     # `Document.collection_slug`, echoed back verbatim (`None` for a
