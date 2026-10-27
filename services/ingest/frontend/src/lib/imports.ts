@@ -120,7 +120,7 @@ export function hostOf(url: string): string {
 export function friendlySyncError(error: string, locale: Locale = DEFAULT_LOCALE): string {
   const text = error.toLowerCase();
   const key = /http 40[137]\b|authentication|credential rejected|access denied/.test(text) ? 'portal.importSync.error.auth'
-    : /http 404|http 410|page not found|not found/.test(text) ? 'portal.importSync.error.notFound'
+    : /http 404|http 410|page not found/.test(text) ? 'portal.importSync.error.notFound'
       : /robots\.txt/.test(text) ? 'portal.importSync.error.robots'
         : /private|loopback|link-local|blocked address/.test(text) ? 'portal.importSync.error.private'
           : /stalled|worker lost|worker was lost/.test(text) ? 'portal.importSync.error.stalled'

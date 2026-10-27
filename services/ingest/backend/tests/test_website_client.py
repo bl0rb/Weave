@@ -55,6 +55,25 @@ def test_scope_prefix_variants():
     assert not website.in_crawl_scope('https://h/a/bc', start_url='https://h/a/b', crawl_scope='prefix')
 
 
+def test_extract_main_html_keeps_content_wrapped_in_a_form():
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup('<html><body><form id="aspnetForm"><main><h1>Intranet</h1><p>Inhalt</p><input name="x"></main></form></body></html>', 'html.parser')
+    title, html = website.extract_main_html(soup)
+    assert title == 'Intranet' and 'Inhalt' in html and '<input' not in html and '<form' not in html
+
+
+def test_page_base_url_and_relative_links_in_markdown():
+    assert website.page_base_url('https://h/a/b/x.html') == 'https://h/a/b'
+    assert website.page_base_url('https://h/a/b/') == 'https://h/a/b'
+    assert website.page_base_url('https://h/') == 'https://h'
+    page = Page(id='https://h/vwvfg/__1.html', title='§ 1', version=1, html='<p><a href="__2.html">weiter</a> <img src="img/a.png"></p>', url='https://h/vwvfg/__1.html')
+    conversion, _ = website.convert_web_page(page, import_run_id='r')
+    assert '(https://h/vwvfg/__2.html)' in conversion.markdown
+    assert 'https://h/vwvfg/img/a.png' in conversion.markdown
+    assert '__1.html/__2.html' not in conversion.markdown
+
+
 def test_extract_main_html_prefers_main_and_strips_chrome():
     from bs4 import BeautifulSoup
 
@@ -184,10 +203,32 @@ def test_credential_sent_to_own_origin_only(fetch):
     client.fetch_page(START)
     _, headers = fetch.calls[-1]
     assert headers['Authorization'].startswith('Basic ')
-    with pytest.raises(ConfluenceError):
-        client.fetch_page('https://other.example.com/x.html')
-    _, headers = fetch.calls[-1]
-    assert 'Authorization' not in headers
+    for other in ('https://other.example.com/x.html', 'http://docs.example.com/x.html', 'https://docs.example.com:8443/x.html'):
+        with pytest.raises(ConfluenceError):
+            client.fetch_page(other)
+        _, headers = fetch.calls[-1]
+        assert 'Authorization' not in headers
+
+
+def test_links_resolve_against_the_redirect_target(monkeypatch):
+    class RedirectingFetch(FakeFetch):
+        def __call__(self, url, **kwargs):
+            response = super().__call__(url, **kwargs)
+            if url == 'https://docs.example.com/handbuch':
+                return SafeFetchResponse(status_code=200, headers={'content-type': 'text/html'}, body=b'<html><title>H</title><body><main><a href="kapitel-1.html">K1</a></main></body></html>', final_url=START)
+            return response
+
+    monkeypatch.setattr(website, 'safe_fetch', RedirectingFetch())
+    client = website.create_website_client(base_url='https://docs.example.com', start_url='https://docs.example.com/handbuch', crawl_scope='host', respect_robots=False)
+    page = client.fetch_page('https://docs.example.com/handbuch')
+    assert page.url == START
+    assert list(client.iter_children('https://docs.example.com/handbuch')) == ['https://docs.example.com/handbuch/kapitel-1.html']
+
+
+def test_private_hosts_for_binds_release_to_the_connection_host():
+    assert website.private_hosts_for(kind='website', base_url='http://intranet.local:8080', allow_private_target=True, global_allowlist=['a']) == frozenset({'a', 'intranet.local:8080'})
+    assert website.private_hosts_for(kind='website', base_url='http://intranet.local', allow_private_target=False, global_allowlist=[]) == frozenset()
+    assert website.private_hosts_for(kind='confluence', base_url='http://intranet.local', allow_private_target=True, global_allowlist=[]) == frozenset()
 
 
 def test_errors_carry_url_and_status_but_never_the_credential(fetch):

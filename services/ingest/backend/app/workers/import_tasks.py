@@ -56,7 +56,7 @@ from app.services.collection_access import collection_role, role_at_least
 from app.services.confluence import AttachmentMeta, ConfluenceError, Page, PageSource, create_client, is_transient
 from app.services.confluence_markdown import add_frontmatter_keys, convert_page, rewrite_cross_page_links, sanitize_filename
 from app.services.paddle_service import effective_pipeline_profile_id, vl_settings_for_worker
-from app.services.website import convert_web_page, create_website_client
+from app.services.website import convert_web_page, create_website_client, private_hosts_for
 from app.workers import webhook_tasks
 from app.workers.celery_app import celery_app
 
@@ -894,20 +894,6 @@ def _job_tags(options: dict, path_titles: list[str] | None) -> list[str]:
     return tags
 
 
-def _private_hosts_for(source: ImportSource) -> frozenset[str]:
-    """The global allowlist plus, for a website connection an admin released
-    for an internal target, exactly that connection's host (mirrors
-    import_routes._private_hosts_for; workers don't import the API module)."""
-    hosts = set(settings.import_private_host_allowlist)
-    if source.kind == 'website' and source.allow_private_target:
-        from urllib.parse import urlsplit
-
-        parts = urlsplit(source.base_url)
-        if parts.hostname:
-            hosts.add(f'{parts.hostname}:{parts.port}' if parts.port else parts.hostname)
-    return frozenset(hosts)
-
-
 def _resolve_collection(db, source: ImportSource, options: dict) -> Collection | None:
     """Resolve an assigned collection before any page job can be written.
 
@@ -1333,7 +1319,10 @@ def import_confluence(self, run_id: str, chunk_seq: int) -> None:
                     auth_type=source.auth_type,
                     auth_username=source.auth_username,
                     credential=credential,
-                    allowed_private_hosts=_private_hosts_for(source),
+                    allowed_private_hosts=private_hosts_for(
+                        kind=source.kind, base_url=source.base_url, allow_private_target=source.allow_private_target,
+                        global_allowlist=settings.import_private_host_allowlist,
+                    ),
                     timeout=float(settings.import_fetch_timeout_seconds),
                     max_response_bytes=settings.import_fetch_max_bytes,
                     max_attachment_bytes=settings.import_attachment_max_bytes,

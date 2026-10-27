@@ -49,7 +49,9 @@ CRAWL_SCOPES = ('page', 'prefix', 'host')
 # Longer URLs are skipped: ImportRun/ImportSync.scope_value is 512 chars and
 # ImportPageState.page_id 2048, and a URL this long is never a page worth
 # importing.
-MAX_PAGE_URL_CHARS = 1000
+# 512 chars * 4 bytes (worst-case UTF-8) stays inside Postgres' btree entry
+# limit for the (source_id, collection_id, page_id) unique index.
+MAX_PAGE_URL_CHARS = 512
 MAX_START_URL_CHARS = 512
 # Links discovered per page (link-bomb guard, in addition to the run's
 # frontier cap in import_tasks).
@@ -64,7 +66,10 @@ _SKIP_EXTENSIONS = (
     '.doc', '.ppt', '.odt', '.ods', '.odp', '.rtf', '.csv', '.txt',
 )
 _HTML_CONTENT_TYPES = ('text/html', 'application/xhtml+xml')
-_STRIP_TAGS = ('script', 'style', 'noscript', 'template', 'iframe', 'object', 'embed', 'svg', 'canvas', 'form', 'button', 'input', 'select', 'textarea')
+_STRIP_TAGS = ('script', 'style', 'noscript', 'template', 'iframe', 'object', 'embed', 'svg', 'canvas', 'button', 'input', 'select', 'textarea')
+# Unwrapped, not dropped: WebForms / classic SharePoint pages wrap the whole
+# body in one <form>.
+_UNWRAP_TAGS = ('form',)
 _CHROME_TAGS = ('nav', 'header', 'footer', 'aside')
 _CHROME_ROLES = ('navigation', 'banner', 'contentinfo', 'complementary', 'search')
 _TRACKING_QUERY_KEYS = ('utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'fbclid', 'gclid', 'sessionid', 'jsessionid', 'phpsessid')
@@ -114,6 +119,37 @@ def _host_key(url: str) -> tuple[str, int | None]:
 
 def host_of(url: str) -> str:
     return (urlsplit(url).hostname or '').lower()
+
+
+def origin_of(url: str) -> tuple[str, str, int | None]:
+    """(scheme, host, port) -- what a credential and a private-target
+    release are bound to."""
+    parts = urlsplit(url)
+    return parts.scheme.lower(), (parts.hostname or '').lower(), parts.port
+
+
+def same_origin(url: str, other: str) -> bool:
+    return origin_of(url) == origin_of(other)
+
+
+def page_base_url(page_url: str) -> str:
+    """The directory a page's relative links resolve against, without the
+    trailing slash html_to_markdown's _prepare appends itself
+    (https://h/a/b/x.html -> https://h/a/b)."""
+    return urljoin(page_url, '.').rstrip('/')
+
+
+def private_hosts_for(*, kind: str, base_url: str, allow_private_target: bool, global_allowlist) -> frozenset[str]:
+    """safe_fetch's allowed_private_hosts for one connection: the global
+    allowlist plus, for a website connection an admin released for an
+    internal target, exactly that connection's host (host:port when the
+    base URL names a port). Shared by the API's /test and the worker."""
+    hosts = set(global_allowlist)
+    if kind == 'website' and allow_private_target:
+        host, port = _host_key(base_url)
+        if host:
+            hosts.add(f'{host}:{port}' if port else host)
+    return frozenset(hosts)
 
 
 def scope_prefix(start_url: str) -> str:
@@ -180,6 +216,8 @@ def extract_main_html(soup: BeautifulSoup) -> tuple[str, str]:
         title = soup.title.string.strip()
     for element in soup.find_all(_STRIP_TAGS):
         element.decompose()
+    for element in soup.find_all(_UNWRAP_TAGS):
+        element.unwrap()
     for element in soup.find_all(_CHROME_TAGS):
         element.decompose()
     for element in soup.find_all(attrs={'role': _CHROME_ROLES}):
@@ -249,6 +287,7 @@ class WebsiteClient:
         self.crawl_scope = crawl_scope if crawl_scope in CRAWL_SCOPES else 'prefix'
         self._headers = auth_headers(auth_type, auth_username, credential)
         self._origin = _host_key(self.base_url)
+        self._origin_full = origin_of(self.base_url)
         self.allowed_private_hosts = allowed_private_hosts
         self.timeout = timeout
         self.max_response_bytes = max_response_bytes
@@ -267,7 +306,7 @@ class WebsiteClient:
     def _request_headers(self, url: str, *, accept: str) -> dict[str, str]:
         headers = {'User-Agent': USER_AGENT, 'Accept': accept}
         # The credential belongs to the connection's origin only.
-        if self._headers and _host_key(url) == self._origin and urlsplit(url).scheme == urlsplit(self.base_url).scheme:
+        if self._headers and origin_of(url) == self._origin_full:
             headers.update(self._headers)
         return headers
 
@@ -323,7 +362,10 @@ class WebsiteClient:
             raise ConfluenceError(f'{url} redirected to another host ({host_of(response.final_url)}); not imported')
 
         soup = BeautifulSoup(response.body, 'html.parser')
-        child_urls, document_urls = self._collect_links(soup, page_url=url)
+        # Relative links resolve against where the page actually came from
+        # (a same-host redirect may have moved it to another directory).
+        final_url = normalize_page_url(response.final_url) or url
+        child_urls, document_urls = self._collect_links(soup, page_url=final_url)
         self._links[url] = (child_urls, document_urls)
         while len(self._links) > _LINK_CACHE_SIZE:
             self._links.popitem(last=False)
@@ -333,7 +375,7 @@ class WebsiteClient:
             title=(title or url)[:512],
             version=content_version(main_html),
             html=main_html,
-            url=normalize_page_url(response.final_url) or url,
+            url=final_url,
         )
 
     def _collect_links(self, soup: BeautifulSoup, *, page_url: str) -> tuple[list[str], list[str]]:
@@ -452,9 +494,10 @@ def convert_web_page(
     """Markdown + frontmatter for a fetched website page. Returns the
     conversion and the provenance dict (source_url, fetched_at,
     legal_status) the worker stores on the job for release-time citations.
-    Images keep their absolute URLs (no artifact capture); the crawl's
-    page-to-page links are rewritten at finalize like Confluence ones."""
-    body, images, _linked = html_to_markdown(page.html, base_url=page.url, capture_attachments=False)
+    Images keep their absolute URLs (no artifact capture) and links stay
+    absolute links to the live site -- unlike Confluence pages, website
+    cross-links are not rewritten to the imported copies at finalize."""
+    body, images, _linked = html_to_markdown(page.html, base_url=page_base_url(page.url), capture_attachments=False)
     moment = (fetched_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
     stamp = moment.strftime('%Y-%m-%dT%H:%M:%SZ')
     meta: dict = {

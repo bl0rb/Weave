@@ -114,6 +114,17 @@ def test_private_target_release_is_admin_only():
     with _db() as db:
         row = db.scalar(select(ImportSource).where(ImportSource.owner_id == admin.id, ImportSource.kind == 'website'))
         assert import_routes._private_hosts_for(row) == frozenset({'intranet.local'})
+        released_id = row.id
+    # The release is bound to the host an admin looked at: an owner who is
+    # not an admin cannot retarget it by changing the base URL.
+    with _db() as db:
+        row = db.get(ImportSource, released_id)
+        row.owner_id = user.id
+        db.commit()
+    resp = client.patch(f'/api/v1/import/sources/{released_id}', json={'base_url': 'http://10.0.0.5:9200'})
+    assert resp.status_code == 200 and resp.json()['allow_private_target'] is False
+    with _db() as db:
+        assert import_routes._private_hosts_for(db.get(ImportSource, released_id)) == frozenset()
 
 
 def test_website_source_test_sets_server_kind_and_hides_credential(monkeypatch):
@@ -156,8 +167,11 @@ def test_create_website_run_requires_url_scope_on_connection_host(monkeypatch):
     assert resp.status_code == 422 and 'docs.example.com' in resp.json()['detail']
     resp = client.post('/api/v1/import/runs', json={'source_id': source['id'], 'scope': {'type': 'url', 'value': 'ftp://docs.example.com/a'}})
     assert resp.status_code == 422
-    resp = client.post('/api/v1/import/runs', json={'source_id': source['id'], 'scope': {'type': 'url', 'value': 'https://docs.example.com/x'}, 'options': {'catalog_entry_id': 'missing'}})
-    assert resp.status_code == 404
+    # Another port or scheme is another origin (credential / release binding).
+    resp = client.post('/api/v1/import/runs', json={'source_id': source['id'], 'scope': {'type': 'url', 'value': 'https://docs.example.com:8443/a'}})
+    assert resp.status_code == 422
+    resp = client.post('/api/v1/import/runs', json={'source_id': source['id'], 'scope': {'type': 'url', 'value': 'http://docs.example.com/a'}})
+    assert resp.status_code == 422
 
     resp = client.post('/api/v1/import/runs', json={
         'source_id': source['id'],
@@ -170,6 +184,7 @@ def test_create_website_run_requires_url_scope_on_connection_host(monkeypatch):
     assert body['kind'] == 'website' and body['scope_type'] == 'url'
     assert body['scope_value'] == 'https://docs.example.com/handbuch/index.html'
     assert sent == [('import_confluence', [body['id'], 0])]
+    sent.clear()
     with _db() as db:
         run = db.get(ImportRun, body['id'])
         assert run.state['frontier'] == [['https://docs.example.com/handbuch/index.html', 0]]
@@ -181,6 +196,13 @@ def test_create_website_run_requires_url_scope_on_connection_host(monkeypatch):
 
     syncs = client.get('/api/v1/import/syncs').json()['items']
     assert len(syncs) == 1 and syncs[0]['source_kind'] == 'website' and syncs[0]['options']['crawl_scope'] == 'prefix'
+    # A deleted catalog entry must not block editing the sync that came from it.
+    with _db() as db:
+        db.delete(db.get(SourceCatalogEntry, entry_id))
+        db.commit()
+    resp = client.patch(f"/api/v1/import/syncs/{syncs[0]['id']}", json={'options': syncs[0]['options'], 'interval_seconds': 3600})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()['options']['catalog_entry_id'] is None and resp.json()['interval_seconds'] == 3600
 
     # A Confluence connection refuses the url scope.
     resp = client.post('/api/v1/import/sources', json={'name': 'wiki', 'base_url': 'https://wiki.example.com', 'auth_type': 'pat_bearer', 'credential': 'pat'})

@@ -297,12 +297,10 @@ def _require_private_target_admin(user: User) -> None:
 
 
 def _private_hosts_for(source: ImportSource) -> frozenset[str]:
-    hosts = set(settings.import_private_host_allowlist)
-    if source.kind == 'website' and source.allow_private_target:
-        parts = urlsplit(source.base_url)
-        if parts.hostname:
-            hosts.add(f'{parts.hostname}:{parts.port}' if parts.port else parts.hostname)
-    return frozenset(hosts)
+    return website.private_hosts_for(
+        kind=source.kind, base_url=source.base_url, allow_private_target=source.allow_private_target,
+        global_allowlist=settings.import_private_host_allowlist,
+    )
 
 
 # --- Sources ------------------------------------------------------------------
@@ -373,8 +371,15 @@ def update_import_source(
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='name cannot be empty')
         source.name = name
     if payload.base_url is not None:
-        source.base_url = _normalize_base_url(payload.base_url)
-        connection_changed = True
+        new_base_url = _normalize_base_url(payload.base_url)
+        if new_base_url != source.base_url:
+            # The private-target release is bound to the host an admin
+            # looked at: a changed base URL drops it unless an admin makes
+            # the change (retargeting the exemption is never an owner's call).
+            if source.allow_private_target and user.role != UserRole.ADMIN:
+                source.allow_private_target = False
+            source.base_url = new_base_url
+            connection_changed = True
     if payload.auth_type is not None and payload.auth_type != source.auth_type:
         source.auth_type = payload.auth_type
         connection_changed = True
@@ -615,10 +620,10 @@ def _validated_run_options(db: Session, user: User, requested: ImportRunOptions)
         'catalog_entry_id': None,
     }
     if requested.catalog_entry_id:
+        # A reference to the template only: an entry deleted since (a sync
+        # PATCH echoes the stored options) simply no longer resolves.
         entry = db.get(SourceCatalogEntry, requested.catalog_entry_id.strip())
-        if entry is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Source catalog entry not found')
-        options['catalog_entry_id'] = entry.id
+        options['catalog_entry_id'] = entry.id if entry is not None else None
     return collection, options
 
 
@@ -632,10 +637,12 @@ def _website_start_url(source: ImportSource, raw: str) -> str:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail='scope.value must be an http(s) page address of at most 512 characters',
         )
-    if website.host_of(start_url) != website.host_of(source.base_url):
+    # Same scheme, host and port: that origin is what the credential and
+    # the private-target release are bound to.
+    if not website.same_origin(start_url, source.base_url):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f'The start page must be on the connection\'s host ({website.host_of(source.base_url)})',
+            detail=f'The start page must be on the connection\'s origin ({source.base_url})',
         )
     return start_url
 
