@@ -24,8 +24,8 @@ Sechs Anwendungsdienste, jeder ein eigener Prozess mit eigenem Image:
   anmelden (Entra ID oder Keycloak).
 
 Dazu zwei Weboberflächen (Wissensportal und Chat), eine Desktop-App
-([clients/desktop](https://github.com/bl0rb/Weave/tree/main/clients/desktop),
-mit eigenen Installern auf `desktop-v*`-Tags) und zwei **optionale**
+([bl0rb/WeaveDesktop](https://github.com/bl0rb/WeaveDesktop), eigenes
+Repository mit eigenen Installern auf `desktop-v*`-Tags) und zwei **optionale**
 CPU-Modelldienste, Embeddings und Reranker. Ohne sie läuft der Stack mit
 Attrappen-Providern: er startet, indiziert und antwortet, nur eben mit
 bedeutungslosen Vektoren und Platzhaltertext. Das ist die Voreinstellung und
@@ -241,7 +241,7 @@ automatisch mit; dafür ist nichts zu tun.
 | Wie sichere ich und stelle wieder her? | betrieb.md, [Abschnitt 12 „Desaster-Recovery“](https://github.com/bl0rb/Weave/blob/main/docs/betrieb.md#12-desaster-recovery) — die Sicherung kommt als verschlüsseltes Archiv in den Browser oder in einen S3-Bucket |
 | Wie übertrage ich Bots in eine andere Umgebung? | betrieb.md, [Abschnitt 9.1](https://github.com/bl0rb/Weave/blob/main/docs/betrieb.md#91-bots-exportieren-und-importieren) und [contracts/bot-document.md](https://github.com/bl0rb/Weave/blob/main/contracts/bot-document.md) |
 | Wie schalte ich das Wissensgedächtnis ein, und was kostet es? | [ADR-0009](https://github.com/bl0rb/Weave/blob/main/docs/adr/0009-wissensgedaechtnis.md); Einstellungen und Kennzahlen unter Administration → Bots & KI → Wissensgedächtnis |
-| Was braucht die Desktop-App vom Server? | [clients/desktop/README.md](https://github.com/bl0rb/Weave/blob/main/clients/desktop/README.md) und der Abschnitt oben |
+| Was braucht die Desktop-App vom Server? | [README von bl0rb/WeaveDesktop](https://github.com/bl0rb/WeaveDesktop#readme) und der Abschnitt oben |
 | Wie betreibe ich mehrere Repliken im Cluster? | betrieb.md, [Abschnitt 13](https://github.com/bl0rb/Weave/blob/main/docs/betrieb.md#13-skalierung-im-cluster-helm) |
 | Läuft die Kette wirklich durch? | betrieb.md, [Abschnitt 10 „Selbsttest“](https://github.com/bl0rb/Weave/blob/main/docs/betrieb.md#10-selbsttest) |
 | Welche Verbindungen muss die Firewall zulassen? | Zuerst [Network design](https://github.com/bl0rb/Weave#network-design) in der Wurzel-README — das ist das plattformweite Bild. [docs/firewall-requirements.md](https://github.com/bl0rb/Weave/blob/main/docs/firewall-requirements.md) hat die feinere Verbindungsmatrix, **aber** einen engeren Geltungsbereich: sie stammt aus der Zeit vor dem Monorepo und beschreibt nur den Ingest-Dienst mit seinen eigenen Compose-Dateien, nicht den Plattform-Stack unter `deploy/` |

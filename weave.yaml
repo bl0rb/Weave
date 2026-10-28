@@ -1085,7 +1085,7 @@ services:
         type: bool
         required: false
         comment: >
-          true lets native apps (the Weave desktop tray app, clients/desktop)
+          true lets native apps (the Weave desktop tray app, bl0rb/WeaveDesktop)
           sign in: `return_to` may then also be
           http://127.0.0.1:<any port>/callback, but only with a PKCE
           code_challenge, and the one-time code is redeemable only with the

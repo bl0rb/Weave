@@ -3,8 +3,9 @@
 
 Das Zeichen (Inline-SVG) und die Keyframes seiner Bewegungen liegen in drei
 getrennt gebauten Oberflächen als Kopie vor (siehe packages/weave-mark/
-README.md). Dieses Skript vergleicht Geometrie und Keyframes jeder Kopie mit
-der kanonischen Fassung und meldet jede Abweichung mit Datei und Fundstelle.
+README.md). Dieses Skript vergleicht Geometrie und Keyframes jeder Kopie in
+diesem Repository mit der kanonischen Fassung (die Desktop-App liegt in
+bl0rb/WeaveDesktop und wird von Hand nachgezogen) und meldet jede Abweichung mit Datei und Fundstelle.
 Exit-Code 1 bei Abweichungen; scripts/tests/test_weave_mark_sync.py lässt es
 im CI mitlaufen.
 """
@@ -22,12 +23,10 @@ CANONICAL_CSS = REPO_ROOT / "packages" / "weave-mark" / "motion.css"
 MARK_COPIES = [
     REPO_ROOT / "services" / "chat" / "src" / "components" / "weave-logo.tsx",
     REPO_ROOT / "services" / "ingest" / "frontend" / "src" / "components" / "weave-ingest-logo.tsx",
-    REPO_ROOT / "clients" / "desktop" / "ui" / "common.js",
 ]
 CSS_COPIES = [
     REPO_ROOT / "services" / "chat" / "src" / "app" / "globals.css",
     REPO_ROOT / "services" / "ingest" / "frontend" / "src" / "app" / "globals.css",
-    REPO_ROOT / "clients" / "desktop" / "ui" / "style.css",
 ]
 
 _TAG_RE = re.compile(r"<(rect|path|g)\b([^>]*?)/?>")
@@ -39,17 +38,11 @@ def mark_geometry(text: str) -> list[tuple[str, tuple[tuple[str, str], ...]]]:
     """Every rect/path/g inside the (first) <svg …>…</svg> of `text`, as
     (tag, sorted attributes) -- JSX attribute names mapped to SVG ones. The
     outer <svg> itself is left out: its classes differ per host on purpose."""
-    # The desktop copy keeps the mark's body in a template literal
-    # (`WEAVE_MARK = \`…\``) and wraps it in <svg> at run time.
-    literal = re.search(r"WEAVE_MARK\s*=\s*`([^`]*)`", text)
-    if literal:
-        body = literal.group(1)
-    else:
-        start = text.find("<svg")
-        end = text.find("</svg>", start)
-        if start < 0 or end < 0:
-            raise ValueError("kein <svg>…</svg> gefunden")
-        body = text[start:end]
+    start = text.find("<svg")
+    end = text.find("</svg>", start)
+    if start < 0 or end < 0:
+        raise ValueError("kein <svg>…</svg> gefunden")
+    body = text[start:end]
     elements = []
     for tag, raw_attrs in _TAG_RE.findall(body):
         attrs = tuple(sorted((_JSX_ATTR_NAMES.get(name, name), value) for name, value in _ATTR_RE.findall(raw_attrs)))

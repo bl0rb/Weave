@@ -174,7 +174,7 @@ Weave-API kann zusätzlich zum Personal-Token-Login eine browserbasierte OIDC-An
 1. **Redirect-URL**: Die beim OIDC-Provider (Keycloak, Entra, …) für diesen Client hinterlegte Redirect-URI muss byte-genau `OIDC_REDIRECT_URL` entsprechen — sonst lehnt der Provider den Code-Austausch beim Login rundweg ab.
 2. **Callback-URL der Oberfläche**: Die öffentlich erreichbare Callback-URL von `weave-tools-frontend` (dessen eigene `APP_BASE_URL` plus `/api/auth/sso/callback`) muss als Eintrag in `OIDC_POST_LOGIN_ALLOWED_URLS` stehen. Fehlt der Eintrag, gibt es keine Fehlermeldung — `return_to` wird von Weave-API still ignoriert, und der Nutzer landet nach dem Login auf dem Gateway statt zurück in der Oberfläche.
 
-Für die Desktop-App (`clients/desktop`) zusätzlich `NATIVE_LOGIN_ENABLED=true` bei `weave-api`; ihr „Im Web öffnen“-Link braucht `CHAT_PUBLIC_URL` bei `weave-api` — die öffentliche Adresse des Web-Chats, derselbe Wert wie dessen `APP_BASE_URL` (`CHAT_APP_BASE_URL` in `weave.yaml`). Compose und Helm übernehmen beide Werte aus `weave.yaml`.
+Für die Desktop-App ([bl0rb/WeaveDesktop](https://github.com/bl0rb/WeaveDesktop)) zusätzlich `NATIVE_LOGIN_ENABLED=true` bei `weave-api`; ihr „Im Web öffnen“-Link braucht `CHAT_PUBLIC_URL` bei `weave-api` — die öffentliche Adresse des Web-Chats, derselbe Wert wie dessen `APP_BASE_URL` (`CHAT_APP_BASE_URL` in `weave.yaml`). Compose und Helm übernehmen beide Werte aus `weave.yaml`.
 
 Personal-Tokens für maschinelle Zugriffe (CLI, n8n, MCP, …) bleiben von alledem vollständig unberührt — SSO ist ein rein zusätzlicher Weg für menschliche Browser-Logins.
 

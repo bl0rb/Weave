@@ -23,7 +23,7 @@ describe('GET /api/desktop', () => {
     const body = await (await GET(desktopRequest())).json();
     expect(body.server_url).toBe('https://weave.example.com/api');
     expect(body.setup_url).toBe('weave://setup?server=https%3A%2F%2Fweave.example.com%2Fapi');
-    expect(body.download_url).toContain('github.com/bl0rb/Weave/releases');
+    expect(body.download_url).toBe('https://github.com/bl0rb/WeaveDesktop/releases/latest');
   });
 
   it('never carries anything but the server address', () => {
