@@ -42,6 +42,9 @@ claude.ai werden aus genau diesen Dateien neu veröffentlicht.
   `services/ingest/backend/requirements.txt` und `requirements-worker.txt`;
   die übrigen sieben sind auf exakte Versionen gepinnt, aber ohne Prüfsummen.
 - Die Integrationsgrenzen und Rückbauentscheidungen zu Altpfaden werden intern geführt.
+- **[wiki/](wiki/)** — die Seiten des [GitHub-Wikis](https://github.com/bl0rb/Weave/wiki)
+  als im Repo gepflegte Fassung (Einstieg, Konzepte, Betrieb, häufige Fragen,
+  „Was ist neu“ seit v0.7.1); von dort ins Wiki synchronisieren.
 - **[screenshots/user-wiki/](screenshots/user-wiki/)** — 31 aktuelle Browseraufnahmen
   in doppelter Pixeldichte mit Beispieldaten für das User-Wiki. Die
   [Galerie](screenshots/user-wiki/index.html) enthält alle Original-PNGs und den
