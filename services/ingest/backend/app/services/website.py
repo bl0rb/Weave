@@ -18,7 +18,8 @@ stored HTML never contains them.
 
 Scope (`crawl_scope`): 'page' = the start page only; 'prefix' = pages whose
 URL starts with the start page's directory; 'host' = every page on the
-start page's host. Links to other hosts are never followed. Linked documents
+start page's host. Links to other hosts are never followed, nor plain http
+links from an https site (no scheme downgrade). Linked documents
 (PDF/Office) are returned as attachments so the existing attachment rules
 (classification by magic bytes, size caps, optional OCR child jobs) apply.
 """
@@ -178,10 +179,16 @@ def scope_prefix(start_url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, path, '', ''))
 
 
+def downgrades_scheme(url: str, reference: str) -> bool:
+    """An http URL reached from an https site: never fetched (the page would
+    travel unencrypted, and without the connection's credential)."""
+    return urlsplit(reference).scheme.lower() == 'https' and urlsplit(url).scheme.lower() != 'https'
+
+
 def in_crawl_scope(url: str, *, start_url: str, crawl_scope: str) -> bool:
     if crawl_scope == 'page':
         return url == start_url
-    if _host_key(url) != _host_key(start_url):
+    if _host_key(url) != _host_key(start_url) or downgrades_scheme(url, start_url):
         return False
     if crawl_scope == 'host':
         return True
@@ -408,8 +415,8 @@ class WebsiteClient:
             seen.add(target)
             extension = _path_extension(target)
             if extension in DOCUMENT_EXTENSIONS:
-                # Documents: same host as the connection, any path.
-                if self.include_linked_documents and _host_key(target) == self._origin:
+                # Documents: same host as the connection, any path, no scheme downgrade.
+                if self.include_linked_documents and _host_key(target) == self._origin and not downgrades_scheme(target, self.base_url):
                     documents.append(target)
                 continue
             if extension in _SKIP_EXTENSIONS:

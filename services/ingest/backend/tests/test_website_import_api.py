@@ -229,9 +229,14 @@ def test_website_sync_rerun_and_space_control(monkeypatch):
     }).json()
     with _db() as db:
         run = db.get(ImportRun, created['id'])
+        # Linked documents are opt-in for websites when the client says nothing.
+        assert run.options['include_attachments'] is False
         run.status = 'finished'
         db.commit()
         sync_id = run.sync_id
+    resp = client.patch(f'/api/v1/import/syncs/{sync_id}', json={'options': {'crawl_scope': 'host'}})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()['options']['include_attachments'] is False
     # Syncs are owner-private: an outsider sees neither the sync nor can run it.
     assert login_as(outsider.username).post(f'/api/v1/import/syncs/{sync_id}/run').status_code == 404
     assert login_as(outsider.username).get('/api/v1/import/syncs').json()['items'] == []

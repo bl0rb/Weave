@@ -58,9 +58,24 @@ def test_origin_of_ignores_an_explicit_default_port():
     ('https://docs.example.com/andere/x.html', 'host', True),
     ('https://other.example.com/handbuch/x.html', 'host', False),
     ('https://docs.example.com:8443/handbuch/x.html', 'host', False),
+    # No scheme downgrade from an https start page.
+    ('http://docs.example.com/andere/x.html', 'host', False),
 ])
 def test_in_crawl_scope(url, scope, expected):
     assert website.in_crawl_scope(url, start_url=START, crawl_scope=scope) is expected
+
+
+def test_http_start_page_may_follow_https_links():
+    assert website.in_crawl_scope('https://h/x.html', start_url='http://h/', crawl_scope='host')
+
+
+def test_http_documents_of_an_https_site_are_not_fetched(monkeypatch):
+    pages = dict(PAGES)
+    pages[START] = '<html><title>Index</title><body><main><a href="http://docs.example.com/handbuch/alt.pdf">alt</a> <a href="anleitung.pdf">PDF</a></main></body></html>'
+    monkeypatch.setattr(website, 'safe_fetch', FakeFetch(pages))
+    client = _client()
+    client.fetch_page(START)
+    assert [item.filename for item in client.iter_attachments(START)] == ['anleitung.pdf']
 
 
 def test_scope_prefix_variants():
