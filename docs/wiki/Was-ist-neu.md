@@ -85,7 +85,7 @@ v0.7.1 gelesen hat. Stand dieser Seite: **v0.7.17** (27. Oktober 2026).
 ## Weave auf dem Desktop
 
 Seit v0.7.8 gibt es eine Tray- beziehungsweise Menüleisten-App für macOS und
-Windows ([clients/desktop](https://github.com/bl0rb/Weave/tree/main/clients/desktop)):
+Windows ([bl0rb/WeaveDesktop](https://github.com/bl0rb/WeaveDesktop)):
 Tastenkürzel, Bot wählen, fragen, Antwort mit Quellen — oder alle lesbaren
 Wissensbereiche durchsuchen. Die Anmeldung läuft über das SSO der
 Organisation, das Sitzungstoken liegt im Schlüsselbund des Betriebssystems.

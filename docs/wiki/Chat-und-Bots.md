@@ -287,7 +287,7 @@ n8n-Bots bleiben bei dem Modell, das ihr Flow vorgibt.
 
 Der Web-Chat ist nicht der einzige Client des Gateways.
 
-- **Die Desktop-App** ([clients/desktop](https://github.com/bl0rb/Weave/tree/main/clients/desktop),
+- **Die Desktop-App** ([bl0rb/WeaveDesktop](https://github.com/bl0rb/WeaveDesktop),
   seit v0.7.8) sitzt in der Menüleiste oder im Infobereich: Tastenkürzel,
   Bot wählen, fragen — die Antwort wird gestreamt und mit Quellen gezeigt —
   oder alle lesbaren Wissensbereiche durchsuchen, ohne KI-Antwort. Sie nutzt

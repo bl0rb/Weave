@@ -8,7 +8,7 @@ import { useCallback, useState, useSyncExternalStore } from 'react';
  * while the weft rows slide through like a loom's shuttle). Every start
  * picks one at random, never the one that ran last, remembered across page
  * loads through localStorage so a reload cannot repeat it either. Mirrors
- * clients/desktop/ui/common.js and Weave-Chat's lib/weave-motion.ts; the
+ * bl0rb/WeaveDesktop's ui/common.js and Weave-Chat's lib/weave-motion.ts; the
  * canonical mark and keyframes live in packages/weave-mark.
  */
 export const WEAVE_MOTIONS = ['weave', 'turn', 'flip', 'shuttle'] as const;

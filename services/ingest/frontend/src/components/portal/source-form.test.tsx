@@ -222,3 +222,73 @@ it('imports a website through an existing tested connection with the chosen scop
     sync: { enabled: false, interval_seconds: null },
   });
 });
+
+it('does not carry a Confluence connection over to the website form', async () => {
+  sessionStorage.clear();
+  const normal = api.getMockImplementation()!;
+  api.mockImplementation(async (path, options) => {
+    if (path === '/api/v1/import/sources') return { items: [{ id: 'wiki', name: 'Firmenwiki', kind: 'confluence', server_kind: '' }, { id: 'intra', name: 'Intranet', kind: 'website', base_url: 'https://intranet.example.com', server_kind: 'website', auth_type: 'none' }] };
+    return normal(path, options);
+  });
+  render(<SourceForm initialCollection="area" initialKind="confluence" initialSourceId="wiki" />);
+  await screen.findByText(/noch nicht erfolgreich geprüft/);
+  fireEvent.click(screen.getByRole('radio', { name: /Website/ }));
+  await screen.findByRole('option', { name: /Intranet/ });
+  expect(screen.queryByText(/noch nicht erfolgreich geprüft/)).toBeNull();
+  fireEvent.change(screen.getByRole('textbox', { name: 'Startadresse' }), { target: { value: 'https://intranet.example.com/a/' } });
+  fireEvent.click(screen.getByRole('checkbox', { name: /Ich prüfe die Berechtigten/ }));
+  expect((screen.getByRole('button', { name: 'Import starten' }) as HTMLButtonElement).disabled).toBe(true);
+});
+
+it('does not send a catalog entry\'s page limit with a plain website import', async () => {
+  sessionStorage.clear();
+  const normal = api.getMockImplementation()!;
+  const entry = { id: 'cat-1', title: 'VwVfG', description: '', category: 'legal', publisher: 'BMJ', kind: 'website', start_url: 'https://www.gesetze-im-internet.de/vwvfg/', crawl_scope: 'prefix', include_linked_documents: false, max_pages: 150, interval_seconds: 604800, legal_source: true, host: 'www.gesetze-im-internet.de', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' };
+  api.mockImplementation(async (path, options) => {
+    if (path.startsWith('/api/v1/source-catalog')) return { items: [entry], can_manage: false };
+    if (path === '/api/v1/import/sources') return { items: [{ id: 'intra', name: 'Intranet', kind: 'website', base_url: 'https://intranet.example.com', server_kind: 'website', auth_type: 'none' }] };
+    if (path === '/api/v1/import/runs') return { id: 'run-3', kind: 'website', status: 'pending', scope_type: 'url', scope_value: 'https://intranet.example.com/a/' };
+    return normal(path, options);
+  });
+  render(<SourceForm initialCollection="area" initialKind="catalog" initialCatalogEntryId="cat-1" />);
+  await screen.findByRole('option', { name: 'Standard – schnell' });
+  await screen.findByText(/Verbindung: Intranet|wird beim Start automatisch/);
+  fireEvent.click(screen.getByRole('radio', { name: /Website/ }));
+  fireEvent.change(await screen.findByRole('combobox', { name: 'Deine Website-Verbindung' }), { target: { value: 'intra' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Startadresse' }), { target: { value: 'https://intranet.example.com/a/' } });
+  fireEvent.click(screen.getByRole('checkbox', { name: /Ich prüfe die Berechtigten/ }));
+  fireEvent.submit(screen.getByRole('button', { name: 'Import starten' }).closest('form')!);
+  await screen.findByRole('heading', { name: 'Website-Import gestartet' });
+  const run = api.mock.calls.find(([path]) => path === '/api/v1/import/runs');
+  expect(JSON.parse(run?.[1]?.body as string).options).not.toHaveProperty('max_pages');
+});
+
+it('keeps adjusted catalog options when switching away and back, and imports the entry\'s own address', async () => {
+  sessionStorage.clear();
+  const normal = api.getMockImplementation()!;
+  const entry = { id: 'cat-1', title: 'VwVfG', description: '', category: 'legal', publisher: 'BMJ', kind: 'website', start_url: 'https://www.gesetze-im-internet.de/vwvfg/', crawl_scope: 'prefix', include_linked_documents: false, max_pages: null, interval_seconds: 604800, legal_source: true, host: 'www.gesetze-im-internet.de', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' };
+  api.mockImplementation(async (path, options) => {
+    // A fresh copy per request, like a real reload of the catalog.
+    if (path.startsWith('/api/v1/source-catalog')) return { items: [{ ...entry }], can_manage: false };
+    if (path === '/api/v1/import/sources') return { items: [{ id: 'gii', name: 'GII', kind: 'website', base_url: 'https://www.gesetze-im-internet.de', server_kind: 'website', auth_type: 'none' }] };
+    if (path === '/api/v1/import/runs') return { id: 'run-4', kind: 'website', status: 'pending', scope_type: 'url', scope_value: entry.start_url };
+    return normal(path, options);
+  });
+  render(<SourceForm initialCollection="area" initialKind="catalog" initialCatalogEntryId="cat-1" />);
+  await screen.findByRole('option', { name: 'Standard – schnell' });
+  await screen.findByText('Verbindung: GII');
+  fireEvent.click(screen.getByRole('button', { name: 'Nur diese Seite' }));
+  fireEvent.click(screen.getByRole('radio', { name: /Website/ }));
+  fireEvent.change(await screen.findByRole('textbox', { name: 'Startadresse' }), { target: { value: 'https://www.gesetze-im-internet.de/andere/' } });
+  fireEvent.click(screen.getByRole('radio', { name: /Quellenkatalog/ }));
+  await waitFor(() => expect(api.mock.calls.filter(([path]) => path.startsWith('/api/v1/source-catalog')).length).toBe(2));
+  await screen.findByText('Verbindung: GII');
+  expect(screen.getByRole('button', { name: 'Nur diese Seite' }).getAttribute('aria-pressed')).toBe('true');
+  fireEvent.click(screen.getByRole('checkbox', { name: /Ich prüfe die Berechtigten/ }));
+  fireEvent.submit(screen.getByRole('button', { name: 'Import starten' }).closest('form')!);
+  await screen.findByRole('heading', { name: 'Website-Import gestartet' });
+  const run = api.mock.calls.find(([path]) => path === '/api/v1/import/runs');
+  const body = JSON.parse(run?.[1]?.body as string);
+  expect(body.scope).toEqual({ type: 'url', value: entry.start_url });
+  expect(body.options.crawl_scope).toBe('page');
+});

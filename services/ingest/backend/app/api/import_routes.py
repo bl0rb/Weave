@@ -563,7 +563,9 @@ def _resolve_page_by_title_via_source(source: ImportSource, space_key: str, titl
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
 
-def _validated_run_options(db: Session, user: User, requested: ImportRunOptions) -> tuple[Collection | None, dict]:
+def _validated_run_options(
+    db: Session, user: User, requested: ImportRunOptions, *, source_kind: str = 'confluence',
+) -> tuple[Collection | None, dict]:
     """Validate and normalise run options -- shared by POST /runs and
     PATCH /syncs/{id}. Returns the target collection and the options dict
     stored on runs (collection_* included)."""
@@ -606,7 +608,9 @@ def _validated_run_options(db: Session, user: User, requested: ImportRunOptions)
         'collection_id': collection.id if collection is not None else None,
         'collection_slug': collection.slug if collection is not None else None,
         'collection_name': collection.name if collection is not None else None,
-        'include_attachments': requested.include_attachments,
+        # Linked documents are opt-in for websites: left out, a website
+        # import follows none (Confluence keeps its attachments-on default).
+        'include_attachments': requested.include_attachments if source_kind != 'website' or 'include_attachments' in requested.model_fields_set else False,
         'ocr_attachments': requested.ocr_attachments,
         'ocr_profile_id': requested.ocr_profile_id,
         'folder': _sanitize_storage_path(requested.folder),
@@ -703,7 +707,7 @@ def create_import_run(
             detail='Source connection has not been tested successfully yet; test the connection first',
         )
 
-    collection, options = _validated_run_options(db, user, payload.options)
+    collection, options = _validated_run_options(db, user, payload.options, source_kind=source.kind)
 
     if (payload.scope.type == 'url') != (source.kind == 'website'):
         raise HTTPException(
@@ -996,7 +1000,8 @@ def update_import_sync(
                 detail='The knowledge space of an import cannot be changed; create a new import instead',
             )
         _collection, options = _validated_run_options(
-            db, user, payload.options.model_copy(update={'collection_id': sync.collection_id})
+            db, user, payload.options.model_copy(update={'collection_id': sync.collection_id}),
+            source_kind=sync.source.kind if sync.source is not None else 'confluence',
         )
         sync.options = sync_options(options)
     if payload.enabled is not None:

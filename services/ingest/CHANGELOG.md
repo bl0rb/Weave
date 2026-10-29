@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The desktop app has its own repository**: [bl0rb/WeaveDesktop](https://github.com/bl0rb/WeaveDesktop)
+  (history included). `clients/desktop` and its workflow are gone from here; the download link of
+  "Desktop-App einrichten" points to the newest WeaveDesktop release.
+
 ## [0.7.17] - 2026-10-27
 
 ### Added

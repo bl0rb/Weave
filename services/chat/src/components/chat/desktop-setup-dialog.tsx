@@ -9,7 +9,7 @@ type DesktopSetup = { server_url: string; setup_url: string; download_url: strin
 
 /**
  * "Desktop-App einrichten": opens the `weave://setup?server=...` link the
- * desktop app (clients/desktop) registers, so it picks up this
+ * desktop app (bl0rb/WeaveDesktop) registers, so it picks up this
  * deployment's Weave-API address and asks the user to confirm it there.
  * The browser shows its own "open Weave?" prompt; with no app installed
  * nothing happens, hence the download link and the address to type in.

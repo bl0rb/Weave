@@ -3,12 +3,12 @@ import type { NextRequest } from 'next/server';
 import { requireSessionCredential } from '@/lib/require-session';
 import { resolveWeaveApiPublicBaseUrl } from '@/lib/sso';
 
-/** The GitHub release the desktop app's installers and update feed live on. */
-export const DESKTOP_DOWNLOAD_URL = 'https://github.com/bl0rb/Weave/releases/tag/desktop-latest';
+/** The newest desktop release with its installers (bl0rb/WeaveDesktop). */
+export const DESKTOP_DOWNLOAD_URL = 'https://github.com/bl0rb/WeaveDesktop/releases/latest';
 
 /**
  * The `weave://setup?server=<url>` link the desktop app registers (see
- * clients/desktop/src-tauri/src/deeplink.rs): only the server address
+ * src-tauri/src/deeplink.rs in bl0rb/WeaveDesktop): only the server address
  * travels in it, never a token -- the app asks the user before saving it.
  */
 export function buildDesktopSetupUrl(serverUrl: string): string {

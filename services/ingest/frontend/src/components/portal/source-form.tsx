@@ -115,7 +115,8 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
   const [setupOpen, setSetupOpen] = useState(false);
   const { test: testSource, testingId, cooldownSecondsFor } = useImportSourceTest();
   const [testMessage, setTestMessage] = useState('');
-  const selectedSource = sources.find(source => source.id === sourceId);
+  // Only a connection of the chosen kind counts: sourceId survives switching between Confluence and Website.
+  const selectedSource = (kind === 'website' ? websiteSources : confluenceSources).find(source => source.id === sourceId);
   // The backend refuses import runs until the connection has been tested once.
   const untested = Boolean(selectedSource) && !selectedSource?.server_kind;
   const testCooldown = selectedSource ? cooldownSecondsFor(selectedSource.id) : 0;
@@ -139,15 +140,21 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
   useEffect(() => {
     sessionStorage.setItem(SOURCE_DRAFT_KEY, JSON.stringify({ collectionId, kind, sourceId, scopeType, pageUrl, automatic, confirmedAccess, profileId, startUrl, crawlScope, linkedDocuments, legalSource, refreshInterval, catalogEntryId } satisfies SourceDraft));
   }, [collectionId, kind, sourceId, scopeType, pageUrl, automatic, confirmedAccess, profileId, startUrl, crawlScope, linkedDocuments, legalSource, refreshInterval, catalogEntryId]);
-  // A chosen catalog entry prefills scope and options; the person may still change them.
+  // A chosen catalog entry prefills scope and options once; the person may still change them, and
+  // neither reloading the catalog nor a restored catalog draft overwrites those changes.
+  const [prefilledEntryId, setPrefilledEntryId] = useState(() => {
+    const draft = readDraft();
+    return draft?.kind === 'catalog' ? draft.catalogEntryId || '' : '';
+  });
   useEffect(() => {
-    if (!catalogEntry) return;
+    if (!catalogEntry || catalogEntry.id === prefilledEntryId) return;
+    setPrefilledEntryId(catalogEntry.id);
     setStartUrl(catalogEntry.start_url);
     setCrawlScope(catalogEntry.crawl_scope);
     setLinkedDocuments(catalogEntry.include_linked_documents);
     setLegalSource(catalogEntry.legal_source);
     setRefreshInterval(catalogEntry.interval_seconds ?? 0);
-  }, [catalogEntry]);
+  }, [catalogEntry, prefilledEntryId]);
   useEffect(() => { if (completed) completedHeading.current?.focus(); }, [completed]);
   function addMore() {
     setResults([]); setRun(null); setFiles([]); setError(''); setSourceError(''); setProgress('');
@@ -257,11 +264,12 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
         if (!source) throw new Error(t('portal.sourceForm.chooseConnection'));
         const created = await apiJson<ImportRun>('/api/v1/import/runs', jsonBody({
           source_id: source.id,
-          scope: { type: 'url', value: startUrl.trim() },
+          // A catalog import always starts at the entry's own address (the start URL field is website-only).
+          scope: { type: 'url', value: kind === 'catalog' && catalogEntry ? catalogEntry.start_url : startUrl.trim() },
           options: {
             collection_id: collectionId, include_attachments: linkedDocuments, ocr_attachments: linkedDocuments, ocr_profile_id: selectedProfile.value,
             crawl_scope: crawlScope, legal_source: legalSource, catalog_entry_id: kind === 'catalog' ? catalogEntryId || null : null,
-            ...(catalogEntry?.max_pages ? { max_pages: catalogEntry.max_pages } : {}),
+            ...(kind === 'catalog' && catalogEntry?.max_pages ? { max_pages: catalogEntry.max_pages } : {}),
           },
           sync: { enabled: refreshInterval > 0, interval_seconds: refreshInterval > 0 ? refreshInterval : null },
         }));
@@ -341,7 +349,7 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
           <p id="profile-scope" className="portal-field-hint">{kind === 'confluence' ? t('portal.sourceForm.profileScopeConfluence') : websiteKind ? t('portal.sourceForm.profileScopeWebsite') : t('portal.sourceForm.profileScopeFiles')}</p>
         </details>}
       </fieldset>
-      <div className="portal-source-summary"><ShieldNotice /><div className="portal-form-actions"><Button type="submit" disabled={saving || !selected || !selectedProfile || Boolean(run) || (kind === 'files' ? files.length === 0 : kind === 'catalog' ? !catalogEntry || !startUrl.trim() || !confirmedAccess : kind === 'website' ? !sourceId || untested || !startUrl.trim() || !confirmedAccess : !sourceId || untested || !pageUrl.trim() || !confirmedAccess)}>{saving ? t('common.starting') : kind === 'files' ? t('portal.sourceForm.uploadSubmit') : t('portal.sourceForm.importSubmit')}</Button><Link href={initialCollection ? `/knowledge/${encodeURIComponent(initialCollection)}` : '/knowledge'} className={buttonVariants({ variant: 'ghost' })}>{t('common.cancel')}</Link></div></div>
+      <div className="portal-source-summary"><ShieldNotice /><div className="portal-form-actions"><Button type="submit" disabled={saving || !selected || !selectedProfile || Boolean(run) || (kind === 'files' ? files.length === 0 : kind === 'catalog' ? !catalogEntry || !confirmedAccess : kind === 'website' ? !selectedSource || untested || !startUrl.trim() || !confirmedAccess : !selectedSource || untested || !pageUrl.trim() || !confirmedAccess)}>{saving ? t('common.starting') : kind === 'files' ? t('portal.sourceForm.uploadSubmit') : t('portal.sourceForm.importSubmit')}</Button><Link href={initialCollection ? `/knowledge/${encodeURIComponent(initialCollection)}` : '/knowledge'} className={buttonVariants({ variant: 'ghost' })}>{t('common.cancel')}</Link></div></div>
     </form>}
     {/* Outside the form above: the dialog has a form of its own. */}
     {setupOpen && <ConfluenceSetupDialog onClose={() => setSetupOpen(false)} onCreated={source => {

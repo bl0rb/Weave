@@ -11,7 +11,7 @@ vi.mock('next/navigation', () => ({
 const SETUP = {
   server_url: 'https://weave.example.com/api',
   setup_url: 'weave://setup?server=https%3A%2F%2Fweave.example.com%2Fapi',
-  download_url: 'https://github.com/bl0rb/Weave/releases/tag/desktop-latest',
+  download_url: 'https://github.com/bl0rb/WeaveDesktop/releases/latest',
 };
 
 const fetchMock = vi.fn();
