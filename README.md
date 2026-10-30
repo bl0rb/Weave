@@ -9,7 +9,7 @@ can find, and in the heads of people who are not at their desk. The first place
 is searchable in theory and unusable in practice; the second goes on holiday.
 
 Weave turns the documents into something that answers. It reads PDFs, Office
-files, scans, e-mails and Confluence pages, converts them into structured text
+files, scans, e-mails, Confluence pages and web pages, converts them into structured text
 with their metadata intact, and makes them answerable in a chat — with the
 source next to every answer, so a reader can check where a statement comes
 from instead of trusting it.
@@ -32,7 +32,7 @@ evaluated before any data or budget leaves the building.
 does not decide anything. It answers questions from documents that someone
 deliberately published, and it shows its work.
 
-The current release is **v0.7.2** — nine services, running and tested end to
+The current release is **v0.7.17** — nine services, running and tested end to
 end, and each one can run as several replicas. The [wiki](https://github.com/bl0rb/Weave/wiki) is the place to
 start reading; this README covers the repository itself.
 
@@ -45,7 +45,7 @@ another.
 
 | Path | Responsibility |
 |---|---|
-| `services/ingest` | Document ingestion: OCR with PaddleOCR, Markdown and frontmatter, quality gate, and the knowledge portal with manual release. **Owns users, teams, OIDC connections, and knowledge spaces (collections)** and is the platform identity provider (ADR-0006). |
+| `services/ingest` | Document ingestion: OCR with PaddleOCR, Markdown and frontmatter, quality gate, Confluence and website imports, the source catalog, and the knowledge portal with manual release. **Owns users, teams, OIDC connections, and knowledge spaces (collections)** and is the platform identity provider (ADR-0006). |
 | `services/knowledge` | Indexing pipeline: consumes released `document.released` snapshots, chunks and embeds them, writes the pgvector chunk store, and mirrors the collection registry. |
 | `services/retrieval` | Hybrid search using pgvector, tsvector, RRF fusion, and cross-encoder reranking. Reads the Knowledge chunk store through a read-only database role (ADR-0005). |
 | `services/runtime` | LLM executor: intent routing, YAML-defined bots, Retrieval calls, and delegated n8n turns. The central chat-provider configuration comes from Ingest (ADR-0007). |
@@ -73,6 +73,40 @@ gibt es zu Y?" from it, with sources, and only within what the asking person may
 read ([ADR-0009](docs/adr/0009-wissensgedaechtnis.md)). Admins adjust mode, model and
 limits and watch coverage and LLM usage under *Administration › KI ›
 Wissensgedächtnis*.
+
+### New in v0.7.17
+
+**Websites and intranet pages as sources.** Next to files and Confluence, a
+knowledge space can import web pages: a website connection (no credentials,
+HTTP Basic or a bearer token; form logins, SSO and Kerberos/NTLM are marked
+unsupported) plus a source with a start page, a crawl scope (this page, its
+section, or the whole host), linked PDF/Office documents and a refresh
+schedule. Pages are fetched through the SSRF-safe fetcher, private-network
+targets stay blocked until an admin releases them per connection, links to
+other hosts are never followed and `robots.txt` is honoured. A refresh
+re-imports only changed pages as a new document version.
+
+**Source catalog.** *Wissensbereiche › Quellenkatalog* holds curated,
+reusable sources (selected laws from gesetze-im-internet.de are seeded;
+bylaws, public-authority information or vendor documentation fit the same
+shape) with categories and search. Everyone may import from an entry into a
+space they control, with the scope confirmed; only admins manage entries. An
+entry is a template and never imports a whole domain.
+
+**Provenance in the chat.** Sources from a website show the link and the
+fetch date; a source marked as legal shows the legal status the page states
+(`fetched_at`, `legal_status`, `source_kind: website`,
+[contracts/internal-chat.md](contracts/internal-chat.md)).
+
+### New in v0.7.16
+
+**Running configuration and S3 backups.** *Betrieb & Sicherheit ›
+Konfiguration* shows every setting with secrets masked, runs connection
+checks for the database, Redis, S3 and the backup directory and exports the
+configuration as `.env` or JSON; backups can be written to, listed in,
+restored from and deleted in an S3 bucket
+([docs/betrieb.md](docs/betrieb.md)). Releases v0.7.3 to v0.7.15 are listed in
+[services/ingest/CHANGELOG.md](services/ingest/CHANGELOG.md).
 
 ### New in v0.7.2
 
