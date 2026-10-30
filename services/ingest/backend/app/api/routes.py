@@ -61,14 +61,11 @@ from app.schemas.jobs import (
     DirectoryTeamsResponse,
     DirectoryUserEntry,
     DirectoryUsersResponse,
-    FolderActionRequest,
     FolderActionResponse,
     JobCollectionEntry,
     JobCollectionResponse,
     JobVersionEntry,
     JobVersionsResponse,
-    MarkdownBrowserResponse,
-    MarkdownFileEntry,
     JobListResponse,
     JobOwner,
     JobRestartRequest,
@@ -80,7 +77,6 @@ from app.schemas.jobs import (
     PaddleSettingsResponse,
     PaddleSettingsUpdate,
     PaddleStatusResponse,
-    PasswordVerificationRequest,
     RuntimeCapabilityInfo,
     UploadResponse,
 )
@@ -211,7 +207,7 @@ def _collection_control_job_filter(db: Session, user: User):
 def _visible_job_filter(user: User, db: Session | None = None):
     """SQL WHERE fragment enforcing row-level job visibility, composed into
     `_apply_job_filters`/`_job_query`/`_job_count` and applied ad hoc to the
-    `/markdown-files` and `/folders/*` queries below.
+    `/folders/*` queries below.
 
     admin => None (no extra filter, sees everything).
     A job in a knowledge space follows only the space's roles (ADR 0008):
@@ -243,7 +239,7 @@ def _apply_visible_filter(query, user: User, *, db: Session | None = None):
     # Benchmark-variant children (see app/api/benchmarks.py) are excluded
     # here for the same reason `_apply_job_filters` excludes them: every
     # browse/aggregate surface built on this helper (/stats,
-    # /markdown-files, /folders/* download-restart-delete, collections)
+    # /folders/* download-restart-delete, collections)
     # must never treat them as normal documents -- they bypass the
     # duplicate-409/version-chain logic and are surfaced only via GET
     # /benchmarks/*, though each stays individually fetchable by id.
@@ -703,24 +699,6 @@ def _storage_folder(
     return '/'.join(parts)
 
 
-def _synthetic_markdown_path(job: Job) -> str:
-    """Relative path of a job's markdown in the browser tree
-    (`{folder}/{job_id}/{job_id}.md`), derived purely from the job row."""
-    return f'{_job_folder_path(job)}/{job.id}/{job.id}.md'
-
-
-def _markdown_entry_from_job(job: Job) -> MarkdownFileEntry:
-    path = _synthetic_markdown_path(job)
-    content = job.result_markdown or ''
-    return MarkdownFileEntry(
-        path=path,
-        filename=f'{job.id}.md',
-        folder=path.rsplit('/', 1)[0],
-        size_bytes=len(content.encode('utf-8')),
-        updated_at=job.updated_at,
-    )
-
-
 def _job_folder_path(job: Job) -> str:
     info = job.processing_info if isinstance(job.processing_info, dict) else {}
     settings_info = info.get('settings') if isinstance(info.get('settings'), dict) else {}
@@ -832,7 +810,7 @@ def _find_predecessor_job(db: Session, user: User, filename: str, collection_id:
     unrelated upload's version history would be wrong; unlike the benchmark
     exclusion this is scoped to this lookup only, so mail-attachment jobs
     still appear normally on the browsing surfaces that reuse
-    `_apply_visible_filter` (stats, /markdown-files, /folders/*)."""
+    `_apply_visible_filter` (stats, /folders/*)."""
     collection_id_expr = Job.processing_info['settings']['collection_id'].as_string()
     query = _apply_visible_filter(
         select(Job)
@@ -1673,31 +1651,6 @@ def upload_document(
 
     process_job.delay(file_id, effective_pipeline_profile_id(profile_id), 'single', email_clean, None)
     return UploadResponse(job_id=job.id, status=job.status)
-
-
-@router.post('/jobs/{job_id}/verify-password')
-def verify_job_password(
-    job_id: str,
-    payload: PasswordVerificationRequest,
-    request: Request,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-) -> dict[str, bool]:
-    enforce_rate_limit(request)
-
-    job = db.get(Job, job_id)
-    if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Job not found')
-    _require_visible(db, job, user)
-
-    if not job.password_hash:
-        # No password protection, always allowed
-        return {'verified': True}
-
-    if verify_password(payload.password, job.password_hash):
-        return {'verified': True}
-    else:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid password')
 
 
 @router.get('/jobs/{job_id}', response_model=JobResponse)
@@ -2582,58 +2535,6 @@ def update_paddle_runtime_settings(
         timeout_seconds=payload.timeout_seconds,
     )
     return PaddleSettingsResponse(**get_paddle_settings(db))
-
-
-@router.get('/markdown-files', response_model=MarkdownBrowserResponse)
-def list_markdown_files(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> MarkdownBrowserResponse:
-    # DB-derived: no shared volume between backend and worker, so the
-    # filesystem is never consulted here. Every finished job with markdown
-    # on record and visible to the caller is surfaced as a synthetic tree
-    # entry -- except password-protected ones, whose markdown only the
-    # password unlocks (GET /jobs/{id}/download; the folder ZIP skips them
-    # the same way).
-    jobs = db.scalars(
-        _apply_visible_filter(
-            select(Job)
-            .where(Job.status == JobStatus.FINISHED, Job.markdown_present(), Job.password_hash.is_(None)),
-            user, db=db,
-        )
-    ).all()
-    entries = sorted((_markdown_entry_from_job(job) for job in jobs), key=lambda entry: entry.path)
-    return MarkdownBrowserResponse(items=entries)
-
-
-@router.get('/markdown-files/{relative_path:path}')
-def get_markdown_file(
-    relative_path: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)
-) -> PlainTextResponse:
-    if not relative_path.lower().endswith('.md'):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Markdown file not found')
-
-    # The synthetic layout always names the file after the job id, so the
-    # path stem is a direct, O(1) lookup key rather than a full table scan.
-    job_id = Path(relative_path).stem
-    job = db.get(Job, job_id)
-    if (
-        job is None
-        or job.status != JobStatus.FINISHED
-        or job.result_markdown is None
-        or job.password_hash
-        or _synthetic_markdown_path(job) != relative_path
-        or not _job_visible(db, job, user)
-    ):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Markdown file not found')
-    return PlainTextResponse(job.result_markdown)
-
-
-@router.post('/folders', response_model=FolderActionResponse)
-def create_folder(payload: FolderActionRequest) -> FolderActionResponse:
-    folder_path = '/'.join(filter(None, [_sanitize_storage_path(payload.folder), _sanitize_storage_path(payload.subfolder)]))
-    if not folder_path:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='Folder or subfolder required')
-    # Folders exist only as the folder/subfolder of their jobs: there is
-    # nothing to create until the first upload names this path.
-    return FolderActionResponse(path=folder_path)
 
 
 @router.get('/folders/{folder_path:path}/download')

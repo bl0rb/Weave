@@ -16,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (history included). `clients/desktop` and its workflow are gone from here; the download link of
   "Desktop-App einrichten" points to the newest WeaveDesktop release.
 
+### Removed
+- Unused API routes without any caller: `POST /api/v1/jobs/{id}/verify-password`,
+  `GET /api/v1/markdown-files` and `/markdown-files/{path}`, `POST /api/v1/folders`,
+  `GET /api/v1/portal/documents/{id}/markdown`, `POST /api/v1/portal/collections/{id}/release-all`
+  and `GET /api/v1/admin/backup/runs/{id}`; `contracts/openapi.json` is regenerated.
+- Unlinked UI pages: the redirect stubs `/search`, `/mail`, `/mail/{id}`, `/processing/new`,
+  `/admin/menschen`, `/admin/wissen` and the `/chat` info page (the sidebar opens the chat directly).
+
 ## [0.7.17] - 2026-10-27
 
 ### Added

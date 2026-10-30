@@ -314,17 +314,16 @@ def test_delete_and_restart_are_also_gated_by_visibility():
     assert client_a.get(f'/api/v1/jobs/{job_b_finished.id}/download').status_code == 404
     assert client_a.get(f'/api/v1/jobs/{job_b_finished.id}/preview').status_code == 404
     assert client_a.put(f'/api/v1/jobs/{job_b_finished.id}/save', json={'markdown': '---\nx: 1\n---\nbody'}).status_code == 404
-    assert client_a.post(f'/api/v1/jobs/{job_b_finished.id}/verify-password', json={'password': 'whatever'}).status_code == 404
 
     del user_a  # only needed for user A's session above
 
 
 def test_password_protected_job_endpoints_are_rate_limited():
-    """Regression for a blocking gap: verify-password/download/preview/save/
-    delete all call `_check_job_password` (bcrypt against Job.password_hash)
-    but, until fixed, none of them called `enforce_rate_limit`, so a logged
-    in, visibility-authorized caller could brute-force the extra per-job
-    password with unlimited attempts. All five must now share the Redis
+    """Regression for a blocking gap: download/preview/save/delete all call
+    `_check_job_password` (bcrypt against Job.password_hash) but, until
+    fixed, none of them called `enforce_rate_limit`, so a logged in,
+    visibility-authorized caller could brute-force the extra per-job
+    password with unlimited attempts. All four must now share the Redis
     rate limiter budget."""
     from app.core.config import settings
 
@@ -336,12 +335,11 @@ def test_password_protected_job_endpoints_are_rate_limited():
     for _ in range(settings.rate_limit_per_minute):
         # Job has no password set, so this is always a cheap 200 -- only the
         # rate-limit budget itself is under test here.
-        resp = client.post(f'/api/v1/jobs/{job.id}/verify-password', json={'password': 'nope'})
+        resp = client.get(f'/api/v1/jobs/{job.id}/preview')
         assert resp.status_code == 200
 
-    assert client.post(f'/api/v1/jobs/{job.id}/verify-password', json={'password': 'nope'}).status_code == 429
-    assert client.get(f'/api/v1/jobs/{job.id}/download').status_code == 429
     assert client.get(f'/api/v1/jobs/{job.id}/preview').status_code == 429
+    assert client.get(f'/api/v1/jobs/{job.id}/download').status_code == 429
     assert client.put(f'/api/v1/jobs/{job.id}/save', json={'markdown': '---\nx: 1\n---\nbody'}).status_code == 429
     assert client.delete(f'/api/v1/jobs/{job.id}').status_code == 429
 

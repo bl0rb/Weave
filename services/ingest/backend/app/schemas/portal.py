@@ -146,15 +146,6 @@ class PortalEditResponse(BaseModel):
     release: PortalReleaseSummary
 
 
-class PortalCollectionReleaseRequest(BaseModel):
-    accept_quality_warnings: bool = False
-
-
-class PortalCollectionReleaseResponse(BaseModel):
-    released: int
-    skipped: int
-
-
 class PortalReindexCollectionResponse(BaseModel):
     requeued: int
 

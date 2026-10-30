@@ -206,10 +206,6 @@ Choose the knowledge area, files or Confluence, and a processing profile. **Stan
 
 Search and filter waiting, running, finished and failed jobs, including older jobs without an area. Visibility follows the existing owner/team/admin boundary. Polling runs only while the tab is visible. Processing, manual approval, handoff and indexing are distinct states; finished processing never claims completed indexing. See [Wissensportal](../../docs/wissensportal.md).
 
-### File Task (`/processing/new`)
-
-The upload wizard is a four-step flow — **Metadata → Profile → Upload → Review & Start** — with a persistent, keyboard-operable stepper. Metadata covers mode (single file or collection), target folder/subfolder (via an "Add folder" dialog) and department; Profile lists the static OCR profiles alongside every enabled VL connection as `VL: <name>`; a single file uploads only when you hit Start on the Review & Start step, not the moment you pick it. Continue stays disabled with a visible reason until the current step is valid, and step-bound errors and duplicate-skip notices appear right under the element they concern.
-
 ### Jobs (`/jobs`)
 
 ![Jobs](../../docs/screenshots/user-wiki/13-job-management.png)

@@ -25,4 +25,4 @@ Die normale Uploadgrößengrenze `MAX_UPLOAD_BYTES` gilt. Der EML-Konverter setz
 
 ## Bestehende Installationen
 
-Es gibt keine Datenlöschung oder neue Migration für diese Entfernung. Vorhandene `MailMessage`-Zeilen und zugehörige Jobs bleiben erhalten; bestehende Anhang-Aufträge sind über die Auftragsverwaltung erreichbar. Das alte Mail-Postfach mit Raw-/Parts-/Export-Endpunkten steht nicht mehr zur Verfügung. Alte UI-Lesezeichen `/mail` und `/mail/{id}` leiten zur Quellenauswahl bzw. Verarbeitung weiter.
+Es gibt keine Datenlöschung oder neue Migration für diese Entfernung. Vorhandene `MailMessage`-Zeilen und zugehörige Jobs bleiben erhalten; bestehende Anhang-Aufträge sind über die Auftragsverwaltung erreichbar. Das alte Mail-Postfach mit Raw-/Parts-/Export-Endpunkten steht nicht mehr zur Verfügung.
