@@ -6,7 +6,7 @@
 #   docker build -f backend/Dockerfile -t weave-runtime-backend .
 #   docker run --rm -p 8000:8000 --env-file .env weave-runtime-backend
 #
-FROM python:3.14-slim
+FROM python:3.15-slim
 
 WORKDIR /app
 
