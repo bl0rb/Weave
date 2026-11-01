@@ -23,7 +23,7 @@ httpcore2==2.16.0
 httptools==0.8.0
 httpx==0.28.1
 httpx2==2.16.0
-huggingface-hub==2.2.0
+huggingface-hub==2.3.0
 idna==3.19
 iniconfig==2.3.0
 numpy==2.5.4
