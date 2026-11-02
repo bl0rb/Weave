@@ -60,8 +60,6 @@ from app.schemas.portal import (
     PortalBulkActionResponse,
     PortalBulkErrorItem,
     PortalConfigResponse,
-    PortalCollectionReleaseRequest,
-    PortalCollectionReleaseResponse,
     PortalDocumentDetail,
     PortalDocumentItem,
     PortalDocumentListResponse,
@@ -1014,32 +1012,6 @@ def unskip_portal_document(job_id: str, db=Depends(get_db), user: User = Depends
     return _set_review_decision_for(job_id, None, db, user)
 
 
-@router.get('/documents/{job_id}/markdown')
-def download_portal_document_markdown(
-    job_id: str,
-    db=Depends(get_db),
-    user: User = Depends(get_current_user),
-) -> Response:
-    """Download the exact Markdown represented by the portal review."""
-    job = _load_visible_job(db, job_id, user)
-    collection = _collection_for_job(db, job)
-    if collection is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Document collection not found')
-    _protected(job)
-    if job.status != JobStatus.FINISHED or not _import_run_finished(db, job):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Document is not ready for download')
-    release = db.scalar(select(DocumentRelease).where(DocumentRelease.job_id == job.id))
-    markdown = _export_markdown(db, job, collection, release)
-    if markdown is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='No Markdown is available')
-    filename = _safe_markdown_filename(job.original_filename, job.id)
-    return Response(
-        content=markdown,
-        media_type='text/markdown; charset=utf-8',
-        headers=_download_headers(filename),
-    )
-
-
 @router.get('/collections/{collection_id}/markdown.zip')
 def download_collection_markdown(
     collection_id: str,
@@ -1289,83 +1261,6 @@ def release_portal_document(
     except Exception:
         logger.exception('publication queue unavailable for release %s', release.id)
     return _summary(release, user.username)  # type: ignore[return-value]
-
-
-@router.post(
-    '/collections/{collection_id}/release-all',
-    response_model=PortalCollectionReleaseResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-)
-def release_collection_documents(
-    collection_id: str,
-    payload: PortalCollectionReleaseRequest,
-    db=Depends(get_db),
-    user: User = Depends(get_current_user),
-) -> PortalCollectionReleaseResponse:
-    if not publication_configured():
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Portal publication is not configured')
-    collection = db.get(Collection, collection_id)
-    if collection is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
-    if user.role != UserRole.ADMIN and not _can_manage_collection(db, collection, user):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='User cannot release this collection')
-
-    collection_id_expr = Job.processing_info['settings']['collection_id'].as_string()
-    jobs = db.scalars(
-        select(Job)
-        .outerjoin(DocumentRelease, DocumentRelease.job_id == Job.id)
-        .where(collection_id_expr == collection.id, DocumentRelease.id.is_(None))
-        .order_by(Job.created_at.asc(), Job.id.asc())
-    ).all()
-    pending: list[tuple[Job, str, str, dict]] = []
-    skipped = 0
-    for job in jobs:
-        # A reviewer's "nicht freigeben" or "parken" must survive a bulk release.
-        if (_review_decision(job) or '').lower() in _DECIDED_REVIEW_STATES or not _can_release_light(db, job, collection, user):
-            skipped += 1
-            continue
-        try:
-            snapshot, digest, frontmatter = canonical_snapshot(db, job, collection)
-        except PublicationValidationError:
-            skipped += 1
-            continue
-        grade, _recommendation = _quality(job)
-        if (grade or '').lower() == 'c' and not payload.accept_quality_warnings:
-            skipped += 1
-            continue
-        pending.append((job, snapshot, digest, frontmatter))
-
-    releases: list[DocumentRelease] = []
-    for job, snapshot, digest, frontmatter in pending:
-        release_id = str(uuid.uuid4())
-        rewritten_snapshot = rewrite_release_image_urls(snapshot, release_id)
-        released_digest = hashlib.sha256(rewritten_snapshot.encode('utf-8')).hexdigest()
-        event_payload = build_release_payload(job, release_id, released_digest, frontmatter)
-        if (_quality(job)[0] or '').lower() == 'c':
-            event_payload['quality_override'] = True
-        release = DocumentRelease(
-            id=release_id,
-            job_id=job.id,
-            owner_id=user.id,
-            # markdown_sha256 stays the pre-rewrite digest (optimistic-concurrency
-            # contract); event_payload carries the post-rewrite digest matching the
-            # bytes actually served for this snapshot.
-            markdown_snapshot=rewritten_snapshot,
-            markdown_sha256=digest,
-            payload=event_payload,
-            status='pending',
-            next_attempt_at=datetime.now(timezone.utc),
-        )
-        db.add(release)
-        releases.append(release)
-    db.commit()
-
-    for release in releases:
-        try:
-            publication_tasks.deliver_release.delay(release.id)
-        except Exception:
-            logger.exception('publication queue unavailable for release %s', release.id)
-    return PortalCollectionReleaseResponse(released=len(releases), skipped=skipped)
 
 
 @router.post('/documents/{job_id}/edit', response_model=PortalEditResponse, status_code=status.HTTP_202_ACCEPTED)

@@ -794,75 +794,10 @@ def test_create_collection_persists_description_and_team_grants():
         db.close()
 
 
-def test_markdown_browser_lists_files(tmp_path):
-    """DB-derived: the browser tree is built from Job rows with
-    result_markdown, not from anything on disk. Field-for-field the response
-    shape (path/filename/folder/size_bytes/updated_at) matches what the old
-    filesystem-scanning handler produced.
-    """
-    db = TestingSessionLocal()
-    db.query(Job).filter(Job.id.in_(['job-1', 'job-2'])).delete(synchronize_session=False)
-    db.commit()  # release the write lock before stored_upload()
-    db.add_all(
-        [
-            Job(
-                id='job-1',
-                original_filename='single.pdf',
-                upload_path=str(tmp_path / 'single.pdf'),
-                upload_object_id=stored_upload(b's'),
-                upload_mime_type='application/pdf',
-                upload_size_bytes=1,
-                status=JobStatus.FINISHED,
-                result_markdown='# single',
-                # No folder/subfolder recorded -> synthesized under 'inbox'.
-            ),
-            Job(
-                id='job-2',
-                original_filename='collection.pdf',
-                upload_path=str(tmp_path / 'collection.pdf'),
-                upload_object_id=stored_upload(b'c'),
-                upload_mime_type='application/pdf',
-                upload_size_bytes=1,
-                status=JobStatus.FINISHED,
-                result_markdown='# collection',
-                processing_info={'settings': {'folder': 'collections', 'subfolder': 'collection-1'}},
-            ),
-        ]
-    )
-    db.commit()
-    db.close()
-
-    list_resp = client.get('/api/v1/markdown-files')
-    assert list_resp.status_code == 200
-    payload = list_resp.json()
-    items_by_path = {item['path']: item for item in payload['items']}
-    assert 'inbox/job-1/job-1.md' in items_by_path
-    assert 'collections/collection-1/job-2/job-2.md' in items_by_path
-
-    entry_one = items_by_path['inbox/job-1/job-1.md']
-    assert entry_one['filename'] == 'job-1.md'
-    assert entry_one['folder'] == 'inbox/job-1'
-    assert entry_one['size_bytes'] == len('# single'.encode('utf-8'))
-    assert 'updated_at' in entry_one
-
-    entry_two = items_by_path['collections/collection-1/job-2/job-2.md']
-    assert entry_two['filename'] == 'job-2.md'
-    assert entry_two['folder'] == 'collections/collection-1/job-2'
-    assert entry_two['size_bytes'] == len('# collection'.encode('utf-8'))
-
-    file_resp = client.get('/api/v1/markdown-files/inbox/job-1/job-1.md')
-    assert file_resp.status_code == 200
-    assert file_resp.text == '# single'
-
-    nested_resp = client.get('/api/v1/markdown-files/collections/collection-1/job-2/job-2.md')
-    assert nested_resp.status_code == 200
-    assert nested_resp.text == '# collection'
-
-
-def test_markdown_browser_and_folder_delete_respect_job_passwords(tmp_path):
+def test_folder_delete_respects_job_passwords(tmp_path):
     """Download and single/bulk delete ask for a protected job's password;
-    the markdown browser and the folder-wide delete cannot, so they leave
-    protected jobs alone instead of bypassing it."""
+    the folder-wide delete cannot, so it leaves protected jobs alone instead
+    of bypassing it."""
     from app.core.config import settings
 
     settings.worker_tmp_dir = tmp_path / 'work'
@@ -880,11 +815,6 @@ def test_markdown_browser_and_folder_delete_respect_job_passwords(tmp_path):
     )
     db.commit()
     db.close()
-
-    listing = client.get('/api/v1/markdown-files')
-    assert listing.status_code == 200
-    assert all('job-protected-md' not in item['path'] for item in listing.json()['items'])
-    assert client.get('/api/v1/markdown-files/protected-folder/job-protected-md/job-protected-md.md').status_code == 404
 
     refused = client.delete('/api/v1/folders/protected-folder')
     assert refused.status_code == 409
@@ -1863,18 +1793,6 @@ def test_inspect_upload_rejects_oversize_after_multiple_chunks(monkeypatch, tmp_
 
     assert exc_info.value.status_code == 413
     assert exc_info.value.detail == 'File too large'
-
-
-def test_create_folder_only_validates_the_path(tmp_path):
-    # Folders exist only as the folder/subfolder of their jobs.
-    response = client.post(
-        '/api/v1/folders',
-        json={'folder': 'finance', 'subfolder': 'q3'},
-    )
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload['path'] == 'finance/q3'
-    assert not list(tmp_path.iterdir())
 
 
 def test_process_job_works_in_a_private_scratch_dir_and_removes_it(monkeypatch, tmp_path):

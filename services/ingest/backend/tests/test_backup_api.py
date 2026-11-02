@@ -101,9 +101,6 @@ def test_export_streams_the_archive_and_records_the_run(tmp_path):
     assert run['status'] == 'finished'
     assert 'jobs' in run['report']['tables']
 
-    fetched = admin.get(f"/api/v1/admin/backup/runs/{run['id']}")
-    assert fetched.status_code == 200, fetched.text
-
     # Nothing was kept on the pod: the old download route is gone, delete
     # only removes the history entry.
     assert admin.get(f"/api/v1/admin/backup/exports/{run['id']}/download").status_code in (404, 405)

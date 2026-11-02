@@ -36,8 +36,7 @@ v0.7.1 gelesen hat. Stand dieser Seite: **v0.7.17** (27. Oktober 2026).
   Zugriffe* (Personen, Gruppen, Anmeldung, Wissensbereiche & Zugriff), *Bots &
   KI* (Bots, Chat & LLM, Suche & Modelle, Wissensgedächtnis), *Verarbeitung &
   Quellen*, *Betrieb & Sicherheit* (Sicherung & Wiederherstellung,
-  Konfiguration, Technische Identitäten, Werkzeuge) und *Systemstatus*. Die
-  alten Pfade `/admin/menschen` und `/admin/wissen` leiten weiter.
+  Konfiguration, Technische Identitäten, Werkzeuge) und *Systemstatus*.
 - Der VL-Benchmark ist entfernt (v0.7.7); VL-Verbindungen bleiben als
   Verarbeitungsprofil nutzbar.
 

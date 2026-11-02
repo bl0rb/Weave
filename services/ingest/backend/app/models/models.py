@@ -249,7 +249,7 @@ class Job(Base):
     # previous_job_id always None) and are excluded from every normal job
     # surface by construction -- GET /jobs, GET /search,
     # _find_predecessor_job, and the _apply_visible_filter-based
-    # /stats, /markdown-files, /folders/* and collection queries -- but
+    # /stats, /folders/* and collection queries -- but
     # remain individually fetchable by id like any other job.
     benchmark_run_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey('benchmark_runs.id', ondelete='SET NULL'), nullable=True, index=True

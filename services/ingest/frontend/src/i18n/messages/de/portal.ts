@@ -754,8 +754,6 @@ export const portal = {
   'importDetail.noJobsCreated': 'Dieser Lauf hat keine Aufträge erstellt.',
 
   // src/app/chat/page.tsx
-  'chatPage.description': 'Stelle Fragen zu den Wissensbereichen, auf die du zugreifen darfst. Der Chat öffnet sich in einem neuen Tab; dort kannst du dich mit deinem Weave-Konto anmelden.',
-  'chatPage.notConfigured': 'Der Chat ist noch nicht eingerichtet. Administration kontaktieren.',
 
   // src/app/connections/page.tsx
   'connectionsPage.title': 'Verbindungen',
@@ -1156,9 +1154,6 @@ export const portal = {
   'chrome.breadcrumb.jobs': 'Aufträge',
   'chrome.breadcrumb.sourcesNew': 'Quelle hinzufügen',
   'chrome.breadcrumb.connections': 'Verbindungen',
-  'chrome.breadcrumb.search': 'Suche',
-  'chrome.breadcrumb.mail': 'Mail',
-  'chrome.breadcrumb.chat': 'Chat',
   'chrome.loading': 'Wird geladen',
 
   // src/lib/portal.ts -- PIPELINE_STEPS

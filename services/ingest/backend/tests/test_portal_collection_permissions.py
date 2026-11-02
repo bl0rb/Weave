@@ -47,14 +47,13 @@ def test_shared_collection_job_visibility_and_release_match_membership(monkeypat
     if role == 'reader':
         assert preview.status_code == 404
         assert authed.put(f'/api/v1/jobs/{job.id}/save', json={'markdown': job.result_markdown}).status_code == 404
-        assert authed.post(f'/api/v1/portal/collections/{collection.id}/release-all', json={}).status_code == 403
+        assert authed.post(f'/api/v1/portal/documents/{job.id}/release', json={'markdown_sha256': '0' * 64}).status_code == 404
     else:
         assert listing.json()['items'][0]['can_release'] is True
         assert preview.status_code == 200, preview.text
         assert preview.json()['can_release'] is True
-        released = authed.post(f'/api/v1/portal/collections/{collection.id}/release-all', json={})
+        released = authed.post(f'/api/v1/portal/documents/{job.id}/release', json={'markdown_sha256': preview.json()['markdown_sha256']})
         assert released.status_code == 202, released.text
-        assert released.json()['released'] == 1
 
 
 def test_postgres_collection_predicate_uses_plain_grant_columns():

@@ -755,8 +755,6 @@ export const portal: Record<keyof typeof de, string> = {
   'importDetail.noJobsCreated': 'This run created no jobs.',
 
   // src/app/chat/page.tsx
-  'chatPage.description': 'Ask questions about the knowledge spaces you have access to. Chat opens in a new tab, where you can sign in with your Weave account.',
-  'chatPage.notConfigured': 'Chat isn’t set up yet. Please contact your administrator.',
 
   // src/app/connections/page.tsx
   'connectionsPage.title': 'Connections',
@@ -1157,9 +1155,6 @@ export const portal: Record<keyof typeof de, string> = {
   'chrome.breadcrumb.jobs': 'Jobs',
   'chrome.breadcrumb.sourcesNew': 'Add source',
   'chrome.breadcrumb.connections': 'Connections',
-  'chrome.breadcrumb.search': 'Search',
-  'chrome.breadcrumb.mail': 'Mail',
-  'chrome.breadcrumb.chat': 'Chat',
   'chrome.loading': 'Loading',
 
   // src/lib/portal.ts -- PIPELINE_STEPS

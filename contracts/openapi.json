@@ -2188,22 +2188,6 @@
         "title": "DirectoryUsersResponse",
         "type": "object"
       },
-      "FolderActionRequest": {
-        "properties": {
-          "folder": {
-            "default": "",
-            "title": "Folder",
-            "type": "string"
-          },
-          "subfolder": {
-            "default": "",
-            "title": "Subfolder",
-            "type": "string"
-          }
-        },
-        "title": "FolderActionRequest",
-        "type": "object"
-      },
       "FolderActionResponse": {
         "properties": {
           "deleted_jobs": {
@@ -6035,56 +6019,6 @@
         "title": "ManagedBotUpdate",
         "type": "object"
       },
-      "MarkdownBrowserResponse": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/MarkdownFileEntry"
-            },
-            "title": "Items",
-            "type": "array"
-          }
-        },
-        "required": [
-          "items"
-        ],
-        "title": "MarkdownBrowserResponse",
-        "type": "object"
-      },
-      "MarkdownFileEntry": {
-        "properties": {
-          "filename": {
-            "title": "Filename",
-            "type": "string"
-          },
-          "folder": {
-            "title": "Folder",
-            "type": "string"
-          },
-          "path": {
-            "title": "Path",
-            "type": "string"
-          },
-          "size_bytes": {
-            "title": "Size Bytes",
-            "type": "integer"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "title": "Updated At",
-            "type": "string"
-          }
-        },
-        "required": [
-          "path",
-          "filename",
-          "folder",
-          "size_bytes",
-          "updated_at"
-        ],
-        "title": "MarkdownFileEntry",
-        "type": "object"
-      },
       "ModelConfig": {
         "additionalProperties": false,
         "properties": {
@@ -6342,20 +6276,6 @@
           "status"
         ],
         "title": "PaddleStatusResponse",
-        "type": "object"
-      },
-      "PasswordVerificationRequest": {
-        "properties": {
-          "password": {
-            "minLength": 1,
-            "title": "Password",
-            "type": "string"
-          }
-        },
-        "required": [
-          "password"
-        ],
-        "title": "PasswordVerificationRequest",
         "type": "object"
       },
       "PortalActivityCounts": {
@@ -6826,35 +6746,6 @@
           "total"
         ],
         "title": "PortalCollectionListResponse",
-        "type": "object"
-      },
-      "PortalCollectionReleaseRequest": {
-        "properties": {
-          "accept_quality_warnings": {
-            "default": false,
-            "title": "Accept Quality Warnings",
-            "type": "boolean"
-          }
-        },
-        "title": "PortalCollectionReleaseRequest",
-        "type": "object"
-      },
-      "PortalCollectionReleaseResponse": {
-        "properties": {
-          "released": {
-            "title": "Released",
-            "type": "integer"
-          },
-          "skipped": {
-            "title": "Skipped",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "released",
-          "skipped"
-        ],
-        "title": "PortalCollectionReleaseResponse",
         "type": "object"
       },
       "PortalConfigResponse": {
@@ -11456,48 +11347,6 @@
         ]
       }
     },
-    "/api/v1/admin/backup/runs/{run_id}": {
-      "get": {
-        "operationId": "get_run_api_v1_admin_backup_runs__run_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "run_id",
-            "required": true,
-            "schema": {
-              "title": "Run Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BackupRunResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Run",
-        "tags": [
-          "backup-admin"
-        ]
-      }
-    },
     "/api/v1/admin/backup/s3": {
       "get": {
         "operationId": "list_s3_backups_api_v1_admin_backup_s3_get",
@@ -14987,44 +14836,6 @@
         "summary": "List Directory Users"
       }
     },
-    "/api/v1/folders": {
-      "post": {
-        "operationId": "create_folder_api_v1_folders_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FolderActionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FolderActionResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Create Folder"
-      }
-    },
     "/api/v1/folders/{folder_path}": {
       "delete": {
         "operationId": "delete_folder_api_v1_folders__folder_path__delete",
@@ -16770,59 +16581,6 @@
         "summary": "Save Markdown"
       }
     },
-    "/api/v1/jobs/{job_id}/verify-password": {
-      "post": {
-        "operationId": "verify_job_password_api_v1_jobs__job_id__verify_password_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "job_id",
-            "required": true,
-            "schema": {
-              "title": "Job Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PasswordVerificationRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": {
-                    "type": "boolean"
-                  },
-                  "title": "Response Verify Job Password Api V1 Jobs  Job Id  Verify Password Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Verify Job Password"
-      }
-    },
     "/api/v1/jobs/{job_id}/versions": {
       "get": {
         "operationId": "get_job_versions_api_v1_jobs__job_id__versions_get",
@@ -16860,61 +16618,6 @@
           }
         },
         "summary": "Get Job Versions"
-      }
-    },
-    "/api/v1/markdown-files": {
-      "get": {
-        "operationId": "list_markdown_files_api_v1_markdown_files_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MarkdownBrowserResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "List Markdown Files"
-      }
-    },
-    "/api/v1/markdown-files/{relative_path}": {
-      "get": {
-        "operationId": "get_markdown_file_api_v1_markdown_files__relative_path__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "relative_path",
-            "required": true,
-            "schema": {
-              "title": "Relative Path",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Markdown File"
       }
     },
     "/api/v1/paddle/capabilities": {
@@ -17295,55 +16998,6 @@
           }
         },
         "summary": "Reindex Collection Documents"
-      }
-    },
-    "/api/v1/portal/collections/{collection_id}/release-all": {
-      "post": {
-        "operationId": "release_collection_documents_api_v1_portal_collections__collection_id__release_all_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "collection_id",
-            "required": true,
-            "schema": {
-              "title": "Collection Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PortalCollectionReleaseRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PortalCollectionReleaseResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Release Collection Documents"
       }
     },
     "/api/v1/portal/config": {
@@ -17758,44 +17412,6 @@
           }
         },
         "summary": "Indexing Diagnostics"
-      }
-    },
-    "/api/v1/portal/documents/{job_id}/markdown": {
-      "get": {
-        "description": "Download the exact Markdown represented by the portal review.",
-        "operationId": "download_portal_document_markdown_api_v1_portal_documents__job_id__markdown_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "job_id",
-            "required": true,
-            "schema": {
-              "title": "Job Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Download Portal Document Markdown"
       }
     },
     "/api/v1/portal/documents/{job_id}/park": {

@@ -307,40 +307,6 @@ def test_portal_preview_hash_canonicalizes_authoritative_collection_and_release(
         db.close()
 
 
-def test_portal_markdown_download_uses_frozen_release_and_safe_headers(monkeypatch):
-    _configure(monkeypatch)
-    user = create_test_user(
-        username=f'portal-download-{uuid.uuid4().hex[:8]}',
-        email=f'portal-download-{uuid.uuid4().hex[:8]}@example.com',
-    )
-    collection = _collection(user.id)
-    job = _job(user.id, collection, markdown='---\nengine: test\n---\n\n# Frozen export\n')
-    authed = login_as(user.username)
-    preview = authed.get(f'/api/v1/portal/documents/{job.id}').json()
-    monkeypatch.setattr('app.api.portal.publication_tasks.deliver_release.delay', lambda release_id: None)
-    assert authed.post(
-        f'/api/v1/portal/documents/{job.id}/release',
-        json={'markdown_sha256': preview['markdown_sha256']},
-    ).status_code == 202
-
-    db = _db()
-    try:
-        stored = db.get(Job, job.id)
-        stored.original_filename = '../Team Richtlinie?.pdf'
-        stored.result_markdown = '---\nengine: test\n---\n\n# Changed later\n'
-        db.commit()
-    finally:
-        db.close()
-
-    response = authed.get(f'/api/v1/portal/documents/{job.id}/markdown')
-    assert response.status_code == 200, response.text
-    assert response.text == preview['markdown']
-    assert 'Team Richtlinie_.md' in response.headers['content-disposition']
-    assert '../' not in response.headers['content-disposition']
-    assert response.headers['cache-control'] == 'private, no-store'
-    assert response.headers['x-content-type-options'] == 'nosniff'
-
-
 def test_portal_collection_zip_contains_only_visible_ready_unprotected_markdown(monkeypatch):
     _configure(monkeypatch)
     team = _team('Portal export')

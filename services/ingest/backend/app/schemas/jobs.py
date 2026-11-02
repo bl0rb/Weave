@@ -313,30 +313,9 @@ class PaddleCapabilitiesResponse(BaseModel):
     profiles: list[PaddleOption]
 
 
-class MarkdownFileEntry(BaseModel):
-    path: str
-    filename: str
-    folder: str
-    size_bytes: int
-    updated_at: datetime
-
-
-class MarkdownBrowserResponse(BaseModel):
-    items: list[MarkdownFileEntry]
-
-
-class FolderActionRequest(BaseModel):
-    folder: str = ''
-    subfolder: str = ''
-
-
 class FolderActionResponse(BaseModel):
     path: str
     deleted_jobs: int = 0
-
-
-class PasswordVerificationRequest(BaseModel):
-    password: str = Field(min_length=1)
 
 
 CollectionResponse.model_rebuild()

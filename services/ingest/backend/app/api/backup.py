@@ -446,14 +446,6 @@ def list_runs(db: Session = Depends(get_db)) -> BackupRunListResponse:
     return BackupRunListResponse(runs=[_serialize_run(run) for run in runs])
 
 
-@router.get('/runs/{run_id}', response_model=BackupRunResponse)
-def get_run(run_id: str, db: Session = Depends(get_db)) -> BackupRunResponse:
-    run = db.get(BackupRun, run_id)
-    if run is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Lauf nicht gefunden.')
-    return _serialize_run(run)
-
-
 @router.delete('/exports/{run_id}', response_model=BackupRunResponse)
 def delete_export(run_id: str, db: Session = Depends(get_db)) -> BackupRunResponse:
     run = db.get(BackupRun, run_id)

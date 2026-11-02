@@ -25,9 +25,6 @@ const ROUTE_LABELS: [string, MessageKey][] = [
   ['/sources/new', 'portal.chrome.breadcrumb.sourcesNew'],
   ['/settings', 'portal.chrome.apiTokens'],
   ['/connections', 'portal.chrome.breadcrumb.connections'],
-  ['/search', 'portal.chrome.breadcrumb.search'],
-  ['/mail', 'portal.chrome.breadcrumb.mail'],
-  ['/chat', 'portal.chrome.breadcrumb.chat'],
   ['/admin', 'portal.chrome.adminSubtitle'],
 ];
 
