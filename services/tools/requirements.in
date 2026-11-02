@@ -19,10 +19,10 @@
 # actually written and tested against (including a real client-session
 # round trip over the streamable-HTTP transport, in-process), not the older
 # 1.x FastMCP API most existing tutorials still show.
-fastapi==0.159.1
+fastapi==0.162.0
 uvicorn[standard]==0.54.0
 pydantic==2.14.1
-pydantic-settings==2.16.1
+pydantic-settings==2.16.2
 httpx==0.28.1
-pytest==9.1.1
+pytest==9.2.0
 mcp==2.3.0

@@ -18,11 +18,11 @@
 # for a library this service doesn't call would be dead weight in the
 # image. onnxruntime + tokenizers + huggingface_hub below are used
 # directly instead.
-fastapi==0.159.1
+fastapi==0.162.0
 uvicorn[standard]==0.54.0
 pydantic==2.14.1
-pydantic-settings==2.16.1
-pytest==9.1.1
+pydantic-settings==2.16.2
+pytest==9.2.0
 httpx==0.28.1
 
 # --- Model inference (app/services/encoder.py) -----------------------------
@@ -33,7 +33,7 @@ httpx==0.28.1
 #   (onnx/model.onnx, onnx/tokenizer.json) from the model's HF repo, and
 #   caches them under EMBEDDINGS_CACHE_DIR.
 # numpy: mean-pooling/normalization math over the model's raw output.
-onnxruntime==1.31.0
+onnxruntime==1.31.1
 tokenizers==0.23.3
-huggingface_hub==2.2.0
+huggingface_hub==2.3.0
 numpy==2.5.4
