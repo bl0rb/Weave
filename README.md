@@ -9,10 +9,10 @@ can find, and in the heads of people who are not at their desk. The first place
 is searchable in theory and unusable in practice; the second goes on holiday.
 
 Weave turns the documents into something that answers. It reads PDFs, Office
-files, scans, e-mails, Confluence pages and web pages, converts them into structured text
-with their metadata intact, and makes them answerable in a chat — with the
-source next to every answer, so a reader can check where a statement comes
-from instead of trusting it.
+files, scans, e-mails, Confluence pages and web pages, converts them into
+structured text with their metadata intact, and makes them answerable in a
+chat — with the source next to every answer, so a reader can check where a
+statement comes from instead of trusting it.
 
 Three decisions shape the product, and they are the ones worth understanding
 before anything technical:
@@ -105,7 +105,9 @@ Konfiguration* shows every setting with secrets masked, runs connection
 checks for the database, Redis, S3 and the backup directory and exports the
 configuration as `.env` or JSON; backups can be written to, listed in,
 restored from and deleted in an S3 bucket
-([docs/betrieb.md](docs/betrieb.md)). Releases v0.7.3 to v0.7.15 are listed in
+([docs/betrieb.md](docs/betrieb.md)).
+
+Releases v0.7.3 to v0.7.15 are listed in
 [services/ingest/CHANGELOG.md](services/ingest/CHANGELOG.md).
 
 ### New in v0.7.2
