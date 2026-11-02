@@ -26,12 +26,12 @@
 # `langchain-core` is pulled in transitively for `RunnableConfig` and is
 # pinned directly here rather than left implicit, so a future `langgraph`
 # upgrade can't silently drift it.
-langgraph==1.2.16
-langchain-core==1.6.13
-fastapi==0.159.1
+langgraph==1.2.18
+langchain-core==1.7.1
+fastapi==0.162.0
 uvicorn[standard]==0.54.0
 pydantic==2.14.1
-pydantic-settings==2.16.1
+pydantic-settings==2.16.2
 httpx==0.28.1
 PyYAML==6.0.3
-pytest==9.1.1
+pytest==9.2.0

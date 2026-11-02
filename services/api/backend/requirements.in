@@ -11,15 +11,15 @@
 # purpose (ADR-0004 / task): Weave-API has no background worker queue --
 # every request it serves is synchronous (auth/ratelimit lookup, DB read,
 # or a live proxy call to Weave-Runtime).
-fastapi==0.159.1
+fastapi==0.162.0
 uvicorn[standard]==0.54.0
 pydantic==2.14.1
-pydantic-settings==2.16.1
+pydantic-settings==2.16.2
 sqlalchemy==2.1.6
 psycopg[binary]==3.3.6
 alembic==1.20.1
 httpx==0.28.1
-pytest==9.1.1
+pytest==9.2.0
 
 # --- OIDC browser-session login at this gateway (app/api/auth.py,
 # app/services/oidc.py, ADR-0002). Same pins as Weave-Ingest's own
