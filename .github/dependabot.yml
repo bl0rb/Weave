@@ -6,53 +6,39 @@
 # does not discover directories on its own.
 version: 2
 updates:
-  # --- Python: one entry per service, because each service pins its own
-  # requirements.txt against its own virtual environment.
+  # --- Python: each service pins its own requirements.txt against its own
+  # virtual environment, but one entry with `directories` lets the group below
+  # bundle them: a single weekly PR for every minor/patch bump across all
+  # services instead of one PR per package and service. Majors still arrive
+  # one by one. /services/ingest/backend covers requirements.txt and
+  # requirements-worker.txt: Dependabot picks up every manifest in the
+  # directory, and both of these are hash-locked.
   - package-ecosystem: "pip"
-    directory: "/services/api/backend"
+    directories:
+      - "/services/api/backend"
+      - "/services/embeddings"
+      - "/services/ingest/backend"
+      - "/services/knowledge/backend"
+      - "/services/reranker"
+      - "/services/retrieval/backend"
+      - "/services/runtime/backend"
+      - "/services/tools"
     schedule:
       interval: "weekly"
+    groups:
+      python-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
-  - package-ecosystem: "pip"
-    directory: "/services/embeddings"
-    schedule:
-      interval: "weekly"
-
-  # Covers requirements.txt and requirements-worker.txt: Dependabot picks up
-  # every manifest in the directory, and both of these are hash-locked.
-  - package-ecosystem: "pip"
-    directory: "/services/ingest/backend"
-    schedule:
-      interval: "weekly"
-
-  - package-ecosystem: "pip"
-    directory: "/services/knowledge/backend"
-    schedule:
-      interval: "weekly"
-
-  - package-ecosystem: "pip"
-    directory: "/services/reranker"
-    schedule:
-      interval: "weekly"
-
-  - package-ecosystem: "pip"
-    directory: "/services/retrieval/backend"
-    schedule:
-      interval: "weekly"
-
-  - package-ecosystem: "pip"
-    directory: "/services/runtime/backend"
-    schedule:
-      interval: "weekly"
-
-  - package-ecosystem: "pip"
-    directory: "/services/tools"
-    schedule:
-      interval: "weekly"
-
-  # --- Node: the chat interface and the Ingest portal frontend.
+  # --- Node: the chat interface and the Ingest portal frontend. One entry, so
+  # the groups span both: React and Next move in lockstep in both apps.
   - package-ecosystem: "npm"
-    directory: "/services/chat"
+    directories:
+      - "/services/chat"
+      - "/services/ingest/frontend"
     schedule:
       interval: "weekly"
     groups:
@@ -75,82 +61,36 @@ updates:
           - "next"
           - "eslint-config-next"
           - "@next/*"
+      # Everything else that is a minor or patch bump, in one weekly PR for
+      # both frontends. A dependency lands in the first group it matches, so
+      # react and next above keep their own PRs.
+      npm-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
-  - package-ecosystem: "npm"
-    directory: "/services/ingest/frontend"
+  # --- Base images, bundled into one weekly PR across every Dockerfile
+  # directory.
+  - package-ecosystem: "docker"
+    directories:
+      - "/services/api/backend"
+      - "/services/chat"
+      - "/services/embeddings"
+      - "/services/ingest/backend"
+      - "/services/ingest/frontend"
+      - "/services/knowledge/backend"
+      - "/services/reranker"
+      - "/services/retrieval/backend"
+      - "/services/runtime/backend"
+      - "/services/tools"
     schedule:
       interval: "weekly"
     groups:
-      # React und ReactDOM muessen exakt dieselbe Version tragen -- React
-      # bricht sonst beim Start ab ("Incompatible React versions"). Einzeln
-      # gebumpt scheitert jede der beiden PRs an genau dieser Pruefung, und
-      # einzeln gemerged waere main kaputt. Die Typen wandern mit, damit sie
-      # nicht hinterherhinken.
-      react:
+      base-images:
         patterns:
-          - "react"
-          - "react-dom"
-          - "@types/react"
-          - "@types/react-dom"
-      # eslint-config-next liest die Next-Version, gegen die es gebaut wurde.
-      # Auseinanderlaufen lassen heisst: Lint-Regeln fuer eine Version, die
-      # nicht installiert ist.
-      next:
-        patterns:
-          - "next"
-          - "eslint-config-next"
-          - "@next/*"
-
-  # --- Base images. One entry per Dockerfile directory.
-  - package-ecosystem: "docker"
-    directory: "/services/api/backend"
-    schedule:
-      interval: "weekly"
-
-  - package-ecosystem: "docker"
-    directory: "/services/chat"
-    schedule:
-      interval: "weekly"
-
-  - package-ecosystem: "docker"
-    directory: "/services/embeddings"
-    schedule:
-      interval: "weekly"
-
-  - package-ecosystem: "docker"
-    directory: "/services/ingest/backend"
-    schedule:
-      interval: "weekly"
-
-  - package-ecosystem: "docker"
-    directory: "/services/ingest/frontend"
-    schedule:
-      interval: "weekly"
-
-  - package-ecosystem: "docker"
-    directory: "/services/knowledge/backend"
-    schedule:
-      interval: "weekly"
-
-  - package-ecosystem: "docker"
-    directory: "/services/reranker"
-    schedule:
-      interval: "weekly"
-
-  - package-ecosystem: "docker"
-    directory: "/services/retrieval/backend"
-    schedule:
-      interval: "weekly"
-
-  - package-ecosystem: "docker"
-    directory: "/services/runtime/backend"
-    schedule:
-      interval: "weekly"
-
-  - package-ecosystem: "docker"
-    directory: "/services/tools"
-    schedule:
-      interval: "weekly"
+          - "*"
 
   # --- The workflow actions themselves. Only .github/workflows/ at the root
   # is executed, so only that directory is watched.
@@ -158,3 +98,7 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
