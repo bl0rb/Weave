@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import origin_guard, require_admin
 from app.database.session import get_db
-from app.services import runtime_config
+from app.services import runtime_config, storage_migration
 
 router = APIRouter(
     prefix='/api/v1/admin/config',
@@ -41,6 +41,12 @@ class S3CheckOverrides(BaseModel):
 @router.get('')
 def get_config(db: Session = Depends(get_db)) -> dict:
     return runtime_config.config_overview(db)
+
+
+@router.get('/storage')
+def get_storage_status(db: Session = Depends(get_db)) -> dict:
+    """Objects and markdown per backend, as `app.cli storage status`."""
+    return storage_migration.status(db)
 
 
 @router.post('/checks/{name}')

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { CheckCircle2, ClipboardCopy, FileDown, PlayCircle, XCircle } from 'lucide-react';
+import { CheckCircle2, ClipboardCopy, FileDown, PlayCircle, RefreshCw, XCircle } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { ApiError, apiFetch, apiJson } from '@/lib/api';
@@ -17,6 +17,7 @@ import {
   inputClass,
   saveResponseAsFile,
 } from './admin-shared';
+import { formatBytes } from './backup-tab';
 
 const BASE_PATH = '/api/v1/admin/config';
 
@@ -41,6 +42,15 @@ type ConfigOverview = {
   manual: ManualSection[];
   checks: string[];
 };
+
+type StorageBackend = 'db' | 's3';
+type StorageStatus = {
+  configured_backend: StorageBackend;
+  objects: Partial<Record<StorageBackend, { count: number; bytes: number }>>;
+  markdown: Record<string, Record<StorageBackend, number>>;
+};
+
+const BACKEND_LABEL: Record<StorageBackend, string> = { db: 'PostgreSQL', s3: 'S3' };
 
 type CheckStep = { id: string; ok: boolean; detail: string; ms: number };
 type CheckResult = { name: string; ok: boolean; steps: CheckStep[] };
@@ -97,6 +107,7 @@ export function ConfigTab() {
   return (
     <div className="space-y-4">
       <ChecksCard checks={overview.checks} />
+      <StorageStatusCard />
       <S3TestCard env={overview.env} />
       <EnvSettingsCard env={overview.env} />
       <ManualSettingsCard sections={overview.manual} />
@@ -201,6 +212,108 @@ function envSnippet(form: S3Form): string {
     }
   }
   return lines.join('\n');
+}
+
+function StorageStatusCard() {
+  const { t, formatNumber } = useI18n();
+  const [data, setData] = useState<StorageStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    try {
+      setData(await apiJson<StorageStatus>(`${BASE_PATH}/storage`));
+      setError(null);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void reload();
+  }, [reload]);
+
+  const target = data?.configured_backend;
+  const other: StorageBackend = target === 's3' ? 'db' : 's3';
+  const markdown = Object.entries(data?.markdown ?? {});
+  const pending = data
+    ? (data.objects[other]?.count ?? 0) + markdown.reduce((sum, [, counts]) => sum + counts[other], 0)
+    : 0;
+  const total = data
+    ? Object.values(data.objects).reduce((sum, item) => sum + (item?.count ?? 0), 0) +
+      markdown.reduce((sum, [, counts]) => sum + counts.db + counts.s3, 0)
+    : 0;
+  const objectCell = (backend: StorageBackend) => {
+    const item = data?.objects[backend];
+    return item ? `${formatNumber(item.count)} · ${formatBytes(item.bytes, formatNumber)}` : '0';
+  };
+
+  return (
+    <SectionCard
+      title={t('admin.config.storage.title')}
+      description={t('admin.config.storage.description')}
+      actions={
+        <Button type="button" variant="ghost" size="sm" disabled={loading} onClick={() => void reload()}>
+          <RefreshCw size={15} />
+          {t('common.refresh')}
+        </Button>
+      }
+    >
+      <ErrorNotice message={error} />
+      {!data ? (
+        !error && <LoadingState />
+      ) : (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone="slate">{t('admin.config.storage.configured', { backend: BACKEND_LABEL[data.configured_backend] })}</Badge>
+            {total === 0 ? (
+              <Badge tone="slate">{t('admin.config.storage.empty')}</Badge>
+            ) : pending === 0 ? (
+              <Badge tone="emerald">{t('admin.config.storage.done', { backend: BACKEND_LABEL[data.configured_backend] })}</Badge>
+            ) : (
+              <Badge tone="amber">
+                {t('admin.config.storage.pending', { count: pending, backend: BACKEND_LABEL[other] })}
+              </Badge>
+            )}
+          </div>
+          {pending > 0 && (
+            <p className="text-sm text-slate-500">
+              {t('admin.config.storage.migrateHint', { backend: data.configured_backend })}
+            </p>
+          )}
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs sm:text-sm">
+              <thead className="text-slate-500">
+                <tr>
+                  <th className="py-1.5 pr-4 font-medium">{t('admin.config.storage.kind')}</th>
+                  <th className="py-1.5 pr-4 font-medium">{BACKEND_LABEL.db}</th>
+                  <th className="py-1.5 font-medium">{BACKEND_LABEL.s3}</th>
+                </tr>
+              </thead>
+              <tbody className="text-slate-700">
+                <tr className="border-t border-[var(--line)]">
+                  <td className="py-1.5 pr-4">{t('admin.config.storage.objects')}</td>
+                  <td className="py-1.5 pr-4">{objectCell('db')}</td>
+                  <td className="py-1.5">{objectCell('s3')}</td>
+                </tr>
+                {markdown.map(([label, counts]) => (
+                  <tr key={label} className="border-t border-[var(--line)]">
+                    <td className="py-1.5 pr-4 font-mono">{label}</td>
+                    <td className="py-1.5 pr-4">{formatNumber(counts.db)}</td>
+                    <td className="py-1.5">{formatNumber(counts.s3)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </SectionCard>
+  );
 }
 
 function S3TestCard({ env }: { env: EnvSetting[] }) {

@@ -112,6 +112,13 @@ def test_overview_masks_secrets(fake_s3):
     assert data['checks'] == ['database', 'redis', 's3', 'backup_dir']
 
 
+def test_storage_status(fake_s3):
+    data = _admin().get('/api/v1/admin/config/storage').json()
+    assert data['configured_backend'] == settings.object_storage_backend
+    assert isinstance(data['objects'], dict)
+    assert all(set(counts) == {'db', 's3'} for counts in data['markdown'].values())
+
+
 def test_env_export_leaves_secrets_out(fake_s3):
     resp = _admin().get('/api/v1/admin/config/export?format=env')
     assert resp.status_code == 200

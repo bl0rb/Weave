@@ -64,7 +64,7 @@ function isRunActive(run: BackupRun | null | undefined): boolean {
   return run != null && (run.status === 'queued' || run.status === 'running');
 }
 
-function formatBytes(value: number | null, formatNumber: (value: number, options?: Intl.NumberFormatOptions) => string): string {
+export function formatBytes(value: number | null, formatNumber: (value: number, options?: Intl.NumberFormatOptions) => string): string {
   if (value == null) return '–';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   let size = value;
