@@ -24,8 +24,8 @@ pgvector==0.5.1
 pluggy==1.6.0
 psycopg[binary]==3.3.6
 psycopg-binary==3.3.6
-pydantic==2.14.1
-pydantic-core==2.50.1
+pydantic==2.14.2
+pydantic-core==2.50.2
 pydantic-settings==2.16.2
 pygments==2.21.0
 pytest==9.2.0
