@@ -20,7 +20,7 @@
 # directly instead.
 fastapi==0.162.0
 uvicorn[standard]==0.54.0
-pydantic==2.14.1
+pydantic==2.14.2
 pydantic-settings==2.16.2
 pytest==9.2.0
 httpx==0.28.1
@@ -35,5 +35,5 @@ httpx==0.28.1
 # numpy: mean-pooling/normalization math over the model's raw output.
 onnxruntime==1.31.1
 tokenizers==0.23.3
-huggingface_hub==2.3.0
+huggingface_hub==2.4.0
 numpy==2.5.4
