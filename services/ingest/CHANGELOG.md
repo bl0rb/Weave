@@ -11,10 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.18] - 2026-11-02
+
 ### Changed
 - **The desktop app has its own repository**: [bl0rb/WeaveDesktop](https://github.com/bl0rb/WeaveDesktop)
   (history included). `clients/desktop` and its workflow are gone from here; the download link of
   "Desktop-App einrichten" points to the newest WeaveDesktop release.
+- Dependencies: fastapi 0.162.0 and pydantic 2.14.2 in every Python service, pydantic-settings
+  2.16.2, pytest 9.2.0, sqlalchemy 2.1.6, boto3 1.43.121, onnxruntime 1.31.1, langchain-core 1.7.3,
+  langgraph 1.2.18, huggingface-hub 2.4.0; next 16.4.3, lucide-react 1.65.0, framer-motion 14.8.0
+  and vitest 5.0.5 in both frontends.
+- redis (Python client) 6.2.0 → 8.1.0 in Ingest and Knowledge. It speaks RESP3 by default, which
+  the bundled Redis 7 supports; the explicit 2–3 s client timeouts keep failing fast exactly as before.
+- Dependabot groups minor and patch updates into one weekly PR per ecosystem (all Python services,
+  both frontends, base images, GitHub Actions) and skips Python base images the services cannot run
+  on yet: 3.15 everywhere (no cp315 wheels for onnxruntime, zstandard, PyYAML) and 3.14 for Ingest
+  (no cp314 wheels for PaddlePaddle).
 
 ### Removed
 - Unused API routes without any caller: `POST /api/v1/jobs/{id}/verify-password`,
@@ -23,6 +35,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `GET /api/v1/admin/backup/runs/{id}`; `contracts/openapi.json` is regenerated.
 - Unlinked UI pages: the redirect stubs `/search`, `/mail`, `/mail/{id}`, `/processing/new`,
   `/admin/menschen`, `/admin/wissen` and the `/chat` info page (the sidebar opens the chat directly).
+
+### Fixed
+- Source form: a connection of the other kind (Confluence vs. website) no longer enables the test
+  button or "Import starten"; a plain website import no longer inherits the page limit of a catalog
+  entry picked earlier; a catalog entry prefills scope and options once and always starts at its own
+  address.
+- Website crawler: no scheme downgrade (http pages and documents of an https site are not fetched);
+  linked documents are opt-in for website runs and syncs when `include_attachments` is omitted.
+
+### Security
+- joserfc 1.7.7 (CVE-2026-119284).
+- pypdf 6.21.4 (CVE-2026-119203 – CVE-2026-119209).
 
 ## [0.7.17] - 2026-10-27
 
