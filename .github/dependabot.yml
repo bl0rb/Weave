@@ -78,7 +78,6 @@ updates:
       - "/services/api/backend"
       - "/services/chat"
       - "/services/embeddings"
-      - "/services/ingest/backend"
       - "/services/ingest/frontend"
       - "/services/knowledge/backend"
       - "/services/reranker"
@@ -91,6 +90,27 @@ updates:
       base-images:
         patterns:
           - "*"
+    ignore:
+      # Python 3.15 (2026-11): onnxruntime (embeddings),
+      # zstandard (runtime) and PyYAML (every service) ship no cp315 wheels
+      # yet, and the slim images cannot build them; the runtime image fails
+      # to build on 3.15 (bl0rb/Weave#388). Lift this once those three
+      # publish cp315 wheels.
+      - dependency-name: "python"
+        versions: [">=3.15"]
+
+  # Ingest's backend and worker images stay on Python 3.13: PaddlePaddle
+  # (3.2.1 and the latest 3.3.1) publishes no cp314 wheels, and the worker
+  # installs it on top of the same base image. Its own entry, because an
+  # ignore rule applies to every directory of an entry. Lift this once
+  # PaddlePaddle ships cp314 wheels (PyPI and the cu126 index).
+  - package-ecosystem: "docker"
+    directory: "/services/ingest/backend"
+    schedule:
+      interval: "weekly"
+    ignore:
+      - dependency-name: "python"
+        versions: [">=3.14"]
 
   # --- The workflow actions themselves. Only .github/workflows/ at the root
   # is executed, so only that directory is watched.
