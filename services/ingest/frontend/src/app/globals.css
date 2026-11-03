@@ -265,11 +265,15 @@ body :is(a, button, input, select, textarea):focus-visible {
 .portal-space-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 22px; }
 .portal-space-card { padding: 20px; display: flex; flex-direction: column; gap: 14px; align-items: stretch; }
 .portal-space-card h2 { margin-top: 0; }
-.portal-space-card > p { font-size: 14px; color: var(--muted); line-height: 1.6; margin: 0; flex: 1; }
+.portal-space-card > p { line-height: 1.5; margin: 0; }
 .portal-space-top { display: flex; gap: 12px; align-items: flex-start; }
+.portal-space-top > div { min-width: 0; }
+.portal-space-top p { margin: 2px 0 0; font-size: 13px; line-height: 1.45; color: var(--muted); }
 .portal-space-mark { display: grid; place-items: center; width: 38px; height: 38px; flex-shrink: 0; border-radius: var(--radius-control); background: var(--c, var(--accent)); color: #fff; font-weight: 700; font-size: 14px; }
 .portal-audience { display: flex; align-items: flex-start; gap: 8px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .portal-space-actions { display: flex; flex-direction: column; width: 100%; margin-top: auto; gap: 8px; }
+.portal-space-primary { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 8px; }
+.portal-space-primary > a { justify-content: center; }
 .portal-space-open { display: inline-flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 36px; color: var(--accent); font-size: 14px; font-weight: 600; white-space: nowrap; }
 .portal-space-open > svg { flex: 0 0 auto; }
 .portal-space-management { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; padding-top: 8px; border-top: 1px solid var(--line); }
