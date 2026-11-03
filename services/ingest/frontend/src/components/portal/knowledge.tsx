@@ -88,7 +88,7 @@ export function KnowledgeSpaces() {
           <AccessLine collection={space} name={space.name} canManage={space.can_manage} onChangeAccess={() => setAccessEditing(space)} />
           {!readOnly && <p className="portal-space-state">{chips.length ? chips : <span className="portal-chip portal-chip-ok"><CheckCheck aria-hidden="true" />{t('portal.spaces.allCurrent')}</span>}</p>}
           <div className="portal-space-actions">
-            {!readOnly && <div className="flex flex-wrap gap-2">
+            {!readOnly && <div className="portal-space-primary">
               <Link className={buttonVariants({ variant: 'outline', size: 'sm' })} href={`/documents?${new URLSearchParams({ bereich: space.slug })}`}>{t('portal.spaces.viewDocuments')}</Link>
               <Link className={buttonVariants({ size: 'sm' })} href={`/sources/new?collection=${encodeURIComponent(space.collection_id)}`}><Plus size={15} aria-hidden="true" />{t('portal.chrome.addSource')}</Link>
             </div>}
