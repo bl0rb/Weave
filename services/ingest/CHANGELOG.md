@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.19] - 2026-11-03
+
+### Fixed
+- Knowledge spaces: the cards no longer drift apart. The owner line is small again, the leftover
+  height no longer spreads unevenly between the lines, the description under the name reads as
+  secondary text, and "View documents" and "Add source" share the same width.
+
 ## [0.7.18] - 2026-11-02
 
 ### Changed
