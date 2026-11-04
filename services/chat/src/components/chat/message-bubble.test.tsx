@@ -129,3 +129,31 @@ describe('MessageBubble clarification chips', () => {
     expect(screen.queryByText('Keine Belege gefunden.')).toBeNull();
   });
 });
+
+describe('MessageBubble answer notices', () => {
+  afterEach(() => cleanup());
+
+  const source = (documentId: string, notice: string | null) => ({
+    source: 'confluence',
+    document_id: documentId,
+    chunk_id: 1,
+    collection: 'intern',
+    notice,
+  });
+
+  it('flags the answer once per distinct notice, even when sources are hidden', () => {
+    const message: UiMessage = {
+      ...makeMessage([]),
+      streaming: false,
+      sources: [source('a', 'Nur intern'), source('b', 'Nur intern'), source('c', null)] as UiMessage['sources'],
+    };
+    render(<MessageBubble message={message} showSources={false} />);
+    expect(screen.getByTestId('answer-notices').textContent).toBe('Nur intern');
+  });
+
+  it('shows no flag without a notice', () => {
+    const message: UiMessage = { ...makeMessage([]), streaming: false, sources: [source('a', null)] as UiMessage['sources'] };
+    render(<MessageBubble message={message} />);
+    expect(screen.queryByTestId('answer-notices')).toBeNull();
+  });
+});

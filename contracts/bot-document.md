@@ -21,7 +21,10 @@ JSON Schema ist daraus erzeugt. Konsument ist `services/ingest`
   `system_prompt`, `retrieval`, `permissions`, `guard`, `n8n`, `agent`,
   `show_sources` (Default `true`; `false` blendet im Chat Quellenleiste und
   Quellen-Knöpfe aus), `disclaimer` (optionaler Hinweistext, höchstens 500
-  Zeichen, den der Chat beim Eingabefeld zeigt) und `intake` (optionale
+  Zeichen, den der Chat beim Eingabefeld zeigt), `collection_notices`
+  (Liste aus `collection` und `text` (höchstens 300 Zeichen): jede Quelle aus
+  diesem Wissensbereich trägt den Text als `Source.notice`, der Chat markiert
+  die Antwort damit, z. B. „Nur intern“) und `intake` (optionale
   Einstiegsfrage: `question`, `options` (höchstens 10), `allow_free_text`
   (Default `true`), `label`; nicht für n8n-Bots). Die Einstiegsfrage stellt
   der Bot einmal vor der ersten Wissensfrage eines Gesprächs, merkt sich die

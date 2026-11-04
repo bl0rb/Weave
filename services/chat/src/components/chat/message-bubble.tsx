@@ -2,7 +2,7 @@ import { useState, type ImgHTMLAttributes } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
-import { PanelRight } from 'lucide-react';
+import { PanelRight, ShieldAlert } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { UiAgentStatus, UiMessage } from '@/lib/chat-types';
 import { SourceCards } from '@/components/chat/source-cards';
@@ -68,6 +68,8 @@ export function MessageBubble({
     message.role !== 'user' && !message.streaming ? (message.trace?.clarification ?? null) : null;
   const isUser = message.role === 'user';
   const sourceCount = message.sources?.length ?? 0;
+  // Shown even when the bot hides its sources: the flag is the point.
+  const notices = isUser ? [] : [...new Set((message.sources ?? []).map((source) => source.notice?.trim()).filter((notice): notice is string => Boolean(notice)))];
 
   return (
     <div className={cn('flex', isUser ? 'justify-end' : 'justify-start')}>
@@ -93,6 +95,18 @@ export function MessageBubble({
 
         {!isUser && message.trace?.guard ? (
           <GuardBanner guard={message.trace.guard} onResetScopeAndRetry={onResetScopeAndRetry} />
+        ) : null}
+
+        {notices.length > 0 ? (
+          <div
+            role="note"
+            aria-label={t('chat.messageBubble.noticeLabel')}
+            data-testid="answer-notices"
+            className="mb-2 flex items-start gap-2 rounded-[var(--radius-control)] bg-[var(--warn-bg)] px-3 py-1.5 text-xs font-semibold text-[var(--warn)]"
+          >
+            <ShieldAlert className="mt-px h-3.5 w-3.5 flex-none" aria-hidden="true" />
+            <span>{notices.join(' · ')}</span>
+          </div>
         ) : null}
 
         {isUser ? (

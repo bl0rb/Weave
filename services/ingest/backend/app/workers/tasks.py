@@ -765,6 +765,11 @@ def process_job(
             webhook_tasks.dispatch_job_event(db, job, 'document.processed')
         except Exception:  # pragma: no cover - webhooks must never break job completion
             logger.exception('webhook dispatch failed for job %s (document.processed)', job_id)
+        # An attachment of an auto-approved import that finishes after its run.
+        if job.import_run_id:
+            from app.workers import publication_tasks
+
+            publication_tasks.auto_release_import_jobs(db, job.import_run_id, [job_id])
     except Exception as exc:  # pragma: no cover
         db.rollback()
         # Only the attempt that still holds the claim may fail the job; a

@@ -57,7 +57,7 @@ from app.services.confluence import AttachmentMeta, ConfluenceError, Page, PageS
 from app.services.confluence_markdown import add_frontmatter_keys, convert_page, rewrite_cross_page_links, sanitize_filename
 from app.services.paddle_service import effective_pipeline_profile_id, vl_settings_for_worker
 from app.services.website import convert_web_page, create_website_client, private_hosts_for
-from app.workers import webhook_tasks
+from app.workers import publication_tasks, webhook_tasks
 from app.workers.celery_app import celery_app
 
 
@@ -657,6 +657,11 @@ def _finalize_run(db, run: ImportRun, state: _RunState, claimed_seq: int) -> Non
             'import run %s finished with %d/%d backstop attachment send(s) failed',
             run.id, failed_sends, len(pending_children),
         )
+
+    # Auto-approval (options.auto_release): release this run's finished
+    # documents now; attachment jobs still processing are released by
+    # process_job when they finish.
+    publication_tasks.auto_release_import_jobs(db, run.id)
 
 
 def _cancel_requested(db, run_id: str) -> bool:

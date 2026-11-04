@@ -28,14 +28,14 @@ describe('SourcesPanel', () => {
   afterEach(() => cleanup());
 
   it('shows the page number of a document source and keeps the details in one muted line', () => {
-    render(<SourcesPanel sources={[makeSource({})]} scopeLabel="Alle" />);
+    render(<SourcesPanel sources={[makeSource({})]} />);
     expect(screen.getByText('S. 4')).toBeTruthy();
     expect(screen.getByText('v2 · Collection: handbuch · Relevanz 87 %')).toBeTruthy();
     expect(screen.queryByRole('link')).toBeNull();
   });
 
   it('shows the wiki page as an external link for a Confluence source', () => {
-    render(<SourcesPanel sources={[makeSource({ page_start: null, page_end: null, source_kind: 'confluence', source_url: 'https://wiki.example/pages/42' })]} scopeLabel="Alle" />);
+    render(<SourcesPanel sources={[makeSource({ page_start: null, page_end: null, source_kind: 'confluence', source_url: 'https://wiki.example/pages/42' })]} />);
     const link = screen.getByRole('link', { name: 'Wiki-Seite öffnen' });
     expect(link.getAttribute('href')).toBe('https://wiki.example/pages/42');
     expect(link.getAttribute('target')).toBe('_blank');
@@ -44,14 +44,14 @@ describe('SourcesPanel', () => {
   });
 
   it('shows neither a locator nor a link when there is no page and no URL, and skips a missing version', () => {
-    render(<SourcesPanel sources={[makeSource({ page_start: null, page_end: null, document_version: null, source_kind: 'upload', collection: null })]} scopeLabel="Alle" />);
+    render(<SourcesPanel sources={[makeSource({ page_start: null, page_end: null, document_version: null, source_kind: 'upload', collection: null })]} />);
     expect(screen.queryByRole('link')).toBeNull();
     expect(screen.queryByText(/^S\. /)).toBeNull();
     expect(screen.getByText('Collection: ohne Collection · Relevanz 87 %')).toBeTruthy();
   });
 
   it('marks a knowledge-space overview from the knowledge memory', () => {
-    render(<SourcesPanel sources={[makeSource({ document_id: 'collection:personal', original_filename: 'Übersicht: Personal', page_start: null, page_end: null, memory_kind: 'collection' })]} scopeLabel="Alle" />);
+    render(<SourcesPanel sources={[makeSource({ document_id: 'collection:personal', original_filename: 'Übersicht: Personal', page_start: null, page_end: null, memory_kind: 'collection' })]} />);
     expect(screen.getByText('Übersicht: Personal')).toBeTruthy();
     expect(screen.getByText('Bereichs-Übersicht')).toBeTruthy();
   });

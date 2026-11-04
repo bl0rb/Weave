@@ -114,6 +114,7 @@ def row_to_document(row: ManagedBot) -> BotDocument:
         'agent': dict(row.agent_config) if is_llm and row.agent_config else None,
         'show_sources': bool(row.show_sources),
         'disclaimer': row.disclaimer,
+        'collection_notices': list(row.collection_notices or []),
         'intake': dict(row.intake_config) if is_llm and row.intake_config else None,
     }
     return BotDocument.model_validate(raw)
@@ -270,6 +271,7 @@ def document_to_payload(
         'config_extras': _extras_from_guard(doc.guard),
         'show_sources': doc.show_sources,
         'disclaimer': doc.disclaimer,
+        'collection_notices': list(doc.collection_notices),
         'intake': doc.intake,
         'blocked_topics': list(doc.guard.blocked_topics),
         'blocked_topic_reply': (

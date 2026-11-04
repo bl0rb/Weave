@@ -656,6 +656,8 @@ class ManagedBot(Base):
     intake_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     blocked_topics: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     blocked_topic_reply: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    # Weave-Runtime BotConfig.collection_notices: [{collection, text}].
+    collection_notices: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     updated_by_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True
     )

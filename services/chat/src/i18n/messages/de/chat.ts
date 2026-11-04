@@ -94,10 +94,6 @@ export const chat = {
   'sourcesPanel.subtitle': 'Belege der ausgewählten Antwort',
   'sourcesPanel.emptyUnknown': 'Belege erscheinen hier, sobald eine Antwort auf Quellen zurückgreift.',
   'sourcesPanel.emptyNone': 'Diese Antwort stützt sich auf keine Quelle.',
-  'sourcesPanel.trustTitle': 'Worauf der Assistent zugreift',
-  'sourcesPanel.trustBody':
-    'Nur freigegebene und indexierte Dokumente aus Bereichen, die du lesen darfst. Findet er nichts Passendes, sagt er das — statt zu raten.',
-  'sourcesPanel.scopeDt': 'Bereiche',
   'sourcesPanel.open': 'Quellen anzeigen',
   'sourcesPanel.collapse': 'Quellenleiste ausblenden',
   'disclaimer.label': 'Hinweis',
@@ -137,6 +133,7 @@ export const chat = {
   'messageBubble.defaultAssistantName': 'Assistent',
   'messageBubble.generating': 'Antwort wird erzeugt…',
   'messageBubble.stillWorking': 'Der Assistent arbeitet noch …',
+  'messageBubble.noticeLabel': 'Kennzeichnung der Antwort',
   'messageBubble.viaFallback':
     'Nicht gestreamt — als Fallback über die nicht-streamende Schnittstelle beantwortet.',
   'messageBubble.sourcedBy': 'Belegt durch {count} Quelle|Belegt durch {count} Quellen',

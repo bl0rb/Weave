@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
@@ -30,6 +30,7 @@ from app.models.models import (
     KnowledgeMemoryConfig,
     RetrievalProviderConfig,
     RuntimeSetting,
+    StoredObject,
     VlConnection,
 )
 from app.services import object_store
@@ -153,6 +154,33 @@ def _manual_settings(db: Session) -> list[dict]:
             'items': [{'id': label(row), 'values': _row_values(row)} for row in rows],
         })
     return sections
+
+
+def storage_usage(db: Session, database_size_bytes: int) -> dict:
+    """Storage used by the database and by S3. Object sizes come from the
+    stored_objects metadata (no bucket listing); the largest tables only on
+    PostgreSQL, where pg_total_relation_size includes indexes and TOAST."""
+    rows = db.execute(
+        select(StoredObject.backend, func.count(), func.coalesce(func.sum(StoredObject.size_bytes), 0))
+        .group_by(StoredObject.backend)
+    ).all()
+    by_backend = {backend: {'objects': int(count), 'bytes': int(size)} for backend, count, size in rows}
+    tables: list[dict] = []
+    if db.get_bind().dialect.name == 'postgresql':
+        tables = [
+            {'name': name, 'bytes': int(size)}
+            for name, size in db.execute(text(
+                'SELECT relname, pg_total_relation_size(relid) FROM pg_catalog.pg_statio_user_tables '
+                'ORDER BY 2 DESC LIMIT 10'
+            )).all()
+        ]
+    return {
+        'generated_at': datetime.now(timezone.utc).isoformat(),
+        'object_storage_backend': settings.object_storage_backend,
+        's3_bucket': settings.s3_bucket or None,
+        'database': {'size_bytes': database_size_bytes, 'objects': by_backend.get('db', {'objects': 0, 'bytes': 0}), 'tables': tables},
+        's3': {'objects': by_backend.get('s3', {'objects': 0, 'bytes': 0})},
+    }
 
 
 def config_overview(db: Session) -> dict:

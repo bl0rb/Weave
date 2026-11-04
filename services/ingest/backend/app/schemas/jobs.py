@@ -9,6 +9,9 @@ from app.models.models import CollectionRole, CollectionVisibility, JobStatus
 class UploadResponse(BaseModel):
     job_id: str
     status: JobStatus
+    # Collection upload with profile_id only: set when the file was stored
+    # but its processing could not be queued (the job stays PENDING).
+    start_error: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class CollectionGrantInput(BaseModel):

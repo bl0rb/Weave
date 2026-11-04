@@ -12,9 +12,11 @@ from sqlalchemy import or_, select, update
 
 from app.core.config import settings
 from app.database.session import SessionLocal
-from app.models.models import DocumentRelease, KnowledgeWithdrawal
+from app.models.models import DocumentRelease, ImportRun, ImportRunStatus, Job, JobStatus, KnowledgeWithdrawal, User
 from app.services.publications import (
+    PublicationValidationError,
     build_collection_registry_changed_payload,
+    canonical_snapshot,
     publication_configured,
     release_endpoint,
 )
@@ -34,6 +36,52 @@ _BACKOFF_SECONDS = (30, 60, 120, 240)
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def auto_release_import_jobs(db, run_id: str, job_ids: list[str] | None = None) -> int:
+    """Release the finished documents of an import run whose configuration
+    asks for it (options.auto_release), as if the run's owner had approved
+    each one in the portal. Every portal check still applies: a document the
+    owner may not release, one with quality grade C (needs an explicit
+    confirmation) or one the quality gate blocks stays in review. Returns
+    the number of documents released; never raises.
+    """
+    # Lazy: the API modules import the workers.
+    from fastapi import HTTPException
+
+    from app.api.portal import _collection_for_job, release_portal_document
+    from app.schemas.portal import PortalReleaseRequest
+
+    run = db.get(ImportRun, run_id)
+    options = run.options if run is not None and isinstance(run.options, dict) else {}
+    if run is None or run.status != ImportRunStatus.FINISHED or not options.get('auto_release') or not run.owner_id:
+        return 0
+    if not publication_configured():
+        return 0
+    owner = db.get(User, run.owner_id)
+    if owner is None:
+        return 0
+    query = select(Job.id).where(Job.import_run_id == run.id, Job.status == JobStatus.FINISHED)
+    if job_ids is not None:
+        query = query.where(Job.id.in_(job_ids))
+    candidates = db.scalars(query.where(~Job.id.in_(select(DocumentRelease.job_id)))).all()
+    released = 0
+    for job_id in candidates:
+        try:
+            job = db.get(Job, job_id)
+            collection = _collection_for_job(db, job) if job is not None else None
+            if collection is None:
+                continue
+            digest = canonical_snapshot(db, job, collection)[1]
+            release_portal_document(job_id, PortalReleaseRequest(markdown_sha256=digest), db, owner)
+            released += 1
+        except (HTTPException, PublicationValidationError) as exc:
+            db.rollback()
+            logger.info('auto-release skipped job %s of import run %s: %s', job_id, run_id, getattr(exc, 'detail', exc))
+        except Exception:
+            db.rollback()
+            logger.exception('auto-release failed for job %s of import run %s', job_id, run_id)
+    return released
 
 
 def _backoff(attempt: int) -> int:

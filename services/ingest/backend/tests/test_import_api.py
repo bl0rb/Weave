@@ -1043,6 +1043,7 @@ def test_run_detail_exposes_source_id_and_options_ignoring_extra_keys():
         'tags': ['a', 'b'],
         'email': 'me@example.com',
         'path_tags': False,
+        'auto_release': False,
         'webhook_connection_id': None,
         'crawl_scope': 'prefix',
         'legal_source': False,

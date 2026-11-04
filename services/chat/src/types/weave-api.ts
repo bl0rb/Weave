@@ -106,6 +106,9 @@ export interface Source {
    * see components/chat/source-cards.tsx.
    */
   images?: string[];
+  /** The bot's notice for this source's knowledge space (e.g. "Nur intern"),
+   * Weave-Runtime's BotConfig.collection_notices; absent/null = none. */
+  notice?: string | null;
   /** Provenance (Weave-Runtime's Source, contracts/internal-chat.md): where
    * the document came from, the exact wiki link (http(s) only), who
    * uploaded it and when. Missing for documents released before. */

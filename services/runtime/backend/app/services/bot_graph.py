@@ -704,12 +704,25 @@ def _generate(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
     }
 
 
+def _with_notices(bot, sources: list[Source]) -> list[Source]:
+    """Each source from a knowledge space the bot flags
+    (`bot.collection_notices`) carries that space's notice."""
+    notices = {notice.collection: notice.text for notice in bot.collection_notices}
+    if not notices:
+        return sources
+    return [
+        source.model_copy(update={'notice': notices[source.collection]}) if source.collection in notices else source
+        for source in sources
+    ]
+
+
 def _finish(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
     timings = _timing(state, 'total_ms', state['total_start'])
+    sources = _with_notices(runtime.context.bot, state.get('sources') or [])
     if runtime.context.streaming and not state.get('errored'):
-        runtime.stream_writer(ChatStreamSourcesEvent(sources=state.get('sources') or []))
+        runtime.stream_writer(ChatStreamSourcesEvent(sources=sources))
         runtime.stream_writer(ChatStreamDoneEvent())
-    return {'timings_ms': timings}
+    return {'timings_ms': timings, 'sources': sources}
 
 
 # --- graph ----------------------------------------------------------------------
