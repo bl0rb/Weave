@@ -359,6 +359,7 @@ def _managed_bot(raw: dict) -> BotConfig:
             # Optional until Ingest's ManagedBot grows the columns; absent = runtime default.
             'show_sources': bool(raw.get('show_sources', True)),
             'disclaimer': raw.get('disclaimer') or None,
+            'collection_notices': raw.get('collection_notices') or [],
             'intake': raw.get('intake') or None if is_llm else None,
         })
     except (ValidationError, KeyError, TypeError) as exc:

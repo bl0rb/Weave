@@ -108,6 +108,7 @@ def _admin_response(row: ManagedBot) -> ManagedBotAdminResponse:
         intake=dict(row.intake_config) if row.intake_config else None,
         blocked_topics=list(row.blocked_topics or []),
         blocked_topic_reply=row.blocked_topic_reply,
+        collection_notices=list(row.collection_notices or []),
         min_score=row.min_score,
         clarify_below=row.clarify_below,
         weak_context_below=row.weak_context_below,
@@ -222,6 +223,7 @@ def _runtime_roster(db: Session | None = None) -> list[ManagedBotAdminResponse] 
             show_sources=bool(config.get('show_sources', True)), disclaimer=config.get('disclaimer'),
             intake=config.get('intake'), blocked_topics=list(guard.get('blocked_topics') or []),
             blocked_topic_reply=guard.get('blocked_topic_reply'),
+            collection_notices=list(config.get('collection_notices') or []),
             llm_endpoint=model.get('endpoint'), llm_endpoints=list(model.get('endpoints') or []),
             created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc), source='runtime', editable=True,
         ))
@@ -378,6 +380,7 @@ def _apply(row: ManagedBot, payload: ManagedBotCreate | ManagedBotUpdate, admin:
     row.intake_config = payload.intake.model_dump() if payload.intake else None
     row.blocked_topics = [topic.model_dump() for topic in payload.blocked_topics] or None
     row.blocked_topic_reply = payload.blocked_topic_reply
+    row.collection_notices = [notice.model_dump() for notice in payload.collection_notices] or None
     row.llm_endpoint = payload.llm_endpoint
     row.llm_endpoints = list(payload.llm_endpoints)
     row.updated_by_id = admin.id
@@ -681,6 +684,7 @@ def internal_managed_bots(response: Response, db: Session = Depends(get_db)) -> 
             intake=dict(row.intake_config) if row.intake_config and row.kind == 'llm' else None,
             blocked_topics=list(row.blocked_topics or []),
             blocked_topic_reply=row.blocked_topic_reply,
+            collection_notices=list(row.collection_notices or []),
             llm_endpoint=row.llm_endpoint,
             llm_endpoints=list(row.llm_endpoints or []),
             **{key: value for key, value in (row.config_extras or {}).items() if value is not None},

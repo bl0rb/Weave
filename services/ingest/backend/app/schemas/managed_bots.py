@@ -12,6 +12,7 @@ from app.schemas.bot_document import (  # noqa: F401 -- AgentLimits is re-export
     AgentConfig,
     AgentLimits,
     BlockedTopic,
+    CollectionNotice,
     IntakeConfig,
     ModelConfig,
     RetrievalFilters,
@@ -131,6 +132,9 @@ class ManagedBotWrite(BaseModel):
     # reply = Runtime's default refusal text.
     intake: IntakeConfig | None = None
     blocked_topics: list[BlockedTopic] = Field(default_factory=list, max_length=20)
+    # Notice flagged on answers using a source from that knowledge space
+    # (Runtime's BotConfig.collection_notices).
+    collection_notices: list[CollectionNotice] = Field(default_factory=list, max_length=50)
     blocked_topic_reply: str | None = Field(default=None, max_length=2000)
     # LLM endpoint (Admin > Chat-Provider) this bot answers with; None = the
     # central 'default'. `llm_endpoints` are further endpoints users may
@@ -273,6 +277,7 @@ class ManagedBotAdminResponse(BaseModel):
     disclaimer: str | None = None
     intake: dict | None = None
     blocked_topics: list[dict] = Field(default_factory=list)
+    collection_notices: list[dict] = Field(default_factory=list)
     blocked_topic_reply: str | None = None
     llm_endpoint: str | None = None
     llm_endpoints: list[str] = Field(default_factory=list)
@@ -355,6 +360,7 @@ class ManagedBotInternalResponse(BaseModel):
     disclaimer: str | None = None
     intake: dict | None = None
     blocked_topics: list[dict] = Field(default_factory=list)
+    collection_notices: list[dict] = Field(default_factory=list)
     blocked_topic_reply: str | None = None
     llm_endpoint: str | None = None
     llm_endpoints: list[str] = Field(default_factory=list)

@@ -198,6 +198,13 @@ class BlockedTopic(BaseModel):
         return [keyword.strip() for keyword in value if keyword.strip()]
 
 
+class CollectionNotice(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    collection: str = Field(min_length=1, max_length=255)
+    text: str = Field(min_length=1, max_length=300)
+
+
 class GuardConfig(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
@@ -259,6 +266,7 @@ class BotConfig(BaseModel):
     agent: AgentConfig | None = None
     show_sources: bool = True
     disclaimer: str | None = Field(default=None, max_length=500)
+    collection_notices: list[CollectionNotice] = Field(default_factory=list, max_length=50)
     intake: IntakeConfig | None = None
 
     @field_validator('id')

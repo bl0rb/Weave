@@ -137,6 +137,7 @@ export const chat = {
   'messageBubble.defaultAssistantName': 'Assistent',
   'messageBubble.generating': 'Antwort wird erzeugt…',
   'messageBubble.stillWorking': 'Der Assistent arbeitet noch …',
+  'messageBubble.noticeLabel': 'Kennzeichnung der Antwort',
   'messageBubble.viaFallback':
     'Nicht gestreamt — als Fallback über die nicht-streamende Schnittstelle beantwortet.',
   'messageBubble.sourcedBy': 'Belegt durch {count} Quelle|Belegt durch {count} Quellen',

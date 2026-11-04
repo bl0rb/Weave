@@ -420,3 +420,33 @@ def test_stream_and_non_stream_pipelines_agree_on_answer_text_and_sources():
     trace_event = next(event for event in events if event.type == 'trace')
     assert trace_event.trace.intent == blocking.trace.intent
     assert trace_event.trace.needs_retrieval == blocking.trace.needs_retrieval
+
+
+def test_sources_from_a_flagged_knowledge_space_carry_the_bots_notice(monkeypatch):
+    """BotConfig.collection_notices: every source from a flagged knowledge
+    space carries that notice -- streamed and blocking alike."""
+    from app.schemas.bot import CollectionNotice
+    from app.schemas.chat import ChatRequest
+    from app.services import chat as chat_service
+    from app.services.botconfig import load_bot
+
+    bot = load_bot('legal-support').model_copy(update={
+        'collection_notices': [CollectionNotice(collection='vertraege', text='Nur intern – nicht an Kunden weitergeben')],
+    })
+    monkeypatch.setattr('app.services.chat.load_bot', lambda bot_id: bot)
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', lambda *args, **kwargs: _readable_collections_response())
+    monkeypatch.setattr(
+        'app.services.retrieval_client.httpx.post',
+        lambda *args, **kwargs: _FakeResponse(200, _search_response(
+            _chunk(chunk_id=1, document_id='doc-1', collection='vertraege'),
+            _chunk(chunk_id=2, document_id='doc-2', collection=None),
+        )),
+    )
+    request = ChatRequest.model_validate(_LEGAL_BODY)
+
+    blocking = chat_service.handle_chat(request)
+    sources_event = next(event for event in chat_service.handle_chat_stream(request) if event.type == 'sources')
+
+    for sources in (blocking.sources, sources_event.sources):
+        notices = {source.document_id: source.notice for source in sources}
+        assert notices == {'doc-1': 'Nur intern – nicht an Kunden weitergeben', 'doc-2': None}

@@ -425,6 +425,18 @@ class BlockedTopic(BaseModel):
         return [keyword.strip() for keyword in value if keyword.strip()]
 
 
+class CollectionNotice(BaseModel):
+    """A notice attached to every answer source from one knowledge space
+    (`BotConfig.collection_notices`), e.g. "Nur intern -- nicht an Kunden
+    weitergeben". app/services/bot_graph.py's `_finish` copies `text` onto
+    each matching `Source.notice`, so the chat can flag the answer."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    collection: str = Field(min_length=1, max_length=255)
+    text: str = Field(min_length=1, max_length=300)
+
+
 class GuardConfig(BaseModel):
     """The response guard (see README's "Zweck") that keeps a
     retrieval-backed bot from answering as if it had sources when it
@@ -565,6 +577,9 @@ class BotConfig(BaseModel):
     # keine verbindlichen Aussagen"); None shows nothing.
     show_sources: bool = True
     disclaimer: str | None = Field(default=None, max_length=500)
+    # Notices flagged on answers that use a source from one of these
+    # knowledge spaces -- see CollectionNotice.
+    collection_notices: list[CollectionNotice] = Field(default_factory=list, max_length=50)
     # None (the default): no intake question -- see IntakeConfig. Not valid
     # for an n8n-provider bot (its flow never sees this pipeline's prompt).
     intake: IntakeConfig | None = None

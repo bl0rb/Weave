@@ -85,6 +85,29 @@
       "title": "BlockedTopic",
       "type": "object"
     },
+    "CollectionNotice": {
+      "additionalProperties": false,
+      "properties": {
+        "collection": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Collection",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "collection",
+        "text"
+      ],
+      "title": "CollectionNotice",
+      "type": "object"
+    },
     "GuardConfig": {
       "additionalProperties": false,
       "properties": {
@@ -622,6 +645,14 @@
         }
       ],
       "default": null
+    },
+    "collection_notices": {
+      "items": {
+        "$ref": "#/$defs/CollectionNotice"
+      },
+      "maxItems": 50,
+      "title": "Collection Notices",
+      "type": "array"
     },
     "description": {
       "anyOf": [

@@ -1627,6 +1627,29 @@
         "title": "CollectionListResponse",
         "type": "object"
       },
+      "CollectionNotice": {
+        "additionalProperties": false,
+        "properties": {
+          "collection": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Collection",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "collection",
+          "text"
+        ],
+        "title": "CollectionNotice",
+        "type": "object"
+      },
       "CollectionRegistryEntry": {
         "description": "One row of the Weave-Knowledge sync payload (GET\n/collections/registry) -- ACL/identity metadata only, deliberately\nnothing document-shaped (no job_ids, no folder/subfolder/email/\ndepartment).",
         "properties": {
@@ -2660,6 +2683,11 @@
       },
       "ImportRunOptions": {
         "properties": {
+          "auto_release": {
+            "default": false,
+            "title": "Auto Release",
+            "type": "boolean"
+          },
           "catalog_entry_id": {
             "anyOf": [
               {
@@ -4441,6 +4469,14 @@
             ],
             "title": "Clarify Below"
           },
+          "collection_notices": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Collection Notices",
+            "type": "array"
+          },
           "collections": {
             "items": {
               "type": "string"
@@ -4773,6 +4809,14 @@
             "default": false,
             "title": "Clear Auth Token",
             "type": "boolean"
+          },
+          "collection_notices": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionNotice"
+            },
+            "maxItems": 50,
+            "title": "Collection Notices",
+            "type": "array"
           },
           "collections": {
             "items": {
@@ -5147,6 +5191,14 @@
               }
             ],
             "title": "Clarify Question"
+          },
+          "collection_notices": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Collection Notices",
+            "type": "array"
           },
           "collections": {
             "items": {
@@ -5764,6 +5816,14 @@
             "default": false,
             "title": "Clear Auth Token",
             "type": "boolean"
+          },
+          "collection_notices": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionNotice"
+            },
+            "maxItems": 50,
+            "title": "Collection Notices",
+            "type": "array"
           },
           "collections": {
             "items": {
@@ -11631,6 +11691,29 @@
           }
         },
         "summary": "Export Config",
+        "tags": [
+          "config-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/config/storage": {
+      "get": {
+        "operationId": "get_storage_usage_api_v1_admin_config_storage_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Storage Usage Api V1 Admin Config Storage Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Storage Usage",
         "tags": [
           "config-admin"
         ]

@@ -85,6 +85,8 @@ type AgentConfig = {
 // Runtime's BotConfig.intake / guard.blocked_topics (bot document shape).
 type IntakeConfig = { question: string; options: string[]; allow_free_text: boolean; label: string | null };
 type BlockedTopic = { name: string; description: string | null; keywords: string[] };
+// Runtime's BotConfig.collection_notices: flagged on answers using that space's sources.
+type CollectionNotice = { collection: string; text: string };
 
 type ManagedBot = {
   id: string;
@@ -123,6 +125,7 @@ type ManagedBot = {
   intake?: IntakeConfig | null;
   blocked_topics?: BlockedTopic[];
   blocked_topic_reply?: string | null;
+  collection_notices?: CollectionNotice[];
   llm_endpoint?: string | null;
   llm_endpoints?: string[];
   created_at: string;
@@ -180,6 +183,7 @@ const emptyDraft = (noContextReply: string): BotDraft => ({
   intake: null,
   blocked_topics: [],
   blocked_topic_reply: null,
+  collection_notices: [],
   agent: null,
   llm_endpoint: null,
   llm_endpoints: [],
@@ -391,6 +395,8 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
     ...(intake && !intake.question.trim() ? [t('admin.bots.problem.intakeQuestion')] : []),
     ...(intake && !intake.allow_free_text && cleanList(intake.options).length === 0 ? [t('admin.bots.problem.intakeOptions')] : []),
     ...((draft.blocked_topics ?? []).some(topic => !topic.name.trim()) ? [t('admin.bots.problem.blockedTopicName')] : []),
+    ...((draft.collection_notices ?? []).some(notice => !notice.collection || !notice.text.trim()) ? [t('admin.bots.problem.collectionNotice')] : []),
+    ...(new Set((draft.collection_notices ?? []).map(notice => notice.collection)).size !== (draft.collection_notices ?? []).length ? [t('admin.bots.problem.collectionNoticeDuplicate')] : []),
   ];
   const canSave = Boolean(
     draft.id.trim() && draft.name.trim() &&
@@ -436,6 +442,7 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
       intake: intake ? { ...intake, question: intake.question.trim(), options: cleanList(intake.options), label: intake.label?.trim() || null } : null,
       blocked_topics: (draft.blocked_topics ?? []).map(topic => ({ name: topic.name.trim(), description: topic.description?.trim() || null, keywords: cleanList(topic.keywords) })),
       blocked_topic_reply: draft.blocked_topic_reply?.trim() || null,
+      collection_notices: (draft.collection_notices ?? []).map(notice => ({ collection: notice.collection, text: notice.text.trim() })),
       agent: draft.kind === 'llm' && draft.agent?.enabled ? draft.agent : null,
       llm_endpoint: draft.kind === 'llm' ? draft.llm_endpoint || null : null,
       llm_endpoints: draft.kind === 'llm' ? draft.llm_endpoints ?? [] : [],
@@ -557,6 +564,7 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
         {draft.require_sources && <Field label={t('admin.bots.field.noContextReply.label')}><textarea className={inputClass} rows={2} value={draft.no_context_reply} onChange={event => set('no_context_reply', event.target.value)} /></Field>}
         <Toggle checked={draft.show_sources !== false} onChange={value => set('show_sources', value)} label={t('admin.bots.toggle.showSources')} />
         <Field label={t('admin.bots.field.disclaimer.label')} hint={t('admin.bots.field.disclaimer.hint')}><input className={inputClass} maxLength={500} value={draft.disclaimer ?? ''} onChange={event => set('disclaimer', event.target.value)} placeholder={t('admin.bots.field.disclaimer.placeholder')} /></Field>
+        <CollectionNoticesEditor notices={draft.collection_notices ?? []} spaces={spaceChoices} onChange={value => set('collection_notices', value)} />
       </section>}
 
       {step === 'agents' && draft.kind === 'llm' && <section className="space-y-4" aria-label={t('admin.bots.step.agents')}>
@@ -748,6 +756,26 @@ function SubagentEditor({
       <Toggle checked={Boolean(subagent.model?.supports_tools)} onChange={value => setModel({ supports_tools: value })} label={t('admin.bots.subagent.toggle.supportsTools')} />
       <Button type="button" variant="ghost" size="sm" className="mt-2" onClick={() => onChange({ ...subagent, model: null })}>{t('admin.bots.subagent.removeOverride')}</Button>
     </details>
+  </div>;
+}
+
+function CollectionNoticesEditor({ notices, spaces, onChange }: { notices: CollectionNotice[]; spaces: { value: string; label: string }[]; onChange: (notices: CollectionNotice[]) => void }) {
+  const { t } = useI18n();
+  const update = (index: number, patch: Partial<CollectionNotice>) => onChange(notices.map((notice, i) => i === index ? { ...notice, ...patch } : notice));
+  return <div className="space-y-3">
+    <div><h4 className="text-sm font-semibold text-[var(--ink)]">{t('admin.bots.collectionNotices.title')}</h4><p className="text-sm text-[var(--muted)]">{t('admin.bots.collectionNotices.hint')}</p></div>
+    {notices.map((notice, index) => <div key={index} className="flex items-start gap-2 rounded-xl border border-[var(--line-2)] p-4">
+      <div className="grid flex-1 gap-3 sm:grid-cols-2">
+        <Field label={t('admin.bots.field.collectionNoticeSpace')}><select className={inputClass} value={notice.collection} onChange={event => update(index, { collection: event.target.value })}>
+          <option value="">{t('admin.bots.collectionNotices.chooseSpace')}</option>
+          {spaces.map(space => <option key={space.value} value={space.value}>{space.label}</option>)}
+          {notice.collection && !spaces.some(space => space.value === notice.collection) && <option value={notice.collection}>{notice.collection}</option>}
+        </select></Field>
+        <Field label={t('admin.bots.field.collectionNoticeText')}><input className={inputClass} maxLength={300} value={notice.text} onChange={event => update(index, { text: event.target.value })} placeholder={t('admin.bots.collectionNotices.placeholder')} /></Field>
+      </div>
+      <Button type="button" variant="ghost" size="sm" onClick={() => onChange(notices.filter((_, i) => i !== index))} aria-label={t('admin.bots.collectionNotices.remove')}><Trash2 size={15} /></Button>
+    </div>)}
+    <Button type="button" variant="outline" size="sm" onClick={() => onChange([...notices, { collection: '', text: '' }])}><Plus size={15} />{t('admin.bots.collectionNotices.add')}</Button>
   </div>;
 }
 
