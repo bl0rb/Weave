@@ -618,6 +618,7 @@ def _validated_run_options(
         'tags': _parse_tags(','.join(requested.tags)),
         'email': requested.email.strip(),
         'path_tags': requested.path_tags,
+        'auto_release': requested.auto_release,
         'webhook_connection_id': requested.webhook_connection_id,
         'crawl_scope': requested.crawl_scope,
         'legal_source': requested.legal_source,

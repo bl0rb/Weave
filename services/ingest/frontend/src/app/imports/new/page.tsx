@@ -116,6 +116,7 @@ function NewImportPageInner() {
   const [includeAttachments, setIncludeAttachments] = useState(true);
   const [ocrAttachments, setOcrAttachments] = useState(false);
   const [pathTags, setPathTags] = useState(false);
+  const [autoRelease, setAutoRelease] = useState(false);
   const [capabilities, setCapabilities] = useState<PaddleCapabilities>({ profiles: [] });
   const [selectedProfileId, setSelectedProfileId] = useState('');
   // '' = no webhook target; only enabled connections are offered.
@@ -204,6 +205,7 @@ function NewImportPageInner() {
           setIncludeAttachments(options.include_attachments);
           setOcrAttachments(options.ocr_attachments);
           setPathTags(options.path_tags ?? false);
+          setAutoRelease(options.auto_release ?? false);
           setTags((options.tags ?? []).join(', '));
           setEmail(options.email ?? '');
           setWebhookConnectionId(webhookConnectionsPayload.items.some(connection => connection.enabled && connection.id === options.webhook_connection_id) ? options.webhook_connection_id ?? '' : '');
@@ -396,6 +398,7 @@ function NewImportPageInner() {
       include_attachments: includeAttachments,
       ocr_attachments: includeAttachments && ocrAttachments,
       path_tags: pathTags,
+      auto_release: autoRelease,
       ocr_profile_id: includeAttachments && ocrAttachments && selectedProfileId ? selectedProfileId : null,
       tags: tags
         .split(',')
@@ -935,6 +938,12 @@ function NewImportPageInner() {
                     <Toggle checked={pathTags} onChange={setPathTags} label={t('portal.importWizard.hierarchyTagsLabel')} />
                     <p className="mt-1.5 text-xs text-slate-500">
                       {t('portal.importWizard.hierarchyTagsHint')}
+                    </p>
+                  </div>
+                  <div>
+                    <Toggle checked={autoRelease} onChange={setAutoRelease} label={t('portal.importWizard.autoReleaseLabel')} />
+                    <p className="mt-1.5 text-xs text-slate-500">
+                      {t('portal.importWizard.autoReleaseHint')}
                     </p>
                   </div>
                 </div>

@@ -81,6 +81,7 @@ export type ImportRunOptions = {
   tags: string[];
   email: string;
   path_tags: boolean;
+  auto_release?: boolean;
   webhook_connection_id: string | null;
   // Website sources only.
   crawl_scope?: CrawlScope;

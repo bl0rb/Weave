@@ -1340,3 +1340,44 @@ def test_portal_stats_counts_spaces_review_wait_and_weekly_releases(monkeypatch)
     assert [week['count'] for week in body['releases_per_week']] == [0] * 7 + [1]
 
     assert login_as(outsider.username).get('/api/v1/portal/stats').json()['spaces'] == []
+
+
+def test_auto_release_import_jobs_releases_clean_pages_only(monkeypatch):
+    _configure(monkeypatch)
+    monkeypatch.setattr('app.api.portal.publication_tasks.deliver_release.delay', lambda release_id: None)
+    user = create_test_user(
+        username=f'portal-auto-{uuid.uuid4().hex[:8]}',
+        password='Password123!',
+        role=UserRole.USER,
+        email=f'portal-auto-{uuid.uuid4().hex[:8]}@example.com',
+    )
+    collection = _collection(user.id)
+    manual_run = _import_run(ImportRunStatus.FINISHED, owner_id=user.id)
+    auto_run = _import_run(ImportRunStatus.FINISHED, owner_id=user.id)
+    db = _db()
+    try:
+        db.get(ImportRun, auto_run.id).options = {'auto_release': True}
+        db.commit()
+    finally:
+        db.close()
+    manual_job = _job(user.id, collection, import_run_id=manual_run.id)
+    clean_job = _job(user.id, collection, import_run_id=auto_run.id)
+    grade_c_job = _job(user.id, collection, import_run_id=auto_run.id)
+    db = _db()
+    try:
+        job = db.get(Job, grade_c_job.id)
+        job.processing_info = {**job.processing_info, 'execution': {'quality_gate': {'grade': 'C', 'recommendation': 'review'}}}
+        db.commit()
+    finally:
+        db.close()
+
+    db = _db()
+    try:
+        assert publication_tasks.auto_release_import_jobs(db, manual_run.id) == 0
+        assert publication_tasks.auto_release_import_jobs(db, auto_run.id) == 1
+        released = set(db.scalars(select(DocumentRelease.job_id)).all())
+    finally:
+        db.close()
+    assert clean_job.id in released
+    assert manual_job.id not in released
+    assert grade_c_job.id not in released

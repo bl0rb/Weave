@@ -95,7 +95,7 @@ it('applies the selected profile to Confluence attachments, not to the page text
   fireEvent.click(screen.getByRole('button', { name: 'Import starten' }));
   await screen.findByRole('heading', { name: 'Confluence-Import gestartet' });
   const mutation = api.mock.calls.find(([path]) => path === '/api/v1/import/runs');
-  expect(JSON.parse(mutation?.[1]?.body as string).options).toEqual({ collection_id: 'area', include_attachments: true, ocr_attachments: true, ocr_profile_id: 'ppocrv6_medium_structurev3' });
+  expect(JSON.parse(mutation?.[1]?.body as string).options).toEqual({ collection_id: 'area', include_attachments: true, ocr_attachments: true, ocr_profile_id: 'ppocrv6_medium_structurev3', auto_release: false });
   expect(JSON.parse(mutation?.[1]?.body as string).sync).toEqual({ enabled: true, interval_seconds: 86400 });
 });
 

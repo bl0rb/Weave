@@ -100,6 +100,9 @@ class ImportRunOptions(BaseModel):
     # path_titles) attached as tags, on top of `tags` above -- see
     # app/workers/import_tasks.py's _job_tags.
     path_tags: bool = False
+    # Release every finished document of a run without a manual review
+    # (app/workers/publication_tasks.py's auto_release_import_jobs).
+    auto_release: bool = False
     # Delivery target for this run's 'import_run.finished' event; None = no
     # webhook. Validated against the caller's own enabled connections at
     # create time (app/api/import_routes.py's create_import_run) -- see

@@ -107,6 +107,7 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
     try { return Boolean((JSON.parse(sessionStorage.getItem(SOURCE_DRAFT_KEY) || 'null') as SourceDraft | null)?.confirmedAccess); }
     catch { return false; }
   });
+  const [autoRelease, setAutoRelease] = useState(false);
   const [saving, setSaving] = useState(false);
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
@@ -253,7 +254,7 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
         const created = await apiJson<ImportRun>('/api/v1/import/runs', jsonBody({
           source_id: sourceId,
           scope: { type: scopeType, value: pageUrl.trim() },
-          options: { collection_id: collectionId, include_attachments: true, ocr_attachments: true, ocr_profile_id: selectedProfile.value },
+          options: { collection_id: collectionId, include_attachments: true, ocr_attachments: true, ocr_profile_id: selectedProfile.value, auto_release: autoRelease },
           sync: { enabled: automatic, interval_seconds: 86400 },
         }));
         setRun(created);
@@ -329,6 +330,7 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
             ? <><label>{t('portal.sourceForm.pageLabel')}<RequiredMark /><input required type="url" value={pageUrl} onChange={event => setPageUrl(event.target.value)} placeholder="https://confluence.example.com/..." /></label><p className="portal-field-hint">{t('portal.sourceForm.subpagesHint')}</p></>
             : <><label>{t('portal.sourceForm.spaceLabel')}<RequiredMark /><input required value={pageUrl} onChange={event => setPageUrl(event.target.value)} placeholder="DOCS · https://confluence.example.com/spaces/DOCS" /></label><p className="portal-field-hint">{t('portal.sourceForm.spaceHint')}</p></>}
           <label className="portal-choice"><input type="checkbox" checked={automatic} onChange={event => setAutomatic(event.target.checked)} />{t('portal.sourceForm.autoRefreshLabel')}</label><p className="portal-field-hint">{t('portal.sourceForm.autoRefreshHint')}</p>
+          <label className="portal-choice"><input type="checkbox" checked={autoRelease} onChange={event => setAutoRelease(event.target.checked)} />{t('portal.sourceForm.autoReleaseLabel')}</label><p className="portal-field-hint">{t('portal.sourceForm.autoReleaseHint')}</p>
           <label className="portal-choice portal-access-confirm"><input required type="checkbox" checked={confirmedAccess} onChange={event => setConfirmedAccess(event.target.checked)} />{t('portal.sourceForm.confirmAccessLabel')}</label>
         </div>}
       </fieldset>
