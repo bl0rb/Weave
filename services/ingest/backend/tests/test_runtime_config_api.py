@@ -11,7 +11,7 @@ from botocore.exceptions import ClientError
 
 import app.api.backup as backup_api
 from app.core.config import settings
-from app.models.models import BackupRun, BackupRunStatus, UserRole
+from app.models.models import BackupRun, BackupRunStatus, StoredObject, UserRole
 from app.services import object_store
 from conftest import TestingSessionLocal, create_test_user, login_as
 
@@ -96,6 +96,27 @@ def test_non_admin_cannot_read_config():
     unique = f'config-user-{uuid.uuid4().hex[:8]}'
     user = create_test_user(username=unique, email=f'{unique}@example.com')
     assert login_as(user.username).get('/api/v1/admin/config').status_code == 403
+
+
+def test_storage_usage_splits_database_and_s3_objects():
+    unique = f'storage-user-{uuid.uuid4().hex[:8]}'
+    user = create_test_user(username=unique, email=f'{unique}@example.com')
+    assert login_as(user.username).get('/api/v1/admin/config/storage').status_code == 403
+    admin = _admin()
+    before = admin.get('/api/v1/admin/config/storage').json()
+    db = TestingSessionLocal()
+    try:
+        db.add(StoredObject(sha256='a' * 64, size_bytes=100, backend='db', chunk_bytes=1024))
+        db.add(StoredObject(sha256='b' * 64, size_bytes=2000, backend='s3', storage_key=f'objects/{uuid.uuid4()}', chunk_bytes=1024))
+        db.commit()
+    finally:
+        db.close()
+    after = admin.get('/api/v1/admin/config/storage').json()
+    assert isinstance(after['database']['size_bytes'], int)
+    assert after['database']['objects']['bytes'] - before['database']['objects']['bytes'] == 100
+    assert after['database']['objects']['objects'] - before['database']['objects']['objects'] == 1
+    assert after['s3']['objects']['bytes'] - before['s3']['objects']['bytes'] == 2000
+    assert after['s3']['objects']['objects'] - before['s3']['objects']['objects'] == 1
 
 
 def test_overview_masks_secrets(fake_s3):

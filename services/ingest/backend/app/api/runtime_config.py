@@ -43,6 +43,13 @@ def get_config(db: Session = Depends(get_db)) -> dict:
     return runtime_config.config_overview(db)
 
 
+@router.get('/storage')
+def get_storage_usage(db: Session = Depends(get_db)) -> dict:
+    from app.api.routes import _resolve_database_size_bytes
+
+    return runtime_config.storage_usage(db, _resolve_database_size_bytes(db))
+
+
 @router.post('/checks/{name}')
 def run_check(name: str, overrides: S3CheckOverrides | None = None, db: Session = Depends(get_db)) -> dict:
     check = runtime_config.CHECKS.get(name)

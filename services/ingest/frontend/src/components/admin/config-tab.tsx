@@ -1,8 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { CheckCircle2, ClipboardCopy, FileDown, PlayCircle, XCircle } from 'lucide-react';
+import { CheckCircle2, ClipboardCopy, FileDown, PlayCircle, RefreshCw, XCircle } from 'lucide-react';
 
+import { formatBytes } from '@/components/dashboard/shared';
 import { Button } from '@/components/ui/button';
 import { ApiError, apiFetch, apiJson } from '@/lib/api';
 import type { MessageKey } from '@/i18n/messages';
@@ -40,6 +41,15 @@ type ConfigOverview = {
   env: EnvSetting[];
   manual: ManualSection[];
   checks: string[];
+};
+
+type ObjectUsage = { objects: number; bytes: number };
+type StorageUsage = {
+  generated_at: string;
+  object_storage_backend: string;
+  s3_bucket: string | null;
+  database: { size_bytes: number; objects: ObjectUsage; tables: { name: string; bytes: number }[] };
+  s3: { objects: ObjectUsage };
 };
 
 type CheckStep = { id: string; ok: boolean; detail: string; ms: number };
@@ -96,11 +106,89 @@ export function ConfigTab() {
 
   return (
     <div className="space-y-4">
+      <StorageCard />
       <ChecksCard checks={overview.checks} />
       <S3TestCard env={overview.env} />
       <EnvSettingsCard env={overview.env} />
       <ManualSettingsCard sections={overview.manual} />
     </div>
+  );
+}
+
+function StorageCard() {
+  const { t } = useI18n();
+  const [usage, setUsage] = useState<StorageUsage | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setUsage(await apiJson<StorageUsage>(`${BASE_PATH}/storage`));
+      setError(null);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load();
+  }, [load]);
+
+  const stats = usage
+    ? [
+        { label: t('admin.config.storage.database'), value: formatBytes(usage.database.size_bytes) },
+        { label: t('admin.config.storage.databaseObjects'), value: formatBytes(usage.database.objects.bytes), hint: t('admin.config.storage.objectCount', { count: usage.database.objects.objects }) },
+        { label: t('admin.config.storage.s3Objects'), value: formatBytes(usage.s3.objects.bytes), hint: t('admin.config.storage.objectCount', { count: usage.s3.objects.objects }) },
+      ]
+    : [];
+
+  return (
+    <SectionCard
+      title={t('admin.config.storage.title')}
+      description={t('admin.config.storage.description')}
+      actions={
+        <Button size="sm" variant="ghost" disabled={loading} onClick={() => void load()}>
+          <RefreshCw size={15} />
+          {t('admin.config.storage.refresh')}
+        </Button>
+      }
+    >
+      <ErrorNotice message={error} />
+      {!usage && !error && <LoadingState label={t('admin.config.storage.loading')} />}
+      {usage && (
+        <div className="space-y-4">
+          <dl className="grid gap-3 sm:grid-cols-3">
+            {stats.map((stat) => (
+              <div key={stat.label} className="rounded-lg border border-slate-200 p-3">
+                <dt className="text-xs text-slate-500">{stat.label}</dt>
+                <dd className="mt-1 text-lg font-semibold text-slate-950">{stat.value}</dd>
+                {stat.hint && <dd className="text-xs text-slate-500">{stat.hint}</dd>}
+              </div>
+            ))}
+          </dl>
+          <p className="text-xs text-slate-500">
+            {t('admin.config.storage.backend', { backend: usage.object_storage_backend, bucket: usage.s3_bucket ?? '–' })}
+          </p>
+          {usage.database.tables.length > 0 && (
+            <div>
+              <p className="text-sm font-medium text-slate-950">{t('admin.config.storage.tables')}</p>
+              <ul className="mt-2 divide-y divide-slate-100 text-sm">
+                {usage.database.tables.map((table) => (
+                  <li key={table.name} className="flex justify-between py-1.5">
+                    <code className="text-slate-700">{table.name}</code>
+                    <span className="text-slate-950">{formatBytes(table.bytes)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+    </SectionCard>
   );
 }
 
