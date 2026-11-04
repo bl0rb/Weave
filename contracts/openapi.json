@@ -785,6 +785,11 @@
             "title": "Folder",
             "type": "string"
           },
+          "profile_id": {
+            "default": "",
+            "title": "Profile Id",
+            "type": "string"
+          },
           "subfolder": {
             "default": "",
             "title": "Subfolder",
@@ -10306,6 +10311,17 @@
           "job_id": {
             "title": "Job Id",
             "type": "string"
+          },
+          "start_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Error"
           },
           "status": {
             "$ref": "#/components/schemas/JobStatus"

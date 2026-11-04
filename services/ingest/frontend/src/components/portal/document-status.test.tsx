@@ -26,3 +26,16 @@ it('shows each document’s own confirmed status in the knowledge-area table usi
   expect(within(rows[2]).queryByText('Für KI verfügbar')).toBeNull();
   expect(apiJson).toHaveBeenCalledTimes(1);
 });
+
+it('keeps documents that cannot be selected out of the row and the select-all choice', () => {
+  const source = { kind: 'upload' as const, label: 'Hochgeladen', path: 'Kunden', url: null };
+  const finished: PortalDocument = { id: 'done', original_filename: 'Fertig.pdf', status: 'FINISHED', collection_id: 'area', collection_name: 'Service', created_at: '2026-09-02T11:00:00Z', quality_grade: 'A', quality_recommendation: 'allow', can_release: true, release: null, source, review_decision: null };
+  const pending: PortalDocument = { ...finished, id: 'waiting', original_filename: 'Wartet.pdf', status: 'PENDING', can_release: false };
+  const onToggleAll = vi.fn();
+  render(<DocumentTable documents={[finished, pending]} selectedIds={new Set(['done'])} onToggle={vi.fn()} onToggleAll={onToggleAll} canSelect={document => document.status !== 'PENDING'} />);
+  const [all, first, second] = screen.getAllByRole('checkbox') as HTMLInputElement[];
+  expect(first.disabled).toBe(false);
+  expect(second.disabled).toBe(true);
+  // Every selectable row is selected, so select-all reads as checked.
+  expect(all.checked).toBe(true);
+});

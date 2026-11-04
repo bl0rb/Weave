@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { ApiError, apiJson } from '@/lib/api';
+import { apiJson } from '@/lib/api';
 import { SourceForm } from './source-form';
 
 vi.mock('@/lib/api', async importOriginal => ({ ...await importOriginal<typeof import('@/lib/api')>(), apiJson: vi.fn() }));
@@ -41,8 +41,9 @@ it('replaces the upload form with next steps and keeps the selected area for mor
   expect(screen.getByText(/einige Minuten dauern/)).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Zum Wissensbereich' }).getAttribute('href')).toBe('/knowledge/area');
   expect(screen.getByRole('link', { name: 'Verarbeitung ansehen' }).getAttribute('href')).toBe('/documents?stand=processing');
-  const restart = api.mock.calls.find(([path]) => path === '/api/v1/jobs/job/restart');
-  expect(JSON.parse(restart?.[1]?.body as string).profile_id).toBe('ppocrv6_tiny_structurev3');
+  const uploadCall = api.mock.calls.find(([path]) => path === '/api/v1/collections/area/upload');
+  expect((uploadCall?.[1]?.body as FormData).get('profile_id')).toBe('ppocrv6_tiny_structurev3');
+  expect(api.mock.calls.some(([path]) => path.endsWith('/restart'))).toBe(false);
   expect(api.mock.calls.some(([path]) => path.includes('/mail/'))).toBe(false);
   fireEvent.click(screen.getByRole('button', { name: 'Weitere Quellen hinzufügen' }));
   expect((screen.getByRole('combobox', { name: 'Wohin gehört die Quelle?' }) as HTMLSelectElement).value).toBe('area');
@@ -53,7 +54,7 @@ it('replaces the upload form with next steps and keeps the selected area for mor
 it('keeps a failed start actionable instead of reporting upload success', async () => {
   const normal = api.getMockImplementation()!;
   api.mockImplementation(async (path, options) => {
-    if (path.endsWith('/restart')) throw new ApiError(503, 'worker unavailable');
+    if (path.endsWith('/upload')) return { job_id: 'job', status: 'PENDING', start_error: 'Processing could not be queued' };
     return normal(path, options);
   });
   await upload();
@@ -73,8 +74,8 @@ it('offers the two structure presets and configured vision models, forwarding th
   fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [new File(['pdf'], 'Datei.pdf', { type: 'application/pdf' })] } });
   fireEvent.submit(screen.getByRole('button', { name: 'Hochladen und verarbeiten' }).closest('form')!);
   await screen.findByRole('heading', { name: 'Upload abgeschlossen' });
-  const restart = api.mock.calls.find(([path]) => path === '/api/v1/jobs/job/restart');
-  expect(JSON.parse(restart?.[1]?.body as string).profile_id).toBe('vl:vision');
+  const uploadCall = api.mock.calls.find(([path]) => path === '/api/v1/collections/area/upload');
+  expect((uploadCall?.[1]?.body as FormData).get('profile_id')).toBe('vl:vision');
 });
 
 it('applies the selected profile to Confluence attachments, not to the page text', async () => {

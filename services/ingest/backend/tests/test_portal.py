@@ -1381,3 +1381,66 @@ def test_auto_release_import_jobs_releases_clean_pages_only(monkeypatch):
     assert clean_job.id in released
     assert manual_job.id not in released
     assert grade_c_job.id not in released
+
+
+def test_collection_upload_with_a_profile_starts_the_job_without_the_rate_limited_restart(monkeypatch):
+    owner = create_test_user(
+        username=f'portal-upload-start-{uuid.uuid4().hex[:8]}',
+        email=f'portal-upload-start-{uuid.uuid4().hex[:8]}@example.com',
+    )
+    collection = _collection(owner.id)
+    process_calls: list[tuple] = []
+    monkeypatch.setattr('app.api.routes.process_job.delay', lambda *args: process_calls.append(args))
+    authed = login_as(owner.username)
+    # The upload must not count against the rate limit that stopped large
+    # batches at ~60 files (POST /jobs/{id}/restart).
+    monkeypatch.setattr(security.rate_limiter, 'check', lambda client_id: (_ for _ in ()).throw(AssertionError('rate limited')))
+
+    job_ids = []
+    for index in range(3):
+        response = authed.post(
+            f'/api/v1/collections/{collection.id}/upload',
+            files={'file': (f'bulk-{index}.pdf', f'%PDF-bulk-{index}'.encode(), 'application/pdf')},
+            data={'profile_id': 'ppocrv6_tiny'},
+        )
+        assert response.status_code == 200, response.text
+        job_ids.append(response.json()['job_id'])
+    assert [call[0] for call in process_calls] == job_ids
+    assert all(call[2] == 'collection' for call in process_calls)
+    db = _db()
+    try:
+        assert db.get(Job, job_ids[0]).processing_info['settings']['profile_id'] == 'ppocrv6_tiny'
+    finally:
+        db.close()
+
+    unknown = authed.post(
+        f'/api/v1/collections/{collection.id}/upload',
+        files={'file': ('unknown.pdf', b'%PDF-unknown', 'application/pdf')},
+        data={'profile_id': 'no-such-profile'},
+    )
+    assert unknown.status_code == 422
+    # Without a profile the upload only stores the file, as before.
+    stored = authed.post(f'/api/v1/collections/{collection.id}/upload', files={'file': ('later.pdf', b'%PDF-later', 'application/pdf')})
+    assert stored.status_code == 200
+    assert len(process_calls) == 3
+
+
+def test_collection_upload_reports_a_start_it_could_not_queue(monkeypatch):
+    owner = create_test_user(
+        username=f'portal-upload-queue-{uuid.uuid4().hex[:8]}',
+        email=f'portal-upload-queue-{uuid.uuid4().hex[:8]}@example.com',
+    )
+    collection = _collection(owner.id)
+
+    def _broker_down(*args):
+        raise ConnectionError('broker down')
+
+    monkeypatch.setattr('app.api.routes.process_job.delay', _broker_down)
+    response = login_as(owner.username).post(
+        f'/api/v1/collections/{collection.id}/upload',
+        files={'file': ('queued.pdf', b'%PDF-queued', 'application/pdf')},
+        data={'profile_id': 'ppocrv6_tiny'},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()['start_error']
+    assert response.json()['status'] == 'PENDING'

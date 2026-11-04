@@ -1437,6 +1437,12 @@ def upload_document_to_collection(
     # transcript_refine.py). Stored in processing_info.settings so a restart
     # applies them again; ignored for every other file type.
     transcript_instructions: str = Form(''),
+    # Given, the new job is started right away with this profile (what the
+    # portal's file upload does) -- one request per file instead of an
+    # upload plus a rate-limited POST /jobs/{id}/restart, which left jobs of
+    # large batches PENDING forever once the limit was hit. Empty = upload
+    # only (start later via POST /collections/{id}/start).
+    profile_id: str = Form(''),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> UploadResponse:
@@ -1451,6 +1457,18 @@ def upload_document_to_collection(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Collection not found')
     _require_visible_collection(db, collection, user)
     _require_collection_control(db, collection, user)
+    start_profile_id = profile_id.strip() or None
+    profile_settings: dict = {}
+    if start_profile_id is not None:
+        known_profile_ids = {
+            p['value'] for p in get_paddle_capabilities(vl_connections=_enabled_vl_connections(db))['profiles']
+        }
+        if start_profile_id not in known_profile_ids:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Unknown profile '{start_profile_id}'",
+            )
+        profile_settings = resolve_profile_selection(db, start_profile_id)
 
     file_id = str(uuid.uuid4())
     folder_value = folder.strip() or collection.folder or ''
@@ -1466,7 +1484,7 @@ def upload_document_to_collection(
             mode='collection',
             email=collection.email,
             department=collection.department,
-            profile_id=None,
+            profile_id=start_profile_id,
             folder=folder_value or None,
             subfolder=subfolder_value or None,
             tags=_parse_tags(tags),
@@ -1479,6 +1497,7 @@ def upload_document_to_collection(
                 'collection_slug': collection.slug,
                 'collection_name': collection.name,
                 **({'transcript_instructions': instructions} if instructions else {}),
+                **profile_settings,
             },
             password_hash=collection.password_hash,
         )
@@ -1486,6 +1505,14 @@ def upload_document_to_collection(
         return _duplicate_upload_response(exc.predecessor)
     db.commit()
 
+    if start_profile_id is not None:
+        try:
+            process_job.delay(
+                job.id, effective_pipeline_profile_id(start_profile_id), 'collection', collection.email, collection.department
+            )
+        except Exception:
+            logger.exception('could not queue uploaded job %s', job.id)
+            return UploadResponse(job_id=job.id, status=job.status, start_error='Processing could not be queued')
     return UploadResponse(job_id=job.id, status=job.status)
 
 

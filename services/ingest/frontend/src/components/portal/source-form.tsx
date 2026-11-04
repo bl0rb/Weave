@@ -238,11 +238,13 @@ export function SourceForm({ initialCollection = '', initialKind, initialSourceI
           try {
             const body = new FormData(); body.append('file', file);
             if (file.name.toLowerCase().endsWith('.vtt') && transcriptInstructions.trim()) body.append('transcript_instructions', transcriptInstructions.trim());
-            const upload = await apiJson<{ job_id: string }>(`/api/v1/collections/${encodeURIComponent(collectionId)}/upload`, { method: 'POST', body });
+            // Upload and start in one request: only the newly uploaded document is started, never the
+            // other (possibly already approved) files in this collection -- and, unlike a separate
+            // rate-limited restart per file, a batch of 100+ files never leaves jobs unstarted.
+            body.append('profile_id', selectedProfile.value);
+            const upload = await apiJson<{ job_id: string; start_error?: string | null }>(`/api/v1/collections/${encodeURIComponent(collectionId)}/upload`, { method: 'POST', body });
             jobId = upload.job_id;
-            // Start only the newly uploaded document, never reprocess the
-            // other (possibly already approved) files in this collection.
-            await apiJson(`/api/v1/jobs/${upload.job_id}/restart`, jsonBody({ profile_id: selectedProfile.value }));
+            if (upload.start_error) throw new Error(upload.start_error);
             setResults(current => [...current, { name: file.name, id: jobId, ok: true, message: t('portal.sourceForm.uploadSuccess') }]);
           } catch (err) {
             setResults(current => [...current, { name: file.name, id: jobId, ok: false, message: jobId ? t('portal.sourceForm.uploadPartialFail') : portalError(err, locale) }]);

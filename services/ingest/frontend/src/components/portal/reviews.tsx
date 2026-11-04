@@ -9,7 +9,7 @@ import { useAuth } from '@/lib/auth-context';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { ConfirmDialog, apiSend } from '@/components/admin/admin-shared';
 import { MarkdownView, type JobArtifact } from '@/components/markdown/markdown-view';
-import { dateLabel, documentState, downloadPortalFile, jsonBody, loadDocuments, markdownDownloadName, parkPortalDocument, portalError, reindexPortalDocument, skipPortalDocument, unskipPortalDocument, type DocumentPage, type DocumentPreview, type PortalConfig, type QualityGradeFilter, type Publication, type ReviewStateFilter } from '@/lib/portal';
+import { dateLabel, documentState, downloadPortalFile, jsonBody, loadDocuments, markdownDownloadName, parkPortalDocument, portalError, reindexPortalDocument, skipPortalDocument, unskipPortalDocument, type DocumentPage, type DocumentPreview, type PortalConfig, type PortalDocument, type QualityGradeFilter, type Publication, type ReviewStateFilter } from '@/lib/portal';
 import { BulkActionBar, DocumentTable, EmptyState, Notice, Pagination, PortalPage, QualityGradeFilterRow, QualityGradeLegend, useBulkSelection } from './shared';
 import { ReprocessForm } from './reprocess-form';
 import { MarkdownEditor } from './markdown-editor';
@@ -61,6 +61,11 @@ function reviewStateChips(t: (key: MessageKey) => string): Array<{ value: Review
   ];
 }
 
+/** Queued or running documents cannot be released, parked or skipped yet. */
+function isSettled(document: PortalDocument): boolean {
+  return document.status !== 'PENDING' && document.status !== 'RUNNING';
+}
+
 export function ReviewInbox() {
   const { t, locale } = useI18n();
   const [documents, setDocuments] = useState<DocumentPage | null>(null);
@@ -81,7 +86,7 @@ export function ReviewInbox() {
     {error && <Notice error action={load}>{error}</Notice>}
     {notice && <Notice>{notice}</Notice>}
     <BulkActionBar {...bulk.barProps} />
-    <section className="portal-panel">{!documents && !error ? <p role="status" className="portal-loading">{t('portal.tasks.documentsLoading')}</p> : documents?.items.length ? <><DocumentTable documents={documents.items} selectedIds={bulk.selectedIds} onToggle={bulk.toggle} onToggleAll={checked => bulk.selectAll(documents.items.map(document => document.id), checked)} /><Pagination offset={offset} total={documents.total} onChange={value => { setDocuments(null); setOffset(value); }} /></> : !error && <EmptyState title={reviewState === 'review' ? t('portal.reviews.emptyReviewTitle') : reviewState === 'skipped' ? t('portal.reviews.emptySkippedTitle') : reviewState === 'parked' ? t('portal.reviews.emptyParkedTitle') : t('portal.reviews.emptyUnassignedTitle')} href="/sources/new" action={t('portal.chrome.addSource')}>{reviewState === 'review' ? t('portal.reviews.emptyReviewBody') : t('portal.reviews.emptyOtherBody')}</EmptyState>}</section>
+    <section className="portal-panel">{!documents && !error ? <p role="status" className="portal-loading">{t('portal.tasks.documentsLoading')}</p> : documents?.items.length ? <><DocumentTable documents={documents.items} selectedIds={bulk.selectedIds} onToggle={bulk.toggle} canSelect={isSettled} onToggleAll={checked => bulk.selectAll(documents.items.filter(isSettled).map(document => document.id), checked)} /><Pagination offset={offset} total={documents.total} onChange={value => { setDocuments(null); setOffset(value); }} /></> : !error && <EmptyState title={reviewState === 'review' ? t('portal.reviews.emptyReviewTitle') : reviewState === 'skipped' ? t('portal.reviews.emptySkippedTitle') : reviewState === 'parked' ? t('portal.reviews.emptyParkedTitle') : t('portal.reviews.emptyUnassignedTitle')} href="/sources/new" action={t('portal.chrome.addSource')}>{reviewState === 'review' ? t('portal.reviews.emptyReviewBody') : t('portal.reviews.emptyOtherBody')}</EmptyState>}</section>
     {bulk.bulkDeleting && <ConfirmDialog title={t('portal.spaces.deleteDocumentsTitle')} body={<p>{t('portal.spaces.deleteDocumentsBody', { count: bulk.count })}</p>} confirmLabel={t('portal.spaces.deleteDocumentsTitle')} onClose={bulk.closeDelete} onConfirm={() => bulk.runBulk('delete')} />}
   </PortalPage>;
 }
