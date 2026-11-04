@@ -1,6 +1,6 @@
 'use client';
 
-import { ExternalLink, Lock, PanelRightClose } from 'lucide-react';
+import { ExternalLink, PanelRightClose } from 'lucide-react';
 import { formatCollection, formatPages, formatScore, formatVersion, getSourceLink, MemoryBadge, SourceOrigin } from '@/components/chat/source-cards';
 import { toProxiedImageUrl } from '@/lib/portal-artifact-url';
 import { useI18n } from '@/i18n/provider';
@@ -12,10 +12,6 @@ interface SourcesPanelProps {
    * selected answer used no retrieval at all. Distinct from `[]`, which
    * means retrieval ran for that answer and found nothing. */
   sources: Source[] | null;
-  /** The knowledge-space scope the shown answer's retrieval actually ran
-   * against, for the trust card at the bottom — derived from that
-   * answer's own trace (see chat-app.tsx's `sourcesScopeLabel`). */
-  scopeLabel: string;
   /** Collapses the panel (chat-app.tsx keeps that choice per browser). */
   onCollapse?: () => void;
 }
@@ -27,7 +23,7 @@ interface SourcesPanelProps {
  * `.chat-sources-panel`/`.chat-inline-sources`), same as the design
  * prototype (docs/design-proposals/06-loom-rc/style.css).
  */
-export function SourcesPanel({ sources, scopeLabel, onCollapse }: SourcesPanelProps) {
+export function SourcesPanel({ sources, onCollapse }: SourcesPanelProps) {
   const { t, locale } = useI18n();
   const images = Array.from(new Set((sources ?? []).flatMap((source) => source.images ?? [])));
 
@@ -138,18 +134,6 @@ export function SourcesPanel({ sources, scopeLabel, onCollapse }: SourcesPanelPr
           })}
         </ol>
       )}
-
-      <div className="mt-auto rounded-[var(--radius-card)] bg-[var(--accent-soft)] p-4 text-[13px] text-[var(--ink)]">
-        <h3 className="mb-1.5 flex items-center gap-1.5 text-[13px] font-semibold">
-          <Lock className="h-4 w-4" aria-hidden="true" />
-          {t('chat.sourcesPanel.trustTitle')}
-        </h3>
-        <p className="text-[var(--muted)]">{t('chat.sourcesPanel.trustBody')}</p>
-        <dl className="mt-2.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 border-t border-[var(--line)] pt-2.5">
-          <dt className="text-[var(--muted)]">{t('chat.sourcesPanel.scopeDt')}</dt>
-          <dd className="font-medium">{scopeLabel}</dd>
-        </dl>
-      </div>
     </aside>
   );
 }

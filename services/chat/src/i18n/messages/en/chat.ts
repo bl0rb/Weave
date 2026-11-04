@@ -93,10 +93,6 @@ export const chat: Record<keyof typeof de, string> = {
   'sourcesPanel.subtitle': 'Evidence for the selected answer',
   'sourcesPanel.emptyUnknown': 'Sources will appear here as soon as an answer draws on any.',
   'sourcesPanel.emptyNone': 'This answer does not rely on any source.',
-  'sourcesPanel.trustTitle': 'What the assistant can access',
-  'sourcesPanel.trustBody':
-    'Only released and indexed documents from spaces you are allowed to read. If it finds nothing suitable, it says so — instead of guessing.',
-  'sourcesPanel.scopeDt': 'Spaces',
   'sourcesPanel.open': 'Show sources',
   'sourcesPanel.collapse': 'Hide sources panel',
   'disclaimer.label': 'Notice',

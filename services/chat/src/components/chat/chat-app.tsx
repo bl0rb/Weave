@@ -539,12 +539,6 @@ export function ChatApp() {
   const activeSourceMessage =
     (selectedSourceMessageId ? assistantMessages.find((message) => message.id === selectedSourceMessageId) : null) ??
     latestAnsweredMessage;
-  // The trust card describes the scope the SHOWN answer's retrieval ran
-  // against (its own trace), not the composer's current selection; only an
-  // older backend that doesn't mirror `requested_collections` falls back.
-  const requestedCollections = activeSourceMessage?.trace?.retrieval?.requested_collections;
-  const sourcesScopeLabel =
-    requestedCollections === undefined ? currentScopeLabel : scopeLabel(requestedCollections ?? [], collections, t);
 
   return (
     <div className={sourcesPanelShown ? 'chat-shell' : 'chat-shell chat-sources-collapsed'}>
@@ -658,7 +652,6 @@ export function ChatApp() {
       {sourcesPanelShown ? (
         <SourcesPanel
           sources={activeSourceMessage?.sources ?? null}
-          scopeLabel={sourcesScopeLabel}
           onCollapse={() => setSourcesPanelOpen(false)}
         />
       ) : null}
