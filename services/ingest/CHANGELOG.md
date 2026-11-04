@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.20] - 2026-11-04
+
+### Added
+- **Automatic release for Confluence imports**: an import can opt into "Release automatically";
+  its finished pages (and attachments finishing later) are released on behalf of the import's
+  owner after every run. All portal checks still apply: grade C and blocked documents stay in review.
+- **Storage usage for admins**: Configuration shows the database size, files stored in the database
+  and on S3 (size and count) and, on PostgreSQL, the largest tables.
+- **Flag answers by knowledge space**: an agent can attach a notice to a knowledge space (e.g.
+  "Internal only – do not share with customers"). Every answer source from that space carries it
+  (`Source.notice`, also via subagents), and the chat marks the answer with it, even when sources
+  are hidden.
+
+### Changed
+- Chat: the "What the assistant can access" box at the bottom of the sources panel is gone.
+
+### Fixed
+- Portal upload of many files: past ~60 files the separate, rate-limited start request failed and
+  the documents stayed queued forever. The upload now starts processing in the same request; a
+  document that cannot be queued is reported in the form. Queued or running documents can no
+  longer be selected in the review list.
+
 ## [0.7.19] - 2026-11-03
 
 ### Fixed
