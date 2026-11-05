@@ -177,9 +177,10 @@ it('imports a catalog entry: creates and tests a credential-less website connect
   render(<SourceForm initialCollection="area" initialKind="catalog" initialCatalogEntryId="cat-1" />);
   await screen.findByRole('option', { name: 'Standard – schnell' });
   await screen.findByText(/wird beim Start automatisch eine Website-Verbindung/);
-  // The entry's recommended scope and options are prefilled.
+  // The entry's recommended scope and options are prefilled -- by an effect after the catalog
+  // loads, so wait for it rather than racing it (it lost on a slow CI runner).
+  await waitFor(() => expect((screen.getByRole('checkbox', { name: /Rechtsquelle/ }) as HTMLInputElement).checked).toBe(true));
   expect(screen.getByRole('button', { name: 'Dieser Bereich (Unterpfad)' }).getAttribute('aria-pressed')).toBe('true');
-  expect((screen.getByRole('checkbox', { name: /Rechtsquelle/ }) as HTMLInputElement).checked).toBe(true);
   fireEvent.click(screen.getByRole('button', { name: 'Nur diese Seite' }));
   fireEvent.click(screen.getByRole('checkbox', { name: /Ich prüfe die Berechtigten/ }));
   fireEvent.submit(screen.getByRole('button', { name: 'Import starten' }).closest('form')!);
