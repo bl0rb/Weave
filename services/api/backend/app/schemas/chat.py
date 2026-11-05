@@ -49,3 +49,6 @@ class ChatResponse(BaseModel):
     answer: str
     sources: list | dict | None = None
     trace: dict | None = None
+    # Answer metadata: the distinct notices of its sources' knowledge spaces
+    # (app/services/notices.py), e.g. "Nur intern"; [] when none is flagged.
+    notices: list[str] = Field(default_factory=list)

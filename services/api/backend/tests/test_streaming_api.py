@@ -293,6 +293,7 @@ def test_chat_completions_without_stream_is_unchanged(db_session, runtime):
     assert body['object'] == 'chat.completion'
     assert body['choices'][0]['message'] == {'role': 'assistant', 'content': 'Normale Antwort.'}
     assert body['choices'][0]['finish_reason'] == 'stop'
+    assert 'weave' not in body
 
 
 def test_chat_completions_stream_is_rate_limited(db_session, monkeypatch, runtime):
@@ -673,3 +674,55 @@ def test_chat_uses_the_dedicated_chat_read_timeout_not_the_default_http_read_tim
     # The conversation-title call right after it is a DIFFERENT `_post`
     # call with no override -- it must still get the unchanged default.
     assert any(t.read == runtime_client.settings.http_read_timeout_seconds for t in seen_timeouts)
+
+
+# --- answer notices (Source.notice lifted to answer metadata) -----------------
+
+FLAGGED_SOURCES = [
+    {'source': 'confluence', 'document_id': 'doc-1', 'chunk_id': 1, 'collection': 'intern', 'notice': 'Nur intern'},
+    {'source': 'confluence', 'document_id': 'doc-2', 'chunk_id': 1, 'collection': 'intern', 'notice': 'Nur intern'},
+    {'source': 'upload', 'document_id': 'doc-3', 'chunk_id': 1, 'collection': 'public', 'notice': None},
+]
+
+
+def _flagged_runtime(request: httpx.Request) -> httpx.Response:
+    if request.url.path == '/internal/conversation-title':
+        return httpx.Response(200, json={'title': 'Titel'})
+    if request.url.path == '/internal/chat/stream':
+        events = [TRACE_EVENT, {'type': 'delta', 'text': 'Antwort'}, {'type': 'sources', 'sources': FLAGGED_SOURCES}, DONE_EVENT]
+        return httpx.Response(200, content=_sse_body(events), headers={'content-type': 'text/event-stream'})
+    return httpx.Response(200, json={'answer': 'Antwort', 'sources': FLAGGED_SOURCES, 'trace': TRACE_EVENT['trace']})
+
+
+def test_chat_and_conversation_carry_the_answer_notices(db_session, runtime):
+    _, raw_token = make_user_with_token(db_session, username='notice-chat', team='legal')
+    db_session.commit()
+    runtime.handle(_flagged_runtime)
+
+    response = client.post('/v1/chat', json={'bot_id': 'legal-support', 'message': 'Hi'}, headers=auth_headers(raw_token))
+    assert response.status_code == 200
+    assert response.json()['notices'] == ['Nur intern']
+
+    conversation = client.get(f"/v1/conversations/{response.json()['conversation_id']}", headers=auth_headers(raw_token)).json()
+    assert [message['notices'] for message in conversation['messages']] == [[], ['Nur intern']]
+
+    streamed = client.post('/v1/chat/stream', json={'bot_id': 'legal-support', 'message': 'Hi'}, headers=auth_headers(raw_token))
+    sources_event = next(event for event in _parse_sse_events(streamed.text) if event['type'] == 'sources')
+    assert sources_event['notices'] == ['Nur intern']
+
+
+def test_chat_completions_carry_the_answer_notices_under_weave(db_session, runtime):
+    _, raw_token = make_user_with_token(db_session, username='notice-openai', team='legal')
+    db_session.commit()
+    runtime.handle(_flagged_runtime)
+    request = {'model': 'legal-support', 'messages': [{'role': 'user', 'content': 'Hi'}]}
+
+    body = client.post('/v1/chat/completions', json=request, headers=auth_headers(raw_token)).json()
+    assert body['weave'] == {'notices': ['Nur intern']}
+
+    chunks = _parse_sse_events(
+        client.post('/v1/chat/completions', json={**request, 'stream': True}, headers=auth_headers(raw_token)).text
+    )[:-1]
+    assert chunks[-1]['choices'][0]['finish_reason'] == 'stop'
+    assert chunks[-1]['weave'] == {'notices': ['Nur intern']}
+    assert all('weave' not in chunk for chunk in chunks[:-1])
