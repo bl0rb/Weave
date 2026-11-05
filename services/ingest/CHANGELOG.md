@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.21] - 2026-11-05
+
+### Added
+- **Answer flags as API metadata**: weave-api lifts the knowledge-space flags of an answer's sources
+  onto the answer itself: `notices` on `POST /v1/chat` and on every conversation message, on the
+  `sources` event of `/v1/chat/stream` (when flagged), and `weave.notices` on
+  `/v1/chat/completions` (one-shot response and final stream chunk, when flagged; unflagged answers
+  stay exactly OpenAI-shaped). Weave Desktop shows them above the answer.
+
+### Note
+- The `v0.7.20` tag points one commit past the code its images were built from (it already contains
+  this change); the `0.7.20` images do not. `0.7.21` brings tag and images back in line.
+
 ## [0.7.20] - 2026-11-04
 
 ### Added
