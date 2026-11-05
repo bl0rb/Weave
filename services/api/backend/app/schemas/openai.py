@@ -62,6 +62,14 @@ class OpenAIUsage(BaseModel):
     total_tokens: int
 
 
+class WeaveAnswerMetadata(BaseModel):
+    """Weave's own answer metadata, outside OpenAI's shape under `weave`
+    (clients that don't know it ignore it): `notices` are the distinct
+    flags of the answer's knowledge spaces (app/services/notices.py)."""
+
+    notices: list[str]
+
+
 class OpenAIChatCompletionResponse(BaseModel):
     """The one-shot (non-streaming) Chat Completions response shape. `usage`
     is optional on the wire and always omitted here in practice --
@@ -76,6 +84,9 @@ class OpenAIChatCompletionResponse(BaseModel):
     model: str
     choices: list[OpenAIChatCompletionChoice]
     usage: OpenAIUsage | None = None
+    # Only present when the answer is flagged -- an unflagged response stays
+    # byte-for-byte OpenAI's shape.
+    weave: WeaveAnswerMetadata | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 # --- POST /v1/chat/completions with "stream": true -----------------------
@@ -121,6 +132,8 @@ class OpenAIChatCompletionChunk(BaseModel):
     created: int
     model: str
     choices: list[OpenAIChatCompletionChunkChoice]
+    # Set on the final (`finish_reason`) chunk of a flagged answer only.
+    weave: WeaveAnswerMetadata | None = None
 
 
 # --- GET /v1/models --------------------------------------------------------

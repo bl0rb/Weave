@@ -1,7 +1,9 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, computed_field
+
+from app.services.notices import answer_notices
 
 
 class MessageResponse(BaseModel):
@@ -13,6 +15,13 @@ class MessageResponse(BaseModel):
     sources: list | dict | None = None
     trace: dict | None = None
     created_at: datetime
+
+    @computed_field
+    @property
+    def notices(self) -> list[str]:
+        """Same answer metadata as ChatResponse.notices, derived from the
+        stored sources -- so a reloaded conversation keeps its flags."""
+        return answer_notices(self.sources)
 
 
 class ConversationResponse(BaseModel):

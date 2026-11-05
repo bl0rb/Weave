@@ -60,8 +60,10 @@ from app.schemas.openai import (
     OpenAIChatMessage,
     OpenAIModel,
     OpenAIModelList,
+    WeaveAnswerMetadata,
 )
 from app.services import runtime_client
+from app.services.notices import answer_notices
 from app.services.runtime_client import RuntimeClientError, list_bots
 
 router = APIRouter(prefix='/v1', tags=['openai-compat'])
@@ -144,13 +146,17 @@ def _stream_openai_chunks(*, chunk_id: str, created: int, model: str, events: It
       below, ending the stream exactly the same way.
     """
     sent_role = False
+    notices: list[str] = []
     try:
         for event in events:
             event_type = event.get('type')
             if event_type == 'keepalive':
                 yield ': keepalive\n\n'
                 continue
-            if event_type == 'delta':
+            if event_type == 'sources':
+                # Not forwarded as such; its notices go on the final chunk.
+                notices = answer_notices(event.get('sources'))
+            elif event_type == 'delta':
                 delta = OpenAIChatCompletionChunkDelta(
                     role=None if sent_role else 'assistant', content=event.get('text', '')
                 )
@@ -171,6 +177,7 @@ def _stream_openai_chunks(*, chunk_id: str, created: int, model: str, events: It
                         created=created,
                         model=model,
                         choices=[OpenAIChatCompletionChunkChoice(delta=final_delta, finish_reason='stop')],
+                        weave=WeaveAnswerMetadata(notices=notices) if notices else None,
                     )
                 )
                 yield 'data: [DONE]\n\n'
@@ -225,6 +232,7 @@ def chat_completions(
     except runtime_client.RuntimeRejected as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail or str(exc)) from exc
 
+    notices = answer_notices(result.get('sources'))
     return OpenAIChatCompletionResponse(
         id=f'chatcmpl-{uuid.uuid4().hex}',
         created=int(time.time()),
@@ -238,6 +246,7 @@ def chat_completions(
         ],
         # See app/schemas/openai.py's OpenAIChatCompletionResponse docstring
         # for why `usage` is always omitted rather than estimated.
+        weave=WeaveAnswerMetadata(notices=notices) if notices else None,
         usage=None,
     )
 
