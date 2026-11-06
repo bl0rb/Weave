@@ -39,8 +39,8 @@ export type DocumentPage = { items: PortalDocument[]; total: number };
 /** One entry of GET /api/v1/portal/collections/{id}/import-scopes -- a distinct Confluence import scope among the space's visible documents. `edit_run_id` is the caller's own newest run of the scope (set only when can_edit), which may differ from the scope's newest run. */
 export type ImportScope = { value: string; scope_type: string; scope_value: string; label: string; count: number; latest_run_id: string; edit_run_id: string | null; can_edit: boolean };
 export type ImportScopesResponse = { items: ImportScope[]; other_count: number };
-/** 'failed': processing or delivery to the chat failed. */
-export type ReviewStateFilter = 'review' | 'all' | 'skipped' | 'parked' | 'failed';
+/** 'failed': processing or delivery to the chat failed; 'in_chat': released and delivered to the chat. */
+export type ReviewStateFilter = 'review' | 'all' | 'skipped' | 'parked' | 'failed' | 'in_chat';
 export type DocumentSourceFilter = '' | 'upload' | 'confluence' | 'mail';
 /** Server-side filters of GET /api/v1/portal/documents beyond space, review state and grade. */
 export type DocumentFilters = { q?: string; source?: DocumentSourceFilter; releasedByMe?: boolean };

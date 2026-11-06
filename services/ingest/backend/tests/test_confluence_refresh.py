@@ -30,10 +30,11 @@ from app.models.models import (
     ImportSource,
     ImportSync,
     Job,
+    JobArtifact,
     JobStatus,
 )
 from app.services import security
-from app.services.confluence import ConfluenceError, Page, PageContext
+from app.services.confluence import AttachmentMeta, ConfluenceError, Page, PageContext
 from app.workers import import_tasks
 from app.workers import refresh_tasks
 from app.workers.celery_app import celery_app
@@ -1078,3 +1079,80 @@ def test_refresh_run_imports_new_child_under_unchanged_parent(sent, client_holde
     assert child_job_id, run.state
     assert _get_job(child_job_id).document_version == 1
     assert _get_page_state(source_id, new_child_id).page_version == 1
+
+
+def _pdf_attachment(page_id: str, attachment_id: str, filename: str) -> AttachmentMeta:
+    return AttachmentMeta(
+        id=attachment_id, filename=filename, media_type='application/pdf', size_bytes=None,
+        download_url=f'{BASE_URL}/wiki/download/attachments/{page_id}/{filename}?version=1',
+        page_id=page_id, _fetch=lambda: b'%PDF-1.4 test',
+    )
+
+
+class _AttachmentClient(FakeClient):
+    def __init__(self, page: Page, attachments: list[AttachmentMeta]) -> None:
+        super().__init__(page)
+        self.attachments = attachments
+
+    def iter_attachments(self, page_id: str):
+        return iter(self.attachments)
+
+
+def _artifact_names(job_id: str) -> set[str]:
+    db = _db()
+    try:
+        return set(db.scalars(select(JobArtifact.filename).where(JobArtifact.job_id == job_id)))
+    finally:
+        db.close()
+
+
+def test_refresh_imports_attachment_added_without_page_version_bump(sent, client_holder) -> None:
+    """Adding an attachment in Confluence does not bump the page version;
+    a sync must still pick it up (and then stay stable once it has)."""
+    owner = _make_owner()
+    source_id = _make_source(owner.id)
+    page_id = 'P1'
+    page = _page(page_id, 'Root Page', '<p>same body</p>', version=3)
+    old = _pdf_attachment(page_id, 'A1', 'Bestand.pdf')
+
+    client_holder['client'] = _AttachmentClient(page, [old])
+    first_run_id = _make_normal_run(owner.id, source_id, scope_value=page_id)
+    import_confluence(first_run_id, 0)
+    first_job_id = _get_run(first_run_id).state['visited'][page_id]
+    assert _artifact_names(first_job_id) == {'Bestand.pdf'}
+
+    client_holder['client'] = _AttachmentClient(page, [old, _pdf_attachment(page_id, 'A2', 'Tariftabellen Erklaerung.pdf')])
+    refresh_id = _make_refresh_run(owner.id, source_id, scope_value=page_id)
+    import_confluence(refresh_id, 0)
+    run = _get_run(refresh_id)
+    assert run.status == ImportRunStatus.FINISHED
+    assert run.pages_imported == 1
+    new_job_id = run.state['visited'][page_id]
+    assert new_job_id != first_job_id
+    assert _get_job(new_job_id).previous_job_id == first_job_id
+    assert len(_artifact_names(new_job_id)) == 2
+
+    # Unchanged listing on the next sync: no further re-import.
+    second_refresh_id = _make_refresh_run(owner.id, source_id, scope_value=page_id)
+    import_confluence(second_refresh_id, 0)
+    run = _get_run(second_refresh_id)
+    assert run.pages_imported == 0
+    assert run.state['visited'][page_id] == new_job_id
+
+
+def test_refresh_legacy_job_without_signature_detects_new_attachment(sent, client_holder) -> None:
+    owner = _make_owner()
+    source_id = _make_source(owner.id)
+    page_id = 'P1'
+    prior_job_id = _make_prior_job(owner.id, page_id, version=3)
+    _make_page_state(source_id, page_id, version=3, job_id=prior_job_id)
+
+    client_holder['client'] = _AttachmentClient(
+        _page(page_id, 'Root Page', '<p>same body</p>', version=3), [_pdf_attachment(page_id, 'A2', 'Neu.pdf')]
+    )
+    run_id = _make_refresh_run(owner.id, source_id, scope_value=page_id)
+    import_confluence(run_id, 0)
+
+    run = _get_run(run_id)
+    assert run.pages_imported == 1
+    assert _artifact_names(run.state['visited'][page_id]) == {'Neu.pdf'}

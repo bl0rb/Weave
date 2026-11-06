@@ -26,6 +26,10 @@ export const portal: Record<keyof typeof de, string> = {
 
   // src/components/portal/documents.tsx, knowledge.tsx, home.tsx (portal redesign)
   'documents.view.mine': 'Released by me',
+  'documents.view.chat': 'In chat',
+  'documents.view.chatEmpty': 'No document is available in the chat yet.',
+  'documents.importScopeFilter': 'Import: {label}',
+  'documents.importScopeClear': 'Remove filter',
   'documents.viewsAria': 'Choose a view',
   'documents.columnGrade': 'Grade',
   'documents.columnSource': 'Source',
@@ -218,6 +222,7 @@ export const portal: Record<keyof typeof de, string> = {
   'spaces.zipCreating': 'Creating ZIP …',
   'spaces.zipAll': 'All as ZIP',
   'spaces.reindexSpace': 'Reindex knowledge space',
+  'spaces.reindexTooltip': 'Hands the released documents to the chat search again (e.g. after a search outage). Does not reload anything from Confluence – use “Sync now” for that.',
   'spaces.deleteDocumentsTitle': 'Delete documents',
   'spaces.deleteDocumentsBody': 'Permanently delete {count} document?|Permanently delete {count} documents?',
   'spaces.withdrawReleased': 'Also delete released documents – they are withdrawn from the knowledge index.',
@@ -688,6 +693,7 @@ export const portal: Record<keyof typeof de, string> = {
   // src/components/portal/import-sync.tsx
   'importSync.syncFailed': 'Sync failed',
   'importSync.syncNow': 'Sync now',
+  'importSync.syncNowTooltip': 'Loads changed, new and deleted pages and attachments from Confluence or the website now instead of waiting for the next scheduled sync.',
   'importSync.removeConfirm': 'Remove “{title}” with all imported versions and OCR attachments from the knowledge base? Import history is kept.',
   'importSync.removeFailed': 'Failed to remove',
   'importSync.missingHeading': 'No longer found in Confluence',
@@ -1150,6 +1156,7 @@ export const portal: Record<keyof typeof de, string> = {
   'chrome.menuOpen': 'Open navigation',
   'chrome.searchDocuments': 'Search by file name',
   'chrome.addSource': 'Add source',
+  'spaces.addSourceTooltip': 'Upload documents or set up a Confluence or website import for this knowledge space.',
   'chrome.breadcrumb.knowledgeNew': 'Create knowledge space',
   'tabs.overview': 'Overview',
   'tabs.advanced': 'Advanced',

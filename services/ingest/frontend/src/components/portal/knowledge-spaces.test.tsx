@@ -209,9 +209,20 @@ it('lists the space\'s Confluence-Bereiche with view, edit and filtered-document
     { value: 'page:1', scope_type: 'page', scope_value: '1', label: 'Reisekosten', count: 1, latest_run_id: 'run-2', edit_run_id: null, can_edit: false },
   ], other_count: 2 } });
   render(<KnowledgeDetail id="area-1" />);
-  expect((await screen.findByRole('link', { name: 'Handbuch · DOCS (3)' })).getAttribute('href')).toBe('/documents?bereich=servicewissen&q=Handbuch');
+  expect((await screen.findByRole('link', { name: 'Handbuch · DOCS (3)' })).getAttribute('href')).toBe('/documents?bereich=servicewissen&import=space%3ADOCS');
   const views = screen.getAllByRole('link', { name: 'Import ansehen' }).map(link => link.getAttribute('href'));
   expect(views).toEqual(['/imports/run-other', '/imports/run-2']);
   // Only the caller's own import may be edited, even when someone else imported the scope later.
   expect(screen.getAllByRole('link', { name: 'Import bearbeiten' }).map(link => link.getAttribute('href'))).toEqual(['/imports/new?from=run-mine']);
+});
+
+it('does not repeat the header link when one import holds every document of the space', async () => {
+  mockDetail({ total: 3, scopes: { items: [
+    { value: 'space:DOCS', scope_type: 'space', scope_value: 'DOCS', label: 'Handbuch', count: 3, latest_run_id: 'run-1', edit_run_id: null, can_edit: false },
+  ], other_count: 0 } });
+  render(<KnowledgeDetail id="area-1" />);
+  expect(await screen.findByText('Handbuch · DOCS (3)')).toBeTruthy();
+  expect(screen.queryByRole('link', { name: 'Handbuch · DOCS (3)' })).toBeNull();
+  expect(screen.getByRole('link', { name: /3 Dokumente ansehen/ })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Wissensbereich neu indizieren' }).getAttribute('title')).toMatch(/Lädt nichts neu aus Confluence/);
 });

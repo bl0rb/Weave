@@ -16,6 +16,7 @@ import {
   documentState,
   documentUrl,
   loadDocuments,
+  loadImportScopes,
   pipelineStage,
   portalError,
   type DocumentSourceFilter,
@@ -35,12 +36,13 @@ const DOCUMENTS_FETCH_LIMIT = 200;
 const PAGE_SIZES = [20, 50, 100, 0];
 
 /** View presets at the top of the page; each maps to one server-side review_state. */
-export type DocumentView = 'review' | 'all' | 'parked' | 'failed' | 'mine';
-const VIEWS: DocumentView[] = ['review', 'all', 'parked', 'failed', 'mine'];
-const VIEW_STATE: Record<DocumentView, ReviewStateFilter> = { review: 'review', all: 'all', parked: 'parked', failed: 'failed', mine: 'all' };
+export type DocumentView = 'review' | 'all' | 'chat' | 'parked' | 'failed' | 'mine';
+const VIEWS: DocumentView[] = ['review', 'all', 'chat', 'parked', 'failed', 'mine'];
+const VIEW_STATE: Record<DocumentView, ReviewStateFilter> = { review: 'review', all: 'all', chat: 'in_chat', parked: 'parked', failed: 'failed', mine: 'all' };
 const VIEW_LABEL: Record<DocumentView, MessageKey> = {
   review: 'portal.home.tile.review.label',
   all: 'common.all',
+  chat: 'portal.documents.view.chat',
   parked: 'portal.documents.state.parked',
   failed: 'common.error',
   mine: 'portal.documents.view.mine',
@@ -48,6 +50,7 @@ const VIEW_LABEL: Record<DocumentView, MessageKey> = {
 const VIEW_EMPTY: Record<DocumentView, MessageKey> = {
   review: 'portal.tasks.reviewEmpty',
   all: 'portal.documents.emptyBody',
+  chat: 'portal.documents.view.chatEmpty',
   parked: 'portal.reviews.emptyParkedTitle',
   failed: 'portal.tasks.helpEmpty',
   mine: 'portal.tasks.releasedByMeEmpty',
@@ -104,14 +107,16 @@ function actionFor(document: PortalDocument, stand: Stand, t: (key: MessageKey) 
   }
 }
 
-export type DocumentsInitialFilters = { q?: string; stand?: string; bereich?: string; bewertung?: string; quelle?: string; ansicht?: string };
+export type DocumentsInitialFilters = { q?: string; stand?: string; bereich?: string; bewertung?: string; quelle?: string; ansicht?: string; import?: string };
 
 /**
  * /documents — every document the person can maintain, in one list:
  * view presets (Zu prüfen, Alle, Geparkt, Fehler, Von mir freigegeben),
  * one filter bar and the bulk actions. The filters live in the URL
- * (?ansicht=&bereich=&stand=&bewertung=&quelle=&q=), so links from the
- * Übersicht and the Wissensbereiche open the matching view.
+ * (?ansicht=&bereich=&stand=&bewertung=&quelle=&import=&q=), so links from
+ * the Übersicht and the Wissensbereiche open the matching view; `import` is
+ * a Confluence import scope (`<scope_type>:<scope_value>`, see
+ * loadImportScopes) linked from a knowledge space's sources.
  */
 export function PortalDocuments({ initial = {} }: { initial?: DocumentsInitialFilters }) {
   const pathname = usePathname();
@@ -119,7 +124,7 @@ export function PortalDocuments({ initial = {} }: { initial?: DocumentsInitialFi
   const [spaces, setSpaces] = useState<KnowledgeSpace[] | null>(null);
   const [documents, setDocuments] = useState<PortalDocument[] | null>(null);
   const [total, setTotal] = useState(0);
-  const [counts, setCounts] = useState<{ review: number; parked: number; failed: number } | null>(null);
+  const [counts, setCounts] = useState<Partial<Record<DocumentView, number>> | null>(null);
   const [error, setError] = useState('');
   const [query, setQuery] = useState(initial.q ?? '');
   const [debouncedQuery, setDebouncedQuery] = useState(initial.q ?? '');
@@ -127,8 +132,10 @@ export function PortalDocuments({ initial = {} }: { initial?: DocumentsInitialFi
   const [bereichSlug, setBereichSlug] = useState(initial.bereich ?? '');
   const [grade, setGrade] = useState<QualityGradeFilter>(isGrade(initial.bewertung) ? initial.bewertung : '');
   const [source, setSource] = useState<DocumentSourceFilter>(isSource(initial.quelle) ? initial.quelle : '');
+  const [importScope, setImportScope] = useState(initial.import ?? '');
+  const [importScopeLabel, setImportScopeLabel] = useState('');
   // "Zu prüfen" is the default on a plain open; a link with filters (e.g. "N Dokumente ansehen") opens "Alle".
-  const hasInitialFilters = Boolean(initial.q || initial.stand || initial.bereich || initial.bewertung || initial.quelle);
+  const hasInitialFilters = Boolean(initial.q || initial.stand || initial.bereich || initial.bewertung || initial.quelle || initial.import);
   const [view, setView] = useState<DocumentView>(isView(initial.ansicht) ? initial.ansicht : hasInitialFilters ? 'all' : 'review');
   // Falls back to "Alle" once when nothing waits for review.
   const autoView = useRef(!isView(initial.ansicht) && !hasInitialFilters);
@@ -157,22 +164,31 @@ export function PortalDocuments({ initial = {} }: { initial?: DocumentsInitialFi
     if (waitingForSpace) return;
     const seq = ++requestSeq.current;
     const filters = { q: debouncedQuery, source };
-    loadDocuments(collectionId, 0, VIEW_STATE[view], grade || undefined, DOCUMENTS_FETCH_LIMIT, undefined, { ...filters, releasedByMe: view === 'mine' })
+    const scope = importScope || undefined;
+    loadDocuments(collectionId, 0, VIEW_STATE[view], grade || undefined, DOCUMENTS_FETCH_LIMIT, scope, { ...filters, releasedByMe: view === 'mine' })
       .then((page) => { if (seq === requestSeq.current) { setDocuments(page.items); setTotal(page.total); setError(''); } })
       .catch((err) => { if (seq === requestSeq.current) setError(portalError(err, locale)); });
     // The preset counts follow the same filters (only `total` is read).
-    Promise.all((['review', 'parked', 'failed'] as const).map((state) => loadDocuments(collectionId, 0, state, grade || undefined, 1, undefined, filters)))
-      .then(([review, parked, failed]) => {
+    Promise.all(VIEWS.map((value) => loadDocuments(collectionId, 0, VIEW_STATE[value], grade || undefined, 1, scope, { ...filters, releasedByMe: value === 'mine' })))
+      .then((pages) => {
         if (seq !== requestSeq.current) return;
-        setCounts({ review: review.total, parked: parked.total, failed: failed.total });
+        setCounts(Object.fromEntries(VIEWS.map((value, index) => [value, pages[index].total])));
+        const review = pages[VIEWS.indexOf('review')];
         if (autoView.current) {
           autoView.current = false;
           if (review.total === 0) setView('all');
         }
       })
       .catch(() => { if (seq === requestSeq.current) setCounts(null); });
-  }, [waitingForSpace, collectionId, view, grade, source, debouncedQuery, locale]);
+  }, [waitingForSpace, collectionId, view, grade, source, importScope, debouncedQuery, locale]);
   useEffect(() => { void load(); }, [load]);
+  // The import scope's readable name ("Führungskräfte Info Guide") for its filter chip.
+  useEffect(() => {
+    if (!importScope || !collectionId) return;
+    loadImportScopes(collectionId)
+      .then((scopes) => setImportScopeLabel(scopes.items.find((item) => item.value === importScope)?.label ?? ''))
+      .catch(() => setImportScopeLabel(''));
+  }, [importScope, collectionId]);
 
   // Reflect the current filters in the URL (shareable) without a server
   // round trip: history.replaceState keeps the page's searchParams props
@@ -184,21 +200,24 @@ export function PortalDocuments({ initial = {} }: { initial?: DocumentsInitialFi
     if (stand) params.set('stand', stand);
     if (grade) params.set('bewertung', grade);
     if (source) params.set('quelle', source);
+    if (importScope) params.set('import', importScope);
     if (query.trim()) params.set('q', query.trim());
     if (view !== 'review' || params.toString()) params.set('ansicht', view);
     const search = params.toString();
     window.history.replaceState(null, '', search ? `${pathname}?${search}` : pathname);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, stand, bereichSlug, grade, source, view]);
+  }, [query, stand, bereichSlug, grade, source, importScope, view]);
 
   // Filter changes reset pagination and the selection inline rather than via a separate effect.
   function resetPaging() { setOffset(0); bulk.clear(); }
   function updateView(value: DocumentView) { if (value === view) return; autoView.current = false; setView(value); setDocuments(null); resetPaging(); }
   function updateQuery(value: string) { setQuery(value); resetPaging(); }
   function updateStand(value: string) { setStand(isStand(value) ? value : ''); resetPaging(); }
-  function updateBereich(value: string) { setBereichSlug(value); resetPaging(); }
+  // An import scope belongs to one space, so changing the space drops it.
+  function updateBereich(value: string) { setBereichSlug(value); setImportScope(''); setImportScopeLabel(''); resetPaging(); }
   function updateGrade(value: string) { setGrade(isGrade(value) ? value : ''); resetPaging(); }
   function updateSource(value: string) { setSource(isSource(value) ? value : ''); resetPaging(); }
+  function clearImportScope() { setImportScope(''); setImportScopeLabel(''); resetPaging(); }
   // The selection spans pages ("alle auswählen" selects every filtered document), so paging keeps it.
   function updateOffset(value: number) { setOffset(value); }
   function updatePageSize(value: number) { setPageSize(value); setOffset(0); }
@@ -207,7 +226,7 @@ export function PortalDocuments({ initial = {} }: { initial?: DocumentsInitialFi
   const { items: live } = useIndexingStatus(releasedIds);
   const filtered = useMemo(() => (documents ?? []).filter((document) => !stand || standOf(document, live[document.id]) === stand), [documents, stand, live]);
   const pageItems = pageSize ? filtered.slice(offset, offset + pageSize) : filtered;
-  const hasFilters = Boolean(query.trim() || stand || bereichSlug || grade || source);
+  const hasFilters = Boolean(query.trim() || stand || bereichSlug || grade || source || importScope);
 
   // Only what still matches the filter counts: a live status change can move a selected document out of it.
   const bulk = useBulkSelection({ documents: filtered, onNotice: setNotice, onError: setError, onDone: () => { setDocuments(null); load(); } });
@@ -222,7 +241,7 @@ export function PortalDocuments({ initial = {} }: { initial?: DocumentsInitialFi
     bulk.deselect(rowDeleting.id);
     load();
   }
-  const viewCount = (value: DocumentView) => value === 'review' || value === 'parked' || value === 'failed' ? counts?.[value] : undefined;
+  const viewCount = (value: DocumentView) => counts?.[value];
 
   return (
     <PortalPage title={t('portal.nav.documents')}>
@@ -282,6 +301,10 @@ export function PortalDocuments({ initial = {} }: { initial?: DocumentsInitialFi
           </select>
         </div>
       </div>
+      {importScope && <p className="mb-3 flex flex-wrap items-center gap-2 text-sm" data-testid="import-scope-filter">
+        <span className="portal-chip">{t('portal.documents.importScopeFilter', { label: importScopeLabel || importScope.slice(importScope.indexOf(':') + 1) })}</span>
+        <button type="button" className="portal-inline-link text-xs" onClick={clearImportScope}>{t('portal.documents.importScopeClear')}</button>
+      </p>}
       {documents && total > documents.length && <p className="text-xs text-[var(--muted)]">{t('portal.documents.truncatedHint', { count: documents.length, total })}</p>}
 
       <section className="portal-panel" aria-labelledby="docs-title">
