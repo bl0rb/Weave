@@ -18,7 +18,7 @@ lässt den Abgleich im CI-Job „Platform configuration" mitlaufen. Eine
 Änderung am Zeichen oder an einer Bewegung beginnt hier und wird dann in
 alle Kopien übernommen, auch in WeaveDesktop.
 
-Bewegungen (`weave`, `turn`, `flip`, `shuttle`): bei jedem Start wird eine
-zufällig gewählt, nie die zuletzt gelaufene (`localStorage`-Schlüssel
-`weave-motion-last`). Ein Klick auf das Zeichen wechselt zur nächsten; die
-letzte Runde einer endlichen Animation endet mit einem weichen `weave-settle`.
+Bewegung: nur `weave` – die Schussfäden weben sich aus und wieder ein; das
+Zeichen selbst dreht, kippt und schaukelt nicht. Ein Klick auf das Zeichen
+startet eine Runde; das Ende einer endlichen Animation markiert `weave-settle`
+(ohne eigene sichtbare Bewegung).
