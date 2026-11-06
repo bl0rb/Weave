@@ -39,6 +39,15 @@
   --ok-bg: #e1f2e8;
   --err: #a2372f;
   --err-bg: #fcebe9;
+
+  /* Knowledge-space colours: an answer mixing knowledge spaces colours its
+     citations, passages and sources by space (components/chat/citations.tsx). */
+  --space-1: #2f6fd0;
+  --space-2: #8a4fc7;
+  --space-3: #c2620f;
+  --space-4: #c23b7a;
+  --space-5: #0f8a8a;
+  --space-6: #6f7a12;
   color-scheme: light;
 }
 
@@ -64,6 +73,13 @@
     --ok-bg: #1d3027;
     --err: #f3a79e;
     --err-bg: #3d2320;
+    /* Knowledge-space colours (see the rules after .prose-chat). */
+    --space-1: #5b9cf0;
+    --space-2: #c08af0;
+    --space-3: #f0a35b;
+    --space-4: #ef7fb0;
+    --space-5: #4fc8c8;
+    --space-6: #b8c25a;
     color-scheme: dark;
   }
 }
@@ -89,6 +105,13 @@
   --ok-bg: #1d3027;
   --err: #f3a79e;
   --err-bg: #3d2320;
+  /* Knowledge-space colours (see the rules after .prose-chat). */
+  --space-1: #5b9cf0;
+  --space-2: #c08af0;
+  --space-3: #f0a35b;
+  --space-4: #ef7fb0;
+  --space-5: #4fc8c8;
+  --space-6: #b8c25a;
   color-scheme: dark;
 }
 
@@ -463,5 +486,68 @@ body {
   .weave-logo,
   .weave-logo * {
     animation: none !important;
+  }
+}
+
+/* Citations in an answer (components/chat/citations.tsx): `[N]` markers as
+   small badges, the passage each one backs, and the source cards. `--space`
+   is set only for an answer mixing knowledge spaces; otherwise the accent. */
+.cite-marker {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.45em;
+  height: 1.45em;
+  margin: 0 0.1em;
+  padding: 0 0.3em;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--space, var(--accent)) 14%, transparent);
+  color: var(--space, var(--accent));
+  font-size: 0.7em;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: 0.3em;
+  cursor: default;
+}
+.cite-marker[data-active='true'] {
+  background: var(--space, var(--accent));
+  color: var(--surface);
+}
+.cite-passage {
+  border-radius: 3px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  transition: background-color 0.15s;
+}
+.cite-passage[data-mixed='true'] {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--space) 55%, transparent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+.cite-passage[data-active='true'] {
+  background: color-mix(in srgb, var(--space, var(--accent)) 22%, transparent);
+}
+.space-dot {
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  flex: none;
+  border-radius: var(--radius-pill);
+  background: var(--space, var(--accent));
+}
+.source-card[data-mixed='true'] {
+  border-left: 3px solid var(--space);
+}
+.source-card[data-active='true'] {
+  border-color: var(--space, var(--accent));
+  background: color-mix(in srgb, var(--space, var(--accent)) 10%, var(--surface));
+}
+.source-ref {
+  color: var(--space, var(--accent));
+  font-weight: 700;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cite-passage {
+    transition: none;
   }
 }

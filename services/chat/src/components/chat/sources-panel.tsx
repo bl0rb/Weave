@@ -4,6 +4,8 @@ import { ExternalLink, PanelRightClose } from 'lucide-react';
 import { formatCollection, formatPages, formatScore, formatVersion, getSourceLink, MemoryBadge, SourceOrigin } from '@/components/chat/source-cards';
 import { toProxiedImageUrl } from '@/lib/portal-artifact-url';
 import { useI18n } from '@/i18n/provider';
+import { answerSpaces, spaceColor } from '@/lib/knowledge-spaces';
+import { highlightHandlers, isHighlighted, spaceName, spaceStyle, useCitationHighlight } from '@/components/chat/citations';
 import type { Source } from '@/types/weave-api';
 
 interface SourcesPanelProps {
@@ -14,6 +16,9 @@ interface SourcesPanelProps {
   sources: Source[] | null;
   /** Collapses the panel (chat-app.tsx keeps that choice per browser). */
   onCollapse?: () => void;
+  /** The answer these sources belong to: hovering a source marks the
+   * passages it backs in that answer. */
+  messageId?: string;
 }
 
 /**
@@ -23,8 +28,11 @@ interface SourcesPanelProps {
  * `.chat-sources-panel`/`.chat-inline-sources`), same as the design
  * prototype (docs/design-proposals/06-loom-rc/style.css).
  */
-export function SourcesPanel({ sources, onCollapse }: SourcesPanelProps) {
+export function SourcesPanel({ sources, onCollapse, messageId }: SourcesPanelProps) {
   const { t, locale } = useI18n();
+  const highlight = useCitationHighlight();
+  const spaces = answerSpaces(sources);
+  const mixed = spaces.length > 1;
   const images = Array.from(new Set((sources ?? []).flatMap((source) => source.images ?? [])));
 
   return (
@@ -93,16 +101,22 @@ export function SourcesPanel({ sources, onCollapse }: SourcesPanelProps) {
               ? t('chat.sources.fetchedOn', { date: new Date(source.fetched_at).toLocaleDateString(locale === 'en' ? 'en-GB' : 'de-DE') })
               : null;
             const legal = source.legal_status ? t('chat.sources.legalStatus', { value: source.legal_status }) : null;
-            const meta = [source.document_version != null ? formatVersion(source, t) : null, t('chat.sources.collectionLabel', { collection: formatCollection(source, t) }), scoreText, link ? fetched : null, link ? legal : null]
+            const collection = mixed ? spaceName(highlight, source.collection ?? null, formatCollection(source, t)) : formatCollection(source, t);
+            const meta = [source.document_version != null ? formatVersion(source, t) : null, t('chat.sources.collectionLabel', { collection }), scoreText, link ? fetched : null, link ? legal : null]
               .filter(Boolean)
               .join(' · ');
             return (
               <li
                 key={`${source.document_id}-${source.chunk_id}`}
-                className="rounded-[var(--radius-card)] border border-[var(--line)] px-3 py-2.5 text-xs"
+                className="source-card rounded-[var(--radius-card)] border border-[var(--line)] px-3 py-2.5 text-xs"
+                style={mixed ? spaceStyle(spaceColor(spaces, source)) : undefined}
+                data-mixed={mixed}
+                data-active={isHighlighted(highlight, messageId, source.ref)}
+                tabIndex={messageId && typeof source.ref === 'number' ? 0 : undefined}
+                {...highlightHandlers(highlight, messageId, source.ref)}
               >
                 <div className="flex items-start gap-2">
-                  <span className="mt-0.5 inline-grid h-5 w-5 flex-none place-items-center rounded-[var(--radius-control)] border border-[var(--line)] text-[11px] font-bold text-[var(--accent)]">
+                  <span className="source-ref mt-0.5 inline-grid h-5 w-5 flex-none place-items-center rounded-[var(--radius-control)] border border-[var(--line)] text-[11px] font-bold text-[var(--accent)]">
                     {source.ref ?? index + 1}
                   </span>
                   <div className="min-w-0 flex-1">

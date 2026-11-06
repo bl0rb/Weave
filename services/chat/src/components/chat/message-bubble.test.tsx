@@ -4,7 +4,7 @@
 // assistant message (see message-bubble.tsx's own `AgentStatusChips`) —
 // asserts the German chip label for each `UiAgentStatus.state`.
 import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MessageBubble } from '@/components/chat/message-bubble';
 import type { UiAgentStatus, UiMessage } from '@/lib/chat-types';
 
@@ -155,5 +155,73 @@ describe('MessageBubble answer notices', () => {
     const message: UiMessage = { ...makeMessage([]), streaming: false, sources: [source('a', null)] as UiMessage['sources'] };
     render(<MessageBubble message={message} />);
     expect(screen.queryByTestId('answer-notices')).toBeNull();
+  });
+});
+
+describe('MessageBubble knowledge spaces and citations', () => {
+  afterEach(() => cleanup());
+
+  const cited = (documentId: string, collection: string, ref: number, notice: string | null = null) => ({
+    source: 'confluence',
+    original_filename: `${documentId}.pdf`,
+    document_id: documentId,
+    chunk_id: 1,
+    collection,
+    notice,
+    ref,
+  });
+
+  const answer = (content: string, sources: unknown[]): UiMessage => ({
+    ...makeMessage([]),
+    streaming: false,
+    content,
+    sources: sources as UiMessage['sources'],
+  });
+
+  it('puts the notice below the answer text', () => {
+    const { container } = render(<MessageBubble message={answer('Antwort [1].', [cited('a', 'intern', 1, 'Nur intern')])} />);
+    const text = container.querySelector('.prose-chat')!;
+    const notice = screen.getByTestId('answer-notices');
+    expect(text.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('colours the passages of an answer mixing knowledge spaces and names the spaces', () => {
+    const { container } = render(
+      <MessageBubble message={answer('Erstens gilt A [1]. Zweitens gilt B [2][3].', [cited('a', 'hr', 1), cited('b', 'it', 2), cited('c', 'hr', 3)])} />
+    );
+    const passages = [...container.querySelectorAll('.cite-passage')];
+    expect(passages.map((passage) => passage.textContent)).toEqual(['Erstens gilt A ', '. Zweitens gilt B ']);
+    expect(passages.map((passage) => passage.getAttribute('data-mixed'))).toEqual(['true', 'true']);
+    expect((passages[0] as HTMLElement).style.getPropertyValue('--space')).toBe('var(--space-1)');
+    expect((passages[1] as HTMLElement).style.getPropertyValue('--space')).toBe('var(--space-2)');
+    expect([...container.querySelectorAll('.cite-marker')].map((marker) => marker.textContent)).toEqual(['1', '2', '3']);
+    expect(screen.getByTestId('answer-spaces').textContent).toContain('hr');
+    expect(screen.getByTestId('answer-spaces').textContent).toContain('it');
+  });
+
+  it('does not colour an answer from a single knowledge space', () => {
+    const { container } = render(<MessageBubble message={answer('Nur A [1].', [cited('a', 'hr', 1)])} />);
+    expect(container.querySelector('.cite-passage')?.getAttribute('data-mixed')).toBe('false');
+    expect(screen.queryByTestId('answer-spaces')).toBeNull();
+  });
+
+  it('leaves markers without a cited source as plain text', () => {
+    const { container } = render(<MessageBubble message={answer('Fakt [7].', [{ ...cited('a', 'hr', 1), ref: null }])} />);
+    expect(container.querySelector('.cite-marker')).toBeNull();
+    expect(container.querySelector('.prose-chat')?.textContent).toBe('Fakt [7].');
+  });
+
+  it('marks the passages a hovered source backs', () => {
+    const { container } = render(
+      <MessageBubble message={answer('A [1]. B [2].', [cited('a', 'hr', 1), cited('b', 'it', 2)])} />
+    );
+    fireEvent.click(screen.getByRole('button', { expanded: false }));
+    const card = container.querySelectorAll('.source-card')[1];
+    fireEvent.mouseEnter(card);
+    const passages = [...container.querySelectorAll('.cite-passage')];
+    expect(passages.map((passage) => passage.getAttribute('data-active'))).toEqual(['false', 'true']);
+    expect(card.getAttribute('data-active')).toBe('true');
+    fireEvent.mouseLeave(card);
+    expect(container.querySelector('.cite-passage[data-active="true"]')).toBeNull();
   });
 });

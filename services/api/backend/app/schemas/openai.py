@@ -65,9 +65,11 @@ class OpenAIUsage(BaseModel):
 class WeaveAnswerMetadata(BaseModel):
     """Weave's own answer metadata, outside OpenAI's shape under `weave`
     (clients that don't know it ignore it): `notices` are the distinct
-    flags of the answer's knowledge spaces (app/services/notices.py)."""
+    flags of the answer's knowledge spaces, `knowledge_spaces` which `[N]`
+    citations come from which space (app/services/notices.py)."""
 
     notices: list[str]
+    knowledge_spaces: list[dict] = Field(default_factory=list)
 
 
 class OpenAIChatCompletionResponse(BaseModel):
@@ -84,7 +86,7 @@ class OpenAIChatCompletionResponse(BaseModel):
     model: str
     choices: list[OpenAIChatCompletionChoice]
     usage: OpenAIUsage | None = None
-    # Only present when the answer is flagged -- an unflagged response stays
+    # Only present when the answer is flagged or mixes knowledge spaces -- a plain response stays
     # byte-for-byte OpenAI's shape.
     weave: WeaveAnswerMetadata | None = Field(default=None, exclude_if=lambda value: value is None)
 
@@ -132,7 +134,7 @@ class OpenAIChatCompletionChunk(BaseModel):
     created: int
     model: str
     choices: list[OpenAIChatCompletionChunkChoice]
-    # Set on the final (`finish_reason`) chunk of a flagged answer only.
+    # Set on the final (`finish_reason`) chunk of a flagged or mixed answer only.
     weave: WeaveAnswerMetadata | None = None
 
 

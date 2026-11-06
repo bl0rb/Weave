@@ -599,7 +599,9 @@ describe('ChatApp sources panel and bot notices', () => {
     render(<I18nProvider initialLocale="de"><ChatApp /></I18nProvider>);
 
     expect((await screen.findByRole('note', { name: 'Hinweis' })).textContent).toBe('Testsystem – keine verbindlichen Aussagen');
-    await screen.findByText('Antwort [3]');
+    // "[3]" renders as a citation badge after the passage it backs.
+    await screen.findByText('Antwort');
+    expect(screen.queryByTitle('fk-info.pdf')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Quellen anzeigen' })).toBeNull();
     expect(screen.queryByRole('complementary', { name: 'Quellen' })).toBeNull();
     expect(screen.queryByText('fk-info.pdf')).toBeNull();

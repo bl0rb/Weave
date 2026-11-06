@@ -3,7 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, computed_field
 
-from app.services.notices import answer_notices
+from app.services.notices import answer_knowledge_spaces, answer_notices
 
 
 class MessageResponse(BaseModel):
@@ -22,6 +22,12 @@ class MessageResponse(BaseModel):
         """Same answer metadata as ChatResponse.notices, derived from the
         stored sources -- so a reloaded conversation keeps its flags."""
         return answer_notices(self.sources)
+
+    @computed_field
+    @property
+    def knowledge_spaces(self) -> list[dict]:
+        """Same answer metadata as ChatResponse.knowledge_spaces."""
+        return answer_knowledge_spaces(self.sources)
 
 
 class ConversationResponse(BaseModel):
