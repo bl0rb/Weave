@@ -13,6 +13,7 @@ import { ErrorBanner } from '@/components/chat/error-banner';
 import { toProxiedImageUrl } from '@/lib/portal-artifact-url';
 import { useI18n } from '@/i18n/provider';
 import { answerSpaces, citedSourcesByRef, spaceColor } from '@/lib/knowledge-spaces';
+import { normalizeAnswerMarkdown, remarkChatBreaks } from '@/lib/markdown';
 import { AnswerCitationsContext, AnswerSpacesFooter, CitationHighlightProvider, CitationSpan, rehypeCitations } from '@/components/chat/citations';
 import type { MessageKey } from '@/i18n/messages';
 
@@ -122,11 +123,11 @@ export function MessageBubble({
           <div className="prose-chat">
             <AnswerCitationsContext.Provider value={citations}>
               <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
+                remarkPlugins={[remarkGfm, remarkChatBreaks]}
                 rehypePlugins={[rehypeSanitize, [rehypeCitations, { refs: citedRefs }]]}
                 components={{ img: AnswerImage, span: CitationSpan }}
               >
-                {message.content}
+                {normalizeAnswerMarkdown(message.content)}
               </ReactMarkdown>
             </AnswerCitationsContext.Provider>
           </div>

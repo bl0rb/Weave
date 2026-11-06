@@ -225,3 +225,28 @@ describe('MessageBubble knowledge spaces and citations', () => {
     expect(container.querySelector('.cite-passage[data-active="true"]')).toBeNull();
   });
 });
+
+describe('MessageBubble answer formatting', () => {
+  afterEach(() => cleanup());
+
+  const html = (content: string) => {
+    const { container } = render(<MessageBubble message={{ ...makeMessage([]), streaming: false, content }} />);
+    return container.querySelector('.prose-chat')!.innerHTML;
+  };
+
+  it('keeps the line breaks the model wrote', () => {
+    expect(html('Adresse:\nMusterstraße 1\n12345 Musterstadt')).toBe('<p>Adresse:<br>\nMusterstraße 1<br>\n12345 Musterstadt</p>');
+  });
+
+  it('renders "•" bullets as a list', () => {
+    expect(html('Folgendes gilt:\n• Punkt eins\n• Punkt zwei')).toContain('<ul>\n<li>Punkt eins</li>\n<li>Punkt zwei</li>\n</ul>');
+  });
+
+  it('turns a <br> in a table cell into a line break instead of dropping it', () => {
+    expect(html('| A | B |\n|---|---|\n| x<br>y | 2 |')).toContain('<td>x<br>\ny</td>');
+  });
+
+  it('leaves code blocks alone', () => {
+    expect(html('```\n• kein Punkt\nzweite Zeile\n```')).toContain('<code>• kein Punkt\nzweite Zeile\n</code>');
+  });
+});
