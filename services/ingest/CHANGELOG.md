@@ -11,6 +11,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.22] - 2026-11-06
+
+### Added
+- **Knowledge spaces in answers**: an answer that mixes knowledge spaces colours each space in the
+  chat -- its `[N]` citation badges, the passages they back, the source cards and the sources panel,
+  with a legend naming the spaces. Hovering (or focusing) a source highlights the passages it backs,
+  hovering a badge its source. The knowledge-space notice (e.g. "Nur intern") moves below the answer.
+- **`knowledge_spaces` answer metadata** in weave-api: `{collection, refs, notice}` per space, in
+  order of first appearance, on `POST /v1/chat` and every conversation message; on the stream's
+  `sources` event and under `weave` of `/v1/chat/completions` together with `notices` when the
+  answer is flagged or mixes spaces.
+- **Per-bot settings**: `router_mode` (`rules`/`llm`, none = the runtime-wide `ROUTER_MODE`, shown in
+  `trace.router_mode`) and `retrieval.memory` (switch the knowledge memory off for one bot while it is
+  on centrally) -- in the bot editor, the bot document and export/import. Migration
+  `0058_bot_memory_router_mode` adds the two columns; existing bots keep their behaviour.
+- **"Meine Bots" with the full editor**: bot owners edit every setting an administrator can
+  (`GET`/`PUT /api/v1/bots/{id}/config`, LLM endpoint names via `/api/v1/bots/llm-endpoints`), with the
+  same checks. The n8n connection and its token, the uncollected-documents switch and the owners stay
+  with the administrators; a restricted bot's spaces cannot be emptied.
+- **Dokumente**: new view "Im Chat" (released and delivered, `review_state=in_chat`) and counts on
+  every view, including "Alle" and "Von mir freigegeben"; a Confluence import scope filter
+  (`?import=`), shown as a removable chip.
+- Tooltips on "Jetzt synchronisieren", "Quelle hinzufügen", "Wissensbereich neu indizieren" and
+  "Alle als ZIP".
+
+### Changed
+- Sidebar: "Verbindungen" sits right below "Wissensbereiche" instead of at the bottom.
+- A knowledge space's import scope ("Führungskräfte Info Guide (101)") opens the documents of that
+  import; when one import holds every document of the space it is plain text, since "N Dokumente
+  ansehen" already leads there.
+- The Weave mark only weaves -- it no longer turns, flips or sways, and a finite run ends without
+  the scale pulse.
+
+### Fixed
+- **Confluence sync picks up new attachments**: adding an attachment does not bump the page version,
+  so an unchanged page skipped its attachments. Unchanged pages now compare their attachment listing
+  with a fingerprint stored at import and are re-imported on change (the first sync after the update
+  re-imports older pages whose attachments differ from what was stored, once). Run "Jetzt
+  synchronisieren" once to bring in attachments added before.
+- **Per-bot reranking**: the bot's "Reranking" switch was stored but never reached Weave-Retrieval;
+  Runtime now sends `rerank: false` and Retrieval skips the reranker for that search.
+- **Chat formatting**: single line breaks the model wrote are kept, "•" bullets render as lists and a
+  `<br>` in a table cell becomes a line break instead of being dropped.
+- The import-scope link on a knowledge space searched the scope's name as text and found nothing.
+
 ## [0.7.21] - 2026-11-05
 
 ### Added
