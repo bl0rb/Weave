@@ -1,12 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Info, Menu, PanelRight } from 'lucide-react';
 import { Rail } from '@/components/chat/rail';
 import { MessageList } from '@/components/chat/message-list';
 import { Composer } from '@/components/chat/composer';
 import { SourcesPanel } from '@/components/chat/sources-panel';
+import { CitationHighlightProvider } from '@/components/chat/citations';
 import { ErrorBanner } from '@/components/chat/error-banner';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/i18n/provider';
@@ -525,6 +526,8 @@ export function ChatApp() {
   const showSources = selectedBot?.show_sources !== false;
   const sourcesPanelShown = showSources && sourcesPanelOpen;
   const currentScopeLabel = scopeLabel(selectedCollections, collections, t);
+  // Knowledge-space names for the colour legend of mixed answers.
+  const spaceNames = useMemo(() => new Map((collections ?? []).map((collection) => [collection.slug, collection.name])), [collections]);
   const conversationTitle = conversations?.find((c) => c.id === conversationId)?.title ?? t('chat.newConversation');
 
   // The right-hand sources panel always follows the latest assistant
@@ -541,6 +544,7 @@ export function ChatApp() {
     latestAnsweredMessage;
 
   return (
+    <CitationHighlightProvider spaceNames={spaceNames}>
     <div className={sourcesPanelShown ? 'chat-shell' : 'chat-shell chat-sources-collapsed'}>
       <Rail
         conversations={conversations}
@@ -653,8 +657,10 @@ export function ChatApp() {
         <SourcesPanel
           sources={activeSourceMessage?.sources ?? null}
           onCollapse={() => setSourcesPanelOpen(false)}
+          messageId={activeSourceMessage?.id}
         />
       ) : null}
     </div>
+    </CitationHighlightProvider>
   );
 }

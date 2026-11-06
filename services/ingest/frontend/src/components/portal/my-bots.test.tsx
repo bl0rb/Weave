@@ -16,12 +16,22 @@ const bot = {
     { user_id: null, team_id: 't-service', role: 'user', name: 'Service' },
   ],
 };
+// GET /api/v1/bots/{id}/config: the admin editor's shape, without the n8n address.
+const config = {
+  ...bot, webhook_url: null, streaming: false, has_auth_token: false, timeout_seconds: 120, temperature: 0.2,
+  retrieval_filters: {}, top_k: 20, final_k: 5, rerank: true, include_uncollected: false, min_score: null,
+  clarify_below: null, weak_context_below: null, query_rewrite: null, uncertainty_hint: true, show_sources: true,
+  disclaimer: null, memory: true, router_mode: null, intake: null, blocked_topics: [], blocked_topic_reply: null,
+  collection_notices: [], agent: null, llm_endpoint: null, llm_endpoints: [], created_at: '2026-09-26T08:00:00Z',
+};
 
 beforeEach(() => {
   api.mockReset();
   api.mockImplementation(async (path, init) => {
-    if (init?.method === 'PATCH') return { ...bot, ...JSON.parse(init.body as string), grants: bot.grants };
+    if (init?.method === 'PUT') return { ...config, ...JSON.parse(init.body as string), grants: bot.grants };
     if (path === '/api/v1/bots') return { items: [bot] };
+    if (path === '/api/v1/bots/wissens-bot/config') return config;
+    if (path === '/api/v1/bots/llm-endpoints') return { items: [] };
     if (path === '/api/v1/collections') return { items: [{ collection_id: 'c1', slug: 'servicewissen', name: 'Servicewissen', description: 'x', visibility: 'public', grants: [] }] };
     if (path === '/api/v1/directory/teams') return { items: [{ id: 't-service', name: 'Service', member_count: 3 }, { id: 't-legal', name: 'Recht', member_count: 2 }] };
     throw new Error(`unexpected request: ${path}`);
@@ -35,31 +45,39 @@ it('lists owned bots with who may use them', async () => {
   expect(screen.getByText('Gruppe Service')).toBeTruthy();
 });
 
-it('saves content and users but keeps the owners fixed', async () => {
+const openStep = async (name: RegExp) => fireEvent.click(await screen.findByRole('button', { name }));
+
+it('edits every setting in the admin editor but keeps the owners fixed', async () => {
   render(<MyBots />);
   fireEvent.click(await screen.findByRole('button', { name: 'Wissens-Bot bearbeiten' }));
-  await screen.findByRole('checkbox', { name: 'Servicewissen' });
+  await openStep(/^\d+Wissen$/);
+  fireEvent.click(await screen.findByRole('checkbox', { name: 'Servicewissen' }));
+  expect(screen.getByRole('checkbox', { name: 'admin-bereich' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('switch', { name: /Wissensgedächtnis nutzen/ }));
+  fireEvent.click(screen.getByRole('switch', { name: 'Reranking' }));
+
+  await openStep(/^\d+Freigabe$/);
   // Owners are shown, but not removable by an owner.
   expect(screen.queryByRole('button', { name: 'ada entfernen' })).toBeNull();
-  expect(screen.getByRole('checkbox', { name: 'admin-bereich' })).toBeTruthy();
-
-  fireEvent.click(screen.getByRole('checkbox', { name: 'Servicewissen' }));
   fireEvent.click(screen.getByRole('checkbox', { name: 'Recht' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Bot speichern' }));
 
-  await waitFor(() => expect(api.mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(true));
-  const [path, init] = api.mock.calls.find(([, options]) => options?.method === 'PATCH')!;
-  expect(path).toBe('/api/v1/bots/wissens-bot');
+  await waitFor(() => expect(api.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(true));
+  const [path, init] = api.mock.calls.find(([, options]) => options?.method === 'PUT')!;
+  expect(path).toBe('/api/v1/bots/wissens-bot/config');
   const body = JSON.parse(init?.body as string);
   expect(body.collections).toEqual(['admin-bereich', 'servicewissen']);
-  expect(body.grants).toEqual([{ team_id: 't-service', role: 'user' }, { team_id: 't-legal', role: 'user' }]);
+  expect(body.grants).toEqual([{ user_id: 'u-ada', role: 'owner' }, { team_id: 't-service', role: 'user' }, { team_id: 't-legal', role: 'user' }]);
   expect(body.system_prompt).toBe('Hilf.');
+  expect(body.memory).toBe(false);
+  expect(body.rerank).toBe(false);
   expect(await screen.findByText('Bot gespeichert.')).toBeTruthy();
 });
 
 it('keeps the last space of a restricted bot selected', async () => {
   render(<MyBots />);
   fireEvent.click(await screen.findByRole('button', { name: 'Wissens-Bot bearbeiten' }));
+  await openStep(/^\d+Wissen$/);
   await screen.findByRole('checkbox', { name: 'Servicewissen' });
   const only = screen.getByRole('checkbox', { name: 'admin-bereich' }) as HTMLInputElement;
   // Emptying the list would widen the bot to every readable space.

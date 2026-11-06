@@ -34,6 +34,7 @@ from kombu.exceptions import OperationalError as BrokerOperationalError
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import OperationalError as DbOperationalError
 from sqlalchemy.orm import defer
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
 from app.database.session import SessionLocal
@@ -670,6 +671,33 @@ def _cancel_requested(db, run_id: str) -> bool:
     return bool(db.execute(select(ImportRun.cancel_requested).where(ImportRun.id == run_id)).scalar())
 
 
+def _attachments_signature(attachments: list[AttachmentMeta]) -> str:
+    """Fingerprint of a page's attachment listing (id + versioned download
+    URL), so additions, deletions and re-uploads are all detected."""
+    lines = sorted(f'{attachment.id}\t{attachment.download_url}' for attachment in attachments)
+    return hashlib.sha256('\n'.join(lines).encode('utf-8')).hexdigest()
+
+
+def _attachments_changed(db, client: PageSource, page: Page, existing_job: Job) -> bool:
+    """Whether an unchanged-version page's attachments differ from what its
+    last job stored. Adding/removing an attachment in Confluence does NOT
+    bump the page version, so the version compare alone misses it. Listing
+    failures count as unchanged (the page keeps its last good import)."""
+    try:
+        attachments = list(client.iter_attachments(page.id))
+    except ConfluenceError as exc:
+        logger.warning('attachment listing for refresh check of page %s failed: %s', page.id, exc)
+        return False
+    import_settings = ((existing_job.processing_info or {}).get('settings') or {}).get('import') or {}
+    stored_signature = import_settings.get('attachments_signature')
+    if stored_signature is not None:
+        return stored_signature != _attachments_signature(attachments)
+    # Job imported before signatures were recorded: fall back to "is any
+    # listed attachment not stored as an artifact yet".
+    stored_urls = set(db.scalars(select(JobArtifact.source_url).where(JobArtifact.job_id == existing_job.id)))
+    return any(attachment.download_url[:2048] not in stored_urls for attachment in attachments)
+
+
 def _store_attachments(
     db,
     run: ImportRun,
@@ -703,6 +731,10 @@ def _store_attachments(
     except ConfluenceError as exc:
         state.add_error(page.id, page.title, f'attachment listing failed: {exc}')
         return child_job_ids
+    # Remembered so a later refresh can see attachment-only changes, which
+    # do not bump the Confluence page version (_attachments_changed).
+    job.processing_info['settings']['import']['attachments_signature'] = _attachments_signature(attachments)
+    flag_modified(job, 'processing_info')
 
     for attachment in attachments:
         display_name = attachment.filename or attachment.id
@@ -1008,6 +1040,9 @@ def _import_one_page(
         and existing_state is not None
         and existing_state.page_version == page.version
         and existing_job is not None
+        and not (
+            options.get('include_attachments', True) and _attachments_changed(db, client, page, existing_job)
+        )
     ):
         # Case (b): unchanged since last known state -- no new job. Still
         # marked visited (with the PREVIOUS job id, so _finalize_run's

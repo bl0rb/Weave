@@ -126,6 +126,11 @@ class ManagedBotWrite(BaseModel):
     config_extras: BotConfigExtras | None = None
     # Chat presentation: hide the sources panel; a note next to the composer.
     show_sources: bool = True
+    # Weave-Runtime RetrievalConfig.memory: use the knowledge memory while it
+    # is on centrally; False switches it off for this bot.
+    memory: bool = True
+    # Weave-Runtime BotConfig.router_mode; None = the runtime-wide ROUTER_MODE.
+    router_mode: Literal['rules', 'llm'] | None = None
     disclaimer: str | None = Field(default=None, max_length=500)
     # Intake question at conversation start (LLM bots only) and the topic
     # block (Runtime's BotConfig.intake / guard.blocked_topics); a None
@@ -274,6 +279,8 @@ class ManagedBotAdminResponse(BaseModel):
     # Only the keys that are set (see BotConfigExtras).
     config_extras: dict | None = None
     show_sources: bool = True
+    memory: bool = True
+    router_mode: Literal['rules', 'llm'] | None = None
     disclaimer: str | None = None
     intake: dict | None = None
     blocked_topics: list[dict] = Field(default_factory=list)
@@ -357,6 +364,8 @@ class ManagedBotInternalResponse(BaseModel):
     clarify_ambiguous_margin: float | None = None
     clarify_ambiguous_question: str | None = None
     show_sources: bool = True
+    memory: bool = True
+    router_mode: Literal['rules', 'llm'] | None = None
     disclaimer: str | None = None
     intake: dict | None = None
     blocked_topics: list[dict] = Field(default_factory=list)

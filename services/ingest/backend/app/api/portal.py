@@ -629,7 +629,8 @@ def list_portal_documents(
 ) -> PortalDocumentListResponse:
     # review_state: 'review' (default when review_only=true) excludes skipped
     # and parked documents from the pending-review view; 'skipped' / 'parked'
-    # show only those; 'failed' shows failed processing or delivery; 'all'
+    # show only those; 'failed' shows failed processing or delivery;
+    # 'in_chat' released documents delivered to the chat; 'all'
     # (default otherwise) shows everything.
     effective_review_state = review_state or ('review' if review_only else 'all')
     collection_id_expr = Job.processing_info['settings']['collection_id'].as_string()
@@ -684,6 +685,9 @@ def list_portal_documents(
         query = query.where(or_(review_decision_expr.is_(None), func.lower(review_decision_expr).not_in(_DECIDED_REVIEW_STATES)))
     elif effective_review_state == 'failed':
         query = query.where(or_(Job.status == JobStatus.FAILED, DocumentRelease.status == 'failed'))
+    elif effective_review_state == 'in_chat':
+        # Released and delivered to the chat -- the Übersicht's `in_chat`.
+        query = query.where(DocumentRelease.status == 'sent')
     query = _apply_quality_grade_filter(query, quality_grade_expr, quality_grade)
     query = _apply_import_scope_filter(query, import_scope)
     query = _apply_document_filters(query, user=user, q=q, source=source, released_by_me=released_by_me)
@@ -712,6 +716,8 @@ def list_portal_documents(
         count_query = count_query.where(or_(review_decision_expr.is_(None), func.lower(review_decision_expr).not_in(_DECIDED_REVIEW_STATES)))
     elif effective_review_state == 'failed':
         count_query = count_query.where(or_(Job.status == JobStatus.FAILED, DocumentRelease.status == 'failed'))
+    elif effective_review_state == 'in_chat':
+        count_query = count_query.where(DocumentRelease.status == 'sent')
     count_query = _apply_quality_grade_filter(count_query, quality_grade_expr, quality_grade)
     count_query = _apply_import_scope_filter(count_query, import_scope)
     count_query = _apply_document_filters(count_query, user=user, q=q, source=source, released_by_me=released_by_me)

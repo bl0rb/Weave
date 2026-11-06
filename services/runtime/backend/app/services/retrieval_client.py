@@ -215,6 +215,7 @@ def search(
     allowed_collections: list[str] | None = None,
     top_k: int | None = None,
     final_k: int | None = None,
+    rerank: bool = True,
 ) -> list[RetrievedChunk]:
     """POST `{settings.retrieval_base_url}/api/v1/search` with
     `Authorization: Bearer {settings.retrieval_api_token}` and a body
@@ -241,6 +242,10 @@ def search(
     configured default for that value" -- same meaning as on that service's
     SearchRequest, not "send no candidates".
 
+    `rerank=False` (a bot's `retrieval.rerank` switch) asks Weave-Retrieval
+    to skip its reranker for this search; it is only sent when off, so a
+    default request body stays unchanged.
+
     Never retries -- see this module's docstring for why. Raises
     RetrievalUnavailable for a network-level failure/timeout/5xx/malformed
     200 body, RetrievalError for a 4xx.
@@ -256,6 +261,8 @@ def search(
         'top_k': top_k,
         'final_k': final_k,
     }
+    if not rerank:
+        payload['rerank'] = False
 
     try:
         response = httpx.post(url, headers=headers, json=payload, timeout=settings.retrieval_timeout_seconds)

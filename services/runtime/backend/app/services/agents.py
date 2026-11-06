@@ -515,6 +515,7 @@ def run_subagent(
                 chunks = retrieval_client.search(
                     query=query, filters=call_filters, allowed_teams=allowed_teams,
                     allowed_collections=call_collections, top_k=top_k, final_k=top_k,
+                    rerank=bot.retrieval.rerank,
                 )
             except (retrieval_client.RetrievalUnavailable, retrieval_client.RetrievalError) as exc:
                 logger.warning('subagent %r search_knowledge failed: %s', subagent.id, exc)

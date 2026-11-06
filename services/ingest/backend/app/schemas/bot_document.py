@@ -68,6 +68,7 @@ class RetrievalConfig(BaseModel):
     top_k: int = 20
     final_k: int = 5
     rerank: bool = True
+    memory: bool = True
     query_rewrite: bool | None = None
     collections: list[str] = Field(default_factory=list)
     include_uncollected: bool = True
@@ -266,6 +267,7 @@ class BotConfig(BaseModel):
     agent: AgentConfig | None = None
     show_sources: bool = True
     disclaimer: str | None = Field(default=None, max_length=500)
+    router_mode: Literal['rules', 'llm'] | None = None
     collection_notices: list[CollectionNotice] = Field(default_factory=list, max_length=50)
     intake: IntakeConfig | None = None
 

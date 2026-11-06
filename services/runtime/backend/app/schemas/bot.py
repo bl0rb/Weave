@@ -151,6 +151,11 @@ class RetrievalConfig(BaseModel):
     top_k: int = 20
     final_k: int = 5
     rerank: bool = True
+    # Use the knowledge memory (ADR-0009) for this bot while it is switched
+    # on centrally (KNOWLEDGE_MEMORY_MODE): overview answers, focusing the
+    # chunk search and the agents' memory_lookup. `False` turns all of it
+    # off for this bot only; it can never switch on a memory that is off.
+    memory: bool = True
     # History-aware query rewrite: when the request carries history, one
     # extra LLM call condenses the latest message into a standalone search
     # query ("und bei Teilzeit?" -> "Kündigungsfrist bei Teilzeit laut
@@ -577,6 +582,9 @@ class BotConfig(BaseModel):
     # keine verbindlichen Aussagen"); None shows nothing.
     show_sources: bool = True
     disclaimer: str | None = Field(default=None, max_length=500)
+    # How this bot's questions are classified: 'rules' (keyword router) or
+    # 'llm' (one LLM call); None follows the runtime-wide ROUTER_MODE.
+    router_mode: Literal['rules', 'llm'] | None = None
     # Notices flagged on answers that use a source from one of these
     # knowledge spaces -- see CollectionNotice.
     collection_notices: list[CollectionNotice] = Field(default_factory=list, max_length=50)

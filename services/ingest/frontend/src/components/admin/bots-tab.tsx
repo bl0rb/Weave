@@ -9,7 +9,7 @@ import type { Team } from '@/lib/auth-types';
 import { BotSharing } from '@/components/bot-sharing';
 import { BotImportDialog } from './bot-import-dialog';
 import { toGrantInputs, type BotGrant } from '@/lib/bots';
-import type { KnowledgeSpace } from '@/lib/portal';
+import type { KnowledgeSpace, TeamRef } from '@/lib/portal';
 import {
   Badge,
   ConfirmDialog,
@@ -88,7 +88,7 @@ type BlockedTopic = { name: string; description: string | null; keywords: string
 // Runtime's BotConfig.collection_notices: flagged on answers using that space's sources.
 type CollectionNotice = { collection: string; text: string };
 
-type ManagedBot = {
+export type ManagedBot = {
   id: string;
   kind: 'n8n' | 'llm';
   name: string;
@@ -122,6 +122,10 @@ type ManagedBot = {
   // Chat presentation: hide the sources panel; a note next to the composer.
   show_sources?: boolean;
   disclaimer?: string | null;
+  // Use the knowledge memory while it is on centrally; the router mode
+  // ('rules' | 'llm'), null = the runtime-wide ROUTER_MODE.
+  memory?: boolean;
+  router_mode?: 'rules' | 'llm' | null;
   intake?: IntakeConfig | null;
   blocked_topics?: BlockedTopic[];
   blocked_topic_reply?: string | null;
@@ -180,6 +184,8 @@ const emptyDraft = (noContextReply: string): BotDraft => ({
   uncertainty_hint: true,
   show_sources: true,
   disclaimer: null,
+  memory: true,
+  router_mode: null,
   intake: null,
   blocked_topics: [],
   blocked_topic_reply: null,
@@ -367,7 +373,12 @@ export function BotsTab() {
   </div>;
 }
 
-function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot | null; teams: Team[]; spaces: KnowledgeSpace[]; onClose: () => void; onSaved: () => Promise<void> }) {
+/**
+ * The bot editor. `owner`: "Meine Bots" -- the same settings for a bot the
+ * person owns, saved through the owner route; the n8n connection, the
+ * token and the owners stay with the administrators (the server keeps them).
+ */
+export function BotEditor({ bot, teams, spaces, onClose, onSaved, owner = false }: { bot: ManagedBot | null; teams: (Team | TeamRef)[]; spaces: KnowledgeSpace[]; onClose: () => void; onSaved: () => Promise<void>; owner?: boolean }) {
   const { t } = useI18n();
   const [draft, setDraft] = useState<BotDraft>(() => bot ? { ...bot, auth_token: '', clear_auth_token: false } : emptyDraft(t('admin.bots.defaultNoContextReply')));
   const [saving, setSaving] = useState(false);
@@ -378,11 +389,11 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
   const [endpoints, setEndpoints] = useState<LlmEndpointOption[]>([]);
   useEffect(() => {
     let cancelled = false;
-    apiJson<{ items: LlmEndpointOption[] }>('/api/v1/auth/admin/chat-provider/endpoints')
+    apiJson<{ items: LlmEndpointOption[] }>(owner ? '/api/v1/bots/llm-endpoints' : '/api/v1/auth/admin/chat-provider/endpoints')
       .then(result => { if (!cancelled) setEndpoints(result.items); })
       .catch(() => undefined);
     return () => { cancelled = true; };
-  }, []);
+  }, [owner]);
   const ownEndpointOptions = [
     ...endpoints.filter(endpoint => endpoint.id !== 'default'),
     ...(draft.llm_endpoint && !endpoints.some(endpoint => endpoint.id === draft.llm_endpoint)
@@ -400,7 +411,7 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
   ];
   const canSave = Boolean(
     draft.id.trim() && draft.name.trim() &&
-    (draft.kind === 'llm' ? draft.system_prompt?.trim() : draft.webhook_url?.trim()) &&
+    (draft.kind === 'llm' ? draft.system_prompt?.trim() : owner || draft.webhook_url?.trim()) &&
     agentErrors.length === 0 && guardRuleErrors.length === 0 && !saving
   );
 
@@ -439,6 +450,8 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
       config_extras: draft.config_extras ?? null,
       show_sources: draft.show_sources ?? true,
       disclaimer: draft.disclaimer?.trim() || null,
+      memory: draft.memory ?? true,
+      router_mode: draft.kind === 'llm' ? draft.router_mode ?? null : null,
       intake: intake ? { ...intake, question: intake.question.trim(), options: cleanList(intake.options), label: intake.label?.trim() || null } : null,
       blocked_topics: (draft.blocked_topics ?? []).map(topic => ({ name: topic.name.trim(), description: topic.description?.trim() || null, keywords: cleanList(topic.keywords) })),
       blocked_topic_reply: draft.blocked_topic_reply?.trim() || null,
@@ -449,7 +462,9 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
       ...(!bot ? { id: draft.id } : {}),
     };
     try {
-      await apiJson(bot ? `/api/v1/auth/admin/bots/${encodeURIComponent(bot.id)}` : '/api/v1/auth/admin/bots', {
+      const target = owner && bot ? `/api/v1/bots/${encodeURIComponent(bot.id)}/config`
+        : bot ? `/api/v1/auth/admin/bots/${encodeURIComponent(bot.id)}` : '/api/v1/auth/admin/bots';
+      await apiJson(target, {
         method: bot ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
       await onSaved();
@@ -472,7 +487,7 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
     behavior: [
       ...(draft.kind === 'llm'
         ? (!draft.system_prompt?.trim() ? [t('admin.bots.problem.systemPrompt')] : [])
-        : (!draft.webhook_url?.trim() ? [t('admin.bots.problem.webhook')] : [])),
+        : (!owner && !draft.webhook_url?.trim() ? [t('admin.bots.problem.webhook')] : [])),
       ...guardRuleErrors,
     ],
     agents: agentErrors,
@@ -511,7 +526,7 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
       </section>}
 
       {step === 'behavior' && <section className="space-y-4" aria-label={t('admin.bots.step.behavior')}>
-        {draft.kind === 'n8n' ? <>
+        {draft.kind === 'n8n' && owner ? <p className="text-sm text-[var(--muted)]">{t('admin.bots.owner.connectionHint')}</p> : draft.kind === 'n8n' ? <>
           <Field label={t('admin.bots.field.webhook.label')} hint={t('admin.bots.field.webhook.hint')}><input className={inputClass} type="url" required value={draft.webhook_url || ''} onChange={event => set('webhook_url', event.target.value)} placeholder="https://n8n.example.com/webhook/weave-agent" /></Field>
           <div className="grid gap-4 sm:grid-cols-2"><Field label={t('admin.bots.field.bearerToken.label')} hint={t('admin.bots.field.bearerToken.hint')}><div className="relative"><KeyRound className="pointer-events-none absolute left-3 top-4 h-4 w-4 text-slate-400" /><input className={`${inputClass} pl-9`} type="password" autoComplete="new-password" disabled value="" placeholder={draft.has_auth_token ? t('admin.bots.field.bearerToken.placeholderStored') : t('admin.bots.field.bearerToken.placeholderPending')} readOnly /></div></Field><Field label={t('admin.bots.field.timeout.label')} hint={t('admin.bots.field.timeout.hint')}><input className={inputClass} type="number" min={1} max={14400} value={draft.timeout_seconds} onChange={event => set('timeout_seconds', Number(event.target.value) || 120)} /></Field></div>
           <Toggle checked={draft.streaming} onChange={value => set('streaming', value)} label={t('admin.bots.toggle.streaming')} />
@@ -534,6 +549,13 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
             selected={draft.llm_endpoints ?? []}
             onToggle={value => set('llm_endpoints', (draft.llm_endpoints ?? []).includes(value) ? (draft.llm_endpoints ?? []).filter(item => item !== value) : [...(draft.llm_endpoints ?? []), value])}
           />
+          <Field label={t('admin.bots.field.routerMode.label')} hint={t('admin.bots.field.routerMode.hint')}>
+            <select className={inputClass} value={draft.router_mode ?? ''} onChange={event => set('router_mode', (event.target.value || null) as BotDraft['router_mode'])}>
+              <option value="">{t('admin.bots.field.routerMode.central')}</option>
+              <option value="rules">{t('admin.bots.field.routerMode.rules')}</option>
+              <option value="llm">{t('admin.bots.field.routerMode.llm')}</option>
+            </select>
+          </Field>
           <Toggle checked={Boolean(intake)} onChange={value => set('intake', value ? emptyIntake() : null)} label={t('admin.bots.toggle.intake')} />
           {intake && <div className="space-y-4 rounded-xl border border-[var(--line-2)] p-4">
             <p className="text-sm text-[var(--muted)]">{t('admin.bots.intake.hint')}</p>
@@ -550,7 +572,9 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
 
       {step === 'knowledge' && <section className="space-y-4" aria-label={t('admin.bots.step.knowledge')}>
         {draft.kind === 'llm' && <Toggle checked={Boolean(draft.retrieval_enabled)} onChange={value => set('retrieval_enabled', value)} label={t('admin.bots.toggle.retrieval')} />}
-        <ScopeChoices title={t('admin.bots.scope.spaces.title')} emptyLabel={t('admin.bots.scope.spaces.empty')} items={spaceChoices} selected={draft.collections} onToggle={value => toggleValue('collections', value)} />
+        {/* An owner may not empty a restricted bot's spaces: no spaces means "every space the asker can read". */}
+        <ScopeChoices title={t('admin.bots.scope.spaces.title')} emptyLabel={owner && bot?.collections.length ? t('portal.bots.spacesKeepOne') : t('admin.bots.scope.spaces.empty')} items={spaceChoices} selected={draft.collections} onToggle={value => toggleValue('collections', value)}
+          locked={owner && bot?.collections.length && draft.collections.length === 1 ? draft.collections : []} />
         {draft.kind === 'llm' && draft.retrieval_enabled && <div className="grid gap-4 sm:grid-cols-3"><Field label={t('admin.bots.field.topK')}><input className={inputClass} type="number" min={1} value={draft.top_k} onChange={event => set('top_k', Number(event.target.value) || 20)} /></Field><Field label={t('admin.bots.field.finalK')}><input className={inputClass} type="number" min={1} max={draft.top_k} value={draft.final_k} onChange={event => set('final_k', Number(event.target.value) || 5)} /></Field><div className="flex items-end pb-2"><Toggle checked={Boolean(draft.rerank)} onChange={value => set('rerank', value)} label={t('admin.bots.field.reranking')} /></div></div>}
         {draft.kind === 'llm' && draft.retrieval_enabled && <Field label={t('admin.bots.field.departmentFilter.label')} hint={t('admin.bots.field.departmentFilter.hint')}><input className={inputClass} value={String(draft.retrieval_filters?.department || '')} onChange={event => set('retrieval_filters', { ...draft.retrieval_filters, department: event.target.value || null })} placeholder={t('admin.bots.field.departmentFilter.placeholder')} /></Field>}
         {draft.kind === 'llm' && draft.retrieval_enabled && <div className="grid gap-4 sm:grid-cols-3">
@@ -559,6 +583,7 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
           <Field label={t('admin.bots.field.weakContextBelow.label')} hint={t('admin.bots.field.weakContextBelow.hint')}><input className={inputClass} type="number" min={0} max={1} step={0.05} value={draft.weak_context_below ?? ''} onChange={event => set('weak_context_below', scoreOrNull(event.target.value))} /></Field>
         </div>}
         {draft.kind === 'llm' && draft.retrieval_enabled && <Toggle checked={draft.query_rewrite === true} onChange={value => set('query_rewrite', value ? true : null)} label={t('admin.bots.toggle.queryRewrite')} />}
+        {draft.kind === 'llm' && draft.retrieval_enabled && <Toggle checked={draft.memory !== false} onChange={value => set('memory', value)} label={t('admin.bots.toggle.memory')} />}
         <Toggle checked={draft.require_sources} onChange={value => set('require_sources', value)} label={t('admin.bots.toggle.requireSources')} />
         {draft.require_sources && <Toggle checked={draft.uncertainty_hint !== false} onChange={value => set('uncertainty_hint', value)} label={t('admin.bots.toggle.uncertaintyHint')} />}
         {draft.require_sources && <Field label={t('admin.bots.field.noContextReply.label')}><textarea className={inputClass} rows={2} value={draft.no_context_reply} onChange={event => set('no_context_reply', event.target.value)} /></Field>}
@@ -578,7 +603,7 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
           : <p className="text-sm text-[var(--muted)]">{t('admin.bots.agent.offHint')}</p>}
       </section>}
 
-      {step === 'sharing' && <BotSharing isPublic={draft.public} onPublicChange={value => set('public', value)} grants={draft.grants} onGrantsChange={value => set('grants', value)} teams={teams} canEditOwners disabled={saving} />}
+      {step === 'sharing' && <BotSharing isPublic={draft.public} onPublicChange={value => set('public', value)} grants={draft.grants} onGrantsChange={value => set('grants', value)} teams={teams} canEditOwners={!owner} disabled={saving} />}
 
       {step === 'review' && <section className="space-y-4" aria-label={t('admin.bots.step.review')}>
         <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-[max-content_1fr]">
@@ -597,9 +622,9 @@ function BotEditor({ bot, teams, spaces, onClose, onSaved }: { bot: ManagedBot |
   </Modal>;
 }
 
-function ScopeChoices({ title, emptyLabel, items, selected, onToggle }: { title: string; emptyLabel: string; items: { value: string; label: string }[]; selected: string[]; onToggle: (value: string) => void }) {
+function ScopeChoices({ title, emptyLabel, items, selected, onToggle, locked = [] }: { title: string; emptyLabel: string; items: { value: string; label: string }[]; selected: string[]; onToggle: (value: string) => void; locked?: string[] }) {
   const { t } = useI18n();
-  return <fieldset><legend className="text-sm font-medium text-slate-700">{title}</legend><p className="mt-1 text-xs text-slate-400">{emptyLabel}</p>{items.length ? <div className="mt-2 grid max-h-56 gap-2 overflow-y-auto rounded-xl border border-slate-200 p-3 sm:grid-cols-2 lg:grid-cols-3">{items.map(item => <label key={item.value} className="flex items-center gap-2 text-sm text-slate-700" title={item.value}><input type="checkbox" checked={selected.includes(item.value)} onChange={() => onToggle(item.value)} />{item.label}</label>)}</div> : <p className="mt-2 text-sm text-amber-700">{t('admin.bots.scope.noEntries')}</p>}</fieldset>;
+  return <fieldset><legend className="text-sm font-medium text-slate-700">{title}</legend><p className="mt-1 text-xs text-slate-400">{emptyLabel}</p>{items.length ? <div className="mt-2 grid max-h-56 gap-2 overflow-y-auto rounded-xl border border-slate-200 p-3 sm:grid-cols-2 lg:grid-cols-3">{items.map(item => <label key={item.value} className="flex items-center gap-2 text-sm text-slate-700" title={item.value}><input type="checkbox" checked={selected.includes(item.value)} disabled={locked.includes(item.value)} onChange={() => onToggle(item.value)} />{item.label}</label>)}</div> : <p className="mt-2 text-sm text-amber-700">{t('admin.bots.scope.noEntries')}</p>}</fieldset>;
 }
 
 function AgentEditor({

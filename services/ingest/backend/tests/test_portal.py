@@ -1311,6 +1311,7 @@ def test_portal_documents_search_source_failed_and_released_by_me_filters(monkey
     assert ids(source='upload') == {upload.id, failed.id, mine.id, theirs.id}
     assert ids(review_state='failed') == {failed.id}
     assert ids(released_by_me='true') == {mine.id}
+    assert ids(review_state='in_chat') == {mine.id, theirs.id}
     assert authed.get('/api/v1/portal/documents', params={'source': 'fax'}).status_code == 422
 
 

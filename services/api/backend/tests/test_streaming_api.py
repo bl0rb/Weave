@@ -679,9 +679,13 @@ def test_chat_uses_the_dedicated_chat_read_timeout_not_the_default_http_read_tim
 # --- answer notices (Source.notice lifted to answer metadata) -----------------
 
 FLAGGED_SOURCES = [
-    {'source': 'confluence', 'document_id': 'doc-1', 'chunk_id': 1, 'collection': 'intern', 'notice': 'Nur intern'},
-    {'source': 'confluence', 'document_id': 'doc-2', 'chunk_id': 1, 'collection': 'intern', 'notice': 'Nur intern'},
-    {'source': 'upload', 'document_id': 'doc-3', 'chunk_id': 1, 'collection': 'public', 'notice': None},
+    {'source': 'confluence', 'document_id': 'doc-1', 'chunk_id': 1, 'collection': 'intern', 'notice': 'Nur intern', 'ref': 1},
+    {'source': 'confluence', 'document_id': 'doc-2', 'chunk_id': 1, 'collection': 'intern', 'notice': 'Nur intern', 'ref': 3},
+    {'source': 'upload', 'document_id': 'doc-3', 'chunk_id': 1, 'collection': 'public', 'notice': None, 'ref': 2},
+]
+FLAGGED_SPACES = [
+    {'collection': 'intern', 'refs': [1, 3], 'notice': 'Nur intern'},
+    {'collection': 'public', 'refs': [2], 'notice': None},
 ]
 
 
@@ -702,13 +706,16 @@ def test_chat_and_conversation_carry_the_answer_notices(db_session, runtime):
     response = client.post('/v1/chat', json={'bot_id': 'legal-support', 'message': 'Hi'}, headers=auth_headers(raw_token))
     assert response.status_code == 200
     assert response.json()['notices'] == ['Nur intern']
+    assert response.json()['knowledge_spaces'] == FLAGGED_SPACES
 
     conversation = client.get(f"/v1/conversations/{response.json()['conversation_id']}", headers=auth_headers(raw_token)).json()
     assert [message['notices'] for message in conversation['messages']] == [[], ['Nur intern']]
+    assert [message['knowledge_spaces'] for message in conversation['messages']] == [[], FLAGGED_SPACES]
 
     streamed = client.post('/v1/chat/stream', json={'bot_id': 'legal-support', 'message': 'Hi'}, headers=auth_headers(raw_token))
     sources_event = next(event for event in _parse_sse_events(streamed.text) if event['type'] == 'sources')
     assert sources_event['notices'] == ['Nur intern']
+    assert sources_event['knowledge_spaces'] == FLAGGED_SPACES
 
 
 def test_chat_completions_carry_the_answer_notices_under_weave(db_session, runtime):
@@ -718,11 +725,26 @@ def test_chat_completions_carry_the_answer_notices_under_weave(db_session, runti
     request = {'model': 'legal-support', 'messages': [{'role': 'user', 'content': 'Hi'}]}
 
     body = client.post('/v1/chat/completions', json=request, headers=auth_headers(raw_token)).json()
-    assert body['weave'] == {'notices': ['Nur intern']}
+    assert body['weave'] == {'notices': ['Nur intern'], 'knowledge_spaces': FLAGGED_SPACES}
 
     chunks = _parse_sse_events(
         client.post('/v1/chat/completions', json={**request, 'stream': True}, headers=auth_headers(raw_token)).text
     )[:-1]
     assert chunks[-1]['choices'][0]['finish_reason'] == 'stop'
-    assert chunks[-1]['weave'] == {'notices': ['Nur intern']}
+    assert chunks[-1]['weave'] == {'notices': ['Nur intern'], 'knowledge_spaces': FLAGGED_SPACES}
     assert all('weave' not in chunk for chunk in chunks[:-1])
+
+
+def test_answer_metadata_only_for_flagged_or_mixed_answers():
+    from app.services.notices import answer_metadata
+
+    one_space = [{'collection': 'public', 'ref': 1}, {'collection': 'public', 'ref': 2}]
+    assert answer_metadata(one_space) == {}
+    mixed = [{'collection': 'public', 'ref': 1}, {'collection': 'hr'}]
+    assert answer_metadata(mixed) == {
+        'notices': [],
+        'knowledge_spaces': [
+            {'collection': 'public', 'refs': [1], 'notice': None},
+            {'collection': 'hr', 'refs': [], 'notice': None},
+        ],
+    }

@@ -247,6 +247,17 @@ def test_search_with_fake_reranker_reorders_and_trims_to_final_k(monkeypatch):
         assert [r['scores']['rerank'] for r in body['results']] == [3.0, 2.0]
         assert body['trace']['reranked'] == 3
         assert body['trace']['rerank_error'] is False
+
+        # A bot that switches reranking off keeps the RRF order, unscored.
+        resp = client.post(
+            '/api/v1/search',
+            json={'query': query, 'top_k': 3, 'final_k': 2, 'rerank': False},
+            headers=AUTH_HEADERS,
+        )
+        assert resp.status_code == 200
+        unranked = resp.json()['results']
+        assert [r['scores']['rerank'] for r in unranked] == [None, None]
+        assert [r['chunk_id'] for r in unranked] != [chunk_fulltext.id, chunk_vector.id]
     finally:
         db.query(Chunk).delete()
         db.query(Document).delete()

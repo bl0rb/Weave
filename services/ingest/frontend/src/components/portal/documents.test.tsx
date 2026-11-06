@@ -118,7 +118,7 @@ it('opens "Zu prüfen" by default and falls back to "Alle" when nothing waits fo
   });
   render(<PortalDocuments />);
   await screen.findByText('Handbuch.pdf');
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Alle' }).getAttribute('aria-pressed')).toBe('true'));
+  await waitFor(() => expect(screen.getByRole('button', { name: /^Alle/ }).getAttribute('aria-pressed')).toBe('true'));
   expect(screen.getByRole('button', { name: /Zu prüfen/ }).textContent).toBe('Zu prüfen0');
 });
 
@@ -131,7 +131,9 @@ it('maps the view presets and the filter bar to the server-side filters and the 
   await waitFor(() => expect(lastListCall()).toContain('review_state=parked'));
   fireEvent.click(screen.getByRole('button', { name: /^Fehler/ }));
   await waitFor(() => expect(lastListCall()).toContain('review_state=failed'));
-  fireEvent.click(screen.getByRole('button', { name: 'Von mir freigegeben' }));
+  fireEvent.click(screen.getByRole('button', { name: /^Im Chat/ }));
+  await waitFor(() => expect(lastListCall()).toContain('review_state=in_chat'));
+  fireEvent.click(screen.getByRole('button', { name: /^Von mir freigegeben/ }));
   await waitFor(() => expect(lastListCall()).toContain('released_by_me=true'));
 
   fireEvent.change(screen.getByRole('combobox', { name: 'Bewertung' }), { target: { value: 'none' } });
@@ -171,4 +173,27 @@ it('hints that only the newest documents are loaded when the space holds more', 
   render(<PortalDocuments />);
   await screen.findByText('Zweit.pdf');
   expect(screen.queryByText(/Geladen sind die neuesten/)).toBeNull();
+});
+
+it('counts every view and filters by a Confluence import scope linked from a space', async () => {
+  json.mockImplementation(async path => {
+    const url = String(path);
+    if (url.startsWith('/api/v1/portal/collections/')) return { items: [{ value: 'space:FKI', scope_type: 'space', scope_value: 'FKI', label: 'Führungskräfte Info Guide', count: 1, latest_run_id: 'r1', edit_run_id: null, can_edit: false }], other_count: 0 };
+    if (url.startsWith('/api/v1/portal/documents')) return { items: [document], total: url.includes('review_state=in_chat') ? 7 : url.includes('released_by_me=true') ? 3 : 1 };
+    if (url.startsWith('/api/v1/portal/indexing-status')) return { items: [] };
+    return { items: [area] };
+  });
+  render(<PortalDocuments initial={{ bereich: area.slug, import: 'space:FKI' }} />);
+  await screen.findByText('Handbuch.pdf');
+  await waitFor(() => expect(screen.getByRole('button', { name: /^Im Chat/ }).textContent).toBe('Im Chat7'));
+  expect(screen.getByRole('button', { name: /^Von mir freigegeben/ }).textContent).toBe('Von mir freigegeben3');
+  expect(screen.getByRole('button', { name: /^Alle/ }).getAttribute('aria-pressed')).toBe('true');
+  const listCalls = json.mock.calls.map(([path]) => String(path)).filter(path => path.startsWith('/api/v1/portal/documents?'));
+  expect(listCalls.every(path => path.includes('import_scope=space%3AFKI'))).toBe(true);
+  expect((await screen.findByTestId('import-scope-filter')).textContent).toContain('Import: Führungskräfte Info Guide');
+  expect(window.location.search).toContain('import=space%3AFKI');
+
+  fireEvent.click(screen.getByRole('button', { name: 'Filter entfernen' }));
+  expect(screen.queryByTestId('import-scope-filter')).toBeNull();
+  expect(window.location.search).not.toContain('import=');
 });

@@ -25,6 +25,10 @@ export const portal = {
 
   // src/components/portal/documents.tsx, knowledge.tsx, home.tsx (portal redesign)
   'documents.view.mine': 'Von mir freigegeben',
+  'documents.view.chat': 'Im Chat',
+  'documents.view.chatEmpty': 'Noch kein Dokument ist im Chat verfügbar.',
+  'documents.importScopeFilter': 'Import: {label}',
+  'documents.importScopeClear': 'Filter entfernen',
   'documents.viewsAria': 'Ansicht wählen',
   'documents.columnGrade': 'Bewertung',
   'documents.columnSource': 'Quelle',
@@ -217,6 +221,7 @@ export const portal = {
   'spaces.zipCreating': 'ZIP wird erstellt …',
   'spaces.zipAll': 'Alle als ZIP',
   'spaces.reindexSpace': 'Wissensbereich neu indizieren',
+  'spaces.reindexTooltip': 'Stellt die freigegebenen Dokumente der Chat-Suche neu zur Verfügung (z. B. nach einer Störung der Suche). Lädt nichts neu aus Confluence – dafür „Jetzt synchronisieren“.',
   'spaces.deleteDocumentsTitle': 'Dokumente löschen',
   'spaces.deleteDocumentsBody': '{count} Dokument unwiderruflich löschen?|{count} Dokumente unwiderruflich löschen?',
   'spaces.withdrawReleased': 'Auch freigegebene Dokumente löschen – sie werden dabei aus dem Wissen zurückgezogen.',
@@ -687,6 +692,7 @@ export const portal = {
   // src/components/portal/import-sync.tsx
   'importSync.syncFailed': 'Synchronisierung fehlgeschlagen',
   'importSync.syncNow': 'Jetzt synchronisieren',
+  'importSync.syncNowTooltip': 'Lädt geänderte, neue und gelöschte Seiten und Anhänge jetzt aus Confluence bzw. von der Website, statt auf den nächsten geplanten Abgleich zu warten.',
   'importSync.removeConfirm': '"{title}" mit allen importierten Versionen und OCR-Anhängen aus dem Wissen entfernen? Die Importhistorie bleibt erhalten.',
   'importSync.removeFailed': 'Entfernen fehlgeschlagen',
   'importSync.missingHeading': 'Nicht mehr in Confluence gefunden',
@@ -1149,6 +1155,7 @@ export const portal = {
   'chrome.menuOpen': 'Navigation öffnen',
   'chrome.searchDocuments': 'Nach Dateiname suchen',
   'chrome.addSource': 'Quelle hinzufügen',
+  'spaces.addSourceTooltip': 'Dokumente hochladen oder einen Confluence- oder Website-Import für diesen Wissensbereich anlegen.',
   'chrome.breadcrumb.knowledgeNew': 'Wissensbereich anlegen',
   'tabs.overview': 'Übersicht',
   'tabs.advanced': 'Erweitert',

@@ -39,6 +39,15 @@
   --ok-bg: #e1f2e8;
   --err: #a2372f;
   --err-bg: #fcebe9;
+
+  /* Knowledge-space colours: an answer mixing knowledge spaces colours its
+     citations, passages and sources by space (components/chat/citations.tsx). */
+  --space-1: #2f6fd0;
+  --space-2: #8a4fc7;
+  --space-3: #c2620f;
+  --space-4: #c23b7a;
+  --space-5: #0f8a8a;
+  --space-6: #6f7a12;
   color-scheme: light;
 }
 
@@ -64,6 +73,13 @@
     --ok-bg: #1d3027;
     --err: #f3a79e;
     --err-bg: #3d2320;
+    /* Knowledge-space colours (see the rules after .prose-chat). */
+    --space-1: #5b9cf0;
+    --space-2: #c08af0;
+    --space-3: #f0a35b;
+    --space-4: #ef7fb0;
+    --space-5: #4fc8c8;
+    --space-6: #b8c25a;
     color-scheme: dark;
   }
 }
@@ -89,6 +105,13 @@
   --ok-bg: #1d3027;
   --err: #f3a79e;
   --err-bg: #3d2320;
+  /* Knowledge-space colours (see the rules after .prose-chat). */
+  --space-1: #5b9cf0;
+  --space-2: #c08af0;
+  --space-3: #f0a35b;
+  --space-4: #ef7fb0;
+  --space-5: #4fc8c8;
+  --space-6: #b8c25a;
   color-scheme: dark;
 }
 
@@ -384,11 +407,8 @@ body {
 .weave-logo [data-row='2'] {
   --weave-row-delay: 0.36s;
 }
-/* Three motions alternate from start to start (lib/weave-motion.ts):
-   'weave' moves the weft rows, 'turn' (the desktop app's half turn) and
-   'flip' (a half turn around the vertical axis) move the whole mark -- it is
-   mirror-symmetric, so 180° looks exactly like 0° and every round ends on
-   the full mark. */
+/* The mark's one motion (lib/weave-motion.ts): the weft rows unweave and
+   shuttle back in. The mark itself never turns, flips or sways. */
 .weave-logo--motion-weave:is(.weave-logo--loop, .weave-logo--finite) .weave-weft > * {
   animation: weave-weft 2s ease-in-out var(--weave-row-delay, 0s) infinite both;
 }
@@ -398,55 +418,12 @@ body {
 .weave-logo--motion-weave.weave-logo--finite :is(.weave-weft, .weave-knots) > * {
   animation-iteration-count: 5;
 }
-.weave-logo--motion-turn:is(.weave-logo--loop, .weave-logo--finite) {
-  animation: weave-turn 1.8s cubic-bezier(0.65, 0, 0.35, 1) infinite both;
-}
-.weave-logo--motion-flip:is(.weave-logo--loop, .weave-logo--finite) {
-  animation: weave-flip 1.8s cubic-bezier(0.65, 0, 0.35, 1) infinite both;
-}
-.weave-logo--finite:is(.weave-logo--motion-turn, .weave-logo--motion-flip) {
-  animation-iteration-count: 5;
-}
-.weave-logo--motion-shuttle:is(.weave-logo--loop, .weave-logo--finite) {
-  animation: weave-sway 2s ease-in-out infinite both;
-}
-.weave-logo--motion-shuttle:is(.weave-logo--loop, .weave-logo--finite) .weave-weft > * {
-  animation: weave-shuttle 2s ease-in-out var(--weave-row-delay, 0s) infinite both;
-}
-.weave-logo--motion-shuttle.weave-logo--finite,
-.weave-logo--motion-shuttle.weave-logo--finite .weave-weft > * {
-  animation-iteration-count: 5;
-}
-.weave-logo .weave-weft > [data-row='1'] {
-  --weave-shuttle-dir: -1;
-}
-/* After the last finite round: one soft settle instead of a hard stop. */
+/* Marks the end of the last finite round (no visible motion of its own). */
 .weave-logo.weave-logo--settle {
   animation: weave-settle 0.45s ease-out 1 both;
 }
-@keyframes weave-sway {
-  0%, 100% { transform: rotate(0); }
-  25% { transform: rotate(-5deg); }
-  75% { transform: rotate(5deg); }
-}
-@keyframes weave-shuttle {
-  0%, 100% { transform: translateX(0); }
-  50% { transform: translateX(calc(6px * var(--weave-shuttle-dir, 1))); }
-}
 @keyframes weave-settle {
-  0% { transform: scale(1); }
-  40% { transform: scale(1.06); }
-  100% { transform: scale(1); }
-}
-@keyframes weave-turn {
-  0%, 10% { transform: rotate(0); }
-  45%, 55% { transform: rotate(90deg); }
-  90%, 100% { transform: rotate(180deg); }
-}
-@keyframes weave-flip {
-  0%, 10% { transform: perspective(160px) rotateY(0); }
-  45%, 55% { transform: perspective(160px) rotateY(90deg); }
-  90%, 100% { transform: perspective(160px) rotateY(180deg); }
+  0%, 100% { transform: none; }
 }
 @keyframes weave-weft {
   0%, 12% { transform: scaleX(1); }
@@ -463,5 +440,68 @@ body {
   .weave-logo,
   .weave-logo * {
     animation: none !important;
+  }
+}
+
+/* Citations in an answer (components/chat/citations.tsx): `[N]` markers as
+   small badges, the passage each one backs, and the source cards. `--space`
+   is set only for an answer mixing knowledge spaces; otherwise the accent. */
+.cite-marker {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.45em;
+  height: 1.45em;
+  margin: 0 0.1em;
+  padding: 0 0.3em;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--space, var(--accent)) 14%, transparent);
+  color: var(--space, var(--accent));
+  font-size: 0.7em;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: 0.3em;
+  cursor: default;
+}
+.cite-marker[data-active='true'] {
+  background: var(--space, var(--accent));
+  color: var(--surface);
+}
+.cite-passage {
+  border-radius: 3px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  transition: background-color 0.15s;
+}
+.cite-passage[data-mixed='true'] {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--space) 55%, transparent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+.cite-passage[data-active='true'] {
+  background: color-mix(in srgb, var(--space, var(--accent)) 22%, transparent);
+}
+.space-dot {
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  flex: none;
+  border-radius: var(--radius-pill);
+  background: var(--space, var(--accent));
+}
+.source-card[data-mixed='true'] {
+  border-left: 3px solid var(--space);
+}
+.source-card[data-active='true'] {
+  border-color: var(--space, var(--accent));
+  background: color-mix(in srgb, var(--space, var(--accent)) 10%, var(--surface));
+}
+.source-ref {
+  color: var(--space, var(--accent));
+  font-weight: 700;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cite-passage {
+    transition: none;
   }
 }

@@ -1045,7 +1045,7 @@ def _run_knowledge_turn(
     def _search(filters: dict | None) -> list[RetrievedChunk]:
         return retrieval_client.search(
             query=query, filters=filters, allowed_teams=allowed_teams, allowed_collections=allowed_collections,
-            top_k=bot.retrieval.top_k, final_k=bot.retrieval.final_k,
+            top_k=bot.retrieval.top_k, final_k=bot.retrieval.final_k, rerank=bot.retrieval.rerank,
         )
 
     # ADR-0009 §10a: with the memory on (and no bot filters it cannot
@@ -1653,7 +1653,7 @@ def _prepare_context(
         if central_provider is not None and central_provider.knowledge_memory_mode
         else settings.knowledge_memory_mode
     )
-    memory = memory_mode in ('extractive', 'llm') and not is_n8n_bot
+    memory = memory_mode in ('extractive', 'llm') and not is_n8n_bot and bot.retrieval.memory
 
     message = request.message
     history = [{'role': turn.role, 'content': turn.content} for turn in request.history]

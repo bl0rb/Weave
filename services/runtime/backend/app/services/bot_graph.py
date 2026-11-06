@@ -108,6 +108,8 @@ class TurnState(TypedDict, total=False):
     timings_ms: dict[str, float]
     total_start: float
     decision: router_service.RouterDecision
+    # The router mode used for this turn: the bot's own, else ROUTER_MODE.
+    router_mode: str
     branch: str
     # Direct path: the LLM-ready transcript for `generate`.
     messages: list[dict[str, str]]
@@ -197,14 +199,16 @@ def _route(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
     # `llm_call` stays None without a real provider (an n8n bot) even in
     # 'llm' router mode -- router.route() then falls back to RULES with
     # `router_fallback=True`, exactly the behaviour an n8n bot needs.
+    router_mode = bot.router_mode or settings.router_mode
     llm_call = (
         chat_service._router_llm_call(ctx.llm_provider)
-        if settings.router_mode == 'llm' and ctx.llm_provider is not None
+        if router_mode == 'llm' and ctx.llm_provider is not None
         else None
     )
-    decision = router_service.route(state['message'], bot, settings.router_mode, llm_call, memory=ctx.memory)
+    decision = router_service.route(state['message'], bot, router_mode, llm_call, memory=ctx.memory)
     return {
         'decision': decision,
+        'router_mode': router_mode,
         'branch': _choose_branch(bot, decision, intake_pending=ctx.intake_pending, intake_retry=ctx.intake_retry),
         'timings_ms': _timing(state, 'router_ms', router_start),
     }
@@ -433,7 +437,7 @@ def _build_trace(state: TurnState, *, model: str | None) -> ChatTrace:
         retrieval=state.get('retrieval_trace'),
         clarification=state.get('clarification'),
         model=model,
-        router_mode=settings.router_mode,
+        router_mode=state.get('router_mode') or settings.router_mode,
         timings_ms=state['timings_ms'],
         guard=state.get('guard'),
         n8n=state.get('n8n_trace'),

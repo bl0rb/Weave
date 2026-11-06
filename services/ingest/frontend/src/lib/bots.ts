@@ -1,5 +1,6 @@
 import { apiJson } from '@/lib/api';
 import { jsonBody } from '@/lib/portal';
+import type { ManagedBot } from '@/components/admin/bots-tab';
 
 /** Roles on a managed bot (ADR 0008): owners maintain it, users chat with it. */
 export type BotRole = 'owner' | 'user';
@@ -34,4 +35,9 @@ export function listOwnedBots(signal?: AbortSignal): Promise<{ items: OwnedBot[]
 
 export function updateOwnedBot(botId: string, update: OwnedBotUpdate): Promise<OwnedBot> {
   return apiJson(`/api/v1/bots/${encodeURIComponent(botId)}`, { ...jsonBody(update), method: 'PATCH' });
+}
+
+/** Every setting of a bot the caller owns, in the admin editor's shape (without the n8n address). */
+export function loadOwnedBotConfig(botId: string): Promise<ManagedBot> {
+  return apiJson(`/api/v1/bots/${encodeURIComponent(botId)}/config`);
 }

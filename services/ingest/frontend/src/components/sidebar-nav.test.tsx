@@ -26,7 +26,7 @@ it('renders English labels when the locale is English', async () => {
   expect(screen.getByText('Knowledge spaces')).toBeTruthy();
   expect(screen.getByText('Documents')).toBeTruthy();
   expect(screen.queryByText('Wissensbereiche')).toBeNull();
-  // Verbindungen is its own entry at the end of the list, no longer in the profile menu.
+  // Verbindungen sits right below Wissensbereiche, no longer in the profile menu.
   const links = screen.getAllByRole('link').filter(link => link.closest('nav'));
   expect(links.map(link => link.getAttribute('href'))).toEqual(['/', '/documents', '/knowledge', '/connections']);
 

@@ -132,6 +132,7 @@ export const chat: Record<keyof typeof de, string> = {
   'messageBubble.generating': 'Generating answer…',
   'messageBubble.stillWorking': 'The assistant is still working …',
   'messageBubble.noticeLabel': 'Answer flag',
+  'messageBubble.spacesLabel': 'Knowledge spaces',
   'messageBubble.viaFallback': 'Not streamed — answered as a fallback through the non-streaming interface.',
   'messageBubble.sourcedBy': 'Backed by {count} source|Backed by {count} sources',
   'messageBubble.noMatchingSource': 'No matching source',

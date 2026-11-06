@@ -242,8 +242,8 @@ export function KnowledgeDetail({ id }: { id: string }) {
         <header className="portal-section-heading">
           <h2 id="space-sources-title">{t('portal.spaces.sourcesTitle')}</h2>
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            {syncs.length > 0 && <Button variant="outline" size="sm" disabled={syncing} onClick={() => void syncNow()}><RefreshCw size={15} />{t('portal.importSync.syncNow')}</Button>}
-            <Link href={`/sources/new?collection=${encodeURIComponent(id)}`} className={buttonVariants({ size: 'sm' })}><Plus size={15} />{t('portal.chrome.addSource')}</Link>
+            {syncs.length > 0 && <Button variant="outline" size="sm" disabled={syncing} title={t('portal.importSync.syncNowTooltip')} onClick={() => void syncNow()}><RefreshCw size={15} />{t('portal.importSync.syncNow')}</Button>}
+            <Link href={`/sources/new?collection=${encodeURIComponent(id)}`} title={t('portal.spaces.addSourceTooltip')} className={buttonVariants({ size: 'sm' })}><Plus size={15} />{t('portal.chrome.addSource')}</Link>
           </div>
         </header>
         <div className="grid gap-4 px-5 pb-5">
@@ -251,7 +251,10 @@ export function KnowledgeDetail({ id }: { id: string }) {
           {Boolean(importScopes?.items?.length) && <div>
             <h3 className="text-sm font-semibold text-[var(--ink-2)]">{t('portal.spaces.importScopeLabel')}</h3>
             <ul className="mt-2 grid gap-2 text-sm">{importScopes?.items?.map(scope => <li key={scope.value} className="flex flex-wrap items-center gap-x-4 gap-y-1">
-              <Link className="portal-inline-link" href={`/documents?${new URLSearchParams({ bereich: space.slug, q: scope.label })}`}>{`${scopeLabel(scope)} (${scope.count})`}</Link>
+              {/* Its own documents; when it holds every document of the space the header's "N Dokumente ansehen" already leads there. */}
+              {importScopes.items.length === 1 && !importScopes.other_count && scope.count === documentTotal
+                ? <span>{`${scopeLabel(scope)} (${scope.count})`}</span>
+                : <Link className="portal-inline-link" href={`/documents?${new URLSearchParams({ bereich: space.slug, import: scope.value })}`}>{`${scopeLabel(scope)} (${scope.count})`}</Link>}
               <Link className="portal-inline-link text-xs" href={`/imports/${encodeURIComponent(scope.latest_run_id)}`}>{t('portal.spaces.importView')}</Link>
               {scope.can_edit && scope.edit_run_id && <Link className="portal-inline-link text-xs" href={`/imports/new?from=${encodeURIComponent(scope.edit_run_id)}`}>{t('portal.spaces.importEdit')}</Link>}
             </li>)}</ul>
@@ -270,8 +273,8 @@ export function KnowledgeDetail({ id }: { id: string }) {
       <section className="portal-panel" aria-labelledby="space-maintenance-title">
         <header className="portal-section-heading"><h2 id="space-maintenance-title">{t('portal.spaces.maintenanceTitle')}</h2></header>
         <div className="grid gap-4 px-5 pb-5 text-sm">
-          <div className="flex flex-wrap items-center gap-3"><Button variant="outline" size="sm" disabled={!documentTotal} onClick={() => setReindexing(true)}><RefreshCw size={15} />{t('portal.spaces.reindexSpace')}</Button><span className="text-[var(--muted)]">{t('portal.spaces.reindexExplanation')}</span></div>
-          <div className="flex flex-wrap items-center gap-3"><Button variant="outline" size="sm" disabled={downloading || !documentTotal} onClick={() => void downloadAll()}><Archive size={15} />{downloading ? t('portal.spaces.zipCreating') : t('portal.spaces.zipAll')}</Button><span className="text-[var(--muted)]">{t('portal.spaces.zipExplanation')}</span></div>
+          <div className="flex flex-wrap items-center gap-3"><Button variant="outline" size="sm" disabled={!documentTotal} title={t('portal.spaces.reindexTooltip')} onClick={() => setReindexing(true)}><RefreshCw size={15} />{t('portal.spaces.reindexSpace')}</Button><span className="text-[var(--muted)]">{t('portal.spaces.reindexExplanation')}</span></div>
+          <div className="flex flex-wrap items-center gap-3"><Button variant="outline" size="sm" disabled={downloading || !documentTotal} title={t('portal.spaces.zipExplanation')} onClick={() => void downloadAll()}><Archive size={15} />{downloading ? t('portal.spaces.zipCreating') : t('portal.spaces.zipAll')}</Button><span className="text-[var(--muted)]">{t('portal.spaces.zipExplanation')}</span></div>
         </div>
       </section>
     </div>}

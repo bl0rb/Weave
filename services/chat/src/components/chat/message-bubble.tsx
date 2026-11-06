@@ -1,8 +1,8 @@
-import { useState, type ImgHTMLAttributes } from 'react';
+import { useMemo, useState, type ImgHTMLAttributes } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
-import { PanelRight, ShieldAlert } from 'lucide-react';
+import { PanelRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { UiAgentStatus, UiMessage } from '@/lib/chat-types';
 import { SourceCards } from '@/components/chat/source-cards';
@@ -12,6 +12,9 @@ import { GuardBanner } from '@/components/chat/guard-banner';
 import { ErrorBanner } from '@/components/chat/error-banner';
 import { toProxiedImageUrl } from '@/lib/portal-artifact-url';
 import { useI18n } from '@/i18n/provider';
+import { answerSpaces, citedSourcesByRef, spaceColor } from '@/lib/knowledge-spaces';
+import { normalizeAnswerMarkdown, remarkChatBreaks } from '@/lib/markdown';
+import { AnswerCitationsContext, AnswerSpacesFooter, CitationHighlightProvider, CitationSpan, rehypeCitations } from '@/components/chat/citations';
 import type { MessageKey } from '@/i18n/messages';
 
 // Rewrites an inline `![alt](url)` image's src to this app's own proxy
@@ -68,10 +71,27 @@ export function MessageBubble({
     message.role !== 'user' && !message.streaming ? (message.trace?.clarification ?? null) : null;
   const isUser = message.role === 'user';
   const sourceCount = message.sources?.length ?? 0;
-  // Shown even when the bot hides its sources: the flag is the point.
-  const notices = isUser ? [] : [...new Set((message.sources ?? []).map((source) => source.notice?.trim()).filter((notice): notice is string => Boolean(notice)))];
+  // The answer's knowledge spaces, in order of first appearance: their
+  // notices go below the answer (shown even when the bot hides its sources:
+  // the flag is the point), and an answer mixing spaces colours its `[N]`
+  // citations and their passages by space.
+  const spaces = useMemo(() => (isUser ? [] : answerSpaces(message.sources)), [isUser, message.sources]);
+  const citations = useMemo(() => {
+    const byRef = citedSourcesByRef(isUser ? null : message.sources);
+    const mixed = spaces.length > 1;
+    const colorByRef = new Map<number, number>();
+    if (mixed) {
+      for (const [ref, source] of byRef) {
+        const color = spaceColor(spaces, source);
+        if (color) colorByRef.set(ref, color);
+      }
+    }
+    return { messageId: message.id, byRef, colorByRef, mixed, showSources };
+  }, [isUser, message.id, message.sources, spaces, showSources]);
+  const citedRefs = useMemo(() => new Set(citations.byRef.keys()), [citations]);
 
   return (
+    <CitationHighlightProvider>
     <div className={cn('flex', isUser ? 'justify-end' : 'justify-start')}>
       <div
         className={cn(
@@ -97,25 +117,19 @@ export function MessageBubble({
           <GuardBanner guard={message.trace.guard} onResetScopeAndRetry={onResetScopeAndRetry} />
         ) : null}
 
-        {notices.length > 0 ? (
-          <div
-            role="note"
-            aria-label={t('chat.messageBubble.noticeLabel')}
-            data-testid="answer-notices"
-            className="mb-2 flex items-start gap-2 rounded-[var(--radius-control)] bg-[var(--warn-bg)] px-3 py-1.5 text-xs font-semibold text-[var(--warn)]"
-          >
-            <ShieldAlert className="mt-px h-3.5 w-3.5 flex-none" aria-hidden="true" />
-            <span>{notices.join(' · ')}</span>
-          </div>
-        ) : null}
-
         {isUser ? (
           <p className="whitespace-pre-wrap">{message.content}</p>
         ) : message.content ? (
           <div className="prose-chat">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]} components={{ img: AnswerImage }}>
-              {message.content}
-            </ReactMarkdown>
+            <AnswerCitationsContext.Provider value={citations}>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm, remarkChatBreaks]}
+                rehypePlugins={[rehypeSanitize, [rehypeCitations, { refs: citedRefs }]]}
+                components={{ img: AnswerImage, span: CitationSpan }}
+              >
+                {normalizeAnswerMarkdown(message.content)}
+              </ReactMarkdown>
+            </AnswerCitationsContext.Provider>
           </div>
         ) : message.streaming ? (
           <span className="inline-flex items-center gap-1 text-[var(--muted)]" aria-live="polite">
@@ -178,6 +192,7 @@ export function MessageBubble({
             ))}
           </div>
         ) : null}
+        {!isUser && !message.streaming ? <AnswerSpacesFooter spaces={spaces} /> : null}
         {/* Only on the ≥1180px layout that has a sources panel at all (see
             globals.css's `.chat-sources-panel-control`); below it the
             inline source cards right after carry their own toggle. */}
@@ -199,7 +214,7 @@ export function MessageBubble({
         ) : null}
         {!isUser && showSources && message.sources ? (
           <div className="chat-inline-sources">
-            <SourceCards sources={message.sources} />
+            <SourceCards sources={message.sources} messageId={message.id} />
           </div>
         ) : null}
         {!isUser && message.trace ? <TracePanel trace={message.trace} /> : null}
@@ -213,6 +228,7 @@ export function MessageBubble({
         ) : null}
       </div>
     </div>
+    </CitationHighlightProvider>
   );
 }
 

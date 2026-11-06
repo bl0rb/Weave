@@ -41,7 +41,7 @@ from app.models.models import Conversation, MessageRole, User
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.services import conversations as conversations_service
 from app.services import runtime_client
-from app.services.notices import answer_notices
+from app.services.notices import answer_knowledge_spaces, answer_metadata, answer_notices
 
 router = APIRouter(prefix='/v1', tags=['chat'])
 
@@ -105,6 +105,7 @@ def chat(
         sources=assistant_message.sources,
         trace=assistant_message.trace,
         notices=answer_notices(assistant_message.sources),
+        knowledge_spaces=answer_knowledge_spaces(assistant_message.sources),
     )
 
 
@@ -184,10 +185,11 @@ def _stream_and_persist(db, conversation: Conversation, events: Iterator[dict]) 
                 answer_parts.append(event.get('text', ''))
             elif event_type == 'sources':
                 sources = event.get('sources')
-                # Answer metadata (ChatResponse.notices) rides on this event,
-                # only when flagged -- an unflagged stream stays verbatim.
-                if notices := answer_notices(sources):
-                    event = {**event, 'notices': notices}
+                # Answer metadata (ChatResponse.notices/knowledge_spaces)
+                # rides on this event, only when flagged or mixing knowledge
+                # spaces -- a plain stream stays verbatim.
+                if metadata := answer_metadata(sources):
+                    event = {**event, **metadata}
 
             if event_type == 'done':
                 # Persist BEFORE yielding this event -- if append_message

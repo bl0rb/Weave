@@ -5,9 +5,9 @@ export default async function DocumentsPage({
 }: {
   searchParams: Promise<DocumentsInitialFilters>;
 }) {
-  const { q, stand, bereich, bewertung, quelle, ansicht } = await searchParams;
+  const { q, stand, bereich, bewertung, quelle, ansicht, import: importScope } = await searchParams;
   // Keyed on the params so a navigation to new ones while already on
   // /documents (the topbar or Übersicht search) resets the filters; the
   // component's own URL sync uses history.replaceState and never changes these props.
-  return <PortalDocuments key={[q, stand, bereich, bewertung, quelle, ansicht].map((value) => value ?? '').join('\n')} initial={{ q, stand, bereich, bewertung, quelle, ansicht }} />;
+  return <PortalDocuments key={[q, stand, bereich, bewertung, quelle, ansicht, importScope].map((value) => value ?? '').join('\n')} initial={{ q, stand, bereich, bewertung, quelle, ansicht, import: importScope }} />;
 }

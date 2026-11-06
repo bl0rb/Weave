@@ -299,6 +299,8 @@ def _managed_bot(raw: dict) -> BotConfig:
                 'top_k': raw.get('top_k', 20),
                 'final_k': raw.get('final_k', 5),
                 'rerank': bool(raw.get('rerank', True)),
+                # Absent (older Ingest) = use the memory while it is on.
+                'memory': bool(raw.get('memory', True)),
                 # Optional until Ingest's ManagedBot grows the column; absent = None = runtime default.
                 'query_rewrite': raw.get('query_rewrite'),
                 'include_uncollected': bool(raw.get('include_uncollected', True)) if is_llm else False,
@@ -359,6 +361,8 @@ def _managed_bot(raw: dict) -> BotConfig:
             # Optional until Ingest's ManagedBot grows the columns; absent = runtime default.
             'show_sources': bool(raw.get('show_sources', True)),
             'disclaimer': raw.get('disclaimer') or None,
+            # Absent/None = the runtime-wide ROUTER_MODE.
+            'router_mode': raw.get('router_mode') or None,
             'collection_notices': raw.get('collection_notices') or [],
             'intake': raw.get('intake') or None if is_llm else None,
         })

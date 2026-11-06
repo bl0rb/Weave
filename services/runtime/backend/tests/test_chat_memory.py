@@ -297,3 +297,41 @@ def test_mode_saved_in_ingest_wins_over_the_environment(monkeypatch):
         lambda endpoint: ChatProviderSnapshot(enabled=False, knowledge_memory_mode='off'),
     )
     assert client.post('/internal/chat', json=BODY, headers=AUTH_HEADERS).json()['trace']['intent'] == 'knowledge'
+
+
+# --- per-bot switches ---------------------------------------------------------
+
+
+def test_a_bot_can_switch_the_memory_off_for_itself(memory_on, monkeypatch):
+    def _bot_without_memory(bot_id):
+        bot = _bot_without_filters(bot_id)
+        return bot.model_copy(update={'retrieval': bot.retrieval.model_copy(update={'memory': False})})
+
+    monkeypatch.setattr('app.services.chat.load_bot', _bot_without_memory)
+    calls = _retrieval(monkeypatch, _FakeResponse(200, MEMORY))
+    body = client.post('/internal/chat', json=BODY, headers=AUTH_HEADERS).json()
+    assert 'memory' not in [name for name, _ in calls]
+    assert body['trace']['intent'] != 'overview'
+
+
+def test_a_bot_without_rerank_asks_retrieval_to_skip_it(memory_on, monkeypatch):
+    def _bot_without_rerank(bot_id):
+        bot = _bot_without_filters(bot_id)
+        return bot.model_copy(update={'retrieval': bot.retrieval.model_copy(update={'rerank': False, 'memory': False})})
+
+    monkeypatch.setattr('app.services.chat.load_bot', _bot_without_rerank)
+    calls = _retrieval(monkeypatch, _FakeResponse(200, MEMORY))
+    client.post('/internal/chat', json={**BODY, 'message': 'Wie lang ist die Kündigungsfrist?'}, headers=AUTH_HEADERS)
+    searches = [payload for name, payload in calls if name == 'search']
+    assert searches and all(payload['rerank'] is False for payload in searches)
+
+
+def test_a_bot_router_mode_overrides_the_runtime_wide_one(memory_on, monkeypatch):
+    def _bot_with_llm_router(bot_id):
+        return _bot_without_filters(bot_id).model_copy(update={'router_mode': 'llm'})
+
+    monkeypatch.setattr('app.services.chat.load_bot', _bot_with_llm_router)
+    monkeypatch.setattr(settings, 'router_mode', 'rules')
+    _retrieval(monkeypatch, _FakeResponse(200, MEMORY))
+    body = client.post('/internal/chat', json=BODY, headers=AUTH_HEADERS).json()
+    assert body['trace']['router_mode'] == 'llm'

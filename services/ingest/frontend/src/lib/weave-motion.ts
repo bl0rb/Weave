@@ -1,43 +1,18 @@
 import { useCallback, useState, useSyncExternalStore } from 'react';
 
 /**
- * The four ways the Weave mark moves while something is busy -- 'weave'
- * (the weft rows unweave and shuttle back in), 'turn' (the desktop app's
- * half turn; the mark is symmetric, so 180° looks like 0°), 'flip' (a half
- * turn around the vertical axis, same symmetry) and 'shuttle' (the mark sways
- * while the weft rows slide through like a loom's shuttle). Every start
- * picks one at random, never the one that ran last, remembered across page
- * loads through localStorage so a reload cannot repeat it either. Mirrors
- * bl0rb/WeaveDesktop's ui/common.js and Weave-Chat's lib/weave-motion.ts; the
- * canonical mark and keyframes live in packages/weave-mark.
+ * How the Weave mark moves while something is busy: 'weave' -- the weft
+ * rows unweave and shuttle back in. The only motion: the mark itself never
+ * turns, flips or sways. Kept as a list (and a picker) so the components
+ * that ask for "the next motion" stay unchanged. Mirrors bl0rb/WeaveDesktop's
+ * ui/common.js and Weave-Chat's lib/weave-motion.ts; the canonical mark and keyframes live in
+ * packages/weave-mark.
  */
-export const WEAVE_MOTIONS = ['weave', 'turn', 'flip', 'shuttle'] as const;
+export const WEAVE_MOTIONS = ['weave'] as const;
 export type WeaveMotion = (typeof WEAVE_MOTIONS)[number];
 
-const STORAGE_KEY = 'weave-motion-last';
-let memoryLast: WeaveMotion | null = null;
-
-function isMotion(value: unknown): value is WeaveMotion {
-  return typeof value === 'string' && (WEAVE_MOTIONS as readonly string[]).includes(value);
-}
-
-export function nextWeaveMotion(random: () => number = Math.random): WeaveMotion {
-  let last: WeaveMotion | null = memoryLast;
-  try {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (isMotion(stored)) last = stored;
-  } catch {
-    // private mode / blocked storage: the in-memory memory still prevents repeats
-  }
-  const candidates = WEAVE_MOTIONS.filter((motion) => motion !== last);
-  const next = candidates[Math.min(candidates.length - 1, Math.floor(random() * candidates.length))];
-  memoryLast = next;
-  try {
-    window.localStorage.setItem(STORAGE_KEY, next);
-  } catch {
-    // ignore
-  }
-  return next;
+export function nextWeaveMotion(): WeaveMotion {
+  return 'weave';
 }
 
 const noopSubscribe = () => () => {};

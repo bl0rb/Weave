@@ -52,3 +52,7 @@ class ChatResponse(BaseModel):
     # Answer metadata: the distinct notices of its sources' knowledge spaces
     # (app/services/notices.py), e.g. "Nur intern"; [] when none is flagged.
     notices: list[str] = Field(default_factory=list)
+    # The knowledge spaces the answer draws on, in order of first appearance
+    # (app/services/notices.py's answer_knowledge_spaces): which `[N]`
+    # citations come from which space, so a client can colour them.
+    knowledge_spaces: list[dict] = Field(default_factory=list)

@@ -7,6 +7,8 @@ import { toProxiedImageUrl } from '@/lib/portal-artifact-url';
 import { translateDefault } from '@/i18n/messages';
 import type { MessageKey, MessageVars } from '@/i18n/messages';
 import { useI18n } from '@/i18n/provider';
+import { answerSpaces, spaceColor } from '@/lib/knowledge-spaces';
+import { highlightHandlers, isHighlighted, spaceStyle, useCitationHighlight } from '@/components/chat/citations';
 
 type Translator = (key: MessageKey, vars?: MessageVars) => string;
 
@@ -123,10 +125,14 @@ export function SourceOrigin({ source }: { source: Source }) {
  * docstring for why `null` is a legitimate, expected value (a
  * pre-Collections legacy document) and not a sign of missing data.
  */
-export function SourceCards({ sources }: { sources: Source[] }) {
+export function SourceCards({ sources, messageId }: { sources: Source[]; /** Enables hover-to-highlight in its answer. */ messageId?: string }) {
   const { t } = useI18n();
+  const highlight = useCitationHighlight();
   const [expanded, setExpanded] = useState(false);
   if (sources.length === 0) return null;
+  // An answer mixing knowledge spaces colours each source by its space.
+  const spaces = answerSpaces(sources);
+  const mixed = spaces.length > 1;
 
   const images = Array.from(new Set(sources.flatMap((source) => source.images ?? [])));
 
@@ -166,10 +172,16 @@ export function SourceCards({ sources }: { sources: Source[] }) {
           return (
             <li
               key={`${source.document_id}-${source.chunk_id}`}
-              className="rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--surface-2)] p-4 text-xs"
+              className="source-card rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--surface-2)] p-4 text-xs"
+              style={mixed ? spaceStyle(spaceColor(spaces, source)) : undefined}
+              data-mixed={mixed}
+              data-active={isHighlighted(highlight, messageId, source.ref)}
+              tabIndex={messageId && typeof source.ref === 'number' ? 0 : undefined}
+              {...highlightHandlers(highlight, messageId, source.ref)}
             >
               <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
                 <span className="flex items-baseline gap-2 font-medium text-[var(--ink)]">
+                  {typeof source.ref === 'number' ? <span className="source-ref">{source.ref}</span> : null}
                   {source.original_filename ?? t('chat.sources.documentFallback', { id: source.document_id })}
                   <MemoryBadge source={source} />
                 </span>
