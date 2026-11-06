@@ -35,8 +35,7 @@ import { listOwnedBots } from '@/lib/bots';
 import { useActiveWork } from '@/lib/activity';
 import { SystemStatusIndicator } from '@/components/system-status-indicator';
 
-/** `bottom`: pinned to the end of the list (Verbindungen). */
-type NavItem = { href: string; label: string; icon: typeof Home; badge?: number; bottom?: boolean };
+type NavItem = { href: string; label: string; icon: typeof Home; badge?: number };
 type T = (key: MessageKey, vars?: Record<string, string | number>) => string;
 
 function portalNav(t: T, ownsBots: boolean): Omit<NavItem, 'badge'>[] {
@@ -44,9 +43,10 @@ function portalNav(t: T, ownsBots: boolean): Omit<NavItem, 'badge'>[] {
     { href: '/', label: t('portal.nav.overview'), icon: Home },
     { href: '/documents', label: t('portal.nav.documents'), icon: FileText },
     { href: '/knowledge', label: t('portal.nav.knowledgeSpaces'), icon: FolderOpen },
+    // Right below the knowledge spaces, whose sources use them.
+    { href: '/connections', label: t('portal.chrome.breadcrumb.connections'), icon: Cloud },
     // Only for bot owners (ADR 0008); everybody else has nothing to maintain there.
     ...(ownsBots ? [{ href: '/bots', label: t('portal.nav.bots'), icon: Bot }] : []),
-    { href: '/connections', label: t('portal.chrome.breadcrumb.connections'), icon: Cloud, bottom: true },
   ];
 }
 
@@ -163,7 +163,7 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
         )}
 
         <nav aria-label={isAdminArea ? t('portal.chrome.adminSubtitle') : t('portal.chrome.mainNav')} className="flex flex-1 flex-col gap-0.5">
-          {navItems.map(({ href, label, icon: Icon, badge, bottom }) => {
+          {navItems.map(({ href, label, icon: Icon, badge }) => {
             const active = isActive(href, pathname);
             return (
               <Link
@@ -171,7 +171,7 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
                 href={href}
                 aria-current={active ? 'page' : undefined}
                 onClick={() => onOpenChange(false)}
-                className={`shell-nav-link ${bottom ? 'mt-auto' : ''} flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)] no-underline transition hover:bg-[var(--hover)] hover:text-[var(--ink)]`}
+                className={`shell-nav-link flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] font-medium text-[var(--ink-2)] no-underline transition hover:bg-[var(--hover)] hover:text-[var(--ink)]`}
               >
                 <Icon className="h-[18px] w-[18px] flex-shrink-0 text-[var(--muted)]" aria-hidden="true" />
                 {label}
