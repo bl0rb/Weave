@@ -676,7 +676,10 @@ def search(db: Session, request: SearchRequest) -> tuple[list[SearchResult], Sea
     timings_ms['fuse'] = (time.perf_counter() - start) * 1000
 
     start = time.perf_counter()
-    reranked, rerank_error = _rerank(request.query, kept)
+    if request.rerank:
+        reranked, rerank_error = _rerank(request.query, kept)
+    else:
+        reranked, rerank_error = [(entry, None) for entry in kept], False
     timings_ms['rerank'] = (time.perf_counter() - start) * 1000
 
     final_pairs = reranked[:final_k]

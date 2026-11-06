@@ -418,6 +418,11 @@
           "title": "Include Uncollected",
           "type": "boolean"
         },
+        "memory": {
+          "default": true,
+          "title": "Memory",
+          "type": "boolean"
+        },
         "query_rewrite": {
           "anyOf": [
             {
@@ -720,6 +725,22 @@
     },
     "retrieval": {
       "$ref": "#/$defs/RetrievalConfig"
+    },
+    "router_mode": {
+      "anyOf": [
+        {
+          "enum": [
+            "rules",
+            "llm"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Router Mode"
     },
     "schema_version": {
       "const": 1,

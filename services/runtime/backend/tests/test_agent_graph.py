@@ -92,7 +92,7 @@ def _available(*agent_ids: str) -> list[ag.AvailableAgent]:
 
 
 def _search_by_collection(mapping: dict[str, list[RetrievedChunk]]):
-    def _search(query, filters, allowed_teams, allowed_collections, top_k, final_k):
+    def _search(query, filters, allowed_teams, allowed_collections, top_k, final_k, rerank=True):
         for collection, chunks in mapping.items():
             if collection in allowed_collections:
                 return chunks
@@ -279,7 +279,7 @@ def test_subagent_search_is_bounded_by_its_own_effective_scope():
     ])
     captured_scopes = []
 
-    def _search(query, filters, allowed_teams, allowed_collections, top_k, final_k):
+    def _search(query, filters, allowed_teams, allowed_collections, top_k, final_k, rerank=True):
         captured_scopes.append(allowed_collections)
         return []
 

@@ -9,7 +9,7 @@ from typing import Literal
 
 from pydantic import ValidationError
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -104,6 +104,8 @@ def _admin_response(row: ManagedBot) -> ManagedBotAdminResponse:
         agent=dict(row.agent_config) if row.agent_config else None,
         config_extras=dict(row.config_extras) if row.config_extras else None,
         show_sources=row.show_sources,
+        memory=row.memory,
+        router_mode=row.router_mode,
         disclaimer=row.disclaimer,
         intake=dict(row.intake_config) if row.intake_config else None,
         blocked_topics=list(row.blocked_topics or []),
@@ -377,6 +379,8 @@ def _apply(row: ManagedBot, payload: ManagedBotCreate | ManagedBotUpdate, admin:
     row.config_extras = extras or None
     row.show_sources = payload.show_sources
     row.disclaimer = payload.disclaimer
+    row.memory = payload.memory
+    row.router_mode = payload.router_mode
     row.intake_config = payload.intake.model_dump() if payload.intake else None
     row.blocked_topics = [topic.model_dump() for topic in payload.blocked_topics] or None
     row.blocked_topic_reply = payload.blocked_topic_reply
@@ -680,6 +684,8 @@ def internal_managed_bots(response: Response, db: Session = Depends(get_db)) -> 
             query_rewrite=row.query_rewrite,
             uncertainty_hint=row.uncertainty_hint,
             show_sources=row.show_sources,
+            memory=row.memory,
+            router_mode=row.router_mode,
             disclaimer=row.disclaimer,
             intake=dict(row.intake_config) if row.intake_config and row.kind == 'llm' else None,
             blocked_topics=list(row.blocked_topics or []),
@@ -811,3 +817,95 @@ def update_owned_bot(
     db.commit()
     db.refresh(row)
     return _owner_response(row)
+
+
+# --- Owner: the full bot settings (same editor as the administrators) --------
+
+# The technical connection of an n8n bot and its widening switch for
+# documents without a space stay with the administrators: an owner's save
+# keeps whatever the bot has.
+_ADMIN_ONLY_FIELDS = ('kind', 'webhook_url', 'streaming', 'timeout_seconds', 'include_uncollected')
+
+
+def _owner_config_response(row: ManagedBot) -> ManagedBotAdminResponse:
+    # Never the n8n webhook address: it is the connection, not the content.
+    return _admin_response(row).model_copy(update={'webhook_url': None})
+
+
+@router_owner.get('/llm-endpoints')
+def list_owner_llm_endpoints(
+    request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> dict:
+    """The LLM endpoints an owner can pick for their bot -- names and models
+    only, never addresses or keys. Only for bot owners and admins."""
+    enforce_rate_limit(request)
+    owns_bot = db.scalars(
+        select(BotGrant.bot_id).where(BotGrant.user_id == user.id, BotGrant.role == BotRole.OWNER)
+    ).first()
+    if owns_bot is None and user.role not in BOT_ADMIN_ROLES:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Nicht gefunden.')
+    rows = db.scalars(select(ChatProviderConfig)).all()
+    rows = sorted(rows, key=lambda row: (row.id != 'default', (row.name or row.id).lower()))
+    return {'items': [
+        {'id': row.id, 'name': row.name, 'model': row.model, 'enabled': row.enabled, 'supports_tools': row.supports_tools}
+        for row in rows
+    ]}
+
+
+@router_owner.get('/{bot_id}/config', response_model=ManagedBotAdminResponse)
+def get_owned_bot_config(
+    bot_id: str, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> ManagedBotAdminResponse:
+    """Every setting of a bot the caller owns, as the admin editor shows it."""
+    enforce_rate_limit(request)
+    return _owner_config_response(_owned_bot(db, bot_id, user))
+
+
+@router_owner.put('/{bot_id}/config', response_model=ManagedBotAdminResponse)
+def update_owned_bot_config(
+    bot_id: str,
+    request: Request,
+    body: dict = Body(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ManagedBotAdminResponse:
+    """An owner saves every setting an administrator can, with the same
+    checks (spaces the owner can read, valid endpoints, valid agent
+    block). Kept from the bot: the n8n connection and its token, the
+    uncollected-documents switch and the owners themselves. The body is
+    the admin editor's ManagedBotUpdate; the kept fields are filled in from
+    the bot BEFORE validation, since the owner never sees the connection."""
+    enforce_rate_limit(request)
+    row = _owned_bot(db, bot_id, user)
+    try:
+        payload = ManagedBotUpdate.model_validate({
+            **body,
+            **{field: getattr(row, field) for field in _ADMIN_ONLY_FIELDS},
+            'auth_token': None,
+            'clear_auth_token': False,
+        })
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=exc.errors(include_url=False, include_context=False),
+        ) from exc
+    if not payload.collections and row.collections and user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Nur Admins können die Einschränkung auf Wissensbereiche aufheben.',
+        )
+    owners = [
+        BotGrantInput(user_id=grant.user_id, role=BotRole.OWNER)
+        for grant in row.grants if grant.role == BotRole.OWNER and grant.user_id
+    ]
+    owner_ids = {grant.user_id for grant in owners}
+    users = [
+        grant for grant in _validated_grants(db, [grant for grant in payload.grants if grant.role == BotRole.USER])
+        if grant.user_id not in owner_ids
+    ]
+    _validate_collections(db, _scope_slugs(payload))
+    _require_readable_scope(db, user, _scope_slugs(payload), _row_scope_slugs(row))
+    _validate_llm_endpoints(db, payload)
+    _apply(row, payload, user, owners + users)
+    db.commit()
+    db.refresh(row)
+    return _owner_config_response(row)

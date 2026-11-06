@@ -838,3 +838,57 @@ def test_bot_admin_manages_bots_but_nothing_else_and_only_readable_spaces():
     bot_id = payload.pop('id')
     updated = bot_admin_client.put(f'/api/v1/auth/admin/bots/{bot_id}', json=payload)
     assert updated.status_code == 200, updated.text
+
+
+def test_owner_edits_every_setting_but_keeps_connection_and_owners(monkeypatch):
+    admin_client = login_as(_identity('owner-config-admin', role=UserRole.ADMIN).username)
+    owner = _identity('owner-config-owner')
+    colleague = _identity('owner-config-colleague')
+    attached = _scope(admin_client, _team())
+    bot = _owned_bot(admin_client, owner, attached)
+    url = f"/api/v1/bots/{bot['id']}/config"
+    owner_client = login_as(owner.username)
+
+    assert login_as(colleague.username).get(url).status_code == 404
+    config = owner_client.get(url)
+    assert config.status_code == 200, config.text
+    config = config.json()
+    assert config['webhook_url'] is None and config['has_auth_token'] is True
+    assert config['memory'] is True and config['router_mode'] is None
+    # What the editor sends back: the writable fields, grants as inputs.
+    from app.schemas.managed_bots import ManagedBotUpdate
+    config = {key: value for key, value in config.items() if key in ManagedBotUpdate.model_fields}
+    config['grants'] = [{'user_id': owner.id, 'role': 'owner'}]
+
+    saved = owner_client.put(url, json={
+        **config,
+        'name': 'Service-Assistent 2',
+        'webhook_url': 'https://evil.example.com/hook',
+        'timeout_seconds': 5,
+        'top_k': 30, 'final_k': 8, 'rerank': False, 'memory': False, 'router_mode': 'llm',
+        'disclaimer': 'Testsystem',
+        'grants': [{'user_id': colleague.id, 'role': 'owner'}],
+    })
+    assert saved.status_code == 200, saved.text
+    body = saved.json()
+    assert body['name'] == 'Service-Assistent 2' and body['disclaimer'] == 'Testsystem'
+    assert (body['top_k'], body['final_k'], body['rerank'], body['memory'], body['router_mode']) == (30, 8, False, False, 'llm')
+    # Owners stay as the administrators set them; the colleague asked to be one gets nothing.
+    assert [(grant['user_id'], grant['role']) for grant in body['grants']] == [(owner.id, 'owner')]
+    with TestingSessionLocal() as db:
+        row = db.get(ManagedBot, bot['id'])
+        assert row.webhook_url == 'https://n8n.example.com/webhook/weave-service'
+        assert row.timeout_seconds == 90 and row.auth_token_encrypted
+
+    # The same space rules as the owner PATCH.
+    assert owner_client.put(url, json={**config, 'collections': []}).status_code == 403
+
+    monkeypatch.setattr(settings, 'chat_config_service_token', 'runtime-control-token')
+    projected = admin_client.get('/api/v1/internal/bots', headers={'Authorization': 'Bearer runtime-control-token'}).json()['items']
+    item = next(entry for entry in projected if entry['id'] == bot['id'])
+    assert (item['memory'], item['router_mode'], item['rerank']) == (False, 'llm', False)
+
+    endpoints = owner_client.get('/api/v1/bots/llm-endpoints')
+    assert endpoints.status_code == 200, endpoints.text
+    assert all(set(entry) == {'id', 'name', 'model', 'enabled', 'supports_tools'} for entry in endpoints.json()['items'])
+    assert login_as(colleague.username).get('/api/v1/bots/llm-endpoints').status_code == 404

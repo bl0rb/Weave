@@ -84,6 +84,10 @@ class SearchRequest(BaseModel):
     # Python slices on the SQLite fallback and invalid LIMITs on Postgres.
     top_k: int | None = Field(default=None, ge=1, le=200)
     final_k: int | None = Field(default=None, ge=1, le=200)
+    # A bot's own `retrieval.rerank` switch: `False` skips the reranker for
+    # this request and keeps the RRF order (same as `RERANK_PROVIDER=none`).
+    # It can only turn a configured reranker off, never on.
+    rerank: bool = True
 
 
 class SearchScores(BaseModel):

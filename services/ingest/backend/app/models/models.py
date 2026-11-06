@@ -651,6 +651,11 @@ class ManagedBot(Base):
     # hide the sources panel, and an optional note next to the composer.
     show_sources: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1', nullable=False)
     disclaimer: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Weave-Runtime RetrievalConfig.memory / BotConfig.router_mode: use the
+    # knowledge memory (while on centrally) and how questions are routed;
+    # router_mode None = the runtime-wide ROUTER_MODE.
+    memory: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1', nullable=False)
+    router_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
     # Weave-Runtime BotConfig.intake / guard.blocked_topics(_reply), stored
     # in the bot document's own shape; None = off / Runtime default reply.
     intake_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
