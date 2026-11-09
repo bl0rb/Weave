@@ -41,8 +41,7 @@ spec:
   strategy:
     # Recreate, gleiche Begruendung wie bei embeddings: alle Pods benutzen
     # dasselbe PVC, und ohne ReadWriteMany kann der neue Pod das Volume
-    # nicht anhaengen, solange der alte laeuft. Hier faellt das noch
-    # deutlicher aus -- ein Pod, der neu laden muss, holt ~2,3 GB.
+    # nicht anhaengen, solange der alte laeuft.
     type: Recreate
   {{- end }}
   selector:
@@ -103,9 +102,8 @@ spec:
           {{- if $r.probes.liveness.enabled }}
           # Wie bei embeddings beweist GET /health nur, dass der Prozess
           # antwortet: es liefert sofort 200, auch waehrend des ersten
-          # Ladens. Der Unterschied ist die Groesse -- ~2,3 GB statt
-          # ~448 MiB, also rund die fuenffache Wartezeit. Deshalb stehen in
-          # values.yaml hier die noch grosszuegigeren Werte.
+          # Ladens. values.yaml laesst hier grosszuegig Luft fuer den
+          # ersten Download (~341 MB int8, ~1,26 GB mit der fp32-Datei).
           livenessProbe:
             httpGet:
               path: {{ $r.probes.liveness.path }}
@@ -134,7 +132,7 @@ spec:
           persistentVolumeClaim:
             claimName: {{ $r.persistence.existingClaim | default $name }}
           {{- else }}
-          # Ohne Persistenz laedt jeder Pod-Neustart ~2,3 GB neu. Das ist
+          # Ohne Persistenz laedt jeder Pod-Neustart die Gewichte neu. Das ist
           # nicht nur langsam -- bei eingeschraenktem Egress schlaegt es
           # fehl, und jede Suche faellt still auf die unrerankte Reihenfolge
           # zurueck (services/reranker/README.md, "Betriebshinweis").

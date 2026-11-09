@@ -14,17 +14,16 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
 
     # --- Model identity & where its weights are cached on disk ------------
-    # The one model Matze prescribed. NOT available in fastembed 0.8.0's
-    # TextCrossEncoder.list_supported_models() (checked experimentally --
-    # that call lists exactly 6 cross-encoders: Xenova/ms-marco-MiniLM-L-6/
-    # 12-v2, BAAI/bge-reranker-base, and three jinaai/jina-reranker-*
-    # models; bge-reranker-v2-m3 is absent), so this service loads it
-    # through sentence-transformers' CrossEncoder (a thin wrapper over a
-    # plain HF transformers XLM-RoBERTa-large-class sequence-classification
-    # model) instead of fastembed's ONNX runtime. See README.md's "Warum
-    # nicht fastembed" for the full reasoning and the image-size/latency
-    # tradeoff that fallback costs.
-    reranker_model: str = 'BAAI/bge-reranker-v2-m3'
+    # Hugging Face repo the ONNX graph and tokenizer.json are downloaded
+    # from (app/services/model.py). The default is onnx-community's export
+    # of Alibaba-NLP/gte-multilingual-reranker-base (Apache-2.0, 306M,
+    # multilingual incl. German); the original repo ships no ONNX. Any
+    # cross-encoder repo with a single-logit ONNX graph and a root
+    # tokenizer.json works, e.g. onnx-community/bge-reranker-v2-m3-ONNX.
+    reranker_model: str = 'onnx-community/gte-multilingual-reranker-base'
+    # Path of the ONNX file inside that repo. The int8 export is ~341 MB
+    # instead of ~1.26 GB (onnx/model.onnx) and several times faster on CPU.
+    reranker_onnx_file: str = 'onnx/model_int8.onnx'
     reranker_cache_dir: str = './.cache'
 
     # --- Incoming request auth ---------------------------------------------
@@ -37,13 +36,11 @@ class Settings(BaseSettings):
     reranker_api_token: str = ''
 
     # --- CPU inference tuning -----------------------------------------------
-    # Passed straight to CrossEncoder.predict(batch_size=...)
-    # (app/services/model.py). Larger batches amortize per-call Python/
-    # tokenizer overhead a little, but bge-reranker-v2-m3 is CPU-bound on
-    # the transformer forward pass itself either way -- see README's
-    # measured-latency table before raising this much past the default.
+    # Pairs per onnxruntime forward pass (app/services/model.py). Larger
+    # batches amortize per-call overhead a little, but the model is
+    # CPU-bound on the forward pass itself either way.
     reranker_batch_size: int = 16
-    # torch.set_num_threads(...) (app/services/model.py). Left well under
+    # onnxruntime intra_op_num_threads (app/services/model.py). Left well under
     # this host's full core count on purpose: one reranker process sharing
     # a box with other Weave services (or several reranker replicas on one
     # box) should not each claim every core for itself.
@@ -52,8 +49,7 @@ class Settings(BaseSettings):
     # --- The one guardrail that actually matters for a cross-encoder: it
     # scores query+document PAIRS one at a time, so cost is O(n) in the
     # document count with no way to batch it away like a bi-encoder
-    # embedding call can (see README's "Warum nicht fastembed" and its
-    # measured-latency table for the numbers this default is based on).
+    # embedding call can (see README's measured-latency table).
     reranker_max_documents: int = 50
 
 

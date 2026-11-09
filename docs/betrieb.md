@@ -63,7 +63,7 @@ Attrappen-Provider ansprechen können:
 | Dienst | Port | Datenbank | Aufgabe |
 |---|---|---|---|
 | Weave-Embeddings | 8006 | keine | OpenAI-kompatibles `/v1/embeddings` für `intfloat/multilingual-e5-small` (CPU, onnxruntime) |
-| Weave-Reranker | 8007 | keine | Cohere/Jina-kompatibles `/rerank` für `BAAI/bge-reranker-v2-m3` (CPU, sentence-transformers) |
+| Weave-Reranker | 8007 | keine | Cohere/Jina-kompatibles `/rerank` für `gte-multilingual-reranker-base` (CPU, onnxruntime) |
 
 Beide starten wie jeder andere Dienst hier und beantworten `/health` sofort —
 aber standardmäßig ruft sie niemand auf: Knowledge/Retrieval bleiben auf den
@@ -621,11 +621,14 @@ läuft über einen anderen Unterbau:
 | Dienst | Modell | Unterbau (statt fastembed) | Dimension/Art | Gewichte | Grobe CPU-Laufzeit |
 |---|---|---|---|---|---|
 | weave-embeddings | `intfloat/multilingual-e5-small` | eigener ONNX-Export des Modells + `onnxruntime` | **384** | ~448 MiB (`onnx/model.onnx`) | ~1,3 ms/Satz (Batch 32) |
-| weave-reranker | `BAAI/bge-reranker-v2-m3` | `sentence-transformers`/`torch` (CPU) | Cross-Encoder | ~2,3 GB (`model.safetensors`) | ~24–70 ms/Dokument (fällt mit Batchgröße) |
+| weave-reranker | `Alibaba-NLP/gte-multilingual-reranker-base` (ONNX-Export `onnx-community/gte-multilingual-reranker-base`) | `onnxruntime` (CPU), wie weave-embeddings | Cross-Encoder | ~341 MB (`onnx/model_int8.onnx`) | ~43 ms/Dokument (4-vCPU-Sandbox, 20 Dokumente) |
 
 Volle Herleitung, Messmethode und die genaue Byte-Zahl in
 `services/embeddings/README.md` ("Modellwahl") und
-`services/reranker/README.md` ("Warum nicht fastembed").
+`services/reranker/README.md` ("Modellwahl und Laufzeit"). Der Reranker ist
+inzwischen bewusst vom vorgegebenen `bge-reranker-v2-m3` auf das kleinere,
+schnellere gte-Modell umgestellt; `bge-reranker-v2-m3` bleibt per
+`RERANKER_MODEL=onnx-community/bge-reranker-v2-m3-ONNX` wählbar.
 
 ### 7.2 Der `input_type`-Vertrag
 
@@ -687,7 +690,7 @@ EMBEDDING_DIMENSION=384                          # aus GET /health gelesen, sieh
 RERANK_PROVIDER=api
 RERANK_BASE_URL=http://weave-reranker:8000
 RERANK_API_KEY=<== derselbe Wert wie RERANKER_API_TOKEN oben>
-RERANK_MODEL=BAAI/bge-reranker-v2-m3
+RERANK_MODEL=onnx-community/gte-multilingual-reranker-base
 ```
 
 Ab hier trennt sich der Weg — je nachdem, ob `weave_knowledge` schon Inhalt hat.

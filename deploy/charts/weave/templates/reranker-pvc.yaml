@@ -2,11 +2,10 @@
 Der Gewichte-Cache unter /data/model-cache (RERANKER_CACHE_DIR aus
 services/reranker/Dockerfile).
 
-Das Image bringt die Gewichte NICHT mit -- es laedt BAAI/bge-reranker-v2-m3
-(~2,3 GB) beim ersten Start von HuggingFace. Deshalb ist die Vorgabegroesse
-hier deutlich hoeher als bei embeddings, und deshalb faellt ein fehlendes
-Volume hier deutlicher auf: ohne Cache holt jeder Pod-Neustart diese
-2,3 GB erneut.
+Das Image bringt die Gewichte NICHT mit -- es laedt das ONNX-Modell aus
+RERANKER_MODEL (Standard gte-multilingual-reranker-base int8, ~341 MB)
+beim ersten Start von HuggingFace. Ohne Volume holt jeder Pod-Neustart
+die Gewichte erneut.
 
 Rendert nur, wenn der Dienst eingeschaltet ist, die Persistenz gilt und
 kein fremder Claim benannt wurde -- mit persistence.existingClaim mountet

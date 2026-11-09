@@ -5,33 +5,19 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 # Default cache location INSIDE the container -- deliberately mounted as a
-# volume at runtime (see README's "Docker starten") so the ~2.3 GB model
-# download survives container restarts/recreations instead of re-fetching
-# every time. RERANKER_CACHE_DIR overrides this if a deployment wants the
-# cache somewhere else.
+# volume at runtime (see README's "Docker starten") so the model download
+# (~341 MB for the default int8 ONNX file) survives container
+# restarts/recreations instead of re-fetching every time.
+# RERANKER_CACHE_DIR overrides this if a deployment wants the cache
+# somewhere else.
 ENV RERANKER_CACHE_DIR=/data/model-cache
 
 # requirements.txt is a plain `pip freeze` (no --generate-hashes) for now
 # -- see requirements.in's header -- so this installs without
 # --require-hashes, same discipline as Weave-Tools' own backend/Dockerfile.
-#
-# torch is installed FIRST, explicitly, from the CPU wheel index --
-# otherwise a plain `pip install -r requirements.txt` resolves the `torch`
-# line against default PyPI, which serves the CUDA build (several GB
-# larger, entirely wasted on a CPU-only deployment). Installing it first
-# means the later `-r requirements.txt` pass finds torch already satisfied
-# and never re-resolves it against the wrong index. See README.md's
-# "Imagegroesse" for the actual size difference this makes.
-#
-# The version is READ OUT of requirements.txt rather than repeated here. A
-# second pin drifts the moment Dependabot bumps the first one, and then the
-# "already satisfied" above quietly stops being true: the -r pass resolves
-# torch against plain PyPI and pulls the CUDA build after all. That is
-# exactly what the torch 2.14.0 bump (#15) did.
+# onnxruntime + tokenizers only, no torch (see app/services/model.py).
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
-	"$(grep -E '^torch==' /app/requirements.txt)" \
-	&& pip install --no-cache-dir -r /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY app /app/app
 

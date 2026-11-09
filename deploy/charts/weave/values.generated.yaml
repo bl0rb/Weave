@@ -132,7 +132,8 @@ config:
   reranker:
     RERANKER_BATCH_SIZE: "16"
     RERANKER_MAX_DOCUMENTS: "50"
-    RERANKER_MODEL: "BAAI/bge-reranker-v2-m3"
+    RERANKER_MODEL: "onnx-community/gte-multilingual-reranker-base"
+    RERANKER_ONNX_FILE: "onnx/model_int8.onnx"
     RERANKER_PORT: "8007"
     RERANKER_THREADS: "4"
     WEAVE_RERANKER_TAG: "latest"

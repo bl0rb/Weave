@@ -1,10 +1,11 @@
-"""The one file in this suite that loads the REAL BAAI/bge-reranker-v2-m3
-model (via RerankerModel.load(), pointed at RERANKER_CACHE_DIR) and checks
-actual semantic behaviour -- every test in test_rerank_api.py monkeypatches
+"""The one file in this suite that loads the REAL reranker model
+(onnx-community/gte-multilingual-reranker-base by default, via
+RerankerModel.load(), pointed at RERANKER_CACHE_DIR) and checks actual
+semantic behaviour -- every test in test_rerank_api.py monkeypatches
 reranker_model.score() instead, to stay fast and network-free.
 
 This is deliberately slow the first time a given cache dir is used (a cold
-download of ~2.3 GB of weights) and still takes several seconds once
+download of ~341 MB of int8 weights) and still takes a second or two once
 cached (module-scoped fixture below loads it exactly once for this whole
 file). Skippable via RERANKER_SKIP_MODEL_TESTS for a CI lane that
 intentionally has no access to the model download and no interest in
@@ -51,10 +52,13 @@ def test_relevant_german_document_scores_higher_than_irrelevant(loaded_model):
     scores = loaded_model.score(query, [irrelevant, relevant])
 
     assert scores[1] > scores[0]
+    # Sigmoid-mapped like CrossEncoder's output was: callers' score
+    # thresholds assume 0..1.
+    assert all(0.0 <= score <= 1.0 for score in scores)
 
 
 def test_long_document_is_truncated_not_rejected(loaded_model):
-    # Documents far longer than the model's 512-token limit
+    # Documents far longer than this service's 512-token limit
     # (app/services/model.py:_MAX_SEQUENCE_LENGTH) must still produce a
     # plain float score -- truncated by the tokenizer, never rejected. See
     # README.md's "Kuerzung statt Ablehnung".
