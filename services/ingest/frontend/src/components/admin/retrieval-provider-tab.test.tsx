@@ -84,3 +84,23 @@ it('starts a rebuild only after the confirm dialog is accepted and shows the req
   await waitFor(() => expect(json).toHaveBeenCalledWith('/api/v1/admin/knowledge/rebuild', { method: 'POST' }));
   expect(await screen.findByText(/7 Veröffentlichungen zur Neuauslieferung eingereiht\./)).toBeTruthy();
 });
+
+it('saves the central hit-count defaults and sends null for an emptied field', async () => {
+  render(<RetrievalProviderTab />);
+  const topK = await screen.findByLabelText('Kandidaten (top_k)');
+  const finalK = screen.getByLabelText('Treffer (final_k)');
+  fireEvent.change(topK, { target: { value: '30' } });
+  fireEvent.change(finalK, { target: { value: '8' } });
+  json.mockImplementation(async (path: string, init?: RequestInit) => {
+    if (path === '/api/v1/auth/admin/retrieval-provider' && init?.method === 'PUT') return { ...config, ...JSON.parse(String(init.body)) };
+    if (path === '/api/v1/auth/admin/retrieval-provider') return config;
+    throw new Error(`unexpected request: ${path}`);
+  });
+  fireEvent.click(screen.getByRole('button', { name: /Speichern/ }));
+  await waitFor(() => expect(json).toHaveBeenCalledWith('/api/v1/auth/admin/retrieval-provider', expect.objectContaining({ method: 'PUT' })));
+  const put = json.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === 'PUT');
+  expect(JSON.parse(String((put?.[1] as RequestInit).body))).toMatchObject({ search_top_k: 30, search_final_k: 8 });
+
+  fireEvent.change(topK, { target: { value: '' } });
+  expect((topK as HTMLInputElement).value).toBe('');
+});

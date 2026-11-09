@@ -21,6 +21,8 @@ class RetrievalProviderAdminResponse(BaseModel):
     rerank_key_source: str
     semantic_weight: float
     lexical_weight: float
+    search_top_k: int | None = None
+    search_final_k: int | None = None
     updated_at: datetime | None
     reindex_started: bool = False
 
@@ -46,6 +48,10 @@ class RetrievalProviderUpdateRequest(BaseModel):
     confirm_reindex: bool = False
     semantic_weight: float = Field(default=0.5, ge=0, le=1)
     lexical_weight: float = Field(default=0.5, ge=0, le=1)
+    # None = Weave-Retrieval's own SEARCH_TOP_K / SEARCH_FINAL_K. Same bounds
+    # as that service's SearchRequest.top_k / final_k.
+    search_top_k: int | None = Field(default=None, ge=1, le=200)
+    search_final_k: int | None = Field(default=None, ge=1, le=200)
 
     @model_validator(mode='after')
     def validate_weights(self) -> 'RetrievalProviderUpdateRequest':
@@ -53,6 +59,8 @@ class RetrievalProviderUpdateRequest(BaseModel):
             raise ValueError('semantic_weight and lexical_weight must add up to 1')
         if self.rerank_provider == 'api' and (not self.rerank_base_url.strip() or not self.rerank_model.strip()):
             raise ValueError('rerank_base_url and rerank_model are required when reranking is enabled')
+        if self.search_top_k is not None and self.search_final_k is not None and self.search_final_k > self.search_top_k:
+            raise ValueError('search_final_k must be less than or equal to search_top_k')
         return self
 
 
@@ -83,4 +91,6 @@ class RetrievalProviderInternalResponse(BaseModel):
     rerank_api_key: str = ''
     semantic_weight: float
     lexical_weight: float
+    search_top_k: int | None = None
+    search_final_k: int | None = None
     updated_at: datetime | None

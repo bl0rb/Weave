@@ -51,6 +51,11 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 
 
+# The environment's own SEARCH_TOP_K / SEARCH_FINAL_K, kept so an admin
+# clearing the central default (Weave-Ingest sends null) falls back to them.
+_ENV_SEARCH_DEFAULTS = {'search_top_k': settings.search_top_k, 'search_final_k': settings.search_final_k}
+
+
 def refresh_control_plane() -> None:
     if not settings.chat_config_base_url or not settings.chat_config_service_token:
         return
@@ -65,6 +70,12 @@ def refresh_control_plane() -> None:
         for name in ('embedding_provider', 'embedding_base_url', 'embedding_model', 'embedding_dimension', 'embedding_batch_size', 'rerank_provider', 'rerank_base_url', 'rerank_model', 'rerank_max_documents', 'rerank_batch_size', 'rerank_threads', 'semantic_weight', 'lexical_weight'):
             if name in values:
                 setattr(settings, name, values[name])
+        # Central hit-count defaults (admin UI): an int overrides the env
+        # value, null restores it; an older Weave-Ingest sends neither key.
+        for name, env_default in _ENV_SEARCH_DEFAULTS.items():
+            if name in values:
+                value = values[name]
+                setattr(settings, name, value if isinstance(value, int) and not isinstance(value, bool) and value >= 1 else env_default)
         settings.embedding_api_key = values.get('embedding_api_key', settings.embedding_api_key)
         settings.rerank_api_key = values.get('rerank_api_key', settings.rerank_api_key)
     except (httpx.HTTPError, ValueError):

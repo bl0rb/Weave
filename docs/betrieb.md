@@ -559,6 +559,13 @@ antwortet er mit 413 — und weil ein Reranker-Fehler abgefangen wird, fällt
 `rerank_error` im Trace. Wer `SEARCH_TOP_K` anhebt, muss
 `RERANKER_MAX_DOCUMENTS` mitziehen.
 
+`SEARCH_TOP_K`/`SEARCH_FINAL_K` lassen sich zentral unter **Ingest →
+Administration → Suche und Modelle → Trefferzahl** überschreiben (leer = die
+Umgebungswerte). Das gilt für jede Suche ohne eigene Werte, etwa über die
+Such-API oder Weave-Tools; Bots schicken immer ihre eigenen `top_k`/`final_k`
+aus dem Bot-Editor. Dieselbe Grenze gilt auch dort: `top_k` nicht über
+`RERANKER_MAX_DOCUMENTS`.
+
 Der Reranker **degradiert leise**: fällt er aus, liefert die Suche die
 unrerankte Reihenfolge zurück statt zu scheitern. Das ist gewollt, heißt aber,
 dass eine kaputte Konfiguration nur an schlechteren Ergebnissen auffällt — im

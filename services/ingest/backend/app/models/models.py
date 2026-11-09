@@ -540,6 +540,12 @@ class RetrievalProviderConfig(Base):
     rerank_api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     semantic_weight: Mapped[float] = mapped_column(Float, default=0.5, server_default='0.5', nullable=False)
     lexical_weight: Mapped[float] = mapped_column(Float, default=0.5, server_default='0.5', nullable=False)
+    # Central defaults for Weave-Retrieval's hit counts (candidates before
+    # reranking / results returned) for every search that sets none of its
+    # own -- e.g. Weave-API/Weave-Tools search. NULL = the service's own
+    # SEARCH_TOP_K / SEARCH_FINAL_K. A bot always sends its own values.
+    search_top_k: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    search_final_k: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_by_id: Mapped[str | None] = mapped_column(String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now(), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
