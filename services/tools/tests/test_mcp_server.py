@@ -72,14 +72,29 @@ def test_search_tool_intersects_collection_and_maps_result():
         result = asyncio.run(search(query='hallo', collection='handbuch', top_k=None, ctx=_ctx(token)))
 
     assert result['results'][0]['text'] == 'hallo'
-    assert result['results'][0]['source'] == {
+    source = result['results'][0]['source']
+    assert {key: source[key] for key in ('document', 'document_id', 'chunk_id', 'page', 'collection')} == {
         'document': 'handbuch.pdf',
         'document_id': 'doc-1',
         'chunk_id': 1,
         'page': '2',
         'collection': 'handbuch',
     }
+    assert result['results'][0]['rank'] == 1
+    assert result['trace'] is None
     assert mock_post.call_args.kwargs['json']['allowed_collections'] == ['handbuch']
+    assert 'final_k' not in mock_post.call_args.kwargs['json']
+
+
+def test_search_tool_forwards_final_k_and_rejects_final_k_above_top_k():
+    token = make_delegation_token(collections=['handbuch'])
+    with patch('app.services.tools.httpx.post', return_value=fake_response(200, {'results': []})) as mock_post:
+        asyncio.run(search(query='x', top_k=10, final_k=3, ctx=_ctx(token)))
+        assert mock_post.call_args.kwargs['json']['top_k'] == 10
+        assert mock_post.call_args.kwargs['json']['final_k'] == 3
+
+        with pytest.raises(ValueError):
+            asyncio.run(search(query='x', top_k=3, final_k=5, ctx=_ctx(token)))
 
 
 def test_search_tool_with_out_of_scope_collection_returns_empty_never_calls_retrieval():
@@ -87,7 +102,7 @@ def test_search_tool_with_out_of_scope_collection_returns_empty_never_calls_retr
     with patch('app.services.tools.httpx.post') as mock_post:
         result = asyncio.run(search(query='x', collection='fremde-collection', top_k=None, ctx=_ctx(token)))
 
-    assert result == {'query': 'x', 'results': []}
+    assert result == {'query': 'x', 'results': [], 'trace': None}
     mock_post.assert_not_called()
 
 
@@ -97,7 +112,7 @@ def test_search_tool_signature_has_no_team_or_user_parameter_at_all():
     # TypeError (a direct call) or fails MCP-side schema validation (a real
     # tool call) before any scope logic ever runs.
     params = set(inspect.signature(search).parameters)
-    assert params == {'query', 'collection', 'top_k', 'ctx'}
+    assert params == {'query', 'collection', 'top_k', 'final_k', 'ctx'}
     with pytest.raises(TypeError):
         asyncio.run(search(query='x', team='attacker-team', ctx=_ctx(make_delegation_token())))  # type: ignore[call-arg]
 

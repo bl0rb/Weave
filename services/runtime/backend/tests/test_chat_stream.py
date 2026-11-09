@@ -29,6 +29,12 @@ class _FakeResponse:
         return self._json_data
 
 
+def _retrieval_core(retrieval: dict) -> dict:
+    """`RetrievalTrace` minus the per-search detail (`top_k`/`final_k`/
+    `rerank`/`search`/`hits`), asserted separately where it matters."""
+    return {k: v for k, v in retrieval.items() if k not in {'top_k', 'final_k', 'rerank', 'search', 'hits'}}
+
+
 def _collection(**overrides) -> dict:
     collection = {'slug': 'vertraege', 'name': 'Vertraege', 'description': None, 'public': False}
     collection.update(overrides)
@@ -156,7 +162,7 @@ def test_stream_knowledge_flow_reconstructs_the_context_marked_answer_and_sends_
     assert events[0]['type'] == 'trace'
     trace = events[0]['trace']
     assert trace['intent'] == 'knowledge'
-    assert trace['retrieval'] == {
+    assert _retrieval_core(trace['retrieval']) == {
         'candidates': 2, 'used': 2, 'collections': ['vertraege', '__none__'], 'requested_collections': None, 'rewritten_query': None, 'focus_documents': None,
     }
     assert 'retrieval_ms' in trace['timings_ms']
@@ -258,7 +264,7 @@ def test_stream_guard_flow_streams_the_guard_text_with_empty_sources_no_collecti
 
     trace = events[0]['trace']
     assert trace['guard'] == {'triggered': True, 'reason': 'no_collections', 'topic': None}
-    assert trace['retrieval'] == {'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': None, 'rewritten_query': None, 'focus_documents': None}
+    assert trace['retrieval'] == {'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': None, 'rewritten_query': None, 'focus_documents': None, 'top_k': None, 'final_k': None, 'rerank': None, 'search': None, 'hits': []}
 
     sources_event = next(event for event in events if event['type'] == 'sources')
     assert sources_event['sources'] == []

@@ -159,6 +159,59 @@ class Source(BaseModel):
         return value if isinstance(value, str) and value.startswith(('https://', 'http://')) else None
 
 
+class RetrievalSearchTrace(BaseModel):
+    """Weave-Retrieval's own `SearchResponse.trace` for the search this turn
+    actually used, copied best-effort (an older Retrieval omits the newer
+    fields; every field is defaulted)."""
+
+    vector_candidates: int = 0
+    fulltext_candidates: int = 0
+    fused: int = 0
+    reranked: int = 0
+    returned: int = 0
+    rerank_error: bool = False
+    rerank_provider: str | None = None
+    rerank_model: str | None = None
+    embedding_model: str | None = None
+    rrf_k: int | None = None
+    semantic_weight: float | None = None
+    lexical_weight: float | None = None
+    timings_ms: dict[str, float] = Field(default_factory=dict)
+
+
+class RetrievalHitScores(BaseModel):
+    """Mirrors Weave-Retrieval's SearchScores."""
+
+    vector: float | None = None
+    fulltext: float | None = None
+    rrf: float | None = None
+    rerank: float | None = None
+
+
+class RetrievalHit(BaseModel):
+    """One chunk Weave-Retrieval returned for this turn -- metadata and
+    scores only, never the chunk text. `used` is True exactly when the
+    chunk was handed to the LLM (survived `min_score`); False for a
+    `min_score` drop and for every hit of a `clarify` turn."""
+
+    rank: int
+    document_id: str
+    chunk_id: int
+    original_filename: str | None = None
+    title: str | None = None
+    collection: str | None = None
+    heading_path: list[str] = Field(default_factory=list)
+    page_start: int | None = None
+    page_end: int | None = None
+    document_version: int | None = None
+    chunk_index: int | None = None
+    language: str | None = None
+    document_type: str | None = None
+    quality_grade: str | None = None
+    scores: RetrievalHitScores = Field(default_factory=RetrievalHitScores)
+    used: bool = False
+
+
 class RetrievalTrace(BaseModel):
     # candidates: how many chunks Weave-Retrieval returned for this bot's
     # query. used: how many of those actually backed the returned answer
@@ -212,6 +265,16 @@ class RetrievalTrace(BaseModel):
     # unfocused -- memory off, bot filters, memory empty or unavailable,
     # or the focused search found nothing and the unfocused retry ran.
     focus_documents: list[str] | None = None
+    # The bot's `retrieval.top_k`/`final_k`/`rerank` as sent to
+    # Weave-Retrieval for this turn's search; `None` when no search ran.
+    top_k: int | None = None
+    final_k: int | None = None
+    rerank: bool | None = None
+    # Weave-Retrieval's own trace for the search actually used (`None` when
+    # no search ran or Retrieval sent none) and the hits it returned,
+    # best first -- see RetrievalSearchTrace/RetrievalHit above.
+    search: RetrievalSearchTrace | None = None
+    hits: list[RetrievalHit] = Field(default_factory=list)
 
 
 class ClarificationOption(BaseModel):

@@ -189,7 +189,7 @@ def test_search_out_of_scope_collection_returns_empty_200_not_an_error():
         )
 
     assert resp.status_code == 200
-    assert resp.json() == {'query': 'geheim', 'results': []}
+    assert resp.json() == {'query': 'geheim', 'results': [], 'trace': None}
     mock_post.assert_not_called()
 
 
@@ -218,3 +218,113 @@ def test_search_body_team_and_user_fields_are_ignored():
     assert body['allowed_teams'] == ['real-team']
     # The scope's REAL allowed_collections, never the injected override.
     assert body['allowed_collections'] == ['handbuch']
+
+
+# --- final_k, scores, metadata and trace ---------------------------------------
+
+
+def test_search_final_k_above_top_k_is_422_and_never_reaches_retrieval():
+    token = make_delegation_token(collections=['handbuch'])
+    with patch('app.services.tools.httpx.post') as mock_post:
+        resp = client.post(
+            '/api/v1/tools/search',
+            json={'query': 'x', 'top_k': 3, 'final_k': 5},
+            headers=_auth_headers(token),
+        )
+    assert resp.status_code == 422
+    mock_post.assert_not_called()
+
+
+def test_search_forwards_final_k_and_maps_scores_metadata_and_trace():
+    token = make_delegation_token(collections=['handbuch'])
+    hit = {
+        'chunk_id': 7,
+        'document_id': 'doc-1',
+        'text': 'Urlaub',
+        'page_start': 2,
+        'page_end': 3,
+        'original_filename': 'handbuch.pdf',
+        'collection': 'handbuch',
+        'rank': 1,
+        'heading_path': ['HR', 'Urlaub'],
+        'document_version': 4,
+        'chunk_index': 12,
+        'title': 'Handbuch',
+        'language': 'de',
+        'document_type': 'policy',
+        'tags': ['hr'],
+        'source_kind': 'upload',
+        'source_url': 'https://wiki.example/hr',
+        'uploaded_at': '2026-01-01T00:00:00Z',
+        'legal_status': 'approved',
+        'scores': {'vector': 0.71, 'fulltext': 0.12, 'rrf': 0.031, 'rerank': 0.92},
+    }
+    trace = {
+        'top_k': 20,
+        'final_k': 5,
+        'vector_candidates': 20,
+        'fulltext_candidates': 8,
+        'fused': 24,
+        'reranked': 24,
+        'returned': 1,
+        'rerank_error': False,
+        'timings_ms': {'total': 12.5},
+        'embedding_model': 'not-copied',
+    }
+    retrieval_resp = fake_response(200, {'query': 'Urlaub', 'results': [hit], 'trace': trace})
+    with patch('app.services.tools.httpx.post', return_value=retrieval_resp) as mock_post:
+        resp = client.post(
+            '/api/v1/tools/search',
+            json={'query': 'Urlaub', 'top_k': 20, 'final_k': 5},
+            headers=_auth_headers(token),
+        )
+
+    assert resp.status_code == 200
+    body = mock_post.call_args.kwargs['json']
+    assert (body['top_k'], body['final_k']) == (20, 5)
+    result = resp.json()['results'][0]
+    assert result['rank'] == 1
+    assert result['scores'] == {'vector': 0.71, 'fulltext': 0.12, 'rrf': 0.031, 'rerank': 0.92}
+    source = result['source']
+    assert source['page'] == '2-3'
+    assert source['heading_path'] == ['HR', 'Urlaub']
+    assert source['document_version'] == 4
+    assert (source['page_start'], source['page_end'], source['chunk_index']) == (2, 3, 12)
+    assert (source['title'], source['language'], source['document_type']) == ('Handbuch', 'de', 'policy')
+    assert source['tags'] == ['hr']
+    assert source['source_url'] == 'https://wiki.example/hr'
+    assert source['fetched_at'] is None
+    assert resp.json()['trace'] == {key: value for key, value in trace.items() if key != 'embedding_model'}
+
+
+def test_search_tolerates_malformed_trace_and_scores():
+    token = make_delegation_token(collections=['handbuch'])
+    hit = {'chunk_id': 1, 'document_id': 'doc-1', 'text': 'x', 'scores': 'bogus'}
+    retrieval_resp = fake_response(200, {'results': [hit], 'trace': 'bogus'})
+    with patch('app.services.tools.httpx.post', return_value=retrieval_resp):
+        resp = client.post('/api/v1/tools/search', json={'query': 'x'}, headers=_auth_headers(token))
+
+    assert resp.status_code == 200
+    assert resp.json()['trace'] is None
+    assert resp.json()['results'][0]['rank'] == 1
+    assert resp.json()['results'][0]['scores'] == {'vector': None, 'fulltext': None, 'rrf': None, 'rerank': None}
+
+
+def test_search_final_k_rejected_by_retrieval_is_422_not_500():
+    # Only final_k sent, larger than Weave-Retrieval's own default top_k.
+    token = make_delegation_token(collections=['handbuch'])
+    retrieval_resp = fake_response(400, {'detail': 'final_k (30) must not exceed top_k (20)'}, method='POST')
+    with patch('app.services.tools.httpx.post', return_value=retrieval_resp):
+        resp = client.post('/api/v1/tools/search', json={'query': 'x', 'final_k': 30}, headers=_auth_headers(token))
+    assert resp.status_code == 422
+    assert resp.json()['detail'] == 'final_k (30) must not exceed top_k (20)'
+
+
+def test_search_source_url_is_http_only():
+    token = make_delegation_token(collections=['handbuch'])
+    hit = {'chunk_id': 1, 'document_id': 'doc-1', 'text': 'x', 'source_url': 'javascript:alert(1)'}
+    retrieval_resp = fake_response(200, {'results': [hit]})
+    with patch('app.services.tools.httpx.post', return_value=retrieval_resp):
+        resp = client.post('/api/v1/tools/search', json={'query': 'x'}, headers=_auth_headers(token))
+    assert resp.status_code == 200
+    assert resp.json()['results'][0]['source']['source_url'] is None

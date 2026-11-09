@@ -121,7 +121,7 @@ def test_oauth_mcp_client_round_trip_uses_authenticated_request_scope():
                         assert {t.name for t in (await session.list_tools()).tools} == {'list_collections', 'search'}
                         result = await session.call_tool('search', {'query': 'x', 'collection': 'forbidden'})
                         assert result.is_error is False
-                        assert json.loads(result.content[0].text) == {'query': 'x', 'results': []}
+                        assert json.loads(result.content[0].text) == {'query': 'x', 'results': [], 'trace': None}
 
     with patch('app.services.scope.httpx.post', return_value=fake_response(200, IDENTITY)) as post, \
          patch('app.services.scope.httpx.get', return_value=fake_response(200, COLLECTIONS)):

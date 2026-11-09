@@ -14,8 +14,11 @@ module is just the HTTP shell around it: request validation, the
 pair into a SearchResponse. That guard still matters even though
 `search()` itself also trims to `final_k` after reranking: a reranker can
 narrow a candidate pool, it can never be asked to produce MORE final
-results than the `top_k` candidates it was actually given, so this is
-rejected as a 400 up front rather than silently clamped.
+results than the `top_k` candidates it was actually given, so an EXPLICIT
+`final_k > top_k` is rejected as a 400 up front rather than silently
+clamped. An omitted `final_k` falls back to settings.search_final_k clamped
+to the effective top_k (resolve_final_k()), so sending only a small
+`top_k` never trips this guard.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status

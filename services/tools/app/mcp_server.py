@@ -3,7 +3,7 @@ Weave-Tools' primary interface for an MCP-speaking caller (n8n's own MCP
 node, or any other MCP client). Exposes exactly two tools:
 
     list_collections() -> the caller's OWN readable collections.
-    search(query, collection=None, top_k=None) -> hybrid-search hits.
+    search(query, collection=None, top_k=None, final_k=None) -> hybrid-search hits.
 
 Neither tool takes a user/team/allowed_collections argument of any kind --
 each resolves its OWN Scope, fresh, from THIS call's Authorization header
@@ -54,6 +54,7 @@ from mcp.server.mcpserver import Context, MCPServer
 
 from app.core.config import settings
 from app.mcp_auth import MCPOAuthMiddleware, mcp_transport_security
+from app.schemas.tools import check_final_k
 from app.services.scope import (
     Scope,
     ScopeConfigurationError,
@@ -134,6 +135,7 @@ async def search(
     query: str,
     collection: str | None = None,
     top_k: int | None = None,
+    final_k: int | None = None,
     ctx: Context[Any, Any] | None = None,
 ) -> dict:
     """Hybrid search over THIS caller's own readable collections. Returns
@@ -148,9 +150,15 @@ async def search(
     `team`/`user_id`/`allowed_collections` argument at all: the caller's
     identity and scope come exclusively from THIS call's own Authorization
     header, never from a tool argument.
+
+    `top_k` is the candidate count, `final_k` how many hits are returned
+    after reranking (must not exceed `top_k` when both are given). Each hit
+    carries its `rank`, per-stage `scores` and further source metadata
+    (heading_path, document_version, ...); `trace` summarises the search.
     """
+    check_final_k(top_k, final_k)
     scope = _resolve_scope(ctx)
-    response = search_for_scope(scope, query=query, collection=collection, top_k=top_k)
+    response = search_for_scope(scope, query=query, collection=collection, top_k=top_k, final_k=final_k)
     return response.model_dump()
 
 

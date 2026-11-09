@@ -217,6 +217,8 @@ import time
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
 
+from pydantic import ValidationError
+
 from app.core.config import settings
 from app.schemas.bot import BotConfig, ModelConfig, SubagentConfig
 from app.schemas.chat import (
@@ -231,6 +233,9 @@ from app.schemas.chat import (
     ChatUser,
     GuardTrace,
     N8nTrace,
+    RetrievalHit,
+    RetrievalHitScores,
+    RetrievalSearchTrace,
     RetrievalTrace,
     Source,
     SubagentTrace,
@@ -1071,6 +1076,7 @@ def _run_knowledge_turn(
     # pipeline hands to the LLM/reports as `sources` below -- there is no
     # further filtering step on this side that would make the two diverge.
     candidate_count = len(chunks)
+    searched = chunks
     clarification = _build_clarification(bot, message, chunks)
     if clarification is not None:
         return _KnowledgeTurnResult(
@@ -1079,7 +1085,7 @@ def _run_knowledge_turn(
             retrieval_trace=RetrievalTrace(
                 candidates=candidate_count, used=0, collections=allowed_collections,
                 requested_collections=requested_collections, rewritten_query=rewritten_query,
-                focus_documents=focus_documents or None,
+                focus_documents=focus_documents or None, **_search_trace_fields(bot, searched, []),
             ),
             guard_triggered=True,
             guard_reason='clarify',
@@ -1090,7 +1096,7 @@ def _run_knowledge_turn(
     retrieval_trace = RetrievalTrace(
         candidates=candidate_count, used=len(chunks), collections=allowed_collections,
         requested_collections=requested_collections, rewritten_query=rewritten_query,
-        focus_documents=focus_documents or None,
+        focus_documents=focus_documents or None, **_search_trace_fields(bot, searched, chunks),
     )
 
     if not chunks and bot.guard.require_sources:
@@ -1120,6 +1126,56 @@ def _run_knowledge_turn(
         messages=messages_with_context, sources=sources, retrieval_trace=retrieval_trace, guard_triggered=False,
         memory_ms=memory_ms,
     )
+
+
+def _search_trace_fields(
+    bot: BotConfig,
+    searched: list[retrieval_client.RetrievedChunk],
+    used: list[retrieval_client.RetrievedChunk],
+) -> dict:
+    """The search-related RetrievalTrace fields for a knowledge turn that ran
+    a search: the bot's own top_k/final_k/rerank as sent, Weave-Retrieval's
+    trace (best-effort, `None` if it sent none or a malformed one) and one
+    RetrievalHit per returned chunk -- `used` marks those in `used` (the
+    chunks handed to the LLM). Never includes chunk text."""
+    raw = getattr(searched, 'trace', None)
+    search = None
+    if isinstance(raw, dict):
+        try:
+            search = RetrievalSearchTrace.model_validate(
+                {'returned': len(searched), **{k: v for k, v in raw.items() if v is not None}}
+            )
+        except ValidationError:
+            logger.warning('ignoring malformed Weave-Retrieval search trace')
+    used_ids = {chunk.chunk_id for chunk in used}
+    hits = [
+        RetrievalHit(
+            rank=getattr(chunk, 'rank', None) or position,
+            document_id=chunk.document_id,
+            chunk_id=chunk.chunk_id,
+            original_filename=chunk.original_filename,
+            title=getattr(chunk, 'title', None),
+            collection=chunk.collection,
+            heading_path=list(chunk.heading_path or []),
+            page_start=chunk.page_start,
+            page_end=chunk.page_end,
+            document_version=chunk.document_version,
+            chunk_index=getattr(chunk, 'chunk_index', None),
+            language=getattr(chunk, 'language', None),
+            document_type=getattr(chunk, 'document_type', None),
+            quality_grade=getattr(chunk, 'quality_grade', None),
+            scores=RetrievalHitScores(
+                vector=chunk.scores.vector, fulltext=chunk.scores.fulltext,
+                rrf=chunk.scores.rrf, rerank=chunk.scores.rerank,
+            ),
+            used=chunk.chunk_id in used_ids,
+        )
+        for position, chunk in enumerate(searched, start=1)
+    ]
+    return {
+        'top_k': bot.retrieval.top_k, 'final_k': bot.retrieval.final_k, 'rerank': bot.retrieval.rerank,
+        'search': search, 'hits': hits,
+    }
 
 
 _MEMORY_LISTED_DOCUMENTS = 30

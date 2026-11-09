@@ -3,13 +3,117 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, ShieldAlert } from 'lucide-react';
 import { useI18n } from '@/i18n/provider';
-import type { ChatTrace } from '@/types/weave-api';
+import type { ChatTrace, RetrievalHit, RetrievalTrace } from '@/types/weave-api';
 
 function Tag({ children }: { children: React.ReactNode }) {
   return (
     <span className="inline-flex items-center rounded-[var(--radius-control)] bg-[var(--surface-2)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted)]">
       {children}
     </span>
+  );
+}
+
+type Translate = ReturnType<typeof useI18n>['t'];
+
+function formatPage(hit: RetrievalHit): string | null {
+  if (hit.page_start == null) return null;
+  if (hit.page_end != null && hit.page_end !== hit.page_start) return `${hit.page_start}–${hit.page_end}`;
+  return String(hit.page_start);
+}
+
+const SCORE_DIGITS: Record<keyof RetrievalHit['scores'], number> = { vector: 2, fulltext: 2, rrf: 3, rerank: 2 };
+
+function formatScores(hit: RetrievalHit, t: Translate): string {
+  return (Object.keys(SCORE_DIGITS) as (keyof RetrievalHit['scores'])[])
+    .filter((key) => hit.scores?.[key] != null)
+    .map((key) => `${t(`chat.trace.hit.score.${key}`)} ${(hit.scores[key] as number).toFixed(SCORE_DIGITS[key])}`)
+    .join(' · ');
+}
+
+/**
+ * The retrieval call's own search parameters, Weave-Retrieval's search
+ * diagnostics and a compact per-hit list (rank, source, heading path, page,
+ * version, scores — never chunk text). Every field is optional: traces
+ * persisted before these existed simply render nothing extra.
+ */
+function RetrievalDetails({ retrieval, t }: { retrieval: RetrievalTrace; t: Translate }) {
+  const search = retrieval.search;
+  const hits = retrieval.hits ?? [];
+  const hasParams = retrieval.top_k != null || retrieval.final_k != null || retrieval.rerank != null;
+  return (
+    <>
+      {hasParams ? (
+        <div className="flex flex-wrap gap-1.5">
+          {retrieval.top_k != null ? <Tag>{t('chat.trace.retrieval.topK', { value: retrieval.top_k })}</Tag> : null}
+          {retrieval.final_k != null ? <Tag>{t('chat.trace.retrieval.finalK', { value: retrieval.final_k })}</Tag> : null}
+          {retrieval.rerank != null ? (
+            <Tag>{retrieval.rerank ? t('chat.trace.retrieval.rerankOn') : t('chat.trace.retrieval.rerankOff')}</Tag>
+          ) : null}
+        </div>
+      ) : null}
+
+      {search ? (
+        <div className="flex flex-col gap-1">
+          <div>
+            <span className="font-medium">{t('chat.trace.search.label')}</span>
+            {t('chat.trace.search.stats', {
+              vector: search.vector_candidates,
+              fulltext: search.fulltext_candidates,
+              fused: search.fused,
+              reranked: search.reranked,
+              returned: search.returned,
+            })}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {search.rerank_provider ? (
+              <Tag>
+                {t('chat.trace.search.reranker', {
+                  value: search.rerank_model ? `${search.rerank_provider}/${search.rerank_model}` : search.rerank_provider,
+                })}
+              </Tag>
+            ) : null}
+            {search.embedding_model ? <Tag>{t('chat.trace.search.embedding', { value: search.embedding_model })}</Tag> : null}
+          </div>
+          {search.rerank_error ? (
+            <div className="warning-callout flex items-start gap-2 rounded-[var(--radius-control)] border border-[var(--warn)]/30 bg-[var(--warn-bg)] px-3 py-2 text-[var(--warn)]">
+              <ShieldAlert className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />
+              <span>{t('chat.trace.search.rerankError')}</span>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {hits.length > 0 ? (
+        <div className="flex flex-col gap-1">
+          <span className="font-medium">{t('chat.trace.hits.label')}</span>
+          <ol className="flex flex-col gap-1">
+            {hits.map((hit) => {
+              const name = hit.original_filename ?? hit.title ?? hit.document_id;
+              const page = formatPage(hit);
+              const scores = formatScores(hit, t);
+              const parts = [
+                hit.title && hit.title !== name ? hit.title : null,
+                hit.heading_path?.length ? hit.heading_path.join(' › ') : null,
+                page ? t('chat.trace.hit.page', { page }) : null,
+                hit.document_version != null ? t('chat.trace.hit.version', { version: hit.document_version }) : null,
+              ].filter(Boolean);
+              return (
+                <li
+                  key={`${hit.rank}-${hit.chunk_id}`}
+                  data-used={hit.used ? 'true' : 'false'}
+                  className={hit.used ? 'text-[var(--ink)]' : 'opacity-60'}
+                >
+                  <span className="font-medium">#{hit.rank}</span> {name}
+                  {parts.length > 0 ? <> · {parts.join(' · ')}</> : null}
+                  {scores ? <span className="block text-[var(--muted)]">{scores}</span> : null}
+                  {!hit.used ? <span className="block italic">{t('chat.trace.hit.unused')}</span> : null}
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -75,6 +179,8 @@ export function TracePanel({ trace }: { trace: ChatTrace }) {
           ) : (
             <div>{t('chat.trace.retrieval.none')}</div>
           )}
+
+          {trace.retrieval ? <RetrievalDetails retrieval={trace.retrieval} t={t} /> : null}
 
           {trace.guard?.triggered ? (
             <div>

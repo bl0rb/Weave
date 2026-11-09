@@ -99,8 +99,13 @@ def resolve_top_k(request: SearchRequest) -> int:
 
 
 def resolve_final_k(request: SearchRequest) -> int:
-    """`request.final_k` if the caller set one, else settings.search_final_k."""
-    return request.final_k if request.final_k is not None else settings.search_final_k
+    """`request.final_k` if the caller set one, else settings.search_final_k
+    clamped to the effective top_k -- a caller that only lowers `top_k` must
+    not be rejected because the configured default final_k is larger. An
+    EXPLICIT `final_k > top_k` is left as-is (app/api/search.py rejects it)."""
+    if request.final_k is not None:
+        return request.final_k
+    return min(settings.search_final_k, resolve_top_k(request))
 
 
 # --- metadata filtering ---------------------------------------------------------
@@ -559,8 +564,18 @@ def _meta_str(meta: dict, key: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _to_search_result(entry: FusedResult, document: Document, rerank_score: float | None) -> SearchResult:
+def _str_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item]
+
+
+def _to_search_result(
+    entry: FusedResult, document: Document, rerank_score: float | None, rank: int = 0
+) -> SearchResult:
     chunk = entry.chunk
+    meta = chunk.meta or {}
+    frontmatter = document.frontmatter if isinstance(document.frontmatter, dict) else {}
     return SearchResult(
         chunk_id=chunk.id,
         document_id=str(document.id),
@@ -596,6 +611,16 @@ def _to_search_result(entry: FusedResult, document: Document, rerank_score: floa
             rerank=rerank_score,
         ),
         embedding_model=chunk.embedding_model,
+        rank=rank,
+        chunk_index=chunk.chunk_index,
+        char_count=chunk.char_count,
+        title=_meta_str(frontmatter, 'title'),
+        language=_meta_str(meta, 'language') or _meta_str(frontmatter, 'language'),
+        document_type=_meta_str(frontmatter, 'document_type'),
+        tags=_str_list(document.tags) or _str_list(meta.get('tags')),
+        quality_grade=document.quality_grade,
+        space=_meta_str(meta, 'space'),
+        confluence_path=_str_list(meta.get('confluence_path')),
     )
 
 
@@ -692,9 +717,14 @@ def search(db: Session, request: SearchRequest) -> tuple[list[SearchResult], Sea
     # for every row either leg touched, so this is not a fresh SELECT for
     # any chunk actually present in `final_pairs`).
     results = [
-        _to_search_result(entry, db.get(Document, entry.chunk.document_id), rerank_score)
-        for entry, rerank_score in final_pairs
+        _to_search_result(entry, db.get(Document, entry.chunk.document_id), rerank_score, rank)
+        for rank, (entry, rerank_score) in enumerate(final_pairs, start=1)
     ]
+
+    provider = settings.rerank_provider.strip().lower()
+    # _rerank() never calls the provider for an empty pool, so report no
+    # reranker then; only the 'api' provider actually uses rerank_model.
+    reranker_ran = request.rerank and provider != 'none' and bool(kept)
 
     trace = SearchTrace(
         vector_candidates=len(vector_results),
@@ -703,5 +733,15 @@ def search(db: Session, request: SearchRequest) -> tuple[list[SearchResult], Sea
         reranked=len(kept),
         rerank_error=rerank_error,
         timings_ms=timings_ms,
+        top_k=top_k,
+        final_k=final_k,
+        returned=len(results),
+        rrf_k=settings.rrf_k,
+        semantic_weight=settings.semantic_weight,
+        lexical_weight=settings.lexical_weight,
+        rerank_requested=request.rerank,
+        rerank_provider=provider if reranker_ran else None,
+        rerank_model=(settings.rerank_model or None) if reranker_ran and provider == 'api' else None,
+        embedding_model=settings.embedding_model,
     )
     return results, trace

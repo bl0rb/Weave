@@ -50,9 +50,9 @@ Weave-Retrieval ist der **Hybrid Search Service** des Weave-Systems. Sie bietet 
    - **Volltext-Suche** (`fulltext_search()`): auf Postgres `websearch_to_tsquery('simple', ...)` gegen die generierte `chunks.tsv`-Spalte, gerankt mit `ts_rank`; auf SQLite ein Fallback über Token-Overlap.
 4. **Reciprocal Rank Fusion** (`rrf_fuse()`): kombiniert beide Ranglisten allein über die RANG-Position jedes Kandidaten in jeder Liste (`1 / (rrf_k + rang)`, `rrf_k` konfigurierbar über `RRF_K`, Default 60) — nicht über die Rohscores, die zwischen Cosine-Similarity und Volltext-Rang nicht vergleichbar wären. Ein Chunk, den BEIDE Signale finden, gewinnt fast immer gegen einen, den nur ein Signal findet. Die fusionierten Top `top_k` Kandidaten gehen in die nächste Stufe.
 5. **Reranking** (optional, `settings.rerank_provider`, `app/services/reranker.py`): `none` (Default) reicht die RRF-Reihenfolge unverändert durch (`NoopReranker`); `fake` ist ein deterministischer, abhängigkeitsfreier Provider für Tests/Demos; `api` spricht einen Cohere/Jina-kompatiblen `POST {base_url}/rerank`-Endpunkt. **Ein Reranker-Ausfall lässt die Suche niemals scheitern**: Eine `RerankError` wird abgefangen, die Suche fällt auf die unveränderte RRF-Reihenfolge zurück (`scores.rerank = null` für jedes Ergebnis) und `trace.rerank_error = true` markiert das für Monitoring/Debugging.
-6. **`final_k`-Kürzung**: erst NACH dem Reranking wird auf die finalen `final_k` Ergebnisse gekürzt (Reranker-Integration "Top `top_k` → Final `final_k` Ergebnisse"). `final_k > top_k` wird von der API bereits vor dem eigentlichen Pipeline-Lauf mit `400` abgelehnt — ein Reranker kann eine Kandidatenmenge nur verkleinern, niemals vergrößern.
+6. **`final_k`-Kürzung**: erst NACH dem Reranking wird auf die finalen `final_k` Ergebnisse gekürzt (Reranker-Integration "Top `top_k` → Final `final_k` Ergebnisse"). Ein explizites `final_k > top_k` wird von der API bereits vor dem eigentlichen Pipeline-Lauf mit `400` abgelehnt — ein Reranker kann eine Kandidatenmenge nur verkleinern, niemals vergrößern. Fehlt `final_k`, gilt `min(SEARCH_FINAL_K, top_k)` — ein Aufrufer, der nur ein kleines `top_k` schickt, bekommt also kein `400`.
 
-Jede Antwort enthält einen `trace` mit Kandidatenzahlen pro Stufe (`vector_candidates`, `fulltext_candidates`, `fused`, `reranked`), dem `rerank_error`-Flag und `timings_ms` pro Stufe (`embed`, `vector_search`, `fulltext_search`, `fuse`, `rerank`) — für genau das Monitoring, das oben unter "Verantwortlichkeiten" gefordert ist.
+Jede Antwort enthält einen `trace` mit Kandidatenzahlen pro Stufe (`vector_candidates`, `fulltext_candidates`, `fused`, `reranked`, `returned`), dem `rerank_error`-Flag, `timings_ms` pro Stufe (`embed`, `vector_search`, `fulltext_search`, `fuse`, `rerank`) sowie den effektiv verwendeten Parametern (`top_k`, `final_k`, `rrf_k`, `semantic_weight`, `lexical_weight`, `rerank_requested`, `rerank_provider`/`rerank_model` — `null`, wenn kein Reranker lief —, `embedding_model`) — für genau das Monitoring, das oben unter "Verantwortlichkeiten" gefordert ist.
 
 ## API
 
@@ -97,7 +97,17 @@ Content-Type: application/json
       "team": "Kundenservice",
       "department": "IT-Support",
       "scores": { "vector": 0.91, "fulltext": 0.83, "rrf": 0.031, "rerank": 0.97 },
-      "embedding_model": "fake-embed"
+      "embedding_model": "fake-embed",
+      "rank": 1,
+      "chunk_index": 7,
+      "char_count": 412,
+      "title": "IT-Support FAQ",
+      "language": "de",
+      "document_type": "faq",
+      "tags": ["vpn", "passwort"],
+      "quality_grade": "A",
+      "space": null,
+      "confluence_path": []
     }
   ],
   "trace": {
@@ -106,12 +116,22 @@ Content-Type: application/json
     "fused": 15,
     "reranked": 15,
     "rerank_error": false,
-    "timings_ms": { "embed": 1.2, "vector_search": 3.4, "fulltext_search": 2.1, "fuse": 0.1, "rerank": 45.6 }
+    "timings_ms": { "embed": 1.2, "vector_search": 3.4, "fulltext_search": 2.1, "fuse": 0.1, "rerank": 45.6 },
+    "top_k": 20,
+    "final_k": 5,
+    "returned": 1,
+    "rrf_k": 60,
+    "semantic_weight": 0.5,
+    "lexical_weight": 0.5,
+    "rerank_requested": true,
+    "rerank_provider": "api",
+    "rerank_model": "rerank-multilingual-v3.0",
+    "embedding_model": "fake-embed"
   }
 }
 ```
 
-Fehlerfälle: `401` (fehlendes/falsches Bearer-Token), `503` (kein `RETRIEVAL_API_TOKEN` konfiguriert — niemals "Auth aus"), `422` (z.B. leere `query`), `400` (`final_k > top_k`).
+Fehlerfälle: `401` (fehlendes/falsches Bearer-Token), `503` (kein `RETRIEVAL_API_TOKEN` konfiguriert — niemals "Auth aus"), `422` (z.B. leere `query`), `400` (explizites `final_k > top_k`).
 
 ## Collections
 

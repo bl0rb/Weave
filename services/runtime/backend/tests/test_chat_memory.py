@@ -216,7 +216,9 @@ def test_focused_search_without_hits_retries_unfocused(memory_on, monkeypatch):
         calls.append((url.rsplit('/', 1)[-1], json))
         if url.endswith('/memory'):
             return _FakeResponse(200, MEMORY)
-        return _FakeResponse(200, _search_response() if json['filters'] else _search_response(_chunk(document_id='doc-9')))
+        if json['filters']:
+            return _FakeResponse(200, {**_search_response(), 'trace': {'vector_candidates': 1, 'returned': 0}})
+        return _FakeResponse(200, {**_search_response(_chunk(document_id='doc-9')), 'trace': {'vector_candidates': 9}})
 
     monkeypatch.setattr('app.services.retrieval_client.httpx.post', _post)
     body = client.post('/internal/chat', json=KNOWLEDGE_BODY, headers=AUTH_HEADERS).json()
@@ -224,6 +226,10 @@ def test_focused_search_without_hits_retries_unfocused(memory_on, monkeypatch):
     assert calls[1][1]['filters'] == {'document_ids': ['doc-1']} and calls[2][1]['filters'] is None
     assert body['trace']['retrieval']['focus_documents'] is None
     assert body['sources'][0]['document_id'] == 'doc-9' and body['trace']['guard'] is None
+    # The trace describes the unfocused retry -- the search actually used.
+    assert [hit['document_id'] for hit in body['trace']['retrieval']['hits']] == ['doc-9']
+    assert body['trace']['retrieval']['search']['vector_candidates'] == 9
+    assert body['trace']['retrieval']['search']['returned'] == 1
 
 
 @pytest.mark.parametrize('memory_response', [

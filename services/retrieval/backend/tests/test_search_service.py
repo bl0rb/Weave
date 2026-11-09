@@ -627,6 +627,11 @@ def test_resolve_top_k_and_final_k_use_request_overrides():
     assert search_service.resolve_final_k(request) == 2
 
 
+def test_resolve_final_k_default_is_clamped_to_top_k_but_explicit_is_not():
+    assert search_service.resolve_final_k(SearchRequest(query='x', top_k=3)) == min(settings.search_final_k, 3)
+    assert search_service.resolve_final_k(SearchRequest(query='x', top_k=3, final_k=7)) == 7
+
+
 # --- search() end-to-end -----------------------------------------------------------
 
 

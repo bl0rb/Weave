@@ -102,6 +102,18 @@ def test_search_uses_configured_defaults_when_top_k_and_final_k_are_omitted():
     assert resp.status_code == 200
 
 
+def test_search_with_only_small_top_k_clamps_default_final_k():
+    # Regression: top_k=3 alone used to 400 because the default final_k (5)
+    # exceeded it. The omitted final_k is now clamped to the effective top_k.
+    _cleanup()
+    resp = client.post('/api/v1/search', json={'query': 'hello', 'top_k': 3}, headers=AUTH_HEADERS)
+    assert resp.status_code == 200
+    trace = resp.json()['trace']
+    assert trace['top_k'] == 3
+    assert trace['final_k'] == 3
+    assert trace['returned'] == 0
+
+
 # --- end-to-end round trip ------------------------------------------------------
 
 
@@ -157,6 +169,18 @@ def test_search_end_to_end_returns_seeded_result_and_enforces_allowed_teams():
         # docstring) with score=None, and no error occurred.
         assert body['trace']['reranked'] == 1
         assert body['trace']['rerank_error'] is False
+        trace = body['trace']
+        assert trace['top_k'] == settings.search_top_k
+        assert trace['final_k'] == settings.search_final_k
+        assert trace['returned'] == len(body['results'])
+        assert trace['rrf_k'] == settings.rrf_k
+        assert trace['rerank_requested'] is True
+        assert trace['rerank_provider'] is None
+        assert trace['rerank_model'] is None
+        assert trace['embedding_model'] == settings.embedding_model
+        assert hit['rank'] == 1
+        assert hit['chunk_index'] == 0
+        assert hit['char_count'] == 20
     finally:
         db.query(Chunk).delete()
         db.query(Document).delete()
@@ -203,9 +227,15 @@ def test_search_with_fake_reranker_reorders_and_trims_to_final_k(monkeypatch):
     `final_k` trims by REranked order, not by the pre-rerank RRF order.
     """
     monkeypatch.setattr(settings, 'rerank_provider', 'fake')
+    monkeypatch.setattr(settings, 'rerank_model', 'some-api-model')
 
     db = TestingSessionLocal()
     try:
+        # No candidates -> the reranker is never invoked, so the trace names none.
+        resp = client.post('/api/v1/search', json={'query': 'nichts'}, headers=AUTH_HEADERS)
+        assert resp.status_code == 200
+        assert resp.json()['trace']['rerank_provider'] is None
+
         query = 'produkt information sofort'
         provider = FakeEmbeddingProvider()
         query_vec = provider.embed_query(query)
@@ -247,6 +277,13 @@ def test_search_with_fake_reranker_reorders_and_trims_to_final_k(monkeypatch):
         assert [r['scores']['rerank'] for r in body['results']] == [3.0, 2.0]
         assert body['trace']['reranked'] == 3
         assert body['trace']['rerank_error'] is False
+        assert [r['rank'] for r in body['results']] == [1, 2]
+        assert body['trace']['rerank_provider'] == 'fake'
+        # rerank_model is only used (and reported) by the 'api' provider.
+        assert body['trace']['rerank_model'] is None
+        assert body['trace']['rerank_requested'] is True
+        assert body['trace']['final_k'] == 2
+        assert body['trace']['returned'] == 2
 
         # A bot that switches reranking off keeps the RRF order, unscored.
         resp = client.post(
@@ -257,6 +294,8 @@ def test_search_with_fake_reranker_reorders_and_trims_to_final_k(monkeypatch):
         assert resp.status_code == 200
         unranked = resp.json()['results']
         assert [r['scores']['rerank'] for r in unranked] == [None, None]
+        assert resp.json()['trace']['rerank_requested'] is False
+        assert resp.json()['trace']['rerank_provider'] is None
         assert [r['chunk_id'] for r in unranked] != [chunk_fulltext.id, chunk_vector.id]
     finally:
         db.query(Chunk).delete()
@@ -332,3 +371,50 @@ def test_non_positive_top_k_and_final_k_are_rejected():
     ):
         resp = client.post('/api/v1/search', json=body, headers=AUTH_HEADERS)
         assert resp.status_code == 422, body
+
+
+# --- result metadata ---------------------------------------------------------------
+
+
+def test_search_result_carries_document_and_chunk_metadata():
+    db = TestingSessionLocal()
+    try:
+        text = 'Rückgabefrist beträgt dreißig Tage.'
+        doc = make_document(
+            status=DocumentStatus.INDEXED,
+            frontmatter={'source': 'x.pdf', 'title': 'Rückgabe-Richtlinie', 'document_type': 'policy', 'language': 'en'},
+            tags=['retoure', 'policy'],
+            quality_grade='A',
+            document_version=3,
+        )
+        db.add(doc)
+        db.flush()
+        chunk = make_chunk(
+            doc, chunk_index=4, text=text, char_count=len(text), heading_path=['Richtlinie', 'Fristen'],
+            embedding=FakeEmbeddingProvider().embed_query(text), embedding_model=settings.embedding_model,
+            meta={'team': doc.team, 'language': 'de', 'space': 'SUP', 'confluence_path': ['Home', 'Retouren']},
+        )
+        db.add(chunk)
+        db.commit()
+
+        resp = client.post('/api/v1/search', json={'query': text}, headers=AUTH_HEADERS)
+        assert resp.status_code == 200
+        hit = resp.json()['results'][0]
+        assert hit['rank'] == 1
+        assert hit['chunk_index'] == 4
+        assert hit['char_count'] == len(text)
+        assert hit['heading_path'] == ['Richtlinie', 'Fristen']
+        assert hit['document_version'] == 3
+        assert hit['title'] == 'Rückgabe-Richtlinie'
+        assert hit['document_type'] == 'policy'
+        # chunk meta wins over the document frontmatter
+        assert hit['language'] == 'de'
+        assert hit['tags'] == ['retoure', 'policy']
+        assert hit['quality_grade'] == 'A'
+        assert hit['space'] == 'SUP'
+        assert hit['confluence_path'] == ['Home', 'Retouren']
+    finally:
+        db.query(Chunk).delete()
+        db.query(Document).delete()
+        db.commit()
+        db.close()

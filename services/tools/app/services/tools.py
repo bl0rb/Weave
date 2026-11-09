@@ -20,9 +20,17 @@ from __future__ import annotations
 import logging
 
 import httpx
+from pydantic import ValidationError
 
 from app.core.config import settings
-from app.schemas.tools import CollectionOut, SearchHitOut, SearchSourceOut, SearchToolResponse
+from app.schemas.tools import (
+    CollectionOut,
+    SearchHitOut,
+    SearchScoresOut,
+    SearchSourceOut,
+    SearchToolResponse,
+    SearchTraceOut,
+)
 from app.services.scope import Scope
 
 logger = logging.getLogger(__name__)
@@ -99,12 +107,40 @@ def _format_page(page_start: int | None, page_end: int | None) -> str | None:
     return f'{page_start}-{page_end}'
 
 
+class SearchRequestRejected(ValueError):
+    """Weave-Retrieval rejected the search parameters themselves (HTTP 400),
+    e.g. a `final_k` larger than its own default `top_k` when the caller
+    sent no `top_k`. A caller error: the REST mirror answers 422, the MCP
+    tool reports it like any other invalid argument."""
+
+
+def _parse_scores(raw: object) -> SearchScoresOut:
+    if not isinstance(raw, dict):
+        return SearchScoresOut()
+    try:
+        return SearchScoresOut.model_validate(raw)
+    except ValidationError:
+        return SearchScoresOut()
+
+
+def _parse_trace(raw: object) -> SearchTraceOut | None:
+    """Best-effort copy of Weave-Retrieval's trace; an older/malformed one
+    yields `None` rather than failing the search."""
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return SearchTraceOut.model_validate(raw)
+    except ValidationError:
+        return None
+
+
 def search_for_scope(
     scope: Scope,
     *,
     query: str,
     collection: str | None,
     top_k: int | None,
+    final_k: int | None = None,
 ) -> SearchToolResponse:
     """Hybrid search over exactly `scope`'s own readable collections.
 
@@ -166,6 +202,8 @@ def search_for_scope(
     }
     if top_k is not None:
         body['top_k'] = top_k
+    if final_k is not None:
+        body['final_k'] = final_k
 
     response = httpx.post(
         f'{settings.retrieval_base_url}/api/v1/search',
@@ -173,12 +211,20 @@ def search_for_scope(
         headers=_retrieval_headers(),
         timeout=settings.retrieval_timeout_seconds,
     )
+    if response.status_code == 400:
+        try:
+            detail = response.json().get('detail')
+        except (ValueError, AttributeError):
+            detail = None
+        raise SearchRequestRejected(detail if isinstance(detail, str) else 'Search parameters rejected')
     response.raise_for_status()
     payload = response.json()
 
     results = [
         SearchHitOut(
+            rank=hit.get('rank') or position,
             text=hit['text'],
+            scores=_parse_scores(hit.get('scores')),
             source=SearchSourceOut(
                 document=hit.get('original_filename') or hit['document_id'],
                 document_id=hit['document_id'],
@@ -187,9 +233,23 @@ def search_for_scope(
                 # The hit's own actual collection, not the request-level
                 # closure variable -- see SearchSourceOut's docstring.
                 collection=hit.get('collection'),
+                heading_path=hit.get('heading_path') or [],
+                document_version=hit.get('document_version'),
+                page_start=hit.get('page_start'),
+                page_end=hit.get('page_end'),
+                chunk_index=hit.get('chunk_index'),
+                title=hit.get('title'),
+                language=hit.get('language'),
+                document_type=hit.get('document_type'),
+                tags=hit.get('tags') or [],
+                source_kind=hit.get('source_kind'),
+                source_url=hit.get('source_url'),
+                uploaded_at=hit.get('uploaded_at'),
+                fetched_at=hit.get('fetched_at'),
+                legal_status=hit.get('legal_status'),
             ),
         )
-        for hit in payload.get('results', [])
+        for position, hit in enumerate(payload.get('results', []), start=1)
     ]
     _audit(scope=scope, tool='search', collection=collection, result_count=len(results), denied=False)
-    return SearchToolResponse(query=query, results=results)
+    return SearchToolResponse(query=query, results=results, trace=_parse_trace(payload.get('trace')))

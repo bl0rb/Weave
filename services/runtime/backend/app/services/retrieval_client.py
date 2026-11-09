@@ -48,7 +48,7 @@ differently -- see README's "Response Guard"):
 """
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 
@@ -135,6 +135,25 @@ class RetrievedChunk:
     uploaded_at: str | None = None
     fetched_at: str | None = None
     legal_status: str | None = None
+    # Ranking/document metadata echoed from Weave-Retrieval's SearchResult
+    # (all optional there too -- an older Retrieval simply omits them).
+    rank: int | None = None
+    chunk_index: int | None = None
+    title: str | None = None
+    language: str | None = None
+    document_type: str | None = None
+    tags: list[str] = field(default_factory=list)
+    quality_grade: str | None = None
+
+
+class SearchHits(list):
+    """`search()`'s return value: a plain list of RetrievedChunk (so every
+    caller -- and every test monkeypatching `search` with a plain list --
+    keeps working) that additionally carries Weave-Retrieval's own
+    `SearchResponse.trace` dict as `.trace` (`None` when absent or
+    malformed). Callers read it via `getattr(chunks, 'trace', None)`."""
+
+    trace: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -190,6 +209,13 @@ def _parse_chunk(item: dict) -> RetrievedChunk:
         uploaded_at=item.get('uploaded_at'),
         fetched_at=item.get('fetched_at'),
         legal_status=item.get('legal_status'),
+        rank=item.get('rank'),
+        chunk_index=item.get('chunk_index'),
+        title=item.get('title'),
+        language=item.get('language'),
+        document_type=item.get('document_type'),
+        tags=list(item.get('tags') or []),
+        quality_grade=item.get('quality_grade'),
         scores=RetrievedChunkScores(
             vector=scores_raw.get('vector'),
             fulltext=scores_raw.get('fulltext'),
@@ -216,7 +242,7 @@ def search(
     top_k: int | None = None,
     final_k: int | None = None,
     rerank: bool = True,
-) -> list[RetrievedChunk]:
+) -> SearchHits:
     """POST `{settings.retrieval_base_url}/api/v1/search` with
     `Authorization: Bearer {settings.retrieval_api_token}` and a body
     shaped exactly like Weave-Retrieval's own SearchRequest -- `filters`
@@ -293,9 +319,12 @@ def search(
         raise RetrievalUnavailable(f"Weave-Retrieval response is missing a 'results' list for POST {url}")
 
     try:
-        return [_parse_chunk(item) for item in results]
+        hits = SearchHits(_parse_chunk(item) for item in results)
     except (KeyError, TypeError) as exc:
         raise RetrievalUnavailable(f'Weave-Retrieval returned a malformed result for POST {url}: {exc}') from exc
+    trace = data.get('trace')
+    hits.trace = trace if isinstance(trace, dict) else None
+    return hits
 
 
 def list_collections(team: str | list[str] | None = None, *, user: str | None = None) -> list[Collection]:
