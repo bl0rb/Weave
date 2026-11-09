@@ -602,8 +602,9 @@ class ManagedBot(Base):
     temperature: Mapped[float | None] = mapped_column(Float, nullable=True)
     retrieval_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0', nullable=False)
     retrieval_filters: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    top_k: Mapped[int] = mapped_column(Integer, default=20, server_default='20', nullable=False)
-    final_k: Mapped[int] = mapped_column(Integer, default=5, server_default='5', nullable=False)
+    # NULL = not sent to Weave-Retrieval, which uses its central default.
+    top_k: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    final_k: Mapped[int | None] = mapped_column(Integer, nullable=True)
     rerank: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1', nullable=False)
     # Legacy documents without a space (ADR 0008 addendum, F41): new bots
     # leave them out. server_default stays '1' -- existing rows keep their

@@ -105,8 +105,13 @@ def _is_sqlite() -> bool:
 
 
 def resolve_top_k(request: SearchRequest) -> int:
-    """`request.top_k` if the caller set one, else settings.search_top_k."""
-    return request.top_k if request.top_k is not None else settings.search_top_k
+    """`request.top_k` if the caller set one, else settings.search_top_k raised
+    to an explicitly requested `final_k` -- a caller that only sends `final_k`
+    never gets fewer candidates than results it asked for (and never a 400).
+    Only an EXPLICIT `final_k > top_k` is rejected (app/api/search.py)."""
+    if request.top_k is not None:
+        return request.top_k
+    return max(settings.search_top_k, request.final_k or 0)
 
 
 def resolve_final_k(request: SearchRequest) -> int:

@@ -632,6 +632,13 @@ def test_resolve_final_k_default_is_clamped_to_top_k_but_explicit_is_not():
     assert search_service.resolve_final_k(SearchRequest(query='x', top_k=3, final_k=7)) == 7
 
 
+def test_resolve_top_k_default_is_raised_to_explicit_final_k(monkeypatch):
+    monkeypatch.setattr(settings, 'search_top_k', 5)
+    assert search_service.resolve_top_k(SearchRequest(query='x', final_k=12)) == 12
+    assert search_service.resolve_top_k(SearchRequest(query='x', final_k=3)) == 5
+    assert search_service.resolve_top_k(SearchRequest(query='x', top_k=4, final_k=12)) == 4
+
+
 # --- search() end-to-end -----------------------------------------------------------
 
 

@@ -1673,3 +1673,25 @@ def test_0052_markdown_objects_round_trip_and_guarded_downgrade(tmp_path, monkey
     assert 'result_markdown_object_id' not in {column['name'] for column in inspect(engine).get_columns('jobs')}
     command.upgrade(cfg, 'head')
     engine.dispose()
+
+
+
+def test_bot_hit_counts_are_nullable_without_server_default(tmp_path, monkeypatch):
+    """Empty bot top_k/final_k (NULL) = Weave-Retrieval's central default.
+    0023 added both columns nullable without a server default (the 20/5 only
+    ever came from the ORM), so the migrated schema needs no change for that
+    and existing bots keep their stored values."""
+    db_url = f'sqlite:///{tmp_path / "bot_hit_counts.db"}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+    engine = create_engine(db_url, future=True)
+    _build_legacy_metadata().create_all(bind=engine)
+    cfg = _alembic_config()
+    command.stamp(cfg, '0003_job_markdown_versions')
+    command.upgrade(cfg, 'head')
+    columns = {column['name']: column for column in inspect(engine).get_columns('managed_bots')}
+    for name in ('top_k', 'final_k'):
+        assert columns[name]['nullable'] is True and columns[name]['default'] is None
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO managed_bots (id, name, collections) VALUES ('new-bot', 'New', '[]')"))
+        assert conn.execute(text("SELECT top_k, final_k FROM managed_bots WHERE id = 'new-bot'")).one() == (None, None)
+    engine.dispose()

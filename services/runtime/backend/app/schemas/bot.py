@@ -14,7 +14,7 @@ quietly ignores half its author's intent.
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_serializer, model_validator
 
 # What Weave-Ingest writes in place of a real `n8n.auth_token` when it
 # exports a bot document (contracts/bot-document.md): the secret itself
@@ -145,11 +145,15 @@ class RetrievalConfig(BaseModel):
     enabled: bool = False
     filters: RetrievalFilters = Field(default_factory=RetrievalFilters)
     # Candidates pulled from Weave-Retrieval before reranking; results
-    # actually handed to the LLM/returned as sources afterwards. Same
-    # defaults and same relationship as Weave-Retrieval's own
-    # SEARCH_TOP_K/SEARCH_FINAL_K (app/core/config.py in that service).
-    top_k: int = 20
-    final_k: int = 5
+    # actually handed to the LLM/returned as sources afterwards. Each is
+    # optional: `None` (the default) is not sent, so Weave-Retrieval uses
+    # its central value (Ingest admin "Trefferzahl", else its own
+    # SEARCH_TOP_K/SEARCH_FINAL_K). Deliberately no bounds or cross-field
+    # check here (as before optional hit counts): Weave-Retrieval validates
+    # what is sent, so a bad value fails only that bot's turns rather than
+    # the whole roster (and health) via BotConfigError.
+    top_k: int | None = None
+    final_k: int | None = None
     rerank: bool = True
     # Use the knowledge memory (ADR-0009) for this bot while it is switched
     # on centrally (KNOWLEDGE_MEMORY_MODE): overview answers, focusing the
@@ -211,6 +215,19 @@ class RetrievalConfig(BaseModel):
     # entire corpus into Collections and wants pre-migration stragglers to
     # stay hidden rather than silently included.
     include_uncollected: bool = True
+
+    @model_serializer(mode='wrap')
+    def _omit_empty_hit_counts(self, handler):
+        # Empty hit counts are omitted rather than sent as null (mirrors
+        # Ingest's ManagedBotInternalResponse): an Ingest from before
+        # optional hit counts reads `retrieval.get('top_k', 20)` from
+        # /internal/bot-configs and would put null into its `int` fields,
+        # failing the whole admin bot list during a rolling upgrade.
+        data = handler(self)
+        for key in ('top_k', 'final_k'):
+            if data.get(key) is None:
+                data.pop(key, None)
+        return data
 
 
 class SubagentLimits(BaseModel):

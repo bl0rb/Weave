@@ -265,8 +265,10 @@ class RetrievalTrace(BaseModel):
     # unfocused -- memory off, bot filters, memory empty or unavailable,
     # or the focused search found nothing and the unfocused retry ran.
     focus_documents: list[str] | None = None
-    # The bot's `retrieval.top_k`/`final_k`/`rerank` as sent to
-    # Weave-Retrieval for this turn's search; `None` when no search ran.
+    # The effective `top_k`/`final_k` of this turn's search (the bot's
+    # `retrieval.top_k`/`final_k` if set, else the value Weave-Retrieval's
+    # `search` trace reports, else `None`) and the bot's `rerank` as sent;
+    # `None` when no search ran.
     top_k: int | None = None
     final_k: int | None = None
     rerank: bool | None = None

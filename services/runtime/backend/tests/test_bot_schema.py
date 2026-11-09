@@ -22,11 +22,25 @@ def test_minimal_config_applies_every_documented_default():
     assert bot.model.provider == 'fake'
     assert bot.model.temperature is None
 
-    assert bot.retrieval == RetrievalConfig(enabled=False, top_k=20, final_k=5, rerank=True, collections=[])
+    assert bot.retrieval == RetrievalConfig(enabled=False, top_k=None, final_k=None, rerank=True, collections=[])
     assert bot.retrieval.filters.team is None
 
     assert bot.permissions == PermissionsConfig(teams=[])
     assert bot.guard == GuardConfig(require_sources=True, no_context_reply='Ich habe dazu keine belegten Informationen gefunden.')
+
+
+@pytest.mark.parametrize(('top_k', 'final_k'), [(None, None), (None, 50), (30, None), (10, 10), (200, 1)])
+def test_retrieval_hit_counts_are_independently_optional(top_k, final_k):
+    config = RetrievalConfig(top_k=top_k, final_k=final_k)
+    assert (config.top_k, config.final_k) == (top_k, final_k)
+
+
+@pytest.mark.parametrize(('top_k', 'final_k'), [(10, 20), (300, None), (None, 0)])
+def test_retrieval_hit_counts_are_not_bounds_checked_here(top_k, final_k):
+    # Weave-Retrieval rejects such values per turn; validating them here
+    # would turn one bad local YAML bot into a whole-roster/health failure.
+    config = RetrievalConfig(top_k=top_k, final_k=final_k)
+    assert (config.top_k, config.final_k) == (top_k, final_k)
 
 
 @pytest.mark.parametrize('bad_id', ['Not-A-Slug', 'has spaces', 'trailing-', '-leading', 'UPPER', ''])

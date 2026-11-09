@@ -107,8 +107,8 @@ export type ManagedBot = {
   temperature?: number | null;
   retrieval_enabled?: boolean;
   retrieval_filters?: Record<string, string | string[] | null>;
-  top_k?: number;
-  final_k?: number;
+  top_k?: number | null;
+  final_k?: number | null;
   rerank?: boolean;
   include_uncollected?: boolean;
   min_score?: number | null;
@@ -152,6 +152,9 @@ const scoreOrNull = (raw: string): number | null => {
   return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : null;
 };
 
+/** A top_k/final_k field: empty input means "use the central default" (null). */
+const hitCountOrNull = (raw: string): number | null => (raw.trim() === '' ? null : Math.max(1, Math.min(100, Math.trunc(Number(raw)) || 1)));
+
 const emptyDraft = (noContextReply: string): BotDraft => ({
   id: '',
   kind: 'llm',
@@ -173,8 +176,8 @@ const emptyDraft = (noContextReply: string): BotDraft => ({
   temperature: 0.2,
   retrieval_enabled: false,
   retrieval_filters: {},
-  top_k: 20,
-  final_k: 5,
+  top_k: null,
+  final_k: null,
   rerank: true,
   include_uncollected: false,
   min_score: null,
@@ -409,10 +412,14 @@ export function BotEditor({ bot, teams, spaces, onClose, onSaved, owner = false 
     ...((draft.collection_notices ?? []).some(notice => !notice.collection || !notice.text.trim()) ? [t('admin.bots.problem.collectionNotice')] : []),
     ...(new Set((draft.collection_notices ?? []).map(notice => notice.collection)).size !== (draft.collection_notices ?? []).length ? [t('admin.bots.problem.collectionNoticeDuplicate')] : []),
   ];
+  // Only checked when both are set: a missing value comes from the central default in Weave-Retrieval.
+  // Checked whatever the kind or retrieval switch, as the values are saved (and validated) either way.
+  const hitsError = draft.top_k != null && draft.final_k != null && draft.final_k > draft.top_k
+    ? t('admin.bots.problem.finalAboveTop') : null;
   const canSave = Boolean(
     draft.id.trim() && draft.name.trim() &&
     (draft.kind === 'llm' ? draft.system_prompt?.trim() : owner || draft.webhook_url?.trim()) &&
-    agentErrors.length === 0 && guardRuleErrors.length === 0 && !saving
+    agentErrors.length === 0 && guardRuleErrors.length === 0 && !hitsError && !saving
   );
 
   async function save(event: FormEvent) {
@@ -429,8 +436,8 @@ export function BotEditor({ bot, teams, spaces, onClose, onSaved, owner = false 
       temperature: draft.kind === 'llm' ? draft.temperature : null,
       retrieval_enabled: draft.kind === 'llm' ? draft.retrieval_enabled : false,
       retrieval_filters: draft.kind === 'llm' ? draft.retrieval_filters : {},
-      top_k: draft.top_k,
-      final_k: draft.final_k,
+      top_k: draft.top_k ?? null,
+      final_k: draft.final_k ?? null,
       rerank: draft.rerank,
       include_uncollected: draft.include_uncollected,
       streaming: draft.streaming,
@@ -490,6 +497,7 @@ export function BotEditor({ bot, teams, spaces, onClose, onSaved, owner = false 
         : (!owner && !draft.webhook_url?.trim() ? [t('admin.bots.problem.webhook')] : [])),
       ...guardRuleErrors,
     ],
+    knowledge: hitsError ? [hitsError] : [],
     agents: agentErrors,
   };
   const goTo = (next: BotStep) => setStep(next);
@@ -575,7 +583,7 @@ export function BotEditor({ bot, teams, spaces, onClose, onSaved, owner = false 
         {/* An owner may not empty a restricted bot's spaces: no spaces means "every space the asker can read". */}
         <ScopeChoices title={t('admin.bots.scope.spaces.title')} emptyLabel={owner && bot?.collections.length ? t('portal.bots.spacesKeepOne') : t('admin.bots.scope.spaces.empty')} items={spaceChoices} selected={draft.collections} onToggle={value => toggleValue('collections', value)}
           locked={owner && bot?.collections.length && draft.collections.length === 1 ? draft.collections : []} />
-        {draft.kind === 'llm' && draft.retrieval_enabled && <div className="grid gap-4 sm:grid-cols-3"><Field label={t('admin.bots.field.topK')}><input className={inputClass} type="number" min={1} value={draft.top_k} onChange={event => set('top_k', Number(event.target.value) || 20)} /></Field><Field label={t('admin.bots.field.finalK')}><input className={inputClass} type="number" min={1} max={draft.top_k} value={draft.final_k} onChange={event => set('final_k', Number(event.target.value) || 5)} /></Field><div className="flex items-end pb-2"><Toggle checked={Boolean(draft.rerank)} onChange={value => set('rerank', value)} label={t('admin.bots.field.reranking')} /></div></div>}
+        {draft.kind === 'llm' && draft.retrieval_enabled && <div className="grid gap-4 sm:grid-cols-3"><Field label={t('admin.bots.field.topK')} hint={t('admin.bots.field.hitCount.hint')}><input className={inputClass} type="number" min={1} max={100} value={draft.top_k ?? ''} placeholder={t('admin.bots.field.hitCount.placeholder')} onChange={event => set('top_k', hitCountOrNull(event.target.value))} /></Field><Field label={t('admin.bots.field.finalK')} hint={t('admin.bots.field.hitCount.hint')} error={hitsError}><input className={inputClass} type="number" min={1} max={draft.top_k ?? 100} value={draft.final_k ?? ''} placeholder={t('admin.bots.field.hitCount.placeholder')} onChange={event => set('final_k', hitCountOrNull(event.target.value))} /></Field><div className="flex items-end pb-2"><Toggle checked={Boolean(draft.rerank)} onChange={value => set('rerank', value)} label={t('admin.bots.field.reranking')} /></div></div>}
         {draft.kind === 'llm' && draft.retrieval_enabled && <Field label={t('admin.bots.field.departmentFilter.label')} hint={t('admin.bots.field.departmentFilter.hint')}><input className={inputClass} value={String(draft.retrieval_filters?.department || '')} onChange={event => set('retrieval_filters', { ...draft.retrieval_filters, department: event.target.value || null })} placeholder={t('admin.bots.field.departmentFilter.placeholder')} /></Field>}
         {draft.kind === 'llm' && draft.retrieval_enabled && <div className="grid gap-4 sm:grid-cols-3">
           <Field label={t('admin.bots.field.minScore.label')} hint={t('admin.bots.field.minScore.hint')}><input className={inputClass} type="number" min={0} max={1} step={0.05} value={draft.min_score ?? ''} onChange={event => set('min_score', scoreOrNull(event.target.value))} /></Field>

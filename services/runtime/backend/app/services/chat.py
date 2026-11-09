@@ -177,9 +177,10 @@ of which of that client's two functions hit it. RetrievalError (a 4xx --
 Weave-Retrieval rejected the request itself, e.g. an invalid top_k/final_k
 combination) is deliberately left UNCAUGHT here, surfacing as this service's
 default 500: `top_k`/`final_k` come straight from a validated `BotConfig`
-with no cross-field check between them (app/schemas/bot.py's
-RetrievalConfig), so a RetrievalError can only mean the bot's own YAML is
-misconfigured -- a deployment bug to fix, not a transient condition worth a
+with no bounds or cross-field check between them (app/schemas/bot.py's
+RetrievalConfig; each optional, `None` = Weave-Retrieval's central
+default), so a RetrievalError can only mean the bot's
+own YAML is misconfigured -- a deployment bug to fix, not a transient condition worth a
 dedicated error path the way RetrievalUnavailable is.
 
 An LLM generation failure (a real `OpenAICompatibleLLM` provider raising
@@ -1128,13 +1129,25 @@ def _run_knowledge_turn(
     )
 
 
+def _effective_k(configured: int | None, raw_trace, key: str) -> int | None:
+    """The bot's own top_k/final_k if set, else the value Weave-Retrieval's
+    trace reports for it (the central default it actually applied), else
+    `None`."""
+    if configured is not None:
+        return configured
+    value = raw_trace.get(key) if isinstance(raw_trace, dict) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
 def _search_trace_fields(
     bot: BotConfig,
     searched: list[retrieval_client.RetrievedChunk],
     used: list[retrieval_client.RetrievedChunk],
 ) -> dict:
     """The search-related RetrievalTrace fields for a knowledge turn that ran
-    a search: the bot's own top_k/final_k/rerank as sent, Weave-Retrieval's
+    a search: the EFFECTIVE top_k/final_k (the bot's own value if set, else
+    the one Weave-Retrieval's trace reports, else `None`), the bot's rerank
+    flag as sent, Weave-Retrieval's
     trace (best-effort, `None` if it sent none or a malformed one) and one
     RetrievalHit per returned chunk -- `used` marks those in `used` (the
     chunks handed to the LLM). Never includes chunk text."""
@@ -1173,8 +1186,9 @@ def _search_trace_fields(
         for position, chunk in enumerate(searched, start=1)
     ]
     return {
-        'top_k': bot.retrieval.top_k, 'final_k': bot.retrieval.final_k, 'rerank': bot.retrieval.rerank,
-        'search': search, 'hits': hits,
+        'top_k': _effective_k(bot.retrieval.top_k, raw, 'top_k'),
+        'final_k': _effective_k(bot.retrieval.final_k, raw, 'final_k'),
+        'rerank': bot.retrieval.rerank, 'search': search, 'hits': hits,
     }
 
 

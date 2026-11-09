@@ -183,6 +183,44 @@ def test_guard_tuning_fields_round_trip_and_default_to_runtime_defaults(monkeypa
     assert updated.json()['weak_context_below'] == 0.55
 
 
+def test_hit_counts_are_optional_and_null_means_central_default(monkeypatch):
+    admin = _identity('hits-admin', role=UserRole.ADMIN)
+    admin_client = login_as(admin.username)
+    team_name = _team()
+    collection_slug = _scope(admin_client, team_name)
+    monkeypatch.setattr(settings, 'chat_config_service_token', 'runtime-control-token')
+    internal_headers = {'Authorization': 'Bearer runtime-control-token'}
+
+    # Omitted: both empty, stored as NULL and projected as null to Runtime.
+    plain = _payload(team_name, collection_slug)
+    created = admin_client.post('/api/v1/auth/admin/bots', json=plain)
+    assert created.status_code == 201, created.text
+    assert (created.json()['top_k'], created.json()['final_k']) == (None, None)
+    with TestingSessionLocal() as db:
+        row = db.get(ManagedBot, plain['id'])
+        assert (row.top_k, row.final_k) == (None, None)
+
+    # Each value on its own; the order check only applies when both are set.
+    only_final = {**plain, 'id': 'only-final', 'name': 'Only final', 'final_k': 40}
+    assert admin_client.post('/api/v1/auth/admin/bots', json=only_final).status_code == 201
+    only_top = {**plain, 'id': 'only-top', 'name': 'Only top', 'top_k': 3}
+    assert admin_client.post('/api/v1/auth/admin/bots', json=only_top).status_code == 201
+    both = {**plain, 'id': 'both-bad', 'name': 'Both', 'top_k': 3, 'final_k': 4}
+    assert admin_client.post('/api/v1/auth/admin/bots', json=both).status_code == 422
+    assert admin_client.post('/api/v1/auth/admin/bots', json={**both, 'final_k': 101}).status_code == 422
+
+    projected = {
+        item['id']: item
+        for item in admin_client.get('/api/v1/internal/bots', headers=internal_headers).json()['items']
+    }
+    # Empty values are omitted, not sent as null: a Runtime from before
+    # optional hit counts then falls back to its 20/5 instead of rejecting
+    # null and dropping the bot during a rolling upgrade.
+    assert 'top_k' not in projected[plain['id']] and 'final_k' not in projected[plain['id']]
+    assert 'top_k' not in projected['only-final'] and projected['only-final']['final_k'] == 40
+    assert projected['only-top']['top_k'] == 3 and 'final_k' not in projected['only-top']
+
+
 def test_unreachable_runtime_roster_is_logged(monkeypatch, caplog):
     """Callers like the space-deletion guard then only know Ingest's own
     bots; an operator must be able to see that."""

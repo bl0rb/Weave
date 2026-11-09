@@ -63,6 +63,8 @@ def test_export_n8n_bot_as_yaml_and_json_hides_secret_and_grants():
     assert doc['n8n']['timeout_seconds'] == 90
     assert doc['permissions'] == {'public': False}
     assert doc['retrieval']['collections'] == [collection_slug]
+    # Empty hit counts (= Weave-Retrieval's central default) are not written.
+    assert 'top_k' not in doc['retrieval'] and 'final_k' not in doc['retrieval']
     assert doc['guard']['clarify_max_options'] == 3  # Runtime default, written out in full
 
     as_json = admin_client.get(f"/api/v1/auth/admin/bots/{payload['id']}/export?format=json")
@@ -76,10 +78,12 @@ def test_export_n8n_bot_as_yaml_and_json_hides_secret_and_grants():
 
 def test_export_dry_run_apply_round_trips_an_llm_bot(monkeypatch):
     admin_client, team_name, collection_slug = _setup('roundtrip-admin')
-    payload = _llm_payload(team_name, collection_slug)
+    payload = _llm_payload(team_name, collection_slug, final_k=8)
     assert admin_client.post('/api/v1/auth/admin/bots', json=payload).status_code == 201, payload
     exported = admin_client.get(f"/api/v1/auth/admin/bots/{payload['id']}/export").content
     assert yaml.safe_load(exported)['guard']['clarify_max_options'] == 5
+    assert yaml.safe_load(exported)['retrieval']['final_k'] == 8
+    assert 'top_k' not in yaml.safe_load(exported)['retrieval']
 
     dry = _import(admin_client, exported, bot_id='kopie-des-bots')
     assert dry.status_code == 200, dry.text
@@ -101,6 +105,7 @@ def test_export_dry_run_apply_round_trips_an_llm_bot(monkeypatch):
         original = row_to_document(db.get(ManagedBot, payload['id'])).model_dump()
         copy = row_to_document(db.get(ManagedBot, 'kopie-des-bots')).model_dump()
     assert copy == {**original, 'id': 'kopie-des-bots'}
+    assert (copy['retrieval']['top_k'], copy['retrieval']['final_k']) == (None, 8)
 
     monkeypatch.setattr(settings, 'chat_config_service_token', 'runtime-control-token')
     projected = {item['id']: item for item in admin_client.get('/api/v1/internal/bots', headers=INTERNAL).json()['items']}

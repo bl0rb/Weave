@@ -563,12 +563,16 @@ antwortet er mit 413 — und weil ein Reranker-Fehler abgefangen wird, fällt
 Administration → Suche und Modelle → Trefferzahl** überschreiben (leer = die
 Umgebungswerte; `final_k` nur zusammen mit `top_k`, sonst würde es still auf das
 Umgebungs-`SEARCH_TOP_K` gekürzt). Jeder Wert greift einzeln für jede Suche, die ihn nicht
-selbst mitschickt, etwa über die Such-API oder Weave-Tools; Bots schicken immer
-ihre eigenen `top_k`/`final_k` aus dem Bot-Editor. Achtung: Ein Aufrufer, der
-nur `final_k` schickt, bekommt das zentrale `top_k` – liegt sein `final_k`
-darüber, lehnt Weave-Retrieval die Suche mit 400 ab. Das zentrale `top_k` also
-nicht unter die `final_k`-Werte bestehender Integrationen senken. Dieselbe Grenze gilt auch dort: `top_k` nicht über
-`RERANKER_MAX_DOCUMENTS`.
+selbst mitschickt, etwa über die Such-API, Weave-Tools oder Bots ohne eigene
+Werte: Bleibt `top_k`/`final_k` im Bot-Editor leer („Zentraler Standard“, Standard
+für neue Bots), gilt der zentrale Wert; bestehende Bots behalten ihre
+gespeicherten Werte. Ein Aufrufer (oder Bot), der nur `final_k` schickt,
+bekommt als Kandidatenzahl das Größere aus zentralem `top_k` und seinem
+`final_k`; abgelehnt (400) wird nur ein ausdrücklich geschicktes `top_k` unter
+`final_k`. Dieselbe Grenze gilt auch dort: `top_k` (und ein so angehobenes
+`final_k`) nicht über `RERANKER_MAX_DOCUMENTS`. Beim schrittweisen Update
+Weave-Retrieval zuerst aktualisieren: Ein älteres Weave-Retrieval lehnt ein
+`final_k` ohne `top_k` über seinem `SEARCH_TOP_K` noch mit 400 ab.
 
 Der Reranker **degradiert leise**: fällt er aus, liefert die Suche die
 unrerankte Reihenfolge zurück statt zu scheitern. Das ist gewollt, heißt aber,

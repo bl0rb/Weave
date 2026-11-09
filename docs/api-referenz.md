@@ -249,7 +249,7 @@ Hybride Suche über die Wissensbereiche, die der Aufrufer lesen darf — für Cl
 | `query` | `string`, 1–2000 Zeichen | ja | Suchtext |
 | `collection` | `string \| null` | nein | grenzt auf einen Wissensbereich ein — nur wirksam innerhalb der eigenen Rechte |
 | `top_k` | `int`, 1–50 | nein | Kandidatenzahl pro Suchweg, Default dienstseitig |
-| `final_k` | `int`, 1–50 | nein | Trefferzahl nach dem Reranking; darf `top_k` (ohne `top_k`: den dienstseitigen Default) nicht übersteigen (sonst `422`). Fehlt es, gilt der Dienst-Default, höchstens aber `top_k` |
+| `final_k` | `int`, 1–50 | nein | Trefferzahl nach dem Reranking; darf ein gesetztes `top_k` nicht übersteigen (sonst `422`). Ohne `top_k` hebt der Dienst die Kandidatenzahl auf mindestens `final_k` an. Fehlt es, gilt der Dienst-Default, höchstens aber `top_k` |
 
 ```bash
 curl -s -X POST https://weave.example.com/v1/search \
@@ -579,7 +579,7 @@ Hybride Suche über die eigenen lesbaren Collections.
 | `query` | `string`, min. 1 Zeichen | ja | Suchtext |
 | `collection` | `string \| null` | nein | grenzt auf eine Collection ein — nur wirksam innerhalb der eigenen Rechte |
 | `top_k` | `int`, 1–200 | nein | Kandidatenzahl pro Suchweg, Default dienstseitig |
-| `final_k` | `int`, 1–200 | nein | Trefferzahl nach dem Reranking; darf `top_k` (ohne `top_k`: den dienstseitigen Default) nicht übersteigen (sonst `422`). Fehlt es, gilt der Dienst-Default, höchstens aber `top_k` |
+| `final_k` | `int`, 1–200 | nein | Trefferzahl nach dem Reranking; darf ein gesetztes `top_k` nicht übersteigen (sonst `422`). Ohne `top_k` hebt der Dienst die Kandidatenzahl auf mindestens `final_k` an. Fehlt es, gilt der Dienst-Default, höchstens aber `top_k` |
 
 ```bash
 curl -s -X POST https://tools.example.com/api/v1/tools/search \

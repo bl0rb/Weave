@@ -109,8 +109,9 @@ def _format_page(page_start: int | None, page_end: int | None) -> str | None:
 
 class SearchRequestRejected(ValueError):
     """Weave-Retrieval rejected the search parameters themselves (HTTP 400),
-    e.g. a `final_k` larger than its own default `top_k` when the caller
-    sent no `top_k`. A caller error: the REST mirror answers 422, the MCP
+    e.g. a `final_k` larger than an explicit `top_k` (a `final_k` without
+    `top_k` is not rejected: Weave-Retrieval raises its default `top_k` to
+    it). A caller error: the REST mirror answers 422, the MCP
     tool reports it like any other invalid argument."""
 
 

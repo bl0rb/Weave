@@ -37,8 +37,9 @@ class RetrievalClientError(Exception):
 
 class RetrievalRequestRejected(RetrievalClientError):
     """Weave-Retrieval rejected the search parameters themselves (HTTP 400),
-    e.g. an explicit `final_k` larger than its own default `top_k` when the
-    caller sent no `top_k`. A caller error, not a gateway failure."""
+    e.g. an explicit `final_k` larger than an explicit `top_k` (a `final_k`
+    without `top_k` is not rejected: Weave-Retrieval raises its default
+    `top_k` to it). A caller error, not a gateway failure."""
 
 
 def _client() -> httpx.Client:

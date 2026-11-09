@@ -18,7 +18,9 @@ results than the `top_k` candidates it was actually given, so an EXPLICIT
 `final_k > top_k` is rejected as a 400 up front rather than silently
 clamped. An omitted `final_k` falls back to settings.search_final_k clamped
 to the effective top_k (resolve_final_k()), so sending only a small
-`top_k` never trips this guard.
+`top_k` never trips this guard; an omitted `top_k` is raised to an
+explicit `final_k` (resolve_top_k()), so sending only `final_k` never
+trips it either.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
