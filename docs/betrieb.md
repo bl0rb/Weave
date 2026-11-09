@@ -561,9 +561,13 @@ antwortet er mit 413 — und weil ein Reranker-Fehler abgefangen wird, fällt
 
 `SEARCH_TOP_K`/`SEARCH_FINAL_K` lassen sich zentral unter **Ingest →
 Administration → Suche und Modelle → Trefferzahl** überschreiben (leer = die
-Umgebungswerte). Das gilt für jede Suche ohne eigene Werte, etwa über die
-Such-API oder Weave-Tools; Bots schicken immer ihre eigenen `top_k`/`final_k`
-aus dem Bot-Editor. Dieselbe Grenze gilt auch dort: `top_k` nicht über
+Umgebungswerte; `final_k` nur zusammen mit `top_k`, sonst würde es still auf das
+Umgebungs-`SEARCH_TOP_K` gekürzt). Jeder Wert greift einzeln für jede Suche, die ihn nicht
+selbst mitschickt, etwa über die Such-API oder Weave-Tools; Bots schicken immer
+ihre eigenen `top_k`/`final_k` aus dem Bot-Editor. Achtung: Ein Aufrufer, der
+nur `final_k` schickt, bekommt das zentrale `top_k` – liegt sein `final_k`
+darüber, lehnt Weave-Retrieval die Suche mit 400 ab. Das zentrale `top_k` also
+nicht unter die `final_k`-Werte bestehender Integrationen senken. Dieselbe Grenze gilt auch dort: `top_k` nicht über
 `RERANKER_MAX_DOCUMENTS`.
 
 Der Reranker **degradiert leise**: fällt er aus, liefert die Suche die

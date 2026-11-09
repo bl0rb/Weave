@@ -79,6 +79,11 @@ def test_search_defaults_are_saved_and_projected_to_retrieval(monkeypatch):
     internal = admin.get('/api/v1/internal/retrieval-provider', headers=internal_headers).json()
     assert (internal['search_top_k'], internal['search_final_k']) == (30, 8)
 
+    # A client that doesn't know the fields (pre-deploy bundle) keeps them.
+    kept = admin.put('/api/v1/auth/admin/retrieval-provider', json={'semantic_weight': 0.6, 'lexical_weight': 0.4})
+    assert kept.status_code == 200, kept.text
+    assert (kept.json()['search_top_k'], kept.json()['search_final_k']) == (30, 8)
+
     cleared = admin.put('/api/v1/auth/admin/retrieval-provider', json={'search_top_k': None, 'search_final_k': None})
     assert cleared.status_code == 200, cleared.text
     assert admin.get('/api/v1/internal/retrieval-provider', headers=internal_headers).json()['search_top_k'] is None
@@ -90,6 +95,9 @@ def test_search_final_k_above_top_k_is_rejected():
     assert admin.put('/api/v1/auth/admin/retrieval-provider', json={'search_top_k': 5, 'search_final_k': 6}).status_code == 422
     assert admin.put('/api/v1/auth/admin/retrieval-provider', json={'search_top_k': 0}).status_code == 422
     assert admin.put('/api/v1/auth/admin/retrieval-provider', json={'search_final_k': 201}).status_code == 422
+    # final_k without top_k would be cut to Retrieval's hidden env SEARCH_TOP_K.
+    assert admin.put('/api/v1/auth/admin/retrieval-provider', json={'search_final_k': 8}).status_code == 422
+    assert admin.put('/api/v1/auth/admin/retrieval-provider', json={'search_top_k': 3}).status_code == 200
 
 # --- Index-Wartung: 'Vektoren neu berechnen' ----------------------------
 

@@ -448,3 +448,23 @@ def test_cli_eval_custom_ks_always_include_gate_k(monkeypatch, capsys):
     printed = capsys.readouterr().out
     assert 'R@5' in printed
     assert 'R@20' in printed
+
+
+def test_get_search_fn_reads_depth_after_control_plane_refresh(monkeypatch):
+    """The central SEARCH_TOP_K (applied by refresh_control_plane()) must
+    already govern the FIRST golden query's depth, not only later ones."""
+    import app.services.search as search_module
+
+    monkeypatch.setattr(settings, 'search_top_k', 20)
+    monkeypatch.setattr(search_module, 'refresh_control_plane', lambda: setattr(settings, 'search_top_k', 50))
+    seen: list[tuple[int | None, int | None, bool]] = []
+
+    def fake_search(db, request, *, refresh=True):
+        seen.append((request.top_k, request.final_k, refresh))
+        return [], None
+
+    monkeypatch.setattr(search_module, 'search', fake_search)
+
+    get_search_fn()('erste Anfrage')
+
+    assert seen == [(50, 50, False)]

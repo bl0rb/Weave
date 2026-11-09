@@ -59,6 +59,10 @@ class RetrievalProviderUpdateRequest(BaseModel):
             raise ValueError('semantic_weight and lexical_weight must add up to 1')
         if self.rerank_provider == 'api' and (not self.rerank_base_url.strip() or not self.rerank_model.strip()):
             raise ValueError('rerank_base_url and rerank_model are required when reranking is enabled')
+        # final_k alone would be silently clamped by Retrieval to its env
+        # SEARCH_TOP_K, which Ingest cannot see -- so it needs an explicit top_k.
+        if self.search_final_k is not None and self.search_top_k is None:
+            raise ValueError('search_final_k requires search_top_k')
         if self.search_top_k is not None and self.search_final_k is not None and self.search_final_k > self.search_top_k:
             raise ValueError('search_final_k must be less than or equal to search_top_k')
         return self

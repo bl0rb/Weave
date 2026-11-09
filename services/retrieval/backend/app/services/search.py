@@ -672,7 +672,7 @@ def _rerank(
     return [(by_chunk_id[candidate.chunk_id], score) for candidate, score in scored_candidates], False
 
 
-def search(db: Session, request: SearchRequest) -> tuple[list[SearchResult], SearchTrace]:
+def search(db: Session, request: SearchRequest, *, refresh: bool = True) -> tuple[list[SearchResult], SearchTrace]:
     """Run the full hybrid-search pipeline for one request: embed the query,
     run the vector and fulltext legs (each capped at `top_k` candidates),
     fuse them with RRF, keep the fused top `top_k`, rerank that pool
@@ -684,9 +684,11 @@ def search(db: Session, request: SearchRequest) -> tuple[list[SearchResult], Sea
 
     Returns `(results, trace)` rather than a full SearchResponse -- building
     the response envelope (echoing `request.query` back) is the API layer's
-    job, not this service's.
+    job, not this service's. `refresh=False` skips refresh_control_plane()
+    for a caller (app/api/search.py) that already refreshed before validating.
     """
-    refresh_control_plane()
+    if refresh:
+        refresh_control_plane()
     timings_ms: dict[str, float] = {}
     top_k = resolve_top_k(request)
     final_k = resolve_final_k(request)

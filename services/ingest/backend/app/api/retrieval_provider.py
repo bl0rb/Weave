@@ -125,8 +125,14 @@ def update_retrieval_provider(payload: RetrievalProviderUpdateRequest, request: 
     embedding_changed = any(getattr(row, field) != getattr(payload, field) for field in ('embedding_provider', 'embedding_base_url', 'embedding_model', 'embedding_dimension', 'embedding_batch_size'))
     if embedding_changed and not payload.confirm_reindex:
         raise HTTPException(status_code=409, detail='Embedding-Änderungen benötigen eine bestätigte Voll-Reindizierung.')
-    for field in ('embedding_provider', 'embedding_base_url', 'embedding_model', 'embedding_dimension', 'embedding_batch_size', 'rerank_provider', 'rerank_base_url', 'rerank_model', 'rerank_max_documents', 'rerank_batch_size', 'rerank_threads', 'semantic_weight', 'lexical_weight', 'search_top_k', 'search_final_k'):
+    for field in ('embedding_provider', 'embedding_base_url', 'embedding_model', 'embedding_dimension', 'embedding_batch_size', 'rerank_provider', 'rerank_base_url', 'rerank_model', 'rerank_max_documents', 'rerank_batch_size', 'rerank_threads', 'semantic_weight', 'lexical_weight'):
         setattr(row, field, getattr(payload, field))
+    # Older clients (stale admin bundle) don't send the hit counts at all; keep
+    # the stored pair then. Treated as one unit so final_k <= top_k, validated
+    # on the payload, can't be broken by mixing payload and stored values.
+    if {'search_top_k', 'search_final_k'} & payload.model_fields_set:
+        row.search_top_k = payload.search_top_k
+        row.search_final_k = payload.search_final_k
     row.updated_by_id = admin.id
     if payload.embedding_api_key and payload.embedding_api_key.strip():
         row.embedding_api_key_encrypted = encrypt_retrieval_provider_api_key(payload.embedding_api_key.strip())

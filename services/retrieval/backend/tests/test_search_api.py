@@ -114,6 +114,39 @@ def test_search_with_only_small_top_k_clamps_default_final_k():
     assert trace['returned'] == 0
 
 
+def test_search_with_only_final_k_above_lowered_default_top_k_is_rejected(monkeypatch):
+    # The central top_k (Ingest admin -> settings.search_top_k) also applies to
+    # callers that send only final_k; it is not clamped up, so such a call 400s.
+    _cleanup()
+    monkeypatch.setattr(settings, 'search_top_k', 5)
+    resp = client.post('/api/v1/search', json={'query': 'hello', 'final_k': 10}, headers=AUTH_HEADERS)
+    assert resp.status_code == 400
+    assert 'must not exceed top_k (5)' in resp.json()['detail']
+
+
+@pytest.mark.parametrize(('central_top_k', 'final_k', 'expected_status'), [(50, 30, 200), (5, 10, 400)])
+def test_search_guard_uses_freshly_refreshed_central_top_k(monkeypatch, central_top_k, final_k, expected_status):
+    # The final_k > top_k guard must compare against the central top_k fetched
+    # for THIS request, not whatever an earlier refresh left in this process.
+    import app.services.search as search_module
+
+    class _Response:
+        status_code = 200
+
+        def json(self) -> dict:
+            return {'search_top_k': central_top_k}
+
+    _cleanup()
+    monkeypatch.setattr(settings, 'chat_config_base_url', 'http://ingest')
+    monkeypatch.setattr(settings, 'chat_config_service_token', 'token')
+    monkeypatch.setattr(settings, 'search_top_k', 20)
+    monkeypatch.setattr(search_module.httpx, 'get', lambda *a, **k: _Response())
+    resp = client.post('/api/v1/search', json={'query': 'hello', 'final_k': final_k}, headers=AUTH_HEADERS)
+    assert resp.status_code == expected_status
+    if expected_status == 200:
+        assert resp.json()['trace']['top_k'] == central_top_k
+
+
 # --- end-to-end round trip ------------------------------------------------------
 
 
