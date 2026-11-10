@@ -33,6 +33,7 @@ Escalate only if all four hold:
 - The handover costs less than another failed attempt is likely to.
 
 If the check fails, change the approach on the current model or ask the user.
+Work that cannot be put as one question is covered by step 3.
 
 ## Steps
 
@@ -41,8 +42,10 @@ If the check fails, change the approach on the current model or ask the user.
    than on new reads or checks, ask the advisor instead. Claude Code checks
    the advisor's rank and it needs no handover, so only the first and third
    value-check bullets apply. Never use both for one problem.
-2. A round is one question to L3 (reviewer or advisor) and its answer. At most
-   two rounds per problem; a follow-up goes to the same agent
+2. A round is one L3 call (reviewer or advisor) on a problem, including a call
+   that errors or is answered by a substitute model (Fallback). At most two
+   rounds per problem; a reworded, narrowed or split question about the same
+   failure or decision is the same problem. A follow-up goes to the same agent
    (`context-continuity.md`). Resending context after a first `NEEDS_CONTEXT:`
    is not a round; after a second one it is.
 3. If two rounds did not resolve it, or the rest of the task needs deep
@@ -66,6 +69,6 @@ If starting an agent returns an error:
 
 Claude Code can also run an agent on a substitute model without an error.
 Signs: the reply opens with a line saying the agent switched models, or its
-`model:` line (`context-handover.md`, Return) does not rank above this
-conversation's family or cannot be ranked. Then name the model when you report
+`model:` line (`context-handover.md`, Return) ranks below the family in the
+agent's frontmatter or cannot be ranked. Then name the model when you report
 the escalation and treat the reply as a second view, not as an L3 result.

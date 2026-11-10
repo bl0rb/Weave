@@ -23,7 +23,7 @@ decide single steps inside it.
 - **Default: the main agent does the step itself.** Development, analysis,
   debugging, implementation and anything that builds on earlier turns stay here.
 - **L1 for a self-contained, read-only lookup** that returns a short summary
-  and would otherwise take many tool calls or pull large files or logs into
+  and would otherwise take more than about ten tool calls or pull large files or logs into
   this conversation, such as summarising a large log. Whatever one search or
   a handful of tool calls answers is done inline, as are small edits:
   starting a subagent costs more than that.

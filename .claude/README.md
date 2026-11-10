@@ -19,7 +19,8 @@ definiert.
 | `agents/escalation-reviewer.md` | L3-Subagent, analysiert und empfiehlt | bei Aufruf |
 
 Die beiden Agent-Dateien wiederholen ihr Ein- und Ausgabeformat, weil sie mit
-`omitClaudeMd: true` ohne `CLAUDE.md`, `AGENTS.md` und die Regeln starten.
+`omitClaudeMd: true` ohne `CLAUDE.md`, `AGENTS.md` und die Regeln starten
+sollen.
 
 `CLAUDE.md` importiert `AGENTS.md`, weil Claude Code `AGENTS.md` nur dann von
 sich aus liest, wenn es keine `CLAUDE.md` gibt.
@@ -82,8 +83,11 @@ nicht verfügbare Modelle.
   erlaubten Tools und ohne den Gesprächsverlauf. Zwei Ausnahmen beim Modell:
   Ein `model`-Parameter im Agent-Aufruf hat Vorrang, und ein Alias aus der
   Familie des Hauptmodells läuft auf genau dem Hauptmodell. `CLAUDE.md`, `AGENTS.md` und
-  `rules/` bekäme er normalerweise mit; `omitClaudeMd: true` schaltet das für
-  beide Agents ab (ab Claude Code v2.1.271).
+  `rules/` bekäme er normalerweise mit; `omitClaudeMd: true` soll das laut
+  Doku für beide Agents abschalten (ab Claude Code v2.1.271). In der
+  Prüfsession hatte `scout` `AGENTS.md` trotzdem im Kontext. Diese Session war
+  allerdings ohne `CLAUDE.md` gestartet; in einer frischen Session ist das
+  noch zu prüfen.
 - Ist ein Modell durch `availableModels` gesperrt, weicht Claude Code für den
   Subagenten auf ein erlaubtes Modell aus; mit `fallbackModel` auch bei
   Überlast oder Nichtverfügbarkeit.
@@ -119,8 +123,10 @@ nicht verfügbare Modelle.
 Kosten, die man kennen sollte: Ein Wechsel des Hauptmodells liest den gesamten
 Verlauf einmal ohne Cache neu. Ein Subagent startet mit eigenem Systemprompt
 und ohne Cache des Hauptagenten; der Cache des Hauptagenten bleibt erhalten.
-In der Prüfsession hat allein der Start eines Subagenten rund 64.000 Token
-gekostet, deshalb erledigt der Hauptagent Kleinigkeiten selbst.
+Gemessen in der Prüfsession: Ein `scout`-Aufruf für eine Ein-Datei-Frage
+verbrauchte insgesamt rund 9.000 Token, ein Allzweck-Subagent mit allen Tools
+dagegen rund 64.000 Token für eine einzeilige Antwort. Der Aufwand hängt also
+stark von der Tool-Liste des Agents ab.
 
 ## Eingebaute Alternativen
 
@@ -170,21 +176,24 @@ Hauptagenten über mehrere Turns ist damit nicht gemessen.
 | 7 | Unnötige Eskalation | Keine Eskalation wegen Länge oder Zahl der Nachfragen; keine, wenn L3 nicht stärker ist als das Hauptmodell (Ausnahme: Auslöser 4) | `escalation-policy.md`, Triggers und Value check | blind bestanden |
 | 8 | Modell fehlt oder ist nicht verfügbar | Kein Wiederholen in Schleife; L3 fällt auf Hauptmodell mit Hinweis an den Nutzer zurück, L1 auf Inline-Arbeit | `escalation-policy.md`, Fallback | blind bestanden; ein Ausfall selbst wurde nicht ausgelöst |
 
-Einzelergebnisse:
+Einzelergebnisse aus drei Prüfrunden:
 
 - `scout`, Faktenfrage: elf CI-Jobs mit `path:line`, gegen `grep` geprüft und
-  korrekt; lief auf `claude-haiku-5-5`.
+  korrekt; lief in allen Runden auf `claude-haiku-5-5`.
 - `scout`, Bewertungsfrage: lieferte die Fakten und gab die Bewertung mit
   `NEEDS_L2:` zurück.
-- `escalation-reviewer`, unvollständige Übergabe: antwortete mit
-  `NEEDS_CONTEXT:` und las keine Dateien.
-- `escalation-reviewer`, vollständige Übergabe: alle fünf Abschnitte, konkrete
-  Ersatztexte, keine Dateiänderung; lief auf `claude-opus-5-5`.
-- Routing-Entscheidungen: 14 Fälle, je einmal auf `sonnet` und auf dem
-  Sessionmodell, beide 14 von 14. Ein als mehrdeutig gemeldeter Fall führte zur
-  schärferen Abgrenzung von L1 in `rules/model-routing.md`.
-- Drei Reviews (Konsistenz, Fakten gegen die Doku, Abdeckung der
-  Anforderungen) fanden zehn Mängel; alle sind in den Dateien korrigiert.
+- `escalation-reviewer`, unvollständige Übergabe: antwortete in allen drei
+  Runden mit `NEEDS_CONTEXT:`, ohne im Repository zu suchen.
+- `escalation-reviewer`, vollständige Übergabe: drei echte Fragen zu diesem
+  Setup, jeweils alle fünf Abschnitte mit konkretem Ersatztext und ohne
+  Dateiänderung; lief auf `claude-opus-5-5` und nennt das seit der letzten
+  Runde selbst in der `model:`-Zeile. Seine Antworten sind in die Regeln
+  eingeflossen (Familienvergleich, bedingte Advisor-Regel, Rundenzählung).
+- Routing-Entscheidungen: zuletzt 21 Fälle, je einmal auf `sonnet` und auf dem
+  Sessionmodell, beide 21 von 21 (Runde eins 14 von 14, Runde zwei 20 von 20).
+- Reviews (Konsistenz, Fakten gegen die Doku, Abdeckung der Anforderungen,
+  Gegenprüfung der Korrekturen): Befunde aus allen Runden sind eingearbeitet.
+  Die Änderungen nach der letzten Runde sind nicht erneut geprüft.
 
 Zum Nachprüfen in einer eigenen Session: Szenario ausführen und mit `/tasks`
 kontrollieren, auf welchem Modell und Effort ein Subagent lief (ab v2.1.242);
