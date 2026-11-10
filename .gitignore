@@ -46,4 +46,12 @@ docs/reviews/
 # repository -- interne Planungsnotizen zu Integrationsgrenzen bleiben
 # außerhalb des öffentlichen Repositories.
 docs/bereinigung.md
-.claude/
+
+# Claude Code: local state stays out, the shared harness (rules, agents,
+# project settings, docs) is versioned -- lokaler Zustand bleibt draußen, der
+# geteilte Harness (Regeln, Agenten, Projekt-Settings, Doku) wird versioniert.
+.claude/*
+!.claude/rules/
+!.claude/agents/
+!.claude/settings.json
+!.claude/README.md
