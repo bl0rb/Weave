@@ -9,6 +9,7 @@ easy to call from a route handler or a test without any extra wiring.
 """
 
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -109,7 +110,11 @@ def append_message(
     # their conversation by.
     if role == MessageRole.USER and conversation.title is None:
         conversation.title = _title_from_first_message(content)
-        db.add(conversation)
+    # Every turn counts as activity: GET /v1/conversations lists by
+    # updated_at, and `onupdate` alone only fires when this row itself
+    # changes, which a new Message row does not do.
+    conversation.updated_at = datetime.now(timezone.utc)
+    db.add(conversation)
 
     db.commit()
     db.refresh(message)

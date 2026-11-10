@@ -83,7 +83,8 @@ function isChatStreamEvent(value: unknown): value is ChatStreamEvent {
     type === 'sources' ||
     type === 'done' ||
     type === 'error' ||
-    type === 'status'
+    type === 'status' ||
+    type === 'title'
   );
 }
 

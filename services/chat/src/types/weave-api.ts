@@ -342,6 +342,10 @@ export type ChatStreamEvent =
   | { type: 'sources'; sources: Source[] }
   | { type: 'done' }
   | { type: 'error'; detail: string }
+  // Weave-API's own, after the first `done` of a conversation: the
+  // generated conversation title (sent after `done` so the answer is not
+  // held back by that extra LLM call).
+  | { type: 'title'; title: string }
   | ChatStreamStatusEvent;
 
 /** POST /v1/chat (non-streaming) response body. */

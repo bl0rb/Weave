@@ -9,6 +9,9 @@ export interface ChatStreamCallbacks {
    * `ChatStreamStatusEvent`'s own docstring. Never carries a prompt/query/
    * token; always safe to render `message` verbatim. */
   onStatus?: (event: ChatStreamStatusEvent) => void;
+  /** The answer is complete and persisted. The stream may still carry a
+   * `title` event after this; the outcome resolves only when it ends. */
+  onDone?: () => void;
 }
 
 export type ChatStreamOutcome =
@@ -36,7 +39,10 @@ export async function consumeChatStream(
   body: ReadableStream<Uint8Array>,
   callbacks: ChatStreamCallbacks
 ): Promise<ChatStreamOutcome> {
+  let done = false;
   for await (const event of parseSseStream(body)) {
+    // After `done` only a `title` may still come; anything else is ignored.
+    if (done && event.type !== 'title') continue;
     switch (event.type) {
       case 'trace':
         callbacks.onTrace?.(event.trace);
@@ -51,11 +57,20 @@ export async function consumeChatStream(
         callbacks.onStatus?.(event);
         break;
       case 'done':
-        return { status: 'done' };
+        // Keep reading: Weave-API sends the first answer's `title` after
+        // `done` and then closes the stream.
+        done = true;
+        callbacks.onDone?.();
+        break;
+      case 'title':
+        // Nothing to render here -- the conversation list refresh after
+        // the turn picks the stored title up.
+        break;
       case 'error':
         return { status: 'error', detail: event.detail };
     }
   }
+  if (done) return { status: 'done' };
   // The generator ran out on its own — the connection ended without a
   // terminal event ever arriving.
   return { status: 'interrupted' };
