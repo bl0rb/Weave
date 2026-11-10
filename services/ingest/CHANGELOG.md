@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **XML content exports become one article per HTML body**: an `.xml` upload whose elements
+  carry HTML (CDATA from a CMS or knowledge-base export) no longer lands as raw HTML on one
+  bullet line. `app/services/xml_document.py` renders `# Folder › Subfolder` / `## Article`
+  (one chunk per article, folder as breadcrumb), renders an article exported under several
+  entries once with the other titles as `**Stichworte:**`, unwraps layout tables and foldouts,
+  turns data tables into one record per row with the column headers repeated (rowspan/colspan
+  expanded), resolves links to other elements of the export to their title and drops styles,
+  `&nbsp;` padding, comments and non-http(s) links/images. Data-like XML keeps the outline.
+
 ## [0.7.24] - 2026-11-10
 
 ### Security
