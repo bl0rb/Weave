@@ -56,6 +56,11 @@ def auto_release_import_jobs(db, run_id: str, job_ids: list[str] | None = None) 
     options = run.options if run is not None and isinstance(run.options, dict) else {}
     if run is None or run.status != ImportRunStatus.FINISHED or not options.get('auto_release') or not run.owner_id:
         return 0
+    if options.get('force_reimport'):
+        # An admin re-ingest converts every page again; it releases only what
+        # was released before (app/services/reingest.py). Auto-releasing here
+        # would also publish pages a reviewer skipped, parked or never approved.
+        return 0
     if not publication_configured():
         return 0
     owner = db.get(User, run.owner_id)
@@ -354,3 +359,11 @@ def _housekeeping() -> None:
             object_store.collect_garbage(db)
     except Exception:
         logger.exception('stored object garbage collection failed; retrying next tick')
+    try:
+        # Safety net of the admin re-ingest: a run whose nudges were lost
+        # still advances every tick.
+        from app.services.reingest import nudge_active_runs
+
+        nudge_active_runs()
+    except Exception:
+        logger.exception('re-ingest step failed; retrying next tick')

@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense } from 'react';
-import { DatabaseBackup, ShieldCheck, SlidersHorizontal, Wrench } from 'lucide-react';
+import { DatabaseBackup, RefreshCcw, ShieldCheck, SlidersHorizontal, Wrench } from 'lucide-react';
 
 import {
   AdminPageShell,
@@ -12,11 +12,12 @@ import {
 } from '@/components/admin/admin-page-shared';
 import { BackupTab } from '@/components/admin/backup-tab';
 import { ConfigTab } from '@/components/admin/config-tab';
+import { ReingestTab } from '@/components/admin/reingest-tab';
 import { TechnicalIdentitiesTab } from '@/components/admin/technical-identities-tab';
 import { IndexMaintenanceSection } from '@/components/admin/retrieval-provider-tab';
 import { useI18n } from '@/i18n/provider';
 
-type Bereich = 'sicherung' | 'konfiguration' | 'identitaeten' | 'werkzeuge';
+type Bereich = 'sicherung' | 'konfiguration' | 'identitaeten' | 'werkzeuge' | 'neu-einlesen';
 
 export default function AdminBetriebPage() {
   return (
@@ -33,6 +34,7 @@ function AdminBetriebPageInner() {
     { id: 'konfiguration', label: t('admin.operations.tab.config'), icon: SlidersHorizontal },
     { id: 'identitaeten', label: t('admin.operations.tab.identities'), icon: ShieldCheck },
     { id: 'werkzeuge', label: t('admin.operations.tab.tools'), icon: Wrench },
+    { id: 'neu-einlesen', label: t('admin.operations.tab.reingest'), icon: RefreshCcw },
   ];
   const IDS = TABS.map((tab) => tab.id);
   const [bereich, setBereich] = useBereich<Bereich>(IDS, 'sicherung');
@@ -61,6 +63,11 @@ function AdminBetriebPageInner() {
       {bereich === 'werkzeuge' && (
         <SectionPanel idPrefix="betrieb" id="werkzeuge">
           <IndexMaintenanceSection />
+        </SectionPanel>
+      )}
+      {bereich === 'neu-einlesen' && (
+        <SectionPanel idPrefix="betrieb" id="neu-einlesen">
+          <ReingestTab />
         </SectionPanel>
       )}
     </AdminPageShell>

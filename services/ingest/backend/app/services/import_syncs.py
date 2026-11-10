@@ -16,7 +16,11 @@ from datetime import datetime, timezone
 import sqlalchemy as sa
 
 # Run-only keys that are recomputed for every run and never belong to a sync.
-RUN_ONLY_OPTION_KEYS = frozenset({'collection_id', 'collection_slug', 'collection_name', 'is_refresh', 'sync_template_run_id'})
+RUN_ONLY_OPTION_KEYS = frozenset({
+    'collection_id', 'collection_slug', 'collection_name', 'is_refresh', 'sync_template_run_id',
+    # Admin re-ingest (app/services/reingest.py): a forced re-import of one run.
+    'force_reimport', 'reingest_run_id', 'reingest_include_edited',
+})
 
 _runs = sa.table(
     'import_runs',

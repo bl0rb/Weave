@@ -41,6 +41,7 @@ from app.database.session import SessionLocal
 from app.models.models import (
     Collection,
     CollectionRole,
+    DocumentRelease,
     ImportPageState,
     ImportRun,
     ImportRunStatus,
@@ -53,6 +54,7 @@ from app.models.models import (
     User,
 )
 from app.services import object_store, security
+from app.services.reingest import is_manually_edited
 from app.services.collection_access import collection_role, role_at_least
 from app.services.confluence import AttachmentMeta, ConfluenceError, Page, PageSource, create_client, is_transient
 from app.services.confluence_markdown import add_frontmatter_keys, convert_page, rewrite_cross_page_links, sanitize_filename
@@ -230,6 +232,9 @@ class _RunState:
         self.missing_pages: list[dict] = list(raw.get('missing_pages') or [])
         self.discovery_complete = raw.get('discovery_complete', True)
         self.unavailable_pages = set(raw.get('unavailable_pages') or [])
+        # Known pages converted again by an admin re-ingest (force_reimport):
+        # like unchanged pages of a refresh they must not use up max_pages.
+        self.forced_reimports = int(raw.get('forced_reimports') or 0)
         # The run root's space key, resolved once via fetch_context on the
         # first chunk (see import_confluence's "first chunk" block) and
         # persisted so a resumed run never re-fetches it.
@@ -292,6 +297,7 @@ class _RunState:
             'unavailable_pages': sorted(self.unavailable_pages),
             'missing_pages': [dict(entry) for entry in self.missing_pages],
             'discovery_complete': self.discovery_complete,
+            'forced_reimports': self.forced_reimports,
             'frontier': [list(entry) for entry in self.frontier],
             'visited': dict(self.visited),
             'errors': [dict(entry) for entry in self.errors],
@@ -618,7 +624,9 @@ def _finalize_run(db, run: ImportRun, state: _RunState, claimed_seq: int) -> Non
     # discipline as the job.finished/job.failed hooks in
     # app/workers/tasks.py.
     try:
-        webhook_tasks.dispatch_run_event(db, run)
+        # An admin re-ingest does not notify the connection's webhook.
+        if not (isinstance(run.options, dict) and run.options.get('reingest_run_id')):
+            webhook_tasks.dispatch_run_event(db, run)
     except Exception:  # pragma: no cover - webhooks must never break run completion
         logger.exception('webhook dispatch failed for import run %s (import_run.finished)', run.id)
 
@@ -663,6 +671,10 @@ def _finalize_run(db, run: ImportRun, state: _RunState, claimed_seq: int) -> Non
     # documents now; attachment jobs still processing are released by
     # process_job when they finish.
     publication_tasks.auto_release_import_jobs(db, run.id)
+    if options.get('reingest_run_id'):
+        from app.services.reingest import nudge
+
+        nudge(options['reingest_run_id'])
 
 
 def _cancel_requested(db, run_id: str) -> bool:
@@ -696,6 +708,58 @@ def _attachments_changed(db, client: PageSource, page: Page, existing_job: Job) 
     # listed attachment not stored as an artifact yet".
     stored_urls = set(db.scalars(select(JobArtifact.source_url).where(JobArtifact.job_id == existing_job.id)))
     return any(attachment.download_url[:2048] not in stored_urls for attachment in attachments)
+
+
+def _force_reimport(db, options: dict, existing_job: Job | None) -> bool:
+    """Admin re-ingest (app/services/reingest.py): convert a known page again
+    although it is unchanged -- not a manually edited version unless the
+    admin included those, not a released one unless the admin chose to
+    release again (an unreleased version on top of a released one would stay
+    unreleased), and not twice when two syncs of the re-ingest share a page."""
+    if not options.get('force_reimport') or existing_job is None:
+        return False
+    if is_manually_edited(existing_job) and not options.get('reingest_include_edited'):
+        return False
+    if not options.get('reingest_rerelease') and db.scalar(
+        select(DocumentRelease.id).where(DocumentRelease.job_id == existing_job.id)
+    ) is not None:
+        return False
+    previous_run = db.get(ImportRun, existing_job.import_run_id) if existing_job.import_run_id else None
+    previous_options = previous_run.options if previous_run is not None and isinstance(previous_run.options, dict) else {}
+    return not (previous_options.get('reingest_run_id') and previous_options.get('reingest_run_id') == options.get('reingest_run_id'))
+
+
+def _carried_review(previous: Job | None) -> dict:
+    info = previous.processing_info if previous is not None and isinstance(previous.processing_info, dict) else {}
+    review = info.get('portal_review')
+    return {'portal_review': dict(review)} if isinstance(review, dict) else {}
+
+
+def _previous_attachment_version(db, page_job: Job, page: Page, filename: str) -> Job | None:
+    """The newest version of the same attachment of the page's previous
+    version: same import run as that page (children are created with their
+    page; a portal edit keeps the run), same file, same source page."""
+    previous_page = db.get(Job, page_job.previous_job_id) if page_job.previous_job_id else None
+    if previous_page is None or previous_page.import_run_id is None:
+        return None
+    candidates = [
+        candidate
+        for candidate in db.scalars(
+            select(Job).where(Job.import_run_id == previous_page.import_run_id, Job.original_filename == filename)
+        )
+        if _attachment_of(candidate, page.id)
+        and db.scalar(select(Job.id).where(Job.previous_job_id == candidate.id).limit(1)) is None
+    ]
+    # Only an unambiguous match is chained (deduplicated file names depend
+    # on the attachment order); otherwise the attachment starts a new chain.
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _attachment_of(job: Job, page_id) -> bool:
+    info = job.processing_info if isinstance(job.processing_info, dict) else {}
+    job_settings = info.get('settings') if isinstance(info.get('settings'), dict) else {}
+    import_info = job_settings.get('import') if isinstance(job_settings.get('import'), dict) else {}
+    return job_settings.get('mode') == 'import_attachment' and str(import_info.get('source_page_id')) == str(page_id)
 
 
 def _store_attachments(
@@ -801,6 +865,17 @@ def _store_attachments(
         run.artifact_bytes += len(data)
 
         if extension in _OCR_DOC_SPECS and options.get('ocr_attachments'):
+            # A forced re-import chains the attachment onto its previous
+            # version, so a re-release supersedes it in Knowledge.
+            previous_child = (
+                _previous_attachment_version(db, job, page, filename) if options.get('force_reimport') else None
+            )
+            if (
+                previous_child is not None
+                and is_manually_edited(previous_child)
+                and not options.get('reingest_include_edited')
+            ):
+                continue  # keep the manually corrected version of this attachment
             child_id = str(uuid.uuid4())
             folder_path = '/'.join(filter(None, [folder, subfolder])) or 'inbox'
             child_storage_folder = f'{folder_path}/{child_id}'
@@ -817,6 +892,8 @@ def _store_attachments(
                 status=JobStatus.PENDING,
                 owner_id=run.owner_id,
                 import_run_id=run.id,
+                document_version=previous_child.document_version + 1 if previous_child is not None else 1,
+                previous_job_id=previous_child.id if previous_child is not None else None,
                 processing_info={
                     'settings': {
                         'mode': 'import_attachment',
@@ -830,6 +907,13 @@ def _store_attachments(
                         'subfolder': subfolder,
                         'storage_folder': child_storage_folder,
                         'import': {'parent_job_id': job.id, 'source_page_id': page.id},
+                        # Admin re-ingest: process_job nudges the run when it
+                        # ends (settings survive its claim; the reviewer's
+                        # decision is restored when the run is finalized).
+                        **(
+                            {'reingest': {'run_id': options['reingest_run_id'], **_carried_review(previous_child)}}
+                            if options.get('reingest_run_id') else {}
+                        ),
                         # vl_connection_id/variant_label for a 'vl:'
                         # ocr_profile_id ({} for a static profile) -- see
                         # vl_settings_for_worker (non-raising: the
@@ -1035,8 +1119,13 @@ def _import_one_page(
         else None
     )
 
+    # Admin re-ingest (app/services/reingest.py): convert unchanged pages
+    # again with the current converter and chain them as the next version --
+    # except a manually edited version, unless the admin included those.
+    force_reimport = _force_reimport(db, options, existing_job)
     if (
         is_refresh
+        and not force_reimport
         and existing_state is not None
         and existing_state.page_version == page.version
         and existing_job is not None
@@ -1081,6 +1170,9 @@ def _import_one_page(
         if existing_job is not None:
             document_version = existing_job.document_version + 1
             previous_job_id = existing_job.id
+    if force_reimport:
+        state.forced_reimports += 1
+        run.pages_discovered = max(run.pages_discovered - 1, 0)
 
     # Provenance stored on the job for release-time citations
     # (app/services/publications.py): source_url always, plus fetched_at /
@@ -1154,6 +1246,8 @@ def _import_one_page(
                 },
             },
             'execution': {'status': 'finished', 'engine': f'{run.kind}-import'},
+            # A forced re-import keeps the reviewer's skip/park decision.
+            **_carried_review(existing_job if force_reimport else None),
         },
     )
     db.add(job)
@@ -1267,6 +1361,9 @@ def _discover_children(
         # could not be listed, giving the admin the context to act on.
         state.add_error(page.id, page.title, f'listing children of this page failed: {exc}')
     if capped_reason is not None:
+        # Pages beyond the cap were never visited: they must not be reported
+        # as missing (_detect_missing_pages).
+        state.discovery_complete = False
         # Not a failure -- a truncated tree by design (spec: an INFO note so
         # this does not read as an error next to the real ones above).
         logger.info(
@@ -1458,7 +1555,7 @@ def import_confluence(self, run_id: str, chunk_seq: int) -> None:
         in_flight: tuple[str, int, list[str], str | None] | None = None
         try:
             while state.frontier and pages_this_chunk < settings.import_chunk_pages:
-                if run.pages_imported >= max_pages:
+                if run.pages_imported - state.forced_reimports >= max_pages:
                     # Not a failure -- an intentional stop, logged at INFO so
                     # an admin reading the logs does not mistake a capped
                     # (truncated-by-design) tree for a broken crawl.
@@ -1568,7 +1665,7 @@ def import_confluence(self, run_id: str, chunk_seq: int) -> None:
             _cancel_run(db, run, state, claimed_seq)
             return
         state.recoveries = 0  # this chunk got through; losses are counted consecutively
-        if state.frontier and run.pages_imported < max_pages and not byte_cap_hit:
+        if state.frontier and run.pages_imported - state.forced_reimports < max_pages and not byte_cap_hit:
             state.persist(run)
             _commit_owned(db, run.id, claimed_seq)
             _send_continuation(self.app, run_id, claimed_seq)

@@ -11,6 +11,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Admin re-ingest of all documents and connections** (Administration › Betrieb › Neu einlesen):
+  converts every document again and re-imports every connection with the current converters
+  and quality rating. As an explicit admin decision, everything that was released and is live
+  in Knowledge is released again: a released document becomes its next version (a release is
+  immutable) and is released as the person who released it before, so Knowledge replaces the
+  old version once the new one is indexed; when body and rating did not change, the new version
+  is discarded and Knowledge stays untouched. Unreleased documents are re-converted in place,
+  keeping review decisions, upload time and the current markdown on failure. Manually edited
+  documents are skipped unless included. Connections run one at a time as forced refresh runs
+  (pages and attachments chained as new versions, the sync's own auto-release does not act); a
+  forced run that does not finish is rolled back. A preview shows what will happen, start
+  requires its confirmed counts, progress and problem items are listed per run, and a run can
+  be cancelled. Runs live in `reingest_runs`/`reingest_items` (migration `0060`), are advanced
+  in lease-guarded steps by the worker (`reingest_advance`, nudged by finished jobs and the
+  publication tick) and exclude backup restores while active. New settings
+  `REINGEST_MAX_IN_FLIGHT` (default 2) and `REINGEST_LEASE_SECONDS` (default 300).
+- A crawl whose child discovery hit `max_pages` is no longer treated as complete, so pages
+  beyond the cap are not reported as missing.
+
 ### Changed
 - **XML content exports become one article per HTML body**: an `.xml` upload whose elements
   carry HTML (CDATA from a CMS or knowledge-base export) no longer lands as raw HTML on one

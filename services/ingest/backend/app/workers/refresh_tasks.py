@@ -240,9 +240,11 @@ def _reap_stale_runs(db, source: ImportSource, now: datetime) -> int:
     return len(stale_runs)
 
 
-def start_sync_run(db, sync: ImportSync) -> ImportRun | None:
+def start_sync_run(db, sync: ImportSync, extra_options: dict | None = None) -> ImportRun | None:
     """Start a run of `sync` -- the scheduler's refresh and the API's "sync
-    now". Scope, target space and options come from the sync itself.
+    now". Scope, target space and options come from the sync itself;
+    `extra_options` (run-only, see import_syncs.RUN_ONLY_OPTION_KEYS) are
+    laid over them -- the admin re-ingest's forced re-import.
     Returns the queued run, or None when the sync is gone or its source
     already has an active run. Raises ValueError when the run must not
     start (owner deactivated, space gone or no longer controllable)."""
@@ -279,6 +281,8 @@ def start_sync_run(db, sync: ImportSync) -> ImportRun | None:
     # Diff against ImportPageState (skip unchanged pages, chain changed
     # ones) -- import_tasks.py keys its refresh path off this flag.
     options['is_refresh'] = True
+    if extra_options:
+        options.update(extra_options)
 
     frontier = [[sync.scope_value, 0]] if sync.scope_type in ('page', 'url') else []
     run = ImportRun(

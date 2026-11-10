@@ -329,6 +329,14 @@ class Settings(BaseSettings):
     # (its pod died) and marked failed, so it stops blocking new runs.
     backup_run_stale_seconds: int = 6 * 3600
 
+    # --- Admin re-ingest (app/services/reingest.py). Documents being
+    # re-converted at the same time: the OCR queue is FIFO and shared with
+    # user uploads, so this bounds how long an upload waits behind the run.
+    reingest_max_in_flight: int = 2
+    # Lease of one advance step of a run; a step that dies keeps the run
+    # blocked at most this long before the publication tick resumes it.
+    reingest_lease_seconds: int = 300
+
 
 def _build_database_url(settings: Settings) -> str:
     if settings.database_url:
