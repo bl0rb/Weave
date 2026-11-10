@@ -100,6 +100,11 @@ def create_my_token(
 ) -> ApiTokenCreateResponse:
     """The raw token is in this response only; afterwards just its label and
     dates can be listed."""
+    # Lock the caller's own user row first so parallel requests count and
+    # insert one after another -- otherwise all of them can pass the check
+    # at count 19 and the cap is exceeded (PostgreSQL; SQLite has no row
+    # locks and serialises writes anyway).
+    db.execute(select(User.id).where(User.id == user.id).with_for_update())
     count = db.scalar(select(func.count()).select_from(ApiToken).where(ApiToken.user_id == user.id)) or 0
     if count >= _TOKEN_MAX_PER_USER:
         raise HTTPException(

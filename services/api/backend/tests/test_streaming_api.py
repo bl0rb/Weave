@@ -344,8 +344,9 @@ def test_chat_stream_forwards_events_and_persists_the_assistant_message_once_at_
     assert response.headers['content-type'].startswith('text/event-stream')
     conversation_id = uuid.UUID(response.headers['x-conversation-id'])
 
-    # Every runtime event is forwarded, unchanged, in order.
-    assert _parse_sse_events(response.text) == sent_events
+    # Every runtime event is forwarded, unchanged, in order -- `done` is
+    # not held back by the title, which follows as one extra event.
+    assert _parse_sse_events(response.text) == [*sent_events, {'type': 'title', 'title': 'Titel'}]
 
     messages = (
         db_session.query(Message)
@@ -363,6 +364,29 @@ def test_chat_stream_forwards_events_and_persists_the_assistant_message_once_at_
 
     conversation = db_session.get(Conversation, conversation_id)
     assert conversation.user_id == user.id
+    assert conversation.title == 'Titel'
+
+
+def test_chat_stream_sends_no_title_event_when_title_generation_fails(db_session, runtime):
+    _, raw_token = make_user_with_token(db_session, username='own-stream-notitle')
+    db_session.commit()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == '/internal/conversation-title':
+            return httpx.Response(503)
+        return httpx.Response(
+            200, content=_sse_body([TRACE_EVENT, DONE_EVENT]), headers={'content-type': 'text/event-stream'}
+        )
+
+    runtime.handle(handler)
+
+    response = client.post(
+        '/v1/chat/stream', json={'bot_id': 'legal-support', 'message': 'Hi'}, headers=auth_headers(raw_token)
+    )
+    assert response.status_code == 200
+    assert _parse_sse_events(response.text) == [TRACE_EVENT, DONE_EVENT]
+    conversation = db_session.get(Conversation, uuid.UUID(response.headers['x-conversation-id']))
+    assert conversation.title == 'Hi'  # the first-message fallback stays
 
 
 def test_chat_stream_forwards_an_unrecognized_status_event_verbatim(db_session, runtime):
@@ -394,7 +418,7 @@ def test_chat_stream_forwards_an_unrecognized_status_event_verbatim(db_session, 
         '/v1/chat/stream', json={'bot_id': 'legal-support', 'message': 'Hi'}, headers=auth_headers(raw_token)
     )
     assert response.status_code == 200
-    assert _parse_sse_events(response.text) == sent_events
+    assert _parse_sse_events(response.text) == [*sent_events, {'type': 'title', 'title': 'Titel'}]
 
     conversation_id = uuid.UUID(response.headers['x-conversation-id'])
     messages = (
@@ -595,6 +619,7 @@ def test_chat_stream_route_relays_keepalive_comment_lines(db_session, runtime):
         {'type': 'delta', 'text': 'Hallo'},
         SOURCES_EVENT,
         DONE_EVENT,
+        {'type': 'title', 'title': 'Titel'},
     ]
 
     messages = db_session.query(Message).join(Conversation).filter(Conversation.user_id == user.id).all()

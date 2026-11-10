@@ -114,6 +114,22 @@ describe('consumeChatStream', () => {
     expect(status).toEqual(statusEvent);
   });
 
+  it('calls onDone at done and still reads a trailing title event', async () => {
+    const chunks = [
+      `data: ${JSON.stringify({ type: 'delta', text: 'Hi' })}\n\n`,
+      `data: ${JSON.stringify({ type: 'done' })}\n\n`,
+      `data: ${JSON.stringify({ type: 'title', title: 'Kündigungsfrist' })}\n\n`,
+    ];
+
+    const order: string[] = [];
+    const outcome = await consumeChatStream(streamFromChunks(chunks), {
+      onDelta: () => order.push('delta'),
+      onDone: () => order.push('done'),
+    });
+    expect(outcome).toEqual({ status: 'done' });
+    expect(order).toEqual(['delta', 'done']);
+  });
+
   it('never calls onSources/onDelta after a terminal event has already ended the turn', async () => {
     // Not a realistic upstream stream (nothing follows `done` per the
     // ordering guarantee), but the consumer must not choke on it either —

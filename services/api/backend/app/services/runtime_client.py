@@ -114,7 +114,11 @@ def _raise_for_status(response: httpx.Response, *, description: str) -> None:
     Shared by `_get` and `_post` -- see the module docstring."""
     if response.status_code < 400:
         return
-    if response.status_code >= 500:
+    # 401/407 here mean OUR service credential (RUNTIME_API_TOKEN) was
+    # refused -- a weave-api misconfiguration, not the end user's session.
+    # Passed through as-is, the chat would read it as "session expired" and
+    # send every user back to /login in a loop.
+    if response.status_code >= 500 or response.status_code in (401, 407):
         raise RuntimeUnavailable(
             f'Weave-Runtime returned HTTP {response.status_code} for {description}',
             status_code=response.status_code,
