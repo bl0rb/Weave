@@ -12,9 +12,12 @@ from pydantic import BaseModel, Field
 
 class SessionExchangeRequest(BaseModel):
     code: str = Field(min_length=1)
-    # RFC 7636: 43-128 characters. Required when the login was started with
-    # a `code_challenge` (native-app login), ignored otherwise.
-    code_verifier: str | None = Field(default=None, min_length=43, max_length=128)
+    # RFC 7636 section 4.1: 43-128 characters from the unreserved set.
+    # Required when the login was started with a `code_challenge` (native-app
+    # login, the chat's SSO handoff); a verifier never redeems an unbound
+    # code (app/api/auth.py). The pattern also keeps non-ASCII input a 422
+    # instead of a 500 from the ASCII-only S256 hash.
+    code_verifier: str | None = Field(default=None, pattern=r'^[A-Za-z0-9._~-]{43,128}$')
 
 
 class SessionExchangeResponse(BaseModel):

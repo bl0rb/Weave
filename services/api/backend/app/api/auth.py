@@ -98,10 +98,17 @@ browser-side JavaScript:
 2. On a successful callback, `oidc_callback` mints a `SessionExchangeCode`
    (app/models/models.py) -- a single-use, 60-second-lived, sha256-at-rest
    code -- and redirects to `<return_to>?code=<code>` INSTEAD of
-   `_POST_LOGIN_REDIRECT`. The gateway's own session cookie is still set on
-   this very response either way (`_create_session` runs unconditionally),
-   so a same-origin deployment that never sets `return_to` at all keeps
-   working byte-for-byte as before.
+   `_POST_LOGIN_REDIRECT`. That code is the ONLY credential such a login
+   produces: no gateway session cookie is set on this response. The UI
+   can't read this origin's cookie jar anyway, and the UI's own logout
+   only ever revokes the session it exchanged the code for -- a second,
+   7-day session left behind on the gateway origin would survive that
+   logout on a shared machine. A same-origin login that never sends
+   `return_to` gets the cookie exactly as before. The callback also
+   re-checks the stashed `return_to` against the same rules `/login` used
+   (`_state_return_to`) before minting the code, so a forged state cookie
+   (a leaked SECRET_KEY) still can't send a code anywhere the allowlist
+   doesn't cover.
 3. The UI's OWN backend calls `POST /v1/auth/session/exchange {code}`
    SERVER-SIDE (never from browser JS) to trade that code for a real
    `{session_token, expires_at}` -- see that endpoint's own docstring for
@@ -122,7 +129,7 @@ from authlib.common.security import generate_token
 from authlib.oauth2.rfc7636 import create_s256_code_challenge
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse, RedirectResponse
-from sqlalchemy import or_, select, update
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -534,6 +541,30 @@ def _state_code_challenge(state_payload: dict) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def _state_return_to(state_payload: dict) -> str | None:
+    """The `return_to` a login's signed state cookie carries, re-checked
+    against exactly the rules `_resolve_login_target` applied at /login --
+    or `None` if the login never resolved one.
+
+    The signature already proves the cookie came from a holder of
+    SECRET_KEY; this is defence in depth for the day that key leaks: a
+    forged cookie could otherwise point the one-time code (and, with it, a
+    session token) at any URL at all. A value that no longer validates --
+    forged, or the allowlist shrank while the login was in flight -- is a
+    400, never a silent fallback to `_POST_LOGIN_REDIRECT`: the login was
+    meant for that `return_to`, and quietly landing it somewhere else
+    would be just as surprising."""
+    return_to = state_payload.get('return_to')
+    if return_to is None or return_to == '':
+        return None
+    if not isinstance(return_to, str):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid login state')
+    resolved, _ = _resolve_login_target(return_to, _state_code_challenge(state_payload))
+    if resolved != return_to:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid login state')
+    return return_to
+
+
 def _append_query(url: str, params: dict[str, str]) -> str:
     """`url` with `params` merged into its query string -- preserving what
     it already carries rather than clobbering it, since a UI's own landing
@@ -564,14 +595,19 @@ def oidc_login(
     stashes the three generated values -- plus `return_to`, resolved
     against `OIDC_POST_LOGIN_ALLOWED_URLS` right here (`_resolve_return_to`)
     rather than deferred to the callback, so a later allowlist change can
-    never retroactively change what an in-flight login resolves to -- in a
-    signed, short-lived, httpOnly cookie for `oidc_callback` below to verify
-    and consume."""
+    never retroactively change what an in-flight login resolves to (the
+    callback only re-checks it, `_state_return_to`, and refuses rather than
+    redirects elsewhere) -- in a signed, short-lived, httpOnly cookie for
+    `oidc_callback` below to verify and consume."""
     resolved_return_to, client_challenge = _resolve_login_target(return_to, code_challenge)
     try:
         discovery = get_discovery_document(settings.oidc_issuer)
     except OIDCError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        # The raw error carries httpx/joserfc text (internal addresses,
+        # connection errors) -- logged here, never handed to an
+        # unauthenticated caller.
+        logger.warning('oidc discovery failed: %s', exc)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='OIDC provider unreachable') from exc
 
     authorization_endpoint = discovery.get('authorization_endpoint')
     if not authorization_endpoint:
@@ -632,12 +668,12 @@ def oidc_callback(
     against the provider's JWKS, issuer, audience, expiry, nonce -- see
     app/services/oidc.py's `validate_id_token`), resolves the local `User`
     by `oidc_subject` (provisioning a new one on first login), creates a
-    Session, and redirects to `_POST_LOGIN_REDIRECT` -- or, if the login's
-    own `return_to` (stashed in the state cookie by `oidc_login`, already
-    allowlist-checked there) resolved to something, to that URL instead,
-    with a fresh `SessionExchangeCode` appended as its `code` query param
-    (see this module's "Cross-origin handoff" docstring section). Either
-    way the session cookie itself is still set on this very response.
+    Session (cookie) and redirects to `_POST_LOGIN_REDIRECT` -- or, if the
+    login's own `return_to` (stashed in the state cookie by `oidc_login`,
+    allowlist-checked there and re-checked here) resolved to something,
+    redirects to that URL instead with a fresh `SessionExchangeCode`
+    appended as its `code` query param and sets NO session cookie (see this
+    module's "Cross-origin handoff" docstring section).
 
     Everything from the `try` below to the end of the function is one
     block: the state cookie was just proven present (the check right
@@ -680,6 +716,9 @@ def oidc_callback(
 
         if not isinstance(state_payload, dict) or not state or state_payload.get('state') != state:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='OIDC state mismatch')
+        # Re-checked before the provider's code is even redeemed, so a
+        # rejected `return_to` costs nothing and provisions nothing.
+        return_to = _state_return_to(state_payload)
 
         if error:
             raise HTTPException(
@@ -711,7 +750,9 @@ def oidc_callback(
                 nonce=state_payload['nonce'],
             )
         except (OIDCError, KeyError, ValueError) as exc:
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f'OIDC login failed: {exc}') from exc
+            # Same as oidc_login: details go to the log, not the response.
+            logger.warning('oidc callback failed: %s', exc)
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='OIDC login failed') from exc
 
         subject = claims.get('sub')
         if not subject:
@@ -759,12 +800,9 @@ def oidc_callback(
         db.commit()
         logger.info('oidc login succeeded for user %s', user.id)
 
-        # `return_to` was already resolved against OIDC_POST_LOGIN_ALLOWED_URLS
-        # by oidc_login itself, before it went into this signed cookie -- never
-        # re-validated here, since the signature just verified above already
-        # proves it's exactly what THIS gateway put there, unmodified.
-        return_to = state_payload.get('return_to')
-        if isinstance(return_to, str) and return_to:
+        # `return_to` was resolved by oidc_login before it went into this
+        # signed cookie and re-checked above (`_state_return_to`).
+        if return_to:
             raw_exchange_code = generate_exchange_code()
             now = datetime.now(timezone.utc)
             db.add(
@@ -783,12 +821,12 @@ def oidc_callback(
 
         redirect_response = RedirectResponse(url=redirect_target, status_code=status.HTTP_302_FOUND)
         redirect_response.delete_cookie(key=_OIDC_STATE_COOKIE, path=_OIDC_STATE_COOKIE_PATH)
-        # Set unconditionally, exactly as before `return_to` existed -- the
-        # same-origin caller that never sends `return_to` at all still gets a
-        # working cookie, and the cross-origin caller above ALSO gets one
-        # (redundant for it, since it can't read this origin's cookie jar, but
-        # harmless -- see module docstring on why both paths run side by side).
-        _create_session(db, request, redirect_response, user)
+        # Only the same-origin login (no `return_to`) gets a gateway cookie.
+        # A handoff login's one credential is the exchange code above: a
+        # second session here would be unreadable for the UI and outlive its
+        # logout (see module docstring, "Cross-origin post-login handoff").
+        if not return_to:
+            _create_session(db, request, redirect_response, user)
         return redirect_response
     except HTTPException as exc:
         # Rebuilds the exact response shape FastAPI's own default
@@ -900,7 +938,8 @@ def ingest_login(
     """Step 1. `return_to` is resolved against OIDC_POST_LOGIN_ALLOWED_URLS
     right here rather than at the callback -- same reasoning as
     `oidc_login` above: a later allowlist change must not retroactively
-    change where an in-flight login lands."""
+    change where an in-flight login lands (the callback only re-checks it
+    and refuses on a mismatch)."""
     resolved_return_to, client_challenge = _resolve_login_target(return_to, code_challenge)
     state = generate_token(32)
 
@@ -962,6 +1001,9 @@ def ingest_callback(
             or not hmac.compare_digest(expected_state, state)
         ):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Login state mismatch')
+        # Re-checked before the handoff code is redeemed (same as
+        # `oidc_callback`).
+        return_to = _state_return_to(state_payload)
         if not code:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Missing handoff code')
 
@@ -983,9 +1025,8 @@ def ingest_callback(
         logger.info('ingest federated login succeeded for user %s', user.id)
 
         # `return_to` was resolved by ingest_login before it went into the
-        # signed cookie; the signature just verified proves it is untouched.
-        return_to = state_payload.get('return_to')
-        if isinstance(return_to, str) and return_to:
+        # signed cookie and re-checked above (`_state_return_to`).
+        if return_to:
             raw_exchange_code = generate_exchange_code()
             now = datetime.now(timezone.utc)
             db.add(
@@ -1004,7 +1045,10 @@ def ingest_callback(
 
         redirect_response = RedirectResponse(url=redirect_target, status_code=status.HTTP_302_FOUND)
         redirect_response.delete_cookie(key=_INGEST_STATE_COOKIE, path=_INGEST_STATE_COOKIE_PATH)
-        _create_session(db, request, redirect_response, user)
+        # Same rule as `oidc_callback`: a gateway cookie only for the
+        # same-origin login; a handoff login gets the exchange code alone.
+        if not return_to:
+            _create_session(db, request, redirect_response, user)
         return redirect_response
     except HTTPException as exc:
         error_response = JSONResponse(status_code=exc.status_code, content={'detail': exc.detail}, headers=exc.headers)
@@ -1050,14 +1094,19 @@ def exchange_session_code(payload: SessionExchangeRequest, db: Session = Depends
     code_hash = hash_exchange_code(payload.code)
     now = datetime.now(timezone.utc)
 
-    # A code bound to a PKCE challenge (native-app login) only redeems with
-    # the matching verifier; an unbound one ignores any verifier. Part of the
-    # same atomic WHERE, so a wrong verifier fails exactly like an unknown code.
+    # A code bound to a PKCE challenge (native-app login, the chat's SSO
+    # handoff) only redeems with the matching verifier, and a client that
+    # presents a verifier only ever redeems a code bound to it. Accepting an
+    # UNBOUND code alongside a verifier would void the chat's login-CSRF
+    # binding: an attacker starts their own login with an allowlisted
+    # return_to and no challenge, then lands the victim on the chat callback
+    # with that code -- the callback always forwards the victim's own
+    # verifier cookie, so "any verifier" would let the attacker's code log
+    # the victim into the attacker's account. A code-only redeem (no
+    # verifier) still works for unbound codes, as before. Part of the same
+    # atomic WHERE, so a wrong verifier fails exactly like an unknown code.
     if payload.code_verifier:
-        challenge_matches = or_(
-            SessionExchangeCode.code_challenge.is_(None),
-            SessionExchangeCode.code_challenge == create_s256_code_challenge(payload.code_verifier),
-        )
+        challenge_matches = SessionExchangeCode.code_challenge == create_s256_code_challenge(payload.code_verifier)
     else:
         challenge_matches = SessionExchangeCode.code_challenge.is_(None)
 

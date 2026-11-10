@@ -61,7 +61,7 @@ const THIRTY_DAYS_IN_SECONDS = 60 * 60 * 24 * 30;
  * localhost, Safari does not — and the login form then answers 200 while
  * the browser stores nothing at all and bounces straight back to /login.
  */
-function isSecureRequest(request: NextRequest): boolean {
+export function isSecureRequest(request: NextRequest): boolean {
   // A proxy chain appends rather than replaces, so the ORIGINAL scheme is
   // the first entry ("https,http"), not the whole header value.
   const forwarded = (request.headers.get('x-forwarded-proto') ?? '').split(',')[0].trim();

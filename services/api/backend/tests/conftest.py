@@ -28,6 +28,10 @@ from app.core.config import settings
 
 TEST_DB_URL = 'sqlite:///./test.db'
 settings.database_url = TEST_DB_URL
+# A strong per-run SECRET_KEY, also set before app.main is imported: that
+# module refuses to start with the public default (see
+# app.core.config.insecure_secret_key_reason).
+settings.secret_key = secrets.token_hex(32)
 
 from app.core import ratelimit  # noqa: E402
 from app.core.db import Base, engine, get_db  # noqa: E402

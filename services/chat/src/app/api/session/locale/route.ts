@@ -4,6 +4,7 @@ import { requireSessionCredential } from '@/lib/require-session';
 import { GatewayError, weaveApiFetchJson } from '@/lib/weave-api-server';
 import { errorForHttpStatus, errorForNetworkFailure, mappedError } from '@/lib/errors';
 import { isLocale, type Locale } from '@/i18n/config';
+import { rejectCrossSiteRequest } from '@/lib/request-guard';
 
 interface LocaleBody {
   locale?: unknown;
@@ -22,6 +23,8 @@ interface LocaleBody {
  * there is nothing gained from hiding which kind of failure it was.
  */
 export async function PUT(request: NextRequest): Promise<NextResponse> {
+  const forbidden = rejectCrossSiteRequest(request, { json: true });
+  if (forbidden) return forbidden;
   const session = requireSessionCredential(request);
   if ('response' in session) return session.response;
 

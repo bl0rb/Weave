@@ -38,6 +38,8 @@ describe('isSsoLoginEnabled — this app\'s OWN setting, since Weave-API exposes
   });
 });
 
+const CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+
 describe('buildSsoLoginUrl', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -47,10 +49,10 @@ describe('buildSsoLoginUrl', () => {
     vi.stubEnv('WEAVE_API_PUBLIC_BASE_URL', 'https://api.example.com');
     vi.stubEnv('APP_BASE_URL', 'https://chat.example.com');
 
-    const url = buildSsoLoginUrl();
+    const url = buildSsoLoginUrl(CHALLENGE);
 
     const expectedReturnTo = `https://chat.example.com${SSO_CALLBACK_PATH}`;
-    const expectedQuery = new URLSearchParams({ return_to: expectedReturnTo }).toString();
+    const expectedQuery = new URLSearchParams({ return_to: expectedReturnTo, code_challenge: CHALLENGE }).toString();
     expect(url).toBe(`https://api.example.com/v1/auth/oidc/login?${expectedQuery}`);
   });
 
@@ -58,7 +60,7 @@ describe('buildSsoLoginUrl', () => {
     vi.stubEnv('WEAVE_API_BASE_URL', 'https://internal-gateway:8004');
     vi.stubEnv('WEAVE_API_PUBLIC_BASE_URL', '');
 
-    const url = buildSsoLoginUrl();
+    const url = buildSsoLoginUrl(CHALLENGE);
 
     expect(url.startsWith('https://internal-gateway:8004/v1/auth/oidc/login?')).toBe(true);
   });
@@ -68,10 +70,10 @@ describe('buildSsoLoginUrl', () => {
     vi.stubEnv('WEAVE_API_PUBLIC_BASE_URL', '');
     vi.stubEnv('APP_BASE_URL', '');
 
-    const url = buildSsoLoginUrl();
+    const url = buildSsoLoginUrl(CHALLENGE);
 
     expect(url.startsWith('http://localhost:8004/v1/auth/oidc/login?')).toBe(true);
-    const expectedQuery = new URLSearchParams({ return_to: `http://localhost:3000${SSO_CALLBACK_PATH}` }).toString();
+    const expectedQuery = new URLSearchParams({ return_to: `http://localhost:3000${SSO_CALLBACK_PATH}`, code_challenge: CHALLENGE }).toString();
     expect(url).toBe(`http://localhost:8004/v1/auth/oidc/login?${expectedQuery}`);
   });
 
@@ -80,7 +82,7 @@ describe('buildSsoLoginUrl', () => {
     vi.stubEnv('APP_BASE_URL', '');
     vi.stubEnv('CHAT_APP_BASE_URL', 'https://chat.example.com');
 
-    const url = new URL(buildSsoLoginUrl());
+    const url = new URL(buildSsoLoginUrl(CHALLENGE));
     expect(url.searchParams.get('return_to')).toBe(`https://chat.example.com${SSO_CALLBACK_PATH}`);
   });
 });
@@ -125,7 +127,7 @@ describe('buildWeaveLoginUrl', () => {
     vi.stubEnv('WEAVE_API_PUBLIC_BASE_URL', 'http://gateway.example:8004');
     vi.stubEnv('APP_BASE_URL', 'http://chat.example:3001');
 
-    const url = new URL(buildWeaveLoginUrl());
+    const url = new URL(buildWeaveLoginUrl(CHALLENGE));
 
     expect(url.origin).toBe('http://gateway.example:8004');
     expect(url.pathname).toBe('/v1/auth/ingest/login');
@@ -136,8 +138,8 @@ describe('buildWeaveLoginUrl', () => {
     vi.stubEnv('WEAVE_API_PUBLIC_BASE_URL', 'http://gateway.example:8004');
     vi.stubEnv('APP_BASE_URL', 'http://chat.example:3001');
 
-    const federated = new URL(buildWeaveLoginUrl()).searchParams.get('return_to');
-    const oidc = new URL(buildSsoLoginUrl()).searchParams.get('return_to');
+    const federated = new URL(buildWeaveLoginUrl(CHALLENGE)).searchParams.get('return_to');
+    const oidc = new URL(buildSsoLoginUrl(CHALLENGE)).searchParams.get('return_to');
 
     expect(federated).toBe(oidc);
   });

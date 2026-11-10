@@ -19,9 +19,13 @@ influenced input a 4xx could be blamed on), so a single `RetrievalClientError`
 enough; app/api/collections.py maps every instance of it to 502.
 """
 
+import logging
+
 import httpx
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class RetrievalClientError(Exception):
@@ -40,6 +44,16 @@ class RetrievalRequestRejected(RetrievalClientError):
     e.g. an explicit `final_k` larger than an explicit `top_k` (a `final_k`
     without `top_k` is not rejected: Weave-Retrieval raises its default
     `top_k` to it). A caller error, not a gateway failure."""
+
+
+def _unreachable(exc: httpx.RequestError, *, description: str) -> RetrievalClientError:
+    """The RetrievalClientError for a transport-level failure, same as
+    runtime_client._unreachable: the raw httpx error (internal host name,
+    port, errno) is logged here and NOT put into the message, because
+    app/api/collections.py, app/api/search.py and app/api/portal_artifacts.py
+    pass `str(exc)` straight through as the caller-visible 502 `detail`."""
+    logger.warning('Weave-Retrieval request failed (%s): %r', description, exc)
+    return RetrievalClientError('Weave-Retrieval unreachable')
 
 
 def _client() -> httpx.Client:
@@ -76,7 +90,7 @@ def list_collections(*, team: str | list[str] | None, user: str | None = None) -
         with _client() as client:
             response = client.get('/api/v1/collections', params=params)
     except httpx.RequestError as exc:
-        raise RetrievalClientError(f'Weave-Retrieval unreachable: {exc}') from exc
+        raise _unreachable(exc, description='GET /api/v1/collections') from exc
 
     if response.status_code >= 400:
         raise RetrievalClientError(
@@ -98,7 +112,7 @@ def release_collection(release_id: str) -> str | None:
         with _client() as client:
             response = client.get(f'/api/v1/releases/{release_id}/collection')
     except httpx.RequestError as exc:
-        raise RetrievalClientError(f'Weave-Retrieval unreachable: {exc}') from exc
+        raise _unreachable(exc, description='GET /api/v1/releases/{id}/collection') from exc
 
     if response.status_code == 404:
         return None
@@ -140,7 +154,7 @@ def search(
         with _client() as client:
             response = client.post('/api/v1/search', json=body)
     except httpx.RequestError as exc:
-        raise RetrievalClientError(f'Weave-Retrieval unreachable: {exc}') from exc
+        raise _unreachable(exc, description='POST /api/v1/search') from exc
 
     if response.status_code == 400:
         try:

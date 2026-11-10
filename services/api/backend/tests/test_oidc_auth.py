@@ -337,7 +337,23 @@ def test_callback_rejects_a_wrong_state(provider, oidc_settings):
     assert response.status_code == 400
 
 
-def test_callback_rejects_a_wrong_nonce(provider, oidc_settings):
+def test_login_hides_discovery_error_detail(provider, oidc_settings, caplog):
+    """An unreachable provider is a generic 502 for this unauthenticated
+    endpoint -- httpx's own text (internal address, errno) only goes to
+    the log."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError('[Errno 111] Connection refused', request=request)
+
+    provider.handle(handler)
+    with caplog.at_level('WARNING', logger='app.api.auth'):
+        response = client.get('/v1/auth/oidc/login', follow_redirects=False)
+    assert response.status_code == 502
+    assert response.json()['detail'] == 'OIDC provider unreachable'
+    assert 'Connection refused' in caplog.text
+
+
+def test_callback_rejects_a_wrong_nonce(provider, oidc_settings, caplog):
     key = RSAKey.generate_key(2048, parameters={'kid': 'key-1'}, private=True)
     provider.handle(
         _make_handler(
@@ -350,9 +366,12 @@ def test_callback_rejects_a_wrong_nonce(provider, oidc_settings):
     )
     state, _real_nonce = _login_and_extract_state_and_nonce()
 
-    response = _callback(state=state)
+    with caplog.at_level('WARNING', logger='app.api.auth'):
+        response = _callback(state=state)
     assert response.status_code == 502
-    assert 'nonce' in response.json()['detail'].lower()
+    # The reason is logged; the response stays generic.
+    assert response.json()['detail'] == 'OIDC login failed'
+    assert 'nonce' in caplog.text.lower()
 
 
 def test_callback_rejects_an_expired_id_token(provider, oidc_settings):
@@ -650,7 +669,7 @@ def _run_login_and_callback(provider, *, return_to: str | None, subject: str) ->
     return _callback(state=state)
 
 
-def test_allowlisted_return_to_redirects_with_a_code_and_still_sets_the_session_cookie(
+def test_allowlisted_return_to_redirects_with_a_code_and_sets_no_session_cookie(
     db_session, provider, oidc_settings, monkeypatch
 ):
     monkeypatch.setattr(settings, 'oidc_post_login_allowed_urls', [_ALLOWED_UI_ORIGIN])
@@ -659,10 +678,10 @@ def test_allowlisted_return_to_redirects_with_a_code_and_still_sets_the_session_
         provider, return_to=f'{_ALLOWED_UI_ORIGIN}/after-login', subject='sub-handoff-happy'
     )
     assert response.status_code == 302
-    # Both paths run side by side -- see app/api/auth.py's own docstring on
-    # why: this gateway's own cookie is set unconditionally, regardless of
-    # whether return_to also resolved to a cross-origin handoff.
-    assert SESSION_COOKIE_NAME in response.cookies
+    # The exchange code is the handoff's only credential: a gateway cookie
+    # here would be unreadable for the UI and outlive the UI's logout (see
+    # app/api/auth.py's "Cross-origin post-login handoff" docstring).
+    assert SESSION_COOKIE_NAME not in response.cookies
 
     location = response.headers['location']
     assert location.startswith(f'{_ALLOWED_UI_ORIGIN}/after-login?code=')
@@ -679,10 +698,9 @@ def test_allowlisted_return_to_redirects_with_a_code_and_still_sets_the_session_
     assert isinstance(body['session_token'], str) and body['session_token']
     assert body['expires_at']
 
-    # The EXCHANGED token -- not the cookie the callback also happened to
-    # set on this shared TestClient -- must itself authenticate a real
-    # endpoint: 404 (not 401) proves it worked, same discipline as every
-    # other cookie-auth test in this file.
+    # The EXCHANGED token must itself authenticate a real endpoint: 404
+    # (not 401) proves it worked, same discipline as every other
+    # cookie-auth test in this file.
     auth_check = client.get(
         f'/v1/conversations/{uuid.uuid4()}', headers={'Cookie': f'{SESSION_COOKIE_NAME}={body["session_token"]}'}
     )
@@ -1049,3 +1067,26 @@ def test_allowlisted_return_to_with_challenge_binds_the_code(provider, oidc_sett
     assert client.post('/v1/auth/session/exchange', json={'code': code}).status_code == 400
     ok = client.post('/v1/auth/session/exchange', json={'code': code, 'code_verifier': _NATIVE_VERIFIER})
     assert ok.status_code == 200
+
+
+def test_unbound_code_does_not_redeem_with_a_verifier(provider, oidc_settings, monkeypatch):
+    # Login-CSRF against the chat's PKCE-bound SSO handoff: an attacker logs
+    # in themselves with an allowlisted return_to and NO challenge, then lands
+    # the victim on the chat callback with that code. The callback forwards the
+    # victim's own verifier cookie -- that must not redeem an unbound code.
+    monkeypatch.setattr(settings, 'oidc_post_login_allowed_urls', [_ALLOWED_UI_ORIGIN])
+    response = _run_native_login(provider, subject='sub-attacker', return_to=_ALLOWED_UI_ORIGIN, challenge=None)
+    code = parse_qs(urlsplit(response.headers['location']).query)['code'][0]
+    bad = client.post('/v1/auth/session/exchange', json={'code': code, 'code_verifier': 'x' * 43})
+    assert bad.status_code == 400
+    # A plain code-only redeem of an unbound code keeps working.
+    ok = client.post('/v1/auth/session/exchange', json={'code': code})
+    assert ok.status_code == 200
+
+
+@pytest.mark.parametrize('verifier', ['é' * 43, 'a' * 42 + ' ', 'a' * 42 + '/', 'a' * 129])
+def test_exchange_rejects_a_verifier_outside_rfc7636_charset(oidc_settings, verifier):
+    # Non-ASCII used to reach the ASCII-only S256 hash and 500; every
+    # malformed verifier is a plain 422 before any lookup now.
+    response = client.post('/v1/auth/session/exchange', json={'code': 'any-code', 'code_verifier': verifier})
+    assert response.status_code == 422

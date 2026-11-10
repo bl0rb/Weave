@@ -193,7 +193,9 @@ def test_a_second_login_resyncs_team_and_admin_but_keeps_one_account(configured,
 
 def test_identity_refresh_syncs_locale(configured, monkeypatch) -> None:
     _mock_ingest(monkeypatch, identity={**IDENTITY, 'locale': 'de'})
-    start = _start_login()
+    # Same-origin login: only that one leaves a gateway session cookie for
+    # the protected request below to ride on.
+    start = _start_login(return_to=None)
     _callback('locale-code-a', _state_from(start))
 
     with _db() as db:

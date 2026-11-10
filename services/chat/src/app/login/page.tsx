@@ -1,9 +1,4 @@
-import {
-  isSsoLoginEnabled,
-  buildSsoLoginUrl,
-  isWeaveLoginEnabled,
-  buildWeaveLoginUrl,
-} from '@/lib/sso';
+import { isSsoLoginEnabled, isWeaveLoginEnabled, buildSsoStartPath } from '@/lib/sso';
 import { LoginForm } from './login-form';
 
 // The SSO URL depends on runtime deployment environment variables. Without
@@ -30,8 +25,10 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const params = await searchParams;
   const rawError = Array.isArray(params.error) ? params.error[0] : params.error;
 
-  const ssoLoginUrl = isSsoLoginEnabled() ? buildSsoLoginUrl() : null;
-  const weaveLoginUrl = isWeaveLoginEnabled() ? buildWeaveLoginUrl() : null;
+  // Both buttons go through /api/auth/sso/start, which binds the login to
+  // this browser (PKCE cookie) before handing off to Weave-API.
+  const ssoLoginUrl = isSsoLoginEnabled() ? buildSsoStartPath('oidc') : null;
+  const weaveLoginUrl = isWeaveLoginEnabled() ? buildSsoStartPath('ingest') : null;
 
   return (
     <LoginForm

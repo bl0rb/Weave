@@ -181,7 +181,9 @@ export interface SessionExchangeResult {
  * one-time, already-authenticated bearer of this call, exactly as
  * Weave-API's own docstring on that endpoint describes — there is no
  * Authorization header or cookie to attach here, unlike every other
- * function in this module.
+ * function in this module. `codeVerifier` is the PKCE verifier from the
+ * browser's own /api/auth/sso/start cookie (sso-pkce.ts): Weave-API only
+ * redeems a code bound to a challenge together with its verifier.
  *
  * An unknown/expired/already-used code, a malformed response, and a
  * transport failure all reach the caller as a thrown `GatewayError` —
@@ -192,14 +194,14 @@ export interface SessionExchangeResult {
  * an authenticated call's OWN credential being refused, which does not
  * apply here.
  */
-export async function exchangeSessionCode(code: string): Promise<SessionExchangeResult> {
+export async function exchangeSessionCode(code: string, codeVerifier: string): Promise<SessionExchangeResult> {
   const url = `${resolveWeaveApiBaseUrl()}/v1/auth/session/exchange`;
   let response: Response;
   try {
     response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({ code, code_verifier: codeVerifier }),
       cache: 'no-store',
     });
   } catch (cause) {

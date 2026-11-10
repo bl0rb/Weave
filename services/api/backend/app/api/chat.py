@@ -46,6 +46,21 @@ from app.services.notices import answer_knowledge_spaces, answer_metadata, answe
 router = APIRouter(prefix='/v1', tags=['chat'])
 
 
+def _release_db_connection(db: Session) -> None:
+    """End the request session's open read transaction so its pooled
+    connection goes back to the pool BEFORE a call to Weave-Runtime.
+    append_message()'s refresh() and build_history()'s lazy load each
+    start a new transaction after the last commit, and that transaction
+    would otherwise stay open (idle in transaction) for the whole upstream
+    call -- up to `chat_read_timeout_seconds` for a blocking turn, the whole
+    answer for a stream -- so a few slow chats would drain the pool and fail
+    every other request. Nothing is pending at these points, so this commit
+    writes nothing; SessionLocal's `expire_on_commit=False` keeps every
+    loaded object (conversation, its messages, user) usable afterwards, and
+    the next write simply checks a connection out again."""
+    db.commit()
+
+
 @router.post('/chat', response_model=ChatResponse)
 def chat(
     body: ChatRequest,
@@ -68,6 +83,7 @@ def chat(
     history = conversations_service.build_history(conversation, exclude_message_id=user_message.id)
 
     runtime_user = runtime_client.runtime_user(user)
+    _release_db_connection(db)
 
     try:
         result = runtime_client.chat(
@@ -93,6 +109,7 @@ def chat(
         trace=result.get('trace'),
     )
     if is_first_assistant:
+        _release_db_connection(db)
         try:
             title = runtime_client.conversation_title(question=body.message, answer=assistant_message.content)
             conversations_service.replace_title(db, conversation, title)
@@ -205,6 +222,7 @@ def _stream_and_persist(db, conversation: Conversation, events: Iterator[dict]) 
                     trace=trace,
                 )
                 if is_first_assistant:
+                    _release_db_connection(db)
                     try:
                         title = runtime_client.conversation_title(
                             question=conversation.messages[0].content,
@@ -277,6 +295,9 @@ def chat_stream(
     history = conversations_service.build_history(conversation, exclude_message_id=user_message.id)
 
     runtime_user = runtime_client.runtime_user(user)
+    # Also covers the whole stream: `_stream_and_persist` touches the
+    # session again only once `done` arrives.
+    _release_db_connection(db)
 
     try:
         events = runtime_client.chat_stream(

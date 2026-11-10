@@ -34,10 +34,12 @@ from fastapi import Depends, HTTPException, status
 from sqlalchemy import delete
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.orm import Session
 
 from app.core import db as db_module
-from app.core.auth import get_current_user
+from app.core.auth import get_credential_user, refresh_credential_user
 from app.core.config import settings
+from app.core.db import get_db
 from app.models.models import RateLimitWindow, User
 
 _WINDOW_SECONDS = 60.0
@@ -159,13 +161,28 @@ class DatabaseRateLimiter:
 rate_limiter: FixedWindowRateLimiter | DatabaseRateLimiter = DatabaseRateLimiter()
 
 
-def enforce_rate_limit(user: User = Depends(get_current_user)) -> User:
+def enforce_rate_limit(
+    user: User = Depends(get_credential_user), db: Session = Depends(get_db)
+) -> User:
     """FastAPI dependency combining authentication with per-user rate
-    limiting: resolves `current_user` (app/core/auth.py) first -- an
-    unauthenticated request must never burn budget it has no user to charge
-    -- then checks it against the shared `rate_limiter`. Routes that need
-    both auth and rate limiting declare only this one dependency (see
-    app/api/conversations.py, app/api/bots.py, app/api/chat.py).
+    limiting, in three steps:
+
+    1. `get_credential_user` (app/core/auth.py) resolves the credential to
+       its User with every local check applied -- an unauthenticated,
+       expired or disabled caller is rejected here and never burns budget
+       it has no user to charge.
+    2. The shared `rate_limiter` charges that user id.
+    3. Only then `refresh_credential_user` runs the Weave-Ingest identity
+       refresh (an outbound HTTP call per request) and rejects an account
+       Ingest no longer knows. Before this order, a throttled caller still
+       triggered that call on every rejected request, so the limit did not
+       protect Weave-Ingest at all.
+
+    FastAPI caches dependencies per request, so a route that also lists
+    this in its router's `dependencies` (app/api/bots.py) is charged once.
+    Routes that need both auth and rate limiting declare only this one
+    dependency (see app/api/conversations.py, app/api/bots.py,
+    app/api/chat.py).
     """
     rate_limiter.check(str(user.id))
-    return user
+    return refresh_credential_user(db, user)

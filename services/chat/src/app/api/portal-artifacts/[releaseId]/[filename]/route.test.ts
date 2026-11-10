@@ -5,13 +5,15 @@ import { SESSION_COOKIE_NAME } from '@/lib/session';
 
 const TOKEN = 'wt_super_secret_personal_token';
 
+const REL = '0b6f3c1e-2a4d-4e8f-9c1b-5d7e3a2f1c00';
+
 function artifactRequest({ withCookie = true }: { withCookie?: boolean } = {}): NextRequest {
   const headers: Record<string, string> = {};
   if (withCookie) headers.cookie = `${SESSION_COOKIE_NAME}=${TOKEN}`;
-  return new NextRequest('http://localhost/api/portal-artifacts/rel-1/diagram.png', { headers });
+  return new NextRequest(`http://localhost/api/portal-artifacts/${REL}/diagram.png`, { headers });
 }
 
-function params(releaseId = 'rel-1', filename = 'diagram.png') {
+function params(releaseId = REL, filename = 'diagram.png') {
   return { params: Promise.resolve({ releaseId, filename }) };
 }
 
@@ -33,7 +35,7 @@ describe('GET /api/portal-artifacts/[releaseId]/[filename]', () => {
   it('proxies the byte content and content-type through Weave-API, only ever hitting the one built path', async () => {
     const bytes = new Uint8Array([1, 2, 3]);
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      expect(String(input)).toBe('http://localhost:8004/v1/portal/releases/rel-1/artifacts/diagram.png');
+      expect(String(input)).toBe(`http://localhost:8004/v1/portal/releases/${REL}/artifacts/diagram.png`);
       expect((init?.headers as Record<string, string>).Authorization).toBe(`Bearer ${TOKEN}`);
       return new Response(bytes, { status: 200, headers: { 'content-type': 'image/png' } });
     });
@@ -47,15 +49,16 @@ describe('GET /api/portal-artifacts/[releaseId]/[filename]', () => {
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes);
   });
 
-  it('never forwards a caller-controlled path — releaseId/filename are always encoded into the fixed Weave-API path', async () => {
+  it('never forwards a caller-controlled path — the filename is always encoded into the fixed Weave-API path', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      expect(String(input)).toBe('http://localhost:8004/v1/portal/releases/rel%2F1/artifacts/evil.png');
+      expect(String(input)).toBe(`http://localhost:8004/v1/portal/releases/${REL}/artifacts/evil%20file%25.png`);
       return new Response(new Uint8Array(), { status: 404 });
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const res = await GET(artifactRequest(), params('rel/1', 'evil.png'));
+    const res = await GET(artifactRequest(), params(REL, 'evil file%.png'));
     expect(res.status).toBe(404);
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it('maps a 404 from Weave-API to 404', async () => {

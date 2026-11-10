@@ -1,5 +1,9 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEFAULT_SECRET_KEY = 'dev-only-insecure-secret-key-do-not-use-in-production'
+MIN_SECRET_KEY_LENGTH = 32
+MIN_SECRET_KEY_DISTINCT_CHARS = 8
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
@@ -18,7 +22,15 @@ class Settings(BaseSettings):
     # services, even though nothing in this skeleton stage actually
     # encrypts anything with it yet (reserved for a future OIDC/session
     # layer at this gateway, see ADR-0002).
-    secret_key: str = 'dev-only-insecure-secret-key-do-not-use-in-production'
+    #
+    # It signs the OIDC login state cookie (app/core/security.py's
+    # sign_value), so anyone who knows it can forge that state -- and the
+    # default below is public. app/main.py therefore refuses to start with
+    # the default or anything shorter than 32 characters (see
+    # `insecure_secret_key_reason`) unless `allow_insecure_dev_secret_key`
+    # opts in, which is meant for a local dev server only.
+    secret_key: str = DEFAULT_SECRET_KEY
+    allow_insecure_dev_secret_key: bool = False
 
     # --- Weave-Runtime client (app/services/runtime_client.py). Weave-API
     # is a trusted internal caller of Weave-Runtime's `/internal/bots`
@@ -93,16 +105,18 @@ class Settings(BaseSettings):
     http_connect_timeout_seconds: float = 5.0
     http_read_timeout_seconds: float = 10.0
 
-    # --- Read timeout for the NON-streaming chat call only (runtime_client.
-    # chat(), POST /internal/chat -- app/services/runtime_client.py). A
+    # --- Read timeout for the chat calls (runtime_client.chat(), POST
+    # /internal/chat, and runtime_client.chat_stream(), POST
+    # /internal/chat/stream -- app/services/runtime_client.py). A
     # long-running n8n agent flow (Weave-Runtime's n8n bots, see that
     # service's contracts/n8n-flow.md) can legitimately take far longer than
-    # `http_read_timeout_seconds` (10s) to answer a single blocking turn --
-    # that 10s value stays as-is for every OTHER call this client makes
-    # (list_bots/get_bot/conversation_title, and each individual chunk read
-    # of chat_stream(), which keepalive frames from Weave-Runtime already
-    # keep well under 10s apart) -- only the one-shot chat() call gets this
-    # much longer allowance.
+    # `http_read_timeout_seconds` (10s) to answer a single blocking turn,
+    # and the stream's response headers are held until bot preparation and
+    # retrieval are done, with an agent flow possibly quiet between
+    # keepalives for longer than 10s as well. The 10s value stays as-is for
+    # every OTHER call this client makes (list_bots/get_bot/
+    # conversation_title) -- only the two chat calls get this much longer
+    # allowance.
     chat_read_timeout_seconds: float = 900.0
 
     # --- POST /v1/chat request body (app/schemas/chat.py's ChatRequest).
@@ -111,6 +125,18 @@ class Settings(BaseSettings):
     # a pasted-in novel a clear 422 instead of an oversized request that
     # only fails once it hits Weave-Runtime's own limits.
     chat_message_max_length: int = 8000
+
+    # --- Request body cap (app/main.py's BodySizeLimitMiddleware). Any
+    # request body larger than this is refused with 413 before a route
+    # parses it -- otherwise one authenticated (or not yet authenticated)
+    # caller could make this process buffer an arbitrarily large JSON body
+    # in memory. 1 MiB leaves ample room for every legitimate body here: a
+    # chat message is capped at `chat_message_max_length` characters (at
+    # most 4 bytes each in UTF-8, plus JSON escaping). The OpenAI-compatible
+    # endpoint is the exception: its clients replay the whole history with no
+    # per-message cap, so a long one can hit 413 -- raise
+    # MAX_REQUEST_BODY_BYTES (weave.yaml) for such clients.
+    max_request_body_bytes: int = 1024 * 1024
 
     # --- OIDC browser-session login (app/api/auth.py, app/services/oidc.py,
     # ADR-0002). Follows Weave-Ingest's own approach and libraries (authlib
@@ -235,6 +261,25 @@ class Settings(BaseSettings):
     # image bytes on a chat user's behalf without exposing this token to
     # the browser.
     ingest_service_token: str = ''
+
+
+def insecure_secret_key_reason(config: Settings) -> str | None:
+    """Why `config.secret_key` must not be used, or None if it is fine
+    (or the local-dev opt-in is set)."""
+    if config.allow_insecure_dev_secret_key:
+        return None
+    # Stripped: the default with a stray trailing newline (a secret file,
+    # a heredoc) is still the public default, and blanks add no entropy.
+    key = config.secret_key.strip()
+    if key == DEFAULT_SECRET_KEY:
+        return 'SECRET_KEY is the public built-in default'
+    if len(key) < MIN_SECRET_KEY_LENGTH:
+        return f'SECRET_KEY is shorter than {MIN_SECRET_KEY_LENGTH} characters'
+    # A cheap floor against placeholders like 'a' * 32 -- not an entropy
+    # estimate: `openssl rand -hex 32` always clears it by far.
+    if len(set(key)) < MIN_SECRET_KEY_DISTINCT_CHARS:
+        return f'SECRET_KEY has fewer than {MIN_SECRET_KEY_DISTINCT_CHARS} distinct characters'
+    return None
 
 
 settings = Settings()

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { setSessionCookie } from '@/lib/session';
 import { resolveAppBaseUrl } from '@/lib/sso';
+import { SSO_PKCE_COOKIE_NAME, clearPkceCookie, readPkceCookie } from '@/lib/sso-pkce';
 import { GatewayError, exchangeSessionCode } from '@/lib/weave-api-server';
 
 // Always dynamic: this handler reads a one-time query param and sets a
@@ -16,15 +17,20 @@ export const dynamic = 'force-dynamic';
  * three-step contract this and src/lib/sso.ts's `buildSsoLoginUrl`
  * implement together):
  *
- * 1. /login's "Mit SSO anmelden" link sends the browser to Weave-API's own
- *    GET /v1/auth/oidc/login?return_to=<this route's own absolute URL>.
+ * 1. /login's "Mit SSO anmelden" link goes through /api/auth/sso/start,
+ *    which keeps a PKCE verifier in this browser's own cookie and sends the
+ *    browser to Weave-API's own GET /v1/auth/oidc/login?return_to=<this
+ *    route's own absolute URL>&code_challenge=<S256 of that verifier>.
  * 2. Weave-API runs the entire OIDC dance itself (state/PKCE/nonce
  *    against the configured provider — none of that touches this app at
  *    all) and, on success, redirects the browser BACK here with a fresh,
  *    single-use, 60-second-lived `code` query param — because `return_to`
  *    matched Weave-API's own `OIDC_POST_LOGIN_ALLOWED_URLS` allowlist.
- * 3. THIS handler exchanges that code for a real Weave-API session token
- *    by calling POST /v1/auth/session/exchange SERVER-SIDE (never from
+ * 3. THIS handler exchanges that code — together with the verifier from
+ *    step 1's cookie, so a code minted for someone else's login never
+ *    redeems in this browser (login CSRF, see sso.ts) — for a real
+ *    Weave-API session token by calling POST /v1/auth/session/exchange
+ *    SERVER-SIDE (never from
  *    browser JS — see weave-api-server.ts's `exchangeSessionCode`), sets
  *    it as this app's OWN httpOnly cookie (`kind: 'session'`, so
  *    weave-api-server.ts's `weaveApiFetch` sends it back to Weave-API as
@@ -44,13 +50,30 @@ export const dynamic = 'force-dynamic';
  * string shown to the end user, and never a stack trace.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const response = await handleCallback(request);
+  // Single use, whatever the outcome: a verifier that has been sent to
+  // Weave-API once is never offered again.
+  if (request.cookies.has(SSO_PKCE_COOKIE_NAME)) {
+    clearPkceCookie(request, response);
+  }
+  return response;
+}
+
+async function handleCallback(request: NextRequest): Promise<NextResponse> {
   const code = request.nextUrl.searchParams.get('code');
   if (!code) {
     return redirectToLogin('missing_code');
   }
+  // No verifier means this browser never started (or already finished)
+  // this login: never redeem the code then, not even "unbound" — it may be
+  // an attacker's own code planted via a link.
+  const codeVerifier = readPkceCookie(request);
+  if (!codeVerifier) {
+    return redirectToLogin('invalid_code');
+  }
 
   try {
-    const { sessionToken, expiresAt } = await exchangeSessionCode(code);
+    const { sessionToken, expiresAt } = await exchangeSessionCode(code, codeVerifier);
     const maxAgeSeconds = secondsUntil(expiresAt);
     if (maxAgeSeconds === null) {
       return redirectToLogin('invalid_code');
