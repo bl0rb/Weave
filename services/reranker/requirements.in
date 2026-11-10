@@ -8,18 +8,9 @@
 # identical to Weave-Tools' backend/requirements.in -- no reason for this
 # service's web-framework/test stack to drift from a sibling service's.
 #
-# sentence-transformers, NOT fastembed: BAAI/bge-reranker-v2-m3 (the model
-# this service is built around) is absent from fastembed 0.8.0's
-# TextCrossEncoder.list_supported_models() as of this writing -- checked
-# experimentally, see README.md's "Warum nicht fastembed" for the full
-# list fastembed DOES carry (6 cross-encoders, none of them this one) and
-# the size/latency tradeoff this fallback costs.
-#
-# torch MUST come from the CPU wheel index, not plain PyPI -- the default
-# PyPI `torch` wheel bundles CUDA and is ~5x larger for a service that will
-# only ever run on CPU (see Dockerfile and README's "Imagegroesse"):
-#
-#   pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
+# onnxruntime + tokenizers + huggingface_hub, no torch: the model is an
+# ONNX export (see app/services/model.py), loaded exactly like
+# services/embeddings loads its encoder -- same pins as that service.
 #
 fastapi==0.162.0
 uvicorn[standard]==0.54.0
@@ -27,5 +18,7 @@ pydantic==2.14.2
 pydantic-settings==2.16.2
 httpx==0.28.1
 pytest==9.2.0
-sentence-transformers==6.2.0
-torch==2.14.1
+onnxruntime==1.31.1
+tokenizers==0.23.3
+huggingface_hub==2.4.0
+numpy==2.5.4

@@ -2,7 +2,7 @@
 
 `client` gives every fast contract test (test_rerank_api.py) a FastAPI
 TestClient with a valid RERANKER_API_TOKEN configured and the model marked
-warm WITHOUT loading the real ~2.3 GB BAAI/bge-reranker-v2-m3 weights --
+warm WITHOUT loading the real ONNX reranker weights --
 each test still monkeypatches `reranker_model.score` itself to control
 exactly what scores come back. test_rerank_content.py deliberately does
 NOT use this fixture: it needs the REAL model to make its point.

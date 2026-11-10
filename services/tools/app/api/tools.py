@@ -8,12 +8,12 @@ no separate access-control logic in this module at all, it is a thin HTTP
 shell around app/services/tools.py, exactly like app/mcp_server.py is.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import get_scope, require_tools_service_token
 from app.schemas.tools import CollectionOut, SearchToolRequest, SearchToolResponse
 from app.services.scope import Scope
-from app.services.tools import list_collections_for_scope, search_for_scope
+from app.services.tools import SearchRequestRejected, list_collections_for_scope, search_for_scope
 
 router = APIRouter(prefix='/api/v1/tools', dependencies=[Depends(require_tools_service_token)])
 
@@ -25,4 +25,13 @@ def list_collections(scope: Scope = Depends(get_scope)) -> list[CollectionOut]:
 
 @router.post('/search', response_model=SearchToolResponse)
 def search(request: SearchToolRequest, scope: Scope = Depends(get_scope)) -> SearchToolResponse:
-    return search_for_scope(scope, query=request.query, collection=request.collection, top_k=request.top_k)
+    try:
+        return search_for_scope(
+            scope,
+            query=request.query,
+            collection=request.collection,
+            top_k=request.top_k,
+            final_k=request.final_k,
+        )
+    except SearchRequestRejected as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc

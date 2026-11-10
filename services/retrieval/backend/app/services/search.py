@@ -51,6 +51,11 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 
 
+# The environment's own SEARCH_TOP_K / SEARCH_FINAL_K, kept so an admin
+# clearing the central default (Weave-Ingest sends null) falls back to them.
+_ENV_SEARCH_DEFAULTS = {'search_top_k': settings.search_top_k, 'search_final_k': settings.search_final_k}
+
+
 def refresh_control_plane() -> None:
     if not settings.chat_config_base_url or not settings.chat_config_service_token:
         return
@@ -65,6 +70,12 @@ def refresh_control_plane() -> None:
         for name in ('embedding_provider', 'embedding_base_url', 'embedding_model', 'embedding_dimension', 'embedding_batch_size', 'rerank_provider', 'rerank_base_url', 'rerank_model', 'rerank_max_documents', 'rerank_batch_size', 'rerank_threads', 'semantic_weight', 'lexical_weight'):
             if name in values:
                 setattr(settings, name, values[name])
+        # Central hit-count defaults (admin UI): an int overrides the env
+        # value, null restores it; an older Weave-Ingest sends neither key.
+        for name, env_default in _ENV_SEARCH_DEFAULTS.items():
+            if name in values:
+                value = values[name]
+                setattr(settings, name, value if isinstance(value, int) and not isinstance(value, bool) and value >= 1 else env_default)
         settings.embedding_api_key = values.get('embedding_api_key', settings.embedding_api_key)
         settings.rerank_api_key = values.get('rerank_api_key', settings.rerank_api_key)
     except (httpx.HTTPError, ValueError):
@@ -94,13 +105,23 @@ def _is_sqlite() -> bool:
 
 
 def resolve_top_k(request: SearchRequest) -> int:
-    """`request.top_k` if the caller set one, else settings.search_top_k."""
-    return request.top_k if request.top_k is not None else settings.search_top_k
+    """`request.top_k` if the caller set one, else settings.search_top_k raised
+    to an explicitly requested `final_k` -- a caller that only sends `final_k`
+    never gets fewer candidates than results it asked for (and never a 400).
+    Only an EXPLICIT `final_k > top_k` is rejected (app/api/search.py)."""
+    if request.top_k is not None:
+        return request.top_k
+    return max(settings.search_top_k, request.final_k or 0)
 
 
 def resolve_final_k(request: SearchRequest) -> int:
-    """`request.final_k` if the caller set one, else settings.search_final_k."""
-    return request.final_k if request.final_k is not None else settings.search_final_k
+    """`request.final_k` if the caller set one, else settings.search_final_k
+    clamped to the effective top_k -- a caller that only lowers `top_k` must
+    not be rejected because the configured default final_k is larger. An
+    EXPLICIT `final_k > top_k` is left as-is (app/api/search.py rejects it)."""
+    if request.final_k is not None:
+        return request.final_k
+    return min(settings.search_final_k, resolve_top_k(request))
 
 
 # --- metadata filtering ---------------------------------------------------------
@@ -559,8 +580,18 @@ def _meta_str(meta: dict, key: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _to_search_result(entry: FusedResult, document: Document, rerank_score: float | None) -> SearchResult:
+def _str_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item]
+
+
+def _to_search_result(
+    entry: FusedResult, document: Document, rerank_score: float | None, rank: int = 0
+) -> SearchResult:
     chunk = entry.chunk
+    meta = chunk.meta or {}
+    frontmatter = document.frontmatter if isinstance(document.frontmatter, dict) else {}
     return SearchResult(
         chunk_id=chunk.id,
         document_id=str(document.id),
@@ -596,6 +627,16 @@ def _to_search_result(entry: FusedResult, document: Document, rerank_score: floa
             rerank=rerank_score,
         ),
         embedding_model=chunk.embedding_model,
+        rank=rank,
+        chunk_index=chunk.chunk_index,
+        char_count=chunk.char_count,
+        title=_meta_str(frontmatter, 'title'),
+        language=_meta_str(meta, 'language') or _meta_str(frontmatter, 'language'),
+        document_type=_meta_str(frontmatter, 'document_type'),
+        tags=_str_list(document.tags) or _str_list(meta.get('tags')),
+        quality_grade=document.quality_grade,
+        space=_meta_str(meta, 'space'),
+        confluence_path=_str_list(meta.get('confluence_path')),
     )
 
 
@@ -636,7 +677,7 @@ def _rerank(
     return [(by_chunk_id[candidate.chunk_id], score) for candidate, score in scored_candidates], False
 
 
-def search(db: Session, request: SearchRequest) -> tuple[list[SearchResult], SearchTrace]:
+def search(db: Session, request: SearchRequest, *, refresh: bool = True) -> tuple[list[SearchResult], SearchTrace]:
     """Run the full hybrid-search pipeline for one request: embed the query,
     run the vector and fulltext legs (each capped at `top_k` candidates),
     fuse them with RRF, keep the fused top `top_k`, rerank that pool
@@ -648,9 +689,11 @@ def search(db: Session, request: SearchRequest) -> tuple[list[SearchResult], Sea
 
     Returns `(results, trace)` rather than a full SearchResponse -- building
     the response envelope (echoing `request.query` back) is the API layer's
-    job, not this service's.
+    job, not this service's. `refresh=False` skips refresh_control_plane()
+    for a caller (app/api/search.py) that already refreshed before validating.
     """
-    refresh_control_plane()
+    if refresh:
+        refresh_control_plane()
     timings_ms: dict[str, float] = {}
     top_k = resolve_top_k(request)
     final_k = resolve_final_k(request)
@@ -692,9 +735,14 @@ def search(db: Session, request: SearchRequest) -> tuple[list[SearchResult], Sea
     # for every row either leg touched, so this is not a fresh SELECT for
     # any chunk actually present in `final_pairs`).
     results = [
-        _to_search_result(entry, db.get(Document, entry.chunk.document_id), rerank_score)
-        for entry, rerank_score in final_pairs
+        _to_search_result(entry, db.get(Document, entry.chunk.document_id), rerank_score, rank)
+        for rank, (entry, rerank_score) in enumerate(final_pairs, start=1)
     ]
+
+    provider = settings.rerank_provider.strip().lower()
+    # _rerank() never calls the provider for an empty pool, so report no
+    # reranker then; only the 'api' provider actually uses rerank_model.
+    reranker_ran = request.rerank and provider != 'none' and bool(kept)
 
     trace = SearchTrace(
         vector_candidates=len(vector_results),
@@ -703,5 +751,15 @@ def search(db: Session, request: SearchRequest) -> tuple[list[SearchResult], Sea
         reranked=len(kept),
         rerank_error=rerank_error,
         timings_ms=timings_ms,
+        top_k=top_k,
+        final_k=final_k,
+        returned=len(results),
+        rrf_k=settings.rrf_k,
+        semantic_weight=settings.semantic_weight,
+        lexical_weight=settings.lexical_weight,
+        rerank_requested=request.rerank,
+        rerank_provider=provider if reranker_ran else None,
+        rerank_model=(settings.rerank_model or None) if reranker_ran and provider == 'api' else None,
+        embedding_model=settings.embedding_model,
     )
     return results, trace

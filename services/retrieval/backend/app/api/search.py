@@ -14,8 +14,13 @@ module is just the HTTP shell around it: request validation, the
 pair into a SearchResponse. That guard still matters even though
 `search()` itself also trims to `final_k` after reranking: a reranker can
 narrow a candidate pool, it can never be asked to produce MORE final
-results than the `top_k` candidates it was actually given, so this is
-rejected as a 400 up front rather than silently clamped.
+results than the `top_k` candidates it was actually given, so an EXPLICIT
+`final_k > top_k` is rejected as a 400 up front rather than silently
+clamped. An omitted `final_k` falls back to settings.search_final_k clamped
+to the effective top_k (resolve_final_k()), so sending only a small
+`top_k` never trips this guard; an omitted `top_k` is raised to an
+explicit `final_k` (resolve_top_k()), so sending only `final_k` never
+trips it either.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -24,7 +29,7 @@ from sqlalchemy.orm import Session
 from app.core.auth import require_service_token
 from app.core.db import get_db
 from app.schemas.search import SearchRequest, SearchResponse
-from app.services.search import resolve_final_k, resolve_top_k
+from app.services.search import refresh_control_plane, resolve_final_k, resolve_top_k
 from app.services.search import search as run_search
 
 router = APIRouter(prefix='/api/v1', dependencies=[Depends(require_service_token)])
@@ -39,7 +44,9 @@ def search(request: SearchRequest, db: Session = Depends(get_db)) -> SearchRespo
     # on TWO fields' resolved values, each of which may fall back to a
     # settings default) is checked here instead: a reranker can narrow a
     # candidate set down, it can never be asked to hand back MORE final
-    # results than it was given candidates for.
+    # results than it was given candidates for. Refresh first so the guard
+    # sees the same central top_k/final_k defaults the search will run with.
+    refresh_control_plane()
     top_k = resolve_top_k(request)
     final_k = resolve_final_k(request)
     if final_k > top_k:
@@ -48,5 +55,5 @@ def search(request: SearchRequest, db: Session = Depends(get_db)) -> SearchRespo
             detail=f'final_k ({final_k}) must not exceed top_k ({top_k})',
         )
 
-    results, trace = run_search(db, request)
+    results, trace = run_search(db, request, refresh=False)
     return SearchResponse(query=request.query, results=results, trace=trace)

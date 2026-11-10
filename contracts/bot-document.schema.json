@@ -409,9 +409,16 @@
           "$ref": "#/$defs/RetrievalFilters"
         },
         "final_k": {
-          "default": 5,
-          "title": "Final K",
-          "type": "integer"
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Final K"
         },
         "include_uncollected": {
           "default": true,
@@ -441,9 +448,16 @@
           "type": "boolean"
         },
         "top_k": {
-          "default": 20,
-          "title": "Top K",
-          "type": "integer"
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Top K"
         }
       },
       "title": "RetrievalConfig",

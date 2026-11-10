@@ -34,6 +34,12 @@ JSON Schema ist daraus erzeugt. Konsument ist `services/ingest`
   und `guard.blocked_topic_reply` sperren Themen technisch: Treffer (Router-
   Klassifikation bei `ROUTER_MODE=llm`, Stichwörter immer) erhalten den festen
   Text ohne Retrieval und ohne Antwort-LLM.
+  `retrieval.top_k` und `retrieval.final_k` sind je optional (Default
+  `null`): ein leerer Wert wird nicht an Weave-Retrieval geschickt, das dann
+  den zentralen Wert nutzt (Ingest-Admin „Suche und Modelle > Trefferzahl“,
+  sonst `SEARCH_TOP_K`/`SEARCH_FINAL_K`). Sind beide gesetzt, gilt
+  `final_k <= top_k`; Ingest prüft je 1–100. Ältere Dokumente mit `20`/`5`
+  bleiben gültig und behalten diese Werte.
   Unbekannte Schlüssel sind überall ein Fehler (`additionalProperties: false`).
 - Ein Export schreibt jedes gesetzte Feld inklusive der Runtime-Defaults aus
   (`exclude_none`); Felder mit dem Wert `null` fehlen.

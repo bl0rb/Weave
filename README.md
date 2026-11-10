@@ -32,7 +32,7 @@ evaluated before any data or budget leaves the building.
 does not decide anything. It answers questions from documents that someone
 deliberately published, and it shows its work.
 
-The current release is **v0.7.22** — nine services, running and tested end to
+The current release is **v0.7.23** — nine services, running and tested end to
 end, and each one can run as several replicas. The [wiki](https://github.com/bl0rb/Weave/wiki) is the place to
 start reading; this README covers the repository itself.
 
@@ -53,7 +53,7 @@ another.
 | `services/tools` | Stateless MCP server and REST mirror for permission-bound `list_collections` and `search` tools; MCP clients can sign in through the organisation's SSO. |
 | `services/chat` | Next.js chat interface. It talks only to `services/api` and signs users in through **Sign in with Weave**. |
 | `services/embeddings` | Optional OpenAI-compatible CPU embedding service using `intfloat/multilingual-e5-small` and ONNX Runtime at `/v1/embeddings`. |
-| `services/reranker` | Optional Cohere/Jina-compatible CPU reranking service using `BAAI/bge-reranker-v2-m3` at `/rerank`. |
+| `services/reranker` | Optional Cohere/Jina-compatible CPU reranking service using `Alibaba-NLP/gte-multilingual-reranker-base` (ONNX, onnxruntime) at `/rerank`. |
 | `contracts/` | Cross-service contracts: `frontmatter.schema.json`, `openapi.json`, `chunk-store.md`, `internal-chat.md`, `n8n-flow.md`, `indexing-status.md`, `technical-identities.md`, and event contracts. |
 | `deploy/` | Docker Compose stack, local build override, and PostgreSQL initialization. `deploy/.env` is generated and ignored by Git. |
 | `docs/` | Operations guide, knowledge-portal guide, ADRs, browser-readable architecture artifacts, and the screenshot-based user wiki. |

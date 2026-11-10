@@ -24,8 +24,8 @@ async def lifespan(app: FastAPI):
             'RERANKER_API_TOKEN is unset -- POST /rerank will answer 503 for every request until it is set'
         )
     # Loaded on a background thread, NOT awaited here -- GET /health must
-    # answer immediately (see below), including while bge-reranker-v2-m3's
-    # ~2.3 GB of weights are still downloading/loading on a cold cache,
+    # answer immediately (see below), including while the model's
+    # weights are still downloading/loading on a cold cache,
     # rather than uvicorn's own startup blocking for however long that
     # takes. POST /rerank (app/api/rerank.py) is the one route that
     # actually waits on `reranker_model.warm`.

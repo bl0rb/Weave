@@ -6,7 +6,7 @@ sends and parses; see README.md for the full field-by-field trace.
 reranker_model.score() is monkeypatched in every test below (the `client`
 fixture from conftest.py only marks the model warm, never loads it) -- no
 real model runs in this file. tests/test_rerank_content.py is the one file
-that runs the actual BAAI/bge-reranker-v2-m3 model.
+that runs the actual ONNX reranker model.
 """
 
 from fastapi.testclient import TestClient

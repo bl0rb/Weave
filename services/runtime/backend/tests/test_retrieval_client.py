@@ -181,6 +181,51 @@ def test_search_defaults_missing_optional_fields():
     assert chunk.collection is None
 
 
+def test_search_maps_ranking_and_document_metadata():
+    payload = _search_response(_search_result(
+        rank=1, chunk_index=7, title='Handbuch', language='de', document_type='policy',
+        tags=['hr', 'urlaub'], quality_grade='A',
+    ))
+
+    with patch('app.services.retrieval_client.httpx.post', return_value=_FakeResponse(200, payload)):
+        chunk = search('q')[0]
+
+    assert (chunk.rank, chunk.chunk_index, chunk.title, chunk.language) == (1, 7, 'Handbuch', 'de')
+    assert (chunk.document_type, chunk.tags, chunk.quality_grade) == ('policy', ['hr', 'urlaub'], 'A')
+
+
+def test_search_ranking_metadata_defaults_for_an_older_retrieval():
+    with patch('app.services.retrieval_client.httpx.post', return_value=_FakeResponse(200, _search_response(_search_result()))):
+        chunk = search('q')[0]
+
+    assert (chunk.rank, chunk.chunk_index, chunk.title, chunk.language) == (None, None, None, None)
+    assert (chunk.document_type, chunk.tags, chunk.quality_grade) == (None, [], None)
+
+
+def test_search_returns_a_list_carrying_the_retrieval_trace():
+    payload = _search_response(_search_result())
+    payload['trace'] = {'vector_candidates': 12, 'fulltext_candidates': 3, 'top_k': 20, 'final_k': 5}
+
+    with patch('app.services.retrieval_client.httpx.post', return_value=_FakeResponse(200, payload)):
+        chunks = search('q')
+
+    assert isinstance(chunks, list)
+    assert len(chunks) == 1
+    assert chunks.trace == payload['trace']
+
+
+@pytest.mark.parametrize('trace', [None, 'oops', ['x']])
+def test_search_trace_is_none_when_missing_or_malformed(trace):
+    payload = _search_response(_search_result())
+    if trace is None:
+        del payload['trace']
+    else:
+        payload['trace'] = trace
+
+    with patch('app.services.retrieval_client.httpx.post', return_value=_FakeResponse(200, payload)):
+        assert search('q').trace is None
+
+
 def test_search_no_results_returns_empty_list():
     with patch('app.services.retrieval_client.httpx.post', return_value=_FakeResponse(200, _search_response())):
         assert search('q') == []

@@ -50,12 +50,13 @@ export function KnowledgeSpaces() {
   const { items: live } = useIndexingStatus(releasedIds);
   const statsFor = useCallback((collectionId: string) => {
     const own = documents.filter(document => document.collection_id === collectionId);
-    const counts = { review: 0, error: 0, working: 0, ready: 0 };
+    const counts = { review: 0, error: 0, processing: 0, indexing: 0, ready: 0 };
     for (const document of own) {
       switch (pipelineStage(document, live[document.id])) {
         case 'review': counts.review += 1; break;
         case 'error': counts.error += 1; break;
-        case 'processing': case 'indexing': counts.working += 1; break;
+        case 'processing': counts.processing += 1; break;
+        case 'indexing': counts.indexing += 1; break;
         case 'ready': counts.ready += 1; break;
       }
     }
@@ -76,7 +77,8 @@ export function KnowledgeSpaces() {
         const chips = [
           stats.review > 0 && <Link className="portal-chip portal-chip-warn" key="review" href={documentsHref('review')}>{t('portal.spaces.chipReview', { count: stats.review })}</Link>,
           stats.error > 0 && <Link className="portal-chip portal-chip-err" key="error" href={documentsHref('error')}><AlertTriangle aria-hidden="true" />{t('portal.spaces.chipError', { count: stats.error })}</Link>,
-          stats.working > 0 && <span className="portal-chip portal-chip-proc" key="working">{t('portal.spaces.chipWorking', { count: stats.working })}</span>,
+          stats.processing > 0 && <Link className="portal-chip portal-chip-proc" key="processing" href={documentsHref('processing')}>{t('portal.spaces.chipProcessing', { count: stats.processing })}</Link>,
+          stats.indexing > 0 && <Link className="portal-chip portal-chip-proc" key="indexing" href={documentsHref('indexing')}>{t('portal.spaces.chipIndexing', { count: stats.indexing })}</Link>,
         ].filter(Boolean);
         return <article className="portal-panel portal-space-card" key={space.collection_id} style={cssVar(spaceColorVar(space.collection_id))}>
           <div className="portal-space-top">
@@ -86,7 +88,8 @@ export function KnowledgeSpaces() {
           {readOnly ? <p className="text-sm text-[var(--ink-2)]">{t('portal.spaces.readerHint')}</p> : <p className="text-sm font-semibold text-[var(--ink-2)]">{t('portal.spaces.readyCount', { count: stats.ready })}</p>}
           <p className="text-xs text-[var(--muted)]">{t('portal.spaces.ownersLine', { owners: ownerSummary(space.grants, locale) })}{space.responsible_team && ` · ${t('portal.spaces.responsibleLine', { team: space.responsible_team.name })}`}</p>
           <AccessLine collection={space} name={space.name} canManage={space.can_manage} onChangeAccess={() => setAccessEditing(space)} />
-          {!readOnly && <p className="portal-space-state">{chips.length ? chips : <span className="portal-chip portal-chip-ok"><CheckCheck aria-hidden="true" />{t('portal.spaces.allCurrent')}</span>}</p>}
+          {/* Always rendered so every card has the same rows and its texts line up with the neighbouring cards. */}
+          <p className="portal-space-state">{!readOnly && (chips.length ? chips : <span className="portal-chip portal-chip-ok"><CheckCheck aria-hidden="true" />{t('portal.spaces.allCurrent')}</span>)}</p>
           <div className="portal-space-actions">
             {!readOnly && <div className="portal-space-primary">
               <Link className={buttonVariants({ variant: 'outline', size: 'sm' })} href={`/documents?${new URLSearchParams({ bereich: space.slug })}`}>{t('portal.spaces.viewDocuments')}</Link>

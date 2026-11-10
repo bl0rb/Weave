@@ -306,13 +306,18 @@ def get_search_fn() -> SearchFn:
         from app.core.db import SessionLocal
         from app.models.models import Document
         from app.schemas.search import SearchRequest
+        from app.services.search import refresh_control_plane
         from app.services.search import search as run_search
 
         db = SessionLocal()
         try:
+            # Refresh first so `depth` already reflects the central default --
+            # otherwise the first golden query would run at the env value and
+            # the rest at the refreshed one.
+            refresh_control_plane()
             depth = settings.search_top_k
             request = SearchRequest(query=query, top_k=depth, final_k=depth)
-            results, _trace = run_search(db, request)
+            results, _trace = run_search(db, request, refresh=False)
 
             retrieved: list[RetrievedChunk] = []
             for result in results:

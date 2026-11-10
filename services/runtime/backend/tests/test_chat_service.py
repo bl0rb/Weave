@@ -652,3 +652,26 @@ def test_filter_n8n_sources_logs_nothing_when_nothing_is_dropped(caplog):
     with caplog.at_level(logging.WARNING):
         _filter_n8n_sources_by_scope([_source(collection='vertraege')], ['vertraege'], bot_id='legal-agent')
     assert caplog.records == []
+
+
+@pytest.mark.parametrize(
+    ('bot_k', 'raw_trace', 'expected'),
+    [
+        ((None, None), {'top_k': 40, 'final_k': 8}, (40, 8)),
+        ((30, None), {'top_k': 40, 'final_k': 8}, (30, 8)),
+        ((None, 4), None, (None, 4)),
+        ((None, None), {'top_k': 'x'}, (None, None)),
+    ],
+)
+def test_search_trace_reports_effective_hit_counts(bot_k, raw_trace, expected):
+    from app.services import retrieval_client
+    from app.services.chat import _search_trace_fields
+
+    bot = BotConfig.model_validate({
+        'id': 'k-bot', 'name': 'K', 'model': {'model': 'fake-chat'}, 'system_prompt': 'x',
+        'retrieval': {'enabled': True, 'top_k': bot_k[0], 'final_k': bot_k[1]},
+    })
+    searched = retrieval_client.SearchHits()
+    searched.trace = raw_trace
+    fields = _search_trace_fields(bot, searched, [])
+    assert (fields['top_k'], fields['final_k']) == expected

@@ -135,6 +135,22 @@ class SearchResult(BaseModel):
     collection: str | None = None
     scores: SearchScores
     embedding_model: str | None = None
+    # 1-based position in the final (reranked, final_k-trimmed) result list.
+    rank: int = 0
+    chunk_index: int | None = None
+    char_count: int | None = None
+    # Descriptive metadata: `title`/`document_type` from the document's
+    # frontmatter, `language` from the chunk meta (else frontmatter), `tags`
+    # from `documents.tags` (else the chunk meta), `quality_grade` from
+    # `documents.quality_grade`; `space`/`confluence_path` only for
+    # Confluence imports (chunk meta). All optional -- older documents lack them.
+    title: str | None = None
+    language: str | None = None
+    document_type: str | None = None
+    tags: list[str] = []
+    quality_grade: str | None = None
+    space: str | None = None
+    confluence_path: list[str] = []
 
 
 class SearchTrace(BaseModel):
@@ -162,6 +178,20 @@ class SearchTrace(BaseModel):
     reranked: int = 0
     rerank_error: bool = False
     timings_ms: dict[str, float] = {}
+    # The effective parameters this search ran with (request override or
+    # settings default) and how many results it returned. `rerank_provider`/
+    # `rerank_model` are None when no reranker ran (provider 'none' or
+    # `request.rerank=False`); `rerank_requested` echoes `request.rerank`.
+    top_k: int | None = None
+    final_k: int | None = None
+    returned: int = 0
+    rrf_k: int | None = None
+    semantic_weight: float | None = None
+    lexical_weight: float | None = None
+    rerank_requested: bool = True
+    rerank_provider: str | None = None
+    rerank_model: str | None = None
+    embedding_model: str | None = None
 
 
 class SearchResponse(BaseModel):

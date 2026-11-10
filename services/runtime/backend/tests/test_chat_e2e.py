@@ -46,6 +46,12 @@ class _FakeResponse:
         return self._json_data
 
 
+def _retrieval_core(retrieval: dict) -> dict:
+    """`RetrievalTrace` minus the per-search detail (`top_k`/`final_k`/
+    `rerank`/`search`/`hits`), asserted separately where it matters."""
+    return {k: v for k, v in retrieval.items() if k not in {'top_k', 'final_k', 'rerank', 'search', 'hits'}}
+
+
 def _collection(**overrides) -> dict:
     collection = {'slug': 'vertraege', 'name': 'Vertraege', 'description': None, 'public': False}
     collection.update(overrides)
@@ -234,7 +240,7 @@ def test_knowledge_flow_passes_context_to_the_llm_and_returns_sources(monkeypatc
     # the outgoing `allowed_collections` asserted further down. See
     # test_chat_service.py's own `resolve_collection_scope`/
     # `include_uncollected` tests for that function's logic in isolation.
-    assert trace['retrieval'] == {
+    assert _retrieval_core(trace['retrieval']) == {
         'candidates': 2, 'used': 2, 'collections': ['vertraege', '__none__'], 'requested_collections': None, 'rewritten_query': None, 'focus_documents': None,
     }
     assert trace['guard'] is None
@@ -260,6 +266,66 @@ def test_knowledge_flow_passes_context_to_the_llm_and_returns_sources(monkeypatc
     assert sent_json['allowed_collections'] == ['vertraege', '__none__']
     assert sent_json['top_k'] == 20
     assert sent_json['final_k'] == 5
+
+
+def test_knowledge_flow_traces_search_settings_retrieval_stats_and_hits(monkeypatch):
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        return _readable_collections_response()
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        payload = _search_response(
+            _chunk(chunk_id=1, document_id='doc-1', rank=1, chunk_index=3, title='Arbeitsvertrag', language='de',
+                   document_type='contract', quality_grade='A', collection='vertraege', page_end=5),
+            _chunk(chunk_id=2, document_id='doc-2', scores={'vector': 0.5, 'fulltext': None, 'rrf': 0.031, 'rerank': None}),
+        )
+        payload['trace'] = {
+            'vector_candidates': 20, 'fulltext_candidates': 7, 'fused': 24, 'reranked': 20, 'rerank_error': False,
+            'timings_ms': {'embed_ms': 3.5, 'total_ms': 41.0}, 'top_k': 20, 'final_k': 5, 'returned': 2,
+            'rrf_k': 60, 'semantic_weight': 1.0, 'lexical_weight': 1.0, 'rerank_requested': True,
+            'rerank_provider': 'cohere', 'rerank_model': 'rerank-v3.5', 'embedding_model': 'bge-m3',
+        }
+        return _FakeResponse(200, payload)
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _fake_get)
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _fake_post)
+
+    retrieval = client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS).json()['trace']['retrieval']
+
+    assert (retrieval['top_k'], retrieval['final_k'], retrieval['rerank']) == (20, 5, True)
+    assert retrieval['search'] == {
+        'vector_candidates': 20, 'fulltext_candidates': 7, 'fused': 24, 'reranked': 20, 'returned': 2,
+        'rerank_error': False, 'rerank_provider': 'cohere', 'rerank_model': 'rerank-v3.5',
+        'embedding_model': 'bge-m3', 'rrf_k': 60, 'semantic_weight': 1.0, 'lexical_weight': 1.0,
+        'timings_ms': {'embed_ms': 3.5, 'total_ms': 41.0},
+    }
+    assert retrieval['hits'] == [
+        {
+            'rank': 1, 'document_id': 'doc-1', 'chunk_id': 1, 'original_filename': 'arbeitsvertrag.pdf',
+            'title': 'Arbeitsvertrag', 'collection': 'vertraege', 'heading_path': ['Arbeitsvertrag', 'Kündigung'],
+            'page_start': 4, 'page_end': 5, 'document_version': 1, 'chunk_index': 3, 'language': 'de',
+            'document_type': 'contract', 'quality_grade': 'A',
+            'scores': {'vector': 0.7, 'fulltext': 0.4, 'rrf': 0.6, 'rerank': 0.95}, 'used': True,
+        },
+        {
+            # No `rank` from an older Retrieval -> the list position.
+            'rank': 2, 'document_id': 'doc-2', 'chunk_id': 2, 'original_filename': 'arbeitsvertrag.pdf',
+            'title': None, 'collection': None, 'heading_path': ['Arbeitsvertrag', 'Kündigung'],
+            'page_start': 4, 'page_end': 4, 'document_version': 1, 'chunk_index': None, 'language': None,
+            'document_type': None, 'quality_grade': None,
+            'scores': {'vector': 0.5, 'fulltext': None, 'rrf': 0.031, 'rerank': None}, 'used': True,
+        },
+    ]
+    assert 'text' not in retrieval['hits'][0]  # never the chunk text
+
+
+def test_knowledge_flow_search_trace_defaults_when_retrieval_sends_only_the_old_fields(monkeypatch):
+    _single_hit(monkeypatch, rerank=0.9)
+
+    retrieval = client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS).json()['trace']['retrieval']
+
+    assert retrieval['search']['returned'] == 1  # falls back to the number of hits
+    assert retrieval['search']['rerank_provider'] is None
+    assert retrieval['search']['timings_ms'] == {}
 
 
 # --- only the sources the answer cites -----------------------------------------
@@ -352,7 +418,7 @@ def test_guard_flow_returns_no_context_reply_when_retrieval_finds_nothing(monkey
     # default) -- this is the 'no_context' guard (search ran but found
     # nothing), not 'no_collections' (search never ran at all, see the
     # dedicated test for that below).
-    assert trace['retrieval'] == {
+    assert _retrieval_core(trace['retrieval']) == {
         'candidates': 0, 'used': 0, 'collections': ['vertraege', '__none__'], 'requested_collections': None, 'rewritten_query': None, 'focus_documents': None,
     }
     assert trace['guard'] == {'triggered': True, 'reason': 'no_context', 'topic': None}
@@ -482,6 +548,7 @@ def test_clarify_guard_asks_instead_of_answering_when_every_hit_is_weak(monkeypa
     assert trace['guard'] == {'triggered': True, 'reason': 'clarify', 'topic': None}
     assert trace['retrieval']['candidates'] == 3
     assert trace['retrieval']['used'] == 0
+    assert [hit['used'] for hit in trace['retrieval']['hits']] == [False, False, False]
     assert trace['model'] is None
     # Best score first, one entry per document, label from heading / file name.
     assert trace['clarification'] == {
@@ -713,6 +780,9 @@ def test_min_score_drops_weak_rerank_hits_but_keeps_unreranked_ones(monkeypatch)
     assert body['trace']['retrieval']['candidates'] == 3
     assert body['trace']['retrieval']['used'] == 2
     assert body['trace']['guard'] is None  # guard did not fire
+    # Every returned hit is listed; the min_score drop is marked unused.
+    hits = body['trace']['retrieval']['hits']
+    assert [(hit['rank'], hit['chunk_id'], hit['used']) for hit in hits] == [(1, 1, True), (2, 2, False), (3, 3, True)]
 
 
 def test_min_score_dropping_every_hit_fires_the_no_context_guard(monkeypatch):
@@ -772,7 +842,7 @@ def test_guard_flow_returns_no_collections_reply_when_the_user_cannot_read_the_b
 
     trace = body['trace']
     assert trace['intent'] == 'knowledge'
-    assert trace['retrieval'] == {'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': None, 'rewritten_query': None, 'focus_documents': None}
+    assert trace['retrieval'] == {'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': None, 'rewritten_query': None, 'focus_documents': None, 'top_k': None, 'final_k': None, 'rerank': None, 'search': None, 'hits': []}
     assert trace['guard'] == {'triggered': True, 'reason': 'no_collections', 'topic': None}
     assert trace['model'] is None
 
@@ -814,7 +884,7 @@ def test_collections_filter_restricts_the_effective_search_scope(monkeypatch):
     body = resp.json()
 
     trace = body['trace']
-    assert trace['retrieval'] == {
+    assert _retrieval_core(trace['retrieval']) == {
         'candidates': 1, 'used': 1, 'collections': ['vertraege'], 'requested_collections': ['vertraege'], 'rewritten_query': None, 'focus_documents': None,
     }
     assert trace['guard'] is None
@@ -879,6 +949,7 @@ def test_collections_filter_naming_only_foreign_slugs_triggers_its_own_guard_rea
     assert trace['guard'] == {'triggered': True, 'reason': 'filter_excluded_all', 'topic': None}
     assert trace['retrieval'] == {
         'candidates': 0, 'used': 0, 'collections': [], 'requested_collections': ['geheimprojekt'], 'rewritten_query': None, 'focus_documents': None,
+        'top_k': None, 'final_k': None, 'rerank': None, 'search': None, 'hits': [],
     }
     assert trace['model'] is None
     assert body['sources'] == []
@@ -911,7 +982,7 @@ def test_no_collections_filter_is_byte_for_byte_the_pre_filter_behaviour(monkeyp
     body = resp.json()
 
     trace = body['trace']
-    assert trace['retrieval'] == {
+    assert _retrieval_core(trace['retrieval']) == {
         'candidates': 1, 'used': 1, 'collections': ['vertraege', '__none__'], 'requested_collections': None, 'rewritten_query': None, 'focus_documents': None,
     }
     assert trace['guard'] is None

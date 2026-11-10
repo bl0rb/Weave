@@ -35,6 +35,13 @@ class RetrievalClientError(Exception):
     app/core/config.py."""
 
 
+class RetrievalRequestRejected(RetrievalClientError):
+    """Weave-Retrieval rejected the search parameters themselves (HTTP 400),
+    e.g. an explicit `final_k` larger than an explicit `top_k` (a `final_k`
+    without `top_k` is not rejected: Weave-Retrieval raises its default
+    `top_k` to it). A caller error, not a gateway failure."""
+
+
 def _client() -> httpx.Client:
     timeout = httpx.Timeout(
         connect=settings.http_connect_timeout_seconds,
@@ -106,12 +113,19 @@ def release_collection(release_id: str) -> str | None:
     return collection if isinstance(collection, str) else None
 
 
-def search(*, query: str, allowed_collections: list[str], allowed_teams: list[str], top_k: int | None) -> list:
+def search(
+    *,
+    query: str,
+    allowed_collections: list[str],
+    allowed_teams: list[str],
+    top_k: int | None,
+    final_k: int | None = None,
+) -> dict:
     """POST /api/v1/search -- hybrid search restricted to exactly
     `allowed_collections` (never `None` from here: that is Weave-Retrieval's
     "no restriction" sentinel for trusted service callers) and, for legacy
     documents without a collection, `allowed_teams`. Returns that service's
-    `results` list verbatim."""
+    response body verbatim (`results` list plus optional `trace` dict)."""
     body: dict[str, object] = {
         'query': query,
         'allowed_collections': allowed_collections,
@@ -119,6 +133,8 @@ def search(*, query: str, allowed_collections: list[str], allowed_teams: list[st
     }
     if top_k is not None:
         body['top_k'] = top_k
+    if final_k is not None:
+        body['final_k'] = final_k
 
     try:
         with _client() as client:
@@ -126,10 +142,19 @@ def search(*, query: str, allowed_collections: list[str], allowed_teams: list[st
     except httpx.RequestError as exc:
         raise RetrievalClientError(f'Weave-Retrieval unreachable: {exc}') from exc
 
+    if response.status_code == 400:
+        try:
+            detail = response.json().get('detail')
+        except (ValueError, AttributeError):
+            detail = None
+        raise RetrievalRequestRejected(detail if isinstance(detail, str) else 'Search parameters rejected')
     if response.status_code >= 400:
         raise RetrievalClientError(f'Weave-Retrieval returned HTTP {response.status_code} for POST /api/v1/search')
 
     try:
-        return response.json().get('results', [])
-    except (ValueError, AttributeError) as exc:
+        payload = response.json()
+    except ValueError as exc:
         raise RetrievalClientError('Weave-Retrieval returned a non-JSON response for POST /api/v1/search') from exc
+    if not isinstance(payload, dict):
+        raise RetrievalClientError('Weave-Retrieval returned a non-JSON response for POST /api/v1/search')
+    return payload

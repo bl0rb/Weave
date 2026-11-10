@@ -5,7 +5,7 @@ from datetime import datetime
 from urllib.parse import urlsplit
 
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 from app.models.models import BotRole
 from app.schemas.bot_document import (  # noqa: F401 -- AgentLimits is re-exported for the admin API's wording
@@ -90,8 +90,9 @@ class ManagedBotWrite(BaseModel):
     temperature: float | None = Field(default=None, ge=0, le=2)
     retrieval_enabled: bool = False
     retrieval_filters: dict = Field(default_factory=dict)
-    top_k: int = Field(default=20, ge=1, le=100)
-    final_k: int = Field(default=5, ge=1, le=100)
+    # None = Weave-Retrieval's central default (Suche und Modelle > Trefferzahl).
+    top_k: int | None = Field(default=None, ge=1, le=100)
+    final_k: int | None = Field(default=None, ge=1, le=100)
     rerank: bool = True
     # Fail closed for legacy documents without a space (ADR 0008 addendum).
     include_uncollected: bool = False
@@ -213,7 +214,7 @@ class ManagedBotWrite(BaseModel):
 
     @model_validator(mode='after')
     def validate_kind(self) -> 'ManagedBotWrite':
-        if self.final_k > self.top_k:
+        if self.top_k is not None and self.final_k is not None and self.final_k > self.top_k:
             raise ValueError('final_k must be less than or equal to top_k')
         if self.kind == 'n8n' and not self.webhook_url:
             raise ValueError('webhook_url is required for n8n bots')
@@ -258,8 +259,8 @@ class ManagedBotAdminResponse(BaseModel):
     temperature: float | None = None
     retrieval_enabled: bool = False
     retrieval_filters: dict = Field(default_factory=dict)
-    top_k: int = 20
-    final_k: int = 5
+    top_k: int | None = None
+    final_k: int | None = None
     rerank: bool = True
     include_uncollected: bool = True
     streaming: bool
@@ -335,8 +336,8 @@ class ManagedBotInternalResponse(BaseModel):
     temperature: float | None = None
     retrieval_enabled: bool = False
     retrieval_filters: dict = Field(default_factory=dict)
-    top_k: int = 20
-    final_k: int = 5
+    top_k: int | None = None
+    final_k: int | None = None
     rerank: bool = True
     include_uncollected: bool = True
     streaming: bool
@@ -373,6 +374,18 @@ class ManagedBotInternalResponse(BaseModel):
     blocked_topic_reply: str | None = None
     llm_endpoint: str | None = None
     llm_endpoints: list[str] = Field(default_factory=list)
+
+    @model_serializer(mode='wrap')
+    def _omit_empty_hit_counts(self, handler):
+        # Empty hit counts are omitted rather than sent as null: Runtime reads
+        # an absent key as "use the central value", and a Runtime from before
+        # optional hit counts falls back to 20/5 instead of rejecting null and
+        # silently dropping the bot during a rolling upgrade.
+        data = handler(self)
+        for key in ('top_k', 'final_k'):
+            if data.get(key) is None:
+                data.pop(key, None)
+        return data
 
 
 class ManagedBotInternalListResponse(BaseModel):

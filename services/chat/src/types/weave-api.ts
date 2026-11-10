@@ -144,6 +144,59 @@ export interface RetrievalTrace {
    * trace literal in this codebase's own tests, written before this field
    * existed, stays valid without needing an update. */
   requested_collections?: string[] | null;
+  /** Effective hit counts / rerank flag the bot config actually sent to
+   * Weave-Retrieval. Optional: older persisted traces lack them. */
+  top_k?: number | null;
+  final_k?: number | null;
+  rerank?: boolean | null;
+  /** Weave-Retrieval's own search diagnostics for the search that was used;
+   * `null`/absent when no search ran or for older traces. */
+  search?: RetrievalSearchTrace | null;
+  /** Per-hit metadata + scores (never chunk text). Optional: older traces lack it. */
+  hits?: RetrievalHit[];
+}
+
+export interface RetrievalSearchTrace {
+  vector_candidates: number;
+  fulltext_candidates: number;
+  fused: number;
+  reranked: number;
+  returned: number;
+  rerank_error: boolean;
+  rerank_provider: string | null;
+  rerank_model: string | null;
+  embedding_model: string | null;
+  rrf_k: number | null;
+  semantic_weight: number | null;
+  lexical_weight: number | null;
+  timings_ms: Record<string, number>;
+}
+
+export interface RetrievalHitScores {
+  vector: number | null;
+  fulltext: number | null;
+  rrf: number | null;
+  rerank: number | null;
+}
+
+export interface RetrievalHit {
+  rank: number;
+  document_id: string;
+  chunk_id: number;
+  original_filename: string | null;
+  title: string | null;
+  collection: string | null;
+  heading_path: string[];
+  page_start: number | null;
+  page_end: number | null;
+  document_version: number | null;
+  chunk_index: number | null;
+  language: string | null;
+  document_type: string | null;
+  quality_grade: string | null;
+  scores: RetrievalHitScores;
+  /** `false` for hits not handed to the LLM (clarify path, min-score drops). */
+  used: boolean;
 }
 
 export interface GuardTrace {

@@ -1375,13 +1375,23 @@ services:
     settings:
       RERANKER_MODEL:
         secret: false
-        value: "BAAI/bge-reranker-v2-m3"
+        value: "onnx-community/gte-multilingual-reranker-base"
         type: string
         required: false
         comment: >
-          The one model prescribed for this service (docs/betrieb.md
-          section 7.1) -- not available in fastembed 0.8.0, served through
-          sentence-transformers/torch instead.
+          Hugging Face repo the ONNX cross-encoder and its tokenizer.json
+          are downloaded from (onnxruntime, no torch). Default is the ONNX
+          export of Alibaba-NLP/gte-multilingual-reranker-base (Apache-2.0,
+          multilingual incl. German). onnx-community/bge-reranker-v2-m3-ONNX
+          is the slower, larger alternative.
+      RERANKER_ONNX_FILE:
+        secret: false
+        value: "onnx/model_int8.onnx"
+        type: string
+        required: false
+        comment: >
+          ONNX file inside RERANKER_MODEL. The int8 export (~341 MB) is
+          about 2.5x faster than onnx/model.onnx (fp32, ~1.26 GB).
       RERANKER_BATCH_SIZE:
         secret: false
         value: 16

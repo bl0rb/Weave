@@ -84,3 +84,64 @@ it('starts a rebuild only after the confirm dialog is accepted and shows the req
   await waitFor(() => expect(json).toHaveBeenCalledWith('/api/v1/admin/knowledge/rebuild', { method: 'POST' }));
   expect(await screen.findByText(/7 Veröffentlichungen zur Neuauslieferung eingereiht\./)).toBeTruthy();
 });
+
+it('saves the central hit-count defaults and sends null for an emptied field', async () => {
+  render(<RetrievalProviderTab />);
+  const topK = await screen.findByLabelText('Kandidaten (top_k)');
+  const finalK = screen.getByLabelText('Treffer (final_k)');
+  fireEvent.change(topK, { target: { value: '30' } });
+  fireEvent.change(finalK, { target: { value: '8' } });
+  json.mockImplementation(async (path: string, init?: RequestInit) => {
+    if (path === '/api/v1/auth/admin/retrieval-provider' && init?.method === 'PUT') return { ...config, ...JSON.parse(String(init.body)) };
+    if (path === '/api/v1/auth/admin/retrieval-provider') return config;
+    throw new Error(`unexpected request: ${path}`);
+  });
+  fireEvent.click(screen.getByRole('button', { name: /Speichern/ }));
+  await waitFor(() => expect(json).toHaveBeenCalledWith('/api/v1/auth/admin/retrieval-provider', expect.objectContaining({ method: 'PUT' })));
+  const put = json.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === 'PUT');
+  expect(JSON.parse(String((put?.[1] as RequestInit).body))).toMatchObject({ search_top_k: 30, search_final_k: 8 });
+
+  fireEvent.change(topK, { target: { value: '' } });
+  expect((topK as HTMLInputElement).value).toBe('');
+  fireEvent.change(finalK, { target: { value: '500' } });
+  expect((finalK as HTMLInputElement).value).toBe('200');
+  fireEvent.change(finalK, { target: { value: '0' } });
+  expect((finalK as HTMLInputElement).value).toBe('1');
+  // final_k without top_k would be cut to Retrieval's hidden env top_k -> blocked.
+  expect(screen.getByText('Bitte auch die Kandidatenzahl (top_k) setzen.')).toBeTruthy();
+  expect((screen.getByRole('button', { name: /Speichern/ }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.change(finalK, { target: { value: '' } });
+  json.mockClear();
+  fireEvent.click(screen.getByRole('button', { name: /Speichern/ }));
+  await waitFor(() => expect(json).toHaveBeenCalledWith('/api/v1/auth/admin/retrieval-provider', expect.objectContaining({ method: 'PUT' })));
+  const second = json.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === 'PUT');
+  expect(JSON.parse(String((second?.[1] as RequestInit).body))).toMatchObject({ search_top_k: null, search_final_k: null });
+});
+
+it('blocks saving with a localized error when final_k exceeds top_k', async () => {
+  render(<RetrievalProviderTab />);
+  const topK = await screen.findByLabelText('Kandidaten (top_k)');
+  const finalK = screen.getByLabelText('Treffer (final_k)');
+  fireEvent.change(topK, { target: { value: '5' } });
+  fireEvent.change(finalK, { target: { value: '10' } });
+  expect(screen.getByText('Darf nicht größer als die Kandidatenzahl (top_k) sein.')).toBeTruthy();
+  const saveButton = screen.getByRole('button', { name: /Speichern/ }) as HTMLButtonElement;
+  expect(saveButton.disabled).toBe(true);
+  fireEvent.click(saveButton);
+  expect(json.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'PUT')).toBe(false);
+  fireEvent.change(topK, { target: { value: '30' } });
+  expect(screen.queryByText('Darf nicht größer als die Kandidatenzahl (top_k) sein.')).toBeNull();
+  expect(saveButton.disabled).toBe(false);
+});
+
+it('warns without blocking when top_k exceeds the reranker candidate limit', async () => {
+  json.mockImplementation(async () => ({ ...config, rerank_provider: 'api', rerank_max_documents: 50 }));
+  render(<RetrievalProviderTab />);
+  const topK = await screen.findByLabelText('Kandidaten (top_k)');
+  const warning = /maximalen Kandidatenzahl des Rerankers \(50\)/;
+  fireEvent.change(topK, { target: { value: '50' } });
+  expect(screen.queryByText(warning)).toBeNull();
+  fireEvent.change(topK, { target: { value: '100' } });
+  expect(screen.getByText(warning)).toBeTruthy();
+  expect((screen.getByRole('button', { name: /Speichern/ }) as HTMLButtonElement).disabled).toBe(false);
+});

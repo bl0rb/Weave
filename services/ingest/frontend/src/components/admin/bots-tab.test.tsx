@@ -179,6 +179,50 @@ it('sends agent: null and leaves out documents without a space for a new bot', a
   const body = JSON.parse(mutation?.[1]?.body as string);
   expect(body.agent).toBeNull();
   expect(body.include_uncollected).toBe(false);
+  // New bots leave the hit counts to the central default.
+  expect(body.top_k).toBeNull();
+  expect(body.final_k).toBeNull();
+});
+
+it('leaves empty hit counts to the central default and checks final_k against top_k only when both are set', async () => {
+  render(<BotsTab />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Bot hinzufügen' }));
+
+  fireEvent.change(screen.getByRole('textbox', { name: /^Bot-ID/ }), { target: { value: 'k-bot' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Anzeigename' }), { target: { value: 'K Bot' } });
+  step(/Verhalten/);
+  fireEvent.change(screen.getByRole('textbox', { name: 'System-Prompt' }), { target: { value: 'Antworte normal.' } });
+  step(/Wissen$/);
+  fireEvent.click(screen.getByRole('switch', { name: 'Wissen durchsuchen' }));
+  const topK = screen.getByRole('spinbutton', { name: /^Top-K/ }) as HTMLInputElement;
+  const finalK = screen.getByRole('spinbutton', { name: /^Final-K/ }) as HTMLInputElement;
+  expect(topK.value).toBe('');
+  expect(topK.placeholder).toBe('Zentraler Standard');
+  expect(finalK.value).toBe('');
+
+  fireEvent.change(topK, { target: { value: '5' } });
+  fireEvent.change(finalK, { target: { value: '10' } });
+  expect(screen.getAllByText('Final-K darf nicht größer als Top-K sein.').length).toBeGreaterThan(0);
+  step(/Überprüfen/);
+  expect((screen.getByRole('button', { name: 'Bot speichern' }) as HTMLButtonElement).disabled).toBe(true);
+
+  // Switching the search off hides the fields but keeps the check: the values are still saved.
+  step(/^3 ?Wissen/);
+  fireEvent.click(screen.getByRole('switch', { name: 'Wissen durchsuchen' }));
+  step(/Überprüfen/);
+  expect(screen.getByRole('alert').textContent).toContain('Final-K darf nicht größer als Top-K sein.');
+  expect((screen.getByRole('button', { name: 'Bot speichern' }) as HTMLButtonElement).disabled).toBe(true);
+
+  step(/^3 ?Wissen/);
+  fireEvent.click(screen.getByRole('switch', { name: 'Wissen durchsuchen' }));
+  fireEvent.change(screen.getByRole('spinbutton', { name: /^Top-K/ }), { target: { value: '' } });
+  expect(screen.queryByText('Final-K darf nicht größer als Top-K sein.')).toBeNull();
+  step(/Überprüfen/);
+  fireEvent.click(screen.getByRole('button', { name: 'Bot speichern' }));
+  await waitFor(() => expect(json.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true));
+  const body = JSON.parse(json.mock.calls.find(([, init]) => init?.method === 'POST')?.[1]?.body as string);
+  expect(body.top_k).toBeNull();
+  expect(body.final_k).toBe(10);
 });
 
 it('sends the chosen LLM endpoint and the endpoints offered in the chat', async () => {

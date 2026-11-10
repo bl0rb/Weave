@@ -32,6 +32,27 @@ def test_bulk_bot_configs_use_one_snapshot_and_mask_credentials(monkeypatch):
     assert 'private-token' not in response.text
     assert response.json()[0]['n8n']['auth_token'] == '**********'
 
+def test_bot_configs_omit_empty_hit_counts_for_older_ingest(monkeypatch):
+    """An Ingest from before optional hit counts reads
+    `retrieval.get('top_k', 20)`; null would break its `int` field, an
+    absent key falls back to its default."""
+    from app.schemas.bot import BotConfig
+
+    bots = [BotConfig.model_validate({
+        'id': 'central', 'name': 'Central', 'model': {'provider': 'fake', 'model': 'x'},
+        'system_prompt': 'Assist.', 'retrieval': {'enabled': True},
+    }), BotConfig.model_validate({
+        'id': 'own', 'name': 'Own', 'model': {'provider': 'fake', 'model': 'x'},
+        'system_prompt': 'Assist.', 'retrieval': {'enabled': True, 'top_k': 30, 'final_k': 7},
+    })]
+    monkeypatch.setattr('app.api.internal.list_bots', lambda: bots)
+    response = client.get('/internal/bot-configs', headers=AUTH_HEADERS)
+    assert response.status_code == 200, response.text
+    central, own = (item['retrieval'] for item in response.json())
+    assert 'top_k' not in central and 'final_k' not in central
+    assert (own['top_k'], own['final_k']) == (30, 7)
+
+
 # --- GET /internal/bots -------------------------------------------------------
 
 

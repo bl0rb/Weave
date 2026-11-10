@@ -627,6 +627,18 @@ def test_resolve_top_k_and_final_k_use_request_overrides():
     assert search_service.resolve_final_k(request) == 2
 
 
+def test_resolve_final_k_default_is_clamped_to_top_k_but_explicit_is_not():
+    assert search_service.resolve_final_k(SearchRequest(query='x', top_k=3)) == min(settings.search_final_k, 3)
+    assert search_service.resolve_final_k(SearchRequest(query='x', top_k=3, final_k=7)) == 7
+
+
+def test_resolve_top_k_default_is_raised_to_explicit_final_k(monkeypatch):
+    monkeypatch.setattr(settings, 'search_top_k', 5)
+    assert search_service.resolve_top_k(SearchRequest(query='x', final_k=12)) == 12
+    assert search_service.resolve_top_k(SearchRequest(query='x', final_k=3)) == 5
+    assert search_service.resolve_top_k(SearchRequest(query='x', top_k=4, final_k=12)) == 4
+
+
 # --- search() end-to-end -----------------------------------------------------------
 
 
@@ -781,3 +793,37 @@ def test_cosine_distance_expression_is_typed_as_float():
 
     expr = Chunk.embedding.op('<=>', return_type=Float)(bindparam('v'))
     assert isinstance(expr.type, Float), f'expected Float, got {expr.type!r}'
+
+
+def test_refresh_control_plane_applies_and_clears_central_hit_count_defaults(monkeypatch):
+    import app.services.search as search_module
+
+    class _Response:
+        status_code = 200
+
+        def __init__(self, body: dict):
+            self._body = body
+
+        def json(self) -> dict:
+            return self._body
+
+    monkeypatch.setattr(settings, 'chat_config_base_url', 'http://ingest')
+    monkeypatch.setattr(settings, 'chat_config_service_token', 'token')
+    monkeypatch.setattr(settings, 'search_top_k', 20)
+    monkeypatch.setattr(settings, 'search_final_k', 5)
+    monkeypatch.setattr(search_module, '_ENV_SEARCH_DEFAULTS', {'search_top_k': 20, 'search_final_k': 5})
+
+    monkeypatch.setattr(search_module.httpx, 'get', lambda *a, **k: _Response({'search_top_k': 40, 'search_final_k': 10}))
+    search_module.refresh_control_plane()
+    assert (settings.search_top_k, settings.search_final_k) == (40, 10)
+
+    # An admin clearing the field (null) restores the environment default.
+    monkeypatch.setattr(search_module.httpx, 'get', lambda *a, **k: _Response({'search_top_k': None, 'search_final_k': None}))
+    search_module.refresh_control_plane()
+    assert (settings.search_top_k, settings.search_final_k) == (20, 5)
+
+    # An older Weave-Ingest that sends neither key leaves the values alone.
+    monkeypatch.setattr(settings, 'search_top_k', 33)
+    monkeypatch.setattr(search_module.httpx, 'get', lambda *a, **k: _Response({}))
+    search_module.refresh_control_plane()
+    assert settings.search_top_k == 33

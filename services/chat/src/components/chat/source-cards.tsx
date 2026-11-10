@@ -40,7 +40,7 @@ export function formatCollection(source: Source, t: Translator = translateDefaul
 }
 
 /**
- * A rerank score (0..1, BAAI/bge-reranker-v2-m3's sigmoid output) reads
+ * A rerank score (0..1, the cross-encoder's sigmoid output) reads
  * honestly as a percentage; an RRF rank-fusion score does not (~0.01–0.03,
  * not "1–3 %") — so this is shown only for `score_kind === 'rerank'`, and
  * `null` otherwise, including for an n8n source whose score semantics are

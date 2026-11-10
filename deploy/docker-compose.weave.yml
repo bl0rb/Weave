@@ -771,15 +771,12 @@ services:
       - weave_netbridge
 
   weave-reranker:
-    # Cohere/Jina-shaped POST /rerank for BAAI/bge-reranker-v2-m3 -- the
-    # one rerank model Matze prescribed. Also NOT available in fastembed
-    # 0.8.0 (checked experimentally: TextCrossEncoder.list_supported_models()
-    # lists exactly 6 cross-encoders, none of them this one -- only the
-    # smaller, older BAAI/bge-reranker-base), so this image loads it
-    # through sentence-transformers' CrossEncoder (CPU-only torch) instead.
-    # See services/reranker/README.md's "Warum nicht fastembed" for the
-    # full experiment, the ~2.3GB weight size and measured CPU-latency
-    # findings, and "Betriebshinweis" for what happens to search quality
+    # Cohere/Jina-shaped POST /rerank for an ONNX cross-encoder (default:
+    # onnx-community/gte-multilingual-reranker-base, int8), served through
+    # onnxruntime + tokenizers on CPU, no torch -- same pattern as
+    # weave-embeddings. See services/reranker/README.md for the model
+    # choice, the ~341MB weight size and measured CPU-latency findings,
+    # and "Betriebshinweis" for what happens to search quality
     # (silently, not an error) if this service is down or misconfigured
     # while weave-retrieval's RERANK_PROVIDER=api.
     security_opt:
@@ -792,7 +789,8 @@ services:
     ports:
       - ${RERANKER_PORT:-8007}:8000
     environment:
-      RERANKER_MODEL: ${RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}
+      RERANKER_MODEL: ${RERANKER_MODEL:-onnx-community/gte-multilingual-reranker-base}
+      RERANKER_ONNX_FILE: ${RERANKER_ONNX_FILE:-onnx/model_int8.onnx}
       # Empty, not `:?...is required` -- same reasoning as weave-embeddings'
       # EMBEDDINGS_API_TOKEN above: POST /rerank answers 503 per request
       # while this is unset (see services/reranker/app/main.py's own
@@ -804,7 +802,7 @@ services:
       RERANKER_THREADS: ${RERANKER_THREADS:-4}
       RERANKER_MAX_DOCUMENTS: ${RERANKER_MAX_DOCUMENTS:-50}
     volumes:
-      # Named volume for the ~2.3GB model weights (see that service's
+      # Named volume for the ~341MB model weights (see that service's
       # README "Docker") -- without it, every container recreation
       # re-downloads them from HuggingFace from scratch.
       - reranker_models:/data/model-cache:rw
@@ -813,10 +811,9 @@ services:
       # Dockerfile), so it is defined here instead -- same liveness-only
       # shape and reasoning as weave-embeddings' own healthcheck above (GET
       # /health answers immediately regardless of model-load state). The
-      # start_period here is roughly double weave-embeddings' own: the
-      # FIRST start downloads ~2.3GB of weights, about 5x weave-embeddings'
-      # ~448MiB ONNX download, which can take several minutes on a
-      # constrained network.
+      # start_period is generous: the FIRST start downloads the model
+      # weights (~341MB int8, ~1.26GB with the fp32 file), which can take
+      # several minutes on a constrained network.
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
       interval: 10s
       timeout: 5s

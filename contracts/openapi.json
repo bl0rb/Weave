@@ -4538,9 +4538,15 @@
             "type": "boolean"
           },
           "final_k": {
-            "default": 5,
-            "title": "Final K",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final K"
           },
           "grants": {
             "items": {
@@ -4596,6 +4602,11 @@
             "title": "Llm Endpoints",
             "type": "array"
           },
+          "memory": {
+            "default": true,
+            "title": "Memory",
+            "type": "boolean"
+          },
           "min_score": {
             "anyOf": [
               {
@@ -4650,6 +4661,21 @@
             "title": "Retrieval Filters",
             "type": "object"
           },
+          "router_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "rules",
+                  "llm"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Router Mode"
+          },
           "runtime_rejected": {
             "default": false,
             "title": "Runtime Rejected",
@@ -4696,9 +4722,15 @@
             "type": "integer"
           },
           "top_k": {
-            "default": 20,
-            "title": "Top K",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top K"
           },
           "uncertainty_hint": {
             "default": true,
@@ -4871,11 +4903,17 @@
             "type": "boolean"
           },
           "final_k": {
-            "default": 5,
-            "maximum": 100.0,
-            "minimum": 1.0,
-            "title": "Final K",
-            "type": "integer"
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final K"
           },
           "grants": {
             "items": {
@@ -4934,6 +4972,11 @@
             "maxItems": 50,
             "title": "Llm Endpoints",
             "type": "array"
+          },
+          "memory": {
+            "default": true,
+            "title": "Memory",
+            "type": "boolean"
           },
           "min_score": {
             "anyOf": [
@@ -4997,6 +5040,21 @@
             "title": "Retrieval Filters",
             "type": "object"
           },
+          "router_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "rules",
+                  "llm"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Router Mode"
+          },
           "show_sources": {
             "default": true,
             "title": "Show Sources",
@@ -5040,11 +5098,17 @@
             "type": "integer"
           },
           "top_k": {
-            "default": 20,
-            "maximum": 100.0,
-            "minimum": 1.0,
-            "title": "Top K",
-            "type": "integer"
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top K"
           },
           "uncertainty_hint": {
             "default": true,
@@ -5235,9 +5299,15 @@
             "title": "Disclaimer"
           },
           "final_k": {
-            "default": 5,
-            "title": "Final K",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final K"
           },
           "id": {
             "title": "Id",
@@ -5282,6 +5352,11 @@
             },
             "title": "Llm Endpoints",
             "type": "array"
+          },
+          "memory": {
+            "default": true,
+            "title": "Memory",
+            "type": "boolean"
           },
           "min_score": {
             "anyOf": [
@@ -5337,6 +5412,21 @@
             "title": "Retrieval Filters",
             "type": "object"
           },
+          "router_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "rules",
+                  "llm"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Router Mode"
+          },
           "show_sources": {
             "default": true,
             "title": "Show Sources",
@@ -5380,9 +5470,15 @@
             "type": "integer"
           },
           "top_k": {
-            "default": 20,
-            "title": "Top K",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top K"
           },
           "uncertainty_hint": {
             "default": true,
@@ -5878,11 +5974,17 @@
             "type": "boolean"
           },
           "final_k": {
-            "default": 5,
-            "maximum": 100.0,
-            "minimum": 1.0,
-            "title": "Final K",
-            "type": "integer"
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final K"
           },
           "grants": {
             "items": {
@@ -5935,6 +6037,11 @@
             "maxItems": 50,
             "title": "Llm Endpoints",
             "type": "array"
+          },
+          "memory": {
+            "default": true,
+            "title": "Memory",
+            "type": "boolean"
           },
           "min_score": {
             "anyOf": [
@@ -5998,6 +6105,21 @@
             "title": "Retrieval Filters",
             "type": "object"
           },
+          "router_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "rules",
+                  "llm"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Router Mode"
+          },
           "show_sources": {
             "default": true,
             "title": "Show Sources",
@@ -6041,11 +6163,17 @@
             "type": "integer"
           },
           "top_k": {
-            "default": 20,
-            "maximum": 100.0,
-            "minimum": 1.0,
-            "title": "Top K",
-            "type": "integer"
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top K"
           },
           "uncertainty_hint": {
             "default": true,
@@ -8569,6 +8697,28 @@
             "title": "Rerank Threads",
             "type": "integer"
           },
+          "search_final_k": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Final K"
+          },
+          "search_top_k": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Top K"
+          },
           "semantic_weight": {
             "title": "Semantic Weight",
             "type": "number"
@@ -8668,6 +8818,28 @@
           "rerank_threads": {
             "title": "Rerank Threads",
             "type": "integer"
+          },
+          "search_final_k": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Final K"
+          },
+          "search_top_k": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Top K"
           },
           "semantic_weight": {
             "title": "Semantic Weight",
@@ -8824,6 +8996,32 @@
             "minimum": 1.0,
             "title": "Rerank Threads",
             "type": "integer"
+          },
+          "search_final_k": {
+            "anyOf": [
+              {
+                "maximum": 200.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Final K"
+          },
+          "search_top_k": {
+            "anyOf": [
+              {
+                "maximum": 200.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Top K"
           },
           "semantic_weight": {
             "default": 0.5,
@@ -14440,6 +14638,30 @@
         ]
       }
     },
+    "/api/v1/bots/llm-endpoints": {
+      "get": {
+        "description": "The LLM endpoints an owner can pick for their bot -- names and models\nonly, never addresses or keys. Only for bot owners and admins.",
+        "operationId": "list_owner_llm_endpoints_api_v1_bots_llm_endpoints_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Owner Llm Endpoints Api V1 Bots Llm Endpoints Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Owner Llm Endpoints",
+        "tags": [
+          "managed-bots-owner"
+        ]
+      }
+    },
     "/api/v1/bots/{bot_id}": {
       "patch": {
         "description": "Owners maintain the content and the users of their bot; the\nconnection and the owners themselves stay with the administrators.",
@@ -14488,6 +14710,102 @@
           }
         },
         "summary": "Update Owned Bot",
+        "tags": [
+          "managed-bots-owner"
+        ]
+      }
+    },
+    "/api/v1/bots/{bot_id}/config": {
+      "get": {
+        "description": "Every setting of a bot the caller owns, as the admin editor shows it.",
+        "operationId": "get_owned_bot_config_api_v1_bots__bot_id__config_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bot_id",
+            "required": true,
+            "schema": {
+              "title": "Bot Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedBotAdminResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Owned Bot Config",
+        "tags": [
+          "managed-bots-owner"
+        ]
+      },
+      "put": {
+        "description": "An owner saves every setting an administrator can, with the same\nchecks (spaces the owner can read, valid endpoints, valid agent\nblock). Kept from the bot: the n8n connection and its token, the\nuncollected-documents switch and the owners themselves. The body is\nthe admin editor's ManagedBotUpdate; the kept fields are filled in from\nthe bot BEFORE validation, since the owner never sees the connection.",
+        "operationId": "update_owned_bot_config_api_v1_bots__bot_id__config_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bot_id",
+            "required": true,
+            "schema": {
+              "title": "Bot Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedBotAdminResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Owned Bot Config",
         "tags": [
           "managed-bots-owner"
         ]

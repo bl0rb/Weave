@@ -65,8 +65,8 @@ class RetrievalConfig(BaseModel):
 
     enabled: bool = False
     filters: RetrievalFilters = Field(default_factory=RetrievalFilters)
-    top_k: int = 20
-    final_k: int = 5
+    top_k: int | None = None
+    final_k: int | None = None
     rerank: bool = True
     memory: bool = True
     query_rewrite: bool | None = None

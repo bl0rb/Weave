@@ -76,9 +76,9 @@ unter Helm den Service-Namen `<fullname>-tools-mcp`.
 | REST | `POST /api/v1/tools/search` | `X-Tools-Service-Token` **und** `Authorization` |
 | REST | `GET /health` | keine |
 
-Body von `POST /api/v1/tools/search`: `{ query, collection?, top_k? }` —
-`query` hat `min_length=1`, `top_k` ist auf `1..200` begrenzt
-(`app/schemas/tools.py`). Ein `team`-, `user_id`- oder
+Body von `POST /api/v1/tools/search`: `{ query, collection?, top_k?, final_k? }` —
+`query` hat `min_length=1`, `top_k`/`final_k` sind auf `1..200` begrenzt,
+`final_k > top_k` ist ein `422` (`app/schemas/tools.py`). Ein `team`-, `user_id`- oder
 `allowed_collections`-Feld gibt es bewusst nicht; jeder zusätzliche Schlüssel
 wird von pydantics Default `extra='ignore'` verworfen, bevor der Handler läuft,
 und würde ohnehin nie zur Scope-Bestimmung herangezogen.
@@ -86,7 +86,7 @@ und würde ohnehin nie zur Scope-Bestimmung herangezogen.
 **Output:**
 
 - `GET /api/v1/tools/collections`: `[{ slug, name, description }, ...]`
-- `POST /api/v1/tools/search`: `{ query, results: [{ text, source: { document, document_id, chunk_id, page, collection } }] }`
+- `POST /api/v1/tools/search`: `{ query, results: [{ rank, text, scores: { vector, fulltext, rrf, rerank }, source: { document, document_id, chunk_id, page, collection, heading_path, document_version, page_start, page_end, chunk_index, title, language, document_type, tags, source_kind, source_url, uploaded_at, fetched_at, legal_status } }], trace? }` (siehe `docs/api-referenz.md`)
 - Beide MCP-Tools liefern dieselben Formen als einfache Dicts (`model_dump()`)
 - `GET /health`: `{ "status": "healthy" }`
 

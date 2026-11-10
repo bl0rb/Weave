@@ -861,8 +861,8 @@ reranker:
     allowPrivilegeEscalation: false
     capabilities:
       drop: ["ALL"]
-  # Wie bei embeddings nur Liveness, mit noch mehr Luft: der erste Start
-  # laedt ~2,3 GB Gewichte.
+  # Wie bei embeddings, mit mehr Luft: der erste Start laedt die
+  # Gewichte (~341 MB int8, ~1,26 GB mit der fp32-Datei).
   probes:
     liveness:
       enabled: true

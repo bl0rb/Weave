@@ -8,7 +8,7 @@ import pytest
 
 from app.api.internal import _summary
 from app.core.config import settings
-from app.services.botconfig import BotConfigError, BotNotFoundError, list_bots, load_bot
+from app.services.botconfig import BotConfigError, BotNotFoundError, list_bots, list_local_bots, load_bot
 
 _MINIMAL_BOT = """
 id: minimal
@@ -203,6 +203,37 @@ def test_centrally_managed_llm_bot_is_projected_with_retrieval(bots_dir, monkeyp
     assert managed.retrieval.filters.department == 'legal'
     assert managed.retrieval.final_k == 4
     assert managed.n8n is None
+
+
+def test_local_bot_with_inverted_or_large_hit_counts_does_not_fail_the_roster(bots_dir):
+    # Before optional hit counts these loaded unchecked (Weave-Retrieval
+    # rejects them per turn); they must not fail the roster/health now.
+    (bots_dir / 'minimal.yaml').write_text(_MINIMAL_BOT, encoding='utf-8')
+    (bots_dir / 'odd.yaml').write_text(
+        _MINIMAL_BOT.replace('id: minimal', 'id: odd') + 'retrieval:\n  top_k: 10\n  final_k: 20\n', encoding='utf-8',
+    )
+    (bots_dir / 'big.yaml').write_text(
+        _MINIMAL_BOT.replace('id: minimal', 'id: big') + 'retrieval:\n  top_k: 300\n', encoding='utf-8',
+    )
+    bots = {bot.id: bot for bot in list_local_bots()}
+    assert (bots['odd'].retrieval.top_k, bots['odd'].retrieval.final_k) == (10, 20)
+    assert bots['big'].retrieval.top_k == 300
+    assert {bot.id for bot in list_bots()} == {'minimal', 'odd', 'big'}
+
+
+def test_centrally_managed_bot_without_hit_counts_leaves_them_to_retrieval(bots_dir, monkeypatch):
+    (bots_dir / 'minimal.yaml').write_text(_MINIMAL_BOT, encoding='utf-8')
+    monkeypatch.setattr('app.services.botconfig.fetch_managed_bots', lambda: [{
+        'id': 'central-k', 'name': 'Central K', 'kind': 'llm', 'system_prompt': 'Answer.',
+        'retrieval_enabled': True, 'top_k': None, 'final_k': 8,
+        'teams': [], 'collections': [], 'require_sources': True, 'no_context_reply': 'Nichts.',
+    }, {
+        'id': 'older-ingest', 'name': 'Older Ingest', 'kind': 'llm', 'system_prompt': 'Answer.',
+        'teams': [], 'collections': [], 'require_sources': True, 'no_context_reply': 'Nichts.',
+    }])
+    bots = {bot.id: bot for bot in list_bots()}
+    assert (bots['central-k'].retrieval.top_k, bots['central-k'].retrieval.final_k) == (None, 8)
+    assert (bots['older-ingest'].retrieval.top_k, bots['older-ingest'].retrieval.final_k) == (None, None)
 
 
 def test_centrally_managed_llm_bot_projects_agent_config(bots_dir, monkeypatch):

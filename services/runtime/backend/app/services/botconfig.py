@@ -296,8 +296,9 @@ def _managed_bot(raw: dict) -> BotConfig:
                 'enabled': bool(raw.get('retrieval_enabled', False)) if is_llm else False,
                 'filters': raw.get('retrieval_filters') or {},
                 'collections': raw.get('collections') or [],
-                'top_k': raw.get('top_k', 20),
-                'final_k': raw.get('final_k', 5),
+                # Absent/None = not sent; Weave-Retrieval uses its central value.
+                'top_k': raw.get('top_k'),
+                'final_k': raw.get('final_k'),
                 'rerank': bool(raw.get('rerank', True)),
                 # Absent (older Ingest) = use the memory while it is on.
                 'memory': bool(raw.get('memory', True)),

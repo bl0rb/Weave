@@ -207,7 +207,7 @@ def _runtime_roster(db: Session | None = None) -> list[ManagedBotAdminResponse] 
             id=bot_id, kind=kind, name=name, description=config.get('description'), enabled=True,
             webhook_url=n8n.get('webhook_url'), system_prompt=config.get('system_prompt'), temperature=model.get('temperature'),
             retrieval_enabled=bool(retrieval.get('enabled')), retrieval_filters=retrieval.get('filters') or {},
-            top_k=retrieval.get('top_k', 20), final_k=retrieval.get('final_k', 5), rerank=bool(retrieval.get('rerank', True)),
+            top_k=retrieval.get('top_k'), final_k=retrieval.get('final_k'), rerank=bool(retrieval.get('rerank', True)),
             include_uncollected=bool(retrieval.get('include_uncollected', True)), streaming=bool(n8n.get('streaming', False)),
             has_auth_token=bool(n8n.get('auth_token')), timeout_seconds=n8n.get('timeout_seconds', 120),
             public=not (permissions.get('teams') or permissions.get('users')) if permissions.get('public') is None

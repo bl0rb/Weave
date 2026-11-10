@@ -464,8 +464,8 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r services/reranker/requirements.txt
 
-      # tests/test_rerank_content.py loads the real BAAI/bge-reranker-v2-m3
-      # weights (~2.3 GB). This lane has no interest in paying that download
+      # tests/test_rerank_content.py loads the real ONNX reranker
+      # weights (~341 MB). This lane has no interest in paying that download
       # per commit, which is exactly what the skip switch exists for.
       - name: Run test suite
         env:

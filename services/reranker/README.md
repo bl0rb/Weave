@@ -1,6 +1,8 @@
 # Weave-Reranker
 
-Eigenstaendiger Rerank-Server auf CPU fuer `BAAI/bge-reranker-v2-m3` -- die
+Eigenstaendiger Rerank-Server auf CPU fuer einen ONNX-Cross-Encoder
+(Standard: `Alibaba-NLP/gte-multilingual-reranker-base` als int8-Export
+`onnx-community/gte-multilingual-reranker-base`) -- die
 eine Instanz, gegen die Weave-Retrievals `HttpReranker` (provider `'api'`,
 `backend/app/services/reranker.py` in diesem Repo) spricht, wenn ein
 Deployment echtes Reranking statt der unrerankten RRF-Reihenfolge will.
@@ -46,92 +48,63 @@ veraendert -- das folgende ist Feld fuer Feld daraus uebernommen:
   nicht konfiguriert") faellt unter die generischen 5xx-Klasse und darf
   von einem Client mit Backoff wiederholt werden.
 
-## Warum nicht fastembed
+## Modellwahl und Laufzeit
 
-Experimentell mit `fastembed==0.8.0` geprueft (siehe
-`fastembed.rerank.cross_encoder.TextCrossEncoder.list_supported_models()`):
+Der Dienst laedt eine ONNX-Datei und die `tokenizer.json` per
+`hf_hub_download` und rechnet mit `onnxruntime` + `tokenizers` auf der CPU
+-- dasselbe Muster wie `services/embeddings`, ohne torch,
+transformers oder sentence-transformers. Der eine Logit pro Paar wird per
+Sigmoid auf 0..1 abgebildet, wie es `CrossEncoder` vorher tat.
 
-```
-Xenova/ms-marco-MiniLM-L-6-v2
-Xenova/ms-marco-MiniLM-L-12-v2
-BAAI/bge-reranker-base
-jinaai/jina-reranker-v1-tiny-en
-jinaai/jina-reranker-v1-turbo-en
-jinaai/jina-reranker-v2-base-multilingual
-```
+Standard ist `Alibaba-NLP/gte-multilingual-reranker-base` (306M Parameter,
+Apache-2.0, mehrsprachig inkl. Deutsch, von TEI auf CPU unterstuetzt). Das
+Original-Repo enthaelt nur safetensors und braucht `trust_remote_code`,
+deshalb kommt die Datei aus dem Export `onnx-community/gte-multilingual-
+reranker-base`. `RERANKER_ONNX_FILE` waehlt die Variante:
 
-`BAAI/bge-reranker-v2-m3` ist NICHT dabei -- nur die kleinere
-`bge-reranker-base` (nicht die vorgegebene Version). Deshalb laedt dieser
-Service das Modell stattdessen ueber `sentence-transformers`' `CrossEncoder`
-(ein duenner Wrapper um ein normales HF-`transformers`-Modell mit
-Sequence-Classification-Head), CPU-only via `torch`.
+| Datei | Groesse |
+|---|---:|
+| `onnx/model_int8.onnx` (Standard) | ~341 MB |
+| `onnx/model.onnx` (fp32) | ~1,26 GB |
 
-(Am Rande, fuer den Embeddings-Service desselben Repos: `intfloat/
-multilingual-e5-small` fehlt ebenso in `fastembed.TextEmbedding.
-list_supported_models()` -- von 30 gelisteten Modellen ist nur
-`intfloat/multilingual-e5-large` vorhanden, nicht die vorgegebene `-small`-
-Variante. Betrifft nicht diesen Service, aber denselben
-Verfuegbarkeits-Vorbehalt aus der Aufgabenstellung.)
+Jedes andere Cross-Encoder-Repo mit einem ONNX-Graphen, der einen Logit
+pro Paar liefert, und einer `tokenizer.json` im Wurzelverzeichnis
+funktioniert ebenso, z. B. das bisherige Modell als
+`RERANKER_MODEL=onnx-community/bge-reranker-v2-m3-ONNX` (int8 ~571 MB).
 
-**Konsequenz fuer die Imagegroesse**: `torch` (CPU-Wheel) + `transformers` +
-`sentence-transformers` bringen zusammen rund **1,0 GB** an installierten
-Paketen mit (gemessen: `torch` allein 529 MB, `transformers` 108 MB, Rest --
-`scipy`, `scikit-learn`, `numpy`, `huggingface_hub`, `tokenizers`,
-`safetensors`, `sentence_transformers` selbst -- rundet auf ca. 1,0 GB
-Site-Packages). Ein reiner `fastembed`+`onnxruntime`-Stack waere deutlich
-kleiner gewesen (onnxruntime allein liegt bei ca. 150-200 MB) -- dieser
-Mehrpreis ist der direkte Preis dafuer, GENAU das vorgegebene Modell zu
-nehmen statt eigenmaechtig auf `bge-reranker-base` auszuweichen, nur weil
-DAS in fastembed verfuegbar waere.
+Python-Pakete: ~250 MB statt ~1,5 GB mit torch (gemessen im venv).
 
-Die Modellgewichte selbst (`model.safetensors`, fp32) sind **2,27 GB** --
-passend zur XLM-RoBERTa-large-Klasse mit ca. 568M Parametern, die die
-Aufgabenstellung nennt. Sie werden NICHT ins Image gebacken, sondern beim
-ersten Start ueber den Hugging-Face-Hub-Cache heruntergeladen und in einem
-Volume persistiert (siehe Dockerfile und ".env.example").
+Gemessen in einer 4-vCPU-Xeon-Sandbox (2,1 GHz, `RERANKER_THREADS=4`,
+`RERANKER_BATCH_SIZE=16`), 20 deutsche Dokumente mit ~140 Tokens je Paar,
+Median aus 7 Laeufen. Absolutwerte sind auf euren Nodes anders, die
+Verhaeltnisse tragen:
 
-## Gemessene CPU-Laufzeit
+| Variante | 20 Dokumente | Peak-RSS |
+|---|---:|---:|
+| gte int8 (Standard) | ~0,86 s | ~1,5 GB |
+| gte fp32 | ~2,1 s | ~2,5 GB |
+| bge-reranker-v2-m3 int8 | ~1,6 s | ~1,4 GB |
 
-Gemessen auf dieser Maschine (Apple M4, 10 Kerne, `RERANKER_THREADS=4`,
-warmes Modell, `RERANKER_BATCH_SIZE=16`, ein realistisches
-Frage/Dokument-Paar mit deutschem Text):
+Ein Cross-Encoder bewertet jedes Query/Dokument-Paar EINZELN; die Kosten
+wachsen linear mit der Dokumentanzahl.
 
-| Dokumente | Gesamtzeit | Pro Dokument |
-|-----------|-----------:|-------------:|
-| 1         | ~0,07 s    | ~70 ms       |
-| 10        | ~0,29 s    | ~29 ms       |
-| 20        | ~0,48 s    | ~24 ms       |
-
-Modell-Ladezeit: ~5 s bei warmem Hugging-Face-Cache; beim allerersten Start
-(kalter Download der 2,27 GB) je nach Bandbreite deutlich laenger --
-`GET /health` antwortet in dieser Zeit trotzdem sofort mit `"warm": false`
-(siehe "Betriebshinweis" unten), nur `POST /rerank` wartet (bis zu 20s,
-danach 503).
-
-Ein Cross-Encoder wie dieser bewertet jedes Query/Dokument-Paar EINZELN --
-anders als ein Bi-Encoder-Embedding gibt es hier keinen Weg, die Kosten
-wegzubatchen. Die Kosten wachsen linear mit der Dokumentanzahl (die kleine
-Fixkosten-Amortisierung von N=10 zu N=20 pro Dokument ist Batching-
-Overhead, kein Sprung in der Grundcharakteristik).
+**Scores verschieben sich beim Modellwechsel.** gte vergibt unpassenden
+Dokumenten deutlich hoehere Werte als bge-reranker-v2-m3 (in obigem
+Testsatz im Mittel ~0,27 statt ~0,02). Wer in Bots `min_score`,
+`clarify_below` oder `weak_context_below` gesetzt hat, muss diese Schwellen
+neu einstellen.
 
 **Betriebsempfehlung fuer `RERANKER_MAX_DOCUMENTS`**: Weave-Retrievals
-eigene Pipeline reicht laut `HttpReranker`s Doku bereits typischerweise
-"Top 20" Kandidaten zum Reranking durch (RRF-Fusion -> Top 20 ->
-`final_k`-Kuerzung auf z.B. 5 Ergebnisse). Bei den gemessenen ~24-30 ms pro
-Dokument liegt genau dieser realistische Fall (20 Dokumente) bei knapp
-einer halben Sekunde zusaetzlicher Latenz -- gut vertretbar. Der Default
-`RERANKER_MAX_DOCUMENTS=50` liegt bewusst mit Sicherheitsabstand DARUEBER
-(bei linearer Fortschreibung ca. 1,2 s Worst-Case bei 50 Dokumenten), nicht
-darunter -- als Obergrenze fuer einen Ausreisser-Request, nicht als
-Zielwert. Sendet eure Suche routinemaessig mehr als ~20-30 Kandidaten zum
-Reranking, zieht `RERANKER_MAX_DOCUMENTS` eher enger statt den Wert einfach
-zu erhoehen: die Kosten skalieren linear und ohne Cap frisst ein einzelner
-Suchrequest beliebig viel CPU-Zeit.
+Pipeline reicht typischerweise die Top 20 Kandidaten zum Reranking durch.
+Der Default `RERANKER_MAX_DOCUMENTS=50` ist eine Obergrenze fuer
+Ausreisser, kein Zielwert. Sendet eure Suche routinemaessig mehr als ~20-30
+Kandidaten, zieht den Wert eher enger: die Kosten skalieren linear und
+ohne Cap frisst ein einzelner Suchrequest beliebig viel CPU-Zeit.
 
 ## Kuerzung statt Ablehnung
 
-Ein Query/Dokument-Paar laenger als 512 Tokens (bge-reranker-v2-m3s eigenes
-Tokenizer-Limit, siehe `app/services/model.py`) wird vom Tokenizer
+Ein Query/Dokument-Paar laenger als 512 Tokens (`_MAX_SEQUENCE_LENGTH` in
+`app/services/model.py`) wird vom Tokenizer
 GEKUERZT, nicht mit einem Fehler abgelehnt -- ein leicht "blinder" Score
 fuer ein zu langes Dokument ist besser als es kommentarlos aus der
 Ergebnisliste des Callers verschwinden zu lassen. Siehe
@@ -173,20 +146,20 @@ Siehe `.env.example` fuer alle Variablen mit Begruendung. Kurzfassung:
 
 | Variable | Default | Bedeutung |
 |---|---|---|
-| `RERANKER_MODEL` | `BAAI/bge-reranker-v2-m3` | Vorgegeben, nicht aendern |
+| `RERANKER_MODEL` | `onnx-community/gte-multilingual-reranker-base` | HF-Repo mit ONNX-Datei und `tokenizer.json` |
+| `RERANKER_ONNX_FILE` | `onnx/model_int8.onnx` | ONNX-Datei im Repo, siehe Modellwahl |
 | `RERANKER_API_TOKEN` | *(leer)* | **Pflicht** -- fail-closed, siehe oben |
-| `RERANKER_BATCH_SIZE` | `16` | An `CrossEncoder.predict(batch_size=...)` |
-| `RERANKER_THREADS` | `4` | An `torch.set_num_threads(...)` |
+| `RERANKER_BATCH_SIZE` | `16` | Paare pro onnxruntime-Durchlauf |
+| `RERANKER_THREADS` | `4` | onnxruntime `intra_op_num_threads` |
 | `RERANKER_CACHE_DIR` | `./.cache` | HF-Hub-Cache-Verzeichnis fuer die Modellgewichte |
 | `RERANKER_MAX_DOCUMENTS` | `50` | Harte Obergrenze, siehe Betriebsempfehlung oben |
 
 ## Lokal starten
 
 ```bash
-cd reranker
-python3.12 -m venv .venv
-.venv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
-.venv/bin/pip install -r requirements.in
+cd services/reranker
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 cp .env.example .env   # und RERANKER_API_TOKEN setzen
 .venv/bin/uvicorn app.main:app --reload
 ```
@@ -220,4 +193,4 @@ docker run -p 8000:8000 \
 ```
 
 Das Cache-Volume ist wichtig: ohne es laedt jeder Container-Neustart die
-2,27 GB Modellgewichte erneut von Hugging Face herunter.
+Modellgewichte (~341 MB int8) erneut von Hugging Face herunter.

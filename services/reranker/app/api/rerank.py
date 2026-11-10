@@ -27,7 +27,7 @@ router = APIRouter()
 # search finally gives up. A short wait still covers the one case worth
 # covering -- a request arriving in the moment right after startup while
 # the model is a heartbeat away from ready. The cold start itself (a
-# ~2.3GB download) is the healthcheck's job, not a request's.
+# cold weight download) is the healthcheck's job, not a request's.
 _MODEL_WAIT_SECONDS = 1.0
 
 

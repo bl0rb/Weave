@@ -26,6 +26,7 @@ Alle Antworten sind JSON, sofern nicht anders angegeben (Streaming-Endpunkte lie
 | Über einen OpenAI-kompatiblen Client chatten | Weave-API | `GET /v1/models`, `POST /v1/chat/completions` |
 | Verfügbare Bots auflisten / Details ansehen | Weave-API | `GET /v1/bots`, `GET /v1/bots/{bot_id}` |
 | Wissensbereiche sehen, die ich lesen darf | Weave-API | `GET /v1/collections` |
+| In meinen lesbaren Wissensbereichen suchen (Treffer statt Bot-Antwort) | Weave-API | `POST /v1/search` |
 | Eigene Konversationen einsehen/löschen | Weave-API | `GET /v1/conversations`, `DELETE /v1/conversations/{id}` |
 | Eigenes Profil / UI-Sprache lesen und setzen | Weave-API | `GET /v1/me`, `PUT /v1/me/locale` |
 | Eigene API-Tokens erstellen, auflisten, widerrufen | Weave-API | `GET/POST /v1/me/tokens`, `DELETE /v1/me/tokens/{id}` |
@@ -238,6 +239,52 @@ curl -s https://weave.example.com/v1/collections \
   { "slug": "vertragsvorlagen", "name": "Vertragsvorlagen", "description": "…", "public": false }
 ]
 ```
+
+#### `POST /v1/search`
+
+Hybride Suche über die Wissensbereiche, die der Aufrufer lesen darf — für Clients, die Treffer statt einer Bot-Antwort wollen. Gleiches Antwortformat wie `POST /api/v1/tools/search` (Weave-Tools). Die Rechte kommen ausschließlich aus den eigenen Zugangsdaten; eine `collection` außerhalb davon liefert ein leeres Ergebnis.
+
+| Feld | Typ | Pflicht | Bedeutung |
+|---|---|---|---|
+| `query` | `string`, 1–2000 Zeichen | ja | Suchtext |
+| `collection` | `string \| null` | nein | grenzt auf einen Wissensbereich ein — nur wirksam innerhalb der eigenen Rechte |
+| `top_k` | `int`, 1–50 | nein | Kandidatenzahl pro Suchweg, Default dienstseitig |
+| `final_k` | `int`, 1–50 | nein | Trefferzahl nach dem Reranking; darf ein gesetztes `top_k` nicht übersteigen (sonst `422`). Ohne `top_k` hebt der Dienst die Kandidatenzahl auf mindestens `final_k` an. Fehlt es, gilt der Dienst-Default, höchstens aber `top_k` |
+
+```bash
+curl -s -X POST https://weave.example.com/v1/search \
+  -H "Authorization: Bearer $WEAVE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Kündigungsfrist", "top_k": 20, "final_k": 5}'
+```
+
+**Antwort (Beispiel)**
+
+```json
+{
+  "query": "Kündigungsfrist",
+  "results": [
+    {
+      "rank": 1,
+      "text": "Die ordentliche Kündigungsfrist beträgt …",
+      "scores": { "vector": 0.71, "fulltext": 0.12, "rrf": 0.031, "rerank": 0.92 },
+      "source": {
+        "document": "Vertragsvorlage.pdf", "document_id": "doc-123", "chunk_id": 4, "page": "3", "collection": "vertragsvorlagen",
+        "heading_path": ["Arbeitsvertrag", "§ 8 Kündigung"], "document_version": 2, "page_start": 3, "page_end": 3,
+        "chunk_index": 17, "title": "Vertragsvorlage Arbeitsvertrag", "language": "de", "document_type": "vorlage",
+        "tags": ["hr"], "source_kind": "upload", "source_url": null, "uploaded_at": "2026-03-02T09:14:00Z",
+        "fetched_at": null, "legal_status": null
+      }
+    }
+  ],
+  "trace": {
+    "top_k": 20, "final_k": 5, "vector_candidates": 20, "fulltext_candidates": 8, "fused": 24, "reranked": 24,
+    "returned": 5, "rerank_error": false, "timings_ms": { "embed": 12.3, "vector_search": 8.1, "fulltext_search": 3.4, "fuse": 0.2, "rerank": 95.0 }
+  }
+}
+```
+
+Jeder Treffer enthält neben `text` seinen `rank` (1-basierte Position nach Reranking), die `scores` der einzelnen Suchstufen (`vector`, `fulltext`, `rrf`, `rerank` — jeweils `null`, wenn die Stufe den Treffer nicht bewertet hat, z. B. kein Volltext-Treffer oder Reranking übersprungen) und in `source` weitere Metadaten: `heading_path` (Überschriftenpfad), `document_version`, `page_start`/`page_end`, `chunk_index`, `title`, `language`, `document_type`, `tags`, `source_kind`, `source_url`, `uploaded_at`, `fetched_at`, `legal_status` — alle optional, `null`/leer, wenn nicht vorhanden; `source_url` nur als `http(s)`-Link. `trace` fasst die Suche zusammen (effektive `top_k`/`final_k`, Kandidaten pro Suchweg, Anzahl nach Fusion/Reranking, `rerank_error`, Laufzeiten in ms) und ist `null`, wenn Weave-Retrieval keinen Trace liefert.
 
 ### Chat
 
@@ -474,7 +521,7 @@ Weave-Tools hat keine eigene Datenbank: Jede Antwort wird live bei Weave-API/Wea
 
 ### MCP-Server
 
-Endpunkt: `POST {MCP-Basis-URL}/mcp` (Streamable-HTTP-Transport). Tools: `list_collections()` und `search(query, collection=None, top_k=None)`. Beide lesen die Rechte ausschließlich aus dem `Authorization`-Header des jeweiligen Aufrufs — es gibt keinen `team`/`user_id`-Parameter, den ein Aufrufer setzen könnte.
+Endpunkt: `POST {MCP-Basis-URL}/mcp` (Streamable-HTTP-Transport). Tools: `list_collections()` und `search(query, collection=None, top_k=None, final_k=None)` (Antwortformat wie beim REST-Spiegel `POST /api/v1/tools/search`). Beide lesen die Rechte ausschließlich aus dem `Authorization`-Header des jeweiligen Aufrufs — es gibt keinen `team`/`user_id`-Parameter, den ein Aufrufer setzen könnte.
 
 Beispiel mit einem MCP-Python-Client:
 
@@ -531,14 +578,15 @@ Hybride Suche über die eigenen lesbaren Collections.
 |---|---|---|---|
 | `query` | `string`, min. 1 Zeichen | ja | Suchtext |
 | `collection` | `string \| null` | nein | grenzt auf eine Collection ein — nur wirksam innerhalb der eigenen Rechte |
-| `top_k` | `int`, 1–200 | nein | Trefferzahl, Default dienstseitig |
+| `top_k` | `int`, 1–200 | nein | Kandidatenzahl pro Suchweg, Default dienstseitig |
+| `final_k` | `int`, 1–200 | nein | Trefferzahl nach dem Reranking; darf ein gesetztes `top_k` nicht übersteigen (sonst `422`). Ohne `top_k` hebt der Dienst die Kandidatenzahl auf mindestens `final_k` an. Fehlt es, gilt der Dienst-Default, höchstens aber `top_k` |
 
 ```bash
 curl -s -X POST https://tools.example.com/api/v1/tools/search \
   -H "X-Tools-Service-Token: $TOOLS_SERVICE_TOKEN" \
   -H "Authorization: Bearer $WEAVE_TOOLS_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"query": "Kündigungsfrist", "top_k": 5}'
+  -d '{"query": "Kündigungsfrist", "top_k": 20, "final_k": 5}'
 ```
 
 ```python
@@ -549,24 +597,38 @@ resp = requests.post(
         "Authorization": f"Bearer {WEAVE_TOOLS_TOKEN}",
         "Content-Type": "application/json",
     },
-    json={"query": "Kündigungsfrist", "top_k": 5},
+    json={"query": "Kündigungsfrist", "top_k": 20, "final_k": 5},
 )
 print(resp.json())
 ```
 
-**Antwort (Beispiel, gekürzt)**
+**Antwort (Beispiel)**
 
 ```json
 {
   "query": "Kündigungsfrist",
   "results": [
     {
+      "rank": 1,
       "text": "Die ordentliche Kündigungsfrist beträgt …",
-      "source": { "document": "Vertragsvorlage", "document_id": "doc-123", "chunk_id": 4, "page": "3", "collection": "vertragsvorlagen" }
+      "scores": { "vector": 0.71, "fulltext": 0.12, "rrf": 0.031, "rerank": 0.92 },
+      "source": {
+        "document": "Vertragsvorlage.pdf", "document_id": "doc-123", "chunk_id": 4, "page": "3", "collection": "vertragsvorlagen",
+        "heading_path": ["Arbeitsvertrag", "§ 8 Kündigung"], "document_version": 2, "page_start": 3, "page_end": 3,
+        "chunk_index": 17, "title": "Vertragsvorlage Arbeitsvertrag", "language": "de", "document_type": "vorlage",
+        "tags": ["hr"], "source_kind": "upload", "source_url": null, "uploaded_at": "2026-03-02T09:14:00Z",
+        "fetched_at": null, "legal_status": null
+      }
     }
-  ]
+  ],
+  "trace": {
+    "top_k": 20, "final_k": 5, "vector_candidates": 20, "fulltext_candidates": 8, "fused": 24, "reranked": 24,
+    "returned": 5, "rerank_error": false, "timings_ms": { "embed": 12.3, "vector_search": 8.1, "fulltext_search": 3.4, "fuse": 0.2, "rerank": 95.0 }
+  }
 }
 ```
+
+Jeder Treffer enthält neben `text` seinen `rank` (1-basierte Position nach Reranking), die `scores` der einzelnen Suchstufen (`vector`, `fulltext`, `rrf`, `rerank` — jeweils `null`, wenn die Stufe den Treffer nicht bewertet hat, z. B. kein Volltext-Treffer oder Reranking übersprungen) und in `source` weitere Metadaten: `heading_path` (Überschriftenpfad), `document_version`, `page_start`/`page_end`, `chunk_index`, `title`, `language`, `document_type`, `tags`, `source_kind`, `source_url`, `uploaded_at`, `fetched_at`, `legal_status` — alle optional, `null`/leer, wenn nicht vorhanden; `source_url` nur als `http(s)`-Link. `trace` fasst die Suche zusammen (effektive `top_k`/`final_k`, Kandidaten pro Suchweg, Anzahl nach Fusion/Reranking, `rerank_error`, Laufzeiten in ms) und ist `null`, wenn Weave-Retrieval keinen Trace liefert.
 
 > **Tipp:** `document_id`/`chunk_id` sind stabile Kennungen — nützlich, um Treffer aus mehreren Suchen zu deduplizieren oder zu referenzieren.
 

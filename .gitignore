@@ -18,7 +18,7 @@ node_modules/
 .next/
 
 # Downloaded model weights and other cached downloads (e.g. services/reranker's
-# .cache/ holding BAAI/bge-reranker-v2-m3, ~2.3 GB; services/embeddings' ONNX
+# .cache/ holding its ONNX cross-encoder, ~341 MB; services/embeddings' ONNX
 # export) -- fetched fresh on first start, never committed.
 .cache/
 

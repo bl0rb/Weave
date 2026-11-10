@@ -55,6 +55,8 @@ def _effective(row: RetrievalProviderConfig) -> dict[str, object]:
         'rerank_threads': row.rerank_threads if override else settings.rerank_threads,
         'semantic_weight': row.semantic_weight,
         'lexical_weight': row.lexical_weight,
+        'search_top_k': row.search_top_k,
+        'search_final_k': row.search_final_k,
     }
     embedding_key = decrypt_retrieval_provider_api_key(row.embedding_api_key_encrypted) if row.embedding_api_key_encrypted else settings.embedding_api_key
     rerank_key = decrypt_retrieval_provider_api_key(row.rerank_api_key_encrypted) if row.rerank_api_key_encrypted else settings.rerank_api_key
@@ -69,7 +71,7 @@ def _admin(row: RetrievalProviderConfig) -> RetrievalProviderAdminResponse:
     values = _effective(row)
     return RetrievalProviderAdminResponse(
         embedding_provider=values['embedding_provider'], embedding_base_url=values['embedding_base_url'], embedding_model=values['embedding_model'], embedding_dimension=values['embedding_dimension'], embedding_batch_size=values['embedding_batch_size'], embedding_has_api_key=bool(values['embedding_key']), embedding_key_source=values['embedding_key_source'],
-        rerank_provider=values['rerank_provider'], rerank_base_url=values['rerank_base_url'], rerank_model=values['rerank_model'], rerank_max_documents=values['rerank_max_documents'], rerank_batch_size=values['rerank_batch_size'], rerank_threads=values['rerank_threads'], rerank_has_api_key=bool(values['rerank_key']), rerank_key_source=values['rerank_key_source'], semantic_weight=values['semantic_weight'], lexical_weight=values['lexical_weight'], updated_at=row.updated_at,
+        rerank_provider=values['rerank_provider'], rerank_base_url=values['rerank_base_url'], rerank_model=values['rerank_model'], rerank_max_documents=values['rerank_max_documents'], rerank_batch_size=values['rerank_batch_size'], rerank_threads=values['rerank_threads'], rerank_has_api_key=bool(values['rerank_key']), rerank_key_source=values['rerank_key_source'], semantic_weight=values['semantic_weight'], lexical_weight=values['lexical_weight'], search_top_k=values['search_top_k'], search_final_k=values['search_final_k'], updated_at=row.updated_at,
     )
 
 
@@ -125,6 +127,12 @@ def update_retrieval_provider(payload: RetrievalProviderUpdateRequest, request: 
         raise HTTPException(status_code=409, detail='Embedding-Änderungen benötigen eine bestätigte Voll-Reindizierung.')
     for field in ('embedding_provider', 'embedding_base_url', 'embedding_model', 'embedding_dimension', 'embedding_batch_size', 'rerank_provider', 'rerank_base_url', 'rerank_model', 'rerank_max_documents', 'rerank_batch_size', 'rerank_threads', 'semantic_weight', 'lexical_weight'):
         setattr(row, field, getattr(payload, field))
+    # Older clients (stale admin bundle) don't send the hit counts at all; keep
+    # the stored pair then. Treated as one unit so final_k <= top_k, validated
+    # on the payload, can't be broken by mixing payload and stored values.
+    if {'search_top_k', 'search_final_k'} & payload.model_fields_set:
+        row.search_top_k = payload.search_top_k
+        row.search_final_k = payload.search_final_k
     row.updated_by_id = admin.id
     if payload.embedding_api_key and payload.embedding_api_key.strip():
         row.embedding_api_key_encrypted = encrypt_retrieval_provider_api_key(payload.embedding_api_key.strip())
@@ -186,5 +194,6 @@ def internal_retrieval_provider(response: Response, db: Session = Depends(get_db
     return RetrievalProviderInternalResponse(
         embedding_provider=effective['embedding_provider'], embedding_base_url=effective['embedding_base_url'], embedding_model=effective['embedding_model'], embedding_dimension=effective['embedding_dimension'], embedding_batch_size=effective['embedding_batch_size'], embedding_api_key=embedding_key,
         rerank_provider=effective['rerank_provider'], rerank_base_url=effective['rerank_base_url'], rerank_model=effective['rerank_model'], rerank_max_documents=effective['rerank_max_documents'], rerank_batch_size=effective['rerank_batch_size'], rerank_threads=effective['rerank_threads'],
-        rerank_api_key=rerank_key, semantic_weight=row.semantic_weight, lexical_weight=row.lexical_weight, updated_at=row.updated_at,
+        rerank_api_key=rerank_key, semantic_weight=row.semantic_weight, lexical_weight=row.lexical_weight,
+        search_top_k=row.search_top_k, search_final_k=row.search_final_k, updated_at=row.updated_at,
     )
