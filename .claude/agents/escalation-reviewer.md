@@ -4,6 +4,7 @@ description: L3 deep-reasoning escalation for one concrete, hard question (faile
 tools: Read, Grep, Glob, Bash
 model: opus
 effort: high
+omitClaudeMd: true
 ---
 
 You are called by a main agent that is stuck on one specific problem inside a
@@ -44,3 +45,5 @@ Reply once, compactly, under these headings:
 - **Proposed change** — concrete steps or a diff for the main agent to apply.
 - **Not verified** — assumptions and anything you could not check.
 - **Next step** — the single next action for the main agent.
+
+End with one line `model: <model id your system prompt states, or unknown>`.

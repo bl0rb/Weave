@@ -1,26 +1,34 @@
 # Model routing
 
-Refines the "Models" and "Agents" sections of `AGENTS.md`. Rules refer to tiers
-only; model names are set in the places listed below and nowhere else.
+Refines the "Models" and "Agents" sections of `AGENTS.md`. Where the two
+differ, these rules apply in Claude Code. Rules refer to tiers; model names
+appear only in the agent frontmatter and in the capability order below.
 
 ## Tiers
 
-| Tier | Runs as | Model set in | Default |
-|---|---|---|---|
-| L1 Lightweight | subagent `scout` | `model:` in `.claude/agents/scout.md` | `haiku` |
-| L2 Standard | main agent (this conversation) | session model (`/model`, `model` setting) | user's choice, `sonnet` recommended |
-| L3 Deep reasoning | subagent `escalation-reviewer` | `model:` in `.claude/agents/escalation-reviewer.md` | `opus` |
+| Tier | Runs as | Model set in |
+|---|---|---|
+| L1 Lightweight | subagent `scout` | `model:` in `.claude/agents/scout.md` |
+| L2 Standard | main agent (this conversation) | session model, chosen by the user |
+| L3 Deep reasoning | subagent `escalation-reviewer` | `model:` in `.claude/agents/escalation-reviewer.md` |
 
-## Routing
+Capability order of model families, weakest first: haiku, sonnet, opus, fable.
+Versions within one family count as equal.
 
-Route once per task (see `context-continuity.md`), then stay.
+## Who does a step
 
-- **Default: the main agent does the work itself.** Development, analysis,
+The task stays with the main agent (`context-continuity.md`). These bullets
+decide single steps inside it.
+
+- **Default: the main agent does the step itself.** Development, analysis,
   debugging, implementation and anything that builds on earlier turns stay here.
-- **L1 only for self-contained, read-only work** where a short summary is all
-  that comes back: broad file or symbol search, summarising a large file or log.
-  Do small lookups, quick questions and small edits inline: a subagent start
-  costs more than a few tool calls on the main model.
+- **L1 for a self-contained, read-only lookup** that returns a short summary
+  and would otherwise take many tool calls or pull large files or logs into
+  this conversation, such as summarising a large log. Whatever one search or
+  a handful of tool calls answers is done inline, as are quick questions and
+  small edits: starting a subagent costs more than that.
+- The `scout` agent is narrower than the Scout role in `AGENTS.md`: it locates
+  and summarises. Finding root causes stays with the main agent.
 - **L3 only through `escalation-policy.md`.** Never as a starting point.
 
 ## Cost rule
@@ -31,9 +39,8 @@ A cheaper model that needs two extra attempts is the expensive choice.
 
 - One subagent at a time by default. At most two `scout` agents in parallel, and
   only for disjoint questions. Never more than one `escalation-reviewer`.
-- Do not delegate what is already known in this conversation.
 - Do not pass a per-call `model` override to these agents; change the
   frontmatter instead, so the mapping stays in one place.
 
 These are instructions the main agent follows. Claude Code does not enforce
-them and does not switch the main model on its own.
+them and does not route tasks to another model on its own.

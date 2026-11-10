@@ -1,6 +1,7 @@
 # Context handover
 
-A subagent starts with an empty context. It knows only what the handover says.
+A subagent does not see this conversation. About the task it knows only what
+the handover says.
 
 ## Handover to `escalation-reviewer`
 
@@ -39,8 +40,14 @@ The one concrete thing to answer or decide, and what a useful answer contains.
 
 ## Return
 
-The agent answers under: **Answer**, **Evidence**, **Proposed change**,
-**Not verified**, **Next step**.
+`escalation-reviewer` answers under **Answer**, **Evidence**, **Proposed
+change**, **Not verified**, **Next step**, followed by a `model:` line naming
+the model it ran on. If the handover is incomplete it answers `NEEDS_CONTEXT:`
+instead; send the missing part to the same agent, which does not count as a
+round.
+
+`scout` returns facts with `path:line`. `NEEDS_L2:` marks a part that needs
+analysis; do that part yourself.
 
 ## Integration by the main agent
 

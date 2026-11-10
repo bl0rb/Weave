@@ -5,23 +5,25 @@ it: clarifications, follow-up questions, fixes, verification, the final report.
 
 ## Task affinity
 
-- The routing decision made at the start of a task holds until the task is done
-  or the topic changes. The main agent owns the task for its whole lifetime.
+- A task stays with the main agent and the session model from start to finish.
+  Delegating a single step (`model-routing.md`) or escalating a question
+  (`escalation-policy.md`) does not move the task.
 - Follow-up and small side questions are answered by the main agent on the
-  current model, even when a lower tier could answer them. No model change, no
-  delegation.
+  current model, even when a lower tier could answer them.
 - Rising difficulty inside a task is not a new task. It may trigger an
-  escalation (`escalation-policy.md`); the task still stays with the main agent.
-- A topic change allows a new routing decision. It is a topic change only when
-  the goal is new and does not build on the files, findings or decisions of the
-  current task. When unsure, treat it as a continuation.
+  escalation; the task still stays with the main agent.
+- A topic change starts a new task that is judged afresh: delegations,
+  escalation rounds and model recommendations of the previous task do not
+  carry over. It is a topic change only when the goal is new and does not
+  build on the files, findings or decisions of the current task. When unsure,
+  treat it as a continuation.
 
 ## Keeping results
 
-- This conversation is the single record of the task. Summarise every subagent
-  result here in a few lines before acting on it.
+- This conversation is the single record of the task; subagent results are
+  recorded here (`context-handover.md`).
 - Never re-delegate or repeat an analysis whose result is already in this
-  conversation; pass the result on instead (`context-handover.md`).
+  conversation; pass the result on instead.
 - A follow-up to an earlier escalation goes to the same agent via `SendMessage`
   (it keeps its history) instead of a new agent with a new handover.
 - Changing the main model re-reads the whole conversation without cache. Do not
