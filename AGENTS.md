@@ -49,6 +49,8 @@ Use the cheapest capable model when model selection is available.
 
 Use stronger models only for difficult reasoning, architecture, debugging, security, or problems cheaper models could not solve.
 
+Claude Code: tiers (L1/L2/L3), task affinity, escalation and handover rules live in `.claude/rules/`; see `.claude/README.md`.
+
 ## Implementation
 
 * Prefer small diffs.
