@@ -4,9 +4,10 @@
 # Cluster prerequisites (not created by this chart):
 #   - GPU nodes with the NVIDIA device plugin (advertises nvidia.com/gpu),
 #     e.g. via the NVIDIA GPU Operator, or EKS accelerated AMIs.
-#   - The published ghcr.io/bl0rb/weave-ingest-worker image is amd64 and already
-#     contains paddlepaddle-gpu — no custom image needed. The runtime
-#     auto-detects CUDA and falls back to CPU if the GPU is absent.
+#   - The published ghcr.io/bl0rb/weave-ingest-worker image is CPU-only. Build
+#     an amd64 image with --build-arg PADDLE_GPU=true (worker.Dockerfile) and
+#     point worker.image.repository/tag at it. The runtime auto-detects CUDA and falls back
+#     to CPU if the GPU is absent.
 #
 # Mirrors the settings of docker-compose.gpu.yml: VL default profile and
 # conservative single-slot Celery settings for CUDA stability.

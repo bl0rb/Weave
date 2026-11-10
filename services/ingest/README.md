@@ -411,7 +411,7 @@ Migrations run automatically on backend startup (Alembic, currently `0001` … `
 
 ### GPU Runtime (Windows + NVIDIA)
 
-Recommended: prebuilt GHCR images plus the GPU override — no local build. The published `weave-ingest-worker` image already contains `paddlepaddle-gpu` on amd64, and `docker-compose.gpu.yml` is a pure runtime overlay (NVIDIA device reservation, VL default profile, solo worker pool), so it stacks directly on the prebuilt-image compose file:
+The published `weave-ingest-worker` image is CPU-only (`paddlepaddle` from PyPI). For a GPU worker, build the image locally with the CUDA wheel (amd64 only) and stack the runtime overlay `docker-compose.gpu.yml` (NVIDIA device reservation, VL default profile, solo worker pool) on top:
 
 ```powershell
 # generate SECRET_KEY / POSTGRES_PASSWORD / REDIS_PASSWORD into .env
@@ -419,21 +419,15 @@ Recommended: prebuilt GHCR images plus the GPU override — no local build. The 
 # or from Git Bash without the wsl prefix)
 wsl bash scripts/init-env.sh
 
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+docker compose -f docker-compose.dev.yml -f docker-compose.gpu.yml build --build-arg PADDLE_GPU=true worker
+docker compose -f docker-compose.dev.yml -f docker-compose.gpu.yml up -d --build
 ```
 
 The defaults target a desktop setup (`http://localhost:3000` / `http://localhost:8000`), so no further URL configuration is needed. Prerequisite: a current NVIDIA driver on the Windows host — Docker Desktop's WSL2 integration handles the CUDA passthrough itself.
 
-Building the images locally instead (only needed when you changed backend/worker/frontend code):
-
-```powershell
-wsl bash scripts/init-env.sh
-docker compose -f docker-compose.dev.yml -f docker-compose.gpu.yml up -d --build
-```
-
 Behavior summary:
 
-- Worker image includes `paddlepaddle-gpu` (amd64 — the published image; a locally built arm64 image ships the CPU wheel instead)
+- Worker image includes `paddlepaddle-gpu` only when built with `--build-arg PADDLE_GPU=true` on amd64 (the published image and arm64 builds ship the CPU wheel)
 - Runtime auto-detects CUDA and falls back to CPU
 - GPU override switches default profile to `paddlevl_1_6_0_9b`
 - Uses safer worker settings for CUDA stability (`solo`, concurrency `1`)

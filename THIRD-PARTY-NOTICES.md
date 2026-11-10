@@ -38,8 +38,8 @@ packages added in `:12` to `:22`.
 |---|---|---|---|
 | `paddleocr[doc-parser]` | 3.7.0 | `requirements-worker.txt:1385`, requested by `requirements-worker.in:15` | Apache-2.0 |
 | `paddlex[genai-client,ocr,ocr-core]` | 3.7.2 | `requirements-worker.txt:1389`, pulled in by `paddleocr` (`:1392`) | Apache-2.0 |
-| `paddlepaddle` | 3.2.1 | `worker.Dockerfile:36` (arm64 path) | Apache-2.0 |
-| `paddlepaddle-gpu` | 3.2.1 | `worker.Dockerfile:33`, from `https://www.paddlepaddle.org.cn/packages/stable/cu126/` (`:34`, amd64 path) | Same upstream project as `paddlepaddle`. This wheel is served from the vendor's own index rather than PyPI and is a CUDA 12.6 build; the terms of the CUDA components it carries have to be checked with the vendor. |
+| `paddlepaddle` | 3.2.1 | `worker.Dockerfile:39` (default, every architecture) | Apache-2.0 |
+| `paddlepaddle-gpu` | 3.2.1 | `worker.Dockerfile:36`, from `https://www.paddlepaddle.org.cn/packages/stable/cu126/` (`:37`), only with `--build-arg PADDLE_GPU=true` on amd64; not in the published image | Same upstream project as `paddlepaddle`. This wheel is served from the vendor's own index rather than PyPI and is a CUDA 12.6 build; the terms of the CUDA components it carries have to be checked with the vendor. |
 | `opencv-contrib-python` | 4.10.0.84 | `requirements-worker.txt:1364`, pulled in by `paddlex` (`:1372`) | Apache-2.0 |
 
 PaddleOCR, PaddleX and PaddlePaddle are published by Baidu. The lock file pulls
