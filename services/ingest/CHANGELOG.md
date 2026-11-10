@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.24] - 2026-11-10
+
 ### Security
 - **Stored XSS via artifacts**: weave-api's and the chat's artifact proxies kept Ingest's content type
   but dropped its `Content-Disposition`, so an SVG attachment from Confluence rendered inline and its
