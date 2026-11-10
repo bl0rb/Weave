@@ -4,6 +4,7 @@ import { requireSessionCredential } from '@/lib/require-session';
 import { GatewayError, weaveApiFetch, weaveApiFetchJson } from '@/lib/weave-api-server';
 import { errorForHttpStatus, errorForNetworkFailure } from '@/lib/errors';
 import type { StoredConversation } from '@/types/weave-api';
+import { rejectCrossSiteRequest } from '@/lib/request-guard';
 
 /**
  * GET /api/conversations/{id} — proxies Weave-API's GET
@@ -40,6 +41,8 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
  * throw on it.
  */
 export async function DELETE(request: NextRequest, context: { params: Promise<{ id: string }> }): Promise<NextResponse> {
+  const forbidden = rejectCrossSiteRequest(request);
+  if (forbidden) return forbidden;
   const session = requireSessionCredential(request);
   if ('response' in session) return session.response;
 

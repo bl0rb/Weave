@@ -1,8 +1,10 @@
 import logging
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.api.auth import router as auth_router
 from app.api.bots import router as bots_router
@@ -14,11 +16,85 @@ from app.api.me import router as me_router
 from app.api.openai_compat import router as openai_compat_router
 from app.api.portal_artifacts import router as portal_artifacts_router
 from app.api.search import router as search_router
-from app.core.config import settings
+from app.core.config import insecure_secret_key_reason, settings
 from app.core.db import get_db
 from app.schemas.health import HealthResponse
 
+# Fail at startup, not at the first forged login state: SECRET_KEY signs
+# the OIDC state cookie (app/core/security.py), and its default is public.
+_secret_key_problem = insecure_secret_key_reason(settings)
+if _secret_key_problem:
+    raise RuntimeError(
+        f'{_secret_key_problem} -- refusing to start. Set SECRET_KEY to a random value of at least 32 '
+        'characters (e.g. `openssl rand -hex 32`), or ALLOW_INSECURE_DEV_SECRET_KEY=true for a local '
+        'dev server only.'
+    )
+
+
+class _BodyTooLarge(HTTPException):
+    def __init__(self) -> None:
+        super().__init__(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail='Request body too large')
+
+
+class BodySizeLimitMiddleware:
+    """Refuses request bodies over `settings.max_request_body_bytes` with
+    413. Pure ASGI (not BaseHTTPMiddleware) so streaming responses -- the
+    chat's SSE -- pass through untouched. A declared Content-Length is
+    checked up front; a chunked body without one is counted while the
+    route reads it, so it can never be buffered past the limit either."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope['type'] != 'http':
+            await self.app(scope, receive, send)
+            return
+        # Read per request so a changed setting (tests) applies at once.
+        limit = settings.max_request_body_bytes
+        for name, value in scope['headers']:
+            if name == b'content-length' and value.isdigit() and int(value) > limit:
+                await self._reject(scope, receive, send)
+                return
+
+        received = 0
+        response_started = False
+
+        async def limited_receive() -> Message:
+            nonlocal received
+            message = await receive()
+            if message['type'] == 'http.request':
+                received += len(message.get('body', b''))
+                if received > limit:
+                    # An HTTPException, so FastAPI's body parsing re-raises
+                    # it as-is (anything else becomes a 400 there) and the
+                    # exception middleware answers 413.
+                    raise _BodyTooLarge()
+            return message
+
+        async def tracking_send(message: Message) -> None:
+            nonlocal response_started
+            if message['type'] == 'http.response.start':
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, tracking_send)
+        except _BodyTooLarge:
+            # Only reached if a route read the body outside FastAPI's own
+            # exception handling; too late to answer once it has started.
+            if response_started:
+                raise
+            await self._reject(scope, receive, send)
+
+    @staticmethod
+    async def _reject(scope: Scope, receive: Receive, send: Send) -> None:
+        response = JSONResponse({'detail': 'Request body too large'}, status_code=status.HTTP_413_CONTENT_TOO_LARGE)
+        await response(scope, receive, send)
+
+
 app = FastAPI(title=settings.app_name)
+app.add_middleware(BodySizeLimitMiddleware)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
 if settings.oidc_issuer and settings.oidc_client_id and settings.ingest_login_url and settings.ingest_api_url:
     # app/api/auth.py's oidc_enabled(): the Ingest handoff wins (ADR 0006).

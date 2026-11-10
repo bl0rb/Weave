@@ -23,16 +23,18 @@ const SSO_ERROR_KEYS: Record<string, MessageKey> = {
 };
 
 interface LoginFormProps {
-  /** Weave-API's own GET /v1/auth/ingest/login URL (src/lib/sso.ts's
-   * `buildWeaveLoginUrl`), or `null` when this deployment has no
+  /** This app's /api/auth/sso/start?provider=ingest (src/lib/sso.ts's
+   * `buildSsoStartPath`), which goes on to Weave-API's own GET
+   * /v1/auth/ingest/login (`buildWeaveLoginUrl`), or `null` when this deployment has no
    * federated login configured. When present this is the PRIMARY action:
    * it leads to Weave-Ingest's own sign-in page, where a person uses
    * whatever method the admin set up for them — a password or any
    * configured OIDC connection — and comes back signed in here. The token
    * form below stays for scripts and for anyone who prefers it. */
   weaveLoginUrl: string | null;
-  /** Weave-API's own GET /v1/auth/oidc/login URL (src/lib/sso.ts's
-   * `buildSsoLoginUrl`), or `null` when this deployment's own
+  /** This app's /api/auth/sso/start?provider=oidc (src/lib/sso.ts's
+   * `buildSsoStartPath`), which goes on to Weave-API's own GET
+   * /v1/auth/oidc/login (`buildSsoLoginUrl`), or `null` when this deployment's own
    * `WEAVE_API_OIDC_ENABLED` setting says the gateway has no OIDC
    * provider configured — see that module's docstring on why this is
    * this app's OWN setting rather than something read live from

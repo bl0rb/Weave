@@ -36,6 +36,7 @@ config:
     HISTORY_MAX_MESSAGES: "20"
     INGEST_API_URL: "http://weave-ingest-backend:8000"
     INGEST_LOGIN_URL: ""
+    MAX_REQUEST_BODY_BYTES: "1048576"
     NATIVE_LOGIN_ENABLED: "false"
     OIDC_CLIENT_ID: ""
     OIDC_ISSUER: ""

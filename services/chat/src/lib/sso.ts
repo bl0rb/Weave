@@ -94,17 +94,15 @@ export function resolveWeaveApiPublicBaseUrl(): string {
 }
 
 /**
- * The full URL the "Mit SSO anmelden" link on /login points at:
- * Weave-API's own GET /v1/auth/oidc/login, carrying `return_to` set to
+ * The full URL /api/auth/sso/start sends the "Mit SSO anmelden" click on
+ * to: Weave-API's own GET /v1/auth/oidc/login, carrying `return_to` set to
  * this app's own callback route — see that route's docstring and
  * Weave-API backend/app/api/auth.py's "Cross-origin post-login handoff"
  * section for the full contract this starts. Only meaningful to call when
  * `isSsoLoginEnabled()` is true; does not itself check that.
  */
-export function buildSsoLoginUrl(): string {
-  const returnTo = `${resolveAppBaseUrl()}${SSO_CALLBACK_PATH}`;
-  const query = new URLSearchParams({ return_to: returnTo });
-  return `${resolveWeaveApiPublicBaseUrl()}/v1/auth/oidc/login?${query.toString()}`;
+export function buildSsoLoginUrl(codeChallenge: string): string {
+  return buildGatewayLoginUrl('/v1/auth/oidc/login', codeChallenge);
 }
 
 
@@ -138,8 +136,40 @@ export function isWeaveLoginEnabled(): boolean {
  * flows converge on this app's one callback route, because both end in a
  * one-time code this app's own backend exchanges for a session.
  */
-export function buildWeaveLoginUrl(): string {
+export function buildWeaveLoginUrl(codeChallenge: string): string {
+  return buildGatewayLoginUrl('/v1/auth/ingest/login', codeChallenge);
+}
+
+/**
+ * `code_challenge` (S256 of the verifier /api/auth/sso/start keeps in this
+ * browser's own cookie, see sso-pkce.ts) binds the one-time code Weave-API
+ * hands back to THIS browser: POST /v1/auth/session/exchange only redeems
+ * a bound code together with the matching `code_verifier`. Without it,
+ * anyone could start a login of their own, stop before the callback, and
+ * get a victim's browser to open `/api/auth/sso/callback?code=<theirs>` —
+ * login CSRF into the attacker's account. Weave-API accepts the challenge
+ * for an allowlisted `return_to` as well as for the native loopback
+ * (backend/app/api/auth.py's `_resolve_login_target`). The exchange refuses
+ * an UNBOUND code presented with a verifier (backend/app/api/auth.py's
+ * `session_exchange`) — the callback always forwards one, so an attacker's
+ * own login started without a challenge can't be planted either. That
+ * protection needs a Weave-API of the same release: an older one redeems an
+ * unbound code with any verifier.
+ */
+function buildGatewayLoginUrl(path: string, codeChallenge: string): string {
   const returnTo = `${resolveAppBaseUrl()}${SSO_CALLBACK_PATH}`;
-  const query = new URLSearchParams({ return_to: returnTo });
-  return `${resolveWeaveApiPublicBaseUrl()}/v1/auth/ingest/login?${query.toString()}`;
+  const query = new URLSearchParams({ return_to: returnTo, code_challenge: codeChallenge });
+  return `${resolveWeaveApiPublicBaseUrl()}${path}?${query.toString()}`;
+}
+
+/** Where the login buttons on /login actually point: this app's own
+ * /api/auth/sso/start, which mints the PKCE verifier cookie and only then
+ * redirects on to `buildSsoLoginUrl`/`buildWeaveLoginUrl`. A relative path
+ * on purpose — the button and the route share one origin. */
+export const SSO_START_PATH = '/api/auth/sso/start';
+
+export type SsoProvider = 'oidc' | 'ingest';
+
+export function buildSsoStartPath(provider: SsoProvider): string {
+  return `${SSO_START_PATH}?${new URLSearchParams({ provider }).toString()}`;
 }

@@ -40,11 +40,11 @@ describe('exchangeSessionCode', () => {
     vi.unstubAllGlobals();
   });
 
-  it('POSTs the code as JSON with no auth header of its own, and returns the session token/expiry', async () => {
+  it('POSTs the code and PKCE verifier as JSON with no auth header of its own, and returns the session token/expiry', async () => {
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       expect(String(url)).toBe('http://localhost:8004/v1/auth/session/exchange');
       expect(init?.method).toBe('POST');
-      expect(JSON.parse(init!.body as string)).toEqual({ code: 'the-one-time-code' });
+      expect(JSON.parse(init!.body as string)).toEqual({ code: 'the-one-time-code', code_verifier: 'the-verifier' });
       const headers = (init?.headers ?? {}) as Record<string, string>;
       expect(headers.Authorization).toBeUndefined();
       expect(headers.Cookie).toBeUndefined();
@@ -55,7 +55,7 @@ describe('exchangeSessionCode', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await exchangeSessionCode('the-one-time-code');
+    const result = await exchangeSessionCode('the-one-time-code', 'the-verifier');
 
     expect(result).toEqual({ sessionToken: 'sess-abc', expiresAt: '2026-01-01T00:00:00Z' });
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -67,8 +67,8 @@ describe('exchangeSessionCode', () => {
       vi.fn(async () => new Response(JSON.stringify({ detail: 'invalid or expired code' }), { status: 400 }))
     );
 
-    await expect(exchangeSessionCode('bad-code')).rejects.toBeInstanceOf(GatewayError);
-    await expect(exchangeSessionCode('bad-code')).rejects.toMatchObject({ kind: 'rejected', status: 400 });
+    await expect(exchangeSessionCode('bad-code', 'the-verifier')).rejects.toBeInstanceOf(GatewayError);
+    await expect(exchangeSessionCode('bad-code', 'the-verifier')).rejects.toMatchObject({ kind: 'rejected', status: 400 });
   });
 
   it('throws an `unreachable` GatewayError on a transport failure', async () => {
@@ -79,7 +79,7 @@ describe('exchangeSessionCode', () => {
       })
     );
 
-    await expect(exchangeSessionCode('any-code')).rejects.toMatchObject({ kind: 'unreachable' });
+    await expect(exchangeSessionCode('any-code', 'the-verifier')).rejects.toMatchObject({ kind: 'unreachable' });
   });
 
   it('throws `rejected` on a well-formed 200 with a malformed body (missing session_token)', async () => {
@@ -88,7 +88,7 @@ describe('exchangeSessionCode', () => {
       vi.fn(async () => new Response(JSON.stringify({ expires_at: '2026-01-01T00:00:00Z' }), { status: 200 }))
     );
 
-    await expect(exchangeSessionCode('code')).rejects.toMatchObject({ kind: 'rejected' });
+    await expect(exchangeSessionCode('code', 'the-verifier')).rejects.toMatchObject({ kind: 'rejected' });
   });
 });
 

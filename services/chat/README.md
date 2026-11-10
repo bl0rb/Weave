@@ -197,16 +197,21 @@ Drei Wege hinein, die alle beim selben httpOnly-Cookie enden. Der primäre ist
 Anmeldung über Weave-Ingest, wo Nutzer, Teams und OIDC-Verbindungen ohnehin
 schon verwaltet werden:
 
-1. Der Knopf auf `/login` ist eine einfache Top-Level-Navigation zu Weave-APIs
-   `GET /v1/auth/ingest/login?return_to=<APP_BASE_URL>/api/auth/sso/callback`
-   (`src/lib/sso.ts:buildWeaveLoginUrl`).
+1. Der Knopf auf `/login` führt über `GET /api/auth/sso/start?provider=ingest`,
+   das einen PKCE-Verifier in ein kurzlebiges httpOnly-Cookie (10 Minuten,
+   Pfad `/api/auth/sso`) legt, weiter zu Weave-APIs
+   `GET /v1/auth/ingest/login?return_to=<APP_BASE_URL>/api/auth/sso/callback&code_challenge=<S256>`
+   (`src/lib/sso.ts:buildWeaveLoginUrl`). So lässt sich der Code nur in dem
+   Browser einlösen, der die Anmeldung begonnen hat (kein Login-CSRF).
 2. Weave-API führt die ganze Anmeldung selbst durch — nichts davon berührt diese
    App — und leitet den Browser mit einem frischen, einmal verwendbaren
    `code`-Query-Parameter auf diesen Callback zurück, weil `return_to` zu ihrer
    Allowlist gepasst hat.
-3. `GET /api/auth/sso/callback` tauscht diesen Code **serverseitig** gegen ein
-   echtes Sitzungs-Token (`POST /v1/auth/session/exchange`), nie aus
-   Browser-JavaScript, und leitet auf `/` weiter.
+3. `GET /api/auth/sso/callback` tauscht diesen Code zusammen mit dem Verifier
+   aus dem Cookie **serverseitig** gegen ein echtes Sitzungs-Token
+   (`POST /v1/auth/session/exchange { code, code_verifier }`), nie aus
+   Browser-JavaScript, löscht das Verifier-Cookie und leitet auf `/` weiter.
+   Ohne Verifier-Cookie wird der Code nie eingelöst.
 4. Das Token landet in derselben Antwort direkt im eigenen Cookie dieser App.
    Seine Lebensdauer wird aus Weave-APIs eigenem `expires_at` abgeleitet, sodass
    das Cookie nie die dahinterliegende Session überlebt.

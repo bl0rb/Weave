@@ -63,7 +63,7 @@ Weave-API ist das **Bot-Gateway** und der zentrale Einstiegspunkt des Weave-Syst
 - PUT `/v1/me/locale`: `{ locale }` bei Erfolg; `422` bei ungültigem Wert; `503` (Wert bleibt lokal unverändert), wenn der Aufrufer über Weave-Ingest authentifiziert ist und Weave-Ingest nicht erreichbar/konfiguriert ist
 - POST `/internal/tokens/introspect`: `{ active: true, user_id, username, team, is_admin }` bei gültigem Token, sonst `{ active: false }` (immer HTTP 200)
 - GET `/v1/auth/oidc/login`: `302` zum Provider, setzt ein kurzlebiges signiertes State-Cookie
-- GET `/v1/auth/oidc/callback`: `302` nach `/` (oder, bei gültigem `return_to`, nach `<return_to>?code=<code>` — siehe unten), setzt das Session-Cookie (`weave_api_session`, httpOnly) in **jedem** Fall
+- GET `/v1/auth/oidc/callback`: `302` nach `/` und setzt das Session-Cookie (`weave_api_session`, httpOnly) — bei gültigem `return_to` stattdessen `302` nach `<return_to>?code=<code>` (siehe unten), dann **ohne** Session-Cookie; ein `return_to` im State, das nicht mehr gegen die Allowlist validiert, liefert `400`
 - POST `/v1/auth/session/exchange`: `{ session_token, expires_at }` bei gültigem, noch nicht verbrauchtem und nicht abgelaufenem Code, sonst generisch `400` (ununterscheidbar, ob unbekannt/abgelaufen/bereits verbraucht)
 - POST `/v1/auth/logout`: `{ "status": "ok" }`, löscht Session-Zeile und Cookie
 
@@ -88,6 +88,12 @@ python3.12 -m venv ../.venv
 ../.venv/bin/pip install -r requirements.txt
 cp ../.env.example ../.env   # und Werte anpassen
 ```
+
+`SECRET_KEY` muss gesetzt sein (mindestens 32 Zeichen, etwa
+`openssl rand -hex 32`): mit dem eingebauten Default oder einem kürzeren
+Wert verweigert der Service den Start. Nur für einen lokalen Dev-Server
+hebt `ALLOW_INSECURE_DEV_SECRET_KEY=true` das auf. Request-Bodies über
+`MAX_REQUEST_BODY_BYTES` (Default 1 MiB) werden mit 413 abgewiesen.
 
 Ohne weitere Konfiguration läuft der Service gegen eine lokale SQLite-Datei
 (`DATABASE_URL`-Default) -- für eine echte Bereitstellung eine eigene
@@ -225,13 +231,21 @@ diesen Fall gibt es eine explizite, serverseitige Übergabe:
 2. Nach erfolgreichem Callback erzeugt das Gateway einen einmal
    verwendbaren Übergabe-Code (kryptografisch zufällig, nur als sha256 in
    `session_exchange_codes.code_hash` gespeichert, 60 Sekunden gültig) und
-   leitet auf `<return_to>?code=<code>` weiter -- **zusätzlich** zum
-   gewohnten Session-Cookie, das auf derselben Antwort weiterhin gesetzt
-   wird (für den Fall, dass Gateway und Oberfläche doch dieselbe Herkunft
-   teilen; beide Wege funktionieren nebeneinander).
+   leitet auf `<return_to>?code=<code>` weiter -- **statt** des gewohnten
+   Session-Cookies: eine Übergabe-Anmeldung bekommt nur den Code, das
+   Cookie setzt der Callback nur bei einer Anmeldung ohne `return_to`.
+   Validiert das im signierten State gespeicherte `return_to` beim Callback
+   nicht mehr (z. B. Allowlist inzwischen geändert), antwortet der Callback
+   mit `400` statt still auf `/` umzulenken.
 3. Die Oberfläche tauscht den Code **serverseitig** (nie aus Browser-JS)
    gegen ein echtes Sitzungs-Token: `POST /v1/auth/session/exchange
-   { code }` → `{ session_token, expires_at }`. Der Code wird dabei in
+   { code }` → `{ session_token, expires_at }`. Ein optionales
+   `code_challenge` (PKCE S256) am `/login` bindet den Code auch bei einem
+   freigegebenen `return_to` (Weave Chat schickt immer eines) -- dann lässt
+   er sich nur mit `{ code, code_verifier }` einlösen. Umgekehrt löst ein
+   `code_verifier` nur einen an seine Challenge gebundenen Code ein: wer
+   einen Verifier mitschickt, ohne den Login mit `code_challenge`
+   begonnen zu haben, bekommt dieselbe `400`. Der Code wird dabei in
    derselben Transaktion sofort entwertet -- ein zweiter Versuch mit
    demselben Code scheitert, ein unbekannter oder abgelaufener Code liefert
    dieselbe generische `400`-Antwort wie ein bereits verbrauchter, nie
@@ -281,6 +295,8 @@ Die Antwort enthält `conversation_id` — bei einer Folgefrage in derselben Kon
 ### Optionalen OpenAI-kompatiblen Client anbinden
 
 `POST /v1/chat/completions` ist ein optionaler OpenAI-kompatibler Shim (`app/api/openai_compat.py`) vor demselben `Weave-Runtime`-Backend wie `POST /v1/chat`. Er bindet Protokoll-kompatible Clients an, ohne dass Weave-API dafür eine eigene Konversation anlegt: jede Anfrage trägt ihren kompletten `messages`-Verlauf selbst und wird eigenständig verarbeitet, es gibt kein `conversation_id`-Äquivalent und **nichts** wird in `conversations`/`messages` persistiert. Für Menschen und persistente Gespräche ist `services/chat` über `/v1/chat` beziehungsweise `/v1/chat/stream` der vorgesehene Weg.
+
+Weil jede Anfrage den ganzen Verlauf mitschickt, kann ein langer Verlauf (oder ein großes eingefügtes Dokument) die Request-Body-Grenze `MAX_REQUEST_BODY_BYTES` (Default 1 MiB) überschreiten und mit `413` abgewiesen werden; für solche Clients diesen Wert in der Umgebung von Weave-API erhöhen.
 
 Der Client erhält als Base-URL `http://<weave-api-host>:8004/v1` und als API-Key ein Personal-API-Token dieses Nutzers. `GET /v1/models` wird aus derselben Bot-Registry wie `GET /v1/bots` gespeist. Jeder Weave-Runtime-Bot erscheint als Modell; die Bot-ID ist dessen `id`.
 
@@ -555,7 +571,7 @@ fremde Domain lenken lässt.
 
 Die Cross-Origin-Übergabe (`return_to`, `POST /v1/auth/session/exchange`,
 "Cross-Origin-Übergabe" oben) ist ebenda mitgetestet: erfolgreiche Übergabe
-samt Cookie-UND-Code nebeneinander, getauschtes Token authentifiziert
+nur mit Code (ohne Gateway-Cookie), getauschtes Token authentifiziert
 echte Endpunkte, Code genau einmal einlösbar, abgelaufener und unbekannter
 Code liefern dieselbe generische Antwort, `return_to` ohne konfigurierte
 Allowlist bzw. außerhalb davon wird ignoriert, sowie Umgehungsversuche

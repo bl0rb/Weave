@@ -37,12 +37,15 @@ tests/test_bots_api.py and tests/test_chat_api.py.
 """
 
 import json
+import logging
 from collections.abc import Iterator
 
 import httpx
 
 from app.core.config import settings
 from app.services.ingest_identity import ingest_subject
+
+logger = logging.getLogger(__name__)
 
 
 class RuntimeClientError(Exception):
@@ -76,8 +79,8 @@ class RuntimeRejected(RuntimeClientError):
 
 def _client(*, read_timeout: float | None = None) -> httpx.Client:
     """`read_timeout` overrides the default `http_read_timeout_seconds` for
-    this one client -- used only by `chat()` below, which passes
-    `settings.chat_read_timeout_seconds` (a long-running n8n agent flow can
+    this one client -- used only by `chat()` and `chat_stream()` below, which
+    pass `settings.chat_read_timeout_seconds` (a long-running n8n agent flow can
     take far longer than the default 10s to answer a single blocking turn,
     see that setting's own docstring in app/core/config.py). Every other
     caller of `_client()` gets the unchanged default."""
@@ -123,6 +126,16 @@ def _raise_for_status(response: httpx.Response, *, description: str) -> None:
     )
 
 
+def _unreachable(exc: httpx.RequestError, *, description: str) -> RuntimeUnavailable:
+    """The RuntimeUnavailable for a transport-level failure. The raw httpx
+    error (internal host name, port, errno) is logged here and NOT put into
+    the message: app/api/chat.py, app/api/openai_compat.py and
+    app/api/bots.py pass `str(exc)` straight through as the caller-visible
+    `detail`, and internal topology is none of the caller's business."""
+    logger.warning('Weave-Runtime request failed (%s): %r', description, exc)
+    return RuntimeUnavailable('Weave-Runtime unreachable')
+
+
 def _parse_json(response: httpx.Response, *, description: str) -> dict | list:
     try:
         return response.json()
@@ -136,7 +149,7 @@ def _get(path: str) -> dict | list:
         with _client() as client:
             response = client.get(path)
     except httpx.RequestError as exc:
-        raise RuntimeUnavailable(f'Weave-Runtime unreachable: {exc}') from exc
+        raise _unreachable(exc, description=description) from exc
 
     _raise_for_status(response, description=description)
     return _parse_json(response, description=description)
@@ -148,7 +161,7 @@ def _post(path: str, json_body: dict, *, read_timeout: float | None = None) -> d
         with _client(read_timeout=read_timeout) as client:
             response = client.post(path, json=json_body)
     except httpx.RequestError as exc:
-        raise RuntimeUnavailable(f'Weave-Runtime unreachable: {exc}') from exc
+        raise _unreachable(exc, description=description) from exc
 
     _raise_for_status(response, description=description)
     return _parse_json(response, description=description)
@@ -305,13 +318,17 @@ def chat_stream(
     payload = _chat_payload(
         bot_id=bot_id, message=message, history=history, user=user, collections=collections, llm_endpoint=llm_endpoint,
     )
-    client = _client()
+    # Same long read timeout as chat(): Weave-Runtime holds this response's
+    # headers until bot preparation and retrieval are done (see above), and
+    # an n8n agent flow can stay quiet between keepalives for longer than
+    # the 10s default too.
+    client = _client(read_timeout=settings.chat_read_timeout_seconds)
     request = client.build_request('POST', '/internal/chat/stream', json=payload)
     try:
         response = client.send(request, stream=True)
     except httpx.RequestError as exc:
         client.close()
-        raise RuntimeUnavailable(f'Weave-Runtime unreachable: {exc}') from exc
+        raise _unreachable(exc, description='POST /internal/chat/stream') from exc
 
     if response.status_code >= 400:
         try:
@@ -362,9 +379,21 @@ def _iter_chat_stream_events(client: httpx.Client, response: httpx.Response) -> 
                 continue
             if not line.startswith('data: '):
                 continue
-            yield json.loads(line[len('data: '):])
+            # A data line that isn't a JSON object is a broken upstream, not
+            # a caller error -- raised as RuntimeUnavailable so both callers'
+            # existing mid-stream failure path ends the stream with an
+            # in-band `error` event instead of an unhandled exception that
+            # just cuts the response off.
+            try:
+                event = json.loads(line[len('data: '):])
+            except ValueError as exc:
+                raise RuntimeUnavailable('Weave-Runtime sent a malformed stream event') from exc
+            if not isinstance(event, dict):
+                raise RuntimeUnavailable('Weave-Runtime sent a malformed stream event')
+            yield event
     except httpx.RequestError as exc:
-        raise RuntimeUnavailable(f'Weave-Runtime stream aborted: {exc}') from exc
+        logger.warning('Weave-Runtime stream aborted: %r', exc)
+        raise RuntimeUnavailable('Weave-Runtime stream aborted') from exc
     finally:
         response.close()
         client.close()

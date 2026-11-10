@@ -4,6 +4,7 @@ import { requireSessionCredential } from '@/lib/require-session';
 import { GatewayError, weaveApiFetch } from '@/lib/weave-api-server';
 import { errorForHttpStatus, errorForNetworkFailure } from '@/lib/errors';
 import type { ChatRequestBody } from '@/types/weave-api';
+import { rejectCrossSiteRequest } from '@/lib/request-guard';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,6 +40,8 @@ export const dynamic = 'force-dynamic';
  *    (run-chat-stream.ts) is what tells those apart.
  */
 export async function POST(request: NextRequest): Promise<Response> {
+  const forbidden = rejectCrossSiteRequest(request, { json: true });
+  if (forbidden) return forbidden;
   const session = requireSessionCredential(request);
   if ('response' in session) return session.response;
 

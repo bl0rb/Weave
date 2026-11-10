@@ -603,6 +603,8 @@ def test_real_weave_yaml_required_secrets_match_betrieb_md_section_4():
         # Schritt 5: Tools resolves technical-identity tokens through
         # Ingest's introspection route, gated by this shared bearer.
         "TOOLS_INTROSPECTION_TOKEN",
+        # weave-api refuses to start without its own >= 32-character key.
+        "WEAVE_API_SECRET_KEY",
     }
 
 

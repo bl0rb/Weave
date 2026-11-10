@@ -11,6 +11,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Stored XSS via artifacts**: weave-api's and the chat's artifact proxies kept Ingest's content type
+  but dropped its `Content-Disposition`, so an SVG attachment from Confluence rendered inline and its
+  script ran on the chat/API origin. Only png/jpeg/gif/webp are served inline now; everything else is
+  `attachment`, every artifact response carries `Content-Security-Policy: default-src 'none'; sandbox`,
+  filenames are validated and encoded, and the chat no longer caches artifacts for an hour.
+- **Login CSRF in the chat**: the SSO login now binds its exchange code to the browser with PKCE
+  (`/api/auth/sso/start`), and every state-changing chat route rejects cross-site requests (Origin /
+  Sec-Fetch-Site check, JSON content type), so a foreign page can no longer sign a user into another
+  account or log them out. weave-api redeems a `code_verifier` only for a code bound to its challenge.
+- weave-api no longer creates a second 7-day session on the API origin when the login hands off to
+  another origin (it survived the chat logout), and re-checks `return_to` in the callbacks.
+- **weave-api refuses to start with the public default `SECRET_KEY`** or a key shorter than 32
+  characters (`ALLOW_INSECURE_DEV_SECRET_KEY=true` for local development only).
+  `WEAVE_API_SECRET_KEY` is now required in `weave.yaml`; a Helm install whose secret lacks it now
+  crash-loops instead of running with the default.
+- Request bodies above `MAX_REQUEST_BODY_BYTES` (default 1 MiB) get 413; raise it for
+  OpenAI-compatible clients that replay long histories.
+- The per-user rate limit is charged before the Weave-Ingest identity refresh, so throttled requests
+  no longer reach Ingest.
+- `/v1/chat` and `/v1/chat/stream` release their database connection while Weave-Runtime answers
+  (about 20 slow chats could exhaust the pool for everyone); the stream uses the 900 s chat timeout
+  instead of 10 s, and a malformed SSE line ends the stream with an error event.
+- Upstream error texts (Runtime, Retrieval, Ingest, OIDC provider) are logged instead of returned to
+  the client; a non-ASCII `X-Weave-Handoff-Secret` gets 401 instead of 500 in Weave-Ingest.
+
 ## [0.7.23] - 2026-11-10
 
 ### Added

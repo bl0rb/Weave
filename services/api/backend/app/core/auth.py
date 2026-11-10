@@ -114,7 +114,7 @@ def _refresh_ingest_identity(db: Session, user: User) -> User | None:
     return user
 
 
-def resolve_api_token(db: Session, raw_token: str) -> User | None:
+def resolve_api_token(db: Session, raw_token: str, *, refresh: bool = True) -> User | None:
     """Resolve a raw bearer token to its User, or `None` if it's unknown,
     expired, or belongs to a disabled user -- every failure mode collapsed
     into the same `None` on purpose (the same non-enumeration discipline
@@ -129,6 +129,10 @@ def resolve_api_token(db: Session, raw_token: str) -> User | None:
     `None` into `{"active": false}` instead -- a different transport for
     the same "no" answer, never a different one for whether the token is
     valid).
+
+    `refresh=False` skips the Weave-Ingest identity refresh -- only for
+    `get_credential_user` below, whose callers MUST still run
+    `refresh_credential_user` before trusting the user.
     """
     token = db.scalar(select(ApiToken).where(ApiToken.token_sha256 == _hash_token(raw_token)))
     if token is None:
@@ -146,7 +150,7 @@ def resolve_api_token(db: Session, raw_token: str) -> User | None:
         token.last_used_at = now
         db.commit()
 
-    return _refresh_ingest_identity(db, user)
+    return _refresh_ingest_identity(db, user) if refresh else user
 
 
 def _authenticate_session_cookie(request: Request, db: Session) -> User:
@@ -181,23 +185,34 @@ def _authenticate_session_cookie(request: Request, db: Session) -> User:
         db.commit()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Not authenticated')
 
-    user = _refresh_ingest_identity(db, user)
-    if user is None:
-        raise HTTPException(status_code=401, detail='Not authenticated')
+    # The Weave-Ingest identity refresh is NOT done here: see
+    # `get_credential_user` / `refresh_credential_user` below.
     return user
 
 
-def get_current_user(
+def get_credential_user(
     request: Request,
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> User:
-    """FastAPI dependency: resolve and return the User for a valid Bearer
-    token OR a valid session cookie (in that order -- see module
-    docstring). A well-formed `Authorization: Bearer <token>` header, when
-    present, is tried first and any failure there (unknown token, expired
-    token, disabled user) raises immediately, WITHOUT falling back to the
-    cookie -- a caller presenting a bearer credential is never silently
+    """FastAPI dependency: the User a valid Bearer token OR a valid session
+    cookie belongs to (in that order -- see module docstring), with every
+    LOCAL check already applied (unknown/expired credential, disabled
+    user -> 401) but WITHOUT the Weave-Ingest identity refresh.
+
+    Split out of `get_current_user` so app/core/ratelimit.py can charge the
+    per-user budget BEFORE that refresh: the refresh is an outbound HTTP
+    call to Weave-Ingest on every request, and running it ahead of the rate
+    limit let a throttled caller still push its full request volume through
+    to Weave-Ingest. The user returned here is not yet authorised for
+    anything -- team/admin may be stale, and the Ingest account may be
+    gone -- so every caller must pass it through `refresh_credential_user`
+    before using it.
+
+    A well-formed `Authorization: Bearer <token>` header, when present, is
+    tried first and any failure there (unknown token, expired token,
+    disabled user) raises immediately, WITHOUT falling back to the cookie
+    -- a caller presenting a bearer credential is never silently
     re-authenticated a different way. A missing or non-Bearer-shaped
     header (nothing at all, `Basic ...`, an empty value) falls through to
     `_authenticate_session_cookie` instead of raising here directly, so a
@@ -206,12 +221,38 @@ def get_current_user(
     """
     if authorization and authorization.startswith(_BEARER_PREFIX):
         raw_token = authorization[len(_BEARER_PREFIX):]
-        user = resolve_api_token(db, raw_token)
+        user = resolve_api_token(db, raw_token, refresh=False)
         if user is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Not authenticated')
         return user
 
     return _authenticate_session_cookie(request, db)
+
+
+def refresh_credential_user(db: Session, user: User) -> User:
+    """Second half of authentication for a `get_credential_user` result:
+    re-read team/admin/locale from Weave-Ingest (per request, so a change
+    there takes effect immediately) and reject an account Weave-Ingest no
+    longer knows -- or a direct-OIDC account next to the Ingest handoff --
+    with the same generic 401."""
+    refreshed = _refresh_ingest_identity(db, user)
+    if refreshed is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Not authenticated')
+    return refreshed
+
+
+def get_current_user(
+    user: User = Depends(get_credential_user),
+    db: Session = Depends(get_db),
+) -> User:
+    """FastAPI dependency: resolve and return the fully authenticated User
+    for a valid Bearer token OR a valid session cookie --
+    `get_credential_user` (see there for the credential order) followed by
+    `refresh_credential_user`. Rate-limited routes use
+    app/core/ratelimit.py's `enforce_rate_limit` instead, which runs the
+    same two steps with the limit check between them.
+    """
+    return refresh_credential_user(db, user)
 
 
 def require_introspection_service_token(authorization: str | None = Header(default=None)) -> None:

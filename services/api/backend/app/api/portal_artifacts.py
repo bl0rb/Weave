@@ -16,7 +16,9 @@ release UUID alone is no longer enough. Unknown, superseded or space-less
 releases fail closed with the same 404 as a missing artifact.
 """
 
+import logging
 import uuid
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -28,6 +30,39 @@ from app.services.ingest_identity import ingest_subject
 from app.services.retrieval_client import RetrievalClientError, list_collections, release_collection
 
 router = APIRouter(prefix='/v1/portal', tags=['portal-artifacts'])
+logger = logging.getLogger(__name__)
+
+# The only types a browser may render inline from THIS origin -- passive
+# raster images, which is all the chat shows (Source.images). Mirrors
+# Weave-Ingest's _ARTIFACT_INLINE_CONTENT_TYPES minus application/pdf: a
+# PDF is not shown in the chat, and the sandbox CSP below would break the
+# browser's viewer anyway. Everything else -- image/svg+xml above all,
+# which carries script, and text/html -- is an attachment: this gateway's
+# origin holds the session cookie, so rendering an uploaded document's
+# active content here would be stored XSS.
+_INLINE_CONTENT_TYPES = frozenset({'image/png', 'image/jpeg', 'image/gif', 'image/webp'})
+# Defence in depth for whatever still renders (a direct navigation to an
+# attachment the browser ignores, a type sniffed despite nosniff): no
+# subresources, no script, an opaque origin. An image document needs none
+# of it -- <img> in the chat is unaffected by the image's own CSP.
+_ARTIFACT_CSP = "default-src 'none'; sandbox"
+
+
+def _valid_filename(filename: str) -> bool:
+    """One plain path segment: never '.'/'..', a separator, or anything
+    that would end or re-shape the upstream path (query, fragment, control
+    characters) once spliced into Weave-Ingest's URL."""
+    if filename in ('', '.', '..'):
+        return False
+    return not any(ch in '/\\?#' or ord(ch) < 32 or ord(ch) == 127 for ch in filename)
+
+
+def _content_disposition(disposition: str, filename: str) -> str:
+    """RFC 6266/5987 Content-Disposition, the same shape as Weave-Ingest's
+    app/api/http_utils.py: ASCII-safe quoted fallback plus a UTF-8
+    filename* parameter for everything else."""
+    fallback = ''.join(ch if 32 <= ord(ch) < 127 and ch not in '"\\' else '_' for ch in filename) or 'download'
+    return f'{disposition}; filename="{fallback}"; filename*=UTF-8\'\'{quote(filename, safe="")}'
 
 
 def _client() -> httpx.Client:
@@ -67,24 +102,36 @@ def _require_read_access(release_id: str, user: User) -> str:
 def get_release_artifact(release_id: str, filename: str, user: User = Depends(enforce_rate_limit)) -> Response:
     if not settings.ingest_api_url:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Ingest is not configured')
+    if not _valid_filename(filename):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Artifact not found')
     release_id = _require_read_access(release_id, user)
 
-    path = f'/api/v1/portal/releases/{release_id}/artifacts/{filename}'
+    path = f'/api/v1/portal/releases/{release_id}/artifacts/{quote(filename, safe="")}'
     try:
         with _client() as http_client:
             upstream = http_client.get(path)
     except httpx.RequestError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f'Ingest unreachable: {exc}') from exc
+        # The transport error names internal hosts/ports -- logs only.
+        logger.warning('Ingest artifact request failed: %s', exc)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='Ingest unreachable') from exc
 
     if upstream.status_code == status.HTTP_404_NOT_FOUND:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Artifact not found')
     if upstream.status_code >= 400:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='Ingest rejected the artifact request')
 
+    media_type = upstream.headers.get('content-type') or 'application/octet-stream'
+    # Inline only for an allowlisted type AND only if Weave-Ingest itself
+    # offered it inline; its 'attachment' is always kept.
+    inline = media_type.split(';', 1)[0].strip().lower() in _INLINE_CONTENT_TYPES and not (
+        upstream.headers.get('content-disposition') or ''
+    ).strip().lower().startswith('attachment')
     return Response(
         content=upstream.content,
-        media_type=upstream.headers.get('content-type', 'application/octet-stream'),
+        media_type=media_type,
         headers={
+            'Content-Disposition': _content_disposition('inline' if inline else 'attachment', filename),
+            'Content-Security-Policy': _ARTIFACT_CSP,
             'X-Content-Type-Options': 'nosniff',
             # Revalidate on every view: each one runs the read check again, so
             # a revoked grant also stops images the browser already holds.

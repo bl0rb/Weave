@@ -271,6 +271,7 @@ Ohne diese startet der Dienst nicht oder verweigert fail-closed die Arbeit.
 | Runtime | `WEAVE_DELEGATION_SECRET` | Signiert Delegations-Token. Ohne Wert wird keines ausgestellt |
 | Ingest + Runtime | `CHAT_CONFIG_SERVICE_TOKEN` | Schützt die interne Projektion der zentralen Chat-Konfiguration samt entschlüsseltem Provider-Key (ADR-0007). Ein geteilter Wert: Ingest prüft, Runtime ruft |
 | API | `INTROSPECTION_SERVICE_TOKEN` | Erlaubt anderen Diensten, Tokens prüfen zu lassen |
+| API | `SECRET_KEY` (`WEAVE_API_SECRET_KEY`) | Signiert den OIDC-Login-State. Zufällig, mindestens 32 Zeichen — sonst startet Weave-API nicht |
 | Tools | `TOOLS_API_TOKEN` | Service-Auth der REST-Oberfläche |
 | Tools | `WEAVE_DELEGATION_SECRET` | Prüft Delegations-Token. Ohne Wert: `503` |
 | Tools | `INTROSPECTION_SERVICE_TOKEN` | Fragt Weave-API, wem ein Token gehört |

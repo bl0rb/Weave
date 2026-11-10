@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { clearSessionCookie, getSessionCredential } from '@/lib/session';
 import { gatewayLogout } from '@/lib/weave-api-server';
+import { rejectCrossSiteRequest } from '@/lib/request-guard';
 
 /**
  * POST /api/session/logout — deletes this app's own httpOnly session
@@ -17,6 +18,8 @@ import { gatewayLogout } from '@/lib/weave-api-server';
  * of whether the gateway call succeeded.
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const forbidden = rejectCrossSiteRequest(request);
+  if (forbidden) return forbidden;
   const credential = getSessionCredential(request);
   if (credential?.kind === 'session') {
     await gatewayLogout(credential.value);

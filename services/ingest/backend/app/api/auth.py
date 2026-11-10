@@ -1330,7 +1330,10 @@ def handoff_exchange(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='service misconfigured'
         )
-    if not hmac.compare_digest(request.headers.get(_HANDOFF_SECRET_HEADER, ''), secret):
+    # Compared as bytes, like the two endpoints below: `compare_digest` on
+    # two str raises TypeError for any non-ASCII character, which would turn
+    # a garbage header into a 500 instead of the 401 it deserves.
+    if not hmac.compare_digest(request.headers.get(_HANDOFF_SECRET_HEADER, '').encode(), secret.encode()):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid handoff credentials')
 
     now = datetime.now(timezone.utc)

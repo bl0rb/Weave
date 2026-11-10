@@ -1013,8 +1013,11 @@ services:
       WEAVE_API_SECRET_KEY:
         secret: true
         env_var: WEAVE_API_SECRET_KEY
-        required: false
-        comment: "ADR-0003: this service's own SECRET_KEY, never shared."
+        required: true
+        comment: >
+          ADR-0003: this service's own SECRET_KEY, never shared. Required:
+          weave-api refuses to start without a random value of at least 32
+          characters (`openssl rand -hex 32`).
       RATE_LIMIT_PER_MINUTE:
         secret: false
         value: 30
@@ -1025,6 +1028,15 @@ services:
         value: 20
         type: int
         required: false
+      MAX_REQUEST_BODY_BYTES:
+        secret: false
+        value: 1048576
+        type: int
+        required: false
+        comment: >
+          Request bodies above this many bytes get 413 (1 MiB). Raise it for
+          OpenAI-compatible clients that replay long histories or large
+          pasted documents on POST /v1/chat/completions.
       OIDC_ISSUER:
         secret: false
         value: ""

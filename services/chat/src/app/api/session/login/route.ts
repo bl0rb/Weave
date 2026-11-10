@@ -4,6 +4,7 @@ import { setSessionCookie } from '@/lib/session';
 import { weaveApiFetch } from '@/lib/weave-api-server';
 import { errorForNetworkFailure, errorForHttpStatus, mappedError } from '@/lib/errors';
 import type { Bot } from '@/types/weave-api';
+import { rejectCrossSiteRequest } from '@/lib/request-guard';
 
 interface LoginBody {
   token?: unknown;
@@ -18,6 +19,8 @@ interface LoginBody {
  * for why the token lives server-side in the first place.
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const forbidden = rejectCrossSiteRequest(request, { json: true });
+  if (forbidden) return forbidden;
   let body: LoginBody;
   try {
     body = (await request.json()) as LoginBody;

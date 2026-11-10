@@ -4,6 +4,7 @@ import { requireSessionCredential } from '@/lib/require-session';
 import { GatewayError, weaveApiFetchJson } from '@/lib/weave-api-server';
 import { errorForHttpStatus, errorForNetworkFailure } from '@/lib/errors';
 import type { ChatRequestBody, ChatResponseBody } from '@/types/weave-api';
+import { rejectCrossSiteRequest } from '@/lib/request-guard';
 
 /**
  * POST /api/chat — proxies Weave-API's non-streaming POST /v1/chat. The
@@ -12,6 +13,8 @@ import type { ChatRequestBody, ChatResponseBody } from '@/types/weave-api';
  * as the default — see the chat client's own retry logic.
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const forbidden = rejectCrossSiteRequest(request, { json: true });
+  if (forbidden) return forbidden;
   const session = requireSessionCredential(request);
   if ('response' in session) return session.response;
 

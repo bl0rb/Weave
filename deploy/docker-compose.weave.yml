@@ -948,6 +948,7 @@ services:
       INTROSPECTION_SERVICE_TOKEN: ${INTROSPECTION_SERVICE_TOKEN:?INTROSPECTION_SERVICE_TOKEN is required}
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-30}
       HISTORY_MAX_MESSAGES: ${HISTORY_MAX_MESSAGES:-20}
+      MAX_REQUEST_BODY_BYTES: ${MAX_REQUEST_BODY_BYTES:-1048576}
       # --- OIDC browser-session login (OPTIONAL, additive -- see
       # services/api/.env.example and services/api/backend/app/core/config.py).
       # This adds a

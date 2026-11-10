@@ -49,7 +49,8 @@ Out of scope:
 - **The development defaults shipped in the `.env.example` files.** Some name
   themselves in the value —
   `SECRET_KEY=dev-only-insecure-secret-key-do-not-use-in-production`
-  (`services/api/.env.example`, `services/knowledge/.env.example`) — and the
+  (`services/knowledge/.env.example`; weave-api ships an empty `SECRET_KEY`
+  and refuses to start with that default) — and the
   rest are marked by the comment above them: the SQLite `DATABASE_URL`
   fallbacks and the `fake` embedding and LLM providers. A deployment that
   keeps any of them is misconfigured rather than vulnerable. Values written as

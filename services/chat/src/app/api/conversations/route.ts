@@ -4,6 +4,7 @@ import { requireSessionCredential } from '@/lib/require-session';
 import { GatewayError, weaveApiFetch, weaveApiFetchJson } from '@/lib/weave-api-server';
 import { errorForHttpStatus, errorForNetworkFailure } from '@/lib/errors';
 import type { ConversationSummary } from '@/types/weave-api';
+import { rejectCrossSiteRequest } from '@/lib/request-guard';
 
 /**
  * GET /api/conversations — proxies Weave-API's GET /v1/conversations: the
@@ -32,6 +33,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 /** DELETE /api/conversations — permanently removes the caller's complete
  * history. The upstream route is ownership-scoped and returns 204. */
 export async function DELETE(request: NextRequest): Promise<NextResponse> {
+  const forbidden = rejectCrossSiteRequest(request);
+  if (forbidden) return forbidden;
   const session = requireSessionCredential(request);
   if ('response' in session) return session.response;
 

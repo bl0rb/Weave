@@ -3,6 +3,7 @@ import type { NextRequest } from 'next/server';
 import { requireSessionCredential } from '@/lib/require-session';
 import { weaveApiFetch } from '@/lib/weave-api-server';
 import { errorForHttpStatus, errorForNetworkFailure } from '@/lib/errors';
+import { rejectCrossSiteRequest } from '@/lib/request-guard';
 
 /**
  * GET/POST /api/tokens — proxies Weave-API's self-service personal API
@@ -29,6 +30,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const forbidden = rejectCrossSiteRequest(request, { json: true });
+  if (forbidden) return forbidden;
   const payload = await request.json().catch(() => ({}));
   return forward(request, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 }

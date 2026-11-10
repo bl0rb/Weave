@@ -2,9 +2,22 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET } from '@/app/api/auth/sso/callback/route';
 import { SESSION_COOKIE_NAME, SESSION_KIND_COOKIE_NAME } from '@/lib/session';
+import { SSO_PKCE_COOKIE_NAME } from '@/lib/sso-pkce';
 
+const VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+
+// Carries the PKCE verifier cookie /api/auth/sso/start would have set — the
+// tests without one live in sec_chatapp_pkce.test.ts.
 function callbackRequest(query = ''): NextRequest {
-  return new NextRequest(`http://localhost/api/auth/sso/callback${query}`);
+  return new NextRequest(`http://localhost/api/auth/sso/callback${query}`, {
+    headers: { cookie: `${SSO_PKCE_COOKIE_NAME}=${VERIFIER}` },
+  });
+}
+
+/** The verifier cookie is cleared on every outcome; the session cookie only
+ * on success. */
+function expectNoSessionCookie(res: Response): void {
+  expect(res.headers.get('set-cookie') ?? '').not.toContain(SESSION_COOKIE_NAME);
 }
 
 describe('GET /api/auth/sso/callback', () => {
@@ -22,7 +35,7 @@ describe('GET /api/auth/sso/callback', () => {
     expect(res.status).toBe(307);
     expect(res.headers.get('location')).toBe('http://localhost:3000/login?error=missing_code');
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(res.headers.get('set-cookie')).toBeNull();
+    expectNoSessionCookie(res);
   });
 
   it(
@@ -35,7 +48,7 @@ describe('GET /api/auth/sso/callback', () => {
       const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
         expect(String(url)).toBe('http://localhost:8004/v1/auth/session/exchange');
         expect(init?.method).toBe('POST');
-        expect(JSON.parse(init!.body as string)).toEqual({ code: 'the-one-time-code' });
+        expect(JSON.parse(init!.body as string)).toEqual({ code: 'the-one-time-code', code_verifier: VERIFIER });
         return new Response(JSON.stringify({ session_token: TOKEN, expires_at: expiresAt }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
@@ -79,7 +92,7 @@ describe('GET /api/auth/sso/callback', () => {
     const res = await GET(callbackRequest('?code=bad-code'));
 
     expect(res.headers.get('location')).toBe('http://localhost:3000/login?error=invalid_code');
-    expect(res.headers.get('set-cookie')).toBeNull();
+    expectNoSessionCookie(res);
   });
 
   it('redirects to /login?error=gateway_unreachable when Weave-API cannot be reached at all', async () => {
@@ -93,7 +106,7 @@ describe('GET /api/auth/sso/callback', () => {
     const res = await GET(callbackRequest('?code=some-code'));
 
     expect(res.headers.get('location')).toBe('http://localhost:3000/login?error=gateway_unreachable');
-    expect(res.headers.get('set-cookie')).toBeNull();
+    expectNoSessionCookie(res);
   });
 
   it('redirects to /login?error=invalid_code on a malformed (non-JSON / missing session_token) 200 response', async () => {
@@ -115,7 +128,7 @@ describe('GET /api/auth/sso/callback', () => {
       const res = await GET(callbackRequest('?code=some-code'));
 
       expect(res.headers.get('location')).toBe('http://localhost:3000/login?error=invalid_code');
-      expect(res.headers.get('set-cookie')).toBeNull();
+      expectNoSessionCookie(res);
     },
   );
 

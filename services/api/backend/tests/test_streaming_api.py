@@ -640,7 +640,7 @@ def test_chat_uses_the_dedicated_chat_read_timeout_not_the_default_http_read_tim
     build its httpx.Client with `settings.chat_read_timeout_seconds` as the
     read timeout -- deliberately NOT `http_read_timeout_seconds`, which
     every other call this client makes (list_bots/get_bot/
-    conversation-title, and each chunk of chat_stream()) still uses
+    conversation-title; chat_stream() shares chat()'s timeout) still uses
     unchanged, since a long-running n8n agent flow behind a blocking chat
     turn can take far longer than that default 10s."""
     from app.core.config import settings
