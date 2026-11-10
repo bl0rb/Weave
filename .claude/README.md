@@ -39,9 +39,10 @@ sich aus liest, wenn es keine `CLAUDE.md` gibt.
 
 ## Modelle konfigurieren
 
-Die Regeln sprechen nur von L1/L2/L3. Modellnamen stehen an genau diesen Stellen:
+Die Regeln sprechen von L1/L2/L3. Modellnamen stehen nur an diesen Stellen
+und in der Familien-Reihenfolge in `rules/model-routing.md`:
 
-| Stufe | Stellschraube | Standard |
+| Stufe | Stellschraube | Wert bei Auslieferung |
 |---|---|---|
 | L1 | `model:` in `agents/scout.md` | `haiku` |
 | L2 | Modell der Session: `/model`, `--model`, `ANTHROPIC_MODEL`, `model` in Settings | Wahl des Nutzers |
@@ -78,7 +79,9 @@ nicht verfügbare Modelle.
 
 - `CLAUDE.md` und alle Dateien in `rules/` werden beim Sessionstart geladen.
 - Ein Subagent läuft auf dem Modell aus seinem Frontmatter, mit den dort
-  erlaubten Tools und ohne den Gesprächsverlauf. `CLAUDE.md`, `AGENTS.md` und
+  erlaubten Tools und ohne den Gesprächsverlauf. Zwei Ausnahmen beim Modell:
+  Ein `model`-Parameter im Agent-Aufruf hat Vorrang, und ein Alias aus der
+  Familie des Hauptmodells läuft auf genau dem Hauptmodell. `CLAUDE.md`, `AGENTS.md` und
   `rules/` bekäme er normalerweise mit; `omitClaudeMd: true` schaltet das für
   beide Agents ab (ab Claude Code v2.1.271).
 - Ist ein Modell durch `availableModels` gesperrt, weicht Claude Code für den
@@ -102,9 +105,12 @@ nicht verfügbare Modelle.
   nur für Fallbacks und in den Fällen unter „Eingebaute Alternativen“.
 - Es gibt kein automatisches Routing einzelner Aufgaben auf ein Hauptmodell.
 - Der Hauptagent erfährt nicht zuverlässig, auf welchem Modell ein Subagent
-  tatsächlich lief. Ersetzt Claude Code das Modell stillschweigend, sieht er
-  keinen Fehler. `escalation-reviewer` nennt deshalb am Ende sein Modell aus
-  dem eigenen Systemprompt; das ist ein Hinweis, kein Beweis.
+  tatsächlich lief. Ersetzt Claude Code das Modell, sieht er keinen Fehler.
+  Nach einem Wechsel über `fallbackModel` beginnt der Bericht des Subagenten
+  mit einer Zeile, dass er das Modell gewechselt hat; eine Ersetzung wegen
+  `availableModels` sieht nur der Nutzer als Warnung. `escalation-reviewer`
+  nennt zusätzlich am Ende sein Modell aus dem eigenen Systemprompt; das ist
+  ein Hinweis, kein Beweis.
 - Der Aufgabenstand überlebt die Session als Transkript (`--resume`) und kann
   durch Kompaktierung verkürzt werden. Dieses Setup bringt keine eigene
   Task-Verwaltung mit; die eingebaute Task-Liste lässt sich mit
@@ -125,12 +131,13 @@ Subagent einbinden. Keiner ist hier eingeschaltet oder getestet.
 |---|---|---|---|
 | Advisor-Tool | `/advisor opus` oder `"advisorModel": "opus"` | an Entscheidungspunkten; Claude entscheidet selbst, wann | Der Advisor liest jedes Mal das ganze Gespräch ungecacht, dafür ohne Übergabe und ohne Cache-Verlust beim Hauptmodell. Experimentell, nur über die Anthropic-API, nicht begrenzbar. |
 | `opusplan` | `/model opusplan` | im Plan-Modus | Jeder Wechsel in den Plan-Modus und zurück ist ein Modellwechsel mit frischem Cache. |
-| Skill oder Command mit `model:` | Frontmatter der Skill-Datei | für genau einen Turn, mit vollem Kontext | Der Turn und der nächste lesen das Gespräch ungecacht. |
+| Skill oder Command mit `model:` | Frontmatter der Skill-Datei | für genau einen Turn, mit vollem Kontext | Der Turn liest das Gespräch ungecacht; danach läuft wieder das Sessionmodell. |
 
-Ist der Advisor eingeschaltet, behandelt `rules/escalation-policy.md` ihn als
-L3-Eskalation mit denselben Auslösern, damit nicht beides für ein Problem
-läuft. Bei langen Gesprächen ist der Subagent mit knapper Übergabe meist
-günstiger, bei Fragen, die am ganzen Verlauf hängen, der Advisor.
+Ist der Advisor eingeschaltet, nutzt `rules/escalation-policy.md` ihn
+anstelle des Subagenten, wenn die Antwort am bisherigen Verlauf hängt und
+keine neuen Lese- oder Prüfschritte braucht. Er zählt als Runde, und für ein
+Problem läuft nie beides. Bei langen Gesprächen mit einer abgrenzbaren Frage
+ist der Subagent mit knapper Übergabe günstiger.
 
 ## Mögliche technische Ausbaustufen
 
@@ -155,8 +162,8 @@ Hauptagenten über mehrere Turns ist damit nicht gemessen.
 | # | Szenario | Erwartetes Verhalten | Regel | Ergebnis |
 |---|---|---|---|---|
 | 1 | Mehrere einfache Folgefragen | Hauptagent antwortet selbst, kein Subagent, kein Modellwechsel | `context-continuity.md`, Task affinity | blind bestanden |
-| 2 | Aufgabe wird schwieriger | Aufgabe bleibt beim Hauptagenten; bei Auslöser plus Mehrwertprüfung eine gezielte L3-Frage | `escalation-policy.md`, Triggers und Value check | blind bestanden |
-| 3 | Fehler nach zwei gescheiterten Versuchen | Auslöser 1, Übergabe mit „Failed attempts“, L3 wiederholt sie nicht | `escalation-policy.md`, `context-handover.md`, `agents/escalation-reviewer.md` | blind bestanden |
+| 2 | Aufgabe wird schwieriger | Aufgabe bleibt beim Hauptagenten; bei Auslöser plus Mehrwertprüfung eine gezielte L3-Frage | `context-continuity.md`, Task affinity; `escalation-policy.md`, Triggers und Value check | blind bestanden |
+| 3 | Fehler nach zwei gescheiterten Versuchen | Auslöser 1, Übergabe mit „Failed attempts“, L3 wiederholt sie nicht | `escalation-policy.md`, `context-handover.md`, `agents/escalation-reviewer.md` | blind bestanden für Auslöser und Übergabe; dass L3 gescheiterte Versuche nicht wiederholt, ist nicht getestet |
 | 4 | Themenwechsel | Neue Aufgabe, neu beurteilt; im Zweifel Fortsetzung | `context-continuity.md` | blind bestanden |
 | 5 | Subagent-Eskalation | Übergabe mit allen acht Abschnitten; fehlt etwas, antwortet L3 mit `NEEDS_CONTEXT:` statt selbst zu suchen | `context-handover.md`, `agents/escalation-reviewer.md` | live bestanden |
 | 6 | Rückkehr zum Hauptagenten | Ergebnis prüfen, festhalten, Aufgabe auf dem Hauptmodell fortsetzen | `context-handover.md`, Integration | blind bestanden; Rückgabeformat live bestanden |

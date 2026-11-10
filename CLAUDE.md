@@ -4,8 +4,10 @@
 
 ## Model escalation
 
-Three model tiers, routed per task (not per message). The rules load automatically
-from `.claude/rules/`; each topic has exactly one owner file:
+Three model tiers. Decisions are made per task, not per message: a task stays
+with the main agent (L2), single steps may go to L1 and single hard questions
+to L3. The rules load automatically from `.claude/rules/`; each topic has
+exactly one owner file:
 
 | Topic | File |
 |---|---|

@@ -1,6 +1,6 @@
 # Context continuity and task affinity
 
-**Route tasks, not messages.** A task is one goal plus everything that serves
+**Decide per task, not per message.** A task is one goal plus everything that serves
 it: clarifications, follow-up questions, fixes, verification, the final report.
 
 ## Task affinity
@@ -12,9 +12,8 @@ it: clarifications, follow-up questions, fixes, verification, the final report.
   current model, even when a lower tier could answer them.
 - Rising difficulty inside a task is not a new task. It may trigger an
   escalation; the task still stays with the main agent.
-- A topic change starts a new task that is judged afresh: delegations,
-  escalation rounds and model recommendations of the previous task do not
-  carry over. It is a topic change only when the goal is new and does not
+- A topic change starts a new task that is judged afresh: delegations and
+  escalation rounds of the previous task do not carry over. It is a topic change only when the goal is new and does not
   build on the files, findings or decisions of the current task. When unsure,
   treat it as a continuation.
 

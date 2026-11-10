@@ -41,10 +41,10 @@ The one concrete thing to answer or decide, and what a useful answer contains.
 ## Return
 
 `escalation-reviewer` answers under **Answer**, **Evidence**, **Proposed
-change**, **Not verified**, **Next step**, followed by a `model:` line naming
-the model it ran on. If the handover is incomplete it answers `NEEDS_CONTEXT:`
-instead; send the missing part to the same agent, which does not count as a
-round.
+change**, **Not verified**, **Next step**, followed by a `model:` line with
+the model id its system prompt states. That line is a hint and may read
+`unknown`. If the handover is incomplete it answers `NEEDS_CONTEXT:` instead;
+send the missing part to the same agent (`escalation-policy.md`, step 2).
 
 `scout` returns facts with `path:line`. `NEEDS_L2:` marks a part that needs
 analysis; do that part yourself.

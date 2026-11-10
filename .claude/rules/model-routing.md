@@ -25,10 +25,12 @@ decide single steps inside it.
 - **L1 for a self-contained, read-only lookup** that returns a short summary
   and would otherwise take many tool calls or pull large files or logs into
   this conversation, such as summarising a large log. Whatever one search or
-  a handful of tool calls answers is done inline, as are quick questions and
-  small edits: starting a subagent costs more than that.
-- The `scout` agent is narrower than the Scout role in `AGENTS.md`: it locates
-  and summarises. Finding root causes stays with the main agent.
+  a handful of tool calls answers is done inline, as are small edits:
+  starting a subagent costs more than that.
+- The two agents are narrower than the Scout and Reviewer roles in
+  `AGENTS.md`: `scout` locates and summarises, `escalation-reviewer` answers
+  one hard question. Finding root causes and reviewing diffs stay with the
+  main agent.
 - **L3 only through `escalation-policy.md`.** Never as a starting point.
 
 ## Cost rule
@@ -39,8 +41,8 @@ A cheaper model that needs two extra attempts is the expensive choice.
 
 - One subagent at a time by default. At most two `scout` agents in parallel, and
   only for disjoint questions. Never more than one `escalation-reviewer`.
-- Do not pass a per-call `model` override to these agents; change the
-  frontmatter instead, so the mapping stays in one place.
+- Do not pass a per-call `model` override to these agents. The user sets the
+  mapping in the frontmatter; do not edit it yourself.
 
 These are instructions the main agent follows. Claude Code does not enforce
 them and does not route tasks to another model on its own.
