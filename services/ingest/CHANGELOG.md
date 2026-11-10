@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RERANKER_MODEL=onnx-community/bge-reranker-v2-m3-ONNX`.
 - Bots: empty top_k/final_k now mean "central default" (new bots start empty); the bot editor shows
   "Zentraler Standard".
+- **The published `weave-ingest-worker` image is CPU-only** (`paddlepaddle` from PyPI): the CUDA wheel
+  from Paddle's own index broke the release build. Build with `--build-arg PADDLE_GPU=true` (amd64)
+  for a GPU worker.
 - Knowledge-space cards line up their rows, and the "in Arbeit" chip is split into
   Verarbeitung/Indexierung chips that link to the filtered document list.
 

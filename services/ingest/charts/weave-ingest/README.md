@@ -65,9 +65,10 @@ helm upgrade --install weave-ingest ./charts/weave-ingest \
 ## GPU Worker Example (NVIDIA)
 
 Runs the worker on NVIDIA GPU nodes with the PaddleOCR-VL profile; backend and
-frontend stay on regular nodes. The published worker image (amd64) already
-contains `paddlepaddle-gpu` — no custom image is needed, and the runtime falls
-back to CPU when no GPU is present.
+frontend stay on regular nodes. The published worker image is CPU-only: build
+your own amd64 image with `--build-arg PADDLE_GPU=true`
+(`services/ingest/backend/worker.Dockerfile`) and point `worker.image.repository`/`tag` at it.
+The runtime falls back to CPU when no GPU is present.
 
 ```bash
 helm upgrade --install weave-ingest ./charts/weave-ingest \

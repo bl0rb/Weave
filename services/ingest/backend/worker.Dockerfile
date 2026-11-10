@@ -26,10 +26,13 @@ RUN apt-get update \
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir --require-hashes -r /app/requirements.txt
 
-# PaddlePaddle install is architecture-specific:
-# - amd64: use CUDA-enabled wheel for GPU deployments.
-# - arm64: use CPU wheel (GPU wheel is not published for aarch64).
-RUN if [ "$TARGETARCH" = "amd64" ]; then \
+# PaddlePaddle: the CPU wheel from PyPI by default, on every architecture --
+# the published image is CPU-only. Build with --build-arg PADDLE_GPU=true to
+# get the CUDA 12.6 wheel from Paddle's own index instead (amd64 only; no GPU
+# wheel exists for aarch64). That index is outside our control and has been
+# unreachable or missing the version, which must not break the release.
+ARG PADDLE_GPU=false
+RUN if [ "$PADDLE_GPU" = "true" ] && [ "$TARGETARCH" = "amd64" ]; then \
 			pip install --no-cache-dir paddlepaddle-gpu==3.2.1 \
 				--extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/; \
 		else \
