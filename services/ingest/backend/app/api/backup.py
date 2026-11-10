@@ -111,7 +111,8 @@ def _fail_stale_runs(db: Session) -> None:
 
 
 def _refuse_during_reingest(db: Session) -> None:
-    """A restore wipes the jobs and releases an active re-ingest is working on."""
+    """A restore wipes the jobs and releases an active re-ingest is working
+    on; an export would freeze jobs whose state only the re-ingest restores."""
     from app.services.reingest import active_run as active_reingest_run
 
     if active_reingest_run(db) is not None:
@@ -129,8 +130,7 @@ def _start_run(db: Session, run: BackupRun) -> BackupRun:
         if _active_run(db) is not None:
             db.commit()
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_ACTIVE_RUN_DETAIL)
-        if run.kind == BackupRunKind.IMPORT:
-            _refuse_during_reingest(db)
+        _refuse_during_reingest(db)
         db.add(run)
         db.commit()
         db.refresh(run)

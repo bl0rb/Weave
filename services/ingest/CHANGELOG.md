@@ -20,13 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   old version once the new one is indexed; when body and rating did not change, the new version
   is discarded and Knowledge stays untouched. Unreleased documents are re-converted in place,
   keeping review decisions, upload time and the current markdown on failure. Manually edited
-  documents are skipped unless included. Connections run one at a time as forced refresh runs
-  (pages and attachments chained as new versions, the sync's own auto-release does not act); a
-  forced run that does not finish is rolled back. A preview shows what will happen, start
+  documents are skipped unless included. Connections run one at a time as forced refresh runs:
+  unchanged pages and their attachments are converted again and chained as new versions (pages
+  changed upstream take the normal refresh path and go to review), the sync's own auto-release
+  skips the converted-again versions, and a forced run that does not finish is rolled back. A preview shows what will happen, start
   requires its confirmed counts, progress and problem items are listed per run, and a run can
   be cancelled. Runs live in `reingest_runs`/`reingest_items` (migration `0060`), are advanced
   in lease-guarded steps by the worker (`reingest_advance`, nudged by finished jobs and the
-  publication tick) and exclude backup restores while active. New settings
+  publication tick) and exclude backup restores and exports while active. New settings
   `REINGEST_MAX_IN_FLIGHT` (default 2) and `REINGEST_LEASE_SECONDS` (default 300).
 - A crawl whose child discovery hit `max_pages` is no longer treated as complete, so pages
   beyond the cap are not reported as missing.

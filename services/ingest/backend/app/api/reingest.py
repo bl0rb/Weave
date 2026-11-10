@@ -25,7 +25,7 @@ from app.schemas.reingest import (
 from app.services import reingest
 from app.services.security import enforce_rate_limit
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 router = APIRouter(
@@ -46,7 +46,8 @@ def _run_response(db: Session, run: ReingestRun) -> ReingestRunResponse:
     return ReingestRunResponse(
         id=run.id,
         status=run.status.value if hasattr(run.status, 'value') else str(run.status),
-        options=run.options if isinstance(run.options, dict) else {},
+        # The live set is internal (and large).
+        options={key: value for key, value in (run.options or {}).items() if key != 'live_job_ids'},
         counts=reingest.item_counts(db, run.id),
         summary=run.summary,
         error_message=run.error_message,
@@ -118,7 +119,10 @@ def list_reingest_items(
     if kind:
         query = query.where(ReingestItem.kind == kind)
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
-    items = db.scalars(query.order_by(ReingestItem.id).offset(offset).limit(limit)).all()
+    # Failures first: planned skips can be many and must not hide them.
+    items = db.scalars(
+        query.order_by(case((ReingestItem.status == 'failed', 0), else_=1), ReingestItem.id).offset(offset).limit(limit)
+    ).all()
     return ReingestItemListResponse(
         items=[ReingestItemResponse.model_validate(item, from_attributes=True) for item in items], total=total
     )

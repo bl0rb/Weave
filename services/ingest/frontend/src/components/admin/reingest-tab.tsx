@@ -380,7 +380,7 @@ export function ReingestTab() {
                 {effectiveRerelease && (
                   <li>{t(acceptQualityWarnings ? 'admin.reingest.confirm.qualityOn' : 'admin.reingest.confirm.qualityOff')}</li>
                 )}
-                {includeDocuments && includeEdited && (
+                {includeEdited && (
                   <li>
                     <strong>{t('admin.reingest.confirm.edited')}</strong>
                   </li>

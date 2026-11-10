@@ -230,8 +230,11 @@ def test_preview_classifies_documents(env):
     preview = client.get(f'{BASE}/preview').json()
     assert preview['documents']['rerelease'] == 1
     assert preview['documents']['reprocess'] == 1
-    assert preview['documents']['skipped'] == {'not_live': 1, 'edited': 1, 'no_original': 1, 'withdrawn': 1}
-    assert preview['documents']['imported'] == 1
+    # The imported page belongs to no connection any more.
+    assert preview['documents']['skipped'] == {
+        'not_live': 1, 'edited': 1, 'no_original': 1, 'withdrawn': 1, 'connection_missing': 1,
+    }
+    assert preview['documents']['imported'] == 0
     assert preview['knowledge_available'] is True
 
     kept = client.get(f'{BASE}/preview', params={'rerelease': False}).json()
@@ -586,16 +589,20 @@ def _sync(env, owner: User, collection: Collection, **source_fields) -> ImportSy
         return sync
 
 
-def _import_page(env, owner, collection, run_id, *, previous: Job | None = None, released=False) -> Job:
+def _import_page(env, owner, collection, run_id, *, previous: Job | None = None, released=False, forced=False,
+                 mode='import', status=JobStatus.FINISHED, name='seite.md') -> Job:
     with env.db() as db:
         job = Job(
-            original_filename='seite.md', upload_path='kb/x/x.html', status=JobStatus.FINISHED, owner_id=owner.id,
+            original_filename=name, upload_path='kb/x/x.html', status=status, owner_id=owner.id,
             import_run_id=run_id, content_sha256=hashlib.sha256(uuid.uuid4().bytes).hexdigest(),
             document_version=previous.document_version + 1 if previous else 1,
             previous_job_id=previous.id if previous else None,
             processing_info={'settings': {
-                'mode': 'import', 'collection_id': collection.id,
-                'import': {'source_page_id': '42', 'source_page_version': 3, 'source_url': 'https://wiki.example/42'},
+                'mode': mode, 'collection_id': collection.id,
+                'import': {
+                    'source_page_id': '42', 'source_page_version': 3, 'source_url': 'https://wiki.example/42',
+                    **({'forced_reimport': True} if forced else {}),
+                },
             }, 'execution': {'status': 'finished', 'engine': 'confluence-import'}},
         )
         db.add(job)
@@ -635,11 +642,12 @@ def test_connection_is_force_reimported_and_released_pages_released_again(env):
         assert forced.options['force_reimport'] is True
         assert forced.options['reingest_run_id'] == run['id']
         assert forced.options['is_refresh'] is True
-        assert item.carry['live_job_ids'] == [page.id]
+        assert db.get(ReingestRun, run['id']).options['live_job_ids'] == [page.id]
+    assert 'live_job_ids' not in client.get(f'{BASE}/runs').json()['items'][0]['options']
     assert ('import_confluence', [forced.id, 0]) in env.tasks
 
     # What the forced run leaves behind: the page converted again, chained.
-    new_page = _import_page(env, owner, collection, forced.id, previous=page)
+    new_page = _import_page(env, owner, collection, forced.id, previous=page, forced=True)
     with env.db() as db:
         db.get(ImportRun, forced.id).status = ImportRunStatus.FINISHED
         db.commit()
@@ -709,20 +717,31 @@ def test_force_reimport_gating(env):
     owner = _user(env)
     collection = _collection(env, owner)
     released = _import_page(env, owner, collection, None, released=True)
+    stale = _import_page(env, owner, collection, None, released=True)
+    with env.db() as db:
+        run = ReingestRun(options={'live_job_ids': [released.id]})
+        db.add(run)
+        db.commit()
+        run_id = run.id
+    forced = {'force_reimport': True, 'reingest_run_id': run_id, 'reingest_rerelease': True}
     with env.db() as db:
         released = db.get(Job, released.id)
         assert _force_reimport(db, {}, released) is False
-        assert _force_reimport(db, {'force_reimport': True, 'reingest_rerelease': True}, released) is True
+        assert _force_reimport(db, forced, released) is True
+        # Released but no longer live in Knowledge: left alone.
+        assert _force_reimport(db, forced, db.get(Job, stale.id)) is False
         # Without the decision to release again, a released page stays as it is.
-        assert _force_reimport(db, {'force_reimport': True}, released) is False
+        assert _force_reimport(db, {**forced, 'reingest_rerelease': False}, released) is False
         released.processing_info = {**released.processing_info, 'portal_edit': {'by': 'x'}}
-        assert _force_reimport(db, {'force_reimport': True, 'reingest_rerelease': True}, released) is False
-        assert _force_reimport(
-            db, {'force_reimport': True, 'reingest_rerelease': True, 'reingest_include_edited': True}, released
-        ) is True
+        assert _force_reimport(db, forced, released) is False
+        assert _force_reimport(db, {**forced, 'reingest_include_edited': True}, released) is True
+    # An unreleased version on top of a released one is not stacked on.
+    pending = _import_page(env, owner, collection, None, previous=stale)
+    with env.db() as db:
+        assert _force_reimport(db, forced, db.get(Job, pending.id)) is False
 
 
-def test_auto_release_does_not_act_on_a_forced_run(env):
+def test_auto_release_skips_only_forced_versions(env):
     owner = _user(env)
     collection = _collection(env, owner)
     with env.db() as db:
@@ -731,10 +750,12 @@ def test_auto_release_does_not_act_on_a_forced_run(env):
         db.add(run)
         db.commit()
         run_id = run.id
-    page = _import_page(env, owner, collection, run_id)
+    forced = _import_page(env, owner, collection, run_id, forced=True)
+    new_page = _import_page(env, owner, collection, run_id, name='neu.md')
     with env.db() as db:
-        assert publication_tasks.auto_release_import_jobs(db, run_id) == 0
-        assert db.scalar(select(DocumentRelease).where(DocumentRelease.job_id == page.id)) is None
+        assert publication_tasks.auto_release_import_jobs(db, run_id) == 1
+        assert db.scalar(select(DocumentRelease).where(DocumentRelease.job_id == forced.id)) is None
+        assert db.scalar(select(DocumentRelease).where(DocumentRelease.job_id == new_page.id)) is not None
 
 
 def test_run_only_options_never_reach_the_sync():
@@ -742,3 +763,184 @@ def test_run_only_options_never_reach_the_sync():
 
     stored = sync_options({'force_reimport': True, 'reingest_run_id': 'r', 'reingest_include_edited': True, 'tags': ['a']})
     assert stored == {'tags': ['a']}
+
+
+def test_cancel_during_a_step_ends_cancelled(env):
+    admin = _user(env, role=UserRole.ADMIN)
+    owner = _user(env)
+    job = _job(env, owner, _collection(env, owner))
+    client = _login(admin)
+    run = _start(client)
+    reingest.advance_run(run['id'])
+    _finish(env, job.id, body='# Neu\n')
+    real = reingest._finalize_documents
+
+    def _cancel_meanwhile(step, run_row):
+        real(step, run_row)
+        assert client.post(f'{BASE}/runs/{run["id"]}/cancel').status_code == 200
+
+    original = reingest._finalize_documents
+    reingest._finalize_documents = _cancel_meanwhile
+    try:
+        assert reingest.advance_run(run['id']) == 'done'
+    finally:
+        reingest._finalize_documents = original
+    with env.db() as db:
+        assert db.get(ReingestRun, run['id']).status == ReingestRunStatus.CANCELLED
+
+
+def test_a_queued_item_that_keeps_failing_is_cleaned_up(env, monkeypatch):
+    admin = _user(env, role=UserRole.ADMIN)
+    owner = _user(env)
+    released = _job(env, owner, _collection(env, owner), released=True)
+    env.knowledge[released.id] = 'indexed'
+    run = _start(_login(admin))
+    reingest.advance_run(run['id'])
+    new_id = _item(env, run['id'], released.id).new_job_id
+    _finish(env, new_id, body='# Neu\n')
+
+    def _broken(old, new):
+        raise OSError('object store down')
+
+    monkeypatch.setattr(reingest, '_unchanged', _broken)
+    reingest.advance_run(run['id'])
+    item = _item(env, run['id'], released.id)
+    assert item.status == 'queued' and item.carry['attempts'] == 1 and 'retry_at' in item.carry
+    # Backed off: the next step leaves it alone.
+    reingest.advance_run(run['id'])
+    assert _item(env, run['id'], released.id).carry['attempts'] == 1
+    for _ in range(reingest._QUEUED_MAX_ATTEMPTS - 1):
+        with env.db() as db:
+            row = db.get(ReingestItem, item.id)
+            row.carry = {**row.carry, 'retry_at': '2000-01-01T00:00:00+00:00'}
+            db.commit()
+        reingest.advance_run(run['id'])
+    item = _item(env, run['id'], released.id)
+    assert (item.status, item.result) == ('failed', 'error')
+    with env.db() as db:
+        assert db.get(Job, new_id) is None  # no unreleased version left on top of the live one
+        assert db.get(ReingestRun, run['id']).status == ReingestRunStatus.FINISHED
+
+
+def test_version_built_on_by_an_upload_is_not_released(env):
+    admin = _user(env, role=UserRole.ADMIN)
+    owner = _user(env)
+    collection = _collection(env, owner)
+    released = _job(env, owner, collection, released=True)
+    env.knowledge[released.id] = 'indexed'
+    run = _start(_login(admin))
+    reingest.advance_run(run['id'])
+    new_id = _item(env, run['id'], released.id).new_job_id
+    with env.db() as db:
+        version = db.get(Job, new_id)
+        db.add(Job(original_filename=version.original_filename, upload_path='x', status=JobStatus.PENDING,
+                   owner_id=owner.id, previous_job_id=new_id, document_version=version.document_version + 1))
+        db.commit()
+    _finish(env, new_id, body='# Neu\n')
+    reingest.advance_run(run['id'])
+    item = _item(env, run['id'], released.id)
+    assert (item.status, item.result) == ('skipped', 'superseded')
+    with env.db() as db:
+        assert db.scalar(select(DocumentRelease).where(DocumentRelease.job_id == new_id)) is None
+        assert 'reingest' not in db.get(Job, new_id).processing_info['settings']
+
+
+def test_orphaned_forced_run_is_adopted(env):
+    admin = _user(env, role=UserRole.ADMIN)
+    owner = _user(env)
+    collection = _collection(env, owner)
+    sync = _sync(env, owner, collection)
+    run = _start(_login(admin), include_documents=False, include_connections=True, expected_documents=0, expected_connections=1)
+    with env.db() as db:
+        orphan = ImportRun(source_id=sync.source_id, sync_id=sync.id, owner_id=owner.id, kind='confluence',
+                           scope_type='space', scope_value='KB', status=ImportRunStatus.RUNNING,
+                           options={'force_reimport': True, 'reingest_run_id': run['id']})
+        db.add(orphan)
+        db.commit()
+        orphan_id = orphan.id
+    reingest.advance_run(run['id'])
+    with env.db() as db:
+        item = db.scalar(select(ReingestItem).where(ReingestItem.run_id == run['id']))
+        assert (item.status, item.import_run_id) == ('queued', orphan_id)
+    assert not [name for name, _ in env.tasks if name == 'import_confluence']
+
+
+def test_failed_attachment_version_is_discarded(env):
+    admin = _user(env, role=UserRole.ADMIN)
+    owner = _user(env)
+    collection = _collection(env, owner)
+    sync = _sync(env, owner, collection)
+    run = _start(_login(admin), include_documents=False, include_connections=True, expected_documents=0, expected_connections=1)
+    reingest.advance_run(run['id'])
+    with env.db() as db:
+        forced_id = db.scalar(select(ReingestItem.import_run_id).where(ReingestItem.run_id == run['id']))
+        db.get(ImportRun, forced_id).status = ImportRunStatus.FINISHED
+        db.commit()
+    attachment = _import_page(env, owner, collection, None, mode='import_attachment', released=True, name='a.pdf')
+    failed = _import_page(env, owner, collection, forced_id, previous=attachment, forced=True,
+                          mode='import_attachment', status=JobStatus.FAILED, name='a.pdf')
+    reingest.advance_run(run['id'])
+    with env.db() as db:
+        assert db.get(Job, failed.id) is None
+        assert sync.id and db.scalar(select(Job.id).where(Job.previous_job_id == attachment.id)) is None
+
+
+def test_source_waits_for_the_rollback_of_a_forced_run(env):
+    from app.workers.refresh_tasks import _has_active_run
+
+    admin = _user(env, role=UserRole.ADMIN)
+    owner = _user(env)
+    collection = _collection(env, owner)
+    sync = _sync(env, owner, collection)
+    run = _start(_login(admin), include_documents=False, include_connections=True, expected_documents=0, expected_connections=1)
+    reingest.advance_run(run['id'])
+    with env.db() as db:
+        forced = db.get(ImportRun, db.scalar(select(ReingestItem.import_run_id).where(ReingestItem.run_id == run['id'])))
+        forced.status = ImportRunStatus.CANCELLED
+        db.commit()
+        assert _has_active_run(db, sync.source_id) is True
+    reingest.advance_run(run['id'])
+    with env.db() as db:
+        assert _has_active_run(db, sync.source_id) is False
+
+
+def test_documents_of_a_deleted_sync_are_reported(env):
+    admin = _user(env, role=UserRole.ADMIN)
+    owner = _user(env)
+    collection = _collection(env, owner)
+    with env.db() as db:
+        orphan_run = ImportRun(owner_id=owner.id, kind='confluence', scope_type='space', scope_value='KB',
+                               status=ImportRunStatus.FINISHED, options={})
+        db.add(orphan_run)
+        db.commit()
+        orphan_run_id = orphan_run.id
+    _import_page(env, owner, collection, orphan_run_id, released=True)
+    preview = _login(admin).get(f'{BASE}/preview').json()
+    assert preview['documents']['imported'] == 0
+    assert preview['documents']['skipped'] == {'connection_missing': 1}
+
+
+def test_backup_export_is_refused_while_a_reingest_runs(env):
+    from app.services import backup
+
+    admin = _user(env, role=UserRole.ADMIN)
+    owner = _user(env)
+    _job(env, owner, _collection(env, owner))
+    _start(_login(admin))
+    with env.db() as db, pytest.raises(backup.BackupError):
+        next(backup.iter_export_backup(db, passphrase='x' * 16))
+
+
+def test_problem_items_list_failures_first(env):
+    admin = _user(env, role=UserRole.ADMIN)
+    owner = _user(env)
+    collection = _collection(env, owner)
+    _job(env, owner, collection, extra_info={'editor': {'version': 2}})
+    failing = _job(env, owner, collection)
+    client = _login(admin)
+    run = _start(client)
+    reingest.advance_run(run['id'])
+    _finish(env, failing.id, body='', failed=True)
+    reingest.advance_run(run['id'])
+    items = client.get(f'{BASE}/runs/{run["id"]}/items', params={'status': ['failed', 'skipped']}).json()['items']
+    assert [item['status'] for item in items] == ['failed', 'skipped']

@@ -151,9 +151,6 @@ class ConnectionPlan:
     label: str
     ready: bool
     reason: str | None = None
-    # Released versions of this connection that are live in Knowledge: only
-    # their successors are released again.
-    live_job_ids: list[str] | None = None
 
 
 def _classify(
@@ -241,12 +238,18 @@ def plan_documents(
     released = set(db.scalars(select(DocumentRelease.job_id)))
     withdrawn = set(db.scalars(select(KnowledgeWithdrawal.job_id)))
     collections = set(db.scalars(select(Collection.id)))
+    # A deleted sync leaves its runs with sync_id NULL (the documents stay):
+    # no connection re-imports them.
+    synced_runs = set(db.scalars(select(ImportRun.id).where(ImportRun.sync_id.is_not(None))))
     plans: list[DocumentPlan] = []
     imported = 0
     for job in _chain_heads(db):
         job_settings = _settings(job)
         if job_settings.get('mode') in _IMPORT_MODES:
-            imported += 1
+            if job.import_run_id in synced_runs:
+                imported += 1
+            else:
+                plans.append(DocumentPlan(job.id, (job.original_filename or job.id)[:255], None, 'connection_missing'))
             continue
         action, reason = _classify(
             job,
@@ -284,24 +287,48 @@ def _connection_blocker(db, sync: ImportSync) -> tuple[str | None, str]:
     return None, label[:255]
 
 
-def plan_connections(db, *, knowledge: dict[str, str] | None = None) -> list[ConnectionPlan]:
-    live_by_sync: dict[str, list[str]] = {}
-    if knowledge:
-        released = set(db.scalars(select(DocumentRelease.job_id)))
-        live = [job_id for job_id, state in knowledge.items() if state in _KNOWLEDGE_LIVE and job_id in released]
-        for start in range(0, len(live), 500):
-            rows = db.execute(
-                select(Job.id, ImportRun.sync_id)
-                .join(ImportRun, ImportRun.id == Job.import_run_id)
-                .where(Job.id.in_(live[start:start + 500]), ImportRun.sync_id.is_not(None))
-            ).all()
-            for job_id, sync_id in rows:
-                live_by_sync.setdefault(sync_id, []).append(job_id)
+def plan_connections(db) -> list[ConnectionPlan]:
     plans = []
     for sync in db.scalars(select(ImportSync).order_by(ImportSync.created_at, ImportSync.id)):
         reason, label = _connection_blocker(db, sync)
-        plans.append(ConnectionPlan(sync.id, label, reason is None, reason, live_by_sync.get(sync.id, [])))
+        plans.append(ConnectionPlan(sync.id, label, reason is None, reason))
     return plans
+
+
+def _live_import_job_ids(db, knowledge: dict[str, str] | None) -> list[str]:
+    """Released, live versions of imported pages and attachments -- run-wide,
+    not per sync: page states are shared by every sync of a source and space,
+    and a version may come from a sync that was deleted since. A forced run
+    converts these again and the re-ingest releases their successors."""
+    if not knowledge:
+        return []
+    released = set(db.scalars(select(DocumentRelease.job_id)))
+    live = [job_id for job_id, state in knowledge.items() if state in _KNOWLEDGE_LIVE and job_id in released]
+    found: list[str] = []
+    for start in range(0, len(live), 500):
+        found.extend(db.scalars(
+            select(Job.id).where(Job.id.in_(live[start:start + 500]), Job.import_run_id.is_not(None))
+        ))
+    return sorted(found)
+
+
+_LIVE_CACHE: dict[str, frozenset[str]] = {}
+
+
+def live_job_ids(db, run_id: str | None) -> frozenset[str]:
+    """The run's live set (fixed when it was planned), cached per process:
+    the import worker asks for every page."""
+    if not run_id:
+        return frozenset()
+    cached = _LIVE_CACHE.get(run_id)
+    if cached is None:
+        run = db.get(ReingestRun, run_id)
+        options = run.options if run is not None and isinstance(run.options, dict) else {}
+        cached = frozenset(options.get('live_job_ids') or [])
+        if len(_LIVE_CACHE) > 16:
+            _LIVE_CACHE.clear()
+        _LIVE_CACHE[run_id] = cached
+    return cached
 
 
 def _count(values) -> dict[str, int]:
@@ -340,10 +367,14 @@ def active_run(db) -> ReingestRun | None:
 
 
 def _backup_import_running(db) -> bool:
+    # Same staleness cutoff as app/api/backup._fail_stale_runs: a restore
+    # whose pod died must not block re-ingests until the next backup action.
+    cutoff = _now() - timedelta(seconds=settings.backup_run_stale_seconds)
     return db.scalar(
         select(BackupRun.id).where(
             BackupRun.kind == BackupRunKind.IMPORT,
             BackupRun.status.in_((BackupRunStatus.QUEUED, BackupRunStatus.RUNNING)),
+            BackupRun.created_at >= cutoff,
         )
     ) is not None
 
@@ -385,7 +416,7 @@ def start_run(
         plan_documents(db, include_edited=include_edited, rerelease=rerelease, knowledge=knowledge)[0]
         if include_documents else []
     )
-    connections = plan_connections(db, knowledge=knowledge) if include_connections else []
+    connections = plan_connections(db) if include_connections else []
     actionable = sum(1 for plan in documents if plan.action)
     rereleases = sum(1 for plan in documents if plan.action == 'rerelease')
     ready = sum(1 for plan in connections if plan.ready)
@@ -406,6 +437,8 @@ def start_run(
             'rerelease': rerelease,
             'accept_quality_warnings': accept_quality_warnings,
             'include_edited': include_edited,
+            # Not part of the API response (app/api/reingest.py strips it).
+            'live_job_ids': _live_import_job_ids(db, knowledge) if include_connections and rerelease else [],
         },
     )
     db.add(run)
@@ -419,7 +452,6 @@ def start_run(
         db.add(ReingestItem(
             run_id=run.id, kind='connection', action='reimport', label=plan.label, sync_id=plan.sync_id,
             status='pending' if plan.ready else 'skipped', result=None if plan.ready else plan.reason,
-            carry={'live_job_ids': plan.live_job_ids or []} if plan.ready else None,
         ))
     db.commit()
     return run
@@ -430,15 +462,19 @@ def cancel_run(db, run: ReingestRun) -> ReingestRun:
     released) normally: abandoning them would leave unreleased new versions
     -- and a forced import run cut short would leave pages on versions that
     can never be released."""
-    if run.status == ReingestRunStatus.RUNNING:
-        run.status = ReingestRunStatus.CANCELLING
+    cancelled = db.execute(
+        update(ReingestRun)
+        .where(ReingestRun.id == run.id, ReingestRun.status == ReingestRunStatus.RUNNING)
+        .values(status=ReingestRunStatus.CANCELLING)
+    ).rowcount
+    if cancelled:
         db.execute(
             update(ReingestItem)
             .where(ReingestItem.run_id == run.id, ReingestItem.status == 'pending')
             .values(status='skipped', result='cancelled')
         )
-        db.commit()
-    return run
+    db.commit()
+    return db.get(ReingestRun, run.id, populate_existing=True)
 
 
 def item_counts(db, run_id: str) -> dict:
@@ -605,10 +641,12 @@ def _advance(step: _Step, run: ReingestRun) -> bool:
     db = step.db
     _finalize_documents(step, run)
     _finalize_connections(step, run)
-    run = db.get(ReingestRun, run.id)
+    # A cancel commits from the API session; this one must see it.
+    run = db.get(ReingestRun, run.id, populate_existing=True)
     if run.status == ReingestRunStatus.RUNNING and not step.exhausted:
         _start_documents(step, run)
         _start_connection(step, run)
+    run = db.get(ReingestRun, run.id, populate_existing=True, with_for_update=True)
     open_items = db.scalar(
         select(func.count()).select_from(ReingestItem)
         .where(ReingestItem.run_id == run.id, ReingestItem.status.in_(('pending', 'queued')))
@@ -624,9 +662,27 @@ def _advance(step: _Step, run: ReingestRun) -> bool:
     return step.exhausted and bool(open_items)
 
 
+_QUEUED_MAX_ATTEMPTS = 6
+
+
+def _retry_due(item: ReingestItem) -> bool:
+    report = item.carry if isinstance(item.carry, dict) else {}
+    retry_at = report.get('retry_at')
+    if not isinstance(retry_at, str):
+        return True
+    try:
+        return datetime.fromisoformat(retry_at) <= _now()
+    except ValueError:
+        return True
+
+
 def _isolated(step: _Step, item_id: int, handler) -> None:
-    """Run one item's transition; an unexpected error is retried on later
-    steps and fails only this item after a few attempts, never the run."""
+    """Run one item's transition; an unexpected error never fails the run.
+    A pending item (nothing started yet) fails after a few attempts. A
+    queued one is mid-transition: it is retried with a growing delay
+    (outages of the object store or database pass) and only given up --
+    after its job's changes are undone as far as possible -- when it keeps
+    failing for about an hour."""
     db = step.db
     try:
         handler()
@@ -641,11 +697,62 @@ def _isolated(step: _Step, item_id: int, handler) -> None:
         if item is None:
             return
         report = dict(item.carry) if isinstance(item.carry, dict) else {}
-        report['attempts'] = int(report.get('attempts') or 0) + 1
-        item.carry = report
-        if report['attempts'] >= _ITEM_MAX_ATTEMPTS:
-            item.status, item.result, item.message = 'failed', 'error', _short(exc)
+        attempts = int(report.get('attempts') or 0) + 1
+        report['attempts'] = attempts
+        if item.status == 'queued':
+            if attempts >= _QUEUED_MAX_ATTEMPTS:
+                item.carry = report
+                step.renew()
+                _abandon(step, item_id, exc)
+                return
+            report['retry_at'] = (_now() + timedelta(minutes=2 ** attempts)).isoformat()
+            item.carry = report
+        else:
+            item.carry = report
+            if attempts >= _ITEM_MAX_ATTEMPTS:
+                item.status, item.result, item.message = 'failed', 'error', _short(exc)
         step.renew()
+
+
+def _abandon(step: _Step, item_id: int, error: Exception) -> None:
+    """Give up on a queued item: undo what it changed as far as possible (the
+    job's marker, a new version, a forced run), then fail it. A job still
+    being converted is waited for instead."""
+    db = step.db
+    item = db.get(ReingestItem, item_id)
+    cleanup_error: Exception | None = None
+    try:
+        if item.kind == 'document':
+            job = db.get(Job, item.new_job_id or item.job_id) if (item.new_job_id or item.job_id) else None
+            if job is not None and job.status in (JobStatus.PENDING, JobStatus.RUNNING):
+                return
+            if job is not None:
+                marker = restore_from_marker(job)
+                if item.action == 'reprocess':
+                    _keep_previous_state(db, job, marker, read_markdown=False)
+                else:
+                    _discard_version(db, job, item)
+        else:
+            import_run = db.get(ImportRun, item.import_run_id) if item.import_run_id else None
+            if import_run is not None:
+                if import_run.status in (ImportRunStatus.PENDING, ImportRunStatus.RUNNING):
+                    return
+                if import_run.status != ImportRunStatus.FINISHED:
+                    _rollback_forced_run(db, import_run)
+                else:
+                    _restore_attachment_markers(db, import_run)
+                    _discard_failed_versions(db, import_run)
+        step.renew()
+    except _LeaseLost:
+        raise
+    except Exception as exc:
+        db.rollback()
+        logger.exception('re-ingest item %s: clean-up failed', item_id)
+        cleanup_error = exc
+    item = db.get(ReingestItem, item_id)
+    item.status, item.result = 'failed', 'error'
+    item.message = _short(error if cleanup_error is None else f'{error} (Aufräumen fehlgeschlagen: {cleanup_error})')
+    step.renew()
 
 
 def _dispatch_process_job(job: Job) -> None:
@@ -765,6 +872,9 @@ def _start_document(db, run: ReingestRun, item: ReingestItem) -> Job | None:
     Returns the job to dispatch (after commit), or None if it was skipped."""
     from app.api.routes import _lock_document_chain
 
+    item = db.get(ReingestItem, item.id, populate_existing=True, with_for_update=True)
+    if item.status != 'pending':
+        return None  # cancelled meanwhile
     job = db.get(Job, item.job_id) if item.job_id else None
     if job is None:
         item.status, item.result = 'skipped', 'job_missing'
@@ -826,6 +936,7 @@ def _start_document(db, run: ReingestRun, item: ReingestItem) -> Job | None:
         target.error_message = None
     _set_marker(target, marker)
     item.status = 'queued'
+    item.carry = None  # start-phase attempts do not count against finalizing
     return target
 
 
@@ -891,6 +1002,7 @@ def _discard_version(db, job: Job, item: ReingestItem | None = None) -> bool:
     from app.api.routes import _lock_document_chain
 
     _lock_document_chain(db, job.original_filename, _collection_id(job))
+    db.flush()  # autoflush is off: keep the caller's marker restore across the reload
     job = db.get(Job, job.id, with_for_update=True, populate_existing=True)
     if job is None:
         return True
@@ -951,6 +1063,27 @@ def _release(db, run: ReingestRun, job: Job, previous: DocumentRelease | None) -
     return False, None
 
 
+def _keep_previous_state(db, job: Job, marker: dict, *, read_markdown: bool = True) -> None:
+    """A failed in-place conversion: the document stays as it was (process_job
+    leaves the markdown alone on failure)."""
+    if job.status != JobStatus.FAILED or marker.get('previous_status') != JobStatus.FINISHED.value:
+        return
+    has_markdown = (
+        bool(job.result_markdown) if read_markdown
+        else db.scalar(select(Job.markdown_nonempty()).where(Job.id == job.id))
+    )
+    if not has_markdown:
+        return
+    info = copy.deepcopy(_info(job))
+    if isinstance(marker.get('previous_execution'), dict):
+        info['execution'] = marker['previous_execution']
+    if isinstance(marker.get('editor'), dict):
+        info['editor'] = marker['editor']
+    job.processing_info = info
+    job.status = JobStatus.FINISHED
+    job.error_message = marker.get('previous_error')
+
+
 def _finalize_document(db, run: ReingestRun, item: ReingestItem) -> None:
     target_id = item.new_job_id or item.job_id
     job = db.get(Job, target_id) if target_id else None
@@ -969,16 +1102,7 @@ def _finalize_document(db, run: ReingestRun, item: ReingestItem) -> None:
     error = _short(job.error_message)
 
     if item.action == 'reprocess':
-        if failed and marker.get('previous_status') == JobStatus.FINISHED.value and job.result_markdown:
-            # Keep the document as it was: the old markdown is still there.
-            info = copy.deepcopy(_info(job))
-            if isinstance(marker.get('previous_execution'), dict):
-                info['execution'] = marker['previous_execution']
-            if isinstance(marker.get('editor'), dict):
-                info['editor'] = marker['editor']
-            job.processing_info = info
-            job.status = JobStatus.FINISHED
-            job.error_message = marker.get('previous_error')
+        _keep_previous_state(db, job, marker)
         item.status, item.result, item.message = ('failed', 'failed', error) if failed else ('done', 'reprocessed', None)
         return
 
@@ -1002,6 +1126,14 @@ def _finalize_document(db, run: ReingestRun, item: ReingestItem) -> None:
         return
     db.commit()  # the restored provenance is part of the released snapshot
     item_id = item.id
+    # Under the chain lock (held until the release commits): a version an
+    # upload already built on must not be published next to that one.
+    from app.api.routes import _lock_document_chain
+
+    _lock_document_chain(db, job.original_filename, _collection_id(job))
+    if _has_successor(db, job.id):
+        item.status, item.result = 'skipped', 'superseded'
+        return
     previous = db.scalar(select(DocumentRelease).where(DocumentRelease.job_id == source.id))
     ok, message = _release(db, run, job, previous)
     item = db.get(ReingestItem, item_id)
@@ -1019,6 +1151,8 @@ def _finalize_documents(step: _Step, run: ReingestRun) -> None:
         if step.exhausted:
             return
         item = db.get(ReingestItem, item_id)
+        if not _retry_due(item):
+            continue
         target_id = item.new_job_id or item.job_id
         job = db.get(Job, target_id) if target_id else None
         if job is not None and job.status == JobStatus.RUNNING:
@@ -1060,7 +1194,15 @@ def _start_connection(step: _Step, run: ReingestRun) -> None:
         started: list[bool] = []
 
         def _start(item_id=item_id, started=started):
-            item = db.get(ReingestItem, item_id)
+            item = db.get(ReingestItem, item_id, populate_existing=True, with_for_update=True)
+            if item.status != 'pending':
+                return  # cancelled meanwhile
+            orphan = _orphaned_import_run(db, run, item.sync_id) if item.sync_id else None
+            if orphan is not None:
+                # Started by an earlier step whose own commit was lost.
+                item.import_run_id, item.status = orphan.id, 'queued'
+                started.append(True)
+                return
             sync = db.get(ImportSync, item.sync_id) if item.sync_id else None
             if sync is None:
                 item.status, item.result = 'skipped', 'sync_missing'
@@ -1098,6 +1240,20 @@ def _start_connection(step: _Step, run: ReingestRun) -> None:
             return
 
 
+def _orphaned_import_run(db, run: ReingestRun, sync_id: str) -> ImportRun | None:
+    linked = set(db.scalars(
+        select(ReingestItem.import_run_id).where(ReingestItem.run_id == run.id, ReingestItem.import_run_id.is_not(None))
+    ))
+    for candidate in db.scalars(
+        select(ImportRun).where(ImportRun.sync_id == sync_id, ImportRun.created_at >= run.created_at)
+        .order_by(ImportRun.created_at)
+    ):
+        options = candidate.options if isinstance(candidate.options, dict) else {}
+        if options.get('reingest_run_id') == run.id and candidate.id not in linked:
+            return candidate
+    return None
+
+
 def _finalize_connection(step: _Step, run: ReingestRun, item_id: int) -> None:
     db = step.db
     item = db.get(ReingestItem, item_id)
@@ -1122,6 +1278,7 @@ def _finalize_connection(step: _Step, run: ReingestRun, item_id: int) -> None:
         return
     if _waiting_for_attachments(db, import_run):
         return
+    _discard_failed_versions(db, import_run)
     report = dict(item.carry) if isinstance(item.carry, dict) else {}
     if run.options.get('rerelease'):
         complete = _rerelease_import_jobs(step, run, import_run, report)
@@ -1147,9 +1304,30 @@ def _finalize_connections(step: _Step, run: ReingestRun) -> None:
         .where(ReingestItem.run_id == run.id, ReingestItem.kind == 'connection', ReingestItem.status == 'queued')
     ))
     for item_id in item_ids:
+        if not _retry_due(db.get(ReingestItem, item_id)):
+            continue
         if not step.spend():
             return
         _isolated(step, item_id, lambda item_id=item_id: _finalize_connection(step, run, item_id))
+
+
+def _discard_failed_versions(db, import_run: ImportRun) -> None:
+    """A failed re-OCR of an attachment must not stay chained on top of its
+    previous version (same rule as for documents): it would block edits of
+    that version, and a later version chained onto it could never supersede
+    the live one."""
+    for job in list(db.scalars(
+        select(Job).where(
+            Job.import_run_id == import_run.id, Job.status == JobStatus.FAILED, Job.previous_job_id.is_not(None),
+        )
+    )):
+        if _is_forced_version(job):
+            _discard_version(db, job)
+
+
+def _is_forced_version(job: Job) -> bool:
+    import_info = _settings(job).get('import')
+    return isinstance(import_info, dict) and bool(import_info.get('forced_reimport'))
 
 
 def _restore_attachment_markers(db, import_run: ImportRun) -> None:
@@ -1203,6 +1381,8 @@ def _rollback_forced_run(db, import_run: ImportRun) -> int:
             continue
         db.delete(job)
         removed += 1
+    # Frees the source for other runs again (refresh_tasks._has_active_run).
+    import_run.options = {**(import_run.options or {}), 'reingest_rolled_back': True}
     db.flush()
     return removed
 
@@ -1214,8 +1394,10 @@ def _rerelease_import_jobs(step: _Step, run: ReingestRun, import_run: ImportRun,
     for review: their images would be missing from the release. Works in
     budgeted slices across steps (`report` keeps the tally); returns True
     when every candidate was handled."""
+    from app.api.routes import _lock_document_chain
+
     db = step.db
-    live = set(report.get('live_job_ids') or [])
+    live = live_job_ids(db, run.id)
     refused = set(report.get('refused') or [])
     state = import_run.state if isinstance(import_run.state, dict) else {}
     pages_with_errors = {
@@ -1234,15 +1416,22 @@ def _rerelease_import_jobs(step: _Step, run: ReingestRun, import_run: ImportRun,
         previous = db.scalar(select(DocumentRelease).where(DocumentRelease.job_id == previous_job_id))
         if previous is None or db.get(KnowledgeWithdrawal, previous_job_id) is not None:
             continue
-        job_settings = (info or {}).get('settings') if isinstance(info, dict) else {}
-        import_info = (job_settings or {}).get('import') or {}
+        job_settings = ((info or {}).get('settings') if isinstance(info, dict) else None) or {}
+        import_info = job_settings.get('import') or {}
+        if not import_info.get('forced_reimport'):
+            continue  # changed upstream: goes through review like any refresh
         if job_settings.get('mode') == 'import' and str(import_info.get('source_page_id')) in pages_with_errors:
             refused.add(job_id)
             continue
         if not step.spend():
             report['refused'] = sorted(refused)
             return False
-        ok, message = _release(db, run, db.get(Job, job_id), previous)
+        job = db.get(Job, job_id)
+        _lock_document_chain(db, job.original_filename, _collection_id(job))
+        if _has_successor(db, job_id):
+            refused.add(job_id)  # a later refresh built on it meanwhile
+            continue
+        ok, message = _release(db, run, job, previous)
         if ok:
             report['released'] = int(report.get('released') or 0) + 1
         else:

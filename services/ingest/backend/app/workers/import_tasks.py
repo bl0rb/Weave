@@ -624,9 +624,7 @@ def _finalize_run(db, run: ImportRun, state: _RunState, claimed_seq: int) -> Non
     # discipline as the job.finished/job.failed hooks in
     # app/workers/tasks.py.
     try:
-        # An admin re-ingest does not notify the connection's webhook.
-        if not (isinstance(run.options, dict) and run.options.get('reingest_run_id')):
-            webhook_tasks.dispatch_run_event(db, run)
+        webhook_tasks.dispatch_run_event(db, run)
     except Exception:  # pragma: no cover - webhooks must never break run completion
         logger.exception('webhook dispatch failed for import run %s (import_run.finished)', run.id)
 
@@ -710,23 +708,44 @@ def _attachments_changed(db, client: PageSource, page: Page, existing_job: Job) 
     return any(attachment.download_url[:2048] not in stored_urls for attachment in attachments)
 
 
-def _force_reimport(db, options: dict, existing_job: Job | None) -> bool:
-    """Admin re-ingest (app/services/reingest.py): convert a known page again
-    although it is unchanged -- not a manually edited version unless the
-    admin included those, not a released one unless the admin chose to
-    release again (an unreleased version on top of a released one would stay
-    unreleased), and not twice when two syncs of the re-ingest share a page."""
-    if not options.get('force_reimport') or existing_job is None:
+def _released(db, job_id: str | None) -> bool:
+    return bool(job_id) and db.scalar(select(DocumentRelease.id).where(DocumentRelease.job_id == job_id)) is not None
+
+
+def _may_reconvert(db, options: dict, job: Job) -> bool:
+    """Admin re-ingest (app/services/reingest.py): may this unchanged page or
+    attachment version be converted again as the next version? Not a
+    manually edited one unless the admin included those; a released one only
+    when the admin chose to release again and it is live in Knowledge (it is
+    then released again); not an unreleased version that sits on a released
+    one (a new version on top would keep the old release live); and not one
+    this re-ingest already created (two syncs sharing a page)."""
+    from app.services.reingest import live_job_ids
+
+    if is_manually_edited(job) and not options.get('reingest_include_edited'):
         return False
-    if is_manually_edited(existing_job) and not options.get('reingest_include_edited'):
+    if _released(db, job.id):
+        return bool(options.get('reingest_rerelease')) and job.id in live_job_ids(db, options.get('reingest_run_id'))
+    if _released(db, job.previous_job_id):
         return False
-    if not options.get('reingest_rerelease') and db.scalar(
-        select(DocumentRelease.id).where(DocumentRelease.job_id == existing_job.id)
-    ) is not None:
-        return False
-    previous_run = db.get(ImportRun, existing_job.import_run_id) if existing_job.import_run_id else None
+    previous_run = db.get(ImportRun, job.import_run_id) if job.import_run_id else None
     previous_options = previous_run.options if previous_run is not None and isinstance(previous_run.options, dict) else {}
     return not (previous_options.get('reingest_run_id') and previous_options.get('reingest_run_id') == options.get('reingest_run_id'))
+
+
+def _force_reimport(db, options: dict, existing_job: Job | None) -> bool:
+    """Convert a known, unchanged page again (forced run of an admin
+    re-ingest) -- see _may_reconvert."""
+    if not options.get('force_reimport') or existing_job is None:
+        return False
+    return _may_reconvert(db, options, existing_job)
+
+
+def _is_forced(job: Job | None) -> bool:
+    info = job.processing_info if job is not None and isinstance(job.processing_info, dict) else {}
+    job_settings = info.get('settings') if isinstance(info.get('settings'), dict) else {}
+    import_info = job_settings.get('import') if isinstance(job_settings.get('import'), dict) else {}
+    return bool(import_info.get('forced_reimport'))
 
 
 def _carried_review(previous: Job | None) -> dict:
@@ -735,14 +754,14 @@ def _carried_review(previous: Job | None) -> dict:
     return {'portal_review': dict(review)} if isinstance(review, dict) else {}
 
 
-def _previous_attachment_version(db, page_job: Job, page: Page, filename: str) -> Job | None:
-    """The newest version of the same attachment of the page's previous
+def _previous_attachment_versions(db, page_job: Job, page: Page, filename: str) -> list[Job]:
+    """The newest versions of the same attachment of the page's previous
     version: same import run as that page (children are created with their
     page; a portal edit keeps the run), same file, same source page."""
     previous_page = db.get(Job, page_job.previous_job_id) if page_job.previous_job_id else None
     if previous_page is None or previous_page.import_run_id is None:
-        return None
-    candidates = [
+        return []
+    return [
         candidate
         for candidate in db.scalars(
             select(Job).where(Job.import_run_id == previous_page.import_run_id, Job.original_filename == filename)
@@ -750,9 +769,6 @@ def _previous_attachment_version(db, page_job: Job, page: Page, filename: str) -
         if _attachment_of(candidate, page.id)
         and db.scalar(select(Job.id).where(Job.previous_job_id == candidate.id).limit(1)) is None
     ]
-    # Only an unambiguous match is chained (deduplicated file names depend
-    # on the attachment order); otherwise the attachment starts a new chain.
-    return candidates[0] if len(candidates) == 1 else None
 
 
 def _attachment_of(job: Job, page_id) -> bool:
@@ -865,17 +881,18 @@ def _store_attachments(
         run.artifact_bytes += len(data)
 
         if extension in _OCR_DOC_SPECS and options.get('ocr_attachments'):
-            # A forced re-import chains the attachment onto its previous
-            # version, so a re-release supersedes it in Knowledge.
-            previous_child = (
-                _previous_attachment_version(db, job, page, filename) if options.get('force_reimport') else None
-            )
-            if (
-                previous_child is not None
-                and is_manually_edited(previous_child)
-                and not options.get('reingest_include_edited')
-            ):
-                continue  # keep the manually corrected version of this attachment
+            # A page converted again by an admin re-ingest chains its
+            # attachments onto their previous versions, so a re-release
+            # supersedes them in Knowledge -- under the same rules as pages.
+            page_forced = _is_forced(job)
+            previous_child: Job | None = None
+            if page_forced:
+                previous_children = _previous_attachment_versions(db, job, page, filename)
+                if len(previous_children) > 1:
+                    continue  # ambiguous (deduplicated names follow the listing order): keep them
+                previous_child = previous_children[0] if previous_children else None
+                if previous_child is not None and not _may_reconvert(db, options, previous_child):
+                    continue  # keep the current version of this attachment
             child_id = str(uuid.uuid4())
             folder_path = '/'.join(filter(None, [folder, subfolder])) or 'inbox'
             child_storage_folder = f'{folder_path}/{child_id}'
@@ -906,7 +923,11 @@ def _store_attachments(
                         'folder': folder,
                         'subfolder': subfolder,
                         'storage_folder': child_storage_folder,
-                        'import': {'parent_job_id': job.id, 'source_page_id': page.id},
+                        'import': {
+                            'parent_job_id': job.id,
+                            'source_page_id': page.id,
+                            **({'forced_reimport': True} if page_forced else {}),
+                        },
                         # Admin re-ingest: process_job nudges the run when it
                         # ends (settings survive its claim; the reviewer's
                         # decision is restored when the run is finalized).
@@ -1119,20 +1140,20 @@ def _import_one_page(
         else None
     )
 
-    # Admin re-ingest (app/services/reingest.py): convert unchanged pages
-    # again with the current converter and chain them as the next version --
-    # except a manually edited version, unless the admin included those.
-    force_reimport = _force_reimport(db, options, existing_job)
-    if (
+    unchanged = (
         is_refresh
-        and not force_reimport
         and existing_state is not None
         and existing_state.page_version == page.version
         and existing_job is not None
         and not (
             options.get('include_attachments', True) and _attachments_changed(db, client, page, existing_job)
         )
-    ):
+    )
+    # Admin re-ingest (app/services/reingest.py): convert an unchanged page
+    # again with the current converter and chain it as the next version (see
+    # _may_reconvert). A changed page takes the normal refresh path.
+    force_reimport = unchanged and _force_reimport(db, options, existing_job)
+    if unchanged and not force_reimport:
         # Case (b): unchanged since last known state -- no new job. Still
         # marked visited (with the PREVIOUS job id, so _finalize_run's
         # cross-page link rewriting still resolves this page id) and
@@ -1243,6 +1264,8 @@ def _import_one_page(
                     'source_page_id': page.id,
                     'source_page_version': page.version,
                     **provenance,
+                    # Converted again by an admin re-ingest (not changed upstream).
+                    **({'forced_reimport': True} if force_reimport else {}),
                 },
             },
             'execution': {'status': 'finished', 'engine': f'{run.kind}-import'},
@@ -1342,15 +1365,15 @@ def _discover_children(
     capped_reason: str | None = None
     try:
         for child_id in client.iter_children(page.id):
+            child_id = str(child_id)
+            if child_id in state.visited or child_id in frontier_ids:
+                continue
             if run.pages_discovered >= max_pages:
                 capped_reason = f'max_pages ({max_pages}) reached'
                 break
             if len(state.frontier) >= frontier_cap:
                 capped_reason = f'frontier link-bomb guard ({frontier_cap}) reached'
                 break
-            child_id = str(child_id)
-            if child_id in state.visited or child_id in frontier_ids:
-                continue
             state.frontier.append([child_id, depth + 1, list(child_path), str(page.id)])
             frontier_ids.add(child_id)
             run.pages_discovered += 1

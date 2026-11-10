@@ -998,6 +998,7 @@ export const admin = {
   'reingest.docSkip.superseded': 'Durch neuere Version ersetzt',
   'reingest.docSkip.changed': 'Seit dem Start geändert',
   'reingest.docSkip.cancelled': 'Abgebrochen',
+  'reingest.docSkip.connection_missing': 'Connection gelöscht',
   'reingest.docSkip.profile_unavailable': 'VL-Verbindung deaktiviert',
   'reingest.docResult.released': 'Erneut freigegeben',
   'reingest.docResult.unchanged': 'Unverändert (neue Version verworfen)',

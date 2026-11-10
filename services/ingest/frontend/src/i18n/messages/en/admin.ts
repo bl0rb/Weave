@@ -999,6 +999,7 @@ export const admin: Record<keyof typeof de, string> = {
   'reingest.docSkip.superseded': 'Superseded by a newer version',
   'reingest.docSkip.changed': 'Changed since the start',
   'reingest.docSkip.cancelled': 'Cancelled',
+  'reingest.docSkip.connection_missing': 'Connection deleted',
   'reingest.docSkip.profile_unavailable': 'VL connection disabled',
   'reingest.docResult.released': 'Released again',
   'reingest.docResult.unchanged': 'Unchanged (new version discarded)',

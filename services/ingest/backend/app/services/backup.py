@@ -636,6 +636,14 @@ def _iter_export_backup(
     memory for the duration of writing its own archive entry.
     """
     _begin_consistent_snapshot(db)
+    from app.services.reingest import active_run as active_reingest_run
+
+    if active_reingest_run(db) is not None:
+        # Jobs mid-re-ingest carry state only the re-ingest restores
+        # (settings.reingest); an archive must not freeze them like that.
+        raise BackupError(
+            'Es läuft gerade ein Re-Ingest. Bitte warten Sie, bis er abgeschlossen ist, oder brechen Sie ihn ab.'
+        )
     progress_cb = progress_cb or (lambda table, rows_done: None)
     tables = _exported_tables()
 
