@@ -11,6 +11,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.23] - 2026-11-10
+
+### Added
+- **Central hit counts for search**: `search_top_k`/`search_final_k` under *Suche und Modelle ›
+  Trefferzahl* (migration `0059`, empty = Weave-Retrieval's `SEARCH_TOP_K`/`SEARCH_FINAL_K`). They
+  apply to every search without its own values (search API, Weave-Tools); the admin UI checks
+  `final_k <= top_k` and hints at the reranker's max-documents limit.
+- **Richer search results and trace**: Weave-Retrieval returns rank, chunk index, title, language,
+  document type, tags, quality grade, space and Confluence path per hit, and a trace with the
+  effective top_k/final_k, weights and models. `/v1/search` and Weave-Tools `search` (REST + MCP)
+  accept `final_k` and return per-hit rank and scores; the chat trace panel shows the search
+  parameters and the scored hit list.
+- `RERANKER_ONNX_FILE` picks the ONNX file inside `RERANKER_MODEL` (default `onnx/model_int8.onnx`).
+
+### Changed
+- **weave-reranker runs on onnxruntime with `Alibaba-NLP/gte-multilingual-reranker-base`** (int8
+  export `onnx-community/gte-multilingual-reranker-base`, ~341 MB) instead of
+  `BAAI/bge-reranker-v2-m3` on torch: no torch in the image (~250 MB of packages instead of
+  ~1.5 GB), about twice as fast on CPU. Scores stay in 0..1, but irrelevant documents score
+  noticeably higher than with bge -- **re-tune `min_score`, `clarify_below` and
+  `weak_context_below` on bots that set them.** The old model stays available as
+  `RERANKER_MODEL=onnx-community/bge-reranker-v2-m3-ONNX`.
+- Bots: empty top_k/final_k now mean "central default" (new bots start empty); the bot editor shows
+  "Zentraler Standard".
+- Knowledge-space cards line up their rows, and the "in Arbeit" chip is split into
+  Verarbeitung/Indexierung chips that link to the filtered document list.
+
+### Fixed
+- An omitted `final_k` is clamped to top_k instead of answering 400 (top_k < 5 alone used to
+  fail); without an explicit top_k, Retrieval fetches at least the requested final_k.
+
 ## [0.7.22] - 2026-11-06
 
 ### Added
