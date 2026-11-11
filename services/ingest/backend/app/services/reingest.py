@@ -78,6 +78,10 @@ from app.services.publications import (
     canonical_snapshot,
     publication_configured,
 )
+# Bound once at import, like every worker module: a reload of
+# app.workers.celery_app (tests) must not split the re-ingest's dispatches
+# from the import worker's.
+from app.workers.celery_app import celery_app
 from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.orm import aliased
 
@@ -496,8 +500,6 @@ def item_counts(db, run_id: str) -> dict:
 def nudge(run_id: str) -> None:
     """Ask a worker to advance the run now (best effort; the publication
     tick nudges active runs anyway)."""
-    from app.workers.celery_app import celery_app
-
     try:
         celery_app.send_task(ADVANCE_TASK_NAME, args=[run_id])
     except Exception:
@@ -757,7 +759,6 @@ def _abandon(step: _Step, item_id: int, error: Exception) -> None:
 
 def _dispatch_process_job(job: Job) -> None:
     from app.services.paddle_service import effective_pipeline_profile_id
-    from app.workers.celery_app import celery_app
 
     job_settings = _settings(job)
 
