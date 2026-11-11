@@ -11,6 +11,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Admin re-ingest of all documents and connections** (Administration › Betrieb › Neu einlesen):
+  converts every document again and re-imports every connection with the current converters
+  and quality rating. As an explicit admin decision, everything that was released and is live
+  in Knowledge is released again: a released document becomes its next version (a release is
+  immutable) and is released as the person who released it before, so Knowledge replaces the
+  old version once the new one is indexed; when body and rating did not change, the new version
+  is discarded and Knowledge stays untouched. Unreleased documents are re-converted in place,
+  keeping review decisions, upload time and the current markdown on failure. Manually edited
+  documents are skipped unless included. Connections run one at a time as forced refresh runs:
+  unchanged pages and their attachments are converted again and chained as new versions (pages
+  changed upstream take the normal refresh path and go to review), the sync's own auto-release
+  skips the converted-again versions, and a forced run that does not finish is rolled back. A preview shows what will happen, start
+  requires its confirmed counts, progress and problem items are listed per run, and a run can
+  be cancelled. Runs live in `reingest_runs`/`reingest_items` (migration `0060`), are advanced
+  in lease-guarded steps by the worker (`reingest_advance`, nudged by finished jobs and the
+  publication tick) and exclude backup restores and exports while active. New settings
+  `REINGEST_MAX_IN_FLIGHT` (default 2) and `REINGEST_LEASE_SECONDS` (default 300).
+- A crawl whose child discovery hit `max_pages` is no longer treated as complete, so pages
+  beyond the cap are not reported as missing.
+
+### Changed
+- **XML content exports become one article per HTML body**: an `.xml` upload whose elements
+  carry HTML (CDATA from a CMS or knowledge-base export) no longer lands as raw HTML on one
+  bullet line. `app/services/xml_document.py` renders `# Folder › Subfolder` / `## Article`
+  (one chunk per article, folder as breadcrumb), renders an article exported under several
+  entries once with the other titles as `**Stichworte:**`, unwraps layout tables and foldouts,
+  turns data tables into one record per row with the column headers repeated (rowspan/colspan
+  expanded), resolves links to other elements of the export to their title and drops styles,
+  `&nbsp;` padding, comments and non-http(s) links/images. Data-like XML keeps the outline.
+
 ### Fixed
 - **Chat answers finish without waiting for the title**: `/v1/chat/stream` sends `done` right away and
   the first answer's generated conversation title afterwards as a `title` event; the chat frees the

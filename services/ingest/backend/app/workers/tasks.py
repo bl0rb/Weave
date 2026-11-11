@@ -24,7 +24,7 @@ from app.services.paddle_service import (
 # from-import: matches import_tasks.py's late-binding convention for
 # security.decrypt_import_credential, keeping the helper monkeypatchable in
 # tests.
-from app.services import object_store, security, transcript_refine
+from app.services import object_store, reingest, security, transcript_refine
 from app.workers import webhook_tasks
 from app.workers.celery_app import celery_app
 
@@ -661,6 +661,13 @@ def process_job(
             },
             'runtime': capability,
             'execution': execution_payload,
+            # Provenance, not a result: when the document was originally
+            # uploaded (a new version of it shares the upload), cited as
+            # uploaded_at in its release.
+            **(
+                {'source_uploaded_at': existing_info['source_uploaded_at']}
+                if isinstance(existing_info.get('source_uploaded_at'), str) else {}
+            ),
         }
         db.commit()
 
@@ -770,6 +777,8 @@ def process_job(
             from app.workers import publication_tasks
 
             publication_tasks.auto_release_import_jobs(db, job.import_run_id, [job_id])
+        # A job of an admin re-ingest: let the run finalize it and start the next.
+        reingest.nudge_for_job(job)
     except Exception as exc:  # pragma: no cover
         db.rollback()
         # Only the attempt that still holds the claim may fail the job; a
@@ -796,6 +805,7 @@ def process_job(
                 webhook_tasks.dispatch_job_event(db, job, 'job.failed')
             except Exception:  # pragma: no cover - webhooks must never break job completion
                 logger.exception('webhook dispatch failed for job %s (job.failed)', job_id)
+            reingest.nudge_for_job(job)
     finally:
         if heartbeat is not None:
             heartbeat.stop()
@@ -821,6 +831,7 @@ import app.workers.import_tasks  # noqa: E402,F401  (registers import_confluence
 import app.workers.refresh_tasks  # noqa: E402,F401  (registers confluence_refresh_tick)
 import app.workers.session_cleanup_tasks  # noqa: E402,F401  (registers session_cleanup_tick)
 import app.workers.publication_tasks  # noqa: E402,F401  (registers publication tasks)
+import app.workers.reingest_tasks  # noqa: E402,F401  (registers reingest_advance)
 # webhook_tasks (registers deliver_webhook) is already imported above (as
 # `webhook_tasks`, module-object style) for the completion hooks' own use --
 # no separate registration-only import needed here, unlike the three above.

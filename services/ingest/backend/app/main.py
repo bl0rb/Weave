@@ -24,6 +24,7 @@ from app.api.managed_bots import router_owner as managed_bots_owner_router
 from app.api.system_status import router as system_status_router
 from app.api.system_status import router_admin as system_status_admin_router
 from app.api.knowledge_maintenance import router as knowledge_maintenance_router
+from app.api.reingest import router as reingest_admin_router
 from app.api.knowledge_memory import router_admin as knowledge_memory_admin_router
 from app.api.knowledge_memory import router_internal as knowledge_memory_internal_router
 from app.api.knowledge_memory import router_maintenance as knowledge_memory_maintenance_router
@@ -120,6 +121,7 @@ app.include_router(knowledge_memory_admin_router)
 app.include_router(knowledge_memory_internal_router)
 app.include_router(knowledge_memory_maintenance_router)
 app.include_router(knowledge_maintenance_router)
+app.include_router(reingest_admin_router)
 app.include_router(technical_identities_admin_router)
 app.include_router(technical_identities_internal_router)
 app.include_router(mcp_oauth_router)

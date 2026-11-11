@@ -77,6 +77,9 @@ _RUN_LOCK_KEY = 7302000101
 _ACTIVE_RUN_DETAIL = (
     'Es läuft bereits eine Sicherung oder Wiederherstellung. Bitte warten Sie, bis dieser Vorgang abgeschlossen ist.'
 )
+_REINGEST_ACTIVE_DETAIL = (
+    'Es läuft gerade ein Re-Ingest. Bitte warten Sie, bis er abgeschlossen ist, oder brechen Sie ihn ab.'
+)
 _TARGET_POPULATED_DETAIL = (
     'Das Ziel enthält bereits Daten. Setzen Sie "Vorhandene Daten überschreiben", um fortzufahren.'
 )
@@ -107,6 +110,16 @@ def _fail_stale_runs(db: Session) -> None:
     db.flush()  # the session does not autoflush; _active_run must see this
 
 
+def _refuse_during_reingest(db: Session) -> None:
+    """A restore wipes the jobs and releases an active re-ingest is working
+    on; an export would freeze jobs whose state only the re-ingest restores."""
+    from app.services.reingest import active_run as active_reingest_run
+
+    if active_reingest_run(db) is not None:
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_REINGEST_ACTIVE_DETAIL)
+
+
 def _start_run(db: Session, run: BackupRun) -> BackupRun:
     """Insert `run` unless another run is active -- atomically across
     replicas (PostgreSQL advisory lock) and threads (_run_lock)."""
@@ -117,6 +130,7 @@ def _start_run(db: Session, run: BackupRun) -> BackupRun:
         if _active_run(db) is not None:
             db.commit()
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_ACTIVE_RUN_DETAIL)
+        _refuse_during_reingest(db)
         db.add(run)
         db.commit()
         db.refresh(run)
@@ -176,6 +190,7 @@ def _check_import_allowed(db: Session, force: bool) -> None:
         db.commit()
     if active is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_ACTIVE_RUN_DETAIL)
+    _refuse_during_reingest(db)
     if not force and not target_state(db)['fresh']:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_TARGET_POPULATED_DETAIL)
 

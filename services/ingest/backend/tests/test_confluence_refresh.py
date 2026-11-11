@@ -670,6 +670,92 @@ def test_refresh_unchanged_pages_do_not_consume_max_pages(sent, client_holder) -
     assert 'C1' in run.state['visited']
 
 
+def _force(run_id: str) -> None:
+    db = _db()
+    try:
+        run = db.get(ImportRun, run_id)
+        run.options = {**run.options, 'force_reimport': True, 'reingest_run_id': 'reingest-1', 'reingest_rerelease': True}
+        db.commit()
+    finally:
+        db.close()
+
+
+def _set_review(job_id: str, decision: str) -> None:
+    db = _db()
+    try:
+        job = db.get(Job, job_id)
+        job.processing_info = {**job.processing_info, 'portal_review': {'decision': decision}}
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_forced_run_converts_an_unchanged_page_again_keeping_the_review_decision(sent, client_holder) -> None:
+    owner = _make_owner()
+    source_id = _make_source(owner.id)
+    prior_job_id = _make_prior_job(owner.id, 'P1', version=3)
+    _set_review(prior_job_id, 'parked')
+    _make_page_state(source_id, 'P1', version=3, job_id=prior_job_id)
+    client_holder['client'] = FakeClient(_page('P1', 'Root Page', '<p>same body</p>', version=3))
+
+    run_id = _make_refresh_run(owner.id, source_id, scope_value='P1')
+    _force(run_id)
+    import_confluence(run_id, 0)
+
+    run = _get_run(run_id)
+    new_job = _get_job(run.state['visited']['P1'])
+    assert new_job.id != prior_job_id and new_job.previous_job_id == prior_job_id
+    assert new_job.processing_info['settings']['import']['forced_reimport'] is True
+    assert new_job.processing_info['portal_review'] == {'decision': 'parked'}
+    assert run.state['forced_reimports'] == 1
+    assert _get_page_state(source_id, 'P1').job_id == new_job.id
+
+
+def test_forced_run_takes_the_normal_path_for_a_changed_page(sent, client_holder) -> None:
+    owner = _make_owner()
+    source_id = _make_source(owner.id)
+    prior_job_id = _make_prior_job(owner.id, 'P1', version=3)
+    _set_review(prior_job_id, 'skipped')
+    _make_page_state(source_id, 'P1', version=3, job_id=prior_job_id)
+    client_holder['client'] = FakeClient(_page('P1', 'Root Page', '<p>rewritten</p>', version=4))
+
+    run_id = _make_refresh_run(owner.id, source_id, scope_value='P1')
+    _force(run_id)
+    import_confluence(run_id, 0)
+
+    run = _get_run(run_id)
+    new_job = _get_job(run.state['visited']['P1'])
+    assert new_job.previous_job_id == prior_job_id
+    # Real upstream changes go to review: no forced marker, no carried decision.
+    assert 'forced_reimport' not in new_job.processing_info['settings']['import']
+    assert 'portal_review' not in new_job.processing_info
+    assert run.state['forced_reimports'] == 0
+
+
+def test_discovery_cap_ignores_children_that_are_already_known(sent, client_holder) -> None:
+    class LoopClient(FakeClient):
+        def iter_children(self, page_id: str):
+            return iter(['P1'])  # links back to the visited root only
+
+    owner = _make_owner()
+    source_id = _make_source(owner.id)
+    client_holder['client'] = LoopClient(_page('P1', 'Root', '<p>x</p>', version=1))
+    run_id = _make_refresh_run(owner.id, source_id, scope_value='P1')
+    db = _db()
+    try:
+        run = db.get(ImportRun, run_id)
+        run.options = {**run.options, 'max_pages': 1}
+        db.commit()
+    finally:
+        db.close()
+    import_confluence(run_id, 0)
+
+    run = _get_run(run_id)
+    assert run.status == ImportRunStatus.FINISHED
+    # Every page was visited: the crawl is complete, so missing pages are detected.
+    assert run.state['discovery_complete'] is True
+
+
 def test_refresh_run_changed_page_creates_chained_job_and_updates_state(sent, client_holder) -> None:
     owner = _make_owner()
     source_id = _make_source(owner.id)

@@ -157,6 +157,11 @@ EXCLUDED_TABLES: dict[str, str] = {
         'a backup must not contain a record of the run that produced it, '
         'or resurrect another archive/target\'s own run history'
     ),
+    'reingest_runs': (
+        'admin re-ingest history of this installation (app/services/reingest.py); '
+        'an archive must not resurrect another target\'s runs'
+    ),
+    'reingest_items': 'work list of a re-ingest run -- same reason as reingest_runs',
 }
 
 # table -> {column_name: (decrypt_fn, encrypt_fn)} for every `*_encrypted`
@@ -631,6 +636,14 @@ def _iter_export_backup(
     memory for the duration of writing its own archive entry.
     """
     _begin_consistent_snapshot(db)
+    from app.services.reingest import active_run as active_reingest_run
+
+    if active_reingest_run(db) is not None:
+        # Jobs mid-re-ingest carry state only the re-ingest restores
+        # (settings.reingest); an archive must not freeze them like that.
+        raise BackupError(
+            'Es läuft gerade ein Re-Ingest. Bitte warten Sie, bis er abgeschlossen ist, oder brechen Sie ihn ab.'
+        )
     progress_cb = progress_cb or (lambda table, rows_done: None)
     tables = _exported_tables()
 
@@ -945,6 +958,13 @@ def _import_backup(
 
         target_revision = _current_alembic_revision(db)
         _check_alembic_compatible(manifest.get('source', {}).get('alembic_revision'), target_revision)
+
+        from app.services.reingest import active_run as active_reingest_run
+
+        if active_reingest_run(db) is not None:
+            raise BackupError(
+                'Es läuft gerade ein Re-Ingest. Bitte warten Sie, bis er abgeschlossen ist, oder brechen Sie ihn ab.'
+            )
 
         state = target_state(db)
         if not state['fresh'] and not force:

@@ -1865,44 +1865,6 @@ def _strip_markdown_frontmatter(text: str) -> str:
     return text
 
 
-def _xml_local_name(tag: object) -> str:
-    name = str(tag)
-    return name.rsplit('}', 1)[-1] if '}' in name else name
-
-
-def _xml_label(element) -> str:
-    name = _xml_local_name(element.tag)
-    attributes = ', '.join(f'{_xml_local_name(key)}={value}' for key, value in element.attrib.items())
-    return f'{name} ({attributes})' if attributes else name
-
-
-def _xml_element_to_markdown(element, depth: int, lines: list[str]) -> None:
-    """Render one element: the root and its direct children become headings
-    (document-like XML stays navigable), anything deeper a nested bullet
-    list (data-like XML stays compact). Text and tail whitespace is
-    collapsed; comments/processing instructions are already dropped by
-    ElementTree."""
-    text = ' '.join((element.text or '').split())
-    children = list(element)
-    if depth <= 1:
-        lines.append(f"{'#' * (depth + 1)} {_xml_label(element)}")
-        lines.append('')
-        if text:
-            lines.append(text)
-            lines.append('')
-    else:
-        indent = '  ' * (depth - 2)
-        lines.append(f'{indent}- **{_xml_label(element)}**' + (f': {text}' if text else ''))
-    for child in children:
-        _xml_element_to_markdown(child, depth + 1, lines)
-    if depth <= 1 and children and lines and lines[-1] != '':
-        lines.append('')
-    tail = ' '.join((element.tail or '').split())
-    if tail:
-        indent = '  ' * max(depth - 2, 0)
-        lines.append(f'{indent}- {tail}' if depth >= 2 else tail)
-
-
 def _text_document_to_markdown(
     source: Path,
     suffix: str,
@@ -1911,10 +1873,9 @@ def _text_document_to_markdown(
 ) -> str:
     """Body markdown for a .md (passed through, own frontmatter stripped),
     .vtt (WebVTT meeting transcript rendered as speaker turns, boilerplate
-    removed -- see app/services/vtt_transcript.py) or .xml (parsed with
-    the stdlib parser -- expat's built-in entity-expansion limits apply,
-    external entities are never fetched -- and rendered as a heading/bullet
-    outline) upload."""
+    removed -- see app/services/vtt_transcript.py) or .xml (an outline, or
+    one article per embedded HTML body for content exports -- see
+    app/services/xml_document.py) upload."""
     text = _decode_text_upload(source.read_bytes())
     if suffix == '.md':
         return _strip_markdown_frontmatter(text).strip() + '\n'
@@ -1927,12 +1888,9 @@ def _text_document_to_markdown(
 
             body = transcript_refine.refine_transcript(body, transcript_refinement)
         return body
-    import xml.etree.ElementTree as ElementTree
+    from app.services.xml_document import xml_to_markdown
 
-    root = ElementTree.fromstring(text)
-    lines: list[str] = []
-    _xml_element_to_markdown(root, 0, lines)
-    return '\n'.join(lines).rstrip() + '\n'
+    return xml_to_markdown(text)
 
 
 # PP-OCRv6's recognition models are one shared model for Chinese, English,

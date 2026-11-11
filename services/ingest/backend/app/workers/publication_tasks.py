@@ -38,6 +38,13 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _forced_reimport(job: Job | None) -> bool:
+    info = job.processing_info if job is not None and isinstance(job.processing_info, dict) else {}
+    job_settings = info.get('settings') if isinstance(info.get('settings'), dict) else {}
+    import_info = job_settings.get('import') if isinstance(job_settings.get('import'), dict) else {}
+    return bool(import_info.get('forced_reimport'))
+
+
 def auto_release_import_jobs(db, run_id: str, job_ids: list[str] | None = None) -> int:
     """Release the finished documents of an import run whose configuration
     asks for it (options.auto_release), as if the run's owner had approved
@@ -47,10 +54,9 @@ def auto_release_import_jobs(db, run_id: str, job_ids: list[str] | None = None) 
     the number of documents released; never raises.
     """
     # Lazy: the API modules import the workers.
-    from fastapi import HTTPException
-
     from app.api.portal import _collection_for_job, release_portal_document
     from app.schemas.portal import PortalReleaseRequest
+    from fastapi import HTTPException
 
     run = db.get(ImportRun, run_id)
     options = run.options if run is not None and isinstance(run.options, dict) else {}
@@ -69,6 +75,13 @@ def auto_release_import_jobs(db, run_id: str, job_ids: list[str] | None = None) 
     for job_id in candidates:
         try:
             job = db.get(Job, job_id)
+            if _forced_reimport(job):
+                # Converted again by an admin re-ingest, which releases only
+                # what was released before (app/services/reingest.py);
+                # auto-releasing would also publish pages a reviewer skipped,
+                # parked or never approved. New and changed pages of the same
+                # run are auto-released as usual.
+                continue
             collection = _collection_for_job(db, job) if job is not None else None
             if collection is None:
                 continue
@@ -354,3 +367,11 @@ def _housekeeping() -> None:
             object_store.collect_garbage(db)
     except Exception:
         logger.exception('stored object garbage collection failed; retrying next tick')
+    try:
+        # Safety net of the admin re-ingest: a run whose nudges were lost
+        # still advances every tick.
+        from app.services.reingest import nudge_active_runs
+
+        nudge_active_runs()
+    except Exception:
+        logger.exception('re-ingest step failed; retrying next tick')

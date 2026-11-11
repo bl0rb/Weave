@@ -254,7 +254,7 @@ def test_transient_tables_excluded_from_archive(monkeypatch, tmp_path):
     finally:
         db.close()
 
-    assert set(backup.EXCLUDED_TABLES) == {'sessions', 'login_handoff_codes', 'backup_runs'}
+    assert set(backup.EXCLUDED_TABLES) == {'sessions', 'login_handoff_codes', 'backup_runs', 'reingest_runs', 'reingest_items'}
     for excluded in backup.EXCLUDED_TABLES:
         assert excluded not in manifest['tables']
     with tarfile.open(archive_path, 'r:gz') as tar:

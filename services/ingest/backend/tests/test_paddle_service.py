@@ -774,6 +774,50 @@ def test_xml_upload_is_rendered_as_an_outline(tmp_path, monkeypatch):
     assert details['engine'] == 'text-xml'
 
 
+def test_xml_content_export_renders_embedded_html_as_articles(tmp_path, monkeypatch):
+    _no_paddle(monkeypatch)
+    table = (
+        '<table><tr><td style="background-color:#cccccc"><strong><strong>Akupunktur</strong></strong></td>'
+        '<td style="background-color:#cccccc">Leistung</td><td style="background-color:#cccccc">Hinweise</td></tr>'
+        '<tr><td style="background-color:#cccccc">Tarif A</td><td><ul><li>erstatten&nbsp;&nbsp;&nbsp;</li></ul></td>'
+        '<td rowspan="2"><ul><li>GOÄ 269</li></ul></td></tr>'
+        '<tr><td style="background-color:#cccccc">Tarif B</td><td>keine Erstattung</td></tr></table>'
+    )
+    xml_file = tmp_path / 'export.xml'
+    xml_file.write_text(
+        '<?xml version="1.0"?>\n<export>\n'
+        '<node id="f0" title="Behandlungen">\n'
+        f'  <node id="n1" title="Akupunktur"><text id="a1b2c3d4e5f6" title="Akupunktur"><![CDATA[{table}]]></text>'
+        '<author>Team KV</author></node>\n'
+        f'  <node id="n2" title="Nadeltherapie"><text id="a1b2c3d4e5f6" title="Akupunktur"><![CDATA[{table}]]></text></node>\n'
+        '  <node id="n3" title="Laser"><text id="b1" title="Laserakupunktur"><![CDATA['
+        '<p>wie <a href="#!/view/x9/text/_id/a1b2c3d4e5f6">s. hier</a>, <a href="#">Anhang</a></p>'
+        '<table><tr><td><x-foldout foldout-header="Vertrag\u200b">'
+        '<table><tr><td style="background-color:#cccccc">Beginn</td><td><ul><li>12/2025</li></ul></td></tr></table>'
+        '</x-foldout></td></tr></table>'
+        ']]></text></node>\n'
+        '</node>\n</export>\n',
+        encoding='utf-8',
+    )
+
+    markdown, details = paddle_service.convert_to_markdown_with_details(str(xml_file), profile_id='ppocrv6_tiny')
+
+    body = markdown.split('---\n', 2)[2]
+    assert details['engine'] == 'text-xml'
+    assert '# Behandlungen\n\n## Akupunktur\n\n**Stichworte:** Nadeltherapie\n\n- **author**: Team KV' in body
+    assert body.count('## Akupunktur') == 1  # exported twice, rendered once
+    # Header row -> repeated column labels; rowspan cell repeated per record.
+    assert (
+        '**Tarif A**\n- **Leistung:**\n  - erstatten\n- **Hinweise:**\n  - GOÄ 269\n\n'
+        '**Tarif B**\n- **Leistung:** keine Erstattung\n- **Hinweise:**\n  - GOÄ 269'
+    ) in body
+    # Internal link resolved to the target title, attachment link unwrapped,
+    # one-column layout table and foldout unwrapped into a section.
+    assert '## Laserakupunktur\n\n**Stichworte:** Laser\n\nwie s. hier → Akupunktur, Anhang\n\n### Vertrag\n\n**Beginn**\n- 12/2025' in body
+    for noise in ('<td', '&nbsp;', '\xa0', '\u200b', 'a1b2c3d4e5f6', '#!/', '****', 'id='):
+        assert noise not in body
+
+
 def test_vtt_upload_is_rendered_as_a_meeting_transcript(tmp_path, monkeypatch):
     _no_paddle(monkeypatch)
     vtt_file = tmp_path / 'upload-uuid.vtt'

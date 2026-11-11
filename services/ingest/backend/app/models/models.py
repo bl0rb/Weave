@@ -1904,6 +1904,106 @@ class BackupRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
 
+class ReingestRunStatus(str, enum.Enum):
+    RUNNING = 'running'
+    CANCELLING = 'cancelling'
+    FINISHED = 'finished'
+    FAILED = 'failed'
+    CANCELLED = 'cancelled'
+
+
+REINGEST_ACTIVE_STATUSES = (ReingestRunStatus.RUNNING, ReingestRunStatus.CANCELLING)
+
+
+class ReingestRun(Base):
+    """One admin re-ingest of every document and connection (see
+    app/services/reingest.py): re-converts with the current pipeline and,
+    when the admin chose so, releases again what was released before.
+
+    The work list lives in ReingestItem rows; the run is advanced in small
+    lease-guarded steps by the worker (task `reingest_advance`, nudged when a
+    re-ingested job or import run finishes, plus the publication tick as a
+    safety net), so it survives worker restarts and the Celery time limit.
+    Only one run may be active at a time -- enforced by the API under an
+    advisory lock. Excluded from backups like backup_runs.
+    """
+
+    __tablename__ = 'reingest_runs'
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    status: Mapped[ReingestRunStatus] = mapped_column(
+        Enum(ReingestRunStatus, name='reingest_run_status', native_enum=False, validate_strings=True),
+        default=ReingestRunStatus.RUNNING,
+        server_default='running',
+        nullable=False,
+        index=True,
+    )
+    # The admin's decision: include_documents, include_connections,
+    # rerelease, accept_quality_warnings, include_edited.
+    options: Mapped[dict] = mapped_column(JSON, default=dict, server_default=sql_text("'{}'"), nullable=False)
+    # Final counts by item status/result, written when the run ends.
+    summary: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    lease_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ReingestItem(Base):
+    """One document (chain head) or connection (ImportSync) of a re-ingest
+    run. status: pending -> queued -> done | failed, or skipped (with the
+    reason in `result`). `carry` keeps what process_job drops at its claim
+    (review decision, original upload time, webhook connection) until the
+    item is finalized."""
+
+    __tablename__ = 'reingest_items'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey('reingest_runs.id', ondelete='CASCADE'), nullable=False, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # document | connection
+    # document: rerelease (new version) | reprocess (in place); connection: reimport
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default='pending', server_default='pending', nullable=False, index=True)
+    result: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    job_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('jobs.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    new_job_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('jobs.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    sync_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('import_syncs.id', ondelete='SET NULL'), nullable=True
+    )
+    import_run_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('import_runs.id', ondelete='SET NULL'), nullable=True
+    )
+    carry: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
 OFFLOADED_TEXT.update({
     Job: (('_result_markdown', 'result_markdown_object_id', 'result_markdown'),),
     JobMarkdownVersion: (('_content', 'content_object_id', 'content'),),
