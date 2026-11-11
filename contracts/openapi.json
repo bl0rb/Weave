@@ -8550,6 +8550,389 @@
         "title": "ReindexStatusResponse",
         "type": "object"
       },
+      "ReingestItemListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReingestItemResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "ReingestItemListResponse",
+        "type": "object"
+      },
+      "ReingestItemResponse": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "import_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Import Run Id"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "new_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Job Id"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "sync_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sync Id"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "action",
+          "status",
+          "updated_at"
+        ],
+        "title": "ReingestItemResponse",
+        "type": "object"
+      },
+      "ReingestPreviewConnections": {
+        "properties": {
+          "blocked": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Blocked",
+            "type": "object"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ready",
+          "blocked"
+        ],
+        "title": "ReingestPreviewConnections",
+        "type": "object"
+      },
+      "ReingestPreviewDocuments": {
+        "properties": {
+          "imported": {
+            "title": "Imported",
+            "type": "integer"
+          },
+          "reprocess": {
+            "title": "Reprocess",
+            "type": "integer"
+          },
+          "rerelease": {
+            "title": "Rerelease",
+            "type": "integer"
+          },
+          "skipped": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Skipped",
+            "type": "object"
+          }
+        },
+        "required": [
+          "rerelease",
+          "reprocess",
+          "skipped",
+          "imported"
+        ],
+        "title": "ReingestPreviewDocuments",
+        "type": "object"
+      },
+      "ReingestPreviewResponse": {
+        "properties": {
+          "active_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Run Id"
+          },
+          "connections": {
+            "$ref": "#/components/schemas/ReingestPreviewConnections"
+          },
+          "documents": {
+            "$ref": "#/components/schemas/ReingestPreviewDocuments"
+          },
+          "knowledge_available": {
+            "title": "Knowledge Available",
+            "type": "boolean"
+          },
+          "publication_configured": {
+            "title": "Publication Configured",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "documents",
+          "connections",
+          "publication_configured",
+          "knowledge_available"
+        ],
+        "title": "ReingestPreviewResponse",
+        "type": "object"
+      },
+      "ReingestRunListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReingestRunResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ReingestRunListResponse",
+        "type": "object"
+      },
+      "ReingestRunResponse": {
+        "properties": {
+          "counts": {
+            "additionalProperties": true,
+            "title": "Counts",
+            "type": "object"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "options": {
+            "additionalProperties": true,
+            "title": "Options",
+            "type": "object"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "options",
+          "counts",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ReingestRunResponse",
+        "type": "object"
+      },
+      "ReingestStartRequest": {
+        "description": "The admin's decision. `rerelease` has no default on purpose: re-releasing\nwhat was released before must be chosen explicitly. The expected counts\nare the preview the admin confirmed; a changed inventory is refused.",
+        "properties": {
+          "accept_quality_warnings": {
+            "default": false,
+            "title": "Accept Quality Warnings",
+            "type": "boolean"
+          },
+          "expected_connections": {
+            "minimum": 0.0,
+            "title": "Expected Connections",
+            "type": "integer"
+          },
+          "expected_documents": {
+            "minimum": 0.0,
+            "title": "Expected Documents",
+            "type": "integer"
+          },
+          "expected_rereleases": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Rereleases"
+          },
+          "include_connections": {
+            "default": true,
+            "title": "Include Connections",
+            "type": "boolean"
+          },
+          "include_documents": {
+            "default": true,
+            "title": "Include Documents",
+            "type": "boolean"
+          },
+          "include_edited": {
+            "default": false,
+            "title": "Include Edited",
+            "type": "boolean"
+          },
+          "rerelease": {
+            "title": "Rerelease",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "rerelease",
+          "expected_documents",
+          "expected_connections"
+        ],
+        "title": "ReingestStartRequest",
+        "type": "object"
+      },
       "RetrievalFilters": {
         "additionalProperties": false,
         "properties": {
@@ -12064,6 +12447,285 @@
           }
         },
         "summary": "Rebuild Knowledge Index Status"
+      }
+    },
+    "/api/v1/admin/reingest/preview": {
+      "get": {
+        "operationId": "preview_reingest_api_v1_admin_reingest_preview_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_edited",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Edited",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "rerelease",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Rerelease",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReingestPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Reingest",
+        "tags": [
+          "reingest-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/reingest/runs": {
+      "get": {
+        "operationId": "list_reingest_runs_api_v1_admin_reingest_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReingestRunListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Reingest Runs",
+        "tags": [
+          "reingest-admin"
+        ]
+      },
+      "post": {
+        "operationId": "start_reingest_api_v1_admin_reingest_runs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReingestStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReingestRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Reingest",
+        "tags": [
+          "reingest-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/reingest/runs/{run_id}/cancel": {
+      "post": {
+        "operationId": "cancel_reingest_api_v1_admin_reingest_runs__run_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReingestRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Reingest",
+        "tags": [
+          "reingest-admin"
+        ]
+      }
+    },
+    "/api/v1/admin/reingest/runs/{run_id}/items": {
+      "get": {
+        "operationId": "list_reingest_items_api_v1_admin_reingest_runs__run_id__items_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReingestItemListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Reingest Items",
+        "tags": [
+          "reingest-admin"
+        ]
       }
     },
     "/api/v1/admin/retrieval-provider/reindex": {
