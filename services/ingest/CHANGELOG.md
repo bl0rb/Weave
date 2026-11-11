@@ -42,6 +42,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   expanded), resolves links to other elements of the export to their title and drops styles,
   `&nbsp;` padding, comments and non-http(s) links/images. Data-like XML keeps the outline.
 
+### Fixed
+- **Chat answers finish without waiting for the title**: `/v1/chat/stream` sends `done` right away and
+  the first answer's generated conversation title afterwards as a `title` event; the chat frees the
+  input at `done`.
+- The conversation list orders by the latest turn again (`updated_at` was only set by title changes).
+- Weave-Runtime refusing weave-api's service token is a 502 now, not a 401 that sent every chat user
+  back to the login page.
+- The cap of 20 personal API tokens per user holds under parallel requests.
+
 ## [0.7.24] - 2026-11-10
 
 ### Security

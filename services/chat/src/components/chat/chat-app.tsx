@@ -338,6 +338,15 @@ export function ChatApp() {
           onSources: (sources) => {
             if (activeTurnRef.current === turnId) updateMessage(assistantId, (m) => ({ ...m, sources }));
           },
+          onDone: () => {
+            // The answer is final -- show it as such and free the input
+            // while the stream still waits for the conversation title.
+            if (slowTimer) clearTimeout(slowTimer);
+            if (activeTurnRef.current === turnId) {
+              updateMessage(assistantId, (m) => ({ ...m, streaming: false }));
+              setSending(false);
+            }
+          },
           onStatus: (event) => {
             // Agent-mode research (planning/researching/merging) can take a
             // while with no `delta` yet -- re-arming here keeps the >30s

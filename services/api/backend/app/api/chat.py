@@ -221,6 +221,13 @@ def _stream_and_persist(db, conversation: Conversation, events: Iterator[dict]) 
                     sources=sources,
                     trace=trace,
                 )
+                # `done` goes out right away; the first answer's title (an
+                # LLM call of up to ~15 s) is generated AFTER it and sent as
+                # one extra `title` event, so the caller sees the answer as
+                # finished immediately. A caller that stops reading at
+                # `done` only misses the event -- the title is still saved
+                # whenever the generator gets to run on.
+                yield _sse_line(event)
                 if is_first_assistant:
                     _release_db_connection(db)
                     try:
@@ -231,10 +238,13 @@ def _stream_and_persist(db, conversation: Conversation, events: Iterator[dict]) 
                         conversations_service.replace_title(db, conversation, title)
                     except runtime_client.RuntimeClientError:
                         pass
+                    else:
+                        yield _sse_line({'type': 'title', 'title': conversation.title})
+                return
 
             yield _sse_line(event)
 
-            if event_type in ('done', 'error'):
+            if event_type == 'error':
                 return
     except runtime_client.RuntimeClientError as exc:
         # Case 2 above: the stream broke mid-flight. Our own response
