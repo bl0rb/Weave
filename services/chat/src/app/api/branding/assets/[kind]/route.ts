@@ -26,10 +26,12 @@ export async function GET(request: NextRequest, context: { params: Promise<{ kin
   }
 
   try {
-    const response = await fetchBrandingAsset(kind, request.headers.get('if-none-match'));
+    const version = request.nextUrl.searchParams.get('v');
+    const response = await fetchBrandingAsset(kind, request.headers.get('if-none-match'), version && ASSET_VERSION.test(version) ? version : null);
     const etag = response.headers.get('etag');
+    const cacheControl = cacheControlFrom(response.headers.get('cache-control'));
     if (response.status === 304) {
-      return new NextResponse(null, { status: 304, headers: cacheHeaders(etag) });
+      return new NextResponse(null, { status: 304, headers: cacheHeaders(etag, cacheControl) });
     }
     if (response.status === 404) {
       return NextResponse.json(errorForHttpStatus(404, null), { status: 404 });
@@ -46,7 +48,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ kin
     if (body.byteLength > MAX_ASSET_BYTES) {
       return NextResponse.json(errorForHttpStatus(502, null), { status: 502 });
     }
-    return new NextResponse(body, { status: 200, headers: assetHeaders(kind, contentType, etag) });
+    return new NextResponse(body, { status: 200, headers: assetHeaders(kind, contentType, etag, cacheControl) });
   } catch (cause) {
     if (cause instanceof GatewayError) {
       return NextResponse.json(errorForHttpStatus(502, cause.detail), { status: 502 });
@@ -55,6 +57,10 @@ export async function GET(request: NextRequest, context: { params: Promise<{ kin
   }
 }
 
+/** The cache-busting `?v=` of an asset URL (first 16 hex of its sha256);
+ * forwarded to Weave-API only in exactly this shape. */
+const ASSET_VERSION = /^[0-9a-f]{16}$/;
+
 /** Same limit as the upload in Ingest and the proxy in Weave-API. */
 const MAX_ASSET_BYTES = 1024 * 1024;
 
@@ -62,19 +68,33 @@ const MAX_ASSET_BYTES = 1024 * 1024;
 // images an SVG may embed, no script, an opaque origin.
 const ASSET_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox";
 
-function cacheHeaders(etag: string | null): Record<string, string> {
+const ASSET_CACHE_CONTROL = 'public, max-age=300';
+
+/** Weave-API answers `no-cache` when the bytes it has do not match the
+ * requested `?v=` (another replica's newer snapshot), so the browser must
+ * not pin them to that URL. Passed through; anything else is the usual value. */
+function cacheControlFrom(upstream: string | null): string {
+  return upstream?.trim().toLowerCase() === 'no-cache' ? 'no-cache' : ASSET_CACHE_CONTROL;
+}
+
+function cacheHeaders(etag: string | null, cacheControl: string): Record<string, string> {
   return {
     'X-Content-Type-Options': 'nosniff',
     'Content-Security-Policy': ASSET_CSP,
-    'Cache-Control': 'public, max-age=300',
+    'Cache-Control': cacheControl,
     ...(etag ? { ETag: etag } : {}),
   };
 }
 
-function assetHeaders(kind: BrandingAssetKind, contentType: BrandingContentType, etag: string | null): Record<string, string> {
+function assetHeaders(
+  kind: BrandingAssetKind,
+  contentType: BrandingContentType,
+  etag: string | null,
+  cacheControl: string,
+): Record<string, string> {
   return {
     'Content-Type': contentType,
     'Content-Disposition': `inline; filename="branding-${kind}.${BRANDING_EXTENSIONS[contentType]}"`,
-    ...cacheHeaders(etag),
+    ...cacheHeaders(etag, cacheControl),
   };
 }

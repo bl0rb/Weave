@@ -227,6 +227,13 @@ REJECTED_SVGS = {
     'css escape': (f'<svg {NS}><style>a {{ fill: \\75 rl(http://x/y) }}</style></svg>', 'CSS'),
     'style attribute image-set': (f'<svg {NS}><rect style="fill: image-set(\'https://x/y.png\' 1x)"/></svg>', 'CSS'),
     'css escaped import': (f'<svg {NS}><style>@\\69mport "x.css";</style></svg>', 'CSS'),
+    # Browsers build the stylesheet from the direct text only, so a child element splits no token.
+    'style element import split by child': (
+        f'<svg {NS}><style>@im<g>zzz</g>port "https://evil.example/x.css";</style></svg>', 'CSS'),
+    'style element url split by child': (
+        f'<svg {NS}><style>rect{{fill:u<g>z</g>rl(https://evil.example/a#x)}}</style><rect/></svg>', 'CSS'),
+    'style element javascript split by child': (f'<svg {NS}><style>a{{b:java<g>z</g>script:x}}</style></svg>', 'CSS'),
+    'style element with child element': (f'<svg {NS}><style>a {{ fill: red }}<g/></style></svg>', 'Kindelement'),
     'presentation attribute url': (f'<svg {NS}><rect filter="url(https://example.com/f.svg#f)"/></svg>', 'CSS'),
     'not xml': (f'<svg {NS}><g></svg>', 'kein gültiges XML'),
     'undefined entity': (f'<svg {NS}>&ext;</svg>', 'kein gültiges XML'),

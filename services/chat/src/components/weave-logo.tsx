@@ -1,7 +1,7 @@
 'use client';
 
 import { cn } from '@/lib/utils';
-import { useEffect, useState, useSyncExternalStore, type AnimationEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type AnimationEvent } from 'react';
 
 import { useBranding } from '@/components/branding-provider';
 import { useWeaveMotion } from '@/lib/weave-motion';
@@ -21,47 +21,90 @@ const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
  *   else the custom logo, else the animated built-in mark;
  * - 'finite': like 'loop' for four seconds, then like no `animation`.
  * Custom assets are always an `<img>`, never inlined markup.
+ *
+ * Reduced motion is left to the browser, so the server HTML is already
+ * right and hydration never changes it: a `<picture>` whose reduced-motion
+ * source is the logo, or -- without a logo -- the busy `<img>` and the
+ * built-in mark side by side, one of them hidden by CSS.
  */
 export function WeaveLogo({ className, animation }: WeaveLogoProps) {
   const branding = useBranding();
   // An asset that fails to load (e.g. the proxy answers 502 while Ingest is
   // down) counts as unset, so a broken image falls back to today's look.
   const [broken, setBroken] = useState<readonly string[]>([]);
-  const markBroken = (src: string) => setBroken((list) => (list.includes(src) ? list : [...list, src]));
+  const markBroken = useCallback((src: string) => setBroken((list) => (list.includes(src) ? list : [...list, src])), []);
   const logoUrl = branding.logoUrl && !broken.includes(branding.logoUrl) ? branding.logoUrl : null;
   const busyUrl = branding.busyUrl && !broken.includes(branding.busyUrl) ? branding.busyUrl : null;
   const branded = Boolean(logoUrl || busyUrl);
-  const reducedMotion = usePrefersReducedMotion();
   const finiteElapsed = useElapsed(branded && animation === 'finite', BRANDED_FINITE_MS);
   if (!branded) return <WeaveMark className={className} animation={animation} />;
 
   const moving = animation === 'loop' || (animation === 'finite' && !finiteElapsed);
-  if (moving && busyUrl && !reducedMotion) return <BrandingImage src={busyUrl} className={className} onBroken={markBroken} />;
+  if (moving && busyUrl && logoUrl) {
+    return <BrandingImage src={busyUrl} reducedMotionSrc={logoUrl} className={className} onBroken={markBroken} />;
+  }
+  if (moving && busyUrl) {
+    return (
+      <>
+        <BrandingImage src={busyUrl} className={cn('motion-reduce:hidden', className)} onBroken={markBroken} />
+        <WeaveMark className={cn('motion-safe:hidden', className)} animation={animation} />
+      </>
+    );
+  }
   if (logoUrl) return <BrandingImage src={logoUrl} className={className} onBroken={markBroken} />;
   return <WeaveMark className={className} animation={moving ? animation : undefined} />;
 }
 
-function BrandingImage({ src, className, onBroken }: { src: string; className?: string; onBroken: (src: string) => void }) {
-  return (
+/** A custom asset as `<img>`; with `reducedMotionSrc`, a `<picture>` that
+ * shows that one instead under prefers-reduced-motion. */
+function BrandingImage({
+  src,
+  reducedMotionSrc,
+  className,
+  onBroken,
+}: {
+  src: string;
+  reducedMotionSrc?: string;
+  className?: string;
+  onBroken: (src: string) => void;
+}) {
+  const ref = useRef<HTMLImageElement>(null);
+  // React does not replay an `error` that fired before hydration (the server
+  // renders this, e.g. on /login), so check the state the request left the
+  // element in. naturalWidth is also 0 for a loaded SVG without width and
+  // height; only a broken image fails decode().
+  useEffect(() => {
+    const img = ref.current;
+    if (!img?.complete || img.naturalWidth !== 0) return;
+    let current = true;
+    const report = () => {
+      if (current) onBroken(shownSrc(src, reducedMotionSrc));
+    };
+    if (typeof img.decode === 'function') img.decode().catch(report);
+    else report();
+    return () => {
+      current = false;
+    };
+  }, [src, reducedMotionSrc, onBroken]);
+  const image = (
     // eslint-disable-next-line @next/next/no-img-element -- admin asset from the same-origin proxy; an <img> never runs an SVG's script
-    <img src={src} alt="" aria-hidden="true" draggable={false} className={cn('object-contain', className)} onError={() => onBroken(src)} />
+    <img ref={ref} src={src} alt="" aria-hidden="true" draggable={false} className={cn('object-contain', className)} onError={() => onBroken(shownSrc(src, reducedMotionSrc))} />
+  );
+  if (!reducedMotionSrc) return image;
+  // `contents`: the <img> stays the box the caller's className lays out.
+  return (
+    <picture className="contents">
+      <source media={REDUCED_MOTION_QUERY} srcSet={reducedMotionSrc} />
+      {image}
+    </picture>
   );
 }
 
-function subscribeReducedMotion(onChange: () => void): () => void {
-  if (typeof window.matchMedia !== 'function') return () => {};
-  const query = window.matchMedia(REDUCED_MOTION_QUERY);
-  query.addEventListener?.('change', onChange);
-  return () => query.removeEventListener?.('change', onChange);
-}
-
-function usePrefersReducedMotion(): boolean {
-  return useSyncExternalStore(
-    subscribeReducedMotion,
-    () => typeof window.matchMedia === 'function' && window.matchMedia(REDUCED_MOTION_QUERY).matches,
-    // Server render and hydration assume motion; the client corrects it.
-    () => false,
-  );
+/** The URL a BrandingImage shows right now: the browser picks the picture's
+ * source by the same media query. */
+function shownSrc(src: string, reducedMotionSrc: string | undefined): string {
+  const reduced = typeof window.matchMedia === 'function' && window.matchMedia(REDUCED_MOTION_QUERY).matches;
+  return reducedMotionSrc && reduced ? reducedMotionSrc : src;
 }
 
 /** True once `ms` have passed since `active` last turned true; false while inactive. */

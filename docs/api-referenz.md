@@ -553,7 +553,7 @@ Weave-API prüft jeden Wert erneut: Eine Palette mit einem Wert, der nicht `#rrg
 
 #### `GET /v1/branding/assets/{kind}`
 
-Liefert die Datei selbst; `kind` ist `logo` oder `busy`, alles andere ergibt `404`. Der Parameter `?v=` aus der `url` dient nur dazu, den Browser-Cache bei einer neuen Datei zu umgehen.
+Liefert die Datei selbst; `kind` ist `logo` oder `busy`, alles andere ergibt `404`. Der Parameter `?v=` aus der `url` (16 Hex-Zeichen des SHA-256) umgeht den Browser-Cache bei einer neuen Datei. Hält Weave-API für ein passendes `?v=` noch eine ältere Datei vor, fragt es Weave-Ingest erneut (je Art höchstens alle 5 Sekunden); passt die gelieferte Datei trotzdem nicht zur angefragten Version, antwortet es mit `Cache-Control: no-cache`, damit der Browser sie nicht unter der neuen URL festhält.
 
 | Status | Bedeutung |
 |---|---|

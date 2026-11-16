@@ -48,6 +48,7 @@ _ASSET_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sand
 _PALETTE_KEYS = ('accent', 'accent_hover', 'accent_ink', 'accent_soft', 'on_accent')
 _COLOR = re.compile(r'#[0-9a-f]{6}')
 _SHA256 = re.compile(r'[0-9a-f]{64}')
+_VERSION = re.compile(r'[0-9a-f]{16}')
 _ETAG = re.compile(r'(?:W/)?"[\x21\x23-\x7e]*"')
 _DEFAULT: dict = {
     'primary_color': None,
@@ -231,11 +232,23 @@ def _etag_matches(if_none_match: str | None, etag: str | None) -> bool:
     return any(candidate.strip().removeprefix('W/') == opaque for candidate in if_none_match.split(','))
 
 
-def _not_modified(etag: str | None) -> Response:
+def _version(etag: str | None) -> str | None:
+    """The ?v= of asset URLs naming the file with this ETag: the first 16
+    hex of its sha256, which Weave-Ingest sends (quoted) as the ETag."""
+    return etag.removeprefix('W/').strip('"')[:16] if etag else None
+
+
+def _cache_control(version: str | None, etag: str | None) -> str:
+    # Bytes that are not the file the URL's ?v= names must not stick to that
+    # URL in browsers.
+    return 'public, max-age=300' if version is None or version == _version(etag) else 'no-cache'
+
+
+def _not_modified(etag: str | None, version: str | None) -> Response:
     headers = {
         'X-Content-Type-Options': 'nosniff',
         'Content-Security-Policy': _ASSET_CSP,
-        'Cache-Control': 'public, max-age=300',
+        'Cache-Control': _cache_control(version, etag),
     }
     if etag:
         headers['ETag'] = etag
@@ -253,7 +266,16 @@ def _replaced_since(kind: str, etag: str | None, since: float) -> bool:
     return etag != (f'"{current["sha256"]}"' if current else None)
 
 
-def _cached_asset(kind: str, if_none_match: str | None) -> _CachedAsset | None:
+def _asks_for_another(version: str | None, etag: str | None, since: float, now: float) -> bool:
+    """The request's ?v= names another file than the one cached under `etag`
+    (or than none, for a miss) -- the branding snapshot it came from, maybe
+    another replica's, can be newer than this cache -- and Ingest was last
+    asked at `since`, long enough ago. The pause bounds what made-up
+    versions can cost Ingest."""
+    return version is not None and version != _version(etag) and now - since >= _BRANDING_RETRY_SECONDS
+
+
+def _cached_asset(kind: str, if_none_match: str | None, version: str | None) -> _CachedAsset | None:
     """What the cache can answer this request with, or None when Ingest has
     to be asked. A recent 404/502 for the kind is raised again."""
     now = _now()
@@ -263,12 +285,18 @@ def _cached_asset(kind: str, if_none_match: str | None) -> _CachedAsset | None:
             entry is not None
             and now - entry.fetched_at < _ASSET_TTL_SECONDS
             and not _replaced_since(kind, entry.etag, entry.fetched_at)
+            and not _asks_for_another(version, entry.etag, entry.fetched_at, now)
             # Without the bytes only a matching conditional request is answerable.
             and (entry.body is not None or _etag_matches(if_none_match, entry.etag))
         ):
             return entry
         miss = _asset_misses.get(kind)
-        if miss is not None and now < miss.expires_at and not _replaced_since(kind, None, miss.fetched_at):
+        if (
+            miss is not None
+            and now < miss.expires_at
+            and not _replaced_since(kind, None, miss.fetched_at)
+            and not _asks_for_another(version, None, miss.fetched_at, now)
+        ):
             raise HTTPException(status_code=miss.status_code, detail=miss.detail)
     return None
 
@@ -286,11 +314,11 @@ def _read_capped(upstream: httpx.Response) -> bytes:
     return bytes(body)
 
 
-def _fetch_asset(kind: str, if_none_match: str | None) -> _CachedAsset | Response:
+def _fetch_asset(kind: str, if_none_match: str | None, version: str | None) -> _CachedAsset | Response:
     """The asset from Ingest (and cached), or a 304 passed through. A 404 is
     remembered for 30 s, any other failure for 5 s."""
     try:
-        return _request_asset(kind, if_none_match)
+        return _request_asset(kind, if_none_match, version)
     except HTTPException as exc:
         now = _now()
         ttl = _BRANDING_TTL_SECONDS if exc.status_code == status.HTTP_404_NOT_FOUND else _BRANDING_RETRY_SECONDS
@@ -299,7 +327,7 @@ def _fetch_asset(kind: str, if_none_match: str | None) -> _CachedAsset | Respons
         raise
 
 
-def _request_asset(kind: str, if_none_match: str | None) -> _CachedAsset | Response:
+def _request_asset(kind: str, if_none_match: str | None, version: str | None) -> _CachedAsset | Response:
     not_found = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Branding asset not found')
     if not settings.ingest_api_url:
         raise not_found
@@ -324,7 +352,7 @@ def _request_asset(kind: str, if_none_match: str | None) -> _CachedAsset | Respo
                             # Remembered without bytes, so further revalidations
                             # (every browser after a restart) stay here.
                             _asset_cache[kind] = _CachedAsset(etag, '', None, _now())
-                return _not_modified(etag)
+                return _not_modified(etag, version)
             if upstream.status_code == status.HTTP_404_NOT_FOUND:
                 with _lock:
                     _asset_cache.pop(kind, None)
@@ -353,23 +381,26 @@ def get_branding_asset(kind: str, request: Request) -> Response:
     if kind not in _KINDS:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Branding asset not found')
     if_none_match = request.headers.get('if-none-match')
-    entry = _cached_asset(kind, if_none_match)
+    # The cache-buster of the asset URLs in /v1/branding; anything else is ignored.
+    version = request.query_params.get('v')
+    version = version if version and _VERSION.fullmatch(version) else None
+    entry = _cached_asset(kind, if_none_match, version)
     if entry is None:
         with _asset_fetch_locks[kind]:
             # Whoever waited here reuses the answer the request before it got.
-            entry = _cached_asset(kind, if_none_match)
+            entry = _cached_asset(kind, if_none_match, version)
             if entry is None:
-                fetched = _fetch_asset(kind, if_none_match)
+                fetched = _fetch_asset(kind, if_none_match, version)
                 if isinstance(fetched, Response):
                     return fetched
                 entry = fetched
     if _etag_matches(if_none_match, entry.etag):
-        return _not_modified(entry.etag)
+        return _not_modified(entry.etag, version)
     headers = {
         'X-Content-Type-Options': 'nosniff',
         'Content-Security-Policy': _ASSET_CSP,
         'Content-Disposition': f'inline; filename="branding-{kind}.{_ASSET_EXTENSIONS[entry.content_type]}"',
-        'Cache-Control': 'public, max-age=300',
+        'Cache-Control': _cache_control(version, entry.etag),
     }
     if entry.etag:
         headers['ETag'] = entry.etag

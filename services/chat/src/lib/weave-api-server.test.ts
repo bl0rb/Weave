@@ -180,18 +180,18 @@ describe('fetchBrandingAsset', () => {
 
   it('forwards only If-None-Match, never a credential', async () => {
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-      expect(String(url)).toBe('http://localhost:8004/v1/branding/assets/busy');
+      expect(String(url)).toBe('http://localhost:8004/v1/branding/assets/busy?v=0123456789abcdef');
       expect(init?.headers).toEqual({ 'If-None-Match': '"abc"' });
       return new Response(null, { status: 304 });
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    expect((await fetchBrandingAsset('busy', '"abc"')).status).toBe(304);
+    expect((await fetchBrandingAsset('busy', '"abc"', '0123456789abcdef')).status).toBe(304);
   });
 
   it('turns a transport failure into GatewayError(unreachable)', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
 
-    await expect(fetchBrandingAsset('logo', null)).rejects.toMatchObject({ name: 'GatewayError', kind: 'unreachable' });
+    await expect(fetchBrandingAsset('logo', null, null)).rejects.toMatchObject({ name: 'GatewayError', kind: 'unreachable' });
   });
 });

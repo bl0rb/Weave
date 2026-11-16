@@ -443,7 +443,12 @@ Weave-Ingest wird unter `INGEST_API_URL` ebenfalls ohne Token gefragt.
   `Content-Disposition: inline; filename="branding-<kind>.<ext>"` und
   `Cache-Control: public, max-age=300`. Weave-API hält jede Datei 300 s vor;
   nennt ein neuerer Stand von `GET /v1/branding` eine andere Datei, wird sie
-  sofort neu geholt.
+  sofort neu geholt. Ebenso, wenn `?v=` (16 Hex-Zeichen, sonst ignoriert)
+  eine andere Datei nennt als die vorgehaltene, etwa aus dem neueren Stand
+  einer anderen Instanz; dann fragt Weave-API höchstens alle 5 s, auch an
+  einem gemerkten `404` vorbei. Passt die ausgelieferte Datei nicht zu `?v=`,
+  trägt sie `Cache-Control: no-cache`, damit Browser sie nicht unter dieser
+  URL festhalten.
 
 Es gibt kein Rate-Limit (ohne Anmeldung gibt es keinen Nutzer, dem es
 zugerechnet werden könnte); die Caches begrenzen die Last auf Weave-Ingest.

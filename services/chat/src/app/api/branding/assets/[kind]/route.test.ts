@@ -6,8 +6,8 @@ import { SESSION_COOKIE_NAME } from '@/lib/session';
 const CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox";
 const SVG = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"/>');
 
-function assetRequest(kind: string, headers: Record<string, string> = {}): [NextRequest, { params: Promise<{ kind: string }> }] {
-  return [new NextRequest(`http://localhost/api/branding/assets/${kind}?v=0123456789abcdef`, { headers }), { params: Promise.resolve({ kind }) }];
+function assetRequest(kind: string, headers: Record<string, string> = {}, query = '?v=0123456789abcdef'): [NextRequest, { params: Promise<{ kind: string }> }] {
+  return [new NextRequest(`http://localhost/api/branding/assets/${kind}${query}`, { headers }), { params: Promise.resolve({ kind }) }];
 }
 
 function upstream(status: number, headers: Record<string, string> = {}, body: BodyInit | null = status === 200 ? SVG : null) {
@@ -27,7 +27,7 @@ describe('GET /api/branding/assets/[kind]', () => {
     const res = await GET(...assetRequest('logo'));
 
     expect(res.status).toBe(200);
-    expect(String(fetchMock.mock.calls[0][0])).toBe('http://localhost:8004/v1/branding/assets/logo');
+    expect(String(fetchMock.mock.calls[0][0])).toBe('http://localhost:8004/v1/branding/assets/logo?v=0123456789abcdef');
     expect(res.headers.get('content-type')).toBe('image/svg+xml');
     expect(res.headers.get('content-security-policy')).toBe(CSP);
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
@@ -37,6 +37,15 @@ describe('GET /api/branding/assets/[kind]', () => {
     expect(res.headers.get('set-cookie')).toBeNull();
     expect(res.headers.get('x-upstream')).toBeNull();
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(SVG);
+  });
+
+  it.each([200, 304])('passes Weave-API no-cache through (bytes that do not match ?v=), status %i', async (status) => {
+    upstream(status, { 'content-type': 'image/svg+xml', etag: '"old"', 'cache-control': 'no-cache' });
+
+    const res = await GET(...assetRequest('logo'));
+
+    expect(res.status).toBe(status);
+    expect(res.headers.get('cache-control')).toBe('no-cache');
   });
 
   it.each([
@@ -50,6 +59,20 @@ describe('GET /api/branding/assets/[kind]', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe(type);
     expect(res.headers.get('content-disposition')).toBe(`inline; filename="${filename}"`);
+  });
+
+  it.each([
+    ['', ''],
+    ['?v=0123456789ABCDEF', ''],
+    ['?v=0123456789abcde', ''],
+    ['?v=0123456789abcdef0', ''],
+    ['?v=0123456789abcdef%26x%3D1', ''],
+    ['?x=1&v=fedcba9876543210', '?v=fedcba9876543210'],
+  ])('forwards ?v= to Weave-API only as 16 lowercase hex (%j -> %j)', async (query, forwarded) => {
+    const fetchMock = upstream(200, { 'content-type': 'image/png' }, new Uint8Array([1]));
+
+    expect((await GET(...assetRequest('busy', {}, query))).status).toBe(200);
+    expect(String(fetchMock.mock.calls[0][0])).toBe(`http://localhost:8004/v1/branding/assets/busy${forwarded}`);
   });
 
   it.each(['icon', 'LOGO', '..', 'logo.svg'])('answers 404 for kind %j without calling Weave-API', async (kind) => {

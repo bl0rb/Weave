@@ -239,11 +239,20 @@ def _check_svg(data: bytes) -> None:
                 raise _rejected('Die SVG-Datei darf keine Verarbeitungsanweisungen (z. B. xml-stylesheet) enthalten.')
             if event == 'end':
                 depth -= 1
-                if _local(element.tag) == 'style' and _unsafe_css(''.join(element.itertext()), full=True):
-                    raise _rejected(
-                        'Die SVG-Datei enthält unzulässiges CSS (@import, javascript:, expression( oder eine '
-                        'externe url()).'
-                    )
+                if _local(element.tag) == 'style':
+                    # Browsers build the stylesheet from the direct text only,
+                    # so a child element can split a token like @im<g/>port.
+                    css = (element.text or '') + ''.join(child.tail or '' for child in element)
+                    if _unsafe_css(css, full=True):
+                        raise _rejected(
+                            'Die SVG-Datei enthält unzulässiges CSS (@import, javascript:, expression( oder eine '
+                            'externe url()).'
+                        )
+                    if len(element):
+                        raise _rejected(
+                            'Die SVG-Datei enthält ein <style>-Element mit Kindelementen; erlaubt ist dort nur '
+                            'CSS-Text.'
+                        )
                 continue
             depth += 1
             elements += 1

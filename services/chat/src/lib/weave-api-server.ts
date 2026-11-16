@@ -290,16 +290,18 @@ export async function fetchBranding(): Promise<Branding | null> {
 }
 
 /**
- * GET /v1/branding/assets/{kind} -- the raw upstream response for the asset
- * proxy route (api/branding/assets/[kind]), which checks status, type and
- * size itself. Forwards only `If-None-Match`. A transport failure becomes
- * `GatewayError('unreachable')`, as in weaveApiFetch.
+ * GET /v1/branding/assets/{kind}[?v=<version>] -- the raw upstream response
+ * for the asset proxy route (api/branding/assets/[kind]), which checks
+ * status, type and size itself and validates `version`. Forwards only
+ * `If-None-Match`. A transport failure becomes `GatewayError('unreachable')`,
+ * as in weaveApiFetch.
  */
-export async function fetchBrandingAsset(kind: BrandingAssetKind, ifNoneMatch: string | null): Promise<Response> {
+export async function fetchBrandingAsset(kind: BrandingAssetKind, ifNoneMatch: string | null, version: string | null): Promise<Response> {
   const headers: Record<string, string> = {};
   if (ifNoneMatch) headers['If-None-Match'] = ifNoneMatch;
+  const query = version ? `?v=${encodeURIComponent(version)}` : '';
   try {
-    return await fetch(`${resolveWeaveApiBaseUrl()}/v1/branding/assets/${kind}`, { headers, cache: 'no-store' });
+    return await fetch(`${resolveWeaveApiBaseUrl()}/v1/branding/assets/${kind}${query}`, { headers, cache: 'no-store' });
   } catch (cause) {
     throw new GatewayError('unreachable', null, cause instanceof Error ? cause.message : String(cause));
   }

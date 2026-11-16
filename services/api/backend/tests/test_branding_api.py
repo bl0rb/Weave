@@ -474,6 +474,81 @@ def test_newer_branding_naming_the_asset_bypasses_a_remembered_404(ingest, clock
     assert len(ingest.requests) == 3
 
 
+def test_newer_version_in_the_url_bypasses_an_older_cached_asset(ingest, clock):
+    # This replica's branding snapshot is old; another replica's JSON already
+    # names the new file, so the browser asks for it by its ?v=.
+    _serve_asset(ingest, b'old', etag=f'"{"c" * 64}"')
+    assert client.get('/v1/branding/assets/logo').content == b'old'
+
+    clock['now'] += 10
+    _serve_asset(ingest, b'new', etag=f'"{_LOGO_SHA}"')
+    response = client.get(f'/v1/branding/assets/logo?v={_LOGO_SHA[:16]}')
+    assert response.content == b'new'
+    assert response.headers['cache-control'] == 'public, max-age=300'
+    assert len(ingest.requests) == 2
+
+    # Now cached under its version.
+    assert client.get(f'/v1/branding/assets/logo?v={_LOGO_SHA[:16]}').content == b'new'
+    assert len(ingest.requests) == 2
+
+
+def test_matching_version_is_served_from_the_cache(ingest, clock):
+    _serve_asset(ingest, b'one', etag=f'"{_LOGO_SHA}"')
+    assert client.get(f'/v1/branding/assets/logo?v={_LOGO_SHA[:16]}').content == b'one'
+
+    clock['now'] += 10
+    _serve_asset(ingest, b'two', etag=f'"{"c" * 64}"')
+    response = client.get(f'/v1/branding/assets/logo?v={_LOGO_SHA[:16]}')
+    assert response.content == b'one'
+    assert response.headers['cache-control'] == 'public, max-age=300'
+    assert len(ingest.requests) == 1
+
+
+@pytest.mark.parametrize('version', ['', 'A' * 16, 'c' * 15, 'c' * 17, 'g' * 16, 'c' * 64])
+def test_invalid_version_is_ignored(ingest, clock, version):
+    _serve_asset(ingest, b'one', etag=f'"{_LOGO_SHA}"')
+    assert client.get('/v1/branding/assets/logo').content == b'one'
+
+    clock['now'] += 10
+    _serve_asset(ingest, b'two', etag=f'"{"c" * 64}"')
+    response = client.get('/v1/branding/assets/logo', params={'v': version})
+    assert response.content == b'one'
+    assert response.headers['cache-control'] == 'public, max-age=300'
+    assert len(ingest.requests) == 1
+
+
+def test_newer_version_in_the_url_bypasses_a_remembered_404(ingest, clock):
+    ingest.handler = lambda request: httpx.Response(404)
+    assert client.get('/v1/branding/assets/logo').status_code == 404
+
+    clock['now'] += 10  # the 404 is still remembered (30 s)
+    _serve_asset(ingest, b'new', etag=f'"{_LOGO_SHA}"')
+    assert client.get(f'/v1/branding/assets/logo?v={_LOGO_SHA[:16]}').content == b'new'
+    assert len(ingest.requests) == 2
+
+
+def test_made_up_versions_reach_ingest_at_most_every_5_seconds(ingest, clock):
+    etag = f'"{_LOGO_SHA}"'
+    _serve_asset(ingest, b'<svg/>', etag=etag)
+    assert client.get('/v1/branding/assets/logo').status_code == 200
+
+    clock['now'] += 10
+    for i in range(5):
+        response = client.get(f'/v1/branding/assets/logo?v={i:016x}')
+        assert response.content == b'<svg/>'
+        # Not the file the URL names: never pinned to that URL.
+        assert response.headers['cache-control'] == 'no-cache'
+    assert len(ingest.requests) == 2
+    response = client.get(f'/v1/branding/assets/logo?v={9:016x}', headers={'If-None-Match': etag})
+    assert response.status_code == 304
+    assert response.headers['cache-control'] == 'no-cache'
+    assert len(ingest.requests) == 2
+
+    clock['now'] += 5
+    assert client.get(f'/v1/branding/assets/logo?v={9:016x}').status_code == 200
+    assert len(ingest.requests) == 3
+
+
 def test_upstream_failure_is_remembered_for_5_seconds(ingest, clock):
     ingest.handler = _fail_with_connect_error
     for _ in range(5):
