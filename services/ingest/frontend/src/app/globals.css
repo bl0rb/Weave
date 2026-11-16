@@ -163,6 +163,21 @@ html.dark .text-emerald-950, html.dark .text-emerald-900 { color: var(--ink) !im
 html.dark :is(.hover\:bg-slate-50, .hover\:bg-slate-100, .hover\:bg-emerald-50):hover { background-color: var(--hover) !important; }
 html.dark .hover\:bg-emerald-100:hover { background-color: #2b3c34 !important; }
 html.dark [class*="border-slate-"], html.dark [class*="border-emerald-"] { border-color: var(--line-2) !important; }
+/* Admin branding (Administration › Betrieb › Erscheinungsbild). The brand
+   components keep their built-in emerald classes, so the default look is
+   unchanged; only while a custom palette is applied (<style id="weave-branding">,
+   lib/branding.ts) do they take the --accent tokens it sets. The #id in :has()
+   outranks the html.dark patches above. */
+html:has(#weave-branding) .brand-btn-primary { background-color: var(--accent) !important; color: var(--on-accent) !important; --tw-shadow-color: color-mix(in srgb, var(--accent) 20%, transparent); }
+html:has(#weave-branding) .brand-btn-primary:hover { background-color: var(--accent-hover) !important; }
+html:has(#weave-branding) :is(.brand-btn-outline, .brand-btn-ghost) { color: var(--accent-ink) !important; }
+html:has(#weave-branding) .brand-btn-outline { border-color: color-mix(in srgb, var(--accent) 35%, transparent) !important; }
+html:has(#weave-branding) :is(.brand-btn-outline, .brand-btn-ghost):hover { background-color: var(--accent-soft) !important; }
+html:has(#weave-branding) .brand-tab-active { background-color: var(--accent-soft) !important; color: var(--accent-ink) !important; }
+html:has(#weave-branding) .brand-tab-icon { color: var(--accent) !important; }
+html:has(#weave-branding) .brand-toggle-on { background-color: var(--accent) !important; }
+html:has(#weave-branding) .brand-spinner { color: var(--accent) !important; border-top-color: var(--accent) !important; }
+html:has(#weave-branding) .brand-input:focus { border-color: var(--accent) !important; --tw-ring-color: var(--accent-soft); }
 /* White marks on the light dark-mode space/status colors are unreadable: dark text instead. */
 html.dark :is(.portal-space-mark, .portal-pipe-human .portal-pipe-n) { color: #141518; }
 /* Form controls need a visible boundary (>= 3:1 against the surface). */

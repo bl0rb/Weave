@@ -12,6 +12,7 @@ Weave-API ist das **Bot-Gateway** und der zentrale Einstiegspunkt des Weave-Syst
 - GET `/v1/models`: OpenAI-kompatible Modell-Liste, gespeist aus der Bot-Registry
 - GET `/v1/collections`: die Collections, die der aufrufende Nutzer (über sein Team) lesen darf — proxied zu Weave-Retrievals Collections-Lese-Autorität
 - POST `/v1/search`: Hybridsuche nur über die Collections, die der Aufrufer lesen darf (Treffer statt Bot-Antwort, z. B. für die Desktop-App)
+- GET `/v1/branding`, GET `/v1/branding/assets/{kind}`: das Erscheinungsbild der Instanz (Farben, Logo, Lade-Animation) aus Weave-Ingest, öffentlich und nur lesend, für den Chat und die Desktop-App
 - POST `/internal/tokens/introspect`: service-zu-service Token-Introspection für andere Weave-Dienste (z. B. einen künftigen MCP-Dienst)
 - OIDC + API-Token Authentifizierung (nach Weave-Ingest-Muster)
 - Rate-Limiting pro User und Bot
@@ -47,6 +48,8 @@ Weave-API ist das **Bot-Gateway** und der zentrale Einstiegspunkt des Weave-Syst
 - POST `/v1/search`: { query, collection?, top_k?, final_k? } (`final_k > top_k` → 422) — `collection` kann den lesbaren Bereich nur einschränken; eine nicht lesbare Collection liefert eine leere Trefferliste
 - Native Apps (`NATIVE_LOGIN_ENABLED=true`, RFC 8252): beide Login-Wege akzeptieren zusätzlich `return_to=http://127.0.0.1:<port>/callback` (oder `[::1]`) — nur zusammen mit `code_challenge` (PKCE S256). Der Einmal-Code lässt sich dann nur mit dem passenden `code_verifier` einlösen. Die App schickt das Sitzungs-Token danach wie die Chat-Oberfläche als Cookie `weave_api_session`.
 - POST `/internal/tokens/introspect`: { token } — hinter einem eigenen Service-Token, nicht dem End-Nutzer-Bearer-Token
+- GET `/v1/branding`: kein Body, **keine Anmeldung**
+- GET `/v1/branding/assets/{kind}` (`kind` = `logo` | `busy`): kein Body, **keine Anmeldung**; optional `If-None-Match`
 - GET `/v1/auth/oidc/login`, GET `/v1/auth/oidc/callback`, POST `/v1/auth/logout`: OIDC-Browser-Session (siehe "OIDC-Anmeldung einrichten" unten) — kein Body, nur wenn `OIDC_ISSUER`/`OIDC_CLIENT_ID` gesetzt sind, sonst `404`. `GET /v1/auth/oidc/login` akzeptiert zusätzlich einen optionalen `return_to`-Query-Parameter (siehe "Cross-Origin-Übergabe" unten)
 - POST `/v1/auth/session/exchange`: { code, code_verifier? } — tauscht einen Übergabe-Code aus der Cross-Origin-Übergabe gegen ein echtes Sitzungs-Token; ebenfalls nur erreichbar, wenn OIDC konfiguriert ist, sonst `404`
 
@@ -66,10 +69,13 @@ Weave-API ist das **Bot-Gateway** und der zentrale Einstiegspunkt des Weave-Syst
 - GET `/v1/auth/oidc/callback`: `302` nach `/` und setzt das Session-Cookie (`weave_api_session`, httpOnly) — bei gültigem `return_to` stattdessen `302` nach `<return_to>?code=<code>` (siehe unten), dann **ohne** Session-Cookie; ein `return_to` im State, das nicht mehr gegen die Allowlist validiert, liefert `400`
 - POST `/v1/auth/session/exchange`: `{ session_token, expires_at }` bei gültigem, noch nicht verbrauchtem und nicht abgelaufenem Code, sonst generisch `400` (ununterscheidbar, ob unbekannt/abgelaufen/bereits verbraucht)
 - POST `/v1/auth/logout`: `{ "status": "ok" }`, löscht Session-Zeile und Cookie
+- GET `/v1/branding`: immer `200`, `{ primary_color, accent_color, palette: { light, dark } | null, logo, busy, updated_at }` (siehe "GET /v1/branding" unten)
+- GET `/v1/branding/assets/{kind}`: die Datei (`image/svg+xml`, `image/gif` oder `image/png`) mit Sandbox-CSP, `304` bei passendem `If-None-Match`, `404` ohne Datei, `502` bei Fehlern von Weave-Ingest
 
 **Abhängigkeiten:**
 - Weave-Runtime: Message-Verarbeitung
 - Weave-Retrieval: Collections-Lese-Autorität (GET `/v1/collections`)
+- Weave-Ingest: Erscheinungsbild (öffentliches GET `/api/v1/branding` und `/api/v1/branding/assets/{kind}`, ohne Token, über `INGEST_API_URL`)
 - PostgreSQL: Konversations-Persistierung
 - OIDC-Provider (optional, siehe unten) oder Personal-API-Token
 - Weave Chat (`services/chat`) oder ein optionaler OpenAI-kompatibler Client
@@ -274,9 +280,10 @@ cd backend
 ```
 
 `GET /health` prüft dabei per `SELECT 1` aktiv die Datenbankverbindung.
-Jede `/v1/*`-Route verlangt `Authorization: Bearer <Token>` (siehe
-`app/core/auth.py`) und läuft zusätzlich durch das In-Process-Rate-Limiting
-aus `app/core/ratelimit.py` (`RATE_LIMIT_PER_MINUTE`, Default 30 Requests
+Jede `/v1/*`-Route außer `/v1/branding` (siehe unten) verlangt
+`Authorization: Bearer <Token>` (siehe `app/core/auth.py`) und läuft
+zusätzlich durch das In-Process-Rate-Limiting aus `app/core/ratelimit.py`
+(`RATE_LIMIT_PER_MINUTE`, Default 30 Requests
 pro Nutzer und rollierender Minute; single-instance, siehe Modul-Docstring
 für die Redis-Variante bei mehreren Replicas).
 
@@ -405,6 +412,67 @@ der Endpunkt mit `502` und einer Detail-Meldung, die den zugrundeliegenden
 Fehler benennt -- konfiguriert wird das Ziel über `RETRIEVAL_BASE_URL`
 (Default `http://localhost:8002`) und `RETRIEVAL_API_TOKEN` (siehe
 `.env.example`).
+
+### GET /v1/branding (öffentlich)
+
+Das Erscheinungsbild (Primär- und Akzentfarbe, die daraus abgeleitete
+Palette für helles und dunkles Design, Logo und Lade-Animation) gehört
+Weave-Ingest; eine Administration pflegt es dort unter Administration ›
+Betrieb › Erscheinungsbild. Der Chat spricht nur mit Weave-API, deshalb
+reicht `app/api/branding.py` es nur lesend durch. Beide Routen sind bewusst
+**ohne Anmeldung** erreichbar (auch die Anmeldeseite ist gebrandet) und
+liegen nicht unter `/v1/auth`, das ohne Browser-Anmeldung `404` liefert.
+Weave-Ingest wird unter `INGEST_API_URL` ebenfalls ohne Token gefragt.
+
+- `GET /v1/branding` fragt `GET /api/v1/branding` (Timeout 3 s) und hält die
+  Antwort 30 s im Prozess vor (`Cache-Control: public, max-age=30`). Ein
+  Fehler bei Weave-Ingest bricht den Chat nie: Es kommt der zuletzt gültige
+  Stand, gab es keinen, alle Felder als `null` (= eingebautes Aussehen),
+  jeweils mit `200`. Nach einem Fehler fragt Weave-API frühestens nach 5 s
+  wieder. Jeder Wert wird erneut geprüft: Eine Palette mit einem Wert, der
+  nicht auf `^#[0-9a-f]{6}$` passt, entfällt ganz; eine Datei mit anderem Typ
+  als SVG/GIF/PNG oder ungültigem `sha256` entfällt. Die `url` der Dateien
+  zeigt auf `/v1/branding/assets/<kind>?v=<sha256[:16]>`.
+- `GET /v1/branding/assets/{kind}` (`logo` oder `busy`, sonst `404`) reicht
+  `GET /api/v1/branding/assets/{kind}` durch, samt `If-None-Match`. `404` und
+  `304` von Weave-Ingest kommen unverändert an. Ein anderer Typ als
+  `image/svg+xml`, `image/gif` oder `image/png` oder eine Datei über 1 MiB
+  ergibt `502`. Die Antwort trägt genau `Content-Type`, `ETag`,
+  `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src
+  'none'; style-src 'unsafe-inline'; img-src data:; sandbox`,
+  `Content-Disposition: inline; filename="branding-<kind>.<ext>"` und
+  `Cache-Control: public, max-age=300`. Weave-API hält jede Datei 300 s vor;
+  nennt ein neuerer Stand von `GET /v1/branding` eine andere Datei, wird sie
+  sofort neu geholt. Ebenso, wenn `?v=` (16 Hex-Zeichen, sonst ignoriert)
+  eine andere Datei nennt als die vorgehaltene, etwa aus dem neueren Stand
+  einer anderen Instanz; dann fragt Weave-API höchstens alle 5 s, auch an
+  einem gemerkten `404` vorbei. Passt die ausgelieferte Datei nicht zu `?v=`,
+  trägt sie `Cache-Control: no-cache`, damit Browser sie nicht unter dieser
+  URL festhalten.
+
+Es gibt kein Rate-Limit (ohne Anmeldung gibt es keinen Nutzer, dem es
+zugerechnet werden könnte); die Caches begrenzen die Last auf Weave-Ingest.
+Das ist nötig, weil Weave-Ingest alle Aufrufe von Weave-API über ein
+gemeinsames Limit pro Adresse zählt, auch die Login-Übergabe. Deshalb fragt
+Weave-API je Ressource höchstens einmal gleichzeitig, merkt sich ein `404`
+30 s und andere Fehler 5 s, und ein `304` von Weave-Ingest gilt 300 s für
+weitere Anfragen mit demselben `If-None-Match`.
+
+```bash
+curl -s http://localhost:8004/v1/branding | jq
+```
+
+```json
+{
+  "primary_color": "#1d6a53",
+  "accent_color": null,
+  "palette": {"light": {"accent": "#1d6a53", "accent_hover": "#195a47", "accent_ink": "#1d6a53", "accent_soft": "#e4eeeb", "on_accent": "#ffffff"},
+              "dark": {"accent": "#5fa08b", "accent_hover": "#77ae9c", "accent_ink": "#8fc0b0", "accent_soft": "#1f3a32", "on_accent": "#0c1511"}},
+  "logo": {"content_type": "image/svg+xml", "sha256": "3f2a…", "size_bytes": 1830, "url": "/v1/branding/assets/logo?v=3f2a9c0d41b7e865"},
+  "busy": null,
+  "updated_at": "2026-11-16T10:00:00+00:00"
+}
+```
 
 ### Token-Introspection (intern)
 

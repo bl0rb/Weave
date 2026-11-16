@@ -8,9 +8,10 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: 'bg-emerald-600 text-white shadow-sm shadow-emerald-600/20 hover:bg-emerald-500 hover:text-white',
-        outline: 'border border-emerald-200 bg-white text-emerald-950 hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-950',
-        ghost: 'text-emerald-900 hover:bg-emerald-50 hover:text-emerald-950',
+        // brand-btn-*: switch to the admin branding colours while one is applied (globals.css).
+        default: 'brand-btn-primary bg-emerald-600 text-white shadow-sm shadow-emerald-600/20 hover:bg-emerald-500 hover:text-white',
+        outline: 'brand-btn-outline border border-emerald-200 bg-white text-emerald-950 hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-950',
+        ghost: 'brand-btn-ghost text-emerald-900 hover:bg-emerald-50 hover:text-emerald-950',
         danger: 'bg-red-500 text-zinc-50 hover:bg-red-400',
       },
       size: {

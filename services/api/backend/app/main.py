@@ -8,6 +8,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.api.auth import router as auth_router
 from app.api.bots import router as bots_router
+from app.api.branding import router as branding_router
 from app.api.chat import router as chat_router
 from app.api.collections import router as collections_router
 from app.api.conversations import router as conversations_router
@@ -125,3 +126,5 @@ app.include_router(search_router)
 app.include_router(internal_router)
 app.include_router(portal_artifacts_router)
 app.include_router(me_router)
+# Public on purpose (the login page is branded too): no auth dependency.
+app.include_router(branding_router)

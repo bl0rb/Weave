@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense } from 'react';
-import { DatabaseBackup, RefreshCcw, ShieldCheck, SlidersHorizontal, Wrench } from 'lucide-react';
+import { DatabaseBackup, Palette, RefreshCcw, ShieldCheck, SlidersHorizontal, Wrench } from 'lucide-react';
 
 import {
   AdminPageShell,
@@ -11,13 +11,14 @@ import {
   useBereich,
 } from '@/components/admin/admin-page-shared';
 import { BackupTab } from '@/components/admin/backup-tab';
+import { BrandingTab } from '@/components/admin/branding-tab';
 import { ConfigTab } from '@/components/admin/config-tab';
 import { ReingestTab } from '@/components/admin/reingest-tab';
 import { TechnicalIdentitiesTab } from '@/components/admin/technical-identities-tab';
 import { IndexMaintenanceSection } from '@/components/admin/retrieval-provider-tab';
 import { useI18n } from '@/i18n/provider';
 
-type Bereich = 'sicherung' | 'konfiguration' | 'identitaeten' | 'werkzeuge' | 'neu-einlesen';
+type Bereich = 'sicherung' | 'konfiguration' | 'identitaeten' | 'werkzeuge' | 'neu-einlesen' | 'erscheinungsbild';
 
 export default function AdminBetriebPage() {
   return (
@@ -35,6 +36,7 @@ function AdminBetriebPageInner() {
     { id: 'identitaeten', label: t('admin.operations.tab.identities'), icon: ShieldCheck },
     { id: 'werkzeuge', label: t('admin.operations.tab.tools'), icon: Wrench },
     { id: 'neu-einlesen', label: t('admin.operations.tab.reingest'), icon: RefreshCcw },
+    { id: 'erscheinungsbild', label: t('admin.operations.tab.branding'), icon: Palette },
   ];
   const IDS = TABS.map((tab) => tab.id);
   const [bereich, setBereich] = useBereich<Bereich>(IDS, 'sicherung');
@@ -68,6 +70,11 @@ function AdminBetriebPageInner() {
       {bereich === 'neu-einlesen' && (
         <SectionPanel idPrefix="betrieb" id="neu-einlesen">
           <ReingestTab />
+        </SectionPanel>
+      )}
+      {bereich === 'erscheinungsbild' && (
+        <SectionPanel idPrefix="betrieb" id="erscheinungsbild">
+          <BrandingTab />
         </SectionPanel>
       )}
     </AdminPageShell>

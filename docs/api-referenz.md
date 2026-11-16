@@ -30,6 +30,7 @@ Alle Antworten sind JSON, sofern nicht anders angegeben (Streaming-Endpunkte lie
 | Eigene Konversationen einsehen/löschen | Weave-API | `GET /v1/conversations`, `DELETE /v1/conversations/{id}` |
 | Eigenes Profil / UI-Sprache lesen und setzen | Weave-API | `GET /v1/me`, `PUT /v1/me/locale` |
 | Eigene API-Tokens erstellen, auflisten, widerrufen | Weave-API | `GET/POST /v1/me/tokens`, `DELETE /v1/me/tokens/{id}` |
+| Farben, Logo und Lade-Animation der Instanz lesen (ohne Anmeldung) | Weave-API | `GET /v1/branding`, `GET /v1/branding/assets/{kind}` |
 | Als Agent/Skript in meinem eigenen Scope suchen | Weave-Tools | MCP `search`, `POST /api/v1/tools/search` |
 | Als Agent/Skript meine lesbaren Collections auflisten | Weave-Tools | MCP `list_collections`, `GET /api/v1/tools/collections` |
 | Einen Wissensbereich anlegen, pflegen, freigeben, löschen | Weave-Ingest | `POST/GET/PATCH/DELETE /api/v1/collections` |
@@ -104,7 +105,7 @@ Für `Authorization` akzeptiert Weave-Tools drei Arten von Tokens, rein an ihrer
 
 ## Weave-API — Chat-Gateway
 
-Alle folgenden Endpunkte liegen unter der Basis-URL von Weave-API und verlangen einen gültigen Bearer-Token bzw. eine Session (siehe oben). Jeder Endpunkt ist zusätzlich pro Nutzer rate-limitiert (siehe „Fehlercodes & Rate-Limits“).
+Alle folgenden Endpunkte liegen unter der Basis-URL von Weave-API und verlangen einen gültigen Bearer-Token bzw. eine Session (siehe oben). Jeder Endpunkt ist zusätzlich pro Nutzer rate-limitiert (siehe „Fehlercodes & Rate-Limits“). Einzige Ausnahme ist das öffentliche Erscheinungsbild (siehe „Erscheinungsbild (öffentlich)“ am Ende dieses Abschnitts).
 
 ### Eigenes Profil
 
@@ -512,6 +513,56 @@ with requests.post(
 ```
 
 > **Hinweis:** Dieser Endpunkt ist bewusst zustandslos — anders als `POST /v1/chat` gibt es kein `conversation_id`-Feld und nichts wird serverseitig gespeichert. Der Client muss bei jedem Aufruf die komplette bisherige `messages`-Liste erneut mitschicken. Ein `collections`-Filter wie bei `POST /v1/chat` steht hier nicht zur Verfügung (kein Feld in der OpenAI-Anfrageform); wer das braucht, nutzt `POST /v1/chat`.
+
+### Erscheinungsbild (öffentlich)
+
+Farben, Logo und Lade-Animation, die eine Administration in Weave-Ingest unter **Administration › Betrieb › Erscheinungsbild** festlegt. Weave-API reicht sie nur lesend durch, damit Chat und Desktop-App sie schon vor der Anmeldung anzeigen können. Beide Endpunkte brauchen **keine** Anmeldung (ein mitgeschickter Token wird ignoriert) und sind nicht rate-limitiert; Weave-API hält die Antworten stattdessen im Prozess vor.
+
+#### `GET /v1/branding`
+
+Kein Body, keine Parameter. Antwortet immer mit `200` und `Cache-Control: public, max-age=30`. Weave-API fragt Weave-Ingest höchstens alle 30 Sekunden. Ist Weave-Ingest nicht erreichbar, kommt der zuletzt gültige Stand; gab es noch keinen, kommen alle Felder als `null`. Alle Felder `null` heißt: nichts eingestellt, der Client zeigt sein eingebautes Aussehen.
+
+```bash
+curl -s https://weave.example.com/v1/branding
+```
+
+**Antwort (Beispiel)**
+
+```json
+{
+  "primary_color": "#1d6a53",
+  "accent_color": null,
+  "palette": {
+    "light": { "accent": "#1d6a53", "accent_hover": "#195a47", "accent_ink": "#1d6a53", "accent_soft": "#e4eeeb", "on_accent": "#ffffff" },
+    "dark":  { "accent": "#5fa08b", "accent_hover": "#77ae9c", "accent_ink": "#8fc0b0", "accent_soft": "#1f3a32", "on_accent": "#0c1511" }
+  },
+  "logo": { "content_type": "image/svg+xml", "sha256": "3f2a…", "size_bytes": 1830, "url": "/v1/branding/assets/logo?v=3f2a9c0d41b7e865" },
+  "busy": null,
+  "updated_at": "2026-11-16T10:00:00+00:00"
+}
+```
+
+| Feld | Bedeutung |
+|---|---|
+| `primary_color`, `accent_color` | eingestellte Primär- und Akzentfarbe als `#rrggbb` oder `null` |
+| `palette` | daraus abgeleitete Farben für helles (`light`) und dunkles (`dark`) Design, jeweils `accent`, `accent_hover`, `accent_ink`, `accent_soft`, `on_accent`; `null`, wenn keine Farbe eingestellt ist |
+| `logo`, `busy` | Logo bzw. Lade-Animation (`content_type` `image/svg+xml`, `image/gif` oder `image/png`) oder `null`; `url` ist relativ zur Basis-URL von Weave-API und ändert sich mit jeder neuen Datei |
+| `updated_at` | Zeitpunkt der letzten Änderung (ISO 8601) oder `null` |
+
+Weave-API prüft jeden Wert erneut: Eine Palette mit einem Wert, der nicht `#rrggbb` (Kleinbuchstaben) ist, wird ganz weggelassen (`null`), ebenso eine Datei mit unbekanntem Typ oder ungültiger Prüfsumme.
+
+#### `GET /v1/branding/assets/{kind}`
+
+Liefert die Datei selbst; `kind` ist `logo` oder `busy`, alles andere ergibt `404`. Der Parameter `?v=` aus der `url` (16 Hex-Zeichen des SHA-256) umgeht den Browser-Cache bei einer neuen Datei. Hält Weave-API für ein passendes `?v=` noch eine ältere Datei vor, fragt es Weave-Ingest erneut (je Art höchstens alle 5 Sekunden); passt die gelieferte Datei trotzdem nicht zur angefragten Version, antwortet es mit `Cache-Control: no-cache`, damit der Browser sie nicht unter der neuen URL festhält.
+
+| Status | Bedeutung |
+|---|---|
+| `200` | die Datei, mit `Content-Type` (`image/svg+xml`, `image/gif` oder `image/png`), `ETag`, `Cache-Control: public, max-age=300`, `Content-Disposition: inline; filename="branding-<kind>.<svg\|gif\|png>"`, `X-Content-Type-Options: nosniff` und `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox` |
+| `304` | `If-None-Match` passt zum aktuellen `ETag`; ohne Body |
+| `404` | unbekanntes `kind` oder keine Datei eingestellt |
+| `502` | Weave-Ingest nicht erreichbar, liefert einen anderen Dateityp oder eine Datei über 1 MiB |
+
+> **Wichtig:** Binden Sie die Datei nur als Bild ein (`<img src="…">`), nie als SVG-Markup im eigenen Dokument.
 
 ---
 
@@ -994,6 +1045,8 @@ Alle drei Dienste folgen demselben Grundmuster: Standard-HTTP-Statuscodes, Fehle
 | Weave-Tools | kein eigenes Rate-Limit | — | — | — (Begrenzung liegt beim `X-Tools-Service-Token`-Ausgeber bzw. den vorgelagerten Diensten) |
 
 > **Hinweis:** Der Datei-Upload (`POST /api/v1/collections/{id}/upload`) ist in Weave-Ingest bewusst von der Rate-Begrenzung ausgenommen, damit ein Batch mit vielen Dateien nicht mittendrin blockiert wird.
+
+> **Hinweis:** Das öffentliche Erscheinungsbild von Weave-API (`GET /v1/branding`, `GET /v1/branding/assets/{kind}`) hat keinen Nutzer, dem ein Limit zugerechnet werden könnte. Es ist nicht rate-limitiert; Weave-API hält die Antworten im Prozess vor (30 bzw. 300 Sekunden, ein `404` 30 Sekunden, andere Fehler 5 Sekunden) und fragt Weave-Ingest je Ressource höchstens einmal gleichzeitig.
 
 ---
 

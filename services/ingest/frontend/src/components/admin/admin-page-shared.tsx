@@ -131,10 +131,10 @@ export function SectionTabs<T extends string>({
               onClick={() => onChange(id)}
               onKeyDown={(event) => onKeyDown(event, id)}
               className={`flex h-10 items-center gap-2 rounded-lg px-4 text-sm font-semibold transition ${
-                isActive ? 'bg-emerald-50 text-emerald-800' : 'text-[var(--ink-2)] hover:bg-[var(--hover)] hover:text-[var(--ink)]'
+                isActive ? 'brand-tab-active bg-emerald-50 text-emerald-800' : 'text-[var(--ink-2)] hover:bg-[var(--hover)] hover:text-[var(--ink)]'
               }`}
             >
-              {Icon && <Icon className={`h-4 w-4 ${isActive ? 'text-emerald-700' : 'text-[var(--muted)]'}`} />}
+              {Icon && <Icon className={`h-4 w-4 ${isActive ? 'brand-tab-icon text-emerald-700' : 'text-[var(--muted)]'}`} />}
               {label}
             </button>
           );

@@ -14,6 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.7.25] - 2026-11-16
 
 ### Added
+- **Configurable branding** (Administration › Betrieb › Erscheinungsbild): admins set a primary and an
+  accent colour as hex codes and upload a logo and a busy animation (SVG, GIF or PNG, at most 1 MiB;
+  animations as animated SVG or GIF). Portal and chat use them everywhere the Weave mark appeared,
+  including the login pages, and the logo becomes the browser-tab icon. Text and contrast colours for
+  light and dark mode are derived from the two colours. Without a setting everything looks as before.
+  Uploads are typed by content, SVGs with scripts, event handlers, external references or DTDs are
+  refused, and assets are only ever shown as `<img>` and served with `Content-Security-Policy: sandbox`.
+  The settings live in `branding_config`/`branding_assets` (migration `0061`) and are part of backups.
+  Ingest serves them publicly at `GET /api/v1/branding` (+ `/assets/{kind}`), weave-api passes them
+  through to the chat at `GET /v1/branding` (+ `/assets/{kind}`). No new env settings.
 - **Admin re-ingest of all documents and connections** (Administration › Betrieb › Neu einlesen):
   converts every document again and re-imports every connection with the current converters
   and quality rating. As an explicit admin decision, everything that was released and is live

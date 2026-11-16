@@ -2,8 +2,10 @@ import type { Metadata } from "next";
 import { Lora, Source_Sans_3 } from 'next/font/google';
 import Script from 'next/script';
 import { AppChrome } from '@/components/app-chrome';
+import { BrandingProvider } from '@/components/branding-provider';
 import { I18nProvider } from '@/i18n/provider';
 import { getLocale, getLocalePreference, getTranslator } from '@/i18n/server';
+import { BRANDING_INIT_SCRIPT } from '@/lib/branding';
 import "./globals.css";
 
 const sourceSans = Source_Sans_3({
@@ -21,6 +23,8 @@ export async function generateMetadata(): Promise<Metadata> {
   return { title: t('common.appTitle'), description: t('common.appDescription') };
 }
 
+// Before the first paint: the theme class, then the cached admin branding
+// colours (lib/branding.ts; validated again there).
 const THEME_INIT_SCRIPT = `
 (function () {
   try {
@@ -31,7 +35,7 @@ const THEME_INIT_SCRIPT = `
     document.documentElement.classList.add(theme);
   } catch (_) {}
 })();
-`;
+${BRANDING_INIT_SCRIPT}`;
 
 export default async function RootLayout({
   children,
@@ -58,7 +62,9 @@ export default async function RootLayout({
       </head>
       <body className="min-h-full flex flex-col">
         <I18nProvider initialLocale={locale} initialPreference={preference}>
-          <AppChrome>{children}</AppChrome>
+          <BrandingProvider>
+            <AppChrome>{children}</AppChrome>
+          </BrandingProvider>
         </I18nProvider>
       </body>
     </html>

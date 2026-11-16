@@ -33,7 +33,7 @@ function ProtectedShell({ children }: { children: React.ReactNode }) {
         <div
           role="status"
           aria-label={t('portal.chrome.loading')}
-          className="h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-emerald-600"
+          className="brand-spinner h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-emerald-600"
         />
       </div>
     );

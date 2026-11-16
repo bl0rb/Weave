@@ -570,6 +570,41 @@ class KnowledgeMemoryConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now(), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
 
+class BrandingConfig(Base):
+    """Singleton (`id='default'`) colours of Administration › Betrieb ›
+    Erscheinungsbild (app/api/branding.py), applied by the portal and -- via
+    Weave-API -- the chat. NULL = the built-in colour. The row exists only
+    once an admin saved; `updated_by_id` is an audit trail only."""
+
+    __tablename__ = 'branding_config'
+
+    id: Mapped[str] = mapped_column(String(16), primary_key=True, default='default')
+    primary_color: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    accent_color: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now(), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_by_id: Mapped[str | None] = mapped_column(String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+
+
+class BrandingAsset(Base):
+    """An uploaded logo or busy animation (`kind` 'logo' | 'busy'). The
+    bytes live in the row -- at most 1 MiB, validated on upload
+    (app/services/branding.py) -- rather than in the object store, so the
+    object-store garbage collection never sees them; backups export the
+    LargeBinary column like any other. `data` is deferred: listings read
+    only the metadata."""
+
+    __tablename__ = 'branding_assets'
+
+    kind: Mapped[str] = mapped_column(String(16), primary_key=True)
+    content_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False, deferred=True)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now(), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_by_id: Mapped[str | None] = mapped_column(String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+
+
 class BotRole(str, enum.Enum):
     """A role on a managed bot (ADR 0008): owners maintain its content and
     sharing, users may chat with it."""

@@ -62,6 +62,7 @@ from app.services.backup import (
     iter_export_backup,
     target_state,
 )
+from app.services.branding import invalidate_cache as invalidate_branding_cache
 
 logger = logging.getLogger(__name__)
 
@@ -270,6 +271,8 @@ def _run_import(run_id: str, path: Path, passphrase: str, importing_admin_id: st
             progress_cb=progress_cb,
         )
         db.commit()
+        # The restored colours and images show at once in this process.
+        invalidate_branding_cache()
 
         run = db.get(BackupRun, run_id)
         run.status = BackupRunStatus.FINISHED

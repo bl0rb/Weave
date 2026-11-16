@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { GatewayError, exchangeSessionCode, gatewayLogout, weaveApiFetch } from '@/lib/weave-api-server';
+import { GatewayError, exchangeSessionCode, fetchBranding, fetchBrandingAsset, gatewayLogout, weaveApiFetch } from '@/lib/weave-api-server';
 
 describe('weaveApiFetch — credential-to-header selection (session.ts SessionCredential)', () => {
   afterEach(() => {
@@ -127,5 +127,71 @@ describe('gatewayLogout', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 404 })));
 
     await expect(gatewayLogout('sess-xyz')).resolves.toBeUndefined();
+  });
+});
+
+describe('fetchBranding', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const SHA = 'cd'.repeat(32);
+
+  it('GETs /v1/branding without any credential, with a 1.5 s timeout and a 30 s revalidate, and rewrites asset URLs', async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit & { next?: { revalidate?: number } }) => {
+      expect(String(url)).toBe('http://localhost:8004/v1/branding');
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      expect(headers.Authorization).toBeUndefined();
+      expect(headers.Cookie).toBeUndefined();
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+      expect(init?.next?.revalidate).toBe(30);
+      return new Response(
+        JSON.stringify({ palette: null, logo: { content_type: 'image/png', sha256: SHA, size_bytes: 10, url: '/v1/branding/assets/logo?v=1' }, busy: null }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchBranding()).resolves.toEqual({
+      palette: null,
+      logo: { contentType: 'image/png', url: `/api/branding/assets/logo?v=${SHA.slice(0, 16)}` },
+      busy: null,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['a transport failure', async () => { throw new TypeError('fetch failed'); }],
+    ['a timeout', async () => { throw new DOMException('The operation was aborted due to timeout', 'TimeoutError'); }],
+    ['a non-2xx answer', async () => new Response('{}', { status: 503 })],
+    ['a non-JSON body', async () => new Response('<html>', { status: 200 })],
+    ['a non-object body', async () => new Response('[1]', { status: 200 })],
+  ])('returns null on %s', async (_label, impl) => {
+    vi.stubGlobal('fetch', vi.fn(impl));
+
+    await expect(fetchBranding()).resolves.toBeNull();
+  });
+});
+
+describe('fetchBrandingAsset', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('forwards only If-None-Match, never a credential', async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      expect(String(url)).toBe('http://localhost:8004/v1/branding/assets/busy?v=0123456789abcdef');
+      expect(init?.headers).toEqual({ 'If-None-Match': '"abc"' });
+      return new Response(null, { status: 304 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect((await fetchBrandingAsset('busy', '"abc"', '0123456789abcdef')).status).toBe(304);
+  });
+
+  it('turns a transport failure into GatewayError(unreachable)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
+
+    await expect(fetchBrandingAsset('logo', null, null)).rejects.toMatchObject({ name: 'GatewayError', kind: 'unreachable' });
   });
 });

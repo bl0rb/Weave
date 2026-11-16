@@ -16,14 +16,17 @@ import type { NextRequest } from 'next/server';
 // Next injects inline <style> and bootstrap <script> blocks, so 'unsafe-inline'
 // cannot be dropped without moving the whole app to nonces. The rest of the
 // policy still does real work: no foreign origins, no framing, no <base>
-// rewriting, and form posts only back to us.
+// rewriting, and form posts only back to us. img-src names the API origin for
+// the admin branding assets (logo, busy animation, favicon), which are always
+// loaded as <img>/<link rel="icon"> from there.
 function contentSecurityPolicy(apiOrigin: string | null): string {
   const connect = ["'self'", apiOrigin].filter(Boolean).join(' ');
+  const img = ["'self'", 'data:', 'blob:', apiOrigin].filter(Boolean).join(' ');
   return [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
+    `img-src ${img}`,
     "font-src 'self' data:",
     `connect-src ${connect}`,
     "object-src 'none'",
