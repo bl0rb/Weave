@@ -2,8 +2,8 @@ import type { NextConfig } from 'next';
 
 // Intentionally no `env` block: WEAVE_API_BASE_URL is read live, per request,
 // only inside server-only code (src/lib/weave-api-server.ts, imported
-// exclusively by Route Handlers under src/app/api/**) — never by a 'use
-// client' component. Next's compiler would otherwise freeze any
+// exclusively by Route Handlers under src/app/api/** and the root layout's
+// server-side branding fetch) — never by a 'use client' component. Next's compiler would otherwise freeze any
 // process.env.<KEY> listed in `env` to whatever value was present at
 // `next build` time, project-wide; that would defeat setting the target
 // gateway URL at container start (see the docker-compose/Helm deployment).

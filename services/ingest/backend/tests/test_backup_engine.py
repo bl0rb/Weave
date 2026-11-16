@@ -25,6 +25,8 @@ import app.core.config as config_module
 from app.models.models import (
     AuthProvider,
     Base,
+    BrandingAsset,
+    BrandingConfig,
     Collection,
     CollectionVisibility,
     DocumentRelease,
@@ -261,6 +263,40 @@ def test_transient_tables_excluded_from_archive(monkeypatch, tmp_path):
         names = tar.getnames()
     for excluded in backup.EXCLUDED_TABLES:
         assert f'tables/{excluded}.jsonl' not in names
+
+
+def test_branding_colours_and_asset_bytes_round_trip(monkeypatch, tmp_path):
+    source_engine, SourceSession = _new_engine(tmp_path, 'source.db')
+    monkeypatch.setattr(config_module.settings, 'secret_key', 'source-instance-secret-key')
+    _use_backup_dir(monkeypatch, tmp_path, 'source')
+    logo = b'<svg xmlns="http://www.w3.org/2000/svg"/>'
+    db = SourceSession()
+    try:
+        db.add(BrandingConfig(id='default', primary_color='#1d6a53'))
+        db.add(BrandingAsset(
+            kind='logo', content_type='image/svg+xml', data=logo, sha256=hashlib.sha256(logo).hexdigest(),
+            size_bytes=len(logo),
+        ))
+        db.commit()
+        archive_path = tmp_path / 'export.weave-backup.tar.gz'
+        manifest = backup.export_backup(db, passphrase='pw', out_path=archive_path)
+    finally:
+        db.close()
+    assert (manifest['tables']['branding_config'], manifest['tables']['branding_assets']) == (1, 1)
+
+    target_engine, TargetSession = _new_engine(tmp_path, 'target.db')
+    _use_backup_dir(monkeypatch, tmp_path, 'target')
+    target_db = TargetSession()
+    try:
+        admin = User(username='bootstrap', email='bootstrap@example.com', password_hash=hash_password('Boots1'), role=UserRole.ADMIN)
+        target_db.add(admin)
+        target_db.commit()
+        backup.import_backup(target_db, path=archive_path, passphrase='pw', importing_admin_id=admin.id)
+        target_db.commit()
+        assert target_db.get(BrandingConfig, 'default').primary_color == '#1d6a53'
+        assert target_db.get(BrandingAsset, 'logo').data == logo
+    finally:
+        target_db.close()
 
 
 def test_wrong_passphrase_rejected_before_any_write(monkeypatch, tmp_path):

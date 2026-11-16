@@ -14,6 +14,8 @@ from app.api.auth import bootstrap_admin
 from app.api.auth import router_authenticated as auth_authenticated_router
 from app.api.auth import router_public as auth_public_router
 from app.api.backup import router as backup_admin_router
+from app.api.branding import router_admin as branding_admin_router
+from app.api.branding import router_public as branding_public_router
 from app.api.runtime_config import router as runtime_config_admin_router
 from app.api.chat_provider import router_admin as chat_provider_admin_router
 from app.api.chat_provider import router_bot_admin as chat_provider_bot_admin_router
@@ -98,6 +100,11 @@ def readiness(db: Session = Depends(get_db)) -> JSONResponse:
 
 app.include_router(public_router)
 
+# Branding (colours, logo, busy animation): public on purpose -- the login
+# pages of portal and chat need it before a session exists. Rate-limited
+# per handler; the admin writes are a separate router below.
+app.include_router(branding_public_router)
+
 # Public auth surface: setup, login, provider discovery, OIDC redirect --
 # these must stay reachable before a session exists. origin_guard is applied
 # at the router level (see app/api/auth.py) so the CSRF check still covers
@@ -127,6 +134,7 @@ app.include_router(technical_identities_internal_router)
 app.include_router(mcp_oauth_router)
 app.include_router(backup_admin_router)
 app.include_router(runtime_config_admin_router)
+app.include_router(branding_admin_router)
 app.include_router(knowledge_registry_router)
 app.include_router(knowledge_release_router)
 

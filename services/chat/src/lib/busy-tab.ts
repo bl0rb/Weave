@@ -1,10 +1,15 @@
 import { useEffect } from 'react';
 
+import { useBranding } from '@/components/branding-provider';
+
 /**
  * While an answer streams, the browser tab shows it too: the title gets an
  * ellipsis prefix and the favicon alternates between the full mark, the warp
  * alone and the weft alone -- a two-frame "weaving" visible from a
- * background tab. Both are restored when the work ends.
+ * background tab. With admin branding (components/branding-provider.tsx)
+ * the favicon shows the custom busy asset instead, or -- with only a custom
+ * logo -- stays as it is and just the title is prefixed. Both are restored
+ * when the work ends.
  */
 const MARK_WARP =
   '<g fill="#bfe7d4"><rect x="12" y="8" width="8" height="48" rx="4"/><rect x="28" y="8" width="8" height="48" rx="4"/><rect x="44" y="8" width="8" height="48" rx="4"/></g>';
@@ -23,22 +28,32 @@ export const BUSY_TITLE_PREFIX = '… ';
 const FRAME_MS = 700;
 
 export function useBusyTabIndicator(busy: boolean): void {
+  const { logoUrl, busyUrl } = useBranding();
   useEffect(() => {
     if (!busy) return;
     const link = document.querySelector<HTMLLinkElement>("link[rel~='icon']");
     const originalHref = link?.getAttribute('href');
+    const originalType = link?.getAttribute('type');
     const originalTitle = document.title;
     document.title = `${BUSY_TITLE_PREFIX}${originalTitle}`;
-    let index = 0;
-    const timer = window.setInterval(() => {
-      index = (index + 1) % BUSY_FAVICON_FRAMES.length;
-      link?.setAttribute('href', BUSY_FAVICON_FRAMES[index]);
-    }, FRAME_MS);
+    let timer: number | undefined;
+    if (busyUrl) {
+      // The link's type names the logo's format, which the busy asset may not share.
+      link?.removeAttribute('type');
+      link?.setAttribute('href', busyUrl);
+    } else if (!logoUrl) {
+      let index = 0;
+      timer = window.setInterval(() => {
+        index = (index + 1) % BUSY_FAVICON_FRAMES.length;
+        link?.setAttribute('href', BUSY_FAVICON_FRAMES[index]);
+      }, FRAME_MS);
+    }
     return () => {
       window.clearInterval(timer);
+      if (link && originalType !== null && originalType !== undefined) link.setAttribute('type', originalType);
       if (link && originalHref !== null && originalHref !== undefined) link.setAttribute('href', originalHref);
       // Only strip our own prefix: a title changed meanwhile stays as is.
       if (document.title.startsWith(BUSY_TITLE_PREFIX)) document.title = document.title.slice(BUSY_TITLE_PREFIX.length);
     };
-  }, [busy]);
+  }, [busy, logoUrl, busyUrl]);
 }

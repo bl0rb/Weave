@@ -1,19 +1,24 @@
 'use client';
 
 import { cn } from '@/lib/utils';
-import { useState, type AnimationEvent } from 'react';
+import { useEffect, useState, type AnimationEvent } from 'react';
 
+import { useBranding } from '@/components/branding-provider';
+import { usePrefersReducedMotion } from '@/lib/reduced-motion';
 import { useWeaveMotion } from '@/lib/weave-motion';
 
+type LogoAnimation = 'loop' | 'finite';
+
 /**
- * The Weave mark is a small woven swatch. Alternating crossings make the
- * over-under structure readable even at favicon size without forming a figure.
+ * The built-in Weave mark is a small woven swatch. Alternating crossings make
+ * the over-under structure readable even at favicon size without forming a
+ * figure. Kept in sync with packages/weave-mark (scripts/check_weave_mark.py).
  *
  * `animation` (CSS in globals.css, `.weave-logo`): 'loop' keeps weaving as a
  * busy indicator, 'finite' weaves five rounds and rests. Both fall back to
  * the static mark under prefers-reduced-motion.
  */
-export function WeaveIngestLogo({ className, animation }: { className?: string; animation?: 'loop' | 'finite' }) {
+export function WeaveIngestMark({ className, animation }: { className?: string; animation?: LogoAnimation }) {
   // One of four motions (weave / turn / flip / shuttle), picked when the
   // animation starts and kept until it stops -- see lib/weave-motion.ts. A
   // click on the mark switches to the next motion (and, when idle, runs one
@@ -70,4 +75,61 @@ export function WeaveIngestLogo({ className, animation }: { className?: string; 
       </g>
     </svg>
   );
+}
+
+/** How long 'finite' shows the custom busy asset before it rests (an `<img>`
+ * fires no animation events, so the built-in mark's rounds cannot be counted). */
+export const BRANDING_FINITE_MS = 4000;
+
+/**
+ * An admin-uploaded asset (components/branding-provider.tsx). Always an
+ * `<img>`: an uploaded SVG is never inlined, so its markup cannot reach the
+ * page's DOM.
+ */
+export function BrandingAssetImage({ src, className, onError }: { src: string; className?: string; onError?: () => void }) {
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- admin asset on the API origin, known only at runtime; next/image cannot be configured for it
+    <img src={src} alt="" aria-hidden="true" draggable={false} className={cn('object-contain', className)} onError={onError} />
+  );
+}
+
+/**
+ * The logo wherever the portal shows it. Without admin branding it is
+ * exactly the built-in mark ({@link WeaveIngestMark}). With a custom logo
+ * and/or busy animation:
+ * - no `animation`: the custom logo, else the built-in mark at rest;
+ * - 'loop': the busy asset (unless the user prefers reduced motion), else
+ *   the custom logo, else the animated built-in mark;
+ * - 'finite': like 'loop' for {@link BRANDING_FINITE_MS}, then at rest.
+ */
+export function WeaveIngestLogo({ className, animation }: { className?: string; animation?: LogoAnimation }) {
+  const branding = useBranding();
+  // An asset that fails to load (removed since the cached URL, unreachable)
+  // counts as unset, so the logo falls back to today's look instead of a gap.
+  const [broken, setBroken] = useState<readonly string[]>([]);
+  const usable = (url: string | null) => (url && !broken.includes(url) ? url : null);
+  const logoUrl = usable(branding.logoUrl);
+  const busyUrl = usable(branding.busyUrl);
+  const markBroken = (url: string) => () => setBroken((current) => (current.includes(url) ? current : [...current, url]));
+  const reducedMotion = usePrefersReducedMotion();
+  const custom = Boolean(logoUrl || busyUrl);
+  const finiteRun = custom && animation === 'finite';
+  const [finiteDone, setFiniteDone] = useState(false);
+  const [trackedRun, setTrackedRun] = useState(finiteRun);
+  if (trackedRun !== finiteRun) {
+    // A new finite run starts busy again (the "adjust state while rendering" pattern).
+    setTrackedRun(finiteRun);
+    setFiniteDone(false);
+  }
+  useEffect(() => {
+    if (!finiteRun) return;
+    const timer = window.setTimeout(() => setFiniteDone(true), BRANDING_FINITE_MS);
+    return () => window.clearTimeout(timer);
+  }, [finiteRun]);
+
+  if (!custom) return <WeaveIngestMark className={className} animation={animation} />;
+  const busy = animation === 'loop' || (animation === 'finite' && !finiteDone);
+  if (busy && busyUrl && !reducedMotion) return <BrandingAssetImage src={busyUrl} className={className} onError={markBroken(busyUrl)} />;
+  if (logoUrl) return <BrandingAssetImage src={logoUrl} className={className} onError={markBroken(logoUrl)} />;
+  return <WeaveIngestMark className={className} animation={busy ? animation : undefined} />;
 }

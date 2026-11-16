@@ -1,4 +1,5 @@
 import 'server-only';
+import { parseBranding, type Branding, type BrandingAssetKind } from '@/lib/branding';
 import type { SessionCredential } from '@/lib/session';
 
 /**
@@ -255,5 +256,51 @@ export async function gatewayLogout(sessionToken: string): Promise<void> {
     });
   } catch {
     // Best-effort only — see docstring above.
+  }
+}
+
+// --- Public branding (no credential) -----------------------------------------
+//
+// Like the two calls above, these do not go through weaveApiFetch: Weave-API's
+// /v1/branding routes are public (they also serve the login page), so no
+// credential is ever attached -- not even when the caller has a session.
+
+/** Never hold up a server render for branding longer than this. */
+const BRANDING_TIMEOUT_MS = 1500;
+
+/**
+ * GET /v1/branding -- the admin branding, validated and with asset URLs
+ * rewritten to this app's own proxy (lib/branding.ts). Cached by Next for
+ * 30 s. Returns null on ANY problem (timeout, network error, non-2xx,
+ * invalid JSON): branding is cosmetic, so the caller then renders today's
+ * look instead of failing.
+ */
+export async function fetchBranding(): Promise<Branding | null> {
+  try {
+    const response = await fetch(`${resolveWeaveApiBaseUrl()}/v1/branding`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(BRANDING_TIMEOUT_MS),
+      next: { revalidate: 30 },
+    });
+    if (!response.ok) return null;
+    return parseBranding(await response.json());
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * GET /v1/branding/assets/{kind} -- the raw upstream response for the asset
+ * proxy route (api/branding/assets/[kind]), which checks status, type and
+ * size itself. Forwards only `If-None-Match`. A transport failure becomes
+ * `GatewayError('unreachable')`, as in weaveApiFetch.
+ */
+export async function fetchBrandingAsset(kind: BrandingAssetKind, ifNoneMatch: string | null): Promise<Response> {
+  const headers: Record<string, string> = {};
+  if (ifNoneMatch) headers['If-None-Match'] = ifNoneMatch;
+  try {
+    return await fetch(`${resolveWeaveApiBaseUrl()}/v1/branding/assets/${kind}`, { headers, cache: 'no-store' });
+  } catch (cause) {
+    throw new GatewayError('unreachable', null, cause instanceof Error ? cause.message : String(cause));
   }
 }

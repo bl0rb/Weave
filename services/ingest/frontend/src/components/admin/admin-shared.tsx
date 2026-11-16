@@ -144,7 +144,7 @@ export function LoadingState({ label }: { label?: string }) {
   const { t } = useI18n();
   return (
     <div className="flex items-center gap-2 py-8 text-sm text-[var(--muted)]">
-      <LoaderCircle className="h-4 w-4 animate-spin text-emerald-600" />
+      <LoaderCircle className="brand-spinner h-4 w-4 animate-spin text-emerald-600" />
       {label ?? t('common.loading')}
     </div>
   );
@@ -221,7 +221,7 @@ export function Toggle({
     >
       <span
         className={`relative inline-block h-5 w-9 flex-shrink-0 rounded-full transition ${
-          checked ? 'bg-emerald-600' : 'bg-slate-200'
+          checked ? 'brand-toggle-on bg-emerald-600' : 'bg-slate-200'
         }`}
       >
         <span

@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings, settings
 from app.models.models import (
     AuthProvider,
+    BrandingConfig,
     ChatProviderConfig,
     KnowledgeMemoryConfig,
     RetrievalProviderConfig,
@@ -64,6 +65,7 @@ _MANUAL_SECTIONS: list[tuple[str, type, Callable[[Any], str]]] = [
     ('chat_providers', ChatProviderConfig, lambda row: row.name or row.id),
     ('retrieval_provider', RetrievalProviderConfig, lambda row: row.id),
     ('knowledge_memory', KnowledgeMemoryConfig, lambda row: row.id),
+    ('branding_config', BrandingConfig, lambda row: row.id),
     ('vl_connections', VlConnection, lambda row: row.name),
     ('auth_providers', AuthProvider, lambda row: row.slug),
 ]

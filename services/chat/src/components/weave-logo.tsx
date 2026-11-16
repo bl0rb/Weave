@@ -1,9 +1,80 @@
 'use client';
 
 import { cn } from '@/lib/utils';
-import { useState, type AnimationEvent } from 'react';
+import { useEffect, useState, useSyncExternalStore, type AnimationEvent } from 'react';
 
+import { useBranding } from '@/components/branding-provider';
 import { useWeaveMotion } from '@/lib/weave-motion';
+
+type WeaveLogoProps = { className?: string; animation?: 'loop' | 'finite' };
+
+/** How long 'finite' shows the custom busy asset: an `<img>` fires no animationend. */
+const BRANDED_FINITE_MS = 4000;
+const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
+
+/**
+ * The app's logo. Without admin branding it is exactly the built-in Weave
+ * mark below, with its CSS animation. With a custom logo and/or busy
+ * animation (components/branding-provider.tsx):
+ * - no `animation`: the custom logo, else the built-in mark at rest;
+ * - 'loop': the custom busy asset (never under prefers-reduced-motion),
+ *   else the custom logo, else the animated built-in mark;
+ * - 'finite': like 'loop' for four seconds, then like no `animation`.
+ * Custom assets are always an `<img>`, never inlined markup.
+ */
+export function WeaveLogo({ className, animation }: WeaveLogoProps) {
+  const branding = useBranding();
+  // An asset that fails to load (e.g. the proxy answers 502 while Ingest is
+  // down) counts as unset, so a broken image falls back to today's look.
+  const [broken, setBroken] = useState<readonly string[]>([]);
+  const markBroken = (src: string) => setBroken((list) => (list.includes(src) ? list : [...list, src]));
+  const logoUrl = branding.logoUrl && !broken.includes(branding.logoUrl) ? branding.logoUrl : null;
+  const busyUrl = branding.busyUrl && !broken.includes(branding.busyUrl) ? branding.busyUrl : null;
+  const branded = Boolean(logoUrl || busyUrl);
+  const reducedMotion = usePrefersReducedMotion();
+  const finiteElapsed = useElapsed(branded && animation === 'finite', BRANDED_FINITE_MS);
+  if (!branded) return <WeaveMark className={className} animation={animation} />;
+
+  const moving = animation === 'loop' || (animation === 'finite' && !finiteElapsed);
+  if (moving && busyUrl && !reducedMotion) return <BrandingImage src={busyUrl} className={className} onBroken={markBroken} />;
+  if (logoUrl) return <BrandingImage src={logoUrl} className={className} onBroken={markBroken} />;
+  return <WeaveMark className={className} animation={moving ? animation : undefined} />;
+}
+
+function BrandingImage({ src, className, onBroken }: { src: string; className?: string; onBroken: (src: string) => void }) {
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- admin asset from the same-origin proxy; an <img> never runs an SVG's script
+    <img src={src} alt="" aria-hidden="true" draggable={false} className={cn('object-contain', className)} onError={() => onBroken(src)} />
+  );
+}
+
+function subscribeReducedMotion(onChange: () => void): () => void {
+  if (typeof window.matchMedia !== 'function') return () => {};
+  const query = window.matchMedia(REDUCED_MOTION_QUERY);
+  query.addEventListener?.('change', onChange);
+  return () => query.removeEventListener?.('change', onChange);
+}
+
+function usePrefersReducedMotion(): boolean {
+  return useSyncExternalStore(
+    subscribeReducedMotion,
+    () => typeof window.matchMedia === 'function' && window.matchMedia(REDUCED_MOTION_QUERY).matches,
+    // Server render and hydration assume motion; the client corrects it.
+    () => false,
+  );
+}
+
+/** True once `ms` have passed since `active` last turned true; false while inactive. */
+function useElapsed(active: boolean, ms: number): boolean {
+  const [state, setState] = useState({ active, elapsed: false });
+  if (state.active !== active) setState({ active, elapsed: false });
+  useEffect(() => {
+    if (!active) return;
+    const timer = window.setTimeout(() => setState({ active: true, elapsed: true }), ms);
+    return () => window.clearTimeout(timer);
+  }, [active, ms]);
+  return active && state.elapsed;
+}
 
 /**
  * The Weave mark is a small woven swatch. Alternating crossings make the
@@ -14,7 +85,7 @@ import { useWeaveMotion } from '@/lib/weave-motion';
  * while the assistant is working, 'finite' weaves five rounds and rests.
  * Both fall back to the static mark under prefers-reduced-motion.
  */
-export function WeaveLogo({ className, animation }: { className?: string; animation?: 'loop' | 'finite' }) {
+function WeaveMark({ className, animation }: WeaveLogoProps) {
   // One of four motions (weave / turn / flip / shuttle), picked when the
   // animation starts and kept until it stops -- see lib/weave-motion.ts. A
   // click on the mark switches to the next motion (and, when idle, runs one

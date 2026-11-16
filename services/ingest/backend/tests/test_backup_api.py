@@ -186,7 +186,9 @@ def test_import_refused_when_target_not_fresh(tmp_path):
     assert 'überschreiben' in resp.json()['detail']
 
 
-def test_import_with_force_overwrites_and_reports(tmp_path):
+def test_import_with_force_overwrites_and_reports(tmp_path, monkeypatch):
+    branding_invalidations = []
+    monkeypatch.setattr(backup_api, 'invalidate_branding_cache', lambda: branding_invalidations.append(True))
     admin, _ = _admin('backup-force')
     archive_path = _build_archive('the-correct-passphrase-3', tmp_path)
 
@@ -206,3 +208,5 @@ def test_import_with_force_overwrites_and_reports(tmp_path):
     assert 'users' in report['tables']
     assert report['requires_relogin'] is True
     assert 'indexing_note' in report
+    # The restored branding is served at once, not after the cache TTL.
+    assert branding_invalidations == [True]

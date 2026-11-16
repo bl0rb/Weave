@@ -90,6 +90,8 @@ bzw. löschen dieses Cookie selbst und haben deshalb keine solche Prüfung:
 | `GET`/`POST /api/tokens`, `DELETE /api/tokens/[id]` | `/v1/me/tokens[/{id}]` | Persönliche API-Tokens verwalten (einmalige Anzeige des Klartexts) |
 | `GET /api/portal-artifacts/[releaseId]/[filename]` | `/v1/portal/releases/{id}/artifacts/{file}` | Bilder aus freigegebenen Dokumenten (z. B. Confluence) in Antworten |
 | `GET /api/auth/sso/callback` | `POST /v1/auth/session/exchange` | Löst den Einmal-Login-Code serverseitig ein |
+| Root-Layout (serverseitig, keine Route) | `GET /v1/branding` | Erscheinungsbild aus dem Portal (Farben, Logo, Lade-Animation); öffentlich, ohne Credential, 1,5 s Timeout, 30 s Cache; bei Fehler das eingebaute Aussehen |
+| `GET /api/branding/assets/[kind]` | `GET /v1/branding/assets/{kind}` | Logo bzw. Lade-Animation (`logo`/`busy`); öffentlich, ohne Credential, nur SVG/GIF/PNG mit Sandbox-CSP und `nosniff` |
 
 Diese Tabelle ist die vollständige Liste der Weave-API-Routen, die dieser Dienst
 aufruft. Die beiden Login-Knöpfe schicken zusätzlich den *Browser* auf

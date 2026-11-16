@@ -1695,3 +1695,37 @@ def test_bot_hit_counts_are_nullable_without_server_default(tmp_path, monkeypatc
         conn.execute(text("INSERT INTO managed_bots (id, name, collections) VALUES ('new-bot', 'New', '[]')"))
         assert conn.execute(text("SELECT top_k, final_k FROM managed_bots WHERE id = 'new-bot'")).one() == (None, None)
     engine.dispose()
+
+
+def test_0061_branding_round_trip(tmp_path, monkeypatch):
+    db_url = f'sqlite:///{tmp_path / "branding.db"}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+    engine = create_engine(db_url, future=True)
+    _build_legacy_metadata().create_all(bind=engine)
+    cfg = _alembic_config()
+    command.stamp(cfg, '0003_job_markdown_versions')
+    command.upgrade(cfg, 'head')
+    config_columns = {column['name']: column for column in inspect(engine).get_columns('branding_config')}
+    assert config_columns['primary_color']['nullable'] is True
+    assert config_columns['updated_at']['nullable'] is False
+    foreign_keys = inspect(engine).get_foreign_keys('branding_assets')
+    assert [(fk['referred_table'], fk['options'].get('ondelete')) for fk in foreign_keys] == [('users', 'SET NULL')]
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO branding_config (id, primary_color) VALUES ('default', '#1d6a53')"))
+        conn.execute(
+            text("INSERT INTO branding_assets (kind, content_type, data, sha256, size_bytes) VALUES ('logo', 'image/gif', :data, :sha, 6)"),
+            {'data': b'GIF89a', 'sha': 'a' * 64},
+        )
+        row = conn.execute(text('SELECT primary_color, accent_color, updated_at FROM branding_config')).one()
+        assert (row.primary_color, row.accent_color) == ('#1d6a53', None)
+        assert row.updated_at is not None
+        asset = conn.execute(text('SELECT data, updated_at, updated_by_id FROM branding_assets')).one()
+        assert (bytes(asset.data), asset.updated_by_id) == (b'GIF89a', None)
+        assert asset.updated_at is not None
+    command.downgrade(cfg, '0060_reingest_runs')
+    tables = inspect(engine).get_table_names()
+    assert 'branding_config' not in tables and 'branding_assets' not in tables
+    assert 'reingest_runs' in tables
+    command.upgrade(cfg, 'head')
+    assert {'branding_config', 'branding_assets'} <= set(inspect(engine).get_table_names())
+    engine.dispose()
