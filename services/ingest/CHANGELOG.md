@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.25] - 2026-11-16
+
 ### Added
 - **Admin re-ingest of all documents and connections** (Administration › Betrieb › Neu einlesen):
   converts every document again and re-imports every connection with the current converters
@@ -50,6 +52,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Weave-Runtime refusing weave-api's service token is a 502 now, not a 401 that sent every chat user
   back to the login page.
 - The cap of 20 personal API tokens per user holds under parallel requests.
+
+### Security
+- soupsieve 4.0 (CVE-2026-126190 – CVE-2026-126193; transitive via beautifulsoup4).
+- dnspython 2.9.2 (CVE-2026-128089; transitive via email-validator).
+- opentelemetry-api 1.45.2 (CVE-2026-126360) in api, embeddings, ingest, knowledge,
+  reranker, retrieval, runtime and tools.
 
 ## [0.7.24] - 2026-11-10
 
