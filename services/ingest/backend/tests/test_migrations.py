@@ -32,6 +32,7 @@ from sqlalchemy import (
     inspect,
     text,
 )
+from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 
@@ -1728,4 +1729,107 @@ def test_0061_branding_round_trip(tmp_path, monkeypatch):
     assert 'reingest_runs' in tables
     command.upgrade(cfg, 'head')
     assert {'branding_config', 'branding_assets'} <= set(inspect(engine).get_table_names())
+    engine.dispose()
+
+
+def test_0062_quality_review_tasks_round_trip(tmp_path, monkeypatch):
+    db_url = f'sqlite:///{tmp_path / "quality.db"}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+    engine = create_engine(db_url, future=True)
+    _build_legacy_metadata().create_all(bind=engine)
+    cfg = _alembic_config()
+    command.stamp(cfg, '0003_job_markdown_versions')
+    command.upgrade(cfg, 'head')
+    inspector = inspect(engine)
+    task_columns = {column['name']: column for column in inspector.get_columns('review_tasks')}
+    assert task_columns['collection_id']['nullable'] is False
+    assert task_columns['job_id']['nullable'] is True and task_columns['resolution_note']['nullable'] is True
+    task_fks = {(fk['constrained_columns'][0], fk['referred_table'], fk['options'].get('ondelete')) for fk in inspector.get_foreign_keys('review_tasks')}
+    assert task_fks == {
+        ('collection_id', 'collections', 'CASCADE'),
+        ('job_id', 'jobs', 'SET NULL'),
+        ('related_job_id', 'jobs', 'SET NULL'),
+        ('assignee_id', 'users', 'SET NULL'),
+        ('resolved_by_id', 'users', 'SET NULL'),
+    }
+    assert {'ix_review_tasks_collection_status', 'ix_review_tasks_kind'} <= {
+        index['name'] for index in inspector.get_indexes('review_tasks')
+    }
+    signal_fks = {(fk['constrained_columns'][0], fk['referred_table'], fk['options'].get('ondelete')) for fk in inspector.get_foreign_keys('quality_signals')}
+    assert signal_fks == {
+        ('collection_id', 'collections', 'CASCADE'),
+        ('job_id', 'jobs', 'SET NULL'),
+        ('task_id', 'review_tasks', 'SET NULL'),
+    }
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO collections (id, slug, name, email, department, folder, subfolder, visibility, created_at, updated_at) VALUES ('c1', 'space', 'Space', '', '', '', '', 'restricted', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"))
+        conn.execute(text("INSERT INTO review_tasks (id, collection_id, kind, title, cluster_key) VALUES ('t1', 'c1', 'knowledge_gap', 'Frage', 'gap:x')"))
+        conn.execute(text("INSERT INTO quality_signals (id, signal_key, kind, collection_id, task_id, payload) VALUES ('s1', 'unanswered:1|c1', 'unanswered', 'c1', 't1', '{}')"))
+        task = conn.execute(text('SELECT status, occurrence_count, details, first_seen_at, created_at FROM review_tasks')).one()
+        assert (task.status, task.occurrence_count, json.loads(task.details)) == ('open', 1, {})
+        assert task.first_seen_at is not None and task.created_at is not None
+        assert conn.execute(text('SELECT retracted FROM quality_signals')).scalar_one() == 0
+        with pytest.raises(IntegrityError):
+            conn.execute(text("INSERT INTO quality_signals (id, signal_key, kind, payload) VALUES ('s2', 'unanswered:1|c1', 'unanswered', '{}')"))
+    command.downgrade(cfg, '0061_branding')
+    tables = inspect(engine).get_table_names()
+    assert 'review_tasks' not in tables and 'quality_signals' not in tables
+    assert 'branding_config' in tables
+    command.upgrade(cfg, 'head')
+    assert {'review_tasks', 'quality_signals'} <= set(inspect(engine).get_table_names())
+    engine.dispose()
+
+
+def test_0063_document_freshness_round_trip(tmp_path, monkeypatch):
+    db_url = f'sqlite:///{tmp_path / "freshness.db"}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+    engine = create_engine(db_url, future=True)
+    _build_legacy_metadata().create_all(bind=engine)
+    cfg = _alembic_config()
+    command.stamp(cfg, '0003_job_markdown_versions')
+    command.upgrade(cfg, '0062_quality_review_tasks')
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO users (id, username, email, role, is_active, created_at, updated_at) VALUES ('u1', 'u1', 'u1@example.com', 'user', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"))
+        conn.execute(text("INSERT INTO collections (id, slug, name, email, department, folder, subfolder, visibility, created_at, updated_at) VALUES ('c1', 'space', 'Space', '', '', '', '', 'restricted', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"))
+        conn.execute(text("INSERT INTO jobs (id, original_filename, upload_path, status, document_version, created_at, updated_at) VALUES ('j1', 'a.pdf', '/tmp/a.pdf', 'FINISHED', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"))
+        conn.execute(text("INSERT INTO document_releases (id, job_id, created_at, markdown_snapshot, markdown_sha256, payload, status, attempts, updated_at) VALUES ('r1', 'j1', '2026-01-02 03:04:05', '---\na: 1\n---\n# A\n', 'x', '{}', 'sent', 0, CURRENT_TIMESTAMP)"))
+    command.upgrade(cfg, 'head')
+    inspector = inspect(engine)
+    assert 'review_interval_days' in {column['name'] for column in inspector.get_columns('collections')}
+    job_columns = {column['name']: column for column in inspector.get_columns('jobs')}
+    assert all(job_columns[name]['nullable'] for name in ('review_due_at', 'last_reviewed_at', 'last_reviewed_by_id'))
+    assert ('last_reviewed_by_id', 'users', 'SET NULL') in {
+        (fk['constrained_columns'][0], fk['referred_table'], fk['options'].get('ondelete')) for fk in inspector.get_foreign_keys('jobs')
+    }
+    assert 'ix_jobs_review_due_at' in {index['name'] for index in inspector.get_indexes('jobs')}
+    subscription_fks = {(fk['constrained_columns'][0], fk['referred_table'], fk['options'].get('ondelete')) for fk in inspector.get_foreign_keys('topic_subscriptions')}
+    assert subscription_fks == {('user_id', 'users', 'CASCADE'), ('collection_id', 'collections', 'CASCADE')}
+    notification_fks = {(fk['constrained_columns'][0], fk['referred_table'], fk['options'].get('ondelete')) for fk in inspector.get_foreign_keys('change_notifications')}
+    assert notification_fks == {
+        ('user_id', 'users', 'CASCADE'),
+        ('subscription_id', 'topic_subscriptions', 'CASCADE'),
+        ('job_id', 'jobs', 'CASCADE'),
+        ('previous_job_id', 'jobs', 'SET NULL'),
+        ('collection_id', 'collections', 'CASCADE'),
+    }
+    with engine.begin() as conn:
+        # Existing releases are backfilled as notified: no notification flood.
+        assert conn.execute(text("SELECT subscribers_notified_at FROM document_releases WHERE id = 'r1'")).scalar_one() is not None
+        conn.execute(text("INSERT INTO topic_subscriptions (id, user_id, collection_id, query, label) VALUES ('s1', 'u1', 'c1', 'reise', 'Reise')"))
+        conn.execute(text("INSERT INTO change_notifications (id, user_id, subscription_id, job_id, collection_id, change_type, title, summary, matched_terms) VALUES ('n1', 'u1', 's1', 'j1', 'c1', 'new', 'A', '{}', '[]')"))
+        assert conn.execute(text('SELECT created_at FROM change_notifications')).scalar_one() is not None
+        with pytest.raises(IntegrityError):
+            conn.execute(text("INSERT INTO change_notifications (id, user_id, subscription_id, job_id, collection_id, change_type, title, summary, matched_terms) VALUES ('n2', 'u1', 's1', 'j1', 'c1', 'new', 'A', '{}', '[]')"))
+    command.downgrade(cfg, '0062_quality_review_tasks')
+    inspector = inspect(engine)
+    tables = inspector.get_table_names()
+    assert 'topic_subscriptions' not in tables and 'change_notifications' not in tables
+    assert 'review_due_at' not in {column['name'] for column in inspector.get_columns('jobs')}
+    assert 'subscribers_notified_at' not in {column['name'] for column in inspector.get_columns('document_releases')}
+    assert 'review_interval_days' not in {column['name'] for column in inspector.get_columns('collections')}
+    assert 'review_tasks' in tables
+    with engine.begin() as conn:
+        assert conn.execute(text("SELECT id FROM jobs")).scalar_one() == 'j1'
+    command.upgrade(cfg, 'head')
+    assert {'topic_subscriptions', 'change_notifications'} <= set(inspect(engine).get_table_names())
     engine.dispose()

@@ -41,7 +41,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.db import SessionLocal
 from app.models.models import Chunk, Document, DocumentStatus
-from app.services import ingest_client, memory
+from app.services import contradictions, ingest_client, memory
 from app.services.chunker import chunk_markdown
 from app.services.embeddings import EmbeddingProviderError, embed_chunks, get_provider
 from app.services.enrichment import build_chunk_meta
@@ -359,6 +359,32 @@ def _run_pipeline(self, db: Session, document: Document, *, reindex: bool = Fals
 
     db.commit()
     memory.touch(db, document.collection_slug)
+    _report_contradiction_candidates(db, document)
+
+
+def _report_contradiction_candidates(db: Session, document: Document) -> None:
+    """Best-effort contradiction check after a successful index commit (see
+    app/services/contradictions.py -- a heuristic that only flags *possible*
+    contradictions within the same knowledge space for human review) and
+    report to Weave-Ingest (ingest_client.report_contradictions).
+
+    Runs AFTER the commit and swallows every error, so neither a failing
+    check nor an unreachable Weave-Ingest can ever turn an indexed document
+    into a failed one or trigger an index retry. Disabled with
+    CONTRADICTION_CHECK_ENABLED=false.
+    """
+    if not settings.contradiction_check_enabled:
+        return
+    try:
+        reports = contradictions.find_candidates(db, document)
+        if reports:
+            logger.info(
+                'index_document: %d contradiction candidate(s) for document %s', len(reports), document.id,
+            )
+            ingest_client.report_contradictions(reports)
+    except Exception:  # noqa: BLE001 - best effort, see docstring
+        db.rollback()
+        logger.warning('index_document: contradiction check failed for document %s', document.id, exc_info=True)
 
 
 def _index_document_unlocked(self, document_id: str, *, reindex: bool = False) -> None:

@@ -12,13 +12,15 @@ export type WebhookEvent =
   | 'job.finished'
   | 'job.failed'
   | 'import_run.finished'
-  | 'document.processed';
+  | 'document.processed'
+  | 'document.review_due';
 
 export const WEBHOOK_EVENTS: WebhookEvent[] = [
   'job.finished',
   'job.failed',
   'import_run.finished',
   'document.processed',
+  'document.review_due',
 ];
 
 /** Plain-language labels for the events checkbox group. */
@@ -31,6 +33,9 @@ export function webhookEventLabel(locale: Locale = DEFAULT_LOCALE): Record<Webho
     // job.finished for a successful job, carrying frontmatter + quality-gate
     // data plus a markdown_url instead of the inline markdown job.finished sends.
     'document.processed': translate(locale, 'portal.webhooks.event.documentProcessed'),
+    // See contracts/events/document.review_due.md -- the reminder for a
+    // document whose review date is reached (Prüfaufgaben inbox).
+    'document.review_due': translate(locale, 'portal.webhooks.event.documentReviewDue'),
   };
 }
 

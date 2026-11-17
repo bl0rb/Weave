@@ -63,6 +63,7 @@ from app.schemas.portal import (
     PortalDocumentDetail,
     PortalDocumentItem,
     PortalDocumentListResponse,
+    PortalDocumentReview,
     PortalDocumentSource,
     PortalEditRequest,
     PortalEditResponse,
@@ -79,7 +80,7 @@ from app.schemas.portal import (
     PortalStatsResponse,
     PortalWeekCount,
 )
-from app.services import document_analysis, object_store
+from app.services import document_analysis, document_freshness, object_store
 from app.services.backup import requeue_collection_releases_for_reindex
 from app.services.markdown_edit import record_markdown_version
 from app.services.publications import (
@@ -630,9 +631,12 @@ def list_portal_documents(
     # review_state: 'review' (default when review_only=true) excludes skipped
     # and parked documents from the pending-review view; 'skipped' / 'parked'
     # show only those; 'failed' shows failed processing or delivery;
-    # 'in_chat' released documents delivered to the chat; 'all'
-    # (default otherwise) shows everything.
+    # 'in_chat' released documents delivered to the chat; 'review_due'
+    # current released versions whose periodic review is due
+    # (app/services/document_freshness.py); 'all' (default otherwise)
+    # shows everything.
     effective_review_state = review_state or ('review' if review_only else 'all')
+    now = datetime.now(timezone.utc)
     collection_id_expr = Job.processing_info['settings']['collection_id'].as_string()
     quality_grade_expr = Job.processing_info['execution']['quality_gate']['grade'].as_string()
     quality_recommendation_expr = Job.processing_info['execution']['quality_gate']['recommendation'].as_string()
@@ -688,6 +692,8 @@ def list_portal_documents(
     elif effective_review_state == 'in_chat':
         # Released and delivered to the chat -- the Übersicht's `in_chat`.
         query = query.where(DocumentRelease.status == 'sent')
+    elif effective_review_state == 'review_due':
+        query = query.where(*document_freshness.review_due_conditions(now))
     query = _apply_quality_grade_filter(query, quality_grade_expr, quality_grade)
     query = _apply_import_scope_filter(query, import_scope)
     query = _apply_document_filters(query, user=user, q=q, source=source, released_by_me=released_by_me)
@@ -718,6 +724,8 @@ def list_portal_documents(
         count_query = count_query.where(or_(Job.status == JobStatus.FAILED, DocumentRelease.status == 'failed'))
     elif effective_review_state == 'in_chat':
         count_query = count_query.where(DocumentRelease.status == 'sent')
+    elif effective_review_state == 'review_due':
+        count_query = count_query.where(*document_freshness.review_due_conditions(now))
     count_query = _apply_quality_grade_filter(count_query, quality_grade_expr, quality_grade)
     count_query = _apply_import_scope_filter(count_query, import_scope)
     count_query = _apply_document_filters(count_query, user=user, q=q, source=source, released_by_me=released_by_me)
@@ -858,6 +866,8 @@ def get_portal_document(job_id: str, db=Depends(get_db), user: User = Depends(ge
     uploader = db.get(User, job.owner_id) if job.owner_id else None
     uploaded_by = uploader.username if uploader is not None else None
     can_edit = _can_edit(db, job, collection, user)
+    review_info = document_freshness.review_info(db, job)
+    review = PortalDocumentReview(**review_info) if review_info is not None else None
     if release is not None:
         return PortalDocumentDetail(
             **_item(
@@ -875,6 +885,7 @@ def get_portal_document(job_id: str, db=Depends(get_db), user: User = Depends(ge
             quality=quality,
             quality_missing_reason=quality_missing_reason,
             can_edit=can_edit,
+            review=review,
         )
     try:
         markdown, digest, _ = canonical_snapshot(db, job, collection)
@@ -896,6 +907,7 @@ def get_portal_document(job_id: str, db=Depends(get_db), user: User = Depends(ge
         quality=quality,
         quality_missing_reason=quality_missing_reason,
         can_edit=can_edit,
+        review=review,
     )
 
 
@@ -1235,6 +1247,8 @@ def release_portal_document(
             event_payload['quality_override'] = True
     except PublicationValidationError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    # Review dates: a new released version counts as reviewed.
+    document_freshness.apply_release_review(db, job, collection, frontmatter, user.id)
     release = DocumentRelease(
         id=release_id,
         job_id=job.id,
@@ -1381,6 +1395,7 @@ def bulk_portal_documents(
                 event_payload = build_release_payload(job, release_id, released_digest, frontmatter)
                 if (grade or '').lower() == 'c':
                     event_payload['quality_override'] = True
+                document_freshness.apply_release_review(db, job, collection, frontmatter, user.id)
                 release = DocumentRelease(
                     id=release_id,
                     job_id=job.id,

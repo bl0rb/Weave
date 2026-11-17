@@ -27,6 +27,9 @@ from app.api.system_status import router as system_status_router
 from app.api.system_status import router_admin as system_status_admin_router
 from app.api.knowledge_maintenance import router as knowledge_maintenance_router
 from app.api.reingest import router as reingest_admin_router
+from app.api.review_tasks import router as review_tasks_router
+from app.api.document_freshness import router as document_freshness_router
+from app.api.review_tasks import router_service as quality_service_router
 from app.api.knowledge_memory import router_admin as knowledge_memory_admin_router
 from app.api.knowledge_memory import router_internal as knowledge_memory_internal_router
 from app.api.knowledge_memory import router_maintenance as knowledge_memory_maintenance_router
@@ -137,6 +140,9 @@ app.include_router(runtime_config_admin_router)
 app.include_router(branding_admin_router)
 app.include_router(knowledge_registry_router)
 app.include_router(knowledge_release_router)
+# Service-to-service quality-signal intake (POST /api/v1/quality/signals):
+# service bearer only (require_service_token on the router), no session.
+app.include_router(quality_service_router)
 
 # Secure-by-default: every other /api/v1 route (jobs, folders, collections,
 # paddle settings, ...) now requires a valid session. Step 3 layers
@@ -166,3 +172,9 @@ app.include_router(webhook_router, dependencies=[Depends(get_current_user), Depe
 app.include_router(portal_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
 app.include_router(portal_management_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
 app.include_router(portal_indexing_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
+# Prüfaufgaben inbox + quality summary (/api/v1/portal/review-tasks,
+# /api/v1/portal/quality/summary): per-space visibility inside the module.
+app.include_router(review_tasks_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
+# Aktualität & Änderungen: review dates, version diff, topic subscriptions
+# and the change feed (app/api/document_freshness.py).
+app.include_router(document_freshness_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])

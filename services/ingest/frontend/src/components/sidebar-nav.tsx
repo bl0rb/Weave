@@ -15,9 +15,11 @@ import {
   ArrowLeft,
   ArrowUpRight,
   FileText,
+  GitCompare,
   HelpCircle,
   Activity,
   Inbox,
+  ListChecks,
   Server,
   ShieldCheck,
   UsersRound,
@@ -30,7 +32,9 @@ import { LanguageSwitch } from '@/i18n/language-switch';
 import { useI18n } from '@/i18n/provider';
 import type { MessageKey } from '@/i18n/messages';
 import { resolveChatPublicUrl } from '@/lib/api-base';
-import { loadDocuments } from '@/lib/portal';
+import { loadDocuments, loadWritableSpaces } from '@/lib/portal';
+import { loadReviewTaskCount, REVIEW_TASKS_CHANGED_EVENT } from '@/lib/review-tasks';
+import { CHANGES_CHANGED_EVENT, loadChangeCount } from '@/lib/document-freshness';
 import { listOwnedBots } from '@/lib/bots';
 import { useActiveWork } from '@/lib/activity';
 import { SystemStatusIndicator } from '@/components/system-status-indicator';
@@ -38,10 +42,14 @@ import { SystemStatusIndicator } from '@/components/system-status-indicator';
 type NavItem = { href: string; label: string; icon: typeof Home; badge?: number };
 type T = (key: MessageKey, vars?: Record<string, string | number>) => string;
 
-function portalNav(t: T, ownsBots: boolean): Omit<NavItem, 'badge'>[] {
+function portalNav(t: T, ownsBots: boolean, reviewsTasks: boolean): Omit<NavItem, 'badge'>[] {
   return [
     { href: '/', label: t('portal.nav.overview'), icon: Home },
     { href: '/documents', label: t('portal.nav.documents'), icon: FileText },
+    // Prüfaufgaben: only for admins and owners/members of a space (the people who see tasks).
+    ...(reviewsTasks ? [{ href: '/pruefaufgaben', label: t('portal.nav.reviewTasks'), icon: ListChecks }] : []),
+    // Änderungen: everybody may follow changes in the spaces they can read.
+    { href: '/aenderungen', label: t('portal.nav.changes'), icon: GitCompare },
     { href: '/knowledge', label: t('portal.nav.knowledgeSpaces'), icon: FolderOpen },
     // Right below the knowledge spaces, whose sources use them.
     { href: '/connections', label: t('portal.chrome.breadcrumb.connections'), icon: Cloud },
@@ -83,6 +91,9 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
   const [menuOpen, setMenuOpen] = useState(false);
   const [reviewBadge, setReviewBadge] = useState<number | null>(null);
   const [ownsBots, setOwnsBots] = useState(false);
+  const [maintainsSpace, setMaintainsSpace] = useState(false);
+  const [taskBadge, setTaskBadge] = useState<number | null>(null);
+  const [changeBadge, setChangeBadge] = useState<number | null>(null);
   // Lazy initializer (not an effect): resolveChatPublicUrl() only ever reads
   // a value injected before hydration (see runtime-env.js) and never
   // changes during the page's lifetime.
@@ -92,7 +103,9 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
   // The mark weaves while any job or import run is in progress (lib/activity.ts).
   const activeWork = useActiveWork(Boolean(user), pathname);
   const adminHome = isBotAdmin ? '/admin/ki' : '/admin';
-  const navItems: NavItem[] = isAdminArea ? adminNav(t, isBotAdmin) : portalNav(t, ownsBots).map((item) => (item.href === '/documents' ? { ...item, badge: reviewBadge ?? undefined } : item));
+  const seesReviewTasks = user?.role === 'admin' || maintainsSpace;
+  const badges: Record<string, number | null> = { '/documents': reviewBadge, '/pruefaufgaben': taskBadge, '/aenderungen': changeBadge };
+  const navItems: NavItem[] = isAdminArea ? adminNav(t, isBotAdmin) : portalNav(t, ownsBots, seesReviewTasks).map((item) => (item.href in badges ? { ...item, badge: badges[item.href] ?? undefined } : item));
 
   // Dokumente badge = documents waiting for review. The request is as cheap
   // as the API allows (limit 1, only `total` is read) and is refreshed on
@@ -105,6 +118,47 @@ export function SidebarNav({ open, onOpenChange }: { open: boolean; onOpenChange
       .then((reviews) => { if (!cancelled) setReviewBadge(reviews.total); })
       .catch(() => { if (!cancelled) setReviewBadge(null); });
     return () => { cancelled = true; };
+  }, [user, pathname]);
+
+  // Whether the caller owns or is a member of any space: only those (and
+  // admins) see Prüfaufgaben, so readers get no empty inbox entry.
+  useEffect(() => {
+    if (!user || user.role === 'admin') return;
+    let cancelled = false;
+    loadWritableSpaces()
+      .then((spaces) => { if (!cancelled) setMaintainsSpace(spaces.length > 0); })
+      .catch(() => { if (!cancelled) setMaintainsSpace(false); });
+    return () => { cancelled = true; };
+  }, [user]);
+
+  // Prüfaufgaben badge = active (open + in progress) tasks; refreshed on
+  // navigation and right after the inbox changes a task.
+  useEffect(() => {
+    if (!user || !seesReviewTasks) return;
+    let cancelled = false;
+    const refresh = () => {
+      loadReviewTaskCount()
+        .then((count) => { if (!cancelled) setTaskBadge(typeof count?.open === 'number' ? count.open : null); })
+        .catch(() => { if (!cancelled) setTaskBadge(null); });
+    };
+    refresh();
+    window.addEventListener(REVIEW_TASKS_CHANGED_EVENT, refresh);
+    return () => { cancelled = true; window.removeEventListener(REVIEW_TASKS_CHANGED_EVENT, refresh); };
+  }, [user, seesReviewTasks, pathname]);
+
+  // Änderungen badge = unread change notifications; refreshed on navigation
+  // and right after the change feed marks notifications read.
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    const refresh = () => {
+      loadChangeCount()
+        .then((count) => { if (!cancelled) setChangeBadge(typeof count?.unread === 'number' ? count.unread : null); })
+        .catch(() => { if (!cancelled) setChangeBadge(null); });
+    };
+    refresh();
+    window.addEventListener(CHANGES_CHANGED_EVENT, refresh);
+    return () => { cancelled = true; window.removeEventListener(CHANGES_CHANGED_EVENT, refresh); };
   }, [user, pathname]);
 
   useEffect(() => {

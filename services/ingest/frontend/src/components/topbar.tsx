@@ -20,6 +20,8 @@ const ROUTE_LABELS: [string, MessageKey][] = [
   ['/documents', 'portal.nav.documents'],
   ['/reviews', 'portal.chrome.breadcrumb.reviews'],
   ['/processing', 'portal.chrome.breadcrumb.processing'],
+  ['/pruefaufgaben', 'portal.nav.reviewTasks'],
+  ['/aenderungen', 'portal.nav.changes'],
   ['/imports', 'portal.chrome.breadcrumb.imports'],
   ['/jobs', 'portal.chrome.breadcrumb.jobs'],
   ['/sources/new', 'portal.chrome.breadcrumb.sourcesNew'],

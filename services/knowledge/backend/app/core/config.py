@@ -121,6 +121,20 @@ class Settings(BaseSettings):
     memory_max_input_chars: int = 12000
     memory_llm_timeout_seconds: float = 120.0
 
+    # --- Contradiction candidates (app/services/contradictions.py, run at
+    # the end of app/workers/tasks.py's index pipeline). A HEURISTIC that
+    # only flags *possible* contradictions between documents of the same
+    # knowledge space for human review; results are reported best-effort to
+    # Weave-Ingest's POST /api/v1/quality/contradictions with the same
+    # weave_ingest_base_url/weave_ingest_api_token as the markdown fetch
+    # (app/services/ingest_client.py's report_contradictions). Never fails
+    # or delays an index run beyond the check itself. Similarity is cosine
+    # similarity of two chunk embeddings (0..1); keep it high -- lower
+    # values flood the review inbox with near-misses.
+    contradiction_check_enabled: bool = True
+    contradiction_min_similarity: float = 0.86
+    contradiction_max_reports_per_document: int = 10
+
     # --- Structure-aware chunking (see app/services -- filled in a later
     # stage). Chars, not tokens: cheap to compute against raw markdown
     # without pulling in a tokenizer at this layer.

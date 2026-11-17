@@ -493,3 +493,26 @@ it('opens the editor right away with initialEdit when the document is editable',
   render(<ReviewDocument id="doc" initialEdit />);
   await screen.findByRole('heading', { name: 'Markdown bearbeiten' });
 });
+
+it('shows „Prüfung & Aktualität“ with the comparison link on a released document', async () => {
+  const versions = { items: [
+    { job_id: 'doc', document_version: 2, content_sha256: null, status: 'FINISHED', created_at: content.created_at, uploaded_by: null, is_current: true },
+    { job_id: 'doc-v1', document_version: 1, content_sha256: null, status: 'FINISHED', created_at: content.created_at, uploaded_by: null, is_current: false },
+  ] };
+  const released = { ...content, release: { id: 'r1', created_at: content.created_at, status: 'sent', error_message: null, released_by: 'anna' },
+    review: { review_due_at: '2026-10-01T00:00:00Z', last_reviewed_at: '2026-04-01T00:00:00Z', last_reviewed_by: 'anna', overdue: true } };
+  api.mockImplementation(async path => path === '/api/v1/portal/config' ? config : path === '/api/v1/jobs/doc/versions' ? versions : released);
+  render(<ReviewDocument id="doc" />);
+  expect(await screen.findByRole('heading', { name: 'Prüfung & Aktualität' })).toBeTruthy();
+  expect(screen.getByText('Überfällig')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Als geprüft bestätigen' })).toBeTruthy();
+  expect((await screen.findByRole('link', { name: 'Versionen vergleichen' })).getAttribute('href')).toBe('/reviews/doc/changes?base=doc-v1');
+});
+
+it('shows no review panel on an unreleased single-version document', async () => {
+  render(<ReviewDocument id="doc" />);
+  await screen.findByRole('button', { name: 'Geprüften Stand freigeben' });
+  await waitFor(() => expect(api.mock.calls.some(([path]) => path === '/api/v1/jobs/doc/versions')).toBe(true));
+  expect(screen.queryByRole('heading', { name: 'Prüfung & Aktualität' })).toBeNull();
+  expect(screen.queryByRole('link', { name: 'Versionen vergleichen' })).toBeNull();
+});

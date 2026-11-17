@@ -105,6 +105,45 @@ it('renames a knowledge space through the existing patch contract', async () => 
   expect(await screen.findByText('Wissensbereich gespeichert.')).toBeTruthy();
 });
 
+it('sets, validates and switches off the review interval, sending it only when changed', async () => {
+  json.mockImplementation(async (path, init) => init?.method === 'PATCH'
+    ? area
+    : path === '/api/v1/directory/teams' ? { items: [] } : { items: [{ ...area, review_interval_days: 365 }] });
+  render(<KnowledgeSpaces />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Servicewissen umbenennen' }));
+  const interval = screen.getByRole('spinbutton', { name: 'Prüfintervall in Tagen' }) as HTMLInputElement;
+  expect(interval.value).toBe('365');
+  const save = screen.getByRole('button', { name: 'Speichern' }) as HTMLButtonElement;
+
+  fireEvent.change(interval, { target: { value: '0' } });
+  expect(screen.getByText('Gib eine ganze Zahl zwischen 1 und 3650 ein oder lass das Feld leer.')).toBeTruthy();
+  expect(save.disabled).toBe(true);
+  fireEvent.change(interval, { target: { value: '3651' } });
+  expect(save.disabled).toBe(true);
+  fireEvent.change(interval, { target: { value: '1.5' } });
+  expect(save.disabled).toBe(true);
+
+  // Emptied = periodic review off: sent explicitly as null.
+  fireEvent.change(interval, { target: { value: '' } });
+  expect(save.disabled).toBe(false);
+  fireEvent.click(save);
+  await waitFor(() => expect(json.mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(true));
+  const mutation = json.mock.calls.find(([, init]) => init?.method === 'PATCH');
+  expect(JSON.parse(mutation?.[1]?.body as string)).toMatchObject({ review_interval_days: null });
+});
+
+it('sends a newly set review interval as a number', async () => {
+  render(<KnowledgeSpaces />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Servicewissen umbenennen' }));
+  const interval = screen.getByRole('spinbutton', { name: 'Prüfintervall in Tagen' }) as HTMLInputElement;
+  expect(interval.value).toBe('');
+  fireEvent.change(interval, { target: { value: '180' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
+  await waitFor(() => expect(json.mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(true));
+  const mutation = json.mock.calls.find(([, init]) => init?.method === 'PATCH');
+  expect(JSON.parse(mutation?.[1]?.body as string)).toEqual({ name: 'Servicewissen', description: 'Anleitungen für den Service.', responsible_team_id: 't-service', review_interval_days: 180 });
+});
+
 it('requires a confirmation before deleting an empty knowledge space', async () => {
   render(<KnowledgeSpaces />);
   fireEvent.click(await screen.findByRole('button', { name: 'Servicewissen löschen' }));
@@ -162,6 +201,17 @@ it('links a space card and the detail header to the space\'s filtered documents 
   expect(screen.getByRole('heading', { name: 'Wartung' })).toBeTruthy();
   expect(screen.queryByRole('table')).toBeNull();
   expect(screen.getByRole('link', { name: 'Verbindungen' }).getAttribute('href')).toBe('/connections');
+});
+
+it('shows the space\'s review interval in the maintenance section with a link to its due reviews', async () => {
+  mockDetail({ space: { ...area, review_interval_days: 90 } });
+  render(<KnowledgeDetail id="area-1" />);
+  expect(await screen.findByText(/Dokumente werden alle 90 Tage zur Prüfung fällig/)).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Fällige Prüfungen' }).getAttribute('href')).toBe('/pruefaufgaben?art=review_due&bereich=area-1');
+  cleanup();
+  mockDetail();
+  render(<KnowledgeDetail id="area-1" />);
+  expect(await screen.findByText(/Keine regelmäßige Prüfung geplant/)).toBeTruthy();
 });
 
 it('reindexes a knowledge space after confirmation, explaining that nothing is re-imported', async () => {

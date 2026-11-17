@@ -2,6 +2,7 @@ import { ApiError, apiFetch, apiJson } from '@/lib/api';
 import { DEFAULT_LOCALE, INTL_LOCALE, type Locale } from '@/i18n/config';
 import { translate } from '@/i18n/messages';
 import { currentReleaseStatus, isIndexReady, publicationState, type IndexingItem } from './indexing-status';
+import type { DocumentReview } from './document-freshness';
 
 /** Roles on a knowledge space (ADR 0008): owner > member > reader. */
 export type CollectionRole = 'owner' | 'member' | 'reader';
@@ -20,6 +21,8 @@ export type KnowledgeSpace = {
   can_manage: boolean; can_upload: boolean; role: CollectionRole | null;
   visibility: 'public' | 'restricted'; grants: CollectionGrant[];
   created_by: { id: string; username: string } | null; responsible_team: TeamRef | null;
+  /** Periodic content review in days; null = no periodic review. Only owners and admins may change it. */
+  review_interval_days?: number | null;
 };
 export type Publication = { id: string; created_at: string; status: 'pending' | 'sent' | 'failed'; error_message: string | null; released_by: string | null };
 export type PortalSource = {
@@ -66,6 +69,8 @@ export type DocumentPreview = PortalDocument & {
   quality: QualityDetail | null; quality_missing_reason: QualityMissingReason | null;
   /** The portal editor may change this document (and releases the change). */
   can_edit?: boolean;
+  /** 'Prüfung & Aktualität' (lib/document-freshness.ts); null when the version has neither a due date nor a recorded review. */
+  review?: DocumentReview | null;
 };
 export type PortalEditResult = { document_id: string; document_version: number; release: Publication };
 export type PortalConfig = { publication_configured: boolean; analysis_configured?: boolean; team_name: string | null; team_names: string[]; teams: TeamRef[] };

@@ -282,6 +282,17 @@ class Job(Base):
     previous_job_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey('jobs.id', ondelete='SET NULL'), nullable=True, index=True
     )
+    # Periodic review ('Prüfung & Aktualität', migration 0063): when this
+    # version is due for a content review and when/by whom it was last
+    # reviewed. Set on release (frontmatter `review_due` or the space's
+    # review_interval_days -- a new version counts as reviewed) and by the
+    # portal's review endpoints; read by the document_review_tick, which
+    # opens `review_due` tasks. See app/services/document_freshness.py.
+    review_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    last_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_reviewed_by_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
@@ -297,7 +308,8 @@ class Job(Base):
         back_populates='job',
         cascade='all, delete-orphan',
     )
-    owner: Mapped['User | None'] = relationship(back_populates='owned_jobs')
+    # foreign_keys: jobs has a second users FK (last_reviewed_by_id).
+    owner: Mapped['User | None'] = relationship(back_populates='owned_jobs', foreign_keys=[owner_id])
     import_run: Mapped['ImportRun | None'] = relationship(back_populates='jobs')
     benchmark_run: Mapped['BenchmarkRun | None'] = relationship(back_populates='jobs')
     mail_message: Mapped['MailMessage | None'] = relationship(back_populates='jobs')
@@ -849,7 +861,7 @@ class User(Base):
 
     oidc_provider: Mapped[AuthProvider | None] = relationship(back_populates='users')
     sessions: Mapped[list['Session']] = relationship(back_populates='user', cascade='all, delete-orphan')
-    owned_jobs: Mapped[list[Job]] = relationship(back_populates='owner')
+    owned_jobs: Mapped[list[Job]] = relationship(back_populates='owner', foreign_keys='Job.owner_id')
     import_sources: Mapped[list['ImportSource']] = relationship(back_populates='owner', cascade='all, delete-orphan')
     import_runs: Mapped[list['ImportRun']] = relationship(back_populates='owner')
     benchmark_runs: Mapped[list['BenchmarkRun']] = relationship(back_populates='owner')
@@ -996,6 +1008,10 @@ class Collection(Base):
     folder: Mapped[str] = mapped_column(String(1024), default='', nullable=False)
     subfolder: Mapped[str] = mapped_column(String(1024), default='', nullable=False)
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Periodic content review in days (1..3650); NULL = no periodic review.
+    # A release sets the version's Job.review_due_at to now + interval unless
+    # its frontmatter names `review_due` (app/services/document_freshness.py).
+    review_interval_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
@@ -1780,6 +1796,10 @@ class DocumentRelease(Base):
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     lease_token: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    # When the change_notification_tick matched this release against the
+    # topic subscriptions (app/services/change_feed.py); NULL = still to do.
+    # Migration 0063 backfilled every older release as done (no flood).
+    subscribers_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class TechnicalIdentity(Base):
@@ -2037,6 +2057,209 @@ class ReingestItem(Base):
         onupdate=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
+
+
+class ReviewTaskKind(str, enum.Enum):
+    KNOWLEDGE_GAP = 'knowledge_gap'
+    ANSWER_FEEDBACK = 'answer_feedback'
+    REVIEW_DUE = 'review_due'
+    CONTRADICTION = 'contradiction'
+
+
+class ReviewTaskStatus(str, enum.Enum):
+    OPEN = 'open'
+    IN_PROGRESS = 'in_progress'
+    DONE = 'done'
+    DISMISSED = 'dismissed'
+
+
+REVIEW_TASK_ACTIVE_STATUSES = (ReviewTaskStatus.OPEN.value, ReviewTaskStatus.IN_PROGRESS.value)
+REVIEW_TASK_CLOSED_STATUSES = (ReviewTaskStatus.DONE.value, ReviewTaskStatus.DISMISSED.value)
+
+
+class ReviewTask(Base):
+    """A 'Prüfaufgabe' for the knowledge owners of one space (owners and
+    members of the collection, plus admins -- app/api/review_tasks.py).
+
+    Created and updated only by app/services/quality_tasks.py, the single
+    writer for every kind: knowledge gaps and answer feedback from the chat
+    (POST /api/v1/quality/signals), and -- reusing `ensure_task` there --
+    due reviews and possible contradictions. `kind`/`status` are plain
+    strings (ReviewTaskKind/ReviewTaskStatus values), like
+    DocumentRelease.status, so a later kind needs no migration.
+
+    `cluster_key` deduplicates: at most one *active* (open/in_progress) task
+    per (collection_id, kind, cluster_key). Enforced in code, not by a
+    unique index, because closed tasks with the same key must coexist -- a
+    done/dismissed task is never reopened, a new matching signal opens a new
+    task. `details` is kind-specific JSON (see quality_tasks.py) and always
+    recomputed from the linked QualitySignal rows, never patched in place.
+    """
+
+    __tablename__ = 'review_tasks'
+    __table_args__ = (
+        Index('ix_review_tasks_collection_status', 'collection_id', 'status'),
+        Index('ix_review_tasks_kind', 'kind'),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    collection_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey('collections.id', ondelete='CASCADE'), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), default=ReviewTaskStatus.OPEN.value, server_default='open', nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    cluster_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    # The document concerned (a specific version) and, for contradictions,
+    # the other document. SET NULL: a task outlives a deleted version.
+    job_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('jobs.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    related_job_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('jobs.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    details: Mapped[dict] = mapped_column(JSON, default=dict, server_default=sql_text("'{}'"), nullable=False)
+    occurrence_count: Mapped[int] = mapped_column(Integer, default=1, server_default='1', nullable=False)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+    assignee_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    resolved_by_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('users.id', ondelete='SET NULL'), nullable=True
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    collection: Mapped[Collection] = relationship(foreign_keys=[collection_id])
+    job: Mapped[Job | None] = relationship(foreign_keys=[job_id])
+    related_job: Mapped[Job | None] = relationship(foreign_keys=[related_job_id])
+    assignee: Mapped[User | None] = relationship(foreign_keys=[assignee_id])
+
+
+class QualitySignal(Base):
+    """One anonymous quality signal (chat feedback, unanswered question,
+    possible contradiction) attributed to one target -- a collection, or a
+    document of it. Never carries a chat user's identity.
+
+    `signal_key` is the sender's idempotency key (e.g. Weave-API's
+    `feedback:<uuid>`), suffixed internally with `|<job_id>` or
+    `|<collection_id>` when one signal is attributed to several targets
+    (app/services/quality_tasks.py), so a resent or updated signal upserts
+    exactly the same rows. `retracted` rows stay for history but count
+    nowhere. `task_id` links the row to the ReviewTask it feeds, if any.
+    """
+
+    __tablename__ = 'quality_signals'
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    signal_key: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    rating: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    collection_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('collections.id', ondelete='CASCADE'), nullable=True, index=True
+    )
+    job_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('jobs.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    task_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('review_tasks.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    retracted: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0', nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
+class TopicSubscription(Base):
+    """A user's 'Thema abonnieren': a knowledge space and/or keywords whose
+    released new versions should show up in the user's change feed
+    (/api/v1/portal/changes). At least one of `collection_id`/`query` is
+    set (checked by the API). `query` is matched with the gap clustering's
+    normaliser minus change-question filler words
+    (app/services/change_feed.query_terms); every keyword must occur. Matching is done by the change_notification_tick
+    (app/services/change_feed.py), which also re-checks read access."""
+
+    __tablename__ = 'topic_subscriptions'
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True
+    )
+    collection_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('collections.id', ondelete='CASCADE'), nullable=True, index=True
+    )
+    query: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    label: Mapped[str] = mapped_column(String(120), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now(), nullable=False
+    )
+
+    collection: Mapped[Collection | None] = relationship(foreign_keys=[collection_id])
+
+
+class ChangeNotification(Base):
+    """One entry of a user's change feed: a released new version (`new`) or
+    update (`updated`, `previous_job_id` = the version released before) that
+    matched one of the user's TopicSubscriptions. `summary` holds the
+    document_diff stats and up to 10 German summary lines; at most one row
+    per (subscription, job)."""
+
+    __tablename__ = 'change_notifications'
+    __table_args__ = (
+        UniqueConstraint('subscription_id', 'job_id', name='uq_change_notifications_subscription_job'),
+        Index('ix_change_notifications_user_read', 'user_id', 'read_at'),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    subscription_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey('topic_subscriptions.id', ondelete='CASCADE'), nullable=False, index=True
+    )
+    job_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey('jobs.id', ondelete='CASCADE'), nullable=False, index=True
+    )
+    previous_job_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey('jobs.id', ondelete='SET NULL'), nullable=True
+    )
+    collection_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey('collections.id', ondelete='CASCADE'), nullable=False, index=True
+    )
+    change_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    summary: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    matched_terms: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now(), nullable=False
+    )
+
+    subscription: Mapped[TopicSubscription] = relationship(foreign_keys=[subscription_id])
+    collection: Mapped[Collection] = relationship(foreign_keys=[collection_id])
 
 
 OFFLOADED_TEXT.update({

@@ -498,6 +498,15 @@ def _recover_jobs_on_worker_ready(sender=None, **kwargs) -> None:  # pragma: no 
     except Exception:
         logger.exception('Failed to kickstart the publication tick chain')
 
+    # Document freshness chains (app/workers/freshness_tasks.py): due
+    # reviews and topic-subscription notifications. Same self-locking,
+    # not-gated-on-the-recovery-lock reasoning as session_cleanup_tick.
+    for tick_name in ('document_review_tick', 'change_notification_tick'):
+        try:
+            celery_app.send_task(tick_name, args=[None])
+        except Exception:
+            logger.exception('Failed to kickstart the %s chain', tick_name)
+
 
 @celery_app.task(name='process_job', bind=True, acks_late=True, reject_on_worker_lost=True)
 def process_job(
@@ -832,6 +841,7 @@ import app.workers.refresh_tasks  # noqa: E402,F401  (registers confluence_refre
 import app.workers.session_cleanup_tasks  # noqa: E402,F401  (registers session_cleanup_tick)
 import app.workers.publication_tasks  # noqa: E402,F401  (registers publication tasks)
 import app.workers.reingest_tasks  # noqa: E402,F401  (registers reingest_advance)
+import app.workers.freshness_tasks  # noqa: E402,F401  (registers document_review_tick, change_notification_tick)
 # webhook_tasks (registers deliver_webhook) is already imported above (as
 # `webhook_tasks`, module-object style) for the completion hooks' own use --
 # no separate registration-only import needed here, unlike the three above.

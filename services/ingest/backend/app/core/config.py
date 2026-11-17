@@ -307,6 +307,17 @@ class Settings(BaseSettings):
     # confluence_refresh_tick_seconds above.
     session_cleanup_tick_seconds: int = 86400
 
+    # --- Document freshness (app/workers/freshness_tasks.py, same
+    # self-re-enqueuing tick pattern as session_cleanup_tick above).
+    # document_review_tick: opens a `review_due` Prüfaufgabe (+ webhook
+    # event document.review_due) for every current released version due
+    # within `document_review_lead_days`.
+    document_review_tick_seconds: int = 3600
+    document_review_lead_days: int = 7
+    # change_notification_tick: matches new releases against the users'
+    # topic subscriptions (app/services/change_feed.py).
+    change_notification_tick_seconds: int = 300
+
     # --- DB connection pool (SQLAlchemy QueuePool; see
     # app/database/session.py). Only applied for a real server backend
     # (postgres) -- sqlite's default pool implementation doesn't accept these

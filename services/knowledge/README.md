@@ -19,6 +19,7 @@ Weave-Knowledge ist die **Index-Pipeline** des Weave-Systems. Sie konsumiert fre
 - Embedding-Generation über Provider-Interface
 - Datenbankschema-Verwaltung und Indexoptimierung
 - Telemetrie und Monitoring der Pipeline
+- Widerspruchs-Kandidaten (`app/services/contradictions.py`, `CONTRADICTION_CHECK_ENABLED`, Standard `true`): nach jedem Index-Lauf werden Chunks des neuen Dokuments mit Chunks anderer indexierter Dokumente desselben Wissensbereichs verglichen (eigene Versionskette ausgenommen). Kandidat ist ein Paar mit Kosinus-Ähnlichkeit ≥ `CONTRADICTION_MIN_SIMILARITY` (0.86), dessen Fakten-Tokens (Daten, Beträge, Prozente, Fristen wie „30 Tage“) sich bei gemeinsamem Kontextwort unterscheiden; höchstens `CONTRADICTION_MAX_REPORTS_PER_DOCUMENT` (10) pro Dokument. Reine Heuristik: sie meldet nur *mögliche* Widersprüche best effort an Weave-Ingest (`POST /api/v1/quality/contradictions`, Prüfaufgabe für die Wissensverantwortlichen) und lässt den Index-Lauf nie scheitern.
 - Wissensgedächtnis ([ADR-0009](../../docs/adr/0009-wissensgedaechtnis.md), `KNOWLEDGE_MEMORY_MODE`, Standard `off`): nach jeder Änderung an einem Wissensbereich, entprellt über den Collection-Sync-Tick, eine Zusammenfassung pro Dokument und eine Übersicht pro Bereich in `knowledge_memory` (`app/services/memory.py`, Task `weave.knowledge.build_memory`). Im Modus `llm` mit dem zentralen Chat-Provider, sonst oder bei dessen Ausfall extraktiv ohne LLM.
 
 ## Nicht-Ziele / Abgrenzung

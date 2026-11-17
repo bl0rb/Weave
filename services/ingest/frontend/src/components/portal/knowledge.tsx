@@ -134,6 +134,9 @@ function KnowledgeSpaceEditor({ space, onClose, onSaved }: { space: KnowledgeSpa
   const [name, setName] = useState(space.name);
   const [purpose, setPurpose] = useState(space.description || '');
   const [responsibleTeam, setResponsibleTeam] = useState(space.responsible_team?.id ?? '');
+  // Periodic review in days; '' = none. Only sent when changed (explicit null switches it off).
+  const initialInterval = space.review_interval_days ? String(space.review_interval_days) : '';
+  const [reviewInterval, setReviewInterval] = useState(initialInterval);
   const [teams, setTeams] = useState<DirectoryTeam[]>(space.responsible_team ? [{ ...space.responsible_team, member_count: 0 }] : []);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -142,13 +145,18 @@ function KnowledgeSpaceEditor({ space, onClose, onSaved }: { space: KnowledgeSpa
     loadDirectoryTeams(controller.signal).then(data => setTeams(data.items)).catch(() => { /* keeps the current team only */ });
     return () => controller.abort();
   }, []);
+  const intervalValue = reviewInterval.trim() ? Number(reviewInterval) : null;
+  const intervalValid = intervalValue === null || (Number.isInteger(intervalValue) && intervalValue >= 1 && intervalValue <= 3650);
   async function save(event: FormEvent) {
     event.preventDefault();
-    if (!name.trim() || !purpose.trim()) return;
+    if (!name.trim() || !purpose.trim() || !intervalValid) return;
     setSaving(true); setError('');
     try {
       await apiJson(`/api/v1/collections/${encodeURIComponent(space.collection_id)}`, {
-        ...jsonBody({ name: name.trim(), description: purpose.trim(), responsible_team_id: responsibleTeam }), method: 'PATCH',
+        ...jsonBody({
+          name: name.trim(), description: purpose.trim(), responsible_team_id: responsibleTeam,
+          ...(reviewInterval.trim() !== initialInterval ? { review_interval_days: intervalValue } : {}),
+        }), method: 'PATCH',
       });
       await onSaved();
     } catch (err) { setError(err instanceof ApiError && err.status === 409 ? t('portal.spaces.nameTaken') : portalError(err, locale)); setSaving(false); }
@@ -162,7 +170,9 @@ function KnowledgeSpaceEditor({ space, onClose, onSaved }: { space: KnowledgeSpa
         <option value="">{t('portal.newSpace.noResponsibleTeam')}</option>
         {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
       </select></label>
-      <div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" onClick={onClose} disabled={saving}>{t('common.cancel')}</Button><Button type="submit" disabled={saving || !name.trim() || !purpose.trim()}>{saving ? t('portal.access.dialog.saving') : t('common.save')}</Button></div>
+      <label className="block text-sm font-medium text-slate-700">{t('portal.spaces.reviewIntervalLabel')}<input type="number" inputMode="numeric" min={1} max={3650} step={1} className={inputClass} value={reviewInterval} placeholder={t('portal.spaces.reviewIntervalPlaceholder')} aria-describedby="space-review-interval-hint" aria-invalid={!intervalValid || undefined} onChange={event => setReviewInterval(event.target.value)} /></label>
+      <p id="space-review-interval-hint" className={`-mt-2 text-xs ${intervalValid ? 'text-[var(--muted)]' : 'text-[var(--err)]'}`}>{intervalValid ? t('portal.spaces.reviewIntervalHint') : t('portal.spaces.reviewIntervalInvalid')}</p>
+      <div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" onClick={onClose} disabled={saving}>{t('common.cancel')}</Button><Button type="submit" disabled={saving || !name.trim() || !purpose.trim() || !intervalValid}>{saving ? t('portal.access.dialog.saving') : t('common.save')}</Button></div>
     </form>
   </Modal>;
 }
@@ -277,6 +287,7 @@ export function KnowledgeDetail({ id }: { id: string }) {
         <header className="portal-section-heading"><h2 id="space-maintenance-title">{t('portal.spaces.maintenanceTitle')}</h2></header>
         <div className="grid gap-4 px-5 pb-5 text-sm">
           <div className="flex flex-wrap items-center gap-3"><Button variant="outline" size="sm" disabled={!documentTotal} title={t('portal.spaces.reindexTooltip')} onClick={() => setReindexing(true)}><RefreshCw size={15} />{t('portal.spaces.reindexSpace')}</Button><span className="text-[var(--muted)]">{t('portal.spaces.reindexExplanation')}</span></div>
+          <p className="text-[var(--muted)]">{space.review_interval_days ? t('portal.spaces.reviewIntervalLine', { count: space.review_interval_days }) : t('portal.spaces.reviewIntervalNone')}{' '}<Link className="portal-inline-link" href={`/pruefaufgaben?${new URLSearchParams({ art: 'review_due', bereich: id })}`}>{t('portal.spaces.reviewDueLink')}</Link></p>
           <div className="flex flex-wrap items-center gap-3"><Button variant="outline" size="sm" disabled={downloading || !documentTotal} title={t('portal.spaces.zipExplanation')} onClick={() => void downloadAll()}><Archive size={15} />{downloading ? t('portal.spaces.zipCreating') : t('portal.spaces.zipAll')}</Button><span className="text-[var(--muted)]">{t('portal.spaces.zipExplanation')}</span></div>
         </div>
       </section>

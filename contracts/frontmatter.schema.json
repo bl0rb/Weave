@@ -169,6 +169,11 @@
       "type": "integer",
       "description": "Hash des extrahierten Seiteninhalts, dient der Änderungserkennung bei der Aktualisierung (Website-Import)"
     },
+    "review_due": {
+      "type": "string",
+      "format": "date",
+      "description": "Optionales Datum der nächsten fachlichen Prüfung (ISO 8601, z. B. 2027-03-31). Bei der Freigabe setzt Weave-Ingest damit das Prüfdatum der Version (Vorrang vor dem Prüfintervall des Wissensbereichs); ungültige Werte werden ignoriert"
+    },
     "legal_status": {
       "type": "string",
       "description": "Auf der Seite ausgewiesener Rechtsstand (z. B. „Zuletzt geändert durch …“); nur bei als Rechtsquelle gekennzeichneten Website-Importen und nur, wenn die Seite ihn ausweist"
