@@ -103,6 +103,12 @@ Vollstaendige Liste, aus deploy/docker-compose.weave.yml abgeglichen:
       WEAVE_API_SECRET_KEY              -> SECRET_KEY
   chat (env):
       CHAT_APP_BASE_URL                 -> APP_BASE_URL
+  knowledge / knowledgeWorker (env):
+      KNOWLEDGE_VECTOR_BACKEND          -> VECTOR_BACKEND
+  retrieval (env):
+      RETRIEVAL_VECTOR_BACKEND          -> VECTOR_BACKEND
+      (ADR-0010: zwei .env-Schluessel, damit Knowledge vor Retrieval auf
+      s3vectors umgestellt werden kann)
 
 Sonst nirgends. Insbesondere ingest liest SECRET_KEY und
 PORTAL_KNOWLEDGE_WEBHOOK_SECRET schon unter dem Namen, den weave.yaml
@@ -156,7 +162,8 @@ Cluster nicht gibt.
 
   knowledge / knowledgeWorker
     env      service "knowledge", except [POSTGRES_USER, POSTGRES_PORT]
-             (die beiden gehen nur in die DATABASE_URL ein)
+             (die beiden gehen nur in die DATABASE_URL ein),
+             rename KNOWLEDGE_VECTOR_BACKEND -> VECTOR_BACKEND
              overrides DATABASE_URL = weave.databaseUrl mit
                          database postgresql.databases.knowledge,
                          user weave.postgresUser,
@@ -168,7 +175,8 @@ Cluster nicht gibt.
     knowledgeWorker zusaetzlich: command aus knowledgeWorker.queue/logLevel
 
   retrieval
-    env      service "retrieval", except [RETRIEVAL_DB_USER]
+    env      service "retrieval", except [RETRIEVAL_DB_USER],
+             rename RETRIEVAL_VECTOR_BACKEND -> VECTOR_BACKEND
              overrides DATABASE_URL = weave.databaseUrl mit
                          database postgresql.databases.knowledge,
                          user weave.retrievalDbUser,

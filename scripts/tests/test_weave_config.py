@@ -477,6 +477,199 @@ def test_check_flags_a_chat_callback_missing_from_the_allowlist(tmp_path, config
 
 
 # ---------------------------------------------------------------------------
+# check: the optional S3 Vectors index (ADR-0010)
+# ---------------------------------------------------------------------------
+
+S3VECTORS_BOTH_ON = (
+    "KNOWLEDGE_VECTOR_BACKEND=s3vectors\n"
+    "RETRIEVAL_VECTOR_BACKEND=s3vectors\n"
+    "S3VECTORS_BUCKET=weave-vectors\n"
+    "S3VECTORS_REGION=eu-central-1\n"
+)
+
+
+def test_check_says_nothing_about_s3vectors_by_default(tmp_path, config_path):
+    messages = [f.message for f in wc.check(config_path, _chain_env(tmp_path, ""))]
+
+    assert not any("VECTOR" in m for m in messages)
+
+
+def test_check_passes_when_both_services_use_s3vectors(tmp_path, config_path):
+    findings = wc.check(config_path, _chain_env(tmp_path, S3VECTORS_BOTH_ON))
+
+    assert [f.message for f in findings] == []
+
+
+def test_check_passes_knowledge_first_during_the_switch(tmp_path, config_path):
+    body = (
+        "KNOWLEDGE_VECTOR_BACKEND=s3vectors\nS3VECTORS_BUCKET=weave-vectors\n"
+        "S3VECTORS_REGION=eu-central-1\n"
+    )
+
+    findings = wc.check(config_path, _chain_env(tmp_path, body))
+
+    assert [f.message for f in findings] == []
+
+
+def test_check_flags_retrieval_on_s3vectors_without_knowledge(tmp_path, config_path):
+    body = "RETRIEVAL_VECTOR_BACKEND=s3vectors\nS3VECTORS_BUCKET=weave-vectors\n"
+
+    messages = [f.message for f in wc.check(config_path, _chain_env(tmp_path, body))]
+
+    assert any(
+        "RETRIEVAL_VECTOR_BACKEND" in m and "KNOWLEDGE_VECTOR_BACKEND" in m
+        for m in messages
+    )
+
+
+def test_check_flags_s3vectors_without_a_bucket(tmp_path, config_path):
+    body = S3VECTORS_BOTH_ON.replace("S3VECTORS_BUCKET=weave-vectors", "S3VECTORS_BUCKET=")
+
+    messages = [f.message for f in wc.check(config_path, _chain_env(tmp_path, body))]
+
+    assert sum("S3VECTORS_BUCKET" in m for m in messages) == 2
+
+
+def test_check_flags_an_unknown_vector_backend(tmp_path, config_path):
+    body = "KNOWLEDGE_VECTOR_BACKEND=s3vector\n"
+
+    messages = [f.message for f in wc.check(config_path, _chain_env(tmp_path, body))]
+
+    assert any("knowledge" in m and "'s3vector'" in m for m in messages)
+
+
+def test_check_flags_half_a_static_s3vectors_key_pair(tmp_path, config_path):
+    body = S3VECTORS_BOTH_ON + "S3VECTORS_ACCESS_KEY_ID=AKIAEXAMPLE\n"
+
+    messages = [f.message for f in wc.check(config_path, _chain_env(tmp_path, body))]
+
+    assert any("S3VECTORS_SECRET_ACCESS_KEY" in m for m in messages)
+
+
+def test_check_flags_an_empty_s3vectors_region_in_the_compose_env(tmp_path, config_path):
+    # botocore reads neither AWS_REGION nor the instance metadata, and the
+    # compose file passes no AWS_DEFAULT_REGION: empty never works there.
+    body = S3VECTORS_BOTH_ON.replace("S3VECTORS_REGION=eu-central-1\n", "")
+
+    messages = [f.message for f in wc.check(config_path, _chain_env(tmp_path, body))]
+
+    assert sum("S3VECTORS_REGION" in m for m in messages) == 2
+
+
+def test_check_leaves_the_region_alone_while_s3vectors_is_off(tmp_path, config_path):
+    body = "S3VECTORS_REGION=\n"
+
+    messages = [f.message for f in wc.check(config_path, _chain_env(tmp_path, body))]
+
+    assert not any("S3VECTORS_REGION" in m for m in messages)
+
+
+@pytest.mark.parametrize("key", ["KNOWLEDGE_VECTOR_BACKEND", "RETRIEVAL_VECTOR_BACKEND"])
+def test_check_accepts_a_blank_vector_backend(tmp_path, config_path, key):
+    # Both services normalize '' to 'pgvector' themselves.
+    body = f"{key}=\n"
+
+    messages = [f.message for f in wc.check(config_path, _chain_env(tmp_path, body))]
+
+    assert not any("VECTOR" in m for m in messages)
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["S3VECTORS_OVERFETCH=0", "S3VECTORS_OVERFETCH=25", "S3VECTORS_OVERFETCH=four",
+     "S3VECTORS_MAX_TOP_K=0"],
+)
+def test_check_flags_s3vectors_limits_out_of_range_even_on_pgvector(
+    tmp_path, config_path, line
+):
+    # Retrieval validates both on every backend: the default pgvector
+    # deployment would not start either.
+    messages = [f.message for f in wc.check(config_path, _chain_env(tmp_path, line + "\n"))]
+
+    assert any(line.split("=")[0] in m for m in messages)
+
+
+def test_check_flags_a_max_top_k_below_top_k_times_overfetch(tmp_path, config_path):
+    body = (
+        S3VECTORS_BOTH_ON
+        + "SEARCH_TOP_K=20\nS3VECTORS_OVERFETCH=4\nS3VECTORS_MAX_TOP_K=50\n"
+    )
+
+    messages = [f.message for f in wc.check(config_path, _chain_env(tmp_path, body))]
+
+    assert any("S3VECTORS_MAX_TOP_K (50)" in m for m in messages)
+
+
+def test_check_ignores_max_top_k_recall_while_retrieval_is_on_pgvector(tmp_path, config_path):
+    body = "SEARCH_TOP_K=20\nS3VECTORS_OVERFETCH=4\nS3VECTORS_MAX_TOP_K=50\n"
+
+    messages = [f.message for f in wc.check(config_path, _chain_env(tmp_path, body))]
+
+    assert not any("S3VECTORS" in m for m in messages)
+
+
+def test_check_reads_vector_backend_from_per_service_env_files(tmp_path, config_path):
+    # A bare per-service .env names the switch the way the service reads it.
+    knowledge_env = tmp_path / "knowledge.env"
+    knowledge_env.write_text("VECTOR_BACKEND=pgvector\n", encoding="utf-8")
+    retrieval_env = tmp_path / "retrieval.env"
+    retrieval_env.write_text(
+        "VECTOR_BACKEND=s3vectors\nS3VECTORS_BUCKET=weave-vectors\n", encoding="utf-8"
+    )
+
+    messages = [
+        f.message
+        for f in wc.check(
+            config_path,
+            _chain_env(tmp_path, ""),
+            {"knowledge": knowledge_env, "retrieval": retrieval_env},
+        )
+    ]
+
+    assert any("RETRIEVAL_VECTOR_BACKEND" in m for m in messages)
+
+
+def test_real_weave_yaml_s3vectors_is_off_and_shared_by_default():
+    items = {i.key: i for i in wc.load_items(REPO_ROOT / "weave.yaml")}
+
+    assert items["KNOWLEDGE_VECTOR_BACKEND"].literal == "pgvector"
+    assert items["RETRIEVAL_VECTOR_BACKEND"].literal == "pgvector"
+    for key in (
+        "S3VECTORS_BUCKET",
+        "S3VECTORS_INDEX",
+        "S3VECTORS_REGION",
+        "S3VECTORS_ENDPOINT_URL",
+        "S3VECTORS_ACCESS_KEY_ID",
+        "S3VECTORS_SECRET_ACCESS_KEY",
+    ):
+        assert set(items[key].targets) == {("knowledge", key), ("retrieval", key)}
+        assert items[key].required is False
+    assert items["S3VECTORS_SECRET_ACCESS_KEY"].secret is True
+
+
+def test_real_weave_yaml_renders_s3vectors_switch_and_checks_clean(tmp_path):
+    out = tmp_path / "deploy.env"
+    items = wc.load_items(REPO_ROOT / "weave.yaml")
+    environ = {
+        item.env_var: f"test-value-for-{item.env_var}"
+        for item in items
+        if item.secret and item.required
+    }
+    environ.update(
+        KNOWLEDGE_VECTOR_BACKEND="s3vectors",
+        RETRIEVAL_VECTOR_BACKEND="s3vectors",
+        S3VECTORS_BUCKET="weave-vectors",
+        S3VECTORS_REGION="eu-central-1",
+    )
+    assert wc.render(REPO_ROOT / "weave.yaml", out, environ=environ) == 0
+
+    rendered = wc.parse_env_file(out)
+    assert rendered["S3VECTORS_BUCKET"] == "weave-vectors"
+    assert rendered["S3VECTORS_SECRET_ACCESS_KEY"] == ""
+    assert wc.check(REPO_ROOT / "weave.yaml", out) == []
+
+
+# ---------------------------------------------------------------------------
 # check: the .env drifting away from weave.yaml
 # ---------------------------------------------------------------------------
 

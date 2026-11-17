@@ -151,6 +151,30 @@ Extrahiert aus Weave-Knowledges `backend/app/models/models.py` (`class Knowledge
 
 **Rechte:** Die Tabelle trägt keine eigene Berechtigung. Weave-Retrieval liest `document`-Zeilen ausschliesslich per `JOIN documents` durch dieselbe `apply_filters()`-Bedingung wie die Chunk-Suche und `collection`-Zeilen ausschliesslich für Slugs aus `allowed_collections`; der Übersichtstext wird nur ausgegeben, solange alle `source_document_ids` noch `indexed` im selben Bereich sind. Dokumente ohne Collection erhalten kein Gedächtnis.
 
+## Optionaler Vektorindex: Amazon S3 Vectors
+
+Additiv und standardmaessig aus (`VECTOR_BACKEND=pgvector`). Mit `VECTOR_BACKEND=s3vectors` (in Weave-Knowledge UND Weave-Retrieval, identische Setting-Namen `S3VECTORS_BUCKET`, `S3VECTORS_INDEX` (Default `weave-chunks`), `S3VECTORS_REGION`, `S3VECTORS_ENDPOINT_URL`, `S3VECTORS_ACCESS_KEY_ID`, `S3VECTORS_SECRET_ACCESS_KEY`; leere Keys = Standard-AWS-Credential-Chain) haelt Weave-Knowledge zusaetzlich eine **Kopie** der Chunk-Embeddings in einem S3-Vectors-Index:
+
+- **Postgres bleibt die massgebliche Quelle.** Chunks, Embeddings, Volltext, Metadaten und Berechtigungen liegen weiterhin unveraendert in den Tabellen oben; der Index ist eine abgeleitete Kopie ohne eigene Wahrheit.
+- **Weave-Knowledge ist der einzige Schreiber** des Index (`backend/app/services/vector_index.py`): nach jedem erfolgreichen Index-/Reindex-Commit werden die Chunks des Dokuments geschrieben, die Vektoren geloeschter Chunks (Neu-Indizierung, Supersede, Rueckzug) erst NACH dem jeweiligen Commit geloescht (beim Rueckzug asynchron im Celery-Task `weave.knowledge.delete_vectors`, nie im Webhook-Request). Best effort: ein S3-Fehler wird geloggt und laesst nie einen Index-Lauf oder Rueckzug scheitern; `python -m app.cli s3vectors sync [--prune]` repariert jede Abweichung. Anlage/Pruefung des Index: `python -m app.cli s3vectors init`.
+- **Weave-Retrieval liest nur** (`QueryVectors`) und prueft **jeden** Treffer erneut in Postgres (Join `documents`, dieselbe `apply_filters()`-Bedingung, `status = 'indexed'`, Modell-Match) — S3-Metadaten allein entscheiden nie ueber Berechtigungen. Veraltete Vektoren fallen dabei heraus, fehlende kosten nur Recall bis zum naechsten `sync`.
+
+**Vektor-Datensatz:**
+
+| Feld | Wert |
+|---|---|
+| `key` | `str(chunks.id)` |
+| `data.float32` | `chunks.embedding` (nur Chunks mit Embedding) |
+| `metadata.collection` | `documents.collection_slug`, oder der Platzhalter `"__none__"` fuer Dokumente ohne Wissensbereich (filterbar) |
+| `metadata.team` | `documents.team` oder `""` (filterbar) |
+| `metadata.document_id` | `str(documents.id)` (filterbar) |
+| `metadata.embedding_model` | `chunks.embedding_model` (filterbar) |
+| `metadata.chunk_index` | `chunks.chunk_index` (**nicht** filterbar) |
+
+**Einschalt-Reihenfolge (verbindlich):** Ein leerer oder unvollstaendiger Index ist fuer `QueryVectors` kein Fehler — Weave-Retrieval bekaeme still weniger Vektortreffer, ohne dass der pgvector-Fallback greift. Deshalb zuerst nur Weave-Knowledge (API und Worker) auf `VECTOR_BACKEND=s3vectors` stellen, `python -m app.cli s3vectors init` und danach `sync` bis zu einem sauberen Lauf (Exit-Code 0) ausfuehren, und **erst dann** Weave-Retrieval auf `s3vectors` umstellen. Abschalten in umgekehrter Reihenfolge (erst Retrieval, dann Knowledge). Obwohl die Setting-Namen identisch sind, werden sie pro Service gesetzt; waehrend der Umstellung duerfen die Werte daher absichtlich voneinander abweichen.
+
+**Index:** `dataType float32`, `dimension = EMBEDDING_DIMENSION`, `distanceMetric cosine`, `nonFilterableMetadataKeys = ["chunk_index"]`. Gespiegelt werden nur Chunks von Dokumenten mit `status = 'indexed'`, deren `embedding_model` dem aktuellen `EMBEDDING_MODEL` entspricht — genau die Menge, die Retrievals Postgres-Nachpruefung akzeptiert. Ein Modell- oder Dimensionswechsel bedeutet einen neuen Index (`S3VECTORS_INDEX`) plus `init` und `sync`; ein bestehender Index wird nie umdimensioniert.
+
 ## Indexe
 
 | Index | Tabelle/Spalte(n) | Typ | Nur Postgres? |
@@ -207,3 +231,4 @@ Lokale Entwicklung und die Pytest-Suite beider Services laufen gegen eine lokale
 - **Additiv, weiterhin v1 (2026-08-31):** `collections`-Tabelle (Registry-Spiegel), `documents.collection_slug` (nullable, kein FK) und `chunks.meta.collection` hinzugefuegt — siehe "Tabelle `collections`" und "Sync-Richtung" oben. Rein additiv im Sinn der Versionierungsregel oben (neue nullable Spalte + neue Tabelle), daher kein Versionssprung: ein bereits laufendes Weave-Retrieval, das diese Felder noch nicht kennt, funktioniert unveraendert weiter, es sieht nur noch keine Collection-Filterung.
 - **Additiv, weiterhin v1 (2026-09-24):** `collections.visibility` (NOT NULL, Default `'public'`) und `collections.read_users` (NOT NULL, Default `[]`) hinzugefuegt — Wissensbereiche sind jetzt zusaetzlich zu oeffentlich/Team auch an einzelne Personen teilbar. `visibility` ersetzt die fruehere implizite "leeres `read_teams` = oeffentlich"-Regel als massgebliches Sichtbarkeits-Flag (siehe "Tabelle `collections`" oben); `read_users` ist das personenbezogene Gegenstueck zu `read_teams`. Ein Sync-Payload eines aelteren Weave-Ingest ohne diese beiden Felder wird von Weave-Knowledge so interpretiert, als kaeme er von einer Version mit der alten Regel (`visibility = 'public' if not read_teams else 'restricted'`, `read_users = []`) — additiv, kein Versionssprung: ein bereits laufendes Weave-Retrieval, das `visibility`/`read_users` noch nicht auswertet, funktioniert unveraendert weiter (es wertet dann weiterhin nur `read_teams` aus, mit dem alten leer-heisst-oeffentlich-Verhalten fuer JEDE Collection, nicht mehr nur fuer eine `'public'`-markierte).
 - **Additiv, weiterhin v1 (2026-10-18):** Tabelle `knowledge_memory` (Wissensgedächtnis, ADR-0009) hinzugefügt — neue Tabelle im Sinn der Versionierungsregel, kein Versionssprung. Ein Weave-Retrieval, das sie nicht kennt, funktioniert unverändert; `POST /api/v1/memory` liefert dann nichts, und Runtime fällt auf die Chunk-Suche zurück.
+- **Additiv, weiterhin v1 (2026-11-17):** Optionaler Vektorindex Amazon S3 Vectors (`VECTOR_BACKEND=s3vectors`, siehe "Optionaler Vektorindex: Amazon S3 Vectors" oben) — eine abgeleitete Kopie der Chunk-Embeddings ausserhalb von Postgres, kein Schema- und kein Versionssprung. Weave-Knowledge ist der einzige Schreiber, Weave-Retrieval fragt nur ab und prueft jeden Treffer in Postgres nach; Postgres bleibt massgeblich. Mit dem Default `pgvector` aendert sich nichts.

@@ -41,7 +41,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.db import SessionLocal
 from app.models.models import Chunk, Document, DocumentStatus
-from app.services import contradictions, ingest_client, memory
+from app.services import contradictions, ingest_client, memory, vector_index
 from app.services.chunker import chunk_markdown
 from app.services.embeddings import EmbeddingProviderError, embed_chunks, get_provider
 from app.services.enrichment import build_chunk_meta
@@ -51,6 +51,7 @@ logger = logging.getLogger(__name__)
 
 INDEX_TASK_NAME = 'weave.knowledge.index_document'
 REINDEX_TASK_NAME = 'weave.knowledge.reindex_all'
+DELETE_VECTORS_TASK_NAME = 'weave.knowledge.delete_vectors'
 
 # Total attempts a document gets at fetching its markdown before this task
 # gives up and marks it status='failed' for good (attempt 1 is the initial
@@ -164,7 +165,7 @@ def _mark_unexpected_failure(db: Session, document_id: str, error: str) -> None:
     db.commit()
 
 
-def _supersede_previous_version(db: Session, document: Document) -> None:
+def _supersede_previous_version(db: Session, document: Document) -> list[str]:
     """Delete the previous job's chunks and mark it superseded, in the SAME
     transaction as the current document's own indexing commit (the caller
     commits right after this returns) -- see app/api/events.py's docstring
@@ -180,19 +181,26 @@ def _supersede_previous_version(db: Session, document: Document) -> None:
     (different collection_slug): a release in one space must never retire a
     document other readers rely on in a space the releaser may not even
     have a role on (ADR 0008).
+
+    Returns the S3 Vectors keys of the deleted chunks (always empty unless
+    VECTOR_BACKEND=s3vectors, see app/services/vector_index.py) so the
+    caller can delete those vectors once the transaction is committed --
+    never before: a rolled-back supersede must keep its vectors.
     """
     if not document.previous_job_id:
-        return
+        return []
     previous = db.execute(
         select(Document).where(Document.source_job_id == document.previous_job_id)
     ).scalar_one_or_none()
     if previous is None or previous.id == document.id:
-        return
+        return []
     if previous.collection_slug != document.collection_slug:
-        return
+        return []
+    superseded_keys = vector_index.chunk_keys(db, previous.id)
     db.execute(delete(Chunk).where(Chunk.document_id == previous.id))
     previous.status = DocumentStatus.SUPERSEDED
     previous.chunk_count = 0
+    return superseded_keys
 
 
 def _run_pipeline(self, db: Session, document: Document, *, reindex: bool = False) -> None:
@@ -276,6 +284,10 @@ def _run_pipeline(self, db: Session, document: Document, *, reindex: bool = Fals
     # indexing THIS SAME document already wrote -- an at-least-once task
     # redelivery (acks_late) must not hit chunks' own
     # (document_id, chunk_index) unique constraint on the rewrite below.
+    # Their S3 Vectors keys (empty unless VECTOR_BACKEND=s3vectors) are
+    # collected first and only deleted after the commit below -- every
+    # failure branch before it rolls this delete back.
+    stale_vector_keys = vector_index.chunk_keys(db, document.id)
     db.execute(delete(Chunk).where(Chunk.document_id == document.id))
 
     chunk_rows = [
@@ -355,9 +367,13 @@ def _run_pipeline(self, db: Session, document: Document, *, reindex: bool = Fals
     # for a stalled reindex retry and keeps re-triggering full reindexes.
     document.embedding_attempts = 0
 
-    _supersede_previous_version(db, document)
+    stale_vector_keys += _supersede_previous_version(db, document)
 
     db.commit()
+    # Optional S3 Vectors mirror (no-op with the default pgvector backend):
+    # after the commit and best effort -- never fails this run, see
+    # app/services/vector_index.py.
+    vector_index.mirror_document(db, document, stale_keys=stale_vector_keys)
     memory.touch(db, document.collection_slug)
     _report_contradiction_candidates(db, document)
 
@@ -432,6 +448,20 @@ def index_document(self, document_id: str, reindex: bool = False) -> None:
     # calls and SQLite workers, where SQLite ignores FOR UPDATE.
     with _document_lock(document_id):
         _index_document_unlocked(self, document_id, reindex=reindex)
+
+
+@celery_app.task(name=DELETE_VECTORS_TASK_NAME, acks_late=True, reject_on_worker_lost=True)
+def delete_vectors(keys: list[str], document_id: str | None = None) -> None:
+    """Delete the optional S3 Vectors copies of chunks whose delete is
+    already committed -- enqueued by the document.withdrawn webhook
+    (app/api/events.py) so that an S3 call (bounded, but with retries up to
+    well over a minute when S3 is slow/unreachable) never runs inside a
+    webhook request Weave-Ingest times out after 15s. Best effort like every
+    mirror write (vector_index.forget_keys never raises): a failed delete
+    leaves orphaned vectors that Retrieval's Postgres recheck drops and
+    `python -m app.cli s3vectors sync --prune` removes. A no-op while
+    VECTOR_BACKEND is not 's3vectors'."""
+    vector_index.forget_keys(keys, document_id=document_id)
 
 
 @worker_ready.connect

@@ -23,3 +23,8 @@ pgvector==0.5.1
 pytest==9.2.0
 httpx==0.28.1
 PyYAML==6.0.3
+# Optional Amazon S3 Vectors vector index (settings.vector_backend=
+# 's3vectors', see app/services/vector_index.py). Pinned identical to
+# Weave-Ingest's and Weave-Knowledge's boto3; imported lazily, so the
+# pgvector default never loads it.
+boto3==1.43.124

@@ -1,4 +1,8 @@
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Accepted VECTOR_BACKEND values (see Settings.vector_backend below).
+VECTOR_BACKENDS = ('pgvector', 's3vectors')
 
 
 class Settings(BaseSettings):
@@ -135,6 +139,40 @@ class Settings(BaseSettings):
     contradiction_min_similarity: float = 0.86
     contradiction_max_reports_per_document: int = 10
 
+    # --- Optional vector index mirror: Amazon S3 Vectors (see
+    # app/services/vector_index.py, contracts/chunk-store.md's "Optionaler
+    # Vektorindex" section). 'pgvector' (default) changes nothing at all:
+    # the chunks.embedding column in Postgres stays the only vector index,
+    # and boto3 is never even imported. 's3vectors' additionally mirrors
+    # every embedded chunk into an S3 Vectors index after each successful
+    # index/reindex commit and deletes the vectors of chunks this service
+    # deletes (re-index, supersede, withdrawal) -- Weave-Retrieval then runs
+    # its vector leg against that index and re-checks every hit in Postgres.
+    # Postgres stays the single source of truth either way: chunks,
+    # embeddings, permissions and fulltext never leave it, the mirror is
+    # best-effort (an S3 error is logged, never fails an index run) and
+    # `python -m app.cli s3vectors sync` repairs any drift. The same setting
+    # names exist in Weave-Retrieval's app/core/config.py.
+    #
+    # Must be one of VECTOR_BACKENDS above (case-insensitive; empty means
+    # 'pgvector'); anything else fails at startup (see _check_vector_backend
+    # below), as does 's3vectors' without a bucket or with only one of the
+    # two static keys.
+    vector_backend: str = 'pgvector'
+    s3vectors_bucket: str = ''
+    s3vectors_index: str = 'weave-chunks'
+    # Empty = boto3's own region resolution: AWS_DEFAULT_REGION or the
+    # profile's region -- NOT AWS_REGION and not instance metadata (EKS IRSA
+    # sets AWS_DEFAULT_REGION; everywhere else set this explicitly).
+    s3vectors_region: str = ''
+    # Empty = the real AWS endpoint; only set for tests or an emulator.
+    s3vectors_endpoint_url: str = ''
+    # Both empty (the recommended setup) = the standard boto3 credential
+    # chain: IAM role / IRSA / environment / instance profile. Static keys
+    # are only an escape hatch for environments without any of those.
+    s3vectors_access_key_id: str = ''
+    s3vectors_secret_access_key: str = ''
+
     # --- Structure-aware chunking (see app/services -- filled in a later
     # stage). Chars, not tokens: cheap to compute against raw markdown
     # without pulling in a tokenizer at this layer.
@@ -151,6 +189,41 @@ class Settings(BaseSettings):
     db_max_overflow: int = 10
     db_pool_recycle_seconds: int = 3600
     db_pool_timeout_seconds: int = 10
+
+    @field_validator('vector_backend', mode='before')
+    @classmethod
+    def _normalize_vector_backend(cls, value):
+        """Case-insensitive, and an empty/blank value means the default
+        'pgvector' -- deploy files pass optional settings as `${VAR:-}`,
+        which yields '' when the variable is unset."""
+        if isinstance(value, str):
+            return value.strip().lower() or 'pgvector'
+        return value
+
+    @model_validator(mode='after')
+    def _check_vector_backend(self) -> 'Settings':
+        """Fail at startup (module import builds `settings` below) instead
+        of at the first index run: a typo in VECTOR_BACKEND would otherwise
+        silently keep pgvector-only behaviour, and 's3vectors' without a
+        bucket would only surface as a warning per document."""
+        if self.vector_backend not in VECTOR_BACKENDS:
+            raise ValueError(
+                f'VECTOR_BACKEND must be one of {", ".join(VECTOR_BACKENDS)}, got {self.vector_backend!r}'
+            )
+        if self.vector_backend == 's3vectors' and not self.s3vectors_bucket.strip():
+            raise ValueError('VECTOR_BACKEND=s3vectors requires S3VECTORS_BUCKET')
+        # Static keys are used only as a pair (vector_index.client()); one
+        # without the other would silently fall back to the default
+        # credential chain. Only checked when the mirror is on, so stray
+        # S3VECTORS_* values never stop a pgvector deployment.
+        if self.vector_backend == 's3vectors' and (
+            bool(self.s3vectors_access_key_id.strip()) != bool(self.s3vectors_secret_access_key.strip())
+        ):
+            raise ValueError(
+                'S3VECTORS_ACCESS_KEY_ID and S3VECTORS_SECRET_ACCESS_KEY must be set together (or both left empty '
+                'for the default AWS credential chain)'
+            )
+        return self
 
 
 settings = Settings()

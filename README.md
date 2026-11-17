@@ -426,6 +426,12 @@ user-configured export webhooks. Every admin-supplied URL goes through an
 SSRF-hardened fetcher that rejects private addresses unless the specific host
 is allowlisted — opening the firewall alone is not enough.
 
+Optional, AWS only, off by default (`VECTOR_BACKEND=pgvector`):
+
+| From | To | Why |
+|---|---|---|
+| Knowledge (API + worker), Retrieval | `s3vectors.<region>.api.aws` (HTTPS); with IRSA also `sts.<region>.amazonaws.com` | Amazon S3 Vectors as an optional vector index ([ADR-0010](docs/adr/0010-s3-vectors-index.md), [betrieb.md §7.8](docs/betrieb.md)). Knowledge writes the index, Retrieval queries it; Postgres stays authoritative, and on an S3 error search falls back to pgvector |
+
 [docs/firewall-requirements.md](docs/firewall-requirements.md) holds a
 port-by-port connection matrix, but note its scope: it predates this repository
 layout and covers only the Ingest service and its own Compose files. The section above is

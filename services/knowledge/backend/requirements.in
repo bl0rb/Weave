@@ -19,3 +19,8 @@ redis==8.1.0
 pytest==9.2.0
 httpx==0.28.1
 PyYAML==6.0.3
+# Optional Amazon S3 Vectors mirror (VECTOR_BACKEND=s3vectors, see
+# app/services/vector_index.py) -- imported lazily, never in pgvector mode.
+# Same pin as Weave-Ingest's requirements.in; needs the bundled `s3vectors`
+# service model.
+boto3==1.43.124

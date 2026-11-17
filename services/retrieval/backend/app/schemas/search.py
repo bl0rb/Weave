@@ -199,6 +199,13 @@ class SearchTrace(BaseModel):
     rerank_provider: str | None = None
     rerank_model: str | None = None
     embedding_model: str | None = None
+    # Which vector index answered the vector leg (app/services/search.py's
+    # vector_search_traced()): 'pgvector' (default, incl. the SQLite dev
+    # fallback), 's3vectors', 'pgvector-fallback' (S3 Vectors failed and
+    # settings.s3vectors_fallback_pgvector re-ran the pgvector leg), or
+    # 's3vectors-error' (S3 Vectors failed, fallback off: empty vector leg).
+    # None only for traces not produced by search().
+    vector_backend: str | None = None
 
 
 class SearchResponse(BaseModel):

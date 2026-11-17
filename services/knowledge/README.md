@@ -112,6 +112,63 @@ steuern, wie geduldig der Worker einen vorübergehend überlasteten/
 neustartenden Embeddings-Pod übersteht, statt das Dokument sofort dauerhaft
 auf `failed` zu setzen.
 
+### Optionaler Vektorindex: Amazon S3 Vectors
+
+Standard ist `VECTOR_BACKEND=pgvector` -- dann bleibt alles wie oben, boto3
+wird nicht einmal importiert. Mit `VECTOR_BACKEND=s3vectors` spiegelt der
+Dienst zusätzlich jeden eingebetteten Chunk in einen S3-Vectors-Index
+(`app/services/vector_index.py`), den Weave-Retrieval für die Vektorsuche
+abfragt. Postgres bleibt die maßgebliche Quelle; Datensatzform und Regeln:
+`contracts/chunk-store.md`, Abschnitt "Optionaler Vektorindex".
+
+| Variable | Default | Bedeutung |
+|---|---|---|
+| `VECTOR_BACKEND` | `pgvector` | `pgvector` oder `s3vectors` (leer = `pgvector`); alles andere bricht den Start ab |
+| `S3VECTORS_BUCKET` | leer | Vector Bucket; Pflicht bei `s3vectors` |
+| `S3VECTORS_INDEX` | `weave-chunks` | Indexname; bei Modell-/Dimensionswechsel neuen Namen wählen |
+| `S3VECTORS_REGION` | leer | leer = boto3-Standard (`AWS_DEFAULT_REGION` oder Profil-Region; nicht `AWS_REGION`, keine Instanz-Metadaten) |
+| `S3VECTORS_ENDPOINT_URL` | leer | nur für Tests/Emulatoren |
+| `S3VECTORS_ACCESS_KEY_ID` / `S3VECTORS_SECRET_ACCESS_KEY` | leer | beide leer = Standard-Credential-Chain (IAM-Rolle/IRSA/Env/Instance Profile); nur einer gesetzt bricht den Start ab |
+
+Schreibzeitpunkte: nach jedem erfolgreichen Index-/Reindex-Commit (auch
+`python -m app.cli reindex` und `reconcile-collections`) werden die Chunks
+des Dokuments geschrieben; Vektoren gelöschter Chunks (Neu-Indizierung,
+Supersede, `document.withdrawn`) werden erst nach dem Commit gelöscht -- beim
+Rückzug nicht im Webhook-Request, sondern im Celery-Task
+`weave.knowledge.delete_vectors`. Alles best effort: ein S3-Fehler erscheint
+als Warnung im Log (mit Dokument-ID) und lässt nie einen Index-Lauf oder
+Rückzug scheitern. `PutVectors`-Batches richten sich nach
+`EMBEDDING_DIMENSION` (max. 500 Vektoren und unter dem 20-MiB-Limit pro
+Request, z. B. 466 bei 1536, 180 bei 4096 Dimensionen); `--batch` ist nur
+eine Obergrenze.
+
+```bash
+cd backend
+../.venv/bin/python -m app.cli s3vectors init                 # Index anlegen bzw. Dimension/Metrik prüfen
+../.venv/bin/python -m app.cli s3vectors sync [--prune] [--batch 500]  # alle indexierten Chunks schreiben, --prune entfernt Überzähliges
+../.venv/bin/python -m app.cli s3vectors status [--count-vectors]      # Index und Zählerstände
+```
+
+**Reihenfolge beim Einschalten (verbindlich):** Ein leerer oder halb
+gefüllter Index ist für Weave-Retrieval kein Fehler -- `QueryVectors`
+liefert dann einfach weniger Treffer, der pgvector-Fallback greift nicht,
+und der Vektoranteil der Suche fällt still weg. Deshalb:
+
+1. `VECTOR_BACKEND=s3vectors` (plus `S3VECTORS_*`) zuerst **nur** für
+   Weave-Knowledge (API und Worker) setzen; Weave-Retrieval bleibt auf
+   `pgvector`.
+2. `init`, dann `sync` ausführen, bis `sync` mit Exit-Code 0 endet;
+   `status --count-vectors` zeigt Vektoren im Index neben den
+   zulässigen Chunks in Postgres.
+3. Erst danach Weave-Retrieval auf `s3vectors` umstellen.
+
+Zurück auf pgvector in umgekehrter Reihenfolge: erst Retrieval, dann
+Knowledge. `sync --prune` regelmäßig (z. B. als Cronjob) repariert verpasste Schreib-
+oder Löschvorgänge. `init`/`sync` verweigern mit Exit-Code 2, solange
+`VECTOR_BACKEND` nicht `s3vectors` ist; 1 = Lauf fehlgeschlagen.
+Benötigte IAM-Aktionen: `s3vectors:PutVectors`, `DeleteVectors`,
+`ListVectors`, `GetIndex`, `GetVectors` und für `init` `CreateIndex`.
+
 ### Docker
 
 ```bash

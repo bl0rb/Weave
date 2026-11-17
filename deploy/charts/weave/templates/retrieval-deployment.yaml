@@ -127,8 +127,15 @@ spec:
             {{- /* Verbindungen je Prozess: zaehlen gegen postgresql.maxConnections. */}}
             {{- $_ := set $ov "DB_POOL_SIZE" (toString $r.dbPool.size) }}
             {{- $_ := set $ov "DB_MAX_OVERFLOW" (toString $r.dbPool.maxOverflow) }}
+            {{- /*
+            rename: der .env-Schluessel heisst RETRIEVAL_VECTOR_BACKEND, damit
+            Retrieval erst NACH Knowledge auf s3vectors umgestellt werden
+            kann (ADR-0010); der Dienst liest VECTOR_BACKEND. Wie in
+            deploy/docker-compose.weave.yml.
+            */}}
             {{- include "weave.env" (dict "ctx" $ "service" "retrieval"
                   "except" (list "RETRIEVAL_DB_USER")
+                  "rename" (dict "RETRIEVAL_VECTOR_BACKEND" "VECTOR_BACKEND")
                   "overrides" $ov) | nindent 12 }}
           {{- if $r.probes.liveness.enabled }}
           livenessProbe:

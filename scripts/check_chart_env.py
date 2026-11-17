@@ -103,7 +103,11 @@ RENAMES: dict[str, dict[str, str]] = {
         "WEAVE_KNOWLEDGE_SECRET_KEY": "SECRET_KEY",
         "WEAVE_KNOWLEDGE_INGEST_API_TOKEN": "WEAVE_INGEST_API_TOKEN",
         "WEAVE_KNOWLEDGE_WEBHOOK_SECRET": "WEAVE_INGEST_WEBHOOK_SECRET",
+        # ADR-0010: eigener .env-Schluessel je Dienst, damit Knowledge vor
+        # Retrieval auf s3vectors umgestellt werden kann.
+        "KNOWLEDGE_VECTOR_BACKEND": "VECTOR_BACKEND",
     },
+    "retrieval": {"RETRIEVAL_VECTOR_BACKEND": "VECTOR_BACKEND"},
     "api": {"WEAVE_API_SECRET_KEY": "SECRET_KEY"},
     "chat": {"CHAT_APP_BASE_URL": "APP_BASE_URL"},
     "ingest": {"INGEST_WORKER_CONCURRENCY": "CELERY_WORKER_CONCURRENCY"},
