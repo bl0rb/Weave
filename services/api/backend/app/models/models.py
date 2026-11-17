@@ -24,7 +24,11 @@ Six tables, in three groups:
   to obtain its own session token -- see that model's own docstring.
 - `Conversation` / `Message` are this service's own conversational state
   (README's "Konversations-State-Verwaltung") -- the one thing here no
-  other Weave service ever writes to.
+  other Weave service ever writes to. `MessageFeedback` is a chat user's
+  own rating of one assistant answer (app/api/feedback.py), and
+  `QualitySignalOutbox` the queue of anonymous quality signals derived from
+  feedback and unanswered turns, forwarded to Weave-Ingest by
+  app/services/quality_signals.py.
 """
 
 import enum
@@ -41,6 +45,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     Uuid,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -282,6 +287,80 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     conversation: Mapped[Conversation] = relationship(back_populates='messages')
+
+
+class FeedbackRating(str, enum.Enum):
+    """The three ratings a chat user can give an assistant answer
+    (PUT /v1/messages/{id}/feedback, app/api/feedback.py). `wrong` and
+    `outdated` become review tasks for the cited documents' knowledge owners
+    on Weave-Ingest's side; `helpful` only counts towards statistics."""
+
+    HELPFUL = 'helpful'
+    WRONG = 'wrong'
+    OUTDATED = 'outdated'
+
+
+class MessageFeedback(Base):
+    """One user's current rating of one assistant `Message` -- at most one
+    row per (message, user), replaced in place by every new rating
+    (app/api/feedback.py's upsert) and deleted when the rating is taken
+    back. Only ever written for a message in one of the caller's OWN
+    conversations, so in practice `user_id` is that conversation's owner;
+    it is still part of the key so GET /v1/conversations/{id} can scope the
+    replayed `feedback` to the caller in the query itself.
+
+    Never leaves this database with `user_id` attached: the signal
+    app/services/quality_signals.py forwards to Weave-Ingest is keyed by
+    this row's own `id` (`feedback:<id>`) and carries no user identity.
+    `rating` is a plain string (one of `FeedbackRating`'s values,
+    validated by app/schemas/feedback.py), the same non-native-enum
+    discipline as `Message.role`.
+    """
+
+    __tablename__ = 'message_feedback'
+    __table_args__ = (UniqueConstraint('message_id', 'user_id', name='uq_message_feedback_message_user'),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    message_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey('messages.id', ondelete='CASCADE'), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True
+    )
+    rating: Mapped[str] = mapped_column(String(16), nullable=False)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
+
+
+class QualitySignalOutbox(Base):
+    """Transactional outbox of anonymous quality signals for Weave-Ingest
+    (POST /api/v1/quality/signals there), written in the same transaction
+    as the change that caused them and forwarded later, best-effort, by
+    app/services/quality_signals.py's `flush_outbox` -- so neither an
+    unreachable Weave-Ingest nor a slow one ever fails or delays a chat
+    request.
+
+    `signal_key` is the idempotency key Weave-Ingest upserts by
+    (`feedback:<MessageFeedback.id>` or `unanswered:<Message.id>`). A
+    changed or retracted feedback rewrites its existing row in place
+    (new `payload`, `created_at` = re-enqueue time, `forwarded_at` reset),
+    so only the latest state is ever sent. `attempts`/`last_error` record
+    failed forwarding attempts; rows forwarded more than 30 days ago are
+    pruned during a flush.
+    """
+
+    __tablename__ = 'quality_signal_outbox'
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    signal_key: Mapped[str] = mapped_column(String(128), nullable=False, unique=True, index=True)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    forwarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
 
 class RateLimitWindow(Base):

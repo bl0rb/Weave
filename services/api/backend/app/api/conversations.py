@@ -14,8 +14,9 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.ratelimit import enforce_rate_limit
-from app.models.models import Conversation, User
-from app.schemas.conversations import ConversationListResponse, ConversationResponse
+from app.models.models import Conversation, MessageFeedback, User
+from app.schemas.conversations import ConversationListResponse, ConversationResponse, MessageResponse
+from app.schemas.feedback import FeedbackState
 
 router = APIRouter(prefix='/v1', tags=['conversations'])
 
@@ -49,7 +50,7 @@ def get_conversation(
     conversation_id: str,
     db: Session = Depends(get_db),
     user: User = Depends(enforce_rate_limit),
-) -> Conversation:
+) -> ConversationResponse:
     # A malformed id can never match a real row anyway; treating it the
     # same as "not found" (rather than a 422) avoids leaking id-format
     # validation as a signal distinct from ownership/existence.
@@ -67,10 +68,42 @@ def get_conversation(
     if conversation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Conversation not found')
 
+    # The caller's own ratings (app/api/feedback.py), scoped to the caller
+    # in the query itself, attached as each message's `feedback`.
+    message_ids = [message.id for message in conversation.messages]
+    feedback_by_message = (
+        {
+            feedback.message_id: feedback
+            for feedback in db.scalars(
+                select(MessageFeedback).where(
+                    MessageFeedback.message_id.in_(message_ids), MessageFeedback.user_id == user.id
+                )
+            )
+        }
+        if message_ids
+        else {}
+    )
+
     # conversation.messages is ordered ASC by Message.id (see the
     # relationship's order_by in app/models/models.py) -- oldest first, the
     # natural reading order for a chat transcript.
-    return conversation
+    messages = []
+    for message in conversation.messages:
+        item = MessageResponse.model_validate(message)
+        feedback = feedback_by_message.get(message.id)
+        if feedback is not None:
+            item.feedback = FeedbackState(
+                rating=feedback.rating, comment=feedback.comment, updated_at=feedback.updated_at
+            )
+        messages.append(item)
+    return ConversationResponse(
+        id=conversation.id,
+        bot_id=conversation.bot_id,
+        title=conversation.title,
+        created_at=conversation.created_at,
+        updated_at=conversation.updated_at,
+        messages=messages,
+    )
 
 
 @router.delete('/conversations/{conversation_id}', status_code=status.HTTP_204_NO_CONTENT)

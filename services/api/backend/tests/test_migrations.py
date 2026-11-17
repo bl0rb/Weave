@@ -206,6 +206,73 @@ def test_0006_user_locale_migration_upgrade_downgrade_round_trip(tmp_path, monke
     assert 'locale' in user_columns
 
 
+def test_0009_message_feedback_migration_upgrade_downgrade_round_trip(tmp_path, monkeypatch):
+    """Verifies 0009_message_feedback (`message_feedback` + the
+    `quality_signal_outbox`, app/api/feedback.py and
+    app/services/quality_signals.py) on top of an already-upgraded 0008
+    schema -- same round-trip discipline as the tests above."""
+    db_path = tmp_path / 'migration_scratch_message_feedback.db'
+    db_url = f'sqlite:///{db_path}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+
+    cfg = _alembic_config()
+    command.upgrade(cfg, '0008_exchange_code_challenge')
+
+    command.upgrade(cfg, 'head')
+
+    engine = create_engine(db_url, future=True)
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    assert {'message_feedback', 'quality_signal_outbox'} <= tables
+
+    feedback_columns = {c['name']: c for c in insp.get_columns('message_feedback')}
+    assert {'id', 'message_id', 'user_id', 'rating', 'comment', 'created_at', 'updated_at'} <= set(feedback_columns)
+    assert feedback_columns['comment']['nullable'] is True
+    assert feedback_columns['rating']['nullable'] is False
+
+    feedback_fks = insp.get_foreign_keys('message_feedback')
+    assert any(
+        fk['referred_table'] == 'messages'
+        and fk['constrained_columns'] == ['message_id']
+        and fk['options'].get('ondelete') == 'CASCADE'
+        for fk in feedback_fks
+    ), feedback_fks
+    assert any(
+        fk['referred_table'] == 'users'
+        and fk['constrained_columns'] == ['user_id']
+        and fk['options'].get('ondelete') == 'CASCADE'
+        for fk in feedback_fks
+    ), feedback_fks
+    unique_sets = [set(c['column_names']) for c in insp.get_unique_constraints('message_feedback')]
+    assert {'message_id', 'user_id'} in unique_sets
+
+    outbox_columns = {c['name']: c for c in insp.get_columns('quality_signal_outbox')}
+    assert {
+        'id', 'signal_key', 'payload', 'created_at', 'forwarded_at', 'attempts', 'last_error'
+    } <= set(outbox_columns)
+    assert outbox_columns['forwarded_at']['nullable'] is True
+    assert outbox_columns['attempts']['nullable'] is False
+    unique_indexes = {
+        idx['column_names'][0] for idx in insp.get_indexes('quality_signal_outbox') if idx['unique']
+    }
+    assert 'signal_key' in unique_indexes
+
+    # --- downgrade back to 0008: only this migration's own tables
+    # disappear, the rest of the schema survives untouched ---
+    command.downgrade(cfg, '0008_exchange_code_challenge')
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    assert 'message_feedback' not in tables
+    assert 'quality_signal_outbox' not in tables
+    assert {'messages', 'users', 'rate_limit_windows'} <= tables
+    assert 'code_challenge' in {c['name'] for c in insp.get_columns('session_exchange_codes')}
+
+    # --- re-upgrade: should cleanly re-apply from 0008 ---
+    command.upgrade(cfg, 'head')
+    insp = inspect(engine)
+    assert {'message_feedback', 'quality_signal_outbox'} <= set(insp.get_table_names())
+
+
 def test_migration_history_has_a_single_head():
     from alembic.script import ScriptDirectory
 

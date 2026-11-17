@@ -1,4 +1,4 @@
-import type { ChatRequestBody, ChatStreamStatusEvent, ChatTrace, Collection, Source, StoredMessage } from '@/types/weave-api';
+import type { ChatRequestBody, ChatStreamStatusEvent, ChatTrace, Collection, MessageFeedback, Source, StoredMessage } from '@/types/weave-api';
 import type { MappedError } from '@/lib/errors';
 import { translateDefault } from '@/i18n/messages';
 import type { MessageKey, MessageVars } from '@/i18n/messages';
@@ -52,6 +52,12 @@ export interface UiMessage {
    * Never cleared mid-turn: a finished agent's chip stays visible
    * alongside a still-researching one. */
   agentStatuses: UiAgentStatus[];
+  /** Weave-API's id of the persisted assistant message — from a stored
+   * message, the stream's `done` event or the fallback response. Unset
+   * until known (and on an older backend): no feedback controls then. */
+  serverId?: number;
+  /** The caller's own rating of this answer (answer-feedback.tsx). */
+  feedback?: MessageFeedback | null;
 }
 
 export function newId(): string {
@@ -107,6 +113,8 @@ export function uiMessageFromStored(message: StoredMessage): UiMessage {
     slowResponse: false,
     progressLine: null,
     agentStatuses: [],
+    ...(message.role === 'assistant' && typeof message.id === 'number' ? { serverId: message.id } : {}),
+    feedback: message.feedback ?? null,
   };
 }
 

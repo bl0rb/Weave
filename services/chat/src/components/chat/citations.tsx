@@ -4,6 +4,7 @@ import { createContext, useContext, useMemo, useState, type CSSProperties, type 
 import { ShieldAlert } from 'lucide-react';
 import { CITATION_RE, citationNumbers, type AnswerSpace } from '@/lib/knowledge-spaces';
 import { useI18n } from '@/i18n/provider';
+import { canOpenPassage, usePassageDialog } from '@/components/chat/passage-dialog';
 import type { Source } from '@/types/weave-api';
 
 // --- shared hover state ------------------------------------------------------
@@ -178,12 +179,31 @@ export function CitationSpan(props: HTMLAttributes<HTMLSpanElement> & { node?: u
   const attributes = rest as Record<string, unknown>;
   const answer = useContext(AnswerCitationsContext);
   const state = useCitationHighlight();
+  const openPassage = usePassageDialog();
+  const { t } = useI18n();
   const passageRefs = typeof attributes['data-cite-refs'] === 'string' ? (attributes['data-cite-refs'] as string).split(' ').map(Number) : null;
   const markerRef = typeof attributes['data-cite-ref'] === 'string' ? Number(attributes['data-cite-ref']) : null;
   if (!answer || (!passageRefs && markerRef === null)) return <span {...rest} />;
 
   if (markerRef !== null) {
     const source = answer.byRef.get(markerRef);
+    // „Textstelle öffnen“ from the marker itself — only when the bot shows
+    // its sources (a hidden source must not be revealed this way).
+    if (answer.showSources && openPassage && canOpenPassage(source)) {
+      return (
+        <button
+          {...(rest as HTMLAttributes<HTMLButtonElement>)}
+          type="button"
+          className="cite-marker"
+          data-active={isHighlighted(state, answer.messageId, markerRef)}
+          style={spaceStyle(answer.colorByRef.get(markerRef))}
+          title={source.original_filename ?? undefined}
+          aria-label={t('chat.passage.openRef', { ref: markerRef })}
+          onClick={() => openPassage(source)}
+          {...highlightHandlers(state, answer.messageId, markerRef)}
+        />
+      );
+    }
     return (
       <span
         {...rest}

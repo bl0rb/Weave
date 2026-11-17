@@ -144,6 +144,34 @@ export const chat = {
   'messageBubble.status.partial': 'teilweise',
   'messageBubble.status.failed': 'fehlgeschlagen',
 
+  // components/chat/answer-feedback.tsx
+  'feedback.groupLabel': 'Wie hilfreich war diese Antwort?',
+  'feedback.helpful': 'Hilfreich',
+  'feedback.wrong': 'Falsch',
+  'feedback.outdated': 'Veraltet',
+  'feedback.commentLabel': 'Was ist falsch oder veraltet? (optional)',
+  'feedback.commentSubmit': 'Kommentar senden',
+  'feedback.commentEdit': 'Kommentar ergänzen',
+  'feedback.thanks': 'Danke für die Rückmeldung',
+  'feedback.removed': 'Rückmeldung zurückgenommen',
+  'feedback.failed': 'Die Rückmeldung konnte nicht gespeichert werden. Bitte versuche es erneut.',
+
+  // components/chat/passage-dialog.tsx (+ its buttons in citations.tsx,
+  // source-cards.tsx and sources-panel.tsx)
+  'passage.open': 'Textstelle öffnen',
+  'passage.openRef': 'Textstelle zu Quelle {ref} öffnen',
+  'passage.title': 'Textstelle',
+  'passage.close': 'Textstelle schließen',
+  'passage.loading': 'Textstelle wird geladen …',
+  'passage.notFound': 'Diese Textstelle ist nicht mehr verfügbar – das Dokument wurde vermutlich aktualisiert.',
+  'passage.loadFailed': 'Die Textstelle konnte nicht geladen werden. Bitte versuche es erneut.',
+  'passage.version': 'Version {version}',
+  'passage.page': 'Seite {page}',
+  'passage.pageRange': 'Seiten {start}–{end}',
+  'passage.headingLabel': 'Gliederung',
+  'passage.cited': 'Zitierte Textstelle',
+  'passage.openOriginal': 'Im Original öffnen',
+
   // components/chat/guard-banner.tsx
   'guard.headline': 'Keine Belege gefunden.',
   // components/chat/message-bubble.tsx (Rückfrage-Chips)

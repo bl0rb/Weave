@@ -127,6 +127,12 @@ export interface Source {
   /** The `[N]` number the answer cites this source by, set when the runtime
    * kept only the cited sources; absent/null = its 1-based position. */
   ref?: number | null;
+  /** Weave-Ingest job behind the document (Weave-Runtime's Source, v1
+   * additive); absent on older answers and n8n sources. */
+  source_job_id?: string | null;
+  /** The chunk's heading breadcrumb and its position in the document. */
+  heading_path?: string[] | null;
+  chunk_index?: number | null;
 }
 
 export interface RetrievalTrace {
@@ -340,7 +346,9 @@ export type ChatStreamEvent =
   | { type: 'trace'; trace: ChatTrace }
   | { type: 'delta'; text: string }
   | { type: 'sources'; sources: Source[] }
-  | { type: 'done' }
+  // `message_id`: the persisted assistant message (Weave-API adds it when
+  // persisting) -- the handle for PUT/DELETE /v1/messages/{id}/feedback.
+  | { type: 'done'; message_id?: number | null }
   | { type: 'error'; detail: string }
   // Weave-API's own, after the first `done` of a conversation: the
   // generated conversation title (sent after `done` so the answer is not
@@ -351,6 +359,9 @@ export type ChatStreamEvent =
 /** POST /v1/chat (non-streaming) response body. */
 export interface ChatResponseBody {
   conversation_id: string;
+  /** Id of the persisted assistant message (feedback handle); absent on an
+   * older backend. */
+  message_id?: number | null;
   answer: string;
   sources: Source[] | null;
   trace: ChatTrace | null;
@@ -405,6 +416,59 @@ export interface StoredMessage {
   sources: Source[] | null;
   trace: ChatTrace | null;
   created_at: string;
+  /** The caller's own rating of this (assistant) message; `null`/absent
+   * when unrated or on an older backend. */
+  feedback?: MessageFeedback | null;
+}
+
+/** Weave-API's answer feedback ratings (app/schemas/feedback.py `Rating`). */
+export type FeedbackRating = 'helpful' | 'wrong' | 'outdated';
+
+/** Weave-API's `FeedbackState`: the caller's current rating of one answer. */
+export interface MessageFeedback {
+  rating: FeedbackRating;
+  comment: string | null;
+  updated_at: string;
+}
+
+/** PUT /v1/messages/{message_id}/feedback request body; `comment` max 2000
+ * characters (stripped, blank = none). */
+export interface FeedbackRequestBody {
+  rating: FeedbackRating;
+  comment?: string | null;
+}
+
+/** PUT /v1/messages/{message_id}/feedback response (`FeedbackResponse`). */
+export interface FeedbackResponseBody extends MessageFeedback {
+  message_id: number;
+}
+
+/** One chunk of GET /v1/sources/passage (`PassageChunk`,
+ * Weave-API backend/app/schemas/sources.py). */
+export interface PassageChunk {
+  chunk_id: number;
+  chunk_index: number | null;
+  heading_path: string[];
+  page_start: number | null;
+  page_end: number | null;
+  text: string;
+  is_target: boolean;
+}
+
+/** GET /v1/sources/passage response (`PassageResponse`): the cited chunk
+ * plus up to `context` neighbours on each side, oldest index first.
+ * `source_url` is already restricted to http(s) by Weave-API. */
+export interface PassageResponse {
+  document_id: string;
+  source_job_id: string | null;
+  title: string | null;
+  original_filename: string | null;
+  document_version: number | null;
+  source_kind: string | null;
+  source_url: string | null;
+  collection: string | null;
+  target_chunk_id: number;
+  chunks: PassageChunk[];
 }
 
 /** GET /v1/conversations/{id} response body (`ConversationResponse`,

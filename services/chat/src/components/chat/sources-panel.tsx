@@ -6,6 +6,7 @@ import { toProxiedImageUrl } from '@/lib/portal-artifact-url';
 import { useI18n } from '@/i18n/provider';
 import { answerSpaces, spaceColor } from '@/lib/knowledge-spaces';
 import { highlightHandlers, isHighlighted, spaceName, spaceStyle, useCitationHighlight } from '@/components/chat/citations';
+import { OpenPassageButton } from '@/components/chat/passage-dialog';
 import type { Source } from '@/types/weave-api';
 
 interface SourcesPanelProps {
@@ -140,6 +141,7 @@ export function SourcesPanel({ sources, onCollapse, messageId }: SourcesPanelPro
                       ) : null}
                       <span>{meta}</span>
                       {link ? null : <SourceOrigin source={source} />}
+                      <OpenPassageButton source={source} />
                     </div>
                   </div>
                 </div>

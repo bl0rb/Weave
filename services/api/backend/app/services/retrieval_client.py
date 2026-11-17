@@ -172,3 +172,46 @@ def search(
     if not isinstance(payload, dict):
         raise RetrievalClientError('Weave-Retrieval returned a non-JSON response for POST /api/v1/search')
     return payload
+
+
+def passage(
+    *,
+    document_id: str,
+    chunk_id: int,
+    context: int,
+    allowed_collections: list[str],
+    allowed_teams: list[str],
+) -> dict | None:
+    """POST /api/v1/passage -- the chunk `chunk_id` of `document_id` plus up
+    to `context` neighbouring chunks on each side, under exactly the same
+    visibility rules as `search` above (`allowed_collections` never `None`
+    from here, `allowed_teams` for legacy documents without a collection).
+    Returns that service's `PassageResponse` body verbatim, or `None` when
+    Weave-Retrieval answers 404 -- not found, not visible to this caller,
+    chunk not in that document, or superseded, deliberately indistinguishable
+    (app/api/sources.py maps it to its own 404)."""
+    body = {
+        'document_id': document_id,
+        'chunk_id': chunk_id,
+        'context': context,
+        'allowed_collections': allowed_collections,
+        'allowed_teams': allowed_teams,
+    }
+    try:
+        with _client() as client:
+            response = client.post('/api/v1/passage', json=body)
+    except httpx.RequestError as exc:
+        raise _unreachable(exc, description='POST /api/v1/passage') from exc
+
+    if response.status_code == 404:
+        return None
+    if response.status_code >= 400:
+        raise RetrievalClientError(f'Weave-Retrieval returned HTTP {response.status_code} for POST /api/v1/passage')
+
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RetrievalClientError('Weave-Retrieval returned a non-JSON response for POST /api/v1/passage') from exc
+    if not isinstance(payload, dict):
+        raise RetrievalClientError('Weave-Retrieval returned a non-JSON response for POST /api/v1/passage')
+    return payload

@@ -8,6 +8,7 @@ import { MessageList } from '@/components/chat/message-list';
 import { Composer } from '@/components/chat/composer';
 import { SourcesPanel } from '@/components/chat/sources-panel';
 import { CitationHighlightProvider } from '@/components/chat/citations';
+import { PassageDialogProvider } from '@/components/chat/passage-dialog';
 import { ErrorBanner } from '@/components/chat/error-banner';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/i18n/provider';
@@ -250,6 +251,7 @@ export function ChatApp() {
         sources: result.data.sources ?? [],
         trace: result.data.trace,
         viaFallback: true,
+        ...(typeof result.data.message_id === 'number' ? { serverId: result.data.message_id } : {}),
       }));
     },
     [router]
@@ -338,12 +340,13 @@ export function ChatApp() {
           onSources: (sources) => {
             if (activeTurnRef.current === turnId) updateMessage(assistantId, (m) => ({ ...m, sources }));
           },
-          onDone: () => {
+          onDone: (messageId) => {
             // The answer is final -- show it as such and free the input
             // while the stream still waits for the conversation title.
+            // Its persisted id enables the feedback row (answer-feedback.tsx).
             if (slowTimer) clearTimeout(slowTimer);
             if (activeTurnRef.current === turnId) {
-              updateMessage(assistantId, (m) => ({ ...m, streaming: false }));
+              updateMessage(assistantId, (m) => ({ ...m, streaming: false, ...(messageId !== undefined ? { serverId: messageId } : {}) }));
               setSending(false);
             }
           },
@@ -554,6 +557,7 @@ export function ChatApp() {
 
   return (
     <CitationHighlightProvider spaceNames={spaceNames}>
+    <PassageDialogProvider>
     <div className={sourcesPanelShown ? 'chat-shell' : 'chat-shell chat-sources-collapsed'}>
       <Rail
         conversations={conversations}
@@ -628,6 +632,7 @@ export function ChatApp() {
             setSourcesPanelOpen(true);
           }}
           showSources={showSources}
+          onFeedbackChange={(id, feedback) => updateMessage(id, (m) => ({ ...m, feedback }))}
         />
 
         {selectedBot?.disclaimer ? (
@@ -670,6 +675,7 @@ export function ChatApp() {
         />
       ) : null}
     </div>
+    </PassageDialogProvider>
     </CitationHighlightProvider>
   );
 }

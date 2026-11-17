@@ -12,11 +12,13 @@ from app.api.branding import router as branding_router
 from app.api.chat import router as chat_router
 from app.api.collections import router as collections_router
 from app.api.conversations import router as conversations_router
+from app.api.feedback import router as feedback_router
 from app.api.internal import router as internal_router
 from app.api.me import router as me_router
 from app.api.openai_compat import router as openai_compat_router
 from app.api.portal_artifacts import router as portal_artifacts_router
 from app.api.search import router as search_router
+from app.api.sources import router as sources_router
 from app.core.config import insecure_secret_key_reason, settings
 from app.core.db import get_db
 from app.schemas.health import HealthResponse
@@ -123,6 +125,8 @@ app.include_router(chat_router)
 app.include_router(openai_compat_router)
 app.include_router(collections_router)
 app.include_router(search_router)
+app.include_router(sources_router)
+app.include_router(feedback_router)
 app.include_router(internal_router)
 app.include_router(portal_artifacts_router)
 app.include_router(me_router)

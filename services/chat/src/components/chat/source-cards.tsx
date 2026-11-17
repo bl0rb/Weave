@@ -9,6 +9,7 @@ import type { MessageKey, MessageVars } from '@/i18n/messages';
 import { useI18n } from '@/i18n/provider';
 import { answerSpaces, spaceColor } from '@/lib/knowledge-spaces';
 import { highlightHandlers, isHighlighted, spaceStyle, useCitationHighlight } from '@/components/chat/citations';
+import { OpenPassageButton } from '@/components/chat/passage-dialog';
 
 type Translator = (key: MessageKey, vars?: MessageVars) => string;
 
@@ -197,6 +198,7 @@ export function SourceCards({ sources, messageId }: { sources: Source[]; /** Ena
               <div className="mt-0.5 flex flex-wrap gap-x-3 text-[var(--muted)]">
                 <SourceOrigin source={source} />
                 <span>{t('chat.sources.collectionLabel', { collection: formatCollection(source, t) })}</span>
+                <OpenPassageButton source={source} />
               </div>
             </li>
           );

@@ -9,6 +9,7 @@ import { DELETE as deleteConversations } from '@/app/api/conversations/route';
 import { DELETE as deleteConversation } from '@/app/api/conversations/[id]/route';
 import { POST as createToken } from '@/app/api/tokens/route';
 import { DELETE as deleteToken } from '@/app/api/tokens/[id]/route';
+import { DELETE as deleteFeedback, PUT as putFeedback } from '@/app/api/messages/[id]/feedback/route';
 import { SESSION_COOKIE_NAME } from '@/lib/session';
 
 type Handler = (request: NextRequest) => Promise<Response>;
@@ -27,6 +28,8 @@ const ROUTES: Array<[string, string, Handler, boolean]> = [
   ['DELETE', '/api/conversations/x', req => deleteConversation(req, idParams), false],
   ['POST', '/api/tokens', createToken, true],
   ['DELETE', '/api/tokens/x', req => deleteToken(req, idParams), false],
+  ['PUT', '/api/messages/x/feedback', req => putFeedback(req, idParams), true],
+  ['DELETE', '/api/messages/x/feedback', req => deleteFeedback(req, idParams), false],
 ];
 
 function request(method: string, path: string, headers: Record<string, string>, json = true): NextRequest {

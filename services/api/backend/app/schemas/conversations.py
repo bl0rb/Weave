@@ -3,6 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, computed_field
 
+from app.schemas.feedback import FeedbackState
 from app.services.notices import answer_knowledge_spaces, answer_notices
 
 
@@ -15,6 +16,10 @@ class MessageResponse(BaseModel):
     sources: list | dict | None = None
     trace: dict | None = None
     created_at: datetime
+    # The caller's own rating of this (assistant) message, PUT
+    # /v1/messages/{id}/feedback (app/api/feedback.py); `None` when unrated.
+    # Filled in by app/api/conversations.py, never read off the ORM row.
+    feedback: FeedbackState | None = None
 
     @computed_field
     @property

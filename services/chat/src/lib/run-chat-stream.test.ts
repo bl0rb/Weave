@@ -130,6 +130,21 @@ describe('consumeChatStream', () => {
     expect(order).toEqual(['delta', 'done']);
   });
 
+  it('passes done.message_id (the feedback handle) to onDone', async () => {
+    const ids: Array<number | undefined> = [];
+    await consumeChatStream(streamFromChunks([`data: ${JSON.stringify({ type: 'done', message_id: 42 })}\n\n`]), {
+      onDone: (messageId) => ids.push(messageId),
+    });
+    // An older backend sends no id; a malformed one is ignored, not trusted.
+    await consumeChatStream(streamFromChunks([`data: ${JSON.stringify({ type: 'done' })}\n\n`]), {
+      onDone: (messageId) => ids.push(messageId),
+    });
+    await consumeChatStream(streamFromChunks([`data: ${JSON.stringify({ type: 'done', message_id: '7' })}\n\n`]), {
+      onDone: (messageId) => ids.push(messageId),
+    });
+    expect(ids).toEqual([42, undefined, undefined]);
+  });
+
   it('never calls onSources/onDelta after a terminal event has already ended the turn', async () => {
     // Not a realistic upstream stream (nothing follows `done` per the
     // ordering guarantee), but the consumer must not choke on it either —

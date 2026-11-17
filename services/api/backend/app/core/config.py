@@ -262,6 +262,17 @@ class Settings(BaseSettings):
     # the browser.
     ingest_service_token: str = ''
 
+    # --- Quality signals to Weave-Ingest (app/services/quality_signals.py):
+    # a chat user's answer feedback (PUT /v1/messages/{id}/feedback,
+    # app/api/feedback.py) and every unanswered (`no_context` guard) turn
+    # are queued, anonymously, in `quality_signal_outbox` and forwarded
+    # best-effort to Weave-Ingest's POST /api/v1/quality/signals, which
+    # turns them into review tasks for the knowledge owners. Forwarding
+    # uses `ingest_api_url` + `ingest_service_token` above and is a no-op
+    # while either is empty (rows simply wait in the outbox). False: the
+    # feedback is still stored for the user, but nothing is queued at all.
+    quality_signals_enabled: bool = True
+
 
 def insecure_secret_key_reason(config: Settings) -> str | None:
     """Why `config.secret_key` must not be used, or None if it is fine
