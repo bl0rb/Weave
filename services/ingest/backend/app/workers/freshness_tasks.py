@@ -91,11 +91,16 @@ def run_document_review_pass() -> dict:
         from app.workers.webhook_tasks import dispatch_review_due_event
 
         sent = 0
-        for job_id, collection_id in result['created']:
+        for task_id, job_id, collection_id in result['pending_webhooks']:
             try:
                 job, collection = db.get(Job, job_id), db.get(Collection, collection_id)
                 if job is not None and collection is not None:
                     sent += dispatch_review_due_event(db, job, collection)
+                # Marked only after a successful dispatch: a failure (or a
+                # worker that dies in between) leaves it pending, and the
+                # next tick sends it.
+                document_freshness.mark_webhook_sent(db, task_id)
+                db.commit()
             except Exception:  # noqa: BLE001 - the task exists; a webhook failure must not undo it
                 logger.exception('document review: webhook dispatch failed for job %s', job_id)
                 db.rollback()

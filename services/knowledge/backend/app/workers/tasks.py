@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 INDEX_TASK_NAME = 'weave.knowledge.index_document'
 REINDEX_TASK_NAME = 'weave.knowledge.reindex_all'
 DELETE_VECTORS_TASK_NAME = 'weave.knowledge.delete_vectors'
+POST_INDEX_TASK_NAME = 'weave.knowledge.post_index'
 
 # Total attempts a document gets at fetching its markdown before this task
 # gives up and marks it status='failed' for good (attempt 1 is the initial
@@ -370,12 +371,24 @@ def _run_pipeline(self, db: Session, document: Document, *, reindex: bool = Fals
     stale_vector_keys += _supersede_previous_version(db, document)
 
     db.commit()
-    # Optional S3 Vectors mirror (no-op with the default pgvector backend):
-    # after the commit and best effort -- never fails this run, see
-    # app/services/vector_index.py.
-    vector_index.mirror_document(db, document, stale_keys=stale_vector_keys)
     memory.touch(db, document.collection_slug)
-    _report_contradiction_candidates(db, document)
+    # The optional S3 Vectors mirror and the contradiction check run in their
+    # own task (post_index_document below), so neither S3 calls nor the
+    # neighbour queries and the report to Weave-Ingest hold this index run.
+    _enqueue_post_index(str(document.id), stale_vector_keys)
+
+
+def _enqueue_post_index(document_id: str, stale_keys: list[str]) -> None:
+    """Hand the post-index work to the queue; a no-op when neither the S3
+    Vectors mirror nor the contradiction check is enabled. If the broker
+    cannot take it, run it inline -- both parts are best effort anyway."""
+    if not vector_index.enabled() and not settings.contradiction_check_enabled:
+        return
+    try:
+        post_index_document.delay(document_id, stale_keys)
+    except Exception:  # noqa: BLE001 - never fail an index run over follow-up work
+        logger.warning('index_document: could not enqueue post-index work for %s; running inline', document_id, exc_info=True)
+        post_index_document(document_id, stale_keys)
 
 
 def _report_contradiction_candidates(db: Session, document: Document) -> None:
@@ -448,6 +461,25 @@ def index_document(self, document_id: str, reindex: bool = False) -> None:
     # calls and SQLite workers, where SQLite ignores FOR UPDATE.
     with _document_lock(document_id):
         _index_document_unlocked(self, document_id, reindex=reindex)
+
+
+@celery_app.task(name=POST_INDEX_TASK_NAME, acks_late=True, reject_on_worker_lost=True)
+def post_index_document(document_id: str, stale_keys: list[str] | None = None) -> None:
+    """Follow-up of a committed index run (enqueued by _run_pipeline): the
+    optional S3 Vectors mirror (vector_index.mirror_document, which also
+    deletes `stale_keys`) and the contradiction check. Own session, best
+    effort -- neither part ever raises. If the document is gone or no longer
+    indexed by now, only the stale vectors are deleted."""
+    db = SessionLocal()
+    try:
+        document = db.get(Document, uuid.UUID(document_id))
+        if document is None or document.status != DocumentStatus.INDEXED:
+            vector_index.forget_keys(stale_keys or [], document_id=document_id)
+            return
+        vector_index.mirror_document(db, document, stale_keys=stale_keys or [])
+        _report_contradiction_candidates(db, document)
+    finally:
+        db.close()
 
 
 @celery_app.task(name=DELETE_VECTORS_TASK_NAME, acks_late=True, reject_on_worker_lost=True)

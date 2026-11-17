@@ -379,6 +379,35 @@ def test_tick_opens_one_task_and_notifies_subscribed_owners_once(monkeypatch):
     assert listed['items'][0]['document']['job_id'] == job_id
 
 
+def test_failed_webhook_dispatch_is_retried_by_the_next_tick(monkeypatch):
+    monkeypatch.setattr(settings, 'document_review_lead_days', 7)
+    space = _space(interval=365)
+    client = login_as(space.owner.username)
+    job_id = make_doc(space)
+    release(client, job_id)
+    _connection(space.member.id, ['document.review_due'])
+    _set_due(job_id, datetime.now(timezone.utc) + timedelta(days=3))
+
+    with patch.object(webhook_tasks, 'dispatch_review_due_event', side_effect=RuntimeError('broker down')):
+        (result, _send_task) = document_freshness_pass()
+    assert (job_id, space.id) in result['created']
+    assert len(_review_tasks(job_id)) == 1
+    assert _deliveries(job_id) == []
+    assert 'webhook_sent_at' not in _review_tasks(job_id)[0].details
+
+    # The task already exists, but its reminder is still pending: sent now.
+    (result, send_task) = document_freshness_pass()
+    assert (job_id, space.id) not in result['created']
+    assert len(_deliveries(job_id)) == 1
+    send_task.assert_called_once()
+    assert _review_tasks(job_id)[0].details['webhook_sent_at']
+
+    # ...and only once.
+    (result, send_task) = document_freshness_pass()
+    assert len(_deliveries(job_id)) == 1
+    send_task.assert_not_called()
+
+
 def test_tick_ignores_far_dates_respects_closed_tasks_and_dismisses_stale_ones(monkeypatch):
     monkeypatch.setattr(settings, 'document_review_lead_days', 7)
     space = _space()

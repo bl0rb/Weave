@@ -21,8 +21,18 @@ def _word() -> str:
     return f'reiseregel{uuid.uuid4().hex[:8]}'
 
 
-def _run() -> int:
+def _run(*, deliver: bool = True) -> int:
+    """One change tick. `deliver` first marks every not-yet-notified
+    release as delivered to Weave-Knowledge (status 'sent') -- the feed only
+    announces delivered releases, and tests have no publication worker."""
     with _db() as db:
+        if deliver:
+            db.execute(
+                update(DocumentRelease)
+                .where(DocumentRelease.subscribers_notified_at.is_(None))
+                .values(status='sent')
+            )
+            db.commit()
         return change_feed.process_pending_releases(db)
 
 
@@ -369,3 +379,23 @@ def test_change_search_without_any_readable_space_is_empty():
         user = db.get(User, outsider.id)
         changes, terms, incomplete = change_feed.search_changes(db, user, q=word, collection_id=None, days=30)
     assert (changes, terms, incomplete) == ([], [word], False)
+
+
+
+def test_undelivered_release_is_announced_only_once_sent():
+    space = _space()
+    reader = login_as(space.reader.username)
+    word = _word()
+    assert reader.post('/api/v1/portal/subscriptions', json={'query': word}).status_code == 201
+    owner = login_as(space.owner.username)
+    job_id = make_doc(space, f'# {word}\n\nNeue Regeln.\n')
+    release(owner, job_id)
+
+    _run(deliver=False)  # still pending: not announced, not marked
+    assert _notifications(space.reader.id) == []
+    with _db() as db:
+        row = db.scalar(select(DocumentRelease).where(DocumentRelease.job_id == job_id))
+        assert row.subscribers_notified_at is None
+
+    _run()  # delivered now
+    assert [n.job_id for n in _notifications(space.reader.id)] == [job_id]

@@ -42,6 +42,13 @@ LAST_ERROR_MAX_LENGTH = 500
 # Forwarded rows older than this are deleted during a flush: Weave-Ingest
 # already holds them, the outbox only needs them for retries.
 FORWARDED_RETENTION = timedelta(days=30)
+# Rows never forwarded (Weave-Ingest unconfigured, or down for this long)
+# are dropped after the same period: question text must not pile up with
+# no retention at all.
+UNFORWARDED_RETENTION = timedelta(days=30)
+# Upper bound of batches one flush drains, so an outage backlog is sent in
+# one go without a single background task running unbounded.
+MAX_FLUSH_BATCHES = 50
 # Weave-Runtime's NO_COLLECTION_SENTINEL ("documents without a collection"),
 # which may appear in `trace.retrieval.collections` -- never a real slug.
 NO_COLLECTION_SENTINEL = '__none__'
@@ -223,6 +230,39 @@ def enqueue_unanswered_signal(db: Session, *, message: Message, conversation: Co
     return True
 
 
+def retract_conversation_signals(db: Session, conversation_ids: list) -> int:
+    """Before conversations are deleted: rewrite every outbox row that
+    belongs to their messages (`unanswered:<message id>`, and
+    `feedback:<feedback id>` of ratings on them) into a retraction without
+    any user text (question, answer excerpt, comment), not yet forwarded.
+    Weave-Ingest then drops the signal from its review tasks, and the
+    question is never sent (again) after the user removed it. No commit --
+    the caller's, in the same transaction as the delete. Returns the number
+    of rows rewritten."""
+    if not conversation_ids:
+        return 0
+    message_ids = list(db.scalars(select(Message.id).where(Message.conversation_id.in_(conversation_ids))))
+    if not message_ids:
+        return 0
+    feedback_ids = db.scalars(select(MessageFeedback.id).where(MessageFeedback.message_id.in_(message_ids)))
+    keys = [f'unanswered:{message_id}' for message_id in message_ids]
+    keys += [f'feedback:{feedback_id}' for feedback_id in feedback_ids]
+    rows = db.scalars(select(QualitySignalOutbox).where(QualitySignalOutbox.signal_key.in_(keys))).all()
+    for row in rows:
+        payload = dict(row.payload) if isinstance(row.payload, dict) else {}
+        for field in ('question', 'answer_excerpt', 'comment', 'rewritten_query'):
+            if field in payload:
+                payload[field] = None
+        payload['retracted'] = True
+        row.payload = payload
+        row.created_at = _now()
+        row.forwarded_at = None
+        row.attempts = 0
+        row.last_error = None
+    db.flush()
+    return len(rows)
+
+
 def _client() -> httpx.Client:
     """Factored out so tests can monkeypatch it (same seam as
     app/api/portal_artifacts.py's own `_client()`)."""
@@ -334,7 +374,11 @@ def _flush_batch(db: Session, limit: int) -> tuple[int, int, bool]:
 def flush_outbox(db: Session, limit: int = 100) -> int:
     """Forward up to `limit` unforwarded outbox rows (oldest first) to
     Weave-Ingest in one request; returns how many were marked forwarded.
-    A no-op (0) while `INGEST_API_URL` or `INGEST_SERVICE_TOKEN` is unset.
+    Rows older than the retention periods are pruned first -- also while
+    `INGEST_API_URL` or `INGEST_SERVICE_TOKEN` is unset, when nothing is
+    forwarded (0) -- so the outbox never keeps question text indefinitely.
+    Up to MAX_FLUSH_BATCHES batches are sent per call, so a backlog drains
+    in one flush.
     Never raises for a transport/HTTP failure: it is logged and recorded
     on the rows for the next flush to retry.
 
@@ -342,28 +386,36 @@ def flush_outbox(db: Session, limit: int = 100) -> int:
     retracted meanwhile, see `_enqueue`) is NOT marked forwarded: the mark
     is conditional on the `created_at` that was read. It is re-queued
     instead (`_requeue_superseded`, which also covers overlapping flushes
-    reaching Weave-Ingest out of order), and after a successful request
-    ONE follow-up request sends the re-queued rows' latest state right away
-    -- otherwise it would wait for whichever request schedules the next
-    flush."""
-    if not settings.ingest_api_url or not settings.ingest_service_token:
-        return 0
-
+    reaching Weave-Ingest out of order); the next batch of the same flush
+    sends the re-queued rows' latest state right away."""
+    now = _now()
     db.execute(
         delete(QualitySignalOutbox).where(
             QualitySignalOutbox.forwarded_at.is_not(None),
-            QualitySignalOutbox.forwarded_at < _now() - FORWARDED_RETENTION,
-        )
+            QualitySignalOutbox.forwarded_at < now - FORWARDED_RETENTION,
+        ).execution_options(synchronize_session=False)
+    )
+    db.execute(
+        delete(QualitySignalOutbox).where(
+            QualitySignalOutbox.forwarded_at.is_(None),
+            QualitySignalOutbox.created_at < now - UNFORWARDED_RETENTION,
+        ).execution_options(synchronize_session=False)
     )
     db.commit()
 
-    forwarded, requeued, accepted = _flush_batch(db, limit)
-    if requeued and accepted:
-        # Only after a successful request: a failing Weave-Ingest is retried
-        # by the next flush, not hammered here. Bounded to one follow-up.
-        more, _, _ = _flush_batch(db, limit)
-        forwarded += more
-    return forwarded
+    if not settings.ingest_api_url or not settings.ingest_service_token:
+        return 0
+
+    # Drain the backlog (e.g. after a Weave-Ingest outage) batch by batch
+    # while Weave-Ingest accepts and there is work left, instead of only one
+    # batch per new signal.
+    total = 0
+    for _ in range(MAX_FLUSH_BATCHES):
+        forwarded, requeued, accepted = _flush_batch(db, limit)
+        total += forwarded
+        if not accepted or (forwarded < limit and not requeued):
+            break
+    return total
 
 
 def flush_outbox_in_background() -> None:

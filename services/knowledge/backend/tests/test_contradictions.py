@@ -549,3 +549,16 @@ def test_index_document_report_failure_never_fails_indexing(db, pipeline, monkey
         index_document(str(new.id))
     assert _status(new.id) == DocumentStatus.INDEXED
     mock_post.assert_called_once()
+
+
+def test_index_document_hands_the_check_to_the_post_index_task(db, pipeline, monkeypatch):
+    """The contradiction check and the S3 Vectors mirror run in their own
+    task, not inside the index run."""
+    _doc(db, texts=[FRIST_14])
+    new = _pending_doc(db)
+    enqueued = []
+    monkeypatch.setattr(tasks_module.post_index_document, 'delay', lambda *args: enqueued.append(args))
+    with patch.object(tasks_module.ingest_client, 'report_contradictions') as mock_report:
+        index_document(str(new.id))
+    mock_report.assert_not_called()
+    assert enqueued and enqueued[0][0] == str(new.id)

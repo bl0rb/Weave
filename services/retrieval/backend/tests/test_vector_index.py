@@ -222,6 +222,33 @@ def test_query_request_matches_service_model(monkeypatch):
     stubber.assert_no_pending_responses()
 
 
+def test_query_follows_next_token_pages(monkeypatch):
+    import boto3
+    from botocore.stub import Stubber
+
+    monkeypatch.setattr(settings, 's3vectors_bucket', 'weave-test')
+    real = boto3.client('s3vectors', region_name='eu-central-1', aws_access_key_id='x', aws_secret_access_key='y')
+    stubber = Stubber(real)
+    base = {
+        'vectorBucketName': 'weave-test', 'indexName': 'weave-chunks', 'queryVector': {'float32': [1.0]},
+        'topK': 3, 'returnDistance': True, 'returnMetadata': False,
+    }
+    stubber.add_response(
+        'query_vectors',
+        {'vectors': [{'key': '1', 'distance': 0.1}, {'key': '2', 'distance': 0.2}], 'distanceMetric': 'cosine', 'nextToken': 'page-2'},
+        base,
+    )
+    stubber.add_response(
+        'query_vectors',
+        {'vectors': [{'key': '3', 'distance': 0.3}], 'distanceMetric': 'cosine'},
+        {**base, 'nextToken': 'page-2'},
+    )
+    monkeypatch.setattr(vector_index, 'client', lambda: real)
+    with stubber:
+        assert vector_index.query([1.0], 3, None) == [(1, 0.1), (2, 0.2), (3, 0.3)]
+    stubber.assert_no_pending_responses()
+
+
 def test_query_wraps_client_errors(s3):
     s3(FakeS3Vectors(error=_client_error()))
     with pytest.raises(vector_index.VectorIndexError):

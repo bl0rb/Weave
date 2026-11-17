@@ -547,28 +547,59 @@ def _wants_task(row: QualitySignal) -> bool:
     return row.kind != 'feedback' or row.rating in TASK_RATINGS
 
 
-def _assign_gap_task(db: Session, row: QualitySignal, payload: dict, seen_at: datetime) -> ReviewTask:
+# Upper bound of active gap tasks a new question is compared with (the most
+# recently seen ones), so one space with a huge backlog cannot make every
+# signal batch slow.
+_GAP_CANDIDATES_MAX = 500
+
+
+def _gap_candidates(db: Session, collection_id: str, cache: dict | None) -> list[tuple[str, set[str]]]:
+    """`(task id, token set)` of the collection's active gap tasks, oldest
+    first; only the id and details columns are loaded, and the list is
+    cached per collection for the whole signal batch."""
+    if cache is not None and collection_id in cache:
+        return cache[collection_id]
+    rows = db.execute(
+        select(ReviewTask.id, ReviewTask.details, ReviewTask.created_at)
+        .where(
+            ReviewTask.collection_id == collection_id,
+            ReviewTask.kind == ReviewTaskKind.KNOWLEDGE_GAP.value,
+            ReviewTask.status.in_(REVIEW_TASK_ACTIVE_STATUSES),
+        )
+        .order_by(ReviewTask.last_seen_at.desc(), ReviewTask.id)
+        .limit(_GAP_CANDIDATES_MAX)
+    ).all()
+    rows = sorted(rows, key=lambda r: (_aware(r.created_at) or datetime.min.replace(tzinfo=timezone.utc), r.id))
+    candidates = [
+        (task_id, set((details or {}).get('tokens') or []) if isinstance(details, dict) else set())
+        for task_id, details, _created in rows
+    ]
+    if cache is not None:
+        cache[collection_id] = candidates
+    return candidates
+
+
+def _assign_gap_task(
+    db: Session, row: QualitySignal, payload: dict, seen_at: datetime, cache: dict | None = None
+) -> ReviewTask:
     question = payload.get('question') or payload.get('rewritten_query') or ''
     tokens = normalize_terms(question)
     cluster_key = gap_cluster_key(question, tokens)
     kind = ReviewTaskKind.KNOWLEDGE_GAP.value
     task = find_active_task(db, collection_id=row.collection_id, kind=kind, cluster_key=cluster_key)
     if task is None and tokens:
-        candidates = db.scalars(
-            select(ReviewTask)
-            .where(
-                ReviewTask.collection_id == row.collection_id,
-                ReviewTask.kind == kind,
-                ReviewTask.status.in_(REVIEW_TASK_ACTIVE_STATUSES),
-            )
-            .order_by(ReviewTask.created_at, ReviewTask.id)
-        ).all()
-        best_score = 0.0
-        for candidate in candidates:
-            stored = (candidate.details or {}).get('tokens') if isinstance(candidate.details, dict) else None
-            score = terms_similarity(tokens, stored or [])
-            if score > best_score:
-                task, best_score = candidate, score
+        scored = [
+            (score, index, task_id)
+            for index, (task_id, stored) in enumerate(_gap_candidates(db, row.collection_id, cache))
+            if (score := terms_similarity(tokens, stored)) > 0
+        ]
+        # Best score first, the oldest task on a tie; a cached candidate the
+        # batch has closed meanwhile is skipped.
+        for _score, _index, task_id in sorted(scored, key=lambda item: (-item[0], item[1])):
+            candidate = db.get(ReviewTask, task_id)
+            if candidate is not None and candidate.status in REVIEW_TASK_ACTIVE_STATUSES:
+                task = candidate
+                break
     if task is not None:
         if _aware(task.last_seen_at) < seen_at:
             task.last_seen_at = seen_at
@@ -578,6 +609,8 @@ def _assign_gap_task(db: Session, row: QualitySignal, payload: dict, seen_at: da
         title=question or 'Unbeantwortete Frage', details={'tokens': tokens, 'questions': [], 'rewritten_queries': []},
         seen_at=seen_at,
     )
+    if cache is not None and row.collection_id in cache:
+        cache[row.collection_id].append((task.id, set(tokens)))
     return task
 
 
@@ -602,7 +635,7 @@ def _assign_feedback_task(db: Session, row: QualitySignal, target: _Target, seen
     return task
 
 
-def ingest_signal(db: Session, signal_key: str, raw_payload: dict) -> None:
+def ingest_signal(db: Session, signal_key: str, raw_payload: dict, gap_cache: dict | None = None) -> None:
     """Upsert one signal (see module docstring). Raises SignalRejected for
     a malformed payload before writing anything."""
     payload = _sanitize(raw_payload)
@@ -645,7 +678,7 @@ def ingest_signal(db: Session, signal_key: str, raw_payload: dict) -> None:
             # task was closed: closed tasks are never reopened, so it opens or
             # joins an active task.
             if row.kind == 'unanswered':
-                task = _assign_gap_task(db, row, payload, seen_at)
+                task = _assign_gap_task(db, row, payload, seen_at, gap_cache)
             else:
                 task = _assign_feedback_task(db, row, target, seen_at)
             row.task_id = task.id
@@ -667,9 +700,12 @@ def ingest_signals(db: Session, signals: list[tuple[str, dict]]) -> int:
     The caller commits."""
     lock_review_tasks(db)
     accepted = 0
+    # Active gap tasks per collection, loaded once per batch (the batch holds
+    # the review-task lock, so no other writer changes them meanwhile).
+    gap_cache: dict = {}
     for signal_key, payload in signals:
         try:
-            ingest_signal(db, signal_key, payload)
+            ingest_signal(db, signal_key, payload, gap_cache)
         except SignalRejected as exc:
             logger.warning('quality signal %s skipped: %s', signal_key, exc)
             continue

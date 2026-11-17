@@ -319,11 +319,12 @@ def test_flush_respects_the_batch_limit(db_session, ingest):
     for index in range(3):
         _add_row(db_session, f'unanswered:{index}', created_at=now - timedelta(minutes=10 - index))
 
-    assert quality_signals.flush_outbox(db_session, limit=2) == 2
+    # One call drains the backlog, but never more than `limit` rows per request.
+    assert quality_signals.flush_outbox(db_session, limit=2) == 3
 
     assert [s['signal_key'] for s in ingest.bodies()[0]['signals']] == ['unanswered:0', 'unanswered:1']
-    assert quality_signals.flush_outbox(db_session, limit=2) == 1
     assert [s['signal_key'] for s in ingest.bodies()[1]['signals']] == ['unanswered:2']
+    assert quality_signals.flush_outbox(db_session, limit=2) == 0
 
 
 def test_flush_with_nothing_pending_sends_nothing(db_session, ingest):
@@ -523,3 +524,61 @@ def test_background_flush_swallows_unexpected_errors(monkeypatch, caplog):
     quality_signals.flush_outbox_in_background()  # must not raise
 
     assert 'Flushing the quality signal outbox failed' in caplog.text
+
+
+# --- retention, backlog draining, deleted conversations -------------------------
+
+
+def test_flush_prunes_old_unforwarded_rows_even_without_ingest_config(db_session):
+    now = datetime.now(timezone.utc)
+    _add_row(db_session, 'unanswered:1', created_at=now - quality_signals.UNFORWARDED_RETENTION - timedelta(days=1))
+    _add_row(db_session, 'unanswered:2', created_at=now - timedelta(days=1))
+
+    assert quality_signals.flush_outbox(db_session) == 0
+
+    assert [row.signal_key for row in _outbox(db_session)] == ['unanswered:2']
+
+
+def test_flush_drains_a_backlog_in_one_call(db_session, ingest):
+    now = datetime.now(timezone.utc)
+    for index in range(5):
+        _add_row(db_session, f'unanswered:{index + 1}', created_at=now - timedelta(minutes=10 - index))
+
+    assert quality_signals.flush_outbox(db_session, limit=2) == 5
+
+    assert len(ingest.requests) == 3
+    assert all(row.forwarded_at is not None for row in _outbox(db_session))
+
+
+def test_deleting_a_conversation_retracts_its_queued_signals_without_text(db_session, monkeypatch):
+    user, token = make_user_with_token(db_session, username='qs-delete', team='Personal')
+    db_session.commit()
+    _stub_runtime_chat(monkeypatch, NO_CONTEXT_TRACE)
+    response = client.post('/v1/chat', json={'bot_id': 'general-assistant', 'message': 'Wie hoch ist das Tagegeld?'}, headers=auth_headers(token))
+    assert response.status_code == 200
+    rows = _outbox(db_session)
+    assert len(rows) == 1 and rows[0].payload['question'] == 'Wie hoch ist das Tagegeld?'
+
+    deleted = client.delete(f"/v1/conversations/{response.json()['conversation_id']}", headers=auth_headers(token))
+
+    assert deleted.status_code == 204
+    rows = _outbox(db_session)
+    assert len(rows) == 1
+    assert rows[0].payload['retracted'] is True
+    assert rows[0].payload['question'] is None
+    assert rows[0].payload['rewritten_query'] is None
+    assert rows[0].forwarded_at is None
+
+
+def test_deleting_all_conversations_retracts_their_signals(db_session, monkeypatch):
+    user, token = make_user_with_token(db_session, username='qs-delete-all', team='Personal')
+    db_session.commit()
+    _stub_runtime_chat(monkeypatch, NO_CONTEXT_TRACE)
+    for question in ('Frage eins?', 'Frage zwei?'):
+        assert client.post('/v1/chat', json={'bot_id': 'general-assistant', 'message': question}, headers=auth_headers(token)).status_code == 200
+
+    assert client.delete('/v1/conversations', headers=auth_headers(token)).status_code == 204
+
+    rows = _outbox(db_session)
+    assert len(rows) == 2
+    assert all(row.payload['retracted'] is True and row.payload['question'] is None for row in rows)

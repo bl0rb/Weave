@@ -235,6 +235,10 @@ def process_pending_releases(db: Session, now: datetime | None = None) -> int:
         releases = db.scalars(
             select(DocumentRelease)
             .where(DocumentRelease.subscribers_notified_at.is_(None))
+            # Only releases delivered to Weave-Knowledge: the feed must not
+            # announce a version the chat cannot answer from yet. A pending
+            # or failed release is picked up once its delivery succeeds.
+            .where(DocumentRelease.status == 'sent')
             .order_by(DocumentRelease.created_at, DocumentRelease.id)
             .limit(_BATCH)
         ).all()

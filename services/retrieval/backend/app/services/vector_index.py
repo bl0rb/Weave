@@ -233,6 +233,10 @@ def query(vector: list[float], top_k: int, filter: dict | None) -> list[tuple[in
         raise VectorIndexError(f'{type(exc).__name__}: {exc}') from exc
 
 
+# Safety bound for following QueryVectors pages within one search.
+_MAX_QUERY_PAGES = 20
+
+
 def _query(vector: list[float], top_k: int, filter: dict | None) -> list[tuple[int, float]]:
     params: dict = {
         'vectorBucketName': settings.s3vectors_bucket,
@@ -245,17 +249,27 @@ def _query(vector: list[float], top_k: int, filter: dict | None) -> list[tuple[i
     if filter is not None:
         params['filter'] = filter
 
-    response = client().query_vectors(**params)
-
+    # QueryVectors pages its result (`nextToken`); follow the pages until
+    # top_k hits are in or the index has no more, so a top_k above the
+    # per-page limit is not silently truncated.
     results: list[tuple[int, float]] = []
-    try:
-        for item in response.get('vectors') or []:
-            try:
-                chunk_id = int(item['key'])
-            except (KeyError, TypeError, ValueError):
-                logger.warning('s3vectors: ignoring vector with non-chunk key %r', item.get('key'))
-                continue
-            results.append((chunk_id, float(item.get('distance', 1.0))))
-    except (AttributeError, TypeError) as exc:
-        raise VectorIndexError(f'unexpected QueryVectors response: {exc}') from exc
+    received = 0
+    for _ in range(_MAX_QUERY_PAGES):
+        response = client().query_vectors(**params)
+        try:
+            items = response.get('vectors') or []
+            next_token = response.get('nextToken')
+            for item in items:
+                received += 1
+                try:
+                    chunk_id = int(item['key'])
+                except (KeyError, TypeError, ValueError):
+                    logger.warning('s3vectors: ignoring vector with non-chunk key %r', item.get('key'))
+                    continue
+                results.append((chunk_id, float(item.get('distance', 1.0))))
+        except (AttributeError, TypeError) as exc:
+            raise VectorIndexError(f'unexpected QueryVectors response: {exc}') from exc
+        if not next_token or not items or received >= top_k:
+            break
+        params['nextToken'] = next_token
     return results

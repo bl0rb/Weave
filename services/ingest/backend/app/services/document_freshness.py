@@ -304,6 +304,10 @@ def _due_conditions(horizon: datetime) -> list:
     ]
 
 
+# details key recording when the task's reminder webhook was dispatched.
+WEBHOOK_SENT_KEY = 'webhook_sent_at'
+
+
 def run_review_tick(db: Session, now: datetime | None = None) -> dict:
     """One pass (see module docstring). Commits. Returns counts plus the
     `(job_id, collection_id)` pairs whose task was created -- the caller
@@ -339,6 +343,9 @@ def run_review_tick(db: Session, now: datetime | None = None) -> dict:
             )
             created.append((job.id, collection.id))
             continue
+        previous = task.details if isinstance(task.details, dict) else {}
+        if WEBHOOK_SENT_KEY in previous:
+            details = {**details, WEBHOOK_SENT_KEY: previous[WEBHOOK_SENT_KEY]}
         if task.details != details:
             task.details = details
             updated += 1
@@ -363,4 +370,27 @@ def run_review_tick(db: Session, now: datetime | None = None) -> dict:
         quality_tasks.resolve_task(task, ReviewTaskStatus.DISMISSED.value, user_id=None, note=_NOT_DUE_NOTE)
         dismissed += 1
     db.commit()
-    return {'created': created, 'updated': updated, 'dismissed': dismissed}
+    # Every active review_due task whose reminder webhook has not gone out
+    # yet -- the ones just created, and any whose dispatch failed or was
+    # interrupted after an earlier commit. The caller dispatches and marks
+    # them (mark_webhook_sent), so a reminder is never silently lost.
+    pending = [
+        (task.id, task.job_id, task.collection_id)
+        for task in db.scalars(
+            select(ReviewTask).where(
+                ReviewTask.kind == REVIEW_DUE_KIND, ReviewTask.status.in_(REVIEW_TASK_ACTIVE_STATUSES)
+            )
+        ).all()
+        if task.job_id and not (isinstance(task.details, dict) and task.details.get(WEBHOOK_SENT_KEY))
+    ]
+    return {'created': created, 'updated': updated, 'dismissed': dismissed, 'pending_webhooks': pending}
+
+
+def mark_webhook_sent(db: Session, task_id: str, now: datetime | None = None) -> None:
+    """Record on the review_due task that its `document.review_due` webhook
+    was dispatched (no commit)."""
+    task = db.get(ReviewTask, task_id)
+    if task is not None:
+        details = dict(task.details) if isinstance(task.details, dict) else {}
+        details[WEBHOOK_SENT_KEY] = (now or _now()).isoformat()
+        task.details = details
