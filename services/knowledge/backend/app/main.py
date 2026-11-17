@@ -12,6 +12,7 @@ from app.api.inventory import router as inventory_router
 from app.api.memory import router as memory_router
 from app.api.reindex import router as reindex_router
 from app.api.routes import router
+from app.api.stats import router as stats_router
 from app.core.config import settings
 from app.core.db import get_db
 from app.schemas.health import HealthResponse
@@ -69,3 +70,4 @@ app.include_router(indexing_router)
 app.include_router(reindex_router)
 app.include_router(memory_router)
 app.include_router(inventory_router)
+app.include_router(stats_router)

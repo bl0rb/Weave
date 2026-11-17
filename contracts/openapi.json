@@ -1,6 +1,170 @@
 {
   "components": {
     "schemas": {
+      "AdminCollectionStatistics": {
+        "properties": {
+          "public": {
+            "title": "Public",
+            "type": "integer"
+          },
+          "restricted": {
+            "title": "Restricted",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "public",
+          "restricted"
+        ],
+        "title": "AdminCollectionStatistics",
+        "type": "object"
+      },
+      "AdminDocumentStatistics": {
+        "properties": {
+          "by_status": {
+            "$ref": "#/components/schemas/JobStatusCounts"
+          },
+          "released": {
+            "title": "Released",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "uploaded_last_30_days": {
+            "title": "Uploaded Last 30 Days",
+            "type": "integer"
+          },
+          "versions": {
+            "title": "Versions",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "versions",
+          "by_status",
+          "released",
+          "uploaded_last_30_days"
+        ],
+        "title": "AdminDocumentStatistics",
+        "type": "object"
+      },
+      "AdminReviewTaskStatistics": {
+        "properties": {
+          "in_progress": {
+            "title": "In Progress",
+            "type": "integer"
+          },
+          "open": {
+            "title": "Open",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "open",
+          "in_progress"
+        ],
+        "title": "AdminReviewTaskStatistics",
+        "type": "object"
+      },
+      "AdminStatisticsResponse": {
+        "properties": {
+          "collections": {
+            "$ref": "#/components/schemas/AdminCollectionStatistics"
+          },
+          "documents": {
+            "$ref": "#/components/schemas/AdminDocumentStatistics"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "knowledge": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeStats"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "knowledge_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledge Error"
+          },
+          "review_tasks": {
+            "$ref": "#/components/schemas/AdminReviewTaskStatistics"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/AdminStorageStatistics"
+          },
+          "subscriptions": {
+            "title": "Subscriptions",
+            "type": "integer"
+          },
+          "teams": {
+            "title": "Teams",
+            "type": "integer"
+          },
+          "users": {
+            "$ref": "#/components/schemas/AdminUserStatistics"
+          }
+        },
+        "required": [
+          "documents",
+          "storage",
+          "collections",
+          "users",
+          "teams",
+          "review_tasks",
+          "subscriptions",
+          "generated_at"
+        ],
+        "title": "AdminStatisticsResponse",
+        "type": "object"
+      },
+      "AdminStorageStatistics": {
+        "properties": {
+          "by_backend": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/StorageBackendStatistics"
+            },
+            "title": "By Backend",
+            "type": "object"
+          },
+          "bytes": {
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "objects": {
+            "title": "Objects",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "objects",
+          "bytes",
+          "by_backend"
+        ],
+        "title": "AdminStorageStatistics",
+        "type": "object"
+      },
       "AdminSystemStatusResponse": {
         "properties": {
           "areas": {
@@ -137,6 +301,29 @@
           "items"
         ],
         "title": "AdminUserListResponse",
+        "type": "object"
+      },
+      "AdminUserStatistics": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "integer"
+          },
+          "admins": {
+            "title": "Admins",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "active",
+          "admins"
+        ],
+        "title": "AdminUserStatistics",
         "type": "object"
       },
       "AdminUserUpdateRequest": {
@@ -4978,6 +5165,32 @@
         "title": "JobStatus",
         "type": "string"
       },
+      "JobStatusCounts": {
+        "properties": {
+          "FAILED": {
+            "default": 0,
+            "title": "Failed",
+            "type": "integer"
+          },
+          "FINISHED": {
+            "default": 0,
+            "title": "Finished",
+            "type": "integer"
+          },
+          "PENDING": {
+            "default": 0,
+            "title": "Pending",
+            "type": "integer"
+          },
+          "RUNNING": {
+            "default": 0,
+            "title": "Running",
+            "type": "integer"
+          }
+        },
+        "title": "JobStatusCounts",
+        "type": "object"
+      },
       "JobVersionEntry": {
         "properties": {
           "content_sha256": {
@@ -5047,6 +5260,112 @@
           "items"
         ],
         "title": "JobVersionsResponse",
+        "type": "object"
+      },
+      "KnowledgeChunkStats": {
+        "properties": {
+          "avg_chars": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Chars"
+          },
+          "embedded": {
+            "default": 0,
+            "title": "Embedded",
+            "type": "integer"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "title": "KnowledgeChunkStats",
+        "type": "object"
+      },
+      "KnowledgeCollectionStats": {
+        "properties": {
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          },
+          "with_documents": {
+            "default": 0,
+            "title": "With Documents",
+            "type": "integer"
+          }
+        },
+        "title": "KnowledgeCollectionStats",
+        "type": "object"
+      },
+      "KnowledgeDocumentStats": {
+        "properties": {
+          "by_status": {
+            "$ref": "#/components/schemas/KnowledgeDocumentStatusCounts"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "title": "KnowledgeDocumentStats",
+        "type": "object"
+      },
+      "KnowledgeDocumentStatusCounts": {
+        "properties": {
+          "blocked": {
+            "default": 0,
+            "title": "Blocked",
+            "type": "integer"
+          },
+          "failed": {
+            "default": 0,
+            "title": "Failed",
+            "type": "integer"
+          },
+          "indexed": {
+            "default": 0,
+            "title": "Indexed",
+            "type": "integer"
+          },
+          "pending": {
+            "default": 0,
+            "title": "Pending",
+            "type": "integer"
+          },
+          "superseded": {
+            "default": 0,
+            "title": "Superseded",
+            "type": "integer"
+          }
+        },
+        "title": "KnowledgeDocumentStatusCounts",
+        "type": "object"
+      },
+      "KnowledgeEmbeddingModelStats": {
+        "properties": {
+          "chunks": {
+            "default": 0,
+            "title": "Chunks",
+            "type": "integer"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model"
+        ],
+        "title": "KnowledgeEmbeddingModelStats",
         "type": "object"
       },
       "KnowledgeMemoryAdminResponse": {
@@ -5193,6 +5512,22 @@
           "queued"
         ],
         "title": "KnowledgeMemoryRebuildResponse",
+        "type": "object"
+      },
+      "KnowledgeMemoryStats": {
+        "properties": {
+          "collections": {
+            "default": 0,
+            "title": "Collections",
+            "type": "integer"
+          },
+          "documents": {
+            "default": 0,
+            "title": "Documents",
+            "type": "integer"
+          }
+        },
+        "title": "KnowledgeMemoryStats",
         "type": "object"
       },
       "KnowledgeMemoryUpdateRequest": {
@@ -5429,6 +5764,90 @@
           "failed"
         ],
         "title": "KnowledgeRebuildStatusResponse",
+        "type": "object"
+      },
+      "KnowledgeStats": {
+        "properties": {
+          "chunks": {
+            "$ref": "#/components/schemas/KnowledgeChunkStats"
+          },
+          "collections": {
+            "$ref": "#/components/schemas/KnowledgeCollectionStats"
+          },
+          "documents": {
+            "$ref": "#/components/schemas/KnowledgeDocumentStats"
+          },
+          "embedding_models": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeEmbeddingModelStats"
+            },
+            "title": "Embedding Models",
+            "type": "array"
+          },
+          "generated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated At"
+          },
+          "memory": {
+            "$ref": "#/components/schemas/KnowledgeMemoryStats"
+          },
+          "storage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeStorageStats"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "vector_backend": {
+            "title": "Vector Backend",
+            "type": "string"
+          }
+        },
+        "required": [
+          "documents",
+          "chunks",
+          "collections",
+          "memory",
+          "vector_backend"
+        ],
+        "title": "KnowledgeStats",
+        "type": "object"
+      },
+      "KnowledgeStorageStats": {
+        "properties": {
+          "chunks_bytes": {
+            "default": 0,
+            "title": "Chunks Bytes",
+            "type": "integer"
+          },
+          "documents_bytes": {
+            "default": 0,
+            "title": "Documents Bytes",
+            "type": "integer"
+          },
+          "memory_bytes": {
+            "default": 0,
+            "title": "Memory Bytes",
+            "type": "integer"
+          },
+          "total_bytes": {
+            "default": 0,
+            "title": "Total Bytes",
+            "type": "integer"
+          }
+        },
+        "title": "KnowledgeStorageStats",
         "type": "object"
       },
       "LocaleUpdateRequest": {
@@ -11600,6 +12019,24 @@
         "title": "SourceCatalogListResponse",
         "type": "object"
       },
+      "StorageBackendStatistics": {
+        "properties": {
+          "bytes": {
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "objects": {
+            "title": "Objects",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "objects",
+          "bytes"
+        ],
+        "title": "StorageBackendStatistics",
+        "type": "object"
+      },
       "SubagentConfig": {
         "additionalProperties": false,
         "properties": {
@@ -14405,6 +14842,27 @@
           }
         },
         "summary": "Reindex Vectors Status"
+      }
+    },
+    "/api/v1/admin/statistics": {
+      "get": {
+        "operationId": "admin_statistics_api_v1_admin_statistics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminStatisticsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Admin Statistics",
+        "tags": [
+          "statistics-admin"
+        ]
       }
     },
     "/api/v1/auth/admin/bots": {
