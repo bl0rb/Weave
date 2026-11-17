@@ -74,6 +74,44 @@ read ([ADR-0009](docs/adr/0009-wissensgedaechtnis.md)). Admins adjust mode, mode
 limits and watch coverage and LLM usage under *Administration › KI ›
 Wissensgedächtnis*.
 
+### Feedback, answer quality and freshness (unreleased)
+
+**Feedback and knowledge gaps.** Under every chat answer people mark it as
+*Hilfreich*, *Falsch* or *Veraltet*, optionally with a comment. Weave-API keeps
+the rating and forwards it, together with every question the bot could not
+answer from sources ("no sources, no answer"), to Weave-Ingest — anonymously,
+without the name, account or team of the person who asked. Ingest bundles
+similar unanswered questions per knowledge space and turns them, wrong or
+outdated ratings, due reviews and possible contradictions into
+**Prüfaufgaben** for the owners and members of the space (portal page
+*Prüfaufgaben*, with a quality summary). `QUALITY_SIGNALS_ENABLED=false` on
+Weave-API stops forwarding; ratings are still kept.
+
+**Answer quality.** Citation markers and source cards open the cited passage
+in place — the chunk highlighted between its neighbours, with heading path,
+page and a link to the original — always within the reader's own rights. The
+retrieval harness (`python -m app.cli eval`) adds Precision@k, nDCG@k and JSON
+output; golden entries may carry an `answer:` block. Weave-Runtime evaluates
+answers on the same golden set and compares models side by side
+(`python -m app.eval_cli answers --bot … --endpoint A --endpoint B`), scoring
+retrieval (context recall/precision), factual correctness (key facts, token
+F1, optional LLM judge) and source grounding (faithfulness, citation coverage
+and precision) separately, plus abstention on unanswerable questions. See
+[services/retrieval/README.md](services/retrieval/README.md) and
+[services/runtime/README.md](services/runtime/README.md).
+
+**Freshness and changes.** Documents get a review date — from the frontmatter
+field `review_due` or a space's review interval — and a reminder for the
+responsible people when it comes up (Prüfaufgabe plus the webhook event
+[`document.review_due`](contracts/events/document.review_due.md), e.g. to
+n8n for mail). Versions can be compared section by section with a plain-language
+summary. On the portal page *Änderungen* people ask "Was hat sich an unseren
+Reiseregeln geändert?", subscribe to topics or spaces and get a feed of new and
+changed documents they may read. After indexing, Weave-Knowledge flags passages
+in different documents of one space that are very similar but state different
+figures or dates as a *possible* contradiction for review — a heuristic, never
+an automatic decision.
+
 ### New in v0.7.17
 
 **Websites and intranet pages as sources.** Next to files and Confluence, a
@@ -330,6 +368,8 @@ Only PostgreSQL and Redis have no host port at all.
 | Weave-API | Runtime | Run a chat turn, list bots | `RUNTIME_API_TOKEN` |
 | Weave-API | Retrieval | Resolve readable collections (never search) | `RETRIEVAL_API_TOKEN` |
 | Weave-API | Ingest | Redeem the single-use login handoff code (ADR-0006) | `HANDOFF_SECRET` |
+| Weave-API | Retrieval | Load a cited passage with its neighbouring chunks for the "open at passage" view, within the caller's read rights | `RETRIEVAL_API_TOKEN` |
+| Weave-API | Ingest | Forward anonymous quality signals (answer feedback, unanswered questions) | `INGEST_SERVICE_TOKEN` (= `WEAVE_KNOWLEDGE_INGEST_API_TOKEN`) |
 | Runtime | Retrieval | Hybrid search and collection scope | `RETRIEVAL_API_TOKEN` |
 | Runtime | Ingest | Fresh chat-provider snapshot and the managed n8n bots (ADR-0007) | `CHAT_CONFIG_SERVICE_TOKEN` |
 | Runtime | n8n | Delegate a whole turn | `X-Weave-Signature` (HMAC over the exact body) and a target that must match `N8N_ALLOWED_BASE_URLS` |
@@ -338,6 +378,7 @@ Only PostgreSQL and Redis have no host port at all.
 | Tools | Ingest | Resolve a technical identity or an MCP OAuth access token to a user and scope | `TOOLS_INTROSPECTION_TOKEN` |
 | Ingest | Knowledge | `document.released` (the only regular indexing trigger), `collection.updated`, indexing status | HMAC-SHA256 over the raw body, `X-Weave-Ingest-Signature` |
 | Knowledge | Ingest | Fetch the released Markdown snapshot and the collection registry | `WEAVE_INGEST_API_TOKEN` — must belong to an Ingest **administrator** |
+| Knowledge | Ingest | Report possible contradictions between documents of a space for human review | `WEAVE_INGEST_API_TOKEN` |
 | n8n | Tools | Search as the person who asked | Two headers: `X-Tools-Service-Token` *and* a short-lived delegation token |
 
 Three of these are effectively master keys and deserve the strictest handling:
