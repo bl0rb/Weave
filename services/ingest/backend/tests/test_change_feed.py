@@ -18,7 +18,9 @@ from tests.test_document_freshness import _db, _setup, _space, _user, make_doc, 
 
 
 def _word() -> str:
-    return f'reiseregel{uuid.uuid4().hex[:8]}'
+    # Ends in 'q' so the keyword normalizer's suffix stemming (-e, -en, -s,
+    # ...) never shortens it -- a random hex tail ending in 'e' would.
+    return f'reiseregel{uuid.uuid4().hex[:8]}q'
 
 
 def _run(*, deliver: bool = True) -> int:
