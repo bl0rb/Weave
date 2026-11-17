@@ -1166,6 +1166,7 @@ def _search_trace_fields(
             rank=getattr(chunk, 'rank', None) or position,
             document_id=chunk.document_id,
             chunk_id=chunk.chunk_id,
+            source_job_id=getattr(chunk, 'source_job_id', None),
             original_filename=chunk.original_filename,
             title=getattr(chunk, 'title', None),
             collection=chunk.collection,

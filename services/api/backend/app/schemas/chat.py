@@ -46,6 +46,9 @@ class ChatResponse(BaseModel):
     GET /v1/conversations/{id})."""
 
     conversation_id: uuid.UUID
+    # Id of the persisted assistant Message -- the handle for
+    # PUT/DELETE /v1/messages/{message_id}/feedback (app/api/feedback.py).
+    message_id: int | None = None
     answer: str
     sources: list | dict | None = None
     trace: dict | None = None

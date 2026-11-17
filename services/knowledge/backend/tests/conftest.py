@@ -47,3 +47,17 @@ def override_get_db():
 app.dependency_overrides[get_db] = override_get_db
 
 client = TestClient(app, headers=AUTH_HEADERS)
+
+
+import pytest  # noqa: E402
+
+from app.workers import tasks as _tasks  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _post_index_runs_synchronously(monkeypatch):
+    """The index pipeline hands the S3 Vectors mirror and the contradiction
+    check to the `post_index_document` task (app/workers/tasks.py); there is
+    no broker in tests, so run it right away -- what the worker would do.
+    tests/test_contradictions.py checks the enqueue itself."""
+    monkeypatch.setattr(_tasks.post_index_document, 'delay', lambda *args: _tasks.post_index_document(*args))

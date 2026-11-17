@@ -10,8 +10,10 @@ export interface ChatStreamCallbacks {
    * token; always safe to render `message` verbatim. */
   onStatus?: (event: ChatStreamStatusEvent) => void;
   /** The answer is complete and persisted. The stream may still carry a
-   * `title` event after this; the outcome resolves only when it ends. */
-  onDone?: () => void;
+   * `title` event after this; the outcome resolves only when it ends.
+   * `messageId` is the persisted assistant message's id (`done.message_id`,
+   * the answer-feedback handle), `undefined` on an older backend. */
+  onDone?: (messageId?: number) => void;
 }
 
 export type ChatStreamOutcome =
@@ -60,7 +62,7 @@ export async function consumeChatStream(
         // Keep reading: Weave-API sends the first answer's `title` after
         // `done` and then closes the stream.
         done = true;
-        callbacks.onDone?.();
+        callbacks.onDone?.(typeof event.message_id === 'number' ? event.message_id : undefined);
         break;
       case 'title':
         // Nothing to render here -- the conversation list refresh after

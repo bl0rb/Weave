@@ -9,6 +9,7 @@ import type { AdminProvider } from '@/lib/auth-types';
 import type { WorkerLogsResponse } from '@/lib/api';
 import { AdminPageShell, PageHead, oldTabRedirectUrl, useAdminJson } from '@/components/admin/admin-page-shared';
 import { LoadingState } from '@/components/admin/admin-shared';
+import { AdminStatisticsSection } from '@/components/admin/admin-statistics';
 import { useI18n } from '@/i18n/provider';
 
 // Narrow local shapes of the data each admin tab already fetches — only the
@@ -271,6 +272,8 @@ function Overview() {
           ))}
         </div>
       </section>
+
+      <AdminStatisticsSection />
 
       <section className="rounded-xl border border-slate-200 bg-white p-5" aria-labelledby="attention-title">
         <div className="mb-4 flex flex-wrap items-center gap-3">

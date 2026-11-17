@@ -18,6 +18,7 @@ import { BackLink } from '@/components/back-link';
 import { TechnicalDetailsButton } from './technical-details';
 import { FindingsList, HighlightedMarkdown } from './quality-highlights';
 import { DocumentAnalysisPanel } from './document-analysis';
+import { DocumentReviewPanel } from './document-review-panel';
 import { useIndexingStatus } from '@/lib/use-indexing-status';
 import { currentReleaseStatus } from '@/lib/indexing-status';
 import { useI18n } from '@/i18n/provider';
@@ -298,6 +299,8 @@ function ReviewDocumentContent({ id, initialEdit }: { id: string; initialEdit: b
             {!deleting && <Button className="w-full" variant="ghost" disabled={saving} onClick={() => setDeleting(true)}><Trash2 size={16} />{t('portal.reviews.deleteDocument')}</Button>}
           </div>}
         </>}
+        {/* Re-keyed on the loaded review dates, so a reload replaces what the panel changed locally. */}
+        <DocumentReviewPanel key={`${preview.review?.review_due_at ?? ''}|${preview.review?.last_reviewed_at ?? ''}`} jobId={id} review={preview.review} released={Boolean(preview.release)} canManage={preview.can_release || Boolean(preview.can_edit)} />
         <TechnicalDetailsButton jobId={id} className="w-full" onJobChanged={load} extraActions={preview.release && user?.role === 'admin' ? <Button className="w-full whitespace-normal h-auto py-3" variant="outline" disabled={downloadingDiagnostics} onClick={() => void downloadDiagnostics()}><Download size={16} />{downloadingDiagnostics ? t('portal.reviews.diagnosticsDownloading') : t('portal.reviews.diagnosticsDownload')}</Button> : undefined} />
       </aside></div></>}
     {deleting && preview && <ConfirmDialog title={t('portal.reviews.deleteDocument')} body={<p>{t('portal.reviews.deleteDialogBodyPrefix')} <strong className="text-slate-950">{preview.original_filename}</strong> {t('portal.reviews.deleteDialogBodySuffix')}</p>} confirmLabel={t('portal.reviews.deleteDocument')} onClose={() => setDeleting(false)} onConfirm={async () => { await apiSend(`/api/v1/jobs/${encodeURIComponent(id)}`, { method: 'DELETE' }); router.push('/reviews'); router.refresh(); }} />}

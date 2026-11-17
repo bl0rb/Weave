@@ -21,8 +21,12 @@ supports three subcommands:
         frontend is actually published on, a half-configured federated
         login (the four settings across three services that have to agree
         before anyone can sign in to the chat with their Ingest account),
-        and a deploy/.env that no longer matches weave.yaml -- values added
-        by hand, or values declared since the last render.
+        an S3 Vectors index (ADR-0010) that Retrieval queries while
+        Knowledge does not write it, or that lacks its bucket, its region
+        (Compose) or half of a static key pair, Retrieval's S3 Vectors
+        limits out of range (validated on every backend), and a deploy/.env
+        that no longer matches weave.yaml -- values added by hand, or values
+        declared since the last render.
         Exits non-zero on any finding. Never prints a secret's actual value
         -- only a short fingerprint, so the check's output itself is safe to
         paste into a chat or a ticket.
@@ -77,6 +81,10 @@ KNOWN_EMBEDDING_DIMENSIONS: dict[str, int] = {
 # Hosts for which `check` treats a CORS origin as "this machine" -- see the
 # CORS_ORIGINS/FRONTEND_PORT check below.
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]")
+
+# Accepted VECTOR_BACKEND values -- the same tuple Weave-Knowledge and
+# Weave-Retrieval validate at startup (app/core/config.py, ADR-0010).
+VECTOR_BACKENDS = ("pgvector", "s3vectors")
 
 
 def _split_origin(origin: str) -> tuple[str, str]:
@@ -661,7 +669,118 @@ def check(
                         f"absichtlich still ignoriert wird."
                     ))
 
-    # --- 7) is the .env still what weave.yaml would render? -----------------
+    # --- 7) the optional S3 Vectors index (ADR-0010) -----------------------
+    # Each service has its own on/off key (KNOWLEDGE_VECTOR_BACKEND,
+    # RETRIEVAL_VECTOR_BACKEND -- both read as VECTOR_BACKEND inside the
+    # container, so that is also the name in a per-service .env given via
+    # --service-env). The one combination that fails QUIETLY is Retrieval
+    # on s3vectors while Knowledge is not: nobody writes the index, an empty
+    # or stale index is no error for QueryVectors, the pgvector fallback
+    # never kicks in and vector hits just go missing behind the fulltext
+    # leg. The other two findings would only surface at container start.
+    # Unset or blank means 'pgvector' in both services (their settings
+    # normalize '' to the default), so only an unknown value is flagged.
+    def vector_backend(service: str, key: str) -> str:
+        var = "VECTOR_BACKEND" if service in service_env_overrides else key
+        raw = lookup(service, var)
+        if raw is None:
+            return "pgvector"
+        return raw.strip().lower() or "pgvector"
+
+    backends = {
+        "knowledge": vector_backend("knowledge", "KNOWLEDGE_VECTOR_BACKEND"),
+        "retrieval": vector_backend("retrieval", "RETRIEVAL_VECTOR_BACKEND"),
+    }
+    for service, backend in backends.items():
+        if backend not in VECTOR_BACKENDS:
+            findings.append(Finding(
+                f"{service}: VECTOR_BACKEND {backend!r} ist unbekannt (erlaubt: "
+                f"{', '.join(VECTOR_BACKENDS)}) -- der Dienst verweigert den Start."
+            ))
+    if backends["retrieval"] == "s3vectors" and backends["knowledge"] != "s3vectors":
+        findings.append(Finding(
+            "retrieval.RETRIEVAL_VECTOR_BACKEND ist 's3vectors', "
+            "knowledge.KNOWLEDGE_VECTOR_BACKEND aber nicht: niemand schreibt den "
+            "S3-Vectors-Index, die Vektorsuche liefert still immer weniger Treffer "
+            "(kein Fehler, also auch kein pgvector-Fallback). Erst Knowledge "
+            "umstellen, `python -m app.cli s3vectors init` und `sync`, dann "
+            "Retrieval (docs/adr/0010-s3-vectors-index.md)."
+        ))
+    for service, backend in backends.items():
+        if backend != "s3vectors":
+            continue
+        if not (lookup(service, "S3VECTORS_BUCKET") or "").strip():
+            findings.append(Finding(
+                f"{source_label(service, 'S3VECTORS_BUCKET')} ist leer, obwohl "
+                f"{service} VECTOR_BACKEND=s3vectors nutzt -- der Dienst "
+                f"verweigert den Start."
+            ))
+        # botocore resolves an empty region from AWS_DEFAULT_REGION or the
+        # config profile only -- not AWS_REGION, not the instance metadata.
+        # deploy/.env is the Compose stack's, and docker-compose.weave.yml
+        # passes neither into the containers: empty never works there. (A
+        # per-service .env may run where AWS_DEFAULT_REGION or a profile
+        # exists, and EKS/IRSA injects AWS_DEFAULT_REGION -- not flagged.)
+        if (
+            service not in service_env_overrides
+            and not (lookup(service, "S3VECTORS_REGION") or "").strip()
+        ):
+            findings.append(Finding(
+                f"{source_label(service, 'S3VECTORS_REGION')} ist leer, obwohl "
+                f"{service} VECTOR_BACKEND=s3vectors nutzt -- der Compose-Stack "
+                f"reicht kein AWS_DEFAULT_REGION in den Container, jeder S3-Vectors-"
+                f"Aufruf scheitert mit NoRegionError (Knowledge loggt nur eine "
+                f"Warnung, Retrieval faellt auf pgvector zurueck)."
+            ))
+        key_id = bool((lookup(service, "S3VECTORS_ACCESS_KEY_ID") or "").strip())
+        secret = bool((lookup(service, "S3VECTORS_SECRET_ACCESS_KEY") or "").strip())
+        if key_id != secret:
+            findings.append(Finding(
+                f"{service}: S3VECTORS_ACCESS_KEY_ID und "
+                f"S3VECTORS_SECRET_ACCESS_KEY nur halb gesetzt -- entweder beide "
+                f"oder keinen (Standard-AWS-Credential-Chain)."
+            ))
+
+    # Retrieval validates these two on EVERY backend, pgvector included
+    # (pydantic Field bounds in services/retrieval/backend/app/core/
+    # config.py): a value out of range stops the default deployment, too.
+    overfetch = max_top_k = None
+    for var, low, high in (
+        ("S3VECTORS_OVERFETCH", 1, 20),
+        ("S3VECTORS_MAX_TOP_K", 1, None),
+    ):
+        raw = (lookup("retrieval", var) or "").strip()
+        if not raw:
+            continue
+        try:
+            number = int(raw)
+        except ValueError:
+            number = None
+        if number is None or number < low or (high is not None and number > high):
+            allowed = f"{low}..{high}" if high is not None else f">= {low}"
+            findings.append(Finding(
+                f"{source_label('retrieval', var)} = {raw!r} liegt nicht in "
+                f"{allowed} -- Weave-Retrieval verweigert den Start, auch mit "
+                f"VECTOR_BACKEND=pgvector."
+            ))
+        elif var == "S3VECTORS_OVERFETCH":
+            overfetch = number
+        else:
+            max_top_k = number
+    if backends["retrieval"] == "s3vectors" and overfetch and max_top_k:
+        try:
+            search_top_k = int((lookup("retrieval", "SEARCH_TOP_K") or "").strip())
+        except ValueError:
+            search_top_k = None
+        if search_top_k and max_top_k < search_top_k * overfetch:
+            findings.append(Finding(
+                f"retrieval.S3VECTORS_MAX_TOP_K ({max_top_k}) ist kleiner als "
+                f"SEARCH_TOP_K * S3VECTORS_OVERFETCH ({search_top_k} * {overfetch}) "
+                f"-- jede Abfrage wird gekappt, und jeder Treffer, den die "
+                f"Postgres-Nachpruefung verwirft, kostet Recall gegenueber pgvector."
+            ))
+
+    # --- 8) is the .env still what weave.yaml would render? -----------------
     # deploy/.env is generated. Anything in it that weave.yaml does not
     # declare got there by hand -- and anything weave.yaml declares that is
     # missing from it means weave.yaml moved on and nobody re-rendered. Both

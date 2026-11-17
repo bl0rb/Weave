@@ -862,6 +862,119 @@ ab:
   neustartenden Embeddings-Pod übersteht, bevor es endgültig auf `failed`
   gesetzt wird. Details: `services/knowledge/README.md`.
 
+### 7.8 Optionaler Vektorindex: Amazon S3 Vectors
+
+Nur für Betrieb auf AWS und standardmäßig aus. Mit `VECTOR_BACKEND=pgvector`
+(Vorgabe) läuft die Vektorsuche wie bisher in Postgres; es gibt keinen
+Netzwerkzugriff zu AWS und keinen boto3-Import. Mit `s3vectors` spiegelt
+Weave-Knowledge die Chunk-Embeddings zusätzlich in einen S3-Vectors-Index,
+und Weave-Retrieval holt dort die Kandidaten für das Vektor-Bein. Postgres
+bleibt maßgeblich: Chunks, Embeddings, Volltext, Metadaten und Berechtigungen
+liegen weiter dort, und jeder S3-Treffer wird in Postgres mit derselben
+`apply_filters()`-Abfrage nachgeprüft. Entscheidung und Begründung: ADR-0010;
+Datensatzform: `contracts/chunk-store.md`, Abschnitt „Optionaler Vektorindex“.
+
+**Einstellungen** (`weave.yaml`). Die Verbindungswerte sind geteilt, weil
+beide Dienste denselben Index meinen müssen. Der Schalter ist ein eigener
+Schlüssel pro Dienst; Compose-Datei und Chart reichen ihn im Container als
+`VECTOR_BACKEND` weiter:
+
+| `weave.yaml`-Schlüssel | Dienst | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `KNOWLEDGE_VECTOR_BACKEND` | Knowledge (API + Worker) | `pgvector` | `s3vectors` = Index schreiben |
+| `RETRIEVAL_VECTOR_BACKEND` | Retrieval | `pgvector` | `s3vectors` = Index abfragen |
+| `S3VECTORS_BUCKET` | beide | leer | Vector Bucket, Pflicht bei `s3vectors`; wird außerhalb von Weave angelegt |
+| `S3VECTORS_INDEX` | beide | `weave-chunks` | Index im Bucket |
+| `S3VECTORS_REGION` | beide | leer | **Setzen.** Leer heißt: botocore liest nur `AWS_DEFAULT_REGION` und die Region des AWS-Profils, weder `AWS_REGION` noch die Instanz-Metadaten. Ohne Region scheitert jeder Aufruf (`NoRegionError`). Leer geht nur, wo `AWS_DEFAULT_REGION` injiziert wird (EKS mit IRSA), nicht bei EKS Pod Identity oder bloßer Node-Rolle. Im Compose-Stack nie, `check` meldet es dort |
+| `S3VECTORS_ENDPOINT_URL` | beide | leer | nur für Tests/Emulatoren |
+| `S3VECTORS_ACCESS_KEY_ID` / `S3VECTORS_SECRET_ACCESS_KEY` | beide | leer | beide leer = Standard-Credential-Chain (IAM-Rolle, IRSA, Instance Profile). Das Geheimnis kommt aus `WEAVE_S3VECTORS_SECRET_ACCESS_KEY` |
+| `S3VECTORS_OVERFETCH` | Retrieval | `4` | fragt `top_k × Faktor` Kandidaten ab (1–20). Der Bereich wird bei **jedem** Backend beim Start geprüft, auch bei `pgvector` |
+| `S3VECTORS_MAX_TOP_K` | Retrieval | `100` | Obergrenze für `topK`; mindestens `SEARCH_TOP_K × S3VECTORS_OVERFETCH`. Muss bei **jedem** Backend ≥ 1 sein |
+| `S3VECTORS_FALLBACK_PGVECTOR` | Retrieval | `true` | bei S3-Fehler pgvector statt leerem Vektor-Bein |
+
+**IAM.** Weave-Knowledge braucht `s3vectors:PutVectors`, `DeleteVectors`,
+`ListVectors`, `GetIndex`, `GetVectors` und für `init` zusätzlich
+`CreateIndex`. Weave-Retrieval braucht `s3vectors:QueryVectors` und
+`GetVectors`, denn eine gefilterte Abfrage verlangt beides. Auf EKS geht das
+per IRSA über `serviceAccount.annotations` des Charts
+(`eks.amazonaws.com/role-arn`). Alle Workloads des Charts teilen sich einen
+ServiceAccount, die Rolle braucht also beide Rechtemengen. Auf EC2 mit
+Compose genügt ein Instance Profile; aus einem Container heraus braucht IMDSv2
+dafür ein Hop-Limit von mindestens 2. Die Zugangsdaten kommen dann aus den
+Instanz-Metadaten, die Region nicht: `S3VECTORS_REGION` trotzdem setzen.
+
+**Einschalten (Reihenfolge verbindlich).** Ein leerer oder halb gefüllter
+Index ist für `QueryVectors` kein Fehler. Der Fallback greift dann nicht, die
+Vektortreffer fehlen still, und die Volltextsuche verdeckt das. Deshalb:
+
+```bash
+# 1. Nur Knowledge umstellen (API und Worker), Retrieval bleibt auf pgvector.
+#    Die Werte entweder in weave.yaml eintragen oder beim Rendern exportieren:
+KNOWLEDGE_VECTOR_BACKEND=s3vectors S3VECTORS_BUCKET=<bucket> \
+  S3VECTORS_REGION=<region> python scripts/weave_config.py render
+docker compose -f deploy/docker-compose.weave.yml up -d weave-knowledge weave-knowledge-worker
+
+# 2. Index anlegen bzw. Dimension/Metrik eines bestehenden prüfen, dann
+#    den Bestand schreiben. sync wiederholen, bis er mit Exit-Code 0 endet.
+docker compose -f deploy/docker-compose.weave.yml exec weave-knowledge \
+  python -m app.cli s3vectors init
+docker compose -f deploy/docker-compose.weave.yml exec weave-knowledge \
+  python -m app.cli s3vectors sync
+docker compose -f deploy/docker-compose.weave.yml exec weave-knowledge \
+  python -m app.cli s3vectors status --count-vectors
+
+# 3. Erst jetzt Retrieval umstellen.
+KNOWLEDGE_VECTOR_BACKEND=s3vectors RETRIEVAL_VECTOR_BACKEND=s3vectors \
+  S3VECTORS_BUCKET=<bucket> S3VECTORS_REGION=<region> \
+  python scripts/weave_config.py render
+python scripts/weave_config.py check
+docker compose -f deploy/docker-compose.weave.yml up -d weave-retrieval
+```
+
+Im Cluster gilt dieselbe Reihenfolge: erst `config.knowledge`, dann
+`kubectl exec` in einen Knowledge-Pod für `init`/`sync`, erst danach
+`config.retrieval`. Abschalten geht umgekehrt: erst Retrieval, dann
+Knowledge. `check` meldet Retrieval auf `s3vectors`, solange Knowledge auf
+`pgvector` steht, außerdem einen fehlenden Bucket, eine leere Region (in der
+`deploy/.env`, also für Compose), ein halbes Schlüsselpaar, ein leeres
+`RETRIEVAL_VECTOR_BACKEND` (Retrieval startet damit nicht; Compose ersetzt es
+durch `pgvector`, das Helm-Chart nicht), `S3VECTORS_OVERFETCH` außerhalb
+1–20 oder `S3VECTORS_MAX_TOP_K` unter 1 (beides bei jedem Backend) und, bei
+Retrieval auf `s3vectors`, ein `S3VECTORS_MAX_TOP_K` unter
+`SEARCH_TOP_K × S3VECTORS_OVERFETCH`. `init` und `sync` verweigern mit Exit-Code 2, solange
+`VECTOR_BACKEND` in diesem Container nicht `s3vectors` ist.
+
+**Laufender Betrieb.** Knowledge schreibt nach jedem erfolgreichen
+Index-/Reindex-Commit und löscht Vektoren ersetzter oder zurückgezogener
+Chunks nach dem Commit. Das geschieht best effort: Ein S3-Fehler erscheint als
+Warnung im Knowledge-Log (mit Dokument-ID) und lässt nie eine Indizierung
+scheitern. Verpasste Schreib- oder Löschvorgänge kosten nur Recall, weil
+Retrieval nachprüft. `sync --prune` regelmäßig laufen lassen (z. B. nächtlich
+als Cronjob) repariert sie und entfernt überzählige Vektoren.
+
+**Fehler und Fallback.** Eine S3-Abfrage hat ein festes Budget von ca. 3 s
+(1 s Connect, 2 s Read, keine Retries). Nach einem Fehler fragt Retrieval
+S3 Vectors 30 s lang gar nicht. Mit `S3VECTORS_FALLBACK_PGVECTOR=true` läuft
+dann die normale pgvector-Suche, sonst bleibt das Vektor-Bein leer und nur
+die Volltextsuche antwortet. `trace.vector_backend` in der Suchantwort zeigt,
+wer geantwortet hat (`pgvector`, `s3vectors`, `pgvector-fallback`,
+`s3vectors-error`). Für die Gegenprobe aus 7.6 sollte dort `s3vectors`
+stehen.
+
+**Kosten und Latenz.** Jede Suche kostet einen Roundtrip zu AWS plus eine
+Nachprüfungsabfrage in Postgres. S3 Vectors rechnet nach gespeicherten
+Vektoren, Schreib- und Abfragevolumen ab, und ein `sync` schreibt den ganzen
+Bestand. Die Embeddings bleiben zusätzlich in Postgres gespeichert; der
+Speicherbedarf dort sinkt also nicht. Ob sich das lohnt, hängt vom Bestand
+ab. Für kleine Installationen ist pgvector meist schneller und billiger.
+
+**Modell- oder Dimensionswechsel (7.4/7.5).** Ein Index hat eine feste
+Dimension und Metrik und wird nie umdimensioniert. Vor dem Reindex einen
+**neuen** `S3VECTORS_INDEX` setzen (Knowledge und Retrieval, geteilt), dann
+`init`, dann `reindex` bzw. `sync`. Den alten Index danach in AWS löschen.
+`init` gegen den alten Indexnamen bricht mit einer klaren Meldung ab, weil die
+Dimension nicht passt.
+
 ---
 
 ## 8. Anmeldung einrichten
@@ -1240,6 +1353,8 @@ python scripts/weave_config.py check
 #        ein Ticket zu kopieren)
 #      - SEARCH_TOP_K > RERANKER_MAX_DOCUMENTS, sobald RERANK_PROVIDER=api
 #      - eine EMBEDDING_DIMENSION, die nicht zum konfigurierten Modell passt
+#      - S3 Vectors (Abschnitt 7.8): Retrieval auf s3vectors, Knowledge
+#        nicht; fehlender Bucket; halbes Schlüsselpaar
 #    Exit-Code ungleich 0 bei jedem Befund.
 ```
 

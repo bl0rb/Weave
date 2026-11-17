@@ -462,6 +462,114 @@ shared:
       order and the only trace is `rerank_error: true` in the response
       trace (docs/betrieb.md section 7).
 
+  # --- Optional vector index: Amazon S3 Vectors (ADR-0010) -----------------
+  # OPTIONAL and AWS-only. Off by default: knowledge.KNOWLEDGE_VECTOR_BACKEND
+  # and retrieval.RETRIEVAL_VECTOR_BACKEND (below, per service) both default
+  # to 'pgvector', and then none of the S3VECTORS_* values here has any
+  # effect (only retrieval's own S3VECTORS_OVERFETCH/S3VECTORS_MAX_TOP_K
+  # below are range-checked at startup even then). Postgres stays authoritative either way: chunks, embeddings,
+  # fulltext, metadata and permissions never leave it; the index is a
+  # derived copy that Weave-Knowledge alone writes and Weave-Retrieval only
+  # queries -- every hit is re-checked in Postgres
+  # (contracts/chunk-store.md, "Optionaler Vektorindex").
+  #
+  # The CONNECTION values below are shared: both services must talk to the
+  # SAME bucket and index, or Retrieval queries an index nobody fills. The
+  # on/off switch is deliberately NOT shared (two keys, both read as
+  # VECTOR_BACKEND inside the container) -- switching on is ordered:
+  # Knowledge first, `python -m app.cli s3vectors init` and `sync` in a
+  # knowledge container until sync exits 0, only then Retrieval
+  # (docs/betrieb.md, "Optionaler Vektorindex"). `check` flags Retrieval on
+  # s3vectors while Knowledge is not.
+  #
+  # IAM: Knowledge needs s3vectors:PutVectors, DeleteVectors, ListVectors,
+  # GetIndex, GetVectors and CreateIndex (the latter for `init` only);
+  # Retrieval needs s3vectors:QueryVectors and GetVectors (a filtered query
+  # requires both).
+  S3VECTORS_BUCKET:
+    secret: false
+    value: ""
+    type: string
+    required: false
+    targets:
+      - {service: knowledge, var: S3VECTORS_BUCKET}
+      - {service: retrieval, var: S3VECTORS_BUCKET}
+    comment: >
+      Name of the S3 vector bucket. Mandatory as soon as either service's
+      VECTOR_BACKEND is 's3vectors' -- that service refuses to start
+      without it (and `check` says so beforehand). The bucket itself is
+      created outside Weave (console/IaC); the index inside it is created by
+      `python -m app.cli s3vectors init`.
+
+  S3VECTORS_INDEX:
+    secret: false
+    value: weave-chunks
+    type: string
+    required: false
+    targets:
+      - {service: knowledge, var: S3VECTORS_INDEX}
+      - {service: retrieval, var: S3VECTORS_INDEX}
+    comment: >
+      Index name inside the bucket. An index has a fixed dimension and
+      metric: a change of EMBEDDING_MODEL/EMBEDDING_DIMENSION means a NEW
+      index name here plus `init` and `sync`, never resizing the old one.
+
+  S3VECTORS_REGION:
+    secret: false
+    value: ""
+    type: string
+    required: false
+    targets:
+      - {service: knowledge, var: S3VECTORS_REGION}
+      - {service: retrieval, var: S3VECTORS_REGION}
+    comment: >
+      Set it. Empty = botocore's own region resolution, which reads ONLY
+      AWS_DEFAULT_REGION and the region of the AWS config profile -- not
+      AWS_REGION, and not the instance metadata. Without either, every S3
+      Vectors call fails (NoRegionError): Knowledge's mirror writes only log
+      a warning, Retrieval falls back to pgvector or loses its vector leg.
+      Empty is only safe where AWS_DEFAULT_REGION is injected, e.g. EKS with
+      IRSA (the pod identity webhook sets it); NOT with EKS Pod Identity or a
+      node role alone. The compose stack passes neither into the containers,
+      so `check` flags it empty there while a service is on s3vectors.
+
+  S3VECTORS_ENDPOINT_URL:
+    secret: false
+    value: ""
+    type: string
+    required: false
+    targets:
+      - {service: knowledge, var: S3VECTORS_ENDPOINT_URL}
+      - {service: retrieval, var: S3VECTORS_ENDPOINT_URL}
+    comment: "Empty = the real AWS endpoint. Only for tests and emulators."
+
+  S3VECTORS_ACCESS_KEY_ID:
+    secret: false
+    value: ""
+    type: string
+    required: false
+    targets:
+      - {service: knowledge, var: S3VECTORS_ACCESS_KEY_ID}
+      - {service: retrieval, var: S3VECTORS_ACCESS_KEY_ID}
+    comment: >
+      Empty (recommended) = the standard AWS credential chain: IAM role /
+      IRSA / environment / instance profile. Static keys are an escape hatch
+      only, and only as a pair with S3VECTORS_SECRET_ACCESS_KEY -- one
+      without the other stops Weave-Knowledge at startup. Shared means BOTH
+      services use the same key, i.e. Retrieval would hold write rights,
+      too; least privilege needs the credential chain instead.
+
+  S3VECTORS_SECRET_ACCESS_KEY:
+    secret: true
+    env_var: WEAVE_S3VECTORS_SECRET_ACCESS_KEY
+    required: false
+    targets:
+      - {service: knowledge, var: S3VECTORS_SECRET_ACCESS_KEY}
+      - {service: retrieval, var: S3VECTORS_SECRET_ACCESS_KEY}
+    comment: >
+      Counterpart of S3VECTORS_ACCESS_KEY_ID. Leave unset for the default
+      credential chain.
+
 # =============================================================================
 # services: everything that is NOT shared -- one service's own knobs.
 # =============================================================================
@@ -832,6 +940,23 @@ services:
           above is the unrelated OCR worker's own knob, kept under a
           different name so the two cannot collide in the shared deploy/.env
           variable pool.
+      KNOWLEDGE_VECTOR_BACKEND:
+        secret: false
+        value: pgvector
+        type: string
+        required: false
+        comment: >
+          Reaches weave-knowledge AND weave-knowledge-worker as
+          VECTOR_BACKEND (renamed in docker-compose.weave.yml and the Helm
+          chart). 'pgvector' (default) changes nothing: Postgres is the only
+          vector index and boto3 is never imported. 's3vectors' additionally
+          mirrors every embedded chunk into the S3 Vectors index named by the
+          shared S3VECTORS_* values above (best effort: an S3 error is logged,
+          never fails indexing). Anything else stops the service at startup.
+          Its own key rather than one shared VECTOR_BACKEND because switching
+          on is ordered -- this one first, then `python -m app.cli s3vectors
+          init` and `sync` in a knowledge container, only then
+          retrieval.RETRIEVAL_VECTOR_BACKEND (ADR-0010).
 
   retrieval:
     settings:
@@ -898,6 +1023,54 @@ services:
         type: int
         required: false
         comment: "Reciprocal Rank Fusion smoothing constant, 60 per the original paper."
+      RETRIEVAL_VECTOR_BACKEND:
+        secret: false
+        value: pgvector
+        type: string
+        required: false
+        comment: >
+          Reaches weave-retrieval as VECTOR_BACKEND (renamed in
+          docker-compose.weave.yml and the Helm chart). 's3vectors' takes the
+          vector leg's candidates from the S3 Vectors index instead of
+          pgvector and re-checks every hit in Postgres. Switch this on only
+          AFTER knowledge.KNOWLEDGE_VECTOR_BACKEND is 's3vectors' and a
+          `python -m app.cli s3vectors sync` has finished cleanly: an empty or
+          half-filled index is no error for QueryVectors, so the fallback does
+          not kick in and vector hits silently go missing. `check` flags this
+          one on s3vectors while Knowledge is not.
+      S3VECTORS_OVERFETCH:
+        secret: false
+        value: 4
+        type: int
+        required: false
+        comment: >
+          Only used with RETRIEVAL_VECTOR_BACKEND=s3vectors. The query asks S3
+          for top_k * this (1..20) candidates, because the metadata filter
+          and the mandatory Postgres re-check can drop hits. The range is
+          validated at startup on EVERY backend, pgvector included -- a value
+          outside 1..20 stops weave-retrieval (`check` flags it beforehand).
+      S3VECTORS_MAX_TOP_K:
+        secret: false
+        value: 100
+        type: int
+        required: false
+        comment: >
+          Cap on topK per S3 Vectors query (the service's own limit has
+          changed over time, hence configurable). Keep it at least
+          SEARCH_TOP_K * S3VECTORS_OVERFETCH -- below that, every id the
+          re-check drops costs recall compared to pgvector (`check` flags it
+          while Retrieval is on s3vectors). Must be >= 1 on EVERY backend,
+          pgvector included: weave-retrieval validates it at startup.
+      S3VECTORS_FALLBACK_PGVECTOR:
+        secret: false
+        value: true
+        type: bool
+        required: false
+        comment: >
+          On an S3 Vectors error (exception, timeout): true runs the regular
+          pgvector leg instead (trace.vector_backend = 'pgvector-fallback');
+          false leaves the vector leg empty for that request and fulltext
+          still answers. A warning is logged either way.
       RETRIEVAL_PORT:
         secret: false
         value: 8002

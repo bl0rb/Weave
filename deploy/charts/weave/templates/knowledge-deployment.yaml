@@ -130,8 +130,15 @@ spec:
             {{- /* Verbindungen je Prozess: zaehlen gegen postgresql.maxConnections. */}}
             {{- $_ := set $ov "DB_POOL_SIZE" (toString $k.dbPool.size) }}
             {{- $_ := set $ov "DB_MAX_OVERFLOW" (toString $k.dbPool.maxOverflow) }}
+            {{- /*
+            rename: der .env-Schluessel heisst KNOWLEDGE_VECTOR_BACKEND, damit
+            er nicht mit dem von Weave-Retrieval kollidiert (ADR-0010: erst
+            Knowledge umstellen, dann Retrieval); der Dienst liest
+            VECTOR_BACKEND. Wie in deploy/docker-compose.weave.yml.
+            */}}
             {{- include "weave.env" (dict "ctx" $ "service" "knowledge"
                   "except" (list "POSTGRES_USER" "POSTGRES_PORT")
+                  "rename" (dict "KNOWLEDGE_VECTOR_BACKEND" "VECTOR_BACKEND")
                   "overrides" $ov) | nindent 12 }}
             # Kein Eintrag aus weave.yaml, sondern eine Betriebsentscheidung
             # dieses Charts: entrypoint.sh im Image faehrt `alembic upgrade

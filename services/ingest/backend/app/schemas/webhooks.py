@@ -14,12 +14,18 @@ from pydantic import BaseModel, Field
 # it is dispatched right alongside job.finished (never on its own, never for
 # job.failed) by app/workers/tasks.py's completion hook, through
 # app/workers/webhook_tasks.dispatch_job_event with a second event string.
+#
+# 'document.review_due' (contracts/events/document.review_due.md) is not tied
+# to a job's own configuration: the document_review_tick
+# (app/services/document_freshness.py) sends it to every enabled connection
+# subscribed to it whose owner is an owner/member of the document's space
+# (app/workers/webhook_tasks.dispatch_review_due_event).
 WEBHOOK_EVENTS: tuple[str, ...] = (
-    'job.finished', 'job.failed', 'import_run.finished', 'document.processed',
+    'job.finished', 'job.failed', 'import_run.finished', 'document.processed', 'document.review_due',
 )
 
 WebhookEvent = Literal[
-    'job.finished', 'job.failed', 'import_run.finished', 'document.processed',
+    'job.finished', 'job.failed', 'import_run.finished', 'document.processed', 'document.review_due',
 ]
 
 

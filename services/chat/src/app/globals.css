@@ -466,6 +466,24 @@ body {
   background: var(--space, var(--accent));
   color: var(--surface);
 }
+/* A marker that opens its passage (passage-dialog.tsx) is a real button. */
+button.cite-marker {
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+button.cite-marker:focus-visible {
+  outline: 2px solid var(--space, var(--accent));
+  outline-offset: 1px;
+}
+/* The cited chunk in the passage dialog, styled like a <mark> block. */
+.passage-target {
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-control);
+  background: var(--warn-bg);
+  color: var(--ink);
+  padding: 0.5rem 0.75rem;
+}
 .cite-passage {
   border-radius: 3px;
   box-decoration-break: clone;

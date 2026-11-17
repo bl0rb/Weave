@@ -92,6 +92,18 @@ SOURCES_EVENT = {'sources': [{'source': 'confluence', 'document_id': 'doc-1', 'c
 DONE_EVENT = {'type': 'done'}
 
 
+def _done_for(db_session, response) -> dict:
+    """The `done` event POST /v1/chat/stream forwards: Weave-Runtime's own,
+    plus the persisted assistant message's id (`message_id`, additive)."""
+    conversation_id = uuid.UUID(response.headers['x-conversation-id'])
+    message = (
+        db_session.query(Message)
+        .filter(Message.conversation_id == conversation_id, Message.role == MessageRole.ASSISTANT)
+        .one()
+    )
+    return {**DONE_EVENT, 'message_id': message.id}
+
+
 # --- GET /v1/models ----------------------------------------------------------
 
 
@@ -346,7 +358,11 @@ def test_chat_stream_forwards_events_and_persists_the_assistant_message_once_at_
 
     # Every runtime event is forwarded, unchanged, in order -- `done` is
     # not held back by the title, which follows as one extra event.
-    assert _parse_sse_events(response.text) == [*sent_events, {'type': 'title', 'title': 'Titel'}]
+    assert _parse_sse_events(response.text) == [
+        *sent_events[:-1],
+        _done_for(db_session, response),
+        {'type': 'title', 'title': 'Titel'},
+    ]
 
     messages = (
         db_session.query(Message)
@@ -384,7 +400,7 @@ def test_chat_stream_sends_no_title_event_when_title_generation_fails(db_session
         '/v1/chat/stream', json={'bot_id': 'legal-support', 'message': 'Hi'}, headers=auth_headers(raw_token)
     )
     assert response.status_code == 200
-    assert _parse_sse_events(response.text) == [TRACE_EVENT, DONE_EVENT]
+    assert _parse_sse_events(response.text) == [TRACE_EVENT, _done_for(db_session, response)]
     conversation = db_session.get(Conversation, uuid.UUID(response.headers['x-conversation-id']))
     assert conversation.title == 'Hi'  # the first-message fallback stays
 
@@ -418,7 +434,11 @@ def test_chat_stream_forwards_an_unrecognized_status_event_verbatim(db_session, 
         '/v1/chat/stream', json={'bot_id': 'legal-support', 'message': 'Hi'}, headers=auth_headers(raw_token)
     )
     assert response.status_code == 200
-    assert _parse_sse_events(response.text) == [*sent_events, {'type': 'title', 'title': 'Titel'}]
+    assert _parse_sse_events(response.text) == [
+        *sent_events[:-1],
+        _done_for(db_session, response),
+        {'type': 'title', 'title': 'Titel'},
+    ]
 
     conversation_id = uuid.UUID(response.headers['x-conversation-id'])
     messages = (
@@ -618,7 +638,7 @@ def test_chat_stream_route_relays_keepalive_comment_lines(db_session, runtime):
         TRACE_EVENT,
         {'type': 'delta', 'text': 'Hallo'},
         SOURCES_EVENT,
-        DONE_EVENT,
+        _done_for(db_session, response),
         {'type': 'title', 'title': 'Titel'},
     ]
 

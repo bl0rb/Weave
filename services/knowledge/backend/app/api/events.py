@@ -93,10 +93,10 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.db import SessionLocal, get_db
 from app.models.models import Chunk, Collection, Document, DocumentStatus, IngestEvent, KnowledgeMemory
-from app.services import memory
+from app.services import memory, vector_index
 from app.schemas.events import DocumentReleasedEvent
 from app.services.collection_sync import CollectionSyncError, sync_collections
-from app.workers.tasks import index_document
+from app.workers.tasks import delete_vectors, index_document
 
 logger = logging.getLogger(__name__)
 
@@ -370,13 +370,30 @@ def _handle_withdrawal(db: Session, raw_payload: dict, raw_body: bytes) -> Respo
             _lock_source_job(db, job_id)
     document = db.scalar(select(Document).where(Document.source_job_id == job_id).with_for_update())
     collection_slug = None
+    vector_keys: list[str] = []
+    document_id = None
     if document is not None:
         collection_slug = document.collection_slug
+        document_id = document.id
+        # Optional S3 Vectors mirror (empty unless VECTOR_BACKEND=s3vectors):
+        # keys collected before the delete, vectors deleted only after the
+        # commit below, best effort and off this request path (the
+        # delete_vectors task) -- see app/services/vector_index.py.
+        vector_keys = vector_index.chunk_keys(db, document.id)
         db.execute(delete(Chunk).where(Chunk.document_id == document.id))
         # ADR-0009: the summary goes with the document, in the same transaction.
         db.execute(delete(KnowledgeMemory).where(KnowledgeMemory.document_id == document.id))
         db.delete(document)
     db.commit()
+    if vector_keys:
+        try:
+            delete_vectors.delay(vector_keys, str(document_id))
+        except Exception:  # noqa: BLE001 - the withdrawal is committed; never turn it into a 500
+            logger.warning(
+                's3vectors: could not enqueue the delete of %d vector(s) of withdrawn document %s; '
+                'run `python -m app.cli s3vectors sync --prune` to repair',
+                len(vector_keys), document_id, exc_info=True,
+            )
     memory.touch(db, collection_slug)
     return JSONResponse(status_code=200, content={'status': 'withdrawn', 'job_id': job_id})
 

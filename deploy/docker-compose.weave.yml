@@ -149,6 +149,27 @@ x-embedding-env: &embedding-env
   EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-1536}
   EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-64}
 
+# Optional Amazon S3 Vectors index (ADR-0010) -- the CONNECTION values only,
+# shared the same way as EMBEDDING_* above: weave-knowledge (+worker) write
+# the index, weave-retrieval queries it, and all three must name the SAME
+# bucket and index. Every default is empty/no-op; none of these is read
+# while the service's VECTOR_BACKEND is 'pgvector'. The on/off switch is
+# NOT part of this anchor: each service maps its own key onto
+# VECTOR_BACKEND (KNOWLEDGE_VECTOR_BACKEND / RETRIEVAL_VECTOR_BACKEND),
+# because switching on is ordered -- Knowledge first, `init` + `sync`, then
+# Retrieval (docs/betrieb.md, "Optionaler Vektorindex"). Empty keys = the
+# default AWS credential chain; note that this file passes no
+# AWS_DEFAULT_REGION into the containers (botocore ignores AWS_REGION and
+# takes no region from the instance metadata), so S3VECTORS_REGION must be
+# set here -- `weave_config.py check` flags it empty.
+x-s3vectors-env: &s3vectors-env
+  S3VECTORS_BUCKET: ${S3VECTORS_BUCKET:-}
+  S3VECTORS_INDEX: ${S3VECTORS_INDEX:-weave-chunks}
+  S3VECTORS_REGION: ${S3VECTORS_REGION:-}
+  S3VECTORS_ENDPOINT_URL: ${S3VECTORS_ENDPOINT_URL:-}
+  S3VECTORS_ACCESS_KEY_ID: ${S3VECTORS_ACCESS_KEY_ID:-}
+  S3VECTORS_SECRET_ACCESS_KEY: ${S3VECTORS_SECRET_ACCESS_KEY:-}
+
 name: weave-ingest
 
 services:
@@ -538,7 +559,13 @@ services:
       # exact same anchor. A vector comparison across two different
       # embedding spaces (a mismatched model or dimension) is not just
       # less accurate, it is meaningless -- see docs/betrieb.md section 5.
-      <<: *embedding-env
+      # Same for the optional S3 Vectors connection (`x-s3vectors-env`).
+      <<: [*embedding-env, *s3vectors-env]
+      # Optional S3 Vectors mirror (ADR-0010): 'pgvector' (default) changes
+      # nothing. This API process deletes vectors on a withdrawal (via the
+      # worker's task) and runs `python -m app.cli s3vectors ...`, so it
+      # needs the same value as the worker below.
+      VECTOR_BACKEND: ${KNOWLEDGE_VECTOR_BACKEND:-pgvector}
     depends_on:
       postgres:
         condition: service_healthy
@@ -601,7 +628,10 @@ services:
       # Same shared `x-embedding-env` anchor as weave-knowledge above --
       # the worker is what actually calls the embedding provider during
       # indexing, so it needs the identical values, not just "similar" ones.
-      <<: *embedding-env
+      <<: [*embedding-env, *s3vectors-env]
+      # The worker is what writes the S3 Vectors index after each index run
+      # -- same switch as weave-knowledge above.
+      VECTOR_BACKEND: ${KNOWLEDGE_VECTOR_BACKEND:-pgvector}
     depends_on:
       weave-knowledge:
         condition: service_healthy
@@ -647,7 +677,17 @@ services:
       # cosine-distance comparison meaningless, not just less accurate.
       # The anchor is what makes "identical" structural rather than
       # merely a convention someone has to remember to keep in sync.
-      <<: *embedding-env
+      # The S3 Vectors connection comes from `x-s3vectors-env` for the
+      # same reason: it must be the index weave-knowledge writes.
+      <<: [*embedding-env, *s3vectors-env]
+      # Optional S3 Vectors vector leg (ADR-0010). Its OWN key, not
+      # KNOWLEDGE_VECTOR_BACKEND: switch this on only after Knowledge
+      # mirrors and `s3vectors sync` finished cleanly -- an empty index is
+      # no error, vector hits would just silently go missing.
+      VECTOR_BACKEND: ${RETRIEVAL_VECTOR_BACKEND:-pgvector}
+      S3VECTORS_OVERFETCH: ${S3VECTORS_OVERFETCH:-4}
+      S3VECTORS_MAX_TOP_K: ${S3VECTORS_MAX_TOP_K:-100}
+      S3VECTORS_FALLBACK_PGVECTOR: ${S3VECTORS_FALLBACK_PGVECTOR:-true}
       # 'none' skips reranking entirely -- RRF-fused results go out as-is,
       # trimmed to SEARCH_FINAL_K. RERANK_* is deliberately NOT part of the
       # shared `x-embedding-env` anchor above: unlike EMBEDDING_*, only

@@ -1,6 +1,170 @@
 {
   "components": {
     "schemas": {
+      "AdminCollectionStatistics": {
+        "properties": {
+          "public": {
+            "title": "Public",
+            "type": "integer"
+          },
+          "restricted": {
+            "title": "Restricted",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "public",
+          "restricted"
+        ],
+        "title": "AdminCollectionStatistics",
+        "type": "object"
+      },
+      "AdminDocumentStatistics": {
+        "properties": {
+          "by_status": {
+            "$ref": "#/components/schemas/JobStatusCounts"
+          },
+          "released": {
+            "title": "Released",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "uploaded_last_30_days": {
+            "title": "Uploaded Last 30 Days",
+            "type": "integer"
+          },
+          "versions": {
+            "title": "Versions",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "versions",
+          "by_status",
+          "released",
+          "uploaded_last_30_days"
+        ],
+        "title": "AdminDocumentStatistics",
+        "type": "object"
+      },
+      "AdminReviewTaskStatistics": {
+        "properties": {
+          "in_progress": {
+            "title": "In Progress",
+            "type": "integer"
+          },
+          "open": {
+            "title": "Open",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "open",
+          "in_progress"
+        ],
+        "title": "AdminReviewTaskStatistics",
+        "type": "object"
+      },
+      "AdminStatisticsResponse": {
+        "properties": {
+          "collections": {
+            "$ref": "#/components/schemas/AdminCollectionStatistics"
+          },
+          "documents": {
+            "$ref": "#/components/schemas/AdminDocumentStatistics"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "knowledge": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeStats"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "knowledge_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledge Error"
+          },
+          "review_tasks": {
+            "$ref": "#/components/schemas/AdminReviewTaskStatistics"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/AdminStorageStatistics"
+          },
+          "subscriptions": {
+            "title": "Subscriptions",
+            "type": "integer"
+          },
+          "teams": {
+            "title": "Teams",
+            "type": "integer"
+          },
+          "users": {
+            "$ref": "#/components/schemas/AdminUserStatistics"
+          }
+        },
+        "required": [
+          "documents",
+          "storage",
+          "collections",
+          "users",
+          "teams",
+          "review_tasks",
+          "subscriptions",
+          "generated_at"
+        ],
+        "title": "AdminStatisticsResponse",
+        "type": "object"
+      },
+      "AdminStorageStatistics": {
+        "properties": {
+          "by_backend": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/StorageBackendStatistics"
+            },
+            "title": "By Backend",
+            "type": "object"
+          },
+          "bytes": {
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "objects": {
+            "title": "Objects",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "objects",
+          "bytes",
+          "by_backend"
+        ],
+        "title": "AdminStorageStatistics",
+        "type": "object"
+      },
       "AdminSystemStatusResponse": {
         "properties": {
           "areas": {
@@ -137,6 +301,29 @@
           "items"
         ],
         "title": "AdminUserListResponse",
+        "type": "object"
+      },
+      "AdminUserStatistics": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "integer"
+          },
+          "admins": {
+            "title": "Admins",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "active",
+          "admins"
+        ],
+        "title": "AdminUserStatistics",
         "type": "object"
       },
       "AdminUserUpdateRequest": {
@@ -1377,6 +1564,347 @@
         "title": "BrandingUpdateRequest",
         "type": "object"
       },
+      "ChangeCollectionRef": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "slug"
+        ],
+        "title": "ChangeCollectionRef",
+        "type": "object"
+      },
+      "ChangeCountResponse": {
+        "properties": {
+          "unread": {
+            "title": "Unread",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "unread"
+        ],
+        "title": "ChangeCountResponse",
+        "type": "object"
+      },
+      "ChangeNotificationListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ChangeNotificationOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size"
+        ],
+        "title": "ChangeNotificationListResponse",
+        "type": "object"
+      },
+      "ChangeNotificationOut": {
+        "properties": {
+          "change_type": {
+            "enum": [
+              "new",
+              "updated"
+            ],
+            "title": "Change Type",
+            "type": "string"
+          },
+          "collection": {
+            "$ref": "#/components/schemas/ChangeCollectionRef"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "document_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Version"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "matched_terms": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Matched Terms",
+            "type": "array"
+          },
+          "previous_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Job Id"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          },
+          "subscription": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChangeSubscriptionRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ChangeSummary"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "job_id",
+          "collection",
+          "change_type",
+          "title",
+          "summary",
+          "created_at"
+        ],
+        "title": "ChangeNotificationOut",
+        "type": "object"
+      },
+      "ChangeReadRequest": {
+        "properties": {
+          "all": {
+            "default": false,
+            "title": "All",
+            "type": "boolean"
+          },
+          "ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 500,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ids"
+          }
+        },
+        "title": "ChangeReadRequest",
+        "type": "object"
+      },
+      "ChangeReadResponse": {
+        "properties": {
+          "updated": {
+            "title": "Updated",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "updated"
+        ],
+        "title": "ChangeReadResponse",
+        "type": "object"
+      },
+      "ChangeSearchItem": {
+        "properties": {
+          "change_type": {
+            "enum": [
+              "new",
+              "updated"
+            ],
+            "title": "Change Type",
+            "type": "string"
+          },
+          "collection": {
+            "$ref": "#/components/schemas/ChangeCollectionRef"
+          },
+          "document_version": {
+            "title": "Document Version",
+            "type": "integer"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "matched_terms": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Matched Terms",
+            "type": "array"
+          },
+          "previous_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Job Id"
+          },
+          "released_at": {
+            "format": "date-time",
+            "title": "Released At",
+            "type": "string"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ChangeSummary"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "document_version",
+          "collection",
+          "change_type",
+          "title",
+          "released_at",
+          "summary"
+        ],
+        "title": "ChangeSearchItem",
+        "type": "object"
+      },
+      "ChangeSearchResponse": {
+        "properties": {
+          "incomplete": {
+            "default": false,
+            "title": "Incomplete",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ChangeSearchItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "terms": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Terms",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ChangeSearchResponse",
+        "type": "object"
+      },
+      "ChangeSubscriptionRef": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label"
+        ],
+        "title": "ChangeSubscriptionRef",
+        "type": "object"
+      },
+      "ChangeSummary": {
+        "description": "Diff stats (null for a new document) and up to 10 summary lines.",
+        "properties": {
+          "lines": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "stats": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentDiffStats"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "ChangeSummary",
+        "type": "object"
+      },
       "ChatEndpointCatalogResponse": {
         "properties": {
           "items": {
@@ -1771,6 +2299,19 @@
             ],
             "title": "Responsible Team Id"
           },
+          "review_interval_days": {
+            "anyOf": [
+              {
+                "maximum": 3650.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Interval Days"
+          },
           "slug": {
             "anyOf": [
               {
@@ -2067,6 +2608,17 @@
               }
             ]
           },
+          "review_interval_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Interval Days"
+          },
           "role": {
             "anyOf": [
               {
@@ -2189,7 +2741,7 @@
         "type": "object"
       },
       "CollectionUpdateRequest": {
-        "description": "PATCH payload: every field optional and only applied when present\n(None = leave unchanged). `slug` is deliberately not patchable here --\nit is the collection's stable cross-service identity (see Collection's\ndocstring) and already-processed documents carry it in their frontmatter.\n\n`grants` replaces the whole access list and must keep at least one\nowner. `responsible_team_id` is cleared with an empty string.",
+        "description": "PATCH payload: every field optional and only applied when present\n(None = leave unchanged). `slug` is deliberately not patchable here --\nit is the collection's stable cross-service identity (see Collection's\ndocstring) and already-processed documents carry it in their frontmatter.\n\n`grants` replaces the whole access list and must keep at least one\nowner. `responsible_team_id` is cleared with an empty string.\n`review_interval_days` is the exception to \"None = leave unchanged\":\nsent explicitly as null it switches the periodic review off (only\nomitting it leaves it unchanged).",
         "properties": {
           "description": {
             "anyOf": [
@@ -2237,6 +2789,19 @@
               }
             ],
             "title": "Responsible Team Id"
+          },
+          "review_interval_days": {
+            "anyOf": [
+              {
+                "maximum": 3650.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Interval Days"
           },
           "visibility": {
             "anyOf": [
@@ -2365,6 +2930,134 @@
         "title": "ContainerState",
         "type": "object"
       },
+      "ContradictionBatch": {
+        "properties": {
+          "reports": {
+            "items": {
+              "$ref": "#/components/schemas/ContradictionReportIn"
+            },
+            "maxItems": 500,
+            "title": "Reports",
+            "type": "array"
+          }
+        },
+        "required": [
+          "reports"
+        ],
+        "title": "ContradictionBatch",
+        "type": "object"
+      },
+      "ContradictionReportIn": {
+        "description": "One possible contradiction found by Weave-Knowledge after indexing\n(app/services/quality_tasks.ingest_contradiction): two chunks of\ndifferent documents of the same space that are very similar but state\ndifferent facts. Texts are trimmed server-side.",
+        "properties": {
+          "collection_slug": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Collection Slug",
+            "type": "string"
+          },
+          "excerpt": {
+            "anyOf": [
+              {
+                "maxLength": 20000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Excerpt"
+          },
+          "facts": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200,
+            "title": "Facts",
+            "type": "array"
+          },
+          "heading_path": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heading Path"
+          },
+          "other_excerpt": {
+            "anyOf": [
+              {
+                "maxLength": 20000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Other Excerpt"
+          },
+          "other_facts": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200,
+            "title": "Other Facts",
+            "type": "array"
+          },
+          "other_heading_path": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Other Heading Path"
+          },
+          "other_source_job_id": {
+            "maxLength": 36,
+            "minLength": 1,
+            "title": "Other Source Job Id",
+            "type": "string"
+          },
+          "similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Similarity"
+          },
+          "source_job_id": {
+            "maxLength": 36,
+            "minLength": 1,
+            "title": "Source Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "collection_slug",
+          "source_job_id",
+          "other_source_job_id"
+        ],
+        "title": "ContradictionReportIn",
+        "type": "object"
+      },
       "DashboardStatsResponse": {
         "properties": {
           "database_size_bytes": {
@@ -2487,6 +3180,273 @@
           }
         },
         "title": "DirectoryUsersResponse",
+        "type": "object"
+      },
+      "DocumentDiff": {
+        "description": "Section-aware comparison (app/services/document_diff.py); unchanged\nsections are omitted, `summary` is German, human readable.",
+        "properties": {
+          "base": {
+            "$ref": "#/components/schemas/DocumentDiffVersion"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentDiffSection"
+            },
+            "title": "Sections",
+            "type": "array"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/DocumentDiffStats"
+          },
+          "summary": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Summary",
+            "type": "array"
+          },
+          "target": {
+            "$ref": "#/components/schemas/DocumentDiffVersion"
+          }
+        },
+        "required": [
+          "base",
+          "target",
+          "stats",
+          "summary",
+          "sections"
+        ],
+        "title": "DocumentDiff",
+        "type": "object"
+      },
+      "DocumentDiffHunk": {
+        "properties": {
+          "base": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Base",
+            "type": "array"
+          },
+          "op": {
+            "enum": [
+              "equal",
+              "insert",
+              "delete",
+              "replace"
+            ],
+            "title": "Op",
+            "type": "string"
+          },
+          "target": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Target",
+            "type": "array"
+          }
+        },
+        "required": [
+          "op",
+          "base",
+          "target"
+        ],
+        "title": "DocumentDiffHunk",
+        "type": "object"
+      },
+      "DocumentDiffSection": {
+        "properties": {
+          "added_lines": {
+            "title": "Added Lines",
+            "type": "integer"
+          },
+          "change": {
+            "enum": [
+              "added",
+              "removed",
+              "changed"
+            ],
+            "title": "Change",
+            "type": "string"
+          },
+          "heading_path": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Heading Path",
+            "type": "array"
+          },
+          "hunks": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentDiffHunk"
+            },
+            "title": "Hunks",
+            "type": "array"
+          },
+          "removed_lines": {
+            "title": "Removed Lines",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "heading_path",
+          "change",
+          "added_lines",
+          "removed_lines",
+          "hunks"
+        ],
+        "title": "DocumentDiffSection",
+        "type": "object"
+      },
+      "DocumentDiffStats": {
+        "properties": {
+          "added_lines": {
+            "title": "Added Lines",
+            "type": "integer"
+          },
+          "removed_lines": {
+            "title": "Removed Lines",
+            "type": "integer"
+          },
+          "sections_added": {
+            "title": "Sections Added",
+            "type": "integer"
+          },
+          "sections_changed": {
+            "title": "Sections Changed",
+            "type": "integer"
+          },
+          "sections_removed": {
+            "title": "Sections Removed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "added_lines",
+          "removed_lines",
+          "sections_added",
+          "sections_removed",
+          "sections_changed"
+        ],
+        "title": "DocumentDiffStats",
+        "type": "object"
+      },
+      "DocumentDiffVersion": {
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "document_version": {
+            "title": "Document Version",
+            "type": "integer"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "document_version"
+        ],
+        "title": "DocumentDiffVersion",
+        "type": "object"
+      },
+      "DocumentReviewConfirm": {
+        "description": "POST /documents/{id}/review/confirm (body optional): an explicit next\ndue date; omitted = now + the space's review interval (or none).",
+        "properties": {
+          "review_due_at": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Due At"
+          }
+        },
+        "title": "DocumentReviewConfirm",
+        "type": "object"
+      },
+      "DocumentReviewResponse": {
+        "description": "`{review_due_at, last_reviewed_at, last_reviewed_by, overdue}`.",
+        "properties": {
+          "last_reviewed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Reviewed At"
+          },
+          "last_reviewed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Reviewed By"
+          },
+          "overdue": {
+            "default": false,
+            "title": "Overdue",
+            "type": "boolean"
+          },
+          "review_due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Due At"
+          }
+        },
+        "title": "DocumentReviewResponse",
+        "type": "object"
+      },
+      "DocumentReviewUpdate": {
+        "description": "PUT /documents/{id}/review: the next due date (null clears it).",
+        "properties": {
+          "review_due_at": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Due At"
+          }
+        },
+        "required": [
+          "review_due_at"
+        ],
+        "title": "DocumentReviewUpdate",
         "type": "object"
       },
       "FolderActionResponse": {
@@ -4205,6 +5165,32 @@
         "title": "JobStatus",
         "type": "string"
       },
+      "JobStatusCounts": {
+        "properties": {
+          "FAILED": {
+            "default": 0,
+            "title": "Failed",
+            "type": "integer"
+          },
+          "FINISHED": {
+            "default": 0,
+            "title": "Finished",
+            "type": "integer"
+          },
+          "PENDING": {
+            "default": 0,
+            "title": "Pending",
+            "type": "integer"
+          },
+          "RUNNING": {
+            "default": 0,
+            "title": "Running",
+            "type": "integer"
+          }
+        },
+        "title": "JobStatusCounts",
+        "type": "object"
+      },
       "JobVersionEntry": {
         "properties": {
           "content_sha256": {
@@ -4274,6 +5260,112 @@
           "items"
         ],
         "title": "JobVersionsResponse",
+        "type": "object"
+      },
+      "KnowledgeChunkStats": {
+        "properties": {
+          "avg_chars": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Chars"
+          },
+          "embedded": {
+            "default": 0,
+            "title": "Embedded",
+            "type": "integer"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "title": "KnowledgeChunkStats",
+        "type": "object"
+      },
+      "KnowledgeCollectionStats": {
+        "properties": {
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          },
+          "with_documents": {
+            "default": 0,
+            "title": "With Documents",
+            "type": "integer"
+          }
+        },
+        "title": "KnowledgeCollectionStats",
+        "type": "object"
+      },
+      "KnowledgeDocumentStats": {
+        "properties": {
+          "by_status": {
+            "$ref": "#/components/schemas/KnowledgeDocumentStatusCounts"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "title": "KnowledgeDocumentStats",
+        "type": "object"
+      },
+      "KnowledgeDocumentStatusCounts": {
+        "properties": {
+          "blocked": {
+            "default": 0,
+            "title": "Blocked",
+            "type": "integer"
+          },
+          "failed": {
+            "default": 0,
+            "title": "Failed",
+            "type": "integer"
+          },
+          "indexed": {
+            "default": 0,
+            "title": "Indexed",
+            "type": "integer"
+          },
+          "pending": {
+            "default": 0,
+            "title": "Pending",
+            "type": "integer"
+          },
+          "superseded": {
+            "default": 0,
+            "title": "Superseded",
+            "type": "integer"
+          }
+        },
+        "title": "KnowledgeDocumentStatusCounts",
+        "type": "object"
+      },
+      "KnowledgeEmbeddingModelStats": {
+        "properties": {
+          "chunks": {
+            "default": 0,
+            "title": "Chunks",
+            "type": "integer"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model"
+        ],
+        "title": "KnowledgeEmbeddingModelStats",
         "type": "object"
       },
       "KnowledgeMemoryAdminResponse": {
@@ -4420,6 +5512,22 @@
           "queued"
         ],
         "title": "KnowledgeMemoryRebuildResponse",
+        "type": "object"
+      },
+      "KnowledgeMemoryStats": {
+        "properties": {
+          "collections": {
+            "default": 0,
+            "title": "Collections",
+            "type": "integer"
+          },
+          "documents": {
+            "default": 0,
+            "title": "Documents",
+            "type": "integer"
+          }
+        },
+        "title": "KnowledgeMemoryStats",
         "type": "object"
       },
       "KnowledgeMemoryUpdateRequest": {
@@ -4656,6 +5764,90 @@
           "failed"
         ],
         "title": "KnowledgeRebuildStatusResponse",
+        "type": "object"
+      },
+      "KnowledgeStats": {
+        "properties": {
+          "chunks": {
+            "$ref": "#/components/schemas/KnowledgeChunkStats"
+          },
+          "collections": {
+            "$ref": "#/components/schemas/KnowledgeCollectionStats"
+          },
+          "documents": {
+            "$ref": "#/components/schemas/KnowledgeDocumentStats"
+          },
+          "embedding_models": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeEmbeddingModelStats"
+            },
+            "title": "Embedding Models",
+            "type": "array"
+          },
+          "generated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated At"
+          },
+          "memory": {
+            "$ref": "#/components/schemas/KnowledgeMemoryStats"
+          },
+          "storage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeStorageStats"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "vector_backend": {
+            "title": "Vector Backend",
+            "type": "string"
+          }
+        },
+        "required": [
+          "documents",
+          "chunks",
+          "collections",
+          "memory",
+          "vector_backend"
+        ],
+        "title": "KnowledgeStats",
+        "type": "object"
+      },
+      "KnowledgeStorageStats": {
+        "properties": {
+          "chunks_bytes": {
+            "default": 0,
+            "title": "Chunks Bytes",
+            "type": "integer"
+          },
+          "documents_bytes": {
+            "default": 0,
+            "title": "Documents Bytes",
+            "type": "integer"
+          },
+          "memory_bytes": {
+            "default": 0,
+            "title": "Memory Bytes",
+            "type": "integer"
+          },
+          "total_bytes": {
+            "default": 0,
+            "title": "Total Bytes",
+            "type": "integer"
+          }
+        },
+        "title": "KnowledgeStorageStats",
         "type": "object"
       },
       "LocaleUpdateRequest": {
@@ -7374,6 +8566,16 @@
               }
             ]
           },
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortalDocumentReview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "review_decision": {
             "anyOf": [
               {
@@ -7518,6 +8720,53 @@
           "total"
         ],
         "title": "PortalDocumentListResponse",
+        "type": "object"
+      },
+      "PortalDocumentReview": {
+        "description": "'Pr\u00fcfung & Aktualit\u00e4t' of one document version\n(app/services/document_freshness.py). `last_reviewed_by` is a username;\n`overdue` = review_due_at has passed.",
+        "properties": {
+          "last_reviewed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Reviewed At"
+          },
+          "last_reviewed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Reviewed By"
+          },
+          "overdue": {
+            "default": false,
+            "title": "Overdue",
+            "type": "boolean"
+          },
+          "review_due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Due At"
+          }
+        },
+        "title": "PortalDocumentReview",
         "type": "object"
       },
       "PortalDocumentSource": {
@@ -8766,6 +10015,159 @@
         "title": "ProvidersPublicResponse",
         "type": "object"
       },
+      "QualityDocumentStats": {
+        "properties": {
+          "helpful": {
+            "default": 0,
+            "title": "Helpful",
+            "type": "integer"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "outdated": {
+            "default": 0,
+            "title": "Outdated",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "wrong": {
+            "default": 0,
+            "title": "Wrong",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "job_id",
+          "title"
+        ],
+        "title": "QualityDocumentStats",
+        "type": "object"
+      },
+      "QualityFeedbackCounts": {
+        "properties": {
+          "helpful": {
+            "default": 0,
+            "title": "Helpful",
+            "type": "integer"
+          },
+          "outdated": {
+            "default": 0,
+            "title": "Outdated",
+            "type": "integer"
+          },
+          "wrong": {
+            "default": 0,
+            "title": "Wrong",
+            "type": "integer"
+          }
+        },
+        "title": "QualityFeedbackCounts",
+        "type": "object"
+      },
+      "QualitySignalBatch": {
+        "properties": {
+          "signals": {
+            "items": {
+              "$ref": "#/components/schemas/QualitySignalIn"
+            },
+            "maxItems": 500,
+            "title": "Signals",
+            "type": "array"
+          }
+        },
+        "required": [
+          "signals"
+        ],
+        "title": "QualitySignalBatch",
+        "type": "object"
+      },
+      "QualitySignalBatchResponse": {
+        "properties": {
+          "accepted": {
+            "title": "Accepted",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "accepted"
+        ],
+        "title": "QualitySignalBatchResponse",
+        "type": "object"
+      },
+      "QualitySignalIn": {
+        "description": "One outbox row of Weave-API. `payload` is validated per signal in\nquality_tasks.py (a malformed one is skipped, not the whole batch).",
+        "properties": {
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "signal_key": {
+            "maxLength": 91,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9:_.\\-]+$",
+            "title": "Signal Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "signal_key",
+          "payload"
+        ],
+        "title": "QualitySignalIn",
+        "type": "object"
+      },
+      "QualitySummaryResponse": {
+        "description": "Last 90 days over the caller's visible spaces (tasks: current state).",
+        "properties": {
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/QualityDocumentStats"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "feedback": {
+            "$ref": "#/components/schemas/QualityFeedbackCounts"
+          },
+          "tasks": {
+            "$ref": "#/components/schemas/QualityTaskCounts"
+          },
+          "unanswered": {
+            "title": "Unanswered",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "feedback",
+          "unanswered",
+          "tasks",
+          "documents"
+        ],
+        "title": "QualitySummaryResponse",
+        "type": "object"
+      },
+      "QualityTaskCounts": {
+        "properties": {
+          "in_progress": {
+            "default": 0,
+            "title": "In Progress",
+            "type": "integer"
+          },
+          "open": {
+            "default": 0,
+            "title": "Open",
+            "type": "integer"
+          }
+        },
+        "title": "QualityTaskCounts",
+        "type": "object"
+      },
       "ReindexStartResponse": {
         "properties": {
           "started": {
@@ -9690,6 +11092,278 @@
         "title": "RetrievalProviderUpdateRequest",
         "type": "object"
       },
+      "ReviewTaskCollectionRef": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "slug"
+        ],
+        "title": "ReviewTaskCollectionRef",
+        "type": "object"
+      },
+      "ReviewTaskCountResponse": {
+        "description": "`open` counts the active tasks (open + in_progress), for the badge.",
+        "properties": {
+          "by_kind": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Kind",
+            "type": "object"
+          },
+          "open": {
+            "title": "Open",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "open",
+          "by_kind"
+        ],
+        "title": "ReviewTaskCountResponse",
+        "type": "object"
+      },
+      "ReviewTaskDocumentRef": {
+        "properties": {
+          "document_version": {
+            "title": "Document Version",
+            "type": "integer"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "title",
+          "document_version"
+        ],
+        "title": "ReviewTaskDocumentRef",
+        "type": "object"
+      },
+      "ReviewTaskListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewTaskOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size"
+        ],
+        "title": "ReviewTaskListResponse",
+        "type": "object"
+      },
+      "ReviewTaskOut": {
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewTaskUserRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "collection": {
+            "$ref": "#/components/schemas/ReviewTaskCollectionRef"
+          },
+          "details": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Details",
+            "type": "object"
+          },
+          "document": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewTaskDocumentRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "first_seen_at": {
+            "format": "date-time",
+            "title": "First Seen At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "last_seen_at": {
+            "format": "date-time",
+            "title": "Last Seen At",
+            "type": "string"
+          },
+          "occurrence_count": {
+            "title": "Occurrence Count",
+            "type": "integer"
+          },
+          "related_document": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewTaskDocumentRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolution_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution Note"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "title",
+          "collection",
+          "occurrence_count",
+          "first_seen_at",
+          "last_seen_at"
+        ],
+        "title": "ReviewTaskOut",
+        "type": "object"
+      },
+      "ReviewTaskUpdate": {
+        "description": "Only the fields sent are changed; `assignee_id: null` unassigns.",
+        "properties": {
+          "assignee_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Id"
+          },
+          "resolution_note": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution Note"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "open",
+                  "in_progress",
+                  "done",
+                  "dismissed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "title": "ReviewTaskUpdate",
+        "type": "object"
+      },
+      "ReviewTaskUserRef": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username"
+        ],
+        "title": "ReviewTaskUserRef",
+        "type": "object"
+      },
       "RuntimeCapabilityInfo": {
         "properties": {
           "cuda_available": {
@@ -10343,6 +12017,24 @@
           "items"
         ],
         "title": "SourceCatalogListResponse",
+        "type": "object"
+      },
+      "StorageBackendStatistics": {
+        "properties": {
+          "bytes": {
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "objects": {
+            "title": "Objects",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "objects",
+          "bytes"
+        ],
+        "title": "StorageBackendStatistics",
         "type": "object"
       },
       "SubagentConfig": {
@@ -11160,6 +12852,117 @@
         "title": "TechnicalIdentityUpdateRequest",
         "type": "object"
       },
+      "TopicSubscriptionCreate": {
+        "description": "At least one of `collection_id` / `query` (keywords, every one must\noccur). `label` defaults to the query or the space's name.",
+        "properties": {
+          "collection_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection Id"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query"
+          }
+        },
+        "title": "TopicSubscriptionCreate",
+        "type": "object"
+      },
+      "TopicSubscriptionListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TopicSubscriptionOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "TopicSubscriptionListResponse",
+        "type": "object"
+      },
+      "TopicSubscriptionOut": {
+        "properties": {
+          "collection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChangeCollectionRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query"
+          },
+          "terms": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Terms",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "created_at"
+        ],
+        "title": "TopicSubscriptionOut",
+        "type": "object"
+      },
       "UploadResponse": {
         "properties": {
           "job_id": {
@@ -11640,11 +13443,12 @@
                 "job.finished",
                 "job.failed",
                 "import_run.finished",
-                "document.processed"
+                "document.processed",
+                "document.review_due"
               ],
               "type": "string"
             },
-            "maxItems": 4,
+            "maxItems": 5,
             "minItems": 1,
             "title": "Events",
             "type": "array"
@@ -11807,11 +13611,12 @@
                     "job.finished",
                     "job.failed",
                     "import_run.finished",
-                    "document.processed"
+                    "document.processed",
+                    "document.review_due"
                   ],
                   "type": "string"
                 },
-                "maxItems": 4,
+                "maxItems": 5,
                 "minItems": 1,
                 "type": "array"
               },
@@ -13037,6 +14842,27 @@
           }
         },
         "summary": "Reindex Vectors Status"
+      }
+    },
+    "/api/v1/admin/statistics": {
+      "get": {
+        "operationId": "admin_statistics_api_v1_admin_statistics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminStatisticsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Admin Statistics",
+        "tags": [
+          "statistics-admin"
+        ]
       }
     },
     "/api/v1/auth/admin/bots": {
@@ -18435,6 +20261,204 @@
         "summary": "List Admin Collections"
       }
     },
+    "/api/v1/portal/changes": {
+      "get": {
+        "description": "The caller's change feed, newest first (`unread=true`: only unread).",
+        "operationId": "list_changes_api_v1_portal_changes_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "unread",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Unread",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeNotificationListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Changes"
+      }
+    },
+    "/api/v1/portal/changes/count": {
+      "get": {
+        "description": "Unread notifications, for the sidebar badge.",
+        "operationId": "count_unread_changes_api_v1_portal_changes_count_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeCountResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Count Unread Changes"
+      }
+    },
+    "/api/v1/portal/changes/read": {
+      "post": {
+        "description": "Mark own notifications read: the listed `ids`, or `all`. Ids of other\nusers are silently ignored.",
+        "operationId": "mark_changes_read_api_v1_portal_changes_read_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeReadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeReadResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mark Changes Read"
+      }
+    },
+    "/api/v1/portal/changes/search": {
+      "get": {
+        "description": "'Was hat sich ge\u00e4ndert?': released new versions of the last `days`\ndays in spaces the caller may read, matching every keyword of `q`\n(optional), each with its diff summary; newest first, at most 50. A\n`collection_id` the caller cannot read answers 404. `incomplete` = the\nper-request scan cap was reached before older releases were checked\n(narrow `days` or pick a space).",
+        "operationId": "search_changes_api_v1_portal_changes_search_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "collection_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Collection Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 365,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeSearchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search Changes"
+      }
+    },
     "/api/v1/portal/collections/{collection_id}/import-scopes": {
       "get": {
         "description": "Distinct Confluence import scopes among the caller-visible documents\nof a collection, for the knowledge space's 'Confluence-Bereich' filter\n(/api/v1/portal/documents?import_scope=...). A re-run/refresh shares its\nscope_type/scope_value with the original import (see ImportRun), so\nevery job for a scope is counted together under one entry -- also when\nseveral people imported it. Editing offers the caller's own newest run\nof the scope (any run for an admin), never someone else's newer run.",
@@ -18875,6 +20899,63 @@
         "summary": "Analyze Portal Document"
       }
     },
+    "/api/v1/portal/documents/{job_id}/diff": {
+      "get": {
+        "description": "Compare `job_id` (target) with `base` (default: the previous\nversion). Each version's Markdown is its release snapshot when released,\nelse the canonical portal snapshot.",
+        "operationId": "diff_document_versions_api_v1_portal_documents__job_id__diff_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "base",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 36,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Base"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentDiff"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Diff Document Versions"
+      }
+    },
     "/api/v1/portal/documents/{job_id}/edit": {
       "post": {
         "description": "Change a document's Markdown and release the change at once.\n\nThe change stays the published version until a changed source -- a new\nupload or a Confluence sync of a changed page -- brings the next one. An\nunreleased version is edited in place; a released one becomes a new\nversion (see _new_edit_version). Save and release share one transaction:\nif the release is refused (quality gate, grade C without confirmation),\nnothing is stored.",
@@ -19144,6 +21225,113 @@
         "summary": "Reprocess Portal Document"
       }
     },
+    "/api/v1/portal/documents/{job_id}/review": {
+      "put": {
+        "description": "Set (or clear with null) when this version is next due for review.\nThe document review tick opens or dismisses the `review_due` task on\nits next run.",
+        "operationId": "set_document_review_api_v1_portal_documents__job_id__review_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentReviewUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentReviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Document Review"
+      }
+    },
+    "/api/v1/portal/documents/{job_id}/review/confirm": {
+      "post": {
+        "description": "'Als gepr\u00fcft best\u00e4tigen': reviewed now by the caller; the next due\ndate is the one sent, else now + the space's interval, else none. Active\n`review_due` tasks of this version are closed (done).",
+        "operationId": "confirm_document_review_api_v1_portal_documents__job_id__review_confirm_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/DocumentReviewConfirm"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentReviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Confirm Document Review"
+      }
+    },
     "/api/v1/portal/documents/{job_id}/skip": {
       "post": {
         "operationId": "skip_portal_document_api_v1_portal_documents__job_id__skip_post",
@@ -19265,6 +21453,53 @@
           }
         },
         "summary": "Indexing Status"
+      }
+    },
+    "/api/v1/portal/quality/summary": {
+      "get": {
+        "description": "Feedback and unanswered questions of the last 90 days, current task\ncounts and the documents with the most negative feedback, over the\ncaller's spaces (or one of them: 404 when not visible). Each signal\ncounts once, however many documents of a space it cited.",
+        "operationId": "quality_summary_api_v1_portal_quality_summary_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "collection_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Collection Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QualitySummaryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Quality Summary"
       }
     },
     "/api/v1/portal/releases/{release_id}/artifacts/{filename}": {
@@ -19392,6 +21627,215 @@
         "summary": "Retry Release"
       }
     },
+    "/api/v1/portal/review-tasks": {
+      "get": {
+        "description": "Tasks of the caller's spaces, sorted by status (open, in progress,\ndone, dismissed), then most recently seen first. `status=active`\n(default) = open + in_progress.",
+        "operationId": "list_review_tasks_api_v1_portal_review_tasks_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "active",
+              "pattern": "^(open|in_progress|done|dismissed|active)$",
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "knowledge_gap",
+                    "answer_feedback",
+                    "review_due",
+                    "contradiction"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "collection_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Collection Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewTaskListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Review Tasks"
+      }
+    },
+    "/api/v1/portal/review-tasks/count": {
+      "get": {
+        "description": "Active (open + in_progress) tasks of the caller's spaces, for the\nsidebar badge.",
+        "operationId": "count_review_tasks_api_v1_portal_review_tasks_count_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewTaskCountResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Count Review Tasks"
+      }
+    },
+    "/api/v1/portal/review-tasks/{task_id}": {
+      "get": {
+        "operationId": "get_review_task_api_v1_portal_review_tasks__task_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewTaskOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Review Task"
+      },
+      "patch": {
+        "description": "Assign, take over, close or reopen a task. done/dismissed record\nwho resolved it and when; done on a `review_due` task also confirms the\ndocument's review (`_confirms_review`). A closed task can only be reopened while no\nother active task covers the same cluster (409 otherwise).",
+        "operationId": "update_review_task_api_v1_portal_review_tasks__task_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewTaskUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewTaskOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Review Task"
+      }
+    },
     "/api/v1/portal/stats": {
       "get": {
         "description": "\u00dcbersicht metrics over every document the caller can see: per space\ntotal / in chat / to review / failed, how long documents wait for a\nreview, and releases per week. Same visibility and 'review' rule as\nGET /documents.",
@@ -19409,6 +21853,172 @@
           }
         },
         "summary": "Portal Stats"
+      }
+    },
+    "/api/v1/portal/subscriptions": {
+      "get": {
+        "operationId": "list_subscriptions_api_v1_portal_subscriptions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopicSubscriptionListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Subscriptions"
+      },
+      "post": {
+        "description": "Subscribe to a space and/or keywords. The space must be readable by\nthe caller (404 otherwise); a query must contain at least one\nsearchable keyword (stopwords alone are refused).",
+        "operationId": "create_subscription_api_v1_portal_subscriptions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TopicSubscriptionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopicSubscriptionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Subscription"
+      }
+    },
+    "/api/v1/portal/subscriptions/{subscription_id}": {
+      "delete": {
+        "description": "Delete an own subscription (its notifications go with it).",
+        "operationId": "delete_subscription_api_v1_portal_subscriptions__subscription_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "subscription_id",
+            "required": true,
+            "schema": {
+              "title": "Subscription Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Subscription"
+      }
+    },
+    "/api/v1/quality/contradictions": {
+      "post": {
+        "description": "Create/update one `contradiction` Pr\u00fcfaufgabe per unordered document\npair. Reports naming an unknown space or job are ignored (not counted\nin `accepted`); the batch still succeeds.",
+        "operationId": "receive_contradictions_api_v1_quality_contradictions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContradictionBatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QualitySignalBatchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Receive Contradictions"
+      }
+    },
+    "/api/v1/quality/signals": {
+      "post": {
+        "description": "Idempotent upsert of a batch of signals by `signal_key`. Malformed\nsignals are skipped and not counted in `accepted`; the batch as a whole\nstill succeeds so the sender marks it forwarded.",
+        "operationId": "receive_quality_signals_api_v1_quality_signals_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QualitySignalBatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QualitySignalBatchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Receive Quality Signals"
       }
     },
     "/api/v1/ready": {

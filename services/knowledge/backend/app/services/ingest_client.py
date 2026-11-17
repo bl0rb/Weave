@@ -7,6 +7,10 @@ target and verifying its UTF-8 SHA-256 before chunking. The existing
 job-based fetcher remains available for compatibility with other callers,
 but released indexing never uses an event-supplied URL.
 
+Also home of the one outbound write, report_contradictions(): a best-effort
+POST of contradiction candidates (app/services/contradictions.py) to
+Weave-Ingest after an index run.
+
 Kept DB-free and FastAPI-free by design, same shape as
 app/services/embeddings.py's OpenAICompatibleProvider: a plain function
 callers (index_document) depend on, easy to monkeypatch/mock in tests
@@ -226,3 +230,43 @@ def _fetch_url(url: str, *, timeout: float) -> str:
     # unexpected 4xx) -- not retryable, same "any other 4xx" reasoning as
     # OpenAICompatibleProvider in app/services/embeddings.py.
     raise PermanentFetchError(f'fetching {url!r} returned unexpected HTTP {response.status_code}')
+
+
+_CONTRADICTIONS_PATH = '/api/v1/quality/contradictions'
+_REPORT_TIMEOUT_SECONDS = 10.0
+
+
+def report_contradictions(reports: list[dict], *, timeout: float = _REPORT_TIMEOUT_SECONDS) -> bool:
+    """POST contradiction candidates (app/services/contradictions.py's
+    find_candidates) to Weave-Ingest's `POST /api/v1/quality/contradictions`
+    as `{"reports": [...]}`, authenticated with the same service token as the
+    markdown fetch above.
+
+    Best effort by design -- the caller (app/workers/tasks.py, after the
+    index commit) must never fail or retry an index run over this: returns
+    True on a 2xx answer, False on anything else (logged), and never raises.
+    A no-op (False, nothing sent) when there is nothing to report or when
+    WEAVE_INGEST_BASE_URL / WEAVE_INGEST_API_TOKEN is unset -- an empty
+    bearer would only ever earn a 401. Like every other request here the
+    URL is built solely from this service's own settings and redirects are
+    not followed.
+    """
+    base_url = _authorized_base_url()
+    if not reports or not base_url or not settings.weave_ingest_api_token:
+        return False
+    url = f'{base_url}{_CONTRADICTIONS_PATH}'
+    headers = {'Authorization': f'Bearer {settings.weave_ingest_api_token}'}
+    try:
+        response = httpx.post(
+            url, json={'reports': reports}, headers=headers, timeout=timeout, follow_redirects=False,
+        )
+    except httpx.HTTPError as exc:
+        logger.warning('contradictions: reporting %d candidate(s) to %s failed: %s', len(reports), url, exc)
+        return False
+    if 200 <= response.status_code < 300:
+        return True
+    logger.warning(
+        'contradictions: reporting %d candidate(s) to %s returned HTTP %s',
+        len(reports), url, response.status_code,
+    )
+    return False

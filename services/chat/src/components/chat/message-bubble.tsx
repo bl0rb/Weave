@@ -16,6 +16,8 @@ import { answerSpaces, citedSourcesByRef, spaceColor } from '@/lib/knowledge-spa
 import { normalizeAnswerMarkdown, remarkChatBreaks } from '@/lib/markdown';
 import { AnswerCitationsContext, AnswerSpacesFooter, CitationHighlightProvider, CitationSpan, rehypeCitations } from '@/components/chat/citations';
 import type { MessageKey } from '@/i18n/messages';
+import { AnswerFeedback } from '@/components/chat/answer-feedback';
+import type { MessageFeedback } from '@/types/weave-api';
 
 // Rewrites an inline `![alt](url)` image's src to this app's own proxy
 // route (see lib/portal-artifact-url.ts) before it ever reaches the DOM —
@@ -55,6 +57,10 @@ interface MessageBubbleProps {
    * answer offers (`trace.clarification`, see types/weave-api.ts). Without
    * it the chips are not rendered at all. */
   onClarifyOption?: (message: string) => void;
+  /** Records this answer's changed rating in the transcript state (see
+   * answer-feedback.tsx). The feedback row itself only needs
+   * `message.serverId`. */
+  onFeedbackChange?: (feedback: MessageFeedback | null) => void;
 }
 
 export function MessageBubble({
@@ -64,6 +70,7 @@ export function MessageBubble({
   isSelectedForSourcesPanel,
   onSelectForSourcesPanel,
   onClarifyOption,
+  onFeedbackChange,
   showSources = true,
 }: MessageBubbleProps) {
   const { t } = useI18n();
@@ -216,6 +223,11 @@ export function MessageBubble({
           <div className="chat-inline-sources">
             <SourceCards sources={message.sources} messageId={message.id} />
           </div>
+        ) : null}
+        {/* Feedback only for a finished, persisted answer: never while it
+            streams, after a failed turn, or before Weave-API named its id. */}
+        {!isUser && !message.streaming && !message.error && typeof message.serverId === 'number' ? (
+          <AnswerFeedback key={message.serverId} messageId={message.serverId} feedback={message.feedback} onChange={onFeedbackChange} />
         ) : null}
         {!isUser && message.trace ? <TracePanel trace={message.trace} /> : null}
         {!isUser && message.viaFallback ? (

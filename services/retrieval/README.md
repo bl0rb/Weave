@@ -31,6 +31,7 @@ Weave-Retrieval ist der **Hybrid Search Service** des Weave-Systems. Sie bietet 
 
 **Input:**
 - POST `/search`: Query, Filter-Objekt, Top-K, optionaler Reranker-Toggle
+- POST `/passage`: ein zitierter Chunk plus Nachbar-Chunks („Textstelle öffnen“), mit denselben Sichtbarkeitsregeln wie `/search`
 
 **Output:**
 - JSON-Array mit Dokumenten-Chunks: ID, Text, Score, Metadaten, Quelle
@@ -46,13 +47,40 @@ Weave-Retrieval ist der **Hybrid Search Service** des Weave-Systems. Sie bietet 
 1. **Embedding**: die Query wird mit `settings.embedding_provider` (`app/services/embeddings.py`) in denselben Vektorraum eingebettet, mit dem Weave-Knowledge `chunks.embedding` befüllt hat.
 2. **Metadaten-Filterung VOR dem Ranking** (`apply_filters()`): `documents.status = 'indexed'` sowie die `allowed_teams`- UND `allowed_collections`-Zugriffsgrenzen (aus `SearchRequest`, propagiert von Weave-API und Weave-Runtime, siehe ADR-0002 bzw. den Collections-Vertrag) werden unconditional angewendet — niemals überspringbar, unabhängig davon, ob `filters.team`/`filters.collection` gesetzt sind. Ist `allowed_collections` eine konkrete Liste, entscheidet sie allein über Dokumente in einem Bereich; `allowed_teams` gilt dann nur noch für Altbestand ohne Collection (ADR 0008 — `documents.team` ist das Hauptteam des Hochladenden, keine Freigabe). Nur ohne `allowed_collections` gilt `allowed_teams` für alle Dokumente. `filters.team`/`filters.department`/`filters.collection` filtern echte `documents`-Spalten; `filters.source`/`language`/`document_type`/`tags` filtern gegen `chunks.meta` (dorthin von Weave-Knowledges `enrichment.py` denormalisiert — `documents` selbst hat kein `source`-Feld, nur `original_filename`). Siehe "Collections" unten für die genaue `allowed_collections`-Semantik, insbesondere die Sonderregel für Dokumente ohne Collection.
 3. **Parallele Kandidaten-Suche**, je bis zu `top_k` Treffer:
-   - **Vektor-Suche** (`vector_search()`): Cosine-Similarity über `chunks.embedding` — auf Postgres pgvectors `<=>`-Operator mit dem HNSW-Index, auf SQLite (lokale Entwicklung/Tests) ein reiner Python-Fallback. Nur Chunks, deren `embedding_model` exakt zu `settings.embedding_model` passt, werden verglichen.
+   - **Vektor-Suche** (`vector_search()`): Cosine-Similarity über `chunks.embedding` — auf Postgres pgvectors `<=>`-Operator mit dem HNSW-Index, auf SQLite (lokale Entwicklung/Tests) ein reiner Python-Fallback. Nur Chunks, deren `embedding_model` exakt zu `settings.embedding_model` passt, werden verglichen. Optional liefert stattdessen ein Amazon-S3-Vectors-Index die Kandidaten (siehe "Vektor-Index: pgvector oder S3 Vectors" unten).
    - **Volltext-Suche** (`fulltext_search()`): auf Postgres `websearch_to_tsquery('simple', ...)` gegen die generierte `chunks.tsv`-Spalte, gerankt mit `ts_rank`; auf SQLite ein Fallback über Token-Overlap.
 4. **Reciprocal Rank Fusion** (`rrf_fuse()`): kombiniert beide Ranglisten allein über die RANG-Position jedes Kandidaten in jeder Liste (`1 / (rrf_k + rang)`, `rrf_k` konfigurierbar über `RRF_K`, Default 60) — nicht über die Rohscores, die zwischen Cosine-Similarity und Volltext-Rang nicht vergleichbar wären. Ein Chunk, den BEIDE Signale finden, gewinnt fast immer gegen einen, den nur ein Signal findet. Die fusionierten Top `top_k` Kandidaten gehen in die nächste Stufe.
 5. **Reranking** (optional, `settings.rerank_provider`, `app/services/reranker.py`): `none` (Default) reicht die RRF-Reihenfolge unverändert durch (`NoopReranker`); `fake` ist ein deterministischer, abhängigkeitsfreier Provider für Tests/Demos; `api` spricht einen Cohere/Jina-kompatiblen `POST {base_url}/rerank`-Endpunkt. **Ein Reranker-Ausfall lässt die Suche niemals scheitern**: Eine `RerankError` wird abgefangen, die Suche fällt auf die unveränderte RRF-Reihenfolge zurück (`scores.rerank = null` für jedes Ergebnis) und `trace.rerank_error = true` markiert das für Monitoring/Debugging.
 6. **`final_k`-Kürzung**: erst NACH dem Reranking wird auf die finalen `final_k` Ergebnisse gekürzt (Reranker-Integration "Top `top_k` → Final `final_k` Ergebnisse"). Ein explizites `final_k > top_k` wird von der API bereits vor dem eigentlichen Pipeline-Lauf mit `400` abgelehnt — ein Reranker kann eine Kandidatenmenge nur verkleinern, niemals vergrößern. Fehlt `final_k`, gilt `min(SEARCH_FINAL_K, top_k)` — ein Aufrufer, der nur ein kleines `top_k` schickt, bekommt also kein `400`. Fehlt `top_k`, gilt `max(SEARCH_TOP_K, final_k)` — ein Aufrufer, der nur `final_k` schickt (z.B. ein Bot ohne eigenes `top_k`), bekommt nie weniger Kandidaten als angefragte Ergebnisse und ebenfalls kein `400`. (`SEARCH_TOP_K`/`SEARCH_FINAL_K` meinen hier jeweils den zentralen Wert aus der Ingest-Admin-Trefferzahl, falls gesetzt.)
 
-Jede Antwort enthält einen `trace` mit Kandidatenzahlen pro Stufe (`vector_candidates`, `fulltext_candidates`, `fused`, `reranked`, `returned`), dem `rerank_error`-Flag, `timings_ms` pro Stufe (`embed`, `vector_search`, `fulltext_search`, `fuse`, `rerank`) sowie den effektiv verwendeten Parametern (`top_k`, `final_k`, `rrf_k`, `semantic_weight`, `lexical_weight`, `rerank_requested`, `rerank_provider`/`rerank_model` — `null`, wenn kein Reranker lief —, `embedding_model`) — für genau das Monitoring, das oben unter "Verantwortlichkeiten" gefordert ist.
+Jede Antwort enthält einen `trace` mit Kandidatenzahlen pro Stufe (`vector_candidates`, `fulltext_candidates`, `fused`, `reranked`, `returned`), dem `rerank_error`-Flag, `timings_ms` pro Stufe (`embed`, `vector_search`, `fulltext_search`, `fuse`, `rerank`) sowie den effektiv verwendeten Parametern (`top_k`, `final_k`, `rrf_k`, `semantic_weight`, `lexical_weight`, `rerank_requested`, `rerank_provider`/`rerank_model` — `null`, wenn kein Reranker lief —, `embedding_model`, `vector_backend`) — für genau das Monitoring, das oben unter "Verantwortlichkeiten" gefordert ist.
+
+## Vektor-Index: pgvector oder S3 Vectors (optional)
+
+Default ist `VECTOR_BACKEND=pgvector`: die Vektor-Suche läuft wie oben beschrieben direkt in Postgres (bzw. im SQLite-Fallback). Mit `VECTOR_BACKEND=s3vectors` fragt `vector_search()` stattdessen einen **Amazon S3 Vectors**-Index nach Kandidaten (`app/services/vector_index.py`). Der Index ist ein optionaler, additiver Spiegel von `chunks.embedding` (siehe `contracts/chunk-store.md`): **Weave-Knowledge ist der einzige Schreiber**, Weave-Retrieval fragt ihn nur ab. Postgres bleibt die Quelle der Wahrheit für Chunks, Volltext, Metadaten und Berechtigungen.
+
+Ablauf pro Anfrage:
+
+1. `build_filter()` übersetzt `allowed_teams`/`allowed_collections` (inkl. `__none__`-Sonderregel), `filters.team`, `filters.collection`, `filters.document_ids` und das aktuelle `embedding_model` in einen S3-Metadatenfilter — dieselbe Semantik wie `apply_filters()`. Ist der effektive Scope leer, wird S3 gar nicht erst gefragt.
+2. `QueryVectors` mit `topK = min(top_k * S3VECTORS_OVERFETCH, S3VECTORS_MAX_TOP_K)` (Over-Fetch, weil Filter und Recheck Treffer wegnehmen können). Achtung: Mit dem Default-Cap 100 gibt es ab `top_k` ≥ 25 keinen Over-Fetch mehr, und ein `top_k` über dem Cap (erlaubt sind bis 200) kann das Vektor-Bein nie füllen — jede vom Recheck verworfene ID kostet dann Recall gegenüber pgvector. `S3VECTORS_MAX_TOP_K` so hoch setzen, wie der Index erlaubt, mindestens auf `SEARCH_TOP_K × S3VECTORS_OVERFETCH`.
+3. **Pflicht-Recheck in Postgres**: jede zurückgelieferte Chunk-ID wird mit exakt derselben Statement-Form wie im pgvector-Pfad geprüft (Join auf `documents`, `apply_filters()`, `status = 'indexed'`, `embedding_model`-Match). S3-Metadaten werden nie allein vertraut — veraltete Vektoren (ersetzte/zurückgezogene Dokumente, geänderte Collection) fallen hier heraus. Die S3-Reihenfolge bleibt erhalten, `scores.vector` ist wie bei pgvector Cosine-Similarity (`1 − Cosine-Distanz`), danach wird auf `top_k` gekürzt.
+4. **Fehler** (boto3/botocore, Timeouts, jede andere Ausnahme): mit `S3VECTORS_FALLBACK_PGVECTOR=true` (Default) läuft der normale pgvector-Pfad, sonst bleibt das Vektor-Bein leer (Volltext antwortet weiter); beides mit Warning im Log. Eine Abfrage hat ein festes Zeitbudget von ca. 3 s (1 s Connect, 2 s Read, keine Retries), damit der Fallback noch innerhalb des Aufrufer-Timeouts (Weave-Runtime: 10 s) antwortet. Nach einem Fehler wird S3 Vectors 30 s lang gar nicht gefragt (direkt Fallback bzw. leeres Vektor-Bein), damit ein Ausfall nicht jede Suche verlangsamt.
+
+`trace.vector_backend` zeigt, wer geantwortet hat: `pgvector`, `s3vectors`, `pgvector-fallback` oder `s3vectors-error` (S3-Fehler bei abgeschaltetem Fallback — unterscheidbar von einem regulär leeren Ergebnis). Passage-Endpunkt und Memory-Suche sind unberührt (nur Postgres).
+
+| Variable | Default | Bedeutung |
+|---|---|---|
+| `VECTOR_BACKEND` | `pgvector` | `pgvector` oder `s3vectors` (leer = `pgvector`); alles andere bricht den Start ab |
+| `S3VECTORS_BUCKET` | leer | Vector Bucket; Pflicht bei `s3vectors` (sonst Startfehler) |
+| `S3VECTORS_INDEX` | `weave-chunks` | Index-Name |
+| `S3VECTORS_REGION` | leer | leer = boto3-Default-Kette |
+| `S3VECTORS_ENDPOINT_URL` | leer | leer = AWS; nur für Tests/Emulatoren |
+| `S3VECTORS_ACCESS_KEY_ID` / `S3VECTORS_SECRET_ACCESS_KEY` | leer | beide leer = Standard-Credential-Kette (IAM-Rolle/IRSA/Env/Instance-Profile) |
+| `S3VECTORS_OVERFETCH` | `4` | Over-Fetch-Faktor (1–20) |
+| `S3VECTORS_MAX_TOP_K` | `100` | Obergrenze für `topK` einer Abfrage |
+| `S3VECTORS_FALLBACK_PGVECTOR` | `true` | bei S3-Fehler auf pgvector zurückfallen |
+
+Benötigte IAM-Rechte für Weave-Retrieval: `s3vectors:QueryVectors` und `s3vectors:GetVectors` (eine gefilterte Abfrage verlangt beide). Index anlegen und befüllen ist Sache von Weave-Knowledge (`python -m app.cli s3vectors init` / `sync`).
 
 ## API
 
@@ -87,6 +115,7 @@ Content-Type: application/json
     {
       "chunk_id": 42,
       "document_id": "b4b997e4-f2e6-4944-9943-78de9dce77ae",
+      "source_job_id": "0b6f3f0e-6a1d-4c51-9d3e-2f1f5a7c9e11",
       "text": "Sie können Ihr VPN-Passwort im Self-Service-Portal unter Einstellungen zurücksetzen, sofern Sie Ihre Mitarbeiter-ID kennen.",
       "heading_path": ["IT-Support", "VPN"],
       "page_start": 3,
@@ -133,6 +162,30 @@ Content-Type: application/json
 
 Fehlerfälle: `401` (fehlendes/falsches Bearer-Token), `503` (kein `RETRIEVAL_API_TOKEN` konfiguriert — niemals "Auth aus"), `422` (z.B. leere `query`), `400` (explizites `final_k > top_k`).
 
+`source_job_id` ist die `Document.source_job_id` (stabile Weave-Ingest-Job-ID genau dieser Dokumentversion) — der Schlüssel, unter dem Feedback, Prüfaufgaben und Golden-Set-Urteile ein Dokument referenzieren.
+
+### Textstelle: `POST /api/v1/passage`
+
+Liefert den Ziel-Chunk eines Dokuments plus bis zu `context` (0–3, Default 1) Nachbar-Chunks auf jeder Seite (nach `chunk_index`, nur aus demselben Dokument) — die Grundlage für „Textstelle öffnen“ an einem Zitat. Gleiche Service-Token-Auth wie `/search`. Die Sichtbarkeit wird **nicht** nachgebaut, sondern über exakt dasselbe `apply_filters()` geprüft (Status `indexed`, `allowed_teams`, `allowed_collections` inkl. `__none__` für Altbestand, siehe "Suche"/"Collections") — eine Textstelle ist genau dann sichtbar, wenn dieselbe Suche den Chunk hätte liefern können (`app/services/passage.py`).
+
+```json
+POST /api/v1/passage
+{ "document_id": "b4b997e4-f2e6-4944-9943-78de9dce77ae", "chunk_id": 42, "context": 1,
+  "allowed_teams": ["Kundenservice"], "allowed_collections": ["support-docs", "__none__"] }
+
+200 OK
+{ "document_id": "b4b997e4-…", "source_job_id": "0b6f3f0e-…", "title": "IT-Support FAQ",
+  "original_filename": "IT-Support-FAQ.pdf", "document_version": 1, "source_kind": "upload",
+  "source_url": null, "collection": "support-docs", "target_chunk_id": 42,
+  "chunks": [
+    { "chunk_id": 41, "chunk_index": 6, "heading_path": ["IT-Support", "VPN"], "page_start": 3, "page_end": 3, "text": "…", "is_target": false },
+    { "chunk_id": 42, "chunk_index": 7, "heading_path": ["IT-Support", "VPN"], "page_start": 3, "page_end": 3, "text": "…", "is_target": true },
+    { "chunk_id": 43, "chunk_index": 8, "heading_path": ["IT-Support", "VPN"], "page_start": 4, "page_end": 4, "text": "…", "is_target": false }
+  ] }
+```
+
+Nicht sichtbar, unbekannte/ungültige `document_id`, Chunk nicht in diesem Dokument oder Dokument nicht (mehr) `indexed` (z.B. `superseded` nach einer neuen Version) → einheitlich `404 {"detail": "Passage not found"}` — kein Existenz-Leak. `422` nur bei strukturell ungültigem Body (z.B. `context` außerhalb 0–3).
+
 ## Collections
 
 Weave-Retrieval ist die **Lese-Autorität** des "Collections"-Vertrags (siehe die Vertrag-Definition; Owner der Registry-Werte ist Weave-Ingest, gespiegelt über Weave-Knowledge in derselben `collections`-Tabelle wie `documents`/`chunks`, siehe oben): es beantwortet, welche Collections ein Team lesen darf, und setzt die Zugriffsgrenze bei der Suche durch — schreibt selbst aber keine Zeile dieser Tabelle.
@@ -161,7 +214,12 @@ Weave-Retrieval ist die **Lese-Autorität** des "Collections"-Vertrags (siehe di
 
 ## Evaluation
 
-Retrieval-Qualität wird gegen ein handkuratiertes **Golden-Set** gemessen: Query → erwartete relevante Chunks (per `Document.source_job_id`, optional eingeengt auf einen Text-Marker-Substring), siehe `backend/eval/golden.example.yaml` und die Docstrings in `app/services/evalharness.py` für das genaue Format. `evaluate()` berechnet Recall@k (für konfigurierbare `k`), MRR und Hit@1, pro Query und als Makro-Durchschnitt.
+Retrieval-Qualität wird gegen ein handkuratiertes **Golden-Set** gemessen: Query → erwartete relevante Chunks (per `Document.source_job_id`, optional eingeengt auf einen Text-Marker-Substring), siehe `backend/eval/golden.example.yaml` und die Docstrings in `app/services/evalharness.py` für das genaue Format. `evaluate()` berechnet Recall@k, Precision@k und nDCG@k (für konfigurierbare `k`), MRR und Hit@1, pro Query und als Makro-Durchschnitt:
+
+- **Precision@k** = Anteil der Top-k-Ränge, deren Treffer irgendein Urteil erfüllt (immer durch `k` geteilt).
+- **nDCG@k** = binäre Relevanz, jedes Urteil zählt höchstens einmal (ein zweiter Chunk eines schon gezählten Dokument-Urteils bringt nichts); ideale DCG aus `min(Anzahl Urteile, k)` Treffern auf den Rängen 1..n.
+
+Jeder Golden-Eintrag darf zusätzlich einen optionalen `answer:`-Block tragen — die Antwort-Erwartung, die Weave-Runtimes Antwort-Evaluation (`python -m app.eval_cli answers`) aus derselben Datei liest (`answerable`, `reference`, `must_include` mit Alternativen, `must_not_include`, `must_cite`; siehe Kommentar in `golden.example.yaml`). Die Retrieval-Harness prüft davon nur den Typ (Mapping, `answerable` bool). Einträge mit `answer.answerable: false` (Frage, die der Korpus nicht beantworten kann — erwartet wird eine Enthaltung) dürfen `relevant: []` haben bzw. `relevant` weglassen; sie werden von allen Retrieval-Metriken übersprungen und im Report als `skipped (unanswerable): n` gezählt. Alle anderen Regeln bleiben unverändert (insbesondere braucht jeder beantwortbare Eintrag eine nicht-leere `relevant`-Liste).
 
 ```bash
 cd backend
@@ -179,9 +237,13 @@ DATABASE_URL=sqlite:///./eval_demo.db .venv/bin/python -m app.cli eval \
 # immer die von --min-recall gegatete Metrik, unabhängig von --k:
 DATABASE_URL=sqlite:///./eval_demo.db .venv/bin/python -m app.cli eval \
   --golden eval/golden.example.yaml --k 5 --k 20
+
+# Vollständiges Ergebnis (pro Query + Aggregat + ks) zusätzlich als JSON:
+DATABASE_URL=sqlite:///./eval_demo.db .venv/bin/python -m app.cli eval \
+  --golden eval/golden.example.yaml --json eval_report.json
 ```
 
-Exit-Codes (safe für ein CI-Gate): `0` Erfolg, `1` aggregiertes Recall@5 unter `--min-recall`, `2` Golden-Set nicht ladbar.
+Exit-Codes (safe für ein CI-Gate): `0` Erfolg, `1` aggregiertes Recall@5 unter `--min-recall`, `2` Golden-Set nicht ladbar (oder `--json`-Datei nicht schreibbar). Die JSON-Datei wird vor der Gate-Prüfung geschrieben, liegt also auch bei Exit-Code `1` vor.
 
 **`seed-demo`** ist ein reines Dev-/CI-Fixture-Kommando, **kein** Ersatz für Weave-Knowledges Indexierung: es legt (`Base.metadata.drop_all` + `create_all`) das komplette Schema auf `DATABASE_URL` neu an und seedet einen festen Mini-Korpus — deshalb verweigert es sich strikt, sobald `DATABASE_URL` nicht mit `sqlite` beginnt, um niemals versehentlich Schema auf der echten, geteilten `weave_knowledge`-Postgres-Datenbank anzulegen (siehe "Architektur-Entscheidung" unten). Ein reales Golden-Set kuratiert man stattdessen manuell gegen tatsächlich von Weave-Knowledge indexierte Dokumente und lässt `eval` gegen die echte (read-only) `DATABASE_URL` laufen — `get_search_fn()` (`app/services/evalharness.py`) ruft dafür exakt dieselbe `app/services/search.py:search()`-Pipeline auf, die auch hinter `POST /api/v1/search` steht, mit `top_k = final_k = settings.search_top_k`, damit auch ein `k` oberhalb von `settings.search_final_k` noch aussagekräftig ist.
 

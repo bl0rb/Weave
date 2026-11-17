@@ -141,6 +141,33 @@ export const chat: Record<keyof typeof de, string> = {
   'messageBubble.status.partial': 'partial',
   'messageBubble.status.failed': 'failed',
 
+  // components/chat/answer-feedback.tsx
+  'feedback.groupLabel': 'How helpful was this answer?',
+  'feedback.helpful': 'Helpful',
+  'feedback.wrong': 'Wrong',
+  'feedback.outdated': 'Outdated',
+  'feedback.commentLabel': 'What is wrong or outdated? (optional)',
+  'feedback.commentSubmit': 'Send comment',
+  'feedback.commentEdit': 'Add a comment',
+  'feedback.thanks': 'Thanks for your feedback',
+  'feedback.removed': 'Feedback withdrawn',
+  'feedback.failed': 'Your feedback could not be saved. Please try again.',
+
+  // components/chat/passage-dialog.tsx
+  'passage.open': 'Open passage',
+  'passage.openRef': 'Open passage for source {ref}',
+  'passage.title': 'Passage',
+  'passage.close': 'Close passage',
+  'passage.loading': 'Loading passage …',
+  'passage.notFound': 'This passage is no longer available – the document has probably been updated.',
+  'passage.loadFailed': 'The passage could not be loaded. Please try again.',
+  'passage.version': 'Version {version}',
+  'passage.page': 'Page {page}',
+  'passage.pageRange': 'Pages {start}–{end}',
+  'passage.headingLabel': 'Outline',
+  'passage.cited': 'Cited passage',
+  'passage.openOriginal': 'Open original',
+
   // components/chat/guard-banner.tsx
   'guard.headline': 'No evidence found.',
   // components/chat/message-bubble.tsx (clarification chips)

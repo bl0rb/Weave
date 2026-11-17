@@ -14,12 +14,32 @@
 #     DIESE Query ueberhaupt betrachtet werden -- sinnvoll, wenn ein Eintrag
 #     nur bis zu einer bestimmten Tiefe manuell verifiziert wurde. Fehlt k,
 #     gilt max(ks) aus dem evaluate()-Aufruf.
+#   - answer (optional): Erwartung an die ANTWORT, ausgewertet von
+#     Weave-Runtimes `python -m app.eval_cli answers` (eigener Loader, liest
+#     dieselbe Datei). Die Retrieval-Harness hier ignoriert den Block bis auf
+#     die Typpruefung (Mapping, `answerable` bool). Felder:
+#       answerable        Default true; false = Bot soll sich enthalten
+#                         ("keine Antwort im Wissen"). Solche Eintraege
+#                         duerfen `relevant: []` haben bzw. `relevant`
+#                         weglassen und werden von den Retrieval-Metriken
+#                         uebersprungen ("skipped (unanswerable)").
+#       reference         optionale Referenzantwort
+#       must_include      Kernfakten; Eintrag = String oder Liste von
+#                         gleichwertigen Alternativen
+#       must_not_include  Formulierungen, die NICHT vorkommen duerfen
+#       must_cite         erwartete source_job_ids; Default = alle
+#                         relevant[].source_job_id
 
 - query: "Wie lange ist die Kündigungsfrist während der Probezeit?"
   k: 10
   relevant:
     - source_job_id: "b1a7e2c4-1111-4a3b-9c2d-000000000001"
       contains: "Kündigungsfrist beträgt während der Probezeit zwei Wochen"
+  answer:
+    reference: "Während der Probezeit beträgt die Kündigungsfrist zwei Wochen."
+    must_include:
+      - ["zwei Wochen", "2 Wochen", "14 Tage"]
+    must_not_include: ["vier Wochen"]
 
 - query: "Wie beantrage ich Remote-Arbeit aus dem europäischen Ausland?"
   k: 10
@@ -32,6 +52,15 @@
   relevant:
     - source_job_id: "b1a7e2c4-3333-4a3b-9c2d-000000000003"
     - source_job_id: "b1a7e2c4-4444-4a3b-9c2d-000000000004"
+  answer:
+    answerable: true
+    must_include:
+      - "Fahrtkosten"
+      - "Übernachtung"
+      - ["Verpflegungsmehraufwand", "Verpflegung"]
+    # Nur das erste Dokument muss zitiert werden (ohne must_cite waeren es
+    # beide relevant[]-Dokumente).
+    must_cite: ["b1a7e2c4-3333-4a3b-9c2d-000000000003"]
 
 - query: "Wie setze ich mein VPN-Passwort zurück?"
   k: 5
@@ -49,3 +78,11 @@
       contains: "30 Urlaubstage pro Kalenderjahr"
     - source_job_id: "b1a7e2c4-6666-4a3b-9c2d-000000000006"
       contains: "Urlaubsantrag im HR-Portal mindestens zwei Wochen im Voraus"
+
+- query: "Wie hoch ist der Zuschuss zum Firmenfitnessstudio?"
+  # Kein Dokument im Korpus beantwortet das -- erwartet wird eine Enthaltung
+  # statt einer erfundenen Antwort. `relevant` darf deshalb leer sein bzw.
+  # fehlen; die Retrieval-Metriken ueberspringen diesen Eintrag.
+  relevant: []
+  answer:
+    answerable: false

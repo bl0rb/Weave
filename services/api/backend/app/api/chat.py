@@ -19,7 +19,11 @@ app/services/runtime_client.py for why each step is shaped the way it is):
    that bot) -> the exact same upstream status code, passed straight
    through with its `detail`.
 5. Persist the assistant's reply (with `sources`/`trace` carried verbatim)
-   and return it.
+   and return it, with its `message_id` (the handle for answer feedback,
+   app/api/feedback.py). An unanswered turn (`no_context` guard) also
+   queues an anonymous quality signal for Weave-Ingest in the same step
+   (app/services/quality_signals.py), forwarded after the response via
+   `BackgroundTasks` -- see `_queue_unanswered_signal` below.
 
 Also POST /v1/chat/stream -- the streaming counterpart of the same turn,
 for Weave-API's own UI (not the OpenAI-compatible shim, which has its own
@@ -29,21 +33,23 @@ persistence and streaming interact.
 """
 
 import json
+import logging
 from collections.abc import Iterator
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.ratelimit import enforce_rate_limit
-from app.models.models import Conversation, MessageRole, User
+from app.models.models import Conversation, Message, MessageRole, User
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.services import conversations as conversations_service
-from app.services import runtime_client
+from app.services import quality_signals, runtime_client
 from app.services.notices import answer_knowledge_spaces, answer_metadata, answer_notices
 
 router = APIRouter(prefix='/v1', tags=['chat'])
+logger = logging.getLogger(__name__)
 
 
 def _release_db_connection(db: Session) -> None:
@@ -61,9 +67,30 @@ def _release_db_connection(db: Session) -> None:
     db.commit()
 
 
+def _queue_unanswered_signal(
+    db: Session, conversation: Conversation, message: Message, background_tasks: BackgroundTasks
+) -> None:
+    """Queue the `unanswered` quality signal for a just-persisted
+    assistant `message` if the `no_context` guard answered it
+    (app/services/quality_signals.py's `enqueue_unanswered_signal`), and
+    schedule the best-effort forward to Weave-Ingest after the response.
+    The answer itself is already committed: a failure here is logged and
+    rolled back, never surfaced to the caller."""
+    try:
+        queued = quality_signals.enqueue_unanswered_signal(db, message=message, conversation=conversation)
+        db.commit()
+    except Exception:  # noqa: BLE001 -- the turn must not fail over a quality signal
+        logger.exception('Queueing the unanswered-question signal for message %s failed', message.id)
+        db.rollback()
+        return
+    if queued:
+        background_tasks.add_task(quality_signals.flush_outbox_in_background)
+
+
 @router.post('/chat', response_model=ChatResponse)
 def chat(
     body: ChatRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     user: User = Depends(enforce_rate_limit),
 ) -> ChatResponse:
@@ -108,6 +135,7 @@ def chat(
         sources=result.get('sources'),
         trace=result.get('trace'),
     )
+    _queue_unanswered_signal(db, conversation, assistant_message, background_tasks)
     if is_first_assistant:
         _release_db_connection(db)
         try:
@@ -118,6 +146,7 @@ def chat(
 
     return ChatResponse(
         conversation_id=conversation.id,
+        message_id=assistant_message.id,
         answer=assistant_message.content,
         sources=assistant_message.sources,
         trace=assistant_message.trace,
@@ -135,7 +164,9 @@ def _sse_line(event: dict) -> str:
     return f'data: {json.dumps(event)}\n\n'
 
 
-def _stream_and_persist(db, conversation: Conversation, events: Iterator[dict]) -> Iterator[str]:
+def _stream_and_persist(
+    db, conversation: Conversation, events: Iterator[dict], background_tasks: BackgroundTasks | None = None
+) -> Iterator[str]:
     """The actual StreamingResponse body for POST /v1/chat/stream below --
     forwards every runtime_client.chat_stream() event to OUR OWN caller
     close to verbatim (`trace`/`delta`/`sources`/`done`/`error`, exactly
@@ -213,7 +244,7 @@ def _stream_and_persist(db, conversation: Conversation, events: Iterator[dict]) 
                 # itself somehow fails, our caller must never see a `done`
                 # for a turn that was never actually written to disk.
                 is_first_assistant = len(conversation.messages) == 1
-                conversations_service.append_message(
+                assistant_message = conversations_service.append_message(
                     db,
                     conversation,
                     role=MessageRole.ASSISTANT,
@@ -221,6 +252,13 @@ def _stream_and_persist(db, conversation: Conversation, events: Iterator[dict]) 
                     sources=sources,
                     trace=trace,
                 )
+                # The persisted message's id rides on `done` (additive
+                # field) -- the handle for answer feedback.
+                event = {**event, 'message_id': assistant_message.id}
+                if background_tasks is not None:
+                    # Tasks added here still run: Starlette executes the
+                    # response's BackgroundTasks after the whole stream.
+                    _queue_unanswered_signal(db, conversation, assistant_message, background_tasks)
                 # `done` goes out right away; the first answer's title (an
                 # LLM call of up to ~15 s) is generated AFTER it and sent as
                 # one extra `title` event, so the caller sees the answer as
@@ -261,6 +299,7 @@ def _stream_and_persist(db, conversation: Conversation, events: Iterator[dict]) 
 @router.post('/chat/stream')
 def chat_stream(
     body: ChatRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     user: User = Depends(enforce_rate_limit),
 ) -> StreamingResponse:
@@ -324,8 +363,9 @@ def chat_stream(
         raise HTTPException(status_code=exc.status_code, detail=exc.detail or str(exc)) from exc
 
     response = StreamingResponse(
-        _stream_and_persist(db, conversation, events),
+        _stream_and_persist(db, conversation, events, background_tasks),
         media_type='text/event-stream',
+        background=background_tasks,
     )
     response.headers['X-Conversation-Id'] = str(conversation.id)
     return response

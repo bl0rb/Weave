@@ -150,6 +150,16 @@ class Source(BaseModel):
     # uncited sources were dropped, so the kept ones keep the numbers used
     # in the text. None otherwise: the 1-based position is its number.
     ref: int | None = None
+    # Stable document identity and chunk position, echoed from Weave-
+    # Retrieval's SearchResult (app/services/retrieval_client.py's
+    # `RetrievedChunk`) by chat_common.py's `_to_source`: `source_job_id` is
+    # Weave-Ingest's job id behind this document version
+    # (`Document.source_job_id`, stable across re-indexing unlike
+    # `document_id`; the id golden sets and quality signals refer to), `heading_path`/`chunk_index` locate the chunk inside it.
+    # None for memory/n8n sources and for an older Retrieval that omits them.
+    source_job_id: str | None = None
+    heading_path: list[str] | None = None
+    chunk_index: int | None = None
 
     @field_validator('source_url')
     @classmethod
@@ -197,6 +207,9 @@ class RetrievalHit(BaseModel):
     rank: int
     document_id: str
     chunk_id: int
+    # Weave-Ingest job id behind the document (see `Source.source_job_id`);
+    # None when an older Weave-Retrieval does not send it.
+    source_job_id: str | None = None
     original_filename: str | None = None
     title: str | None = None
     collection: str | None = None

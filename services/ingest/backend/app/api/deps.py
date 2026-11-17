@@ -136,6 +136,24 @@ def get_knowledge_reader(request: Request, db: Session = Depends(get_db)) -> Use
     return get_current_user(request, db)
 
 
+def require_service_token(request: Request) -> None:
+    """Service-to-service only: the same bearer credential
+    `get_knowledge_reader` accepts (settings.knowledge_ingest_api_token),
+    but WITHOUT its fallback to a user session or API token -- for
+    endpoints only Weave services may call (POST /api/v1/quality/signals,
+    app/api/review_tasks.py). Fail closed like
+    technical_identities.py's `_require_tools_introspection_token`: 503
+    when the token is unset (never an empty-string match), 401 for any
+    other credential, compared in constant time."""
+    expected = settings.knowledge_ingest_api_token
+    if not expected:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='service misconfigured')
+    scheme, _, token = (request.headers.get('authorization') or '').partition(' ')
+    token = token.strip()
+    if scheme.lower() != 'bearer' or not token or not hmac.compare_digest(token.encode(), expected.encode()):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='invalid service token')
+
+
 def require_knowledge_registry_reader(user: User | None = Depends(get_knowledge_reader)) -> User | None:
     if user is not None and user.role != UserRole.ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Admin privileges required')

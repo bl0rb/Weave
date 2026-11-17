@@ -511,6 +511,7 @@ def _collection_to_response(
         folder=collection.folder,
         subfolder=collection.subfolder,
         job_ids=job_ids or [],
+        review_interval_days=collection.review_interval_days,
     )
 
 
@@ -1058,6 +1059,7 @@ def create_collection(
         folder=folder_clean,
         subfolder=subfolder_clean,
         password_hash=password_hash,
+        review_interval_days=payload.review_interval_days,
     )
     # The creator is always an owner (ADR 0008).
     collection.grants.append(CollectionGrant(user_id=user.id, role=CollectionRole.OWNER))
@@ -1222,6 +1224,9 @@ def update_collection(
         _replace_grants(collection, grants)
     if payload.visibility is not None:
         collection.visibility = payload.visibility
+    if 'review_interval_days' in payload.model_fields_set:
+        # Owner rights already required above (_require_collection_owner_control).
+        collection.review_interval_days = payload.review_interval_days
 
     db.commit()
     try:

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyAgentStatus, buildChatRequestBody, pendingAssistantMessage, scopeLabel } from '@/lib/chat-types';
+import { applyAgentStatus, buildChatRequestBody, pendingAssistantMessage, scopeLabel, uiMessageFromStored } from '@/lib/chat-types';
 import type { ChatStreamStatusEvent, Collection } from '@/types/weave-api';
 
 describe('buildChatRequestBody', () => {
@@ -129,5 +129,22 @@ describe('applyAgentStatus', () => {
     };
     const result = applyAgentStatus(applyAgentStatus([], started), hrStarted);
     expect(result.map((s) => s.agentId)).toEqual(['it-support', 'hr-support']);
+  });
+});
+
+describe('uiMessageFromStored', () => {
+  const base = { content: 'x', sources: null, trace: null, created_at: '2026-11-17T10:00:00Z' };
+
+  it('carries an assistant message id as serverId and its stored feedback', () => {
+    const feedback = { rating: 'outdated' as const, comment: 'Stand 2024', updated_at: '2026-11-17T11:00:00Z' };
+    const message = uiMessageFromStored({ ...base, id: 42, role: 'assistant', feedback });
+    expect(message.id).toBe('42');
+    expect(message.serverId).toBe(42);
+    expect(message.feedback).toEqual(feedback);
+  });
+
+  it('gives a user message no serverId, and an older backend without feedback null', () => {
+    expect(uiMessageFromStored({ ...base, id: 41, role: 'user' }).serverId).toBeUndefined();
+    expect(uiMessageFromStored({ ...base, id: 42, role: 'assistant' }).feedback).toBeNull();
   });
 });

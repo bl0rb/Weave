@@ -42,6 +42,7 @@ from app.services.collection_access import collection_role, role_at_least
 from app.services.webhooks import (
     build_document_processed_payload,
     build_job_payload,
+    build_review_due_payload,
     build_run_payload,
     send_webhook_request,
 )
@@ -146,6 +147,8 @@ def deliver_webhook(self, delivery_id: str) -> None:
                     return
                 if delivery.event == 'document.processed':
                     payload = build_document_processed_payload(job)
+                elif delivery.event == 'document.review_due':
+                    payload = build_review_due_payload(db, job)
                 else:
                     payload = build_job_payload(
                         db, job, delivery.event, include_markdown=delivery.event != 'job.failed'
@@ -363,3 +366,63 @@ def dispatch_run_event(db, run) -> None:
     connection_id = options.get('webhook_connection_id')
     connection_id = connection_id if isinstance(connection_id, str) and connection_id else None
     _dispatch(db, run.owner_id, 'import_run.finished', connection_id=connection_id, job_id=None, import_run_id=run.id)
+
+
+REVIEW_DUE_EVENT = 'document.review_due'
+
+
+def dispatch_review_due_event(db, job: Job, collection: Collection) -> int:
+    """Create+enqueue one 'document.review_due' delivery per enabled
+    connection subscribed to that event whose owner is active and an
+    owner/member of `collection` (admins included) -- the knowledge owners'
+    reminder (app/services/document_freshness.py's tick, once per task
+    creation). Unlike dispatch_job_event this is a fan-out over the
+    subscribed connections, because a due review belongs to no single
+    processing task; the per-user pending cap still applies, and
+    deliver_webhook re-checks the owner's access at send time
+    (_recipient_allowed). Commits; returns the number of deliveries."""
+    if not settings.webhooks_enabled:
+        return 0
+    deliveries: list[WebhookDelivery] = []
+    pending: dict[str, int] = {}
+    connections = db.scalars(
+        select(WebhookConnection)
+        .where(WebhookConnection.enabled.is_(True), WebhookConnection.owner_id.is_not(None))
+        .order_by(WebhookConnection.created_at, WebhookConnection.id)
+    ).all()
+    for connection in connections:
+        if REVIEW_DUE_EVENT not in (connection.events or []):
+            continue
+        owner = db.get(User, connection.owner_id)
+        if owner is None or not owner.is_active:
+            continue
+        if not role_at_least(collection_role(db, collection, owner), CollectionRole.MEMBER):
+            continue
+        if owner.id not in pending:
+            pending[owner.id] = _pending_delivery_count(db, owner.id)
+        if pending[owner.id] >= settings.webhook_max_pending_deliveries_per_user:
+            logger.warning(
+                'webhook dispatch: pending-delivery cap reached for user %s (event %s); skipping connection %s',
+                owner.id, REVIEW_DUE_EVENT, connection.id,
+            )
+            continue
+        pending[owner.id] += 1
+        delivery = WebhookDelivery(
+            connection_id=connection.id,
+            connection_name=connection.name,
+            owner_id=owner.id,
+            event=REVIEW_DUE_EVENT,
+            job_id=job.id,
+            status='pending',
+        )
+        db.add(delivery)
+        deliveries.append(delivery)
+    if not deliveries:
+        return 0
+    db.commit()
+    for delivery in deliveries:
+        try:
+            celery_app.send_task(DELIVER_TASK_NAME, args=[delivery.id])
+        except Exception:  # pragma: no cover - broker outage: the row stays pending
+            logger.exception('webhook dispatch: enqueue failed for delivery %s', delivery.id)
+    return len(deliveries)

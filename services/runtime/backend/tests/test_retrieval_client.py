@@ -202,6 +202,26 @@ def test_search_ranking_metadata_defaults_for_an_older_retrieval():
     assert (chunk.document_type, chunk.tags, chunk.quality_grade) == (None, [], None)
 
 
+def test_search_maps_source_job_id():
+    payload = _search_response(_search_result(source_job_id='job-42'))
+
+    with patch('app.services.retrieval_client.httpx.post', return_value=_FakeResponse(200, payload)):
+        chunk = search('q')[0]
+
+    assert chunk.source_job_id == 'job-42'
+
+
+@pytest.mark.parametrize('raw', [None, 17, ['job']])
+def test_search_source_job_id_is_none_when_missing_or_not_a_string(raw):
+    result = _search_result()
+    if raw is not None:
+        result['source_job_id'] = raw
+    with patch('app.services.retrieval_client.httpx.post', return_value=_FakeResponse(200, _search_response(result))):
+        chunk = search('q')[0]
+
+    assert chunk.source_job_id is None
+
+
 def test_search_returns_a_list_carrying_the_retrieval_trace():
     payload = _search_response(_search_result())
     payload['trace'] = {'vector_candidates': 12, 'fulltext_candidates': 3, 'top_k': 20, 'final_k': 5}

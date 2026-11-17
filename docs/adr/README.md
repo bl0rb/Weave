@@ -15,6 +15,7 @@ Dieses Verzeichnis enthält die Architektur-Entscheidungen der Weave-Plattform. 
 | [0007](0007-zentrale-chat-provider-konfiguration.md) | Zentrale Chat-Provider-Konfiguration in Weave-Ingest | angenommen | 2026-09-02 |
 | [0008](0008-besitz-freigaben-metadaten.md) | Besitz, Freigaben und Metadaten für Wissensbereiche und Bots | angenommen | 2026-09-26 |
 | [0009](0009-wissensgedaechtnis.md) | Wissensgedächtnis: Zusammenfassungen pro Dokument und Wissensbereich | angenommen | 2026-10-18 |
+| [0010](0010-s3-vectors-index.md) | Amazon S3 Vectors als optionaler Vektorindex neben pgvector | angenommen | 2026-11-17 |
 
 ## Format
 
@@ -55,3 +56,6 @@ Rechte an Wissensbereichen entstehen nur über Freigaben an Personen (lokal oder
 
 ### 0009: Wissensgedächtnis
 Weave-Knowledge verdichtet nach jeder Änderung an einem Wissensbereich (entprellt, über den bestehenden Sync-Tick) jedes Dokument zu Titel, Typ, Kurzfassung und Kernpunkten und jeden Bereich zu einer Übersicht – per zentralem Chat-Provider oder ohne LLM extraktiv (`KNOWLEDGE_MEMORY_MODE`, Standard `off`). Weave-Retrieval liest die neue Tabelle `knowledge_memory` über dasselbe Rechteprädikat wie die Chunk-Suche; Runtime beantwortet Überblicksfragen (Intent `overview`) daraus mit Quellen und fällt sonst auf die Chunk-Suche zurück. Ergänzt 2026-10-23: Weave-Tools reicht das Gedächtnis an MCP-Clients durch (`list_collections` mit Übersicht, `memory_lookup`, `search` mit `document_id`/`document_type`), und die Dokumentart des Gedächtnisses wird zur zweiten Quelle des Filters `document_type`.
+
+### 0010: Amazon S3 Vectors als optionaler Vektorindex
+Optional und standardmäßig aus (`VECTOR_BACKEND=pgvector`). Mit `s3vectors` spiegelt Weave-Knowledge als einziger Schreiber die Chunk-Embeddings best effort in einen S3-Vectors-Index; Weave-Retrieval holt dort Kandidaten und prüft jeden Treffer mit derselben `apply_filters()`-Abfrage in Postgres nach. Postgres bleibt maßgeblich, bei S3-Fehlern fällt die Suche auf pgvector zurück. Umstellung in fester Reihenfolge: erst Knowledge, `s3vectors init`/`sync`, dann Retrieval.

@@ -1,4 +1,7 @@
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+VECTOR_BACKENDS = ('pgvector', 's3vectors')
 
 
 class Settings(BaseSettings):
@@ -85,6 +88,64 @@ class Settings(BaseSettings):
     db_max_overflow: int = 10
     db_pool_recycle_seconds: int = 3600
     db_pool_timeout_seconds: int = 10
+
+    # --- Vector index backend (see app/services/vector_index.py and
+    # contracts/chunk-store.md's optional S3-Vectors mirror). 'pgvector' (the
+    # default) runs the vector leg exactly as before: KNN over
+    # `chunks.embedding` in Postgres (or the SQLite fallback in dev/tests).
+    # 's3vectors' asks an Amazon S3 Vectors index -- written ONLY by
+    # Weave-Knowledge -- for candidate chunk ids instead, then ALWAYS
+    # re-checks every returned id against Postgres through the very same
+    # apply_filters() statement the pgvector path uses: S3 metadata is never
+    # trusted for permissions, status or model match on its own, Postgres
+    # stays the single source of truth. Any other value fails at startup.
+    vector_backend: str = 'pgvector'
+    # Vector bucket + index name. An empty bucket with
+    # vector_backend='s3vectors' is a startup error (see below).
+    s3vectors_bucket: str = ''
+    s3vectors_index: str = 'weave-chunks'
+    # Empty region/endpoint = boto3's own region resolution (AWS_DEFAULT_REGION
+    # or the profile's region -- NOT AWS_REGION and not instance metadata; EKS
+    # IRSA sets AWS_DEFAULT_REGION) and the real AWS endpoint; the endpoint
+    # override exists for tests and emulators only.
+    s3vectors_region: str = ''
+    s3vectors_endpoint_url: str = ''
+    # Both empty = the standard AWS credential chain (IAM role / IRSA / env /
+    # instance profile) -- the recommended setup. Static keys are optional.
+    # Retrieval needs s3vectors:QueryVectors and s3vectors:GetVectors (a
+    # filtered query requires the latter, too).
+    s3vectors_access_key_id: str = ''
+    s3vectors_secret_access_key: str = ''
+    # Retrieval-only tuning. A selective metadata filter can make S3 Vectors
+    # return fewer than topK hits, and the mandatory Postgres recheck can drop
+    # more (stale vectors of superseded/withdrawn documents, non-mirrored
+    # SearchFilters fields) -- so the query over-fetches `top_k *
+    # s3vectors_overfetch` candidates, capped at s3vectors_max_top_k (the
+    # service's own topK limit has changed over time, hence configurable).
+    s3vectors_overfetch: int = Field(default=4, ge=1, le=20)
+    s3vectors_max_top_k: int = Field(default=100, ge=1)
+    # On an S3 Vectors error (botocore/boto3 exception, timeout): True runs
+    # the regular pgvector leg instead (trace.vector_backend =
+    # 'pgvector-fallback'); False leaves the vector leg empty for this request
+    # (fulltext still answers). A warning is logged either way.
+    s3vectors_fallback_pgvector: bool = True
+
+    @field_validator('vector_backend', mode='before')
+    @classmethod
+    def _check_vector_backend(cls, value: str) -> str:
+        # Case-insensitive, and blank means the default 'pgvector' -- same
+        # rule as Weave-Knowledge's settings: deploy files pass optional
+        # settings as `${VAR:-}` and the Helm chart passes "" through.
+        normalized = str(value).strip().lower() or 'pgvector'
+        if normalized not in VECTOR_BACKENDS:
+            raise ValueError(f'VECTOR_BACKEND must be one of {", ".join(VECTOR_BACKENDS)}, got {value!r}')
+        return normalized
+
+    @model_validator(mode='after')
+    def _check_s3vectors_bucket(self) -> 'Settings':
+        if self.vector_backend == 's3vectors' and not self.s3vectors_bucket.strip():
+            raise ValueError('VECTOR_BACKEND=s3vectors requires S3VECTORS_BUCKET to be set')
+        return self
 
 
 settings = Settings()

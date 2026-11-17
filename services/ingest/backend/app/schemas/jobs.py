@@ -51,6 +51,9 @@ class CollectionCreateRequest(BaseModel):
     folder: str = ''
     subfolder: str = ''
     password: str = ''
+    # Periodic content review in days (app/services/document_freshness.py);
+    # None = no periodic review.
+    review_interval_days: int | None = Field(default=None, ge=1, le=3650)
 
 
 class CollectionUpdateRequest(BaseModel):
@@ -61,6 +64,9 @@ class CollectionUpdateRequest(BaseModel):
 
     `grants` replaces the whole access list and must keep at least one
     owner. `responsible_team_id` is cleared with an empty string.
+    `review_interval_days` is the exception to "None = leave unchanged":
+    sent explicitly as null it switches the periodic review off (only
+    omitting it leaves it unchanged).
     """
 
     name: str | None = None
@@ -68,6 +74,7 @@ class CollectionUpdateRequest(BaseModel):
     visibility: CollectionVisibility | None = None
     responsible_team_id: str | None = None
     grants: list[CollectionGrantInput] | None = None
+    review_interval_days: int | None = Field(default=None, ge=1, le=3650)
 
 
 class CollectionGrantResponse(BaseModel):
@@ -108,6 +115,7 @@ class CollectionResponse(BaseModel):
     folder: str = ''
     subfolder: str = ''
     job_ids: list[str] = Field(default_factory=list)
+    review_interval_days: int | None = None
 
 
 class CollectionListResponse(BaseModel):

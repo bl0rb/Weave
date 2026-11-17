@@ -607,3 +607,116 @@ describe('ChatApp sources panel and bot notices', () => {
     expect(screen.queryByText('fk-info.pdf')).toBeNull();
   });
 });
+
+describe('ChatApp answer feedback', () => {
+  beforeEach(() => {
+    window.matchMedia =
+      window.matchMedia ??
+      ((() => ({
+        matches: false, media: '', onchange: null, addListener: () => {}, removeListener: () => {},
+        addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
+      })) as unknown as typeof window.matchMedia);
+    Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? vi.fn();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    window.history.replaceState(null, '', '/');
+  });
+
+  function feedbackReply(init?: RequestInit): Promise<Response> {
+    const body = JSON.parse(init!.body as string);
+    return Promise.resolve(jsonResponse({ message_id: 42, rating: body.rating, comment: null, updated_at: '2026-11-17T10:00:00Z' }));
+  }
+
+  async function ask(text: string) {
+    const textarea = (await screen.findByPlaceholderText('Nachricht schreiben…')) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: text } });
+    fireEvent.click(screen.getByRole('button', { name: 'Nachricht senden' }));
+  }
+
+  it('offers feedback once the stream done event names the persisted message, and rates that message', async () => {
+    let finish: (() => void) | null = null;
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>((input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/bots')) return Promise.resolve(jsonResponse([BOTS[0]]));
+      if (url.endsWith('/api/chat/stream')) {
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode('data: {"type":"delta","text":"Antwort"}\n\n'));
+            finish = () => {
+              controller.enqueue(encoder.encode('data: {"type":"done","message_id":42}\n\n'));
+              controller.close();
+            };
+          },
+        });
+        return Promise.resolve(new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+      }
+      if (url.endsWith('/api/messages/42/feedback')) return feedbackReply(init);
+      return Promise.resolve(jsonResponse([]));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<ChatApp />);
+    await screen.findByRole('option', { name: 'Bot A' });
+    await ask('Frage');
+
+    await screen.findByText('Antwort');
+    // Still streaming: no feedback yet.
+    expect(screen.queryByRole('button', { name: 'Hilfreich' })).toBeNull();
+
+    await act(async () => finish!());
+    fireEvent.click(await screen.findByRole('button', { name: 'Veraltet' }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Veraltet' }).getAttribute('aria-pressed')).toBe('true'));
+    const call = fetchMock.mock.calls.find(([req]) => String(req).endsWith('/api/messages/42/feedback'))!;
+    expect(call[1]?.method).toBe('PUT');
+  });
+
+  it('offers feedback for an answer from the non-streaming fallback, using its message_id', async () => {
+    vi.stubGlobal('fetch', vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>((input) => {
+      const url = String(input);
+      if (url.endsWith('/api/bots')) return Promise.resolve(jsonResponse([BOTS[0]]));
+      if (url.endsWith('/api/chat/stream')) return Promise.reject(new TypeError('fetch failed'));
+      if (url.endsWith('/api/chat')) {
+        return Promise.resolve(jsonResponse({ conversation_id: 'c-1', message_id: 7, answer: 'Fallback-Antwort', sources: [], trace: null }));
+      }
+      return Promise.resolve(jsonResponse([]));
+    }));
+
+    render(<ChatApp />);
+    await screen.findByRole('option', { name: 'Bot A' });
+    await ask('Frage');
+
+    await screen.findByText('Fallback-Antwort');
+    expect(await screen.findByRole('button', { name: 'Hilfreich', pressed: false })).toBeTruthy();
+  });
+
+  it('replays the stored rating of a reopened conversation', async () => {
+    window.history.replaceState(null, '', '/?conversation=conv-1');
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/api/bots')) return Promise.resolve(jsonResponse([BOTS[0]]));
+      if (url.endsWith('/api/conversations/conv-1')) {
+        return Promise.resolve(jsonResponse({
+          id: 'conv-1', bot_id: 'bot-a', title: 'Alt',
+          messages: [
+            { id: 41, role: 'user', content: 'Frage', sources: null, trace: null, created_at: 'x', feedback: null },
+            { id: 42, role: 'assistant', content: 'Alte Antwort', sources: null, trace: null, created_at: 'x',
+              feedback: { rating: 'wrong', comment: null, updated_at: 'x' } },
+          ],
+        }));
+      }
+      return Promise.resolve(jsonResponse([]));
+    }));
+
+    render(<I18nProvider initialLocale="de"><ChatApp /></I18nProvider>);
+
+    await screen.findByText('Alte Antwort');
+    expect(screen.getByRole('button', { name: 'Falsch' }).getAttribute('aria-pressed')).toBe('true');
+    // One feedback row: the user message never gets one.
+    expect(screen.getAllByRole('group', { name: 'Wie hilfreich war diese Antwort?' })).toHaveLength(1);
+  });
+});

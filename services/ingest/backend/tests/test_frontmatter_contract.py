@@ -474,3 +474,23 @@ def test_no_engine_literal_in_paddle_service_is_missing_from_schema_enum():
         f'paddle_service.py assigns engine value(s) {unknown} that '
         f'contracts/frontmatter.schema.json does not list in its engine enum'
     )
+
+
+def test_review_due_is_an_optional_iso_date_in_the_contract():
+    """`review_due` (Prüfdatum, app/services/document_freshness.py) is an
+    optional ISO date string. A YAML date in edited frontmatter becomes that
+    string in the canonical snapshot (publications._json_compatible), which
+    is what consumers see."""
+    from datetime import date
+
+    from app.services.document_freshness import parse_review_due
+    from app.services.publications import _json_compatible
+
+    prop = SCHEMA['properties']['review_due']
+    assert prop['type'] == 'string' and prop['format'] == 'date'
+    assert 'review_due' not in SCHEMA['required']
+    canonical = _json_compatible(yaml.safe_load('review_due: 2027-03-31\n'))
+    assert canonical == {'review_due': '2027-03-31'}
+    assert _validate_value(canonical['review_due'], prop, '$review_due') == []
+    assert _validate_value(date(2027, 3, 31), prop, '$review_due')  # a raw date object would violate it
+    assert parse_review_due(canonical['review_due']).date() == date(2027, 3, 31)

@@ -104,6 +104,13 @@ class SearchScores(BaseModel):
 class SearchResult(BaseModel):
     chunk_id: int
     document_id: str
+    # `Document.source_job_id` -- Weave-Ingest's stable job id for this exact
+    # document version (app/models/models.py). Unlike `document_id` (this
+    # read-model's surrogate UUID) it is what downstream services key
+    # feedback, review tasks and golden-set judgments on (see
+    # app/services/evalharness.py). Optional only for schema symmetry with
+    # older clients; search() always fills it.
+    source_job_id: str | None = None
     text: str
     heading_path: list[str] = []
     page_start: int | None = None
@@ -192,9 +199,69 @@ class SearchTrace(BaseModel):
     rerank_provider: str | None = None
     rerank_model: str | None = None
     embedding_model: str | None = None
+    # Which vector index answered the vector leg (app/services/search.py's
+    # vector_search_traced()): 'pgvector' (default, incl. the SQLite dev
+    # fallback), 's3vectors', 'pgvector-fallback' (S3 Vectors failed and
+    # settings.s3vectors_fallback_pgvector re-ran the pgvector leg), or
+    # 's3vectors-error' (S3 Vectors failed, fallback off: empty vector leg).
+    # None only for traces not produced by search().
+    vector_backend: str | None = None
 
 
 class SearchResponse(BaseModel):
     query: str
     results: list[SearchResult] = []
     trace: SearchTrace
+
+
+class PassageRequest(BaseModel):
+    """Body of POST /api/v1/passage (app/api/search.py): "show me this exact
+    chunk of this document, plus its neighbours" -- the "Textstelle öffnen"
+    view behind a citation. `allowed_teams`/`allowed_collections` carry the
+    exact same meaning (and the exact same `None` = unrestricted /
+    `[]` = nothing / NO_COLLECTION_SENTINEL rules) as on SearchRequest and are
+    enforced by the very same apply_filters() (app/services/passage.py), so
+    a passage is visible exactly when a search could have returned it.
+
+    `document_id` is a plain string, not a UUID type, on purpose: a
+    malformed id must yield the same 404 as an unknown or invisible one
+    (no existence leak, no 422 distinguishing "bad id" from "not yours").
+    """
+
+    document_id: str
+    chunk_id: int
+    # Neighbouring chunks (by chunk_index, same document) on EACH side of
+    # the target -- 0 returns the target chunk alone.
+    context: int = Field(default=1, ge=0, le=3)
+    allowed_teams: list[str] | None = None
+    allowed_collections: list[str] | None = None
+
+
+class PassageChunk(BaseModel):
+    chunk_id: int
+    chunk_index: int
+    heading_path: list[str] = []
+    page_start: int | None = None
+    page_end: int | None = None
+    text: str
+    # True for exactly one chunk per response: the one `target_chunk_id` names.
+    is_target: bool = False
+
+
+class PassageResponse(BaseModel):
+    """Response of POST /api/v1/passage. Document-level fields mirror the
+    same-named SearchResult fields (and are derived the same way, see
+    app/services/search.py's _to_search_result()); `source_kind`/
+    `source_url` come from the TARGET chunk's denormalized meta. `chunks`
+    is ordered by `chunk_index` ascending."""
+
+    document_id: str
+    source_job_id: str
+    title: str | None = None
+    original_filename: str | None = None
+    document_version: int
+    source_kind: str | None = None
+    source_url: str | None = None
+    collection: str | None = None
+    target_chunk_id: int
+    chunks: list[PassageChunk] = []

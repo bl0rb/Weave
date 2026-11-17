@@ -231,6 +231,41 @@ def build_document_processed_payload(job: 'Job') -> dict:
     }
 
 
+def build_review_due_payload(db, job: 'Job') -> dict:
+    """Build the JSON payload for a 'document.review_due' event (see
+    contracts/events/document.review_due.md): the document version whose
+    periodic review is due, as of sending time (a retry reports the current
+    due date). Never carries markdown or any personal data beyond the space
+    name; `portal_path` is relative to the Ingest frontend."""
+    from app.models.models import Collection
+
+    info = job.processing_info if isinstance(job.processing_info, dict) else {}
+    job_settings = info.get('settings') if isinstance(info.get('settings'), dict) else {}
+    collection_id = job_settings.get('collection_id')
+    collection = db.get(Collection, collection_id) if isinstance(collection_id, str) else None
+    now = datetime.now(timezone.utc)
+
+    def _aware(value):
+        return value.replace(tzinfo=timezone.utc) if value is not None and value.tzinfo is None else value
+
+    due = _aware(job.review_due_at)
+    reviewed = _aware(job.last_reviewed_at)
+    return {
+        'event': 'document.review_due',
+        'timestamp': now.isoformat(),
+        'job_id': job.id,
+        'document_version': job.document_version,
+        'original_filename': job.original_filename,
+        'collection': (
+            {'id': collection.id, 'slug': collection.slug, 'name': collection.name} if collection is not None else None
+        ),
+        'review_due_at': due.isoformat() if due else None,
+        'overdue': due is not None and due <= now,
+        'last_reviewed_at': reviewed.isoformat() if reviewed else None,
+        'portal_path': f'/reviews/{job.id}',
+    }
+
+
 def build_run_payload(run: 'ImportRun') -> dict:
     """Build the JSON payload for an 'import_run.finished' event."""
     return {

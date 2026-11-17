@@ -116,6 +116,17 @@ class PortalQualityDetail(BaseModel):
 QualityMissingReason = Literal['not_finished', 'failed', 'legacy', 'import_without_gate', 'unknown']
 
 
+class PortalDocumentReview(BaseModel):
+    """'Prüfung & Aktualität' of one document version
+    (app/services/document_freshness.py). `last_reviewed_by` is a username;
+    `overdue` = review_due_at has passed."""
+
+    review_due_at: datetime | None = None
+    last_reviewed_at: datetime | None = None
+    last_reviewed_by: str | None = None
+    overdue: bool = False
+
+
 class PortalDocumentDetail(PortalDocumentItem):
     markdown: str
     markdown_sha256: str
@@ -125,6 +136,9 @@ class PortalDocumentDetail(PortalDocumentItem):
     quality_missing_reason: QualityMissingReason | None = None
     # The portal editor may change this document and release the change.
     can_edit: bool = False
+    # Review dates; null when the version has neither a due date nor a
+    # recorded review (e.g. not released yet).
+    review: PortalDocumentReview | None = None
 
 
 class PortalReleaseRequest(BaseModel):

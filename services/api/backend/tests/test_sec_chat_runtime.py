@@ -122,7 +122,7 @@ def test_chat_stream_releases_db_connection_while_streaming(monkeypatch, caller,
 
     response = client.post('/v1/chat/stream', json={'bot_id': 'legal-support', 'message': 'Hi'}, headers=headers)
     assert response.status_code == 200
-    assert 'data: {"type": "done"}' in response.text
+    assert 'data: {"type": "done", "message_id": ' in response.text
     assert seen == [0, 0, 0, 0, 0, 0]
 
     conversation = db_session.query(Conversation).filter(Conversation.user_id == user.id).one()

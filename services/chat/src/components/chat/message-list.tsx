@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { MessageBubble } from '@/components/chat/message-bubble';
 import { useI18n } from '@/i18n/provider';
 import type { UiMessage } from '@/lib/chat-types';
+import type { MessageFeedback } from '@/types/weave-api';
 
 interface MessageListProps {
   messages: UiMessage[];
@@ -17,6 +18,9 @@ interface MessageListProps {
   onSelectForSourcesPanel: (id: string) => void;
   /** The bot's `show_sources` — see `MessageBubble`'s prop of the same name. */
   showSources?: boolean;
+  /** Records an answer's changed rating (by UI message id) — see
+   * `MessageBubble`'s prop of the same name. */
+  onFeedbackChange?: (messageId: string, feedback: MessageFeedback | null) => void;
 }
 
 export function MessageList({
@@ -27,6 +31,7 @@ export function MessageList({
   selectedSourceMessageId,
   onSelectForSourcesPanel,
   showSources,
+  onFeedbackChange,
 }: MessageListProps) {
   const { t } = useI18n();
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -59,6 +64,7 @@ export function MessageList({
           isSelectedForSourcesPanel={message.id === selectedSourceMessageId}
           onSelectForSourcesPanel={() => onSelectForSourcesPanel(message.id)}
           showSources={showSources}
+          onFeedbackChange={onFeedbackChange ? (feedback) => onFeedbackChange(message.id, feedback) : undefined}
         />
       ))}
       <div ref={bottomRef} />

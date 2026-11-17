@@ -84,6 +84,7 @@ from app.models.models import Chunk, Document, DocumentStatus
 from app.schemas.search import SearchFilters, SearchRequest, SearchResult, SearchScores, SearchTrace
 from app.services.embeddings import embed_query
 from app.services.reranker import RerankCandidate, RerankError, get_reranker
+from app.services import vector_index
 
 logger = logging.getLogger(__name__)
 
@@ -371,8 +372,119 @@ def vector_search(
     allowed_collections: list[str] | None,
     limit: int,
 ) -> list[tuple[Chunk, float]]:
-    """The vector leg of hybrid search: nearest chunks to `query_vec` by
-    cosine similarity, restricted to chunks embedded with the SAME model
+    """The vector leg of hybrid search -- see vector_search_traced() for
+    which backend answers it (pgvector/SQLite by default, the optional S3
+    Vectors index with vector_backend='s3vectors'). Returns only the
+    `(chunk, score)` pairs.
+    """
+    return vector_search_traced(db, query_vec, filters, allowed_teams, allowed_collections, limit)[0]
+
+
+def vector_search_traced(
+    db: Session,
+    query_vec: list[float],
+    filters: SearchFilters | None,
+    allowed_teams: list[str] | None,
+    allowed_collections: list[str] | None,
+    limit: int,
+) -> tuple[list[tuple[Chunk, float]], str]:
+    """vector_search() plus the backend that actually answered it, for
+    SearchTrace.vector_backend: 'pgvector' (default; also the SQLite dev/test
+    fallback), 's3vectors', 'pgvector-fallback' (S3 Vectors failed and
+    settings.s3vectors_fallback_pgvector re-ran the regular leg), or
+    's3vectors-error' (S3 Vectors failed with the fallback off: the vector
+    leg is empty for this request, fulltext still answers -- reported
+    distinctly so monitoring can tell an outage from a legitimately empty
+    result).
+    """
+    if not vector_index.enabled():
+        return _vector_search_db(db, query_vec, filters, allowed_teams, allowed_collections, limit), 'pgvector'
+    try:
+        return _vector_search_s3(db, query_vec, filters, allowed_teams, allowed_collections, limit), 's3vectors'
+    except vector_index.VectorIndexError as exc:
+        if settings.s3vectors_fallback_pgvector:
+            logger.warning('s3vectors query failed, falling back to pgvector: %s', exc)
+            results = _vector_search_db(db, query_vec, filters, allowed_teams, allowed_collections, limit)
+            return results, 'pgvector-fallback'
+        logger.warning('s3vectors query failed, vector leg empty for this request: %s', exc)
+        return [], 's3vectors-error'
+
+
+def _vector_search_s3(
+    db: Session,
+    query_vec: list[float],
+    filters: SearchFilters | None,
+    allowed_teams: list[str] | None,
+    allowed_collections: list[str] | None,
+    limit: int,
+) -> list[tuple[Chunk, float]]:
+    """S3 Vectors leg: over-fetch `limit * s3vectors_overfetch` candidate
+    ids (capped at s3vectors_max_top_k) under vector_index.build_filter()'s
+    metadata pre-filter, then RE-CHECK every id against Postgres through the
+    same statement shape as the pgvector path (documents JOIN, embedding
+    present, embedding_model match, apply_filters() incl. status=indexed;
+    meta_matches() on SQLite). S3 metadata is never trusted on its own: a
+    stale vector of a superseded/withdrawn/re-scoped document is simply
+    dropped here. S3's order is kept; score is cosine SIMILARITY
+    (`1 - cosine distance`, the same scale `<=>` yields on the pgvector
+    path). An empty effective scope never calls S3 at all.
+    """
+    if limit <= 0:
+        return []
+    s3_filter = vector_index.build_filter(allowed_teams, allowed_collections, filters, settings.embedding_model)
+    if s3_filter is None:
+        return []
+    top_k = min(limit * settings.s3vectors_overfetch, settings.s3vectors_max_top_k)
+    if top_k < limit * settings.s3vectors_overfetch:
+        # The cap cuts the over-fetch: below `limit` S3 can never fill the
+        # leg, and every id the recheck drops costs recall vs. pgvector.
+        logger.debug(
+            's3vectors: topK capped at %d (limit %d x overfetch %d); raise S3VECTORS_MAX_TOP_K if the index allows',
+            top_k, limit, settings.s3vectors_overfetch,
+        )
+    hits = vector_index.query(query_vec, top_k, s3_filter)
+    if not hits:
+        return []
+
+    candidate_ids = list(dict.fromkeys(chunk_id for chunk_id, _distance in hits))
+    stmt = (
+        select(Chunk, Document)
+        .join(Document, Chunk.document_id == Document.id)
+        .where(Chunk.embedding.is_not(None))
+        .where(Chunk.embedding_model == settings.embedding_model)
+        .where(Chunk.id.in_(candidate_ids))
+    )
+    stmt = apply_filters(stmt, filters, allowed_teams, allowed_collections)
+    sqlite = _is_sqlite()
+    verified = {
+        chunk.id: chunk
+        for chunk, _document in db.execute(stmt).all()
+        if not sqlite or meta_matches(chunk.meta, filters)
+    }
+
+    results: list[tuple[Chunk, float]] = []
+    seen: set[int] = set()
+    for chunk_id, distance in hits:
+        chunk = verified.get(chunk_id)
+        if chunk is None or chunk_id in seen:
+            continue
+        seen.add(chunk_id)
+        results.append((chunk, 1.0 - distance))
+        if len(results) >= limit:
+            break
+    return results
+
+
+def _vector_search_db(
+    db: Session,
+    query_vec: list[float],
+    filters: SearchFilters | None,
+    allowed_teams: list[str] | None,
+    allowed_collections: list[str] | None,
+    limit: int,
+) -> list[tuple[Chunk, float]]:
+    """The pgvector vector leg (the default backend): nearest chunks to
+    `query_vec` by cosine similarity, restricted to chunks embedded with the SAME model
     settings.embedding_model names (`Chunk.embedding_model` is per-chunk,
     not just per-document, since a model change mid-reindex can leave the
     two briefly out of sync -- see the chunk-store contract's `embedding_model`
@@ -595,6 +707,7 @@ def _to_search_result(
     return SearchResult(
         chunk_id=chunk.id,
         document_id=str(document.id),
+        source_job_id=document.source_job_id,
         text=chunk.text,
         heading_path=chunk.heading_path or [],
         page_start=chunk.page_start,
@@ -706,7 +819,9 @@ def search(db: Session, request: SearchRequest, *, refresh: bool = True) -> tupl
     timings_ms['embed'] = (time.perf_counter() - start) * 1000
 
     start = time.perf_counter()
-    vector_results = vector_search(db, query_vec, filters, allowed_teams, allowed_collections, top_k)
+    vector_results, vector_backend = vector_search_traced(
+        db, query_vec, filters, allowed_teams, allowed_collections, top_k
+    )
     timings_ms['vector_search'] = (time.perf_counter() - start) * 1000
 
     start = time.perf_counter()
@@ -761,5 +876,6 @@ def search(db: Session, request: SearchRequest, *, refresh: bool = True) -> tupl
         rerank_provider=provider if reranker_ran else None,
         rerank_model=(settings.rerank_model or None) if reranker_ran and provider == 'api' else None,
         embedding_model=settings.embedding_model,
+        vector_backend=vector_backend,
     )
     return results, trace

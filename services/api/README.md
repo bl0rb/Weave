@@ -12,6 +12,8 @@ Weave-API ist das **Bot-Gateway** und der zentrale Einstiegspunkt des Weave-Syst
 - GET `/v1/models`: OpenAI-kompatible Modell-Liste, gespeist aus der Bot-Registry
 - GET `/v1/collections`: die Collections, die der aufrufende Nutzer (über sein Team) lesen darf — proxied zu Weave-Retrievals Collections-Lese-Autorität
 - POST `/v1/search`: Hybridsuche nur über die Collections, die der Aufrufer lesen darf (Treffer statt Bot-Antwort, z. B. für die Desktop-App)
+- GET `/v1/sources/passage`: die zitierte Textstelle einer Quelle samt Nachbarabschnitten („Textstelle öffnen“), proxied zu Weave-Retrieval mit denselben Leserechten wie die Suche
+- PUT/DELETE `/v1/messages/{message_id}/feedback`: Rückmeldung zu einer Antwort (Hilfreich/Falsch/Veraltet); wird anonym als Qualitätssignal an Weave-Ingest weitergereicht (Prüfaufgaben für Wissensverantwortliche, `QUALITY_SIGNALS_ENABLED`, Default `true`)
 - GET `/v1/branding`, GET `/v1/branding/assets/{kind}`: das Erscheinungsbild der Instanz (Farben, Logo, Lade-Animation) aus Weave-Ingest, öffentlich und nur lesend, für den Chat und die Desktop-App
 - POST `/internal/tokens/introspect`: service-zu-service Token-Introspection für andere Weave-Dienste (z. B. einen künftigen MCP-Dienst)
 - OIDC + API-Token Authentifizierung (nach Weave-Ingest-Muster)
@@ -47,6 +49,8 @@ Weave-API ist das **Bot-Gateway** und der zentrale Einstiegspunkt des Weave-Syst
 - PUT `/v1/me/locale`: { locale: "de" | "en" | null } — eigene UI-Sprachpräferenz setzen/löschen
 - POST `/v1/search`: { query, collection?, top_k?, final_k? } (`final_k > top_k` → 422) — `collection` kann den lesbaren Bereich nur einschränken; eine nicht lesbare Collection liefert eine leere Trefferliste
 - Native Apps (`NATIVE_LOGIN_ENABLED=true`, RFC 8252): beide Login-Wege akzeptieren zusätzlich `return_to=http://127.0.0.1:<port>/callback` (oder `[::1]`) — nur zusammen mit `code_challenge` (PKCE S256). Der Einmal-Code lässt sich dann nur mit dem passenden `code_verifier` einlösen. Die App schickt das Sitzungs-Token danach wie die Chat-Oberfläche als Cookie `weave_api_session`.
+- GET `/v1/sources/passage?document_id=<uuid>&chunk_id=<int>&context=<0..3>` (Default `context=1`) — ungültige IDs, nicht lesbare, unbekannte oder ersetzte Dokumente → einheitlich `404`, Weave-Retrieval nicht erreichbar → `502`
+- PUT `/v1/messages/{message_id}/feedback`: { rating: "helpful" | "wrong" | "outdated", comment? (max. 2000 Zeichen) } — nur für Antworten (`assistant`) in eigenen Konversationen, sonst `404`; DELETE nimmt die Rückmeldung zurück (`204`, idempotent)
 - POST `/internal/tokens/introspect`: { token } — hinter einem eigenen Service-Token, nicht dem End-Nutzer-Bearer-Token
 - GET `/v1/branding`: kein Body, **keine Anmeldung**
 - GET `/v1/branding/assets/{kind}` (`kind` = `logo` | `busy`): kein Body, **keine Anmeldung**; optional `If-None-Match`
@@ -54,7 +58,10 @@ Weave-API ist das **Bot-Gateway** und der zentrale Einstiegspunkt des Weave-Syst
 - POST `/v1/auth/session/exchange`: { code, code_verifier? } — tauscht einen Übergabe-Code aus der Cross-Origin-Übergabe gegen ein echtes Sitzungs-Token; ebenfalls nur erreichbar, wenn OIDC konfiguriert ist, sonst `404`
 
 **Output:**
-- POST `/v1/chat`: JSON `{ answer, sources[], trace, created_at, conversation_id }`
+- POST `/v1/chat`: JSON `{ answer, sources[], trace, created_at, conversation_id, message_id }` — `message_id` ist die ID der gespeicherten Antwort (für `/v1/messages/{message_id}/feedback`); das `done`-Ereignis von `/v1/chat/stream` trägt sie ebenfalls (`{"type":"done","message_id":…}`)
+- GET `/v1/conversations/{id}`: jede Nachricht trägt zusätzlich `feedback: { rating, comment, updated_at } | null` (die eigene Rückmeldung)
+- GET `/v1/sources/passage`: `{ document_id, source_job_id, title, original_filename, document_version, source_kind, source_url, collection, target_chunk_id, chunks: [{ chunk_id, chunk_index, heading_path, page_start, page_end, text, is_target }] }`
+- PUT `/v1/messages/{message_id}/feedback`: `{ message_id, rating, comment, updated_at }`
 - POST `/v1/chat/stream`: `text/event-stream` (`trace`/`delta`/`sources`/`done`/`error`-Ereignisse, nach dem ersten `done` eines Gesprächs noch `title`), Header `X-Conversation-Id`
 - POST `/v1/chat/completions`: JSON im OpenAI-Format `{ id, object, created, model, choices[], usage? }`, oder — mit `"stream": true` — `text/event-stream` aus `chat.completion.chunk`-Ereignissen + `[DONE]`
 - **Kennzeichnung der Antwort (`notices`)**: Ist ein Wissensbereich am Agenten gekennzeichnet (z. B. „Nur intern – nicht an Kunden weitergeben“) und stützt sich die Antwort auf eine Quelle daraus, trägt sie die Hinweise als Metadaten: `notices: string[]` in der `/v1/chat`-Antwort und an jeder Nachricht von `GET /v1/conversations/{id}` (sonst `[]`), `notices` am `sources`-Ereignis von `/v1/chat/stream` (nur wenn gekennzeichnet) und bei `/v1/chat/completions` als `weave: { notices }` — in der JSON-Antwort bzw. am letzten Chunk (mit `finish_reason`), nur wenn gekennzeichnet; eine ungekennzeichnete Antwort bleibt exakt im OpenAI-Format. Die einzelne Quelle trägt ihren Hinweis zusätzlich als `sources[].notice`.

@@ -275,7 +275,8 @@ def test_knowledge_flow_traces_search_settings_retrieval_stats_and_hits(monkeypa
     def _fake_post(url, headers=None, json=None, timeout=None):
         payload = _search_response(
             _chunk(chunk_id=1, document_id='doc-1', rank=1, chunk_index=3, title='Arbeitsvertrag', language='de',
-                   document_type='contract', quality_grade='A', collection='vertraege', page_end=5),
+                   document_type='contract', quality_grade='A', collection='vertraege', page_end=5,
+                   source_job_id='job-1'),
             _chunk(chunk_id=2, document_id='doc-2', scores={'vector': 0.5, 'fulltext': None, 'rrf': 0.031, 'rerank': None}),
         )
         payload['trace'] = {
@@ -300,7 +301,8 @@ def test_knowledge_flow_traces_search_settings_retrieval_stats_and_hits(monkeypa
     }
     assert retrieval['hits'] == [
         {
-            'rank': 1, 'document_id': 'doc-1', 'chunk_id': 1, 'original_filename': 'arbeitsvertrag.pdf',
+            'rank': 1, 'document_id': 'doc-1', 'chunk_id': 1, 'source_job_id': 'job-1',
+            'original_filename': 'arbeitsvertrag.pdf',
             'title': 'Arbeitsvertrag', 'collection': 'vertraege', 'heading_path': ['Arbeitsvertrag', 'Kündigung'],
             'page_start': 4, 'page_end': 5, 'document_version': 1, 'chunk_index': 3, 'language': 'de',
             'document_type': 'contract', 'quality_grade': 'A',
@@ -308,7 +310,8 @@ def test_knowledge_flow_traces_search_settings_retrieval_stats_and_hits(monkeypa
         },
         {
             # No `rank` from an older Retrieval -> the list position.
-            'rank': 2, 'document_id': 'doc-2', 'chunk_id': 2, 'original_filename': 'arbeitsvertrag.pdf',
+            'rank': 2, 'document_id': 'doc-2', 'chunk_id': 2, 'source_job_id': None,
+            'original_filename': 'arbeitsvertrag.pdf',
             'title': None, 'collection': None, 'heading_path': ['Arbeitsvertrag', 'Kündigung'],
             'page_start': 4, 'page_end': 4, 'document_version': 1, 'chunk_index': None, 'language': None,
             'document_type': None, 'quality_grade': None,
@@ -316,6 +319,25 @@ def test_knowledge_flow_traces_search_settings_retrieval_stats_and_hits(monkeypa
         },
     ]
     assert 'text' not in retrieval['hits'][0]  # never the chunk text
+
+
+def test_knowledge_flow_sources_carry_source_job_id_heading_path_and_chunk_index(monkeypatch):
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        return _readable_collections_response()
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        return _FakeResponse(200, _search_response(_chunk(source_job_id='job-9', chunk_index=2)))
+
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _fake_get)
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _fake_post)
+
+    body = client.post('/internal/chat', json=_LEGAL_BODY, headers=AUTH_HEADERS).json()
+
+    source = body['sources'][0]
+    assert source['source_job_id'] == 'job-9'
+    assert source['heading_path'] == ['Arbeitsvertrag', 'Kündigung']
+    assert source['chunk_index'] == 2
+    assert body['trace']['retrieval']['hits'][0]['source_job_id'] == 'job-9'
 
 
 def test_knowledge_flow_search_trace_defaults_when_retrieval_sends_only_the_old_fields(monkeypatch):
