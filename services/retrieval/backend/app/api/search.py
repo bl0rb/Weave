@@ -1,9 +1,12 @@
-"""POST /api/v1/search -- the hybrid-search endpoint.
+"""POST /api/v1/search -- the hybrid-search endpoint -- and its companion
+POST /api/v1/passage (a cited chunk plus its neighbours, see
+app/services/passage.py).
 
 Every route on this router sits behind `require_service_token` (see
 app/core/auth.py), applied once at the router level below rather than
-per-route, since this router has exactly one endpoint today and any future
-addition to it is just as much an internal search-pipeline surface.
+per-route: both endpoints are internal search-pipeline surfaces, and the
+passage lookup enforces the very same apply_filters() visibility rules as
+search itself.
 
 The actual pipeline (parallel pgvector KNN + tsvector fulltext search
 against contracts/chunk-store.md's `chunks` table,
@@ -28,7 +31,8 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import require_service_token
 from app.core.db import get_db
-from app.schemas.search import SearchRequest, SearchResponse
+from app.schemas.search import PassageRequest, PassageResponse, SearchRequest, SearchResponse
+from app.services.passage import get_passage
 from app.services.search import refresh_control_plane, resolve_final_k, resolve_top_k
 from app.services.search import search as run_search
 
@@ -57,3 +61,15 @@ def search(request: SearchRequest, db: Session = Depends(get_db)) -> SearchRespo
 
     results, trace = run_search(db, request, refresh=False)
     return SearchResponse(query=request.query, results=results, trace=trace)
+
+
+@router.post('/passage', response_model=PassageResponse)
+def passage(request: PassageRequest, db: Session = Depends(get_db)) -> PassageResponse:
+    # One uniform 404 for "malformed id", "no such document/chunk", "chunk of
+    # another document", "superseded/blocked" and "not visible to this
+    # caller" -- the response must never reveal that a document exists
+    # outside the caller's allowed_teams/allowed_collections.
+    result = get_passage(db, request)
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Passage not found')
+    return result

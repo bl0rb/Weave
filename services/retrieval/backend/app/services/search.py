@@ -595,6 +595,7 @@ def _to_search_result(
     return SearchResult(
         chunk_id=chunk.id,
         document_id=str(document.id),
+        source_job_id=document.source_job_id,
         text=chunk.text,
         heading_path=chunk.heading_path or [],
         page_start=chunk.page_start,

@@ -120,4 +120,9 @@ def _to_source(chunk: RetrievedChunk) -> Source:
         uploaded_at=chunk.uploaded_at,
         fetched_at=chunk.fetched_at,
         legal_status=chunk.legal_status,
+        # getattr: tests (and agent-mode fakes) may hand in a duck-typed
+        # chunk predating these fields.
+        source_job_id=getattr(chunk, 'source_job_id', None),
+        heading_path=list(chunk.heading_path) if getattr(chunk, 'heading_path', None) else None,
+        chunk_index=getattr(chunk, 'chunk_index', None),
     )

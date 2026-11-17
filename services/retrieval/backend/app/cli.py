@@ -2,7 +2,7 @@
 
 Run from `backend/` as:
 
-    python -m app.cli eval --golden GOLDEN.yaml [--k 5 --k 10] [--min-recall 0.5]
+    python -m app.cli eval --golden GOLDEN.yaml [--k 5 --k 10] [--min-recall 0.5] [--json OUT.json]
     python -m app.cli seed-demo
 
 Two subcommands:
@@ -10,7 +10,8 @@ Two subcommands:
 - `eval`: run a golden-set retrieval evaluation (see
   app/services/evalharness.py) against the live search pipeline
   (app/services/search.py, via app.services.evalharness.get_search_fn()) and
-  print a Recall@k / MRR / Hit@1 table. Exits non-zero when the golden set
+  print a Recall@k / Precision@k / nDCG@k / MRR / Hit@1 table (optionally
+  also written as JSON with `--json`). Exits non-zero when the golden set
   fails to load or when the aggregate Recall@5 falls below --min-recall --
   safe to wire into a CI gate that should fail a build on a retrieval-
   quality regression.
@@ -23,8 +24,10 @@ Two subcommands:
 """
 
 import argparse
+import json
 import logging
 import sys
+from pathlib import Path
 
 from app.services.evalharness import EvaluationResult, GoldenQuery, evaluate, get_search_fn, load_golden
 
@@ -187,13 +190,17 @@ _DEFAULT_KS = [5, 10]
 
 def _format_table(result: EvaluationResult, *, ks: list[int]) -> str:
     """Plain-text report: one row per golden query plus an AGGREGATE row, one
-    column per requested Recall@k cutoff plus MRR and Hit@1. No external
+    column per requested cutoff for each of Recall@k, Precision@k and
+    nDCG@k, plus MRR and Hit@1 -- and a trailing "skipped (unanswerable)"
+    line when the golden set had `answer.answerable: false` entries. No external
     table-formatting dependency -- this CLI has exactly one subcommand and a
     handful of rows, so fixed-width str.format() columns are simpler than
     adding one.
     """
     recall_headers = [f'R@{k}' for k in ks]
-    numeric_headers = [*recall_headers, 'MRR', 'Hit@1']
+    precision_headers = [f'P@{k}' for k in ks]
+    ndcg_headers = [f'nDCG@{k}' for k in ks]
+    numeric_headers = [*recall_headers, *precision_headers, *ndcg_headers, 'MRR', 'Hit@1']
     # Every score is formatted as "%.3f" in [0.000, 1.000] -- always exactly
     # 5 characters -- so 5 is the floor a numeric column ever needs; only a
     # wider header (e.g. "R@100") pushes it past that.
@@ -203,29 +210,38 @@ def _format_table(result: EvaluationResult, *, ks: list[int]) -> str:
     def _truncate(text: str) -> str:
         return text if len(text) <= query_col_width else text[: query_col_width - 1] + '…'
 
-    def _row(label: str, recalls: dict[int, float], mrr: float, hit_at_1: float) -> str:
+    def _row(label: str, metrics) -> str:
         cells = [_truncate(label).ljust(query_col_width)]
-        cells += [f'{recalls[k]:.3f}'.rjust(numeric_col_width) for k in ks]
-        cells += [f'{mrr:.3f}'.rjust(numeric_col_width), f'{hit_at_1:.3f}'.rjust(numeric_col_width)]
+        for values in (metrics.recall_at_k, metrics.precision_at_k, metrics.ndcg_at_k):
+            cells += [f'{values[k]:.3f}'.rjust(numeric_col_width) for k in ks]
+        cells += [f'{metrics.mrr:.3f}'.rjust(numeric_col_width), f'{metrics.hit_at_1:.3f}'.rjust(numeric_col_width)]
         return '  '.join(cells)
 
     header_cells = ['query'.ljust(query_col_width)] + [h.rjust(numeric_col_width) for h in numeric_headers]
     lines = ['  '.join(header_cells)]
     for query_metrics in result.per_query:
-        lines.append(_row(query_metrics.query, query_metrics.recall_at_k, query_metrics.mrr, query_metrics.hit_at_1))
+        lines.append(_row(query_metrics.query, query_metrics))
     lines.append('-' * len(lines[0]))
-    lines.append(_row('AGGREGATE', result.recall_at_k, result.mrr, result.hit_at_1))
+    lines.append(_row('AGGREGATE', result))
+    if result.skipped_unanswerable:
+        lines.append(f'skipped (unanswerable): {result.skipped_unanswerable}')
     return '\n'.join(lines)
 
 
-def run_eval(*, golden_path: str, ks: list[int] | None = None, min_recall: float = 0.0) -> int:
+def run_eval(
+    *, golden_path: str, ks: list[int] | None = None, min_recall: float = 0.0, json_path: str | None = None
+) -> int:
     """Load `golden_path`, evaluate it against get_search_fn()'s search_fn
     (the real hybrid-search pipeline, run against whatever database
     settings.database_url / `DATABASE_URL` currently names -- see that
     function's own docstring, and `seed-demo` above for populating one),
     print the resulting table, and return an exit code: 0 on success, 1 if
     the aggregate Recall@5 is below `min_recall`, 2 if the golden set
-    couldn't be loaded.
+    couldn't be loaded (or `json_path` couldn't be written).
+
+    `json_path`, when given, receives EvaluationResult.to_dict() (per query
+    + aggregate + ks) -- written BEFORE the --min-recall gate is checked, so
+    a failing CI run still leaves the full report behind.
     """
     requested_ks = list(ks) if ks else list(_DEFAULT_KS)
     eval_ks = sorted(set(requested_ks) | {_GATE_K})
@@ -246,6 +262,15 @@ def run_eval(*, golden_path: str, ks: list[int] | None = None, min_recall: float
 
     print(_format_table(result, ks=eval_ks))
 
+    if json_path:
+        try:
+            Path(json_path).write_text(
+                json.dumps(result.to_dict(), ensure_ascii=False, indent=2) + '\n', encoding='utf-8'
+            )
+        except OSError as exc:
+            logger.error('eval: failed to write JSON report %r: %s', json_path, exc)
+            return 2
+
     recall_at_gate = result.recall_at_k[_GATE_K]
     if recall_at_gate < min_recall:
         logger.error(
@@ -263,7 +288,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
     eval_parser = subparsers.add_parser(
         'eval',
-        help='Run a golden-set retrieval evaluation (Recall@k / MRR / Hit@1) against the search pipeline',
+        help='Run a golden-set retrieval evaluation (Recall@k / Precision@k / nDCG@k / MRR / Hit@1) against the search pipeline',
     )
     eval_parser.add_argument(
         '--golden', required=True,
@@ -271,11 +296,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     eval_parser.add_argument(
         '--k', type=int, action='append', default=None,
-        help=f'Recall@k cutoff to report; repeatable (default: {_DEFAULT_KS}). Recall@{_GATE_K} is always included.',
+        help=f'Cutoff k to report Recall/Precision/nDCG@k at; repeatable (default: {_DEFAULT_KS}). Recall@{_GATE_K} is always included.',
     )
     eval_parser.add_argument(
         '--min-recall', type=float, default=0.0,
         help='Exit non-zero if the aggregate Recall@%d falls below this value (default: 0.0, i.e. never fail)' % _GATE_K,
+    )
+    eval_parser.add_argument(
+        '--json', dest='json_path', default=None, metavar='PATH',
+        help='Also write the full result (per query + aggregate + ks) as JSON to PATH',
     )
 
     subparsers.add_parser(
@@ -296,7 +325,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == 'eval':
-        return run_eval(golden_path=args.golden, ks=args.k, min_recall=args.min_recall)
+        return run_eval(golden_path=args.golden, ks=args.k, min_recall=args.min_recall, json_path=args.json_path)
     if args.command == 'seed-demo':
         return run_seed_demo()
 

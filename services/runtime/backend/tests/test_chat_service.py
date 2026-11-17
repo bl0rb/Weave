@@ -547,6 +547,16 @@ def test_to_source_defaults_missing_collection_to_none():
     assert source.collection is None
 
 
+def test_to_source_propagates_source_job_id_heading_path_and_chunk_index():
+    source = _to_source(_chunk(source_job_id='job-7', heading_path=['Reisen', 'Tagegeld'], chunk_index=4))
+    assert (source.source_job_id, source.heading_path, source.chunk_index) == ('job-7', ['Reisen', 'Tagegeld'], 4)
+
+
+def test_to_source_document_identity_fields_default_to_none_for_an_older_retrieval():
+    source = _to_source(_chunk(heading_path=[]))
+    assert (source.source_job_id, source.heading_path, source.chunk_index) == (None, None, None)
+
+
 def test_images_for_extracts_dedupes_and_caps_http_image_urls():
     text = (
         '![a](https://x.example/a.png) text ![a](https://x.example/a.png) '

@@ -31,6 +31,7 @@ Weave-Retrieval ist der **Hybrid Search Service** des Weave-Systems. Sie bietet 
 
 **Input:**
 - POST `/search`: Query, Filter-Objekt, Top-K, optionaler Reranker-Toggle
+- POST `/passage`: ein zitierter Chunk plus Nachbar-Chunks („Textstelle öffnen“), mit denselben Sichtbarkeitsregeln wie `/search`
 
 **Output:**
 - JSON-Array mit Dokumenten-Chunks: ID, Text, Score, Metadaten, Quelle
@@ -87,6 +88,7 @@ Content-Type: application/json
     {
       "chunk_id": 42,
       "document_id": "b4b997e4-f2e6-4944-9943-78de9dce77ae",
+      "source_job_id": "0b6f3f0e-6a1d-4c51-9d3e-2f1f5a7c9e11",
       "text": "Sie können Ihr VPN-Passwort im Self-Service-Portal unter Einstellungen zurücksetzen, sofern Sie Ihre Mitarbeiter-ID kennen.",
       "heading_path": ["IT-Support", "VPN"],
       "page_start": 3,
@@ -133,6 +135,30 @@ Content-Type: application/json
 
 Fehlerfälle: `401` (fehlendes/falsches Bearer-Token), `503` (kein `RETRIEVAL_API_TOKEN` konfiguriert — niemals "Auth aus"), `422` (z.B. leere `query`), `400` (explizites `final_k > top_k`).
 
+`source_job_id` ist die `Document.source_job_id` (stabile Weave-Ingest-Job-ID genau dieser Dokumentversion) — der Schlüssel, unter dem Feedback, Prüfaufgaben und Golden-Set-Urteile ein Dokument referenzieren.
+
+### Textstelle: `POST /api/v1/passage`
+
+Liefert den Ziel-Chunk eines Dokuments plus bis zu `context` (0–3, Default 1) Nachbar-Chunks auf jeder Seite (nach `chunk_index`, nur aus demselben Dokument) — die Grundlage für „Textstelle öffnen“ an einem Zitat. Gleiche Service-Token-Auth wie `/search`. Die Sichtbarkeit wird **nicht** nachgebaut, sondern über exakt dasselbe `apply_filters()` geprüft (Status `indexed`, `allowed_teams`, `allowed_collections` inkl. `__none__` für Altbestand, siehe "Suche"/"Collections") — eine Textstelle ist genau dann sichtbar, wenn dieselbe Suche den Chunk hätte liefern können (`app/services/passage.py`).
+
+```json
+POST /api/v1/passage
+{ "document_id": "b4b997e4-f2e6-4944-9943-78de9dce77ae", "chunk_id": 42, "context": 1,
+  "allowed_teams": ["Kundenservice"], "allowed_collections": ["support-docs", "__none__"] }
+
+200 OK
+{ "document_id": "b4b997e4-…", "source_job_id": "0b6f3f0e-…", "title": "IT-Support FAQ",
+  "original_filename": "IT-Support-FAQ.pdf", "document_version": 1, "source_kind": "upload",
+  "source_url": null, "collection": "support-docs", "target_chunk_id": 42,
+  "chunks": [
+    { "chunk_id": 41, "chunk_index": 6, "heading_path": ["IT-Support", "VPN"], "page_start": 3, "page_end": 3, "text": "…", "is_target": false },
+    { "chunk_id": 42, "chunk_index": 7, "heading_path": ["IT-Support", "VPN"], "page_start": 3, "page_end": 3, "text": "…", "is_target": true },
+    { "chunk_id": 43, "chunk_index": 8, "heading_path": ["IT-Support", "VPN"], "page_start": 4, "page_end": 4, "text": "…", "is_target": false }
+  ] }
+```
+
+Nicht sichtbar, unbekannte/ungültige `document_id`, Chunk nicht in diesem Dokument oder Dokument nicht (mehr) `indexed` (z.B. `superseded` nach einer neuen Version) → einheitlich `404 {"detail": "Passage not found"}` — kein Existenz-Leak. `422` nur bei strukturell ungültigem Body (z.B. `context` außerhalb 0–3).
+
 ## Collections
 
 Weave-Retrieval ist die **Lese-Autorität** des "Collections"-Vertrags (siehe die Vertrag-Definition; Owner der Registry-Werte ist Weave-Ingest, gespiegelt über Weave-Knowledge in derselben `collections`-Tabelle wie `documents`/`chunks`, siehe oben): es beantwortet, welche Collections ein Team lesen darf, und setzt die Zugriffsgrenze bei der Suche durch — schreibt selbst aber keine Zeile dieser Tabelle.
@@ -161,7 +187,12 @@ Weave-Retrieval ist die **Lese-Autorität** des "Collections"-Vertrags (siehe di
 
 ## Evaluation
 
-Retrieval-Qualität wird gegen ein handkuratiertes **Golden-Set** gemessen: Query → erwartete relevante Chunks (per `Document.source_job_id`, optional eingeengt auf einen Text-Marker-Substring), siehe `backend/eval/golden.example.yaml` und die Docstrings in `app/services/evalharness.py` für das genaue Format. `evaluate()` berechnet Recall@k (für konfigurierbare `k`), MRR und Hit@1, pro Query und als Makro-Durchschnitt.
+Retrieval-Qualität wird gegen ein handkuratiertes **Golden-Set** gemessen: Query → erwartete relevante Chunks (per `Document.source_job_id`, optional eingeengt auf einen Text-Marker-Substring), siehe `backend/eval/golden.example.yaml` und die Docstrings in `app/services/evalharness.py` für das genaue Format. `evaluate()` berechnet Recall@k, Precision@k und nDCG@k (für konfigurierbare `k`), MRR und Hit@1, pro Query und als Makro-Durchschnitt:
+
+- **Precision@k** = Anteil der Top-k-Ränge, deren Treffer irgendein Urteil erfüllt (immer durch `k` geteilt).
+- **nDCG@k** = binäre Relevanz, jedes Urteil zählt höchstens einmal (ein zweiter Chunk eines schon gezählten Dokument-Urteils bringt nichts); ideale DCG aus `min(Anzahl Urteile, k)` Treffern auf den Rängen 1..n.
+
+Jeder Golden-Eintrag darf zusätzlich einen optionalen `answer:`-Block tragen — die Antwort-Erwartung, die Weave-Runtimes Antwort-Evaluation (`python -m app.eval_cli answers`) aus derselben Datei liest (`answerable`, `reference`, `must_include` mit Alternativen, `must_not_include`, `must_cite`; siehe Kommentar in `golden.example.yaml`). Die Retrieval-Harness prüft davon nur den Typ (Mapping, `answerable` bool). Einträge mit `answer.answerable: false` (Frage, die der Korpus nicht beantworten kann — erwartet wird eine Enthaltung) dürfen `relevant: []` haben bzw. `relevant` weglassen; sie werden von allen Retrieval-Metriken übersprungen und im Report als `skipped (unanswerable): n` gezählt. Alle anderen Regeln bleiben unverändert (insbesondere braucht jeder beantwortbare Eintrag eine nicht-leere `relevant`-Liste).
 
 ```bash
 cd backend
@@ -179,9 +210,13 @@ DATABASE_URL=sqlite:///./eval_demo.db .venv/bin/python -m app.cli eval \
 # immer die von --min-recall gegatete Metrik, unabhängig von --k:
 DATABASE_URL=sqlite:///./eval_demo.db .venv/bin/python -m app.cli eval \
   --golden eval/golden.example.yaml --k 5 --k 20
+
+# Vollständiges Ergebnis (pro Query + Aggregat + ks) zusätzlich als JSON:
+DATABASE_URL=sqlite:///./eval_demo.db .venv/bin/python -m app.cli eval \
+  --golden eval/golden.example.yaml --json eval_report.json
 ```
 
-Exit-Codes (safe für ein CI-Gate): `0` Erfolg, `1` aggregiertes Recall@5 unter `--min-recall`, `2` Golden-Set nicht ladbar.
+Exit-Codes (safe für ein CI-Gate): `0` Erfolg, `1` aggregiertes Recall@5 unter `--min-recall`, `2` Golden-Set nicht ladbar (oder `--json`-Datei nicht schreibbar). Die JSON-Datei wird vor der Gate-Prüfung geschrieben, liegt also auch bei Exit-Code `1` vor.
 
 **`seed-demo`** ist ein reines Dev-/CI-Fixture-Kommando, **kein** Ersatz für Weave-Knowledges Indexierung: es legt (`Base.metadata.drop_all` + `create_all`) das komplette Schema auf `DATABASE_URL` neu an und seedet einen festen Mini-Korpus — deshalb verweigert es sich strikt, sobald `DATABASE_URL` nicht mit `sqlite` beginnt, um niemals versehentlich Schema auf der echten, geteilten `weave_knowledge`-Postgres-Datenbank anzulegen (siehe "Architektur-Entscheidung" unten). Ein reales Golden-Set kuratiert man stattdessen manuell gegen tatsächlich von Weave-Knowledge indexierte Dokumente und lässt `eval` gegen die echte (read-only) `DATABASE_URL` laufen — `get_search_fn()` (`app/services/evalharness.py`) ruft dafür exakt dieselbe `app/services/search.py:search()`-Pipeline auf, die auch hinter `POST /api/v1/search` steht, mit `top_k = final_k = settings.search_top_k`, damit auch ein `k` oberhalb von `settings.search_final_k` noch aussagekräftig ist.
 

@@ -144,6 +144,10 @@ class RetrievedChunk:
     document_type: str | None = None
     tags: list[str] = field(default_factory=list)
     quality_grade: str | None = None
+    # Weave-Ingest job id behind the document (Weave-Retrieval's
+    # `SearchResult.source_job_id`, i.e. `Document.source_job_id`) -- the
+    # stable document identity golden sets and quality signals refer to.
+    source_job_id: str | None = None
 
 
 class SearchHits(list):
@@ -216,6 +220,7 @@ def _parse_chunk(item: dict) -> RetrievedChunk:
         document_type=item.get('document_type'),
         tags=list(item.get('tags') or []),
         quality_grade=item.get('quality_grade'),
+        source_job_id=item.get('source_job_id') if isinstance(item.get('source_job_id'), str) else None,
         scores=RetrievedChunkScores(
             vector=scores_raw.get('vector'),
             fulltext=scores_raw.get('fulltext'),

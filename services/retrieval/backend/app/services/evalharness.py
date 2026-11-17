@@ -1,5 +1,6 @@
-"""Retrieval-quality evaluation harness: Recall@k / MRR / Hit@1 against a
-hand-curated "golden set" of (query, expected-relevant-chunks) pairs.
+"""Retrieval-quality evaluation harness: Recall@k / Precision@k / nDCG@k /
+MRR / Hit@1 against a hand-curated "golden set" of (query,
+expected-relevant-chunks) pairs.
 
 `evaluate()` below takes the thing under test as a plain injected callable:
 
@@ -36,11 +37,25 @@ Golden-set YAML format (see backend/eval/golden.example.yaml)
         - source_job_id: "<Document.source_job_id>"                 # whole document counts as relevant
         - source_job_id: "<Document.source_job_id>"
           contains: "<substring that must appear in the matching chunk's text>"
+      answer:                    # optional; see below
+        answerable: true
+
+The optional `answer:` mapping is the answer-quality block shared with
+Weave-Runtime's answer evaluation (`python -m app.eval_cli answers`, which
+reads the same file with its own loader): `answerable`, `reference`,
+`must_include`, `must_not_include`, `must_cite`. This harness ignores it,
+except that it must be a mapping, `answerable` (when given) must be a bool,
+and an entry with `answer.answerable: false` (a query the corpus cannot
+answer; the bot should abstain) may have `relevant: []` or omit `relevant`
+entirely. Such unanswerable entries are skipped by every retrieval metric
+here and only counted (EvaluationResult.skipped_unanswerable). Every other
+entry still needs a non-empty `relevant` list.
 """
 
 import logging
+import math
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -97,12 +112,20 @@ class GoldenQuery:
     query: str
     relevant: list[GoldenRelevant]
     k: int | None = None
+    # The raw `answer:` mapping (see the module docstring), kept verbatim
+    # for callers that care; evaluate() only reads `answerable` below.
+    answer: dict[str, Any] | None = None
+
+    @property
+    def answerable(self) -> bool:
+        """False only for an explicit `answer.answerable: false`."""
+        return not (self.answer is not None and self.answer.get('answerable') is False)
 
 
 @dataclass(frozen=True)
 class QueryMetrics:
-    """Metrics for one GoldenQuery. `recall_at_k` has one entry per cutoff
-    requested of evaluate()'s own `ks`. `mrr` and `hit_at_1` are computed
+    """Metrics for one GoldenQuery. `recall_at_k`, `precision_at_k` and
+    `ndcg_at_k` have one entry per cutoff requested of evaluate()'s own `ks`. `mrr` and `hit_at_1` are computed
     against the query's full (GoldenQuery.k-capped) ranked result list, not
     against any single `ks` cutoff -- rank 1 is rank 1 regardless of which
     Recall@k values were requested."""
@@ -112,18 +135,55 @@ class QueryMetrics:
     recall_at_k: dict[int, float]
     mrr: float
     hit_at_1: float
+    precision_at_k: dict[int, float] = field(default_factory=dict)
+    ndcg_at_k: dict[int, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class EvaluationResult:
     """evaluate()'s return value: every query's own metrics plus the
     macro-average (mean over queries, each query weighted equally
-    regardless of how many relevant chunks it has) aggregate."""
+    regardless of how many relevant chunks it has) aggregate.
+    `skipped_unanswerable` counts golden entries with `answer.answerable:
+    false` that were left out of every metric; `ks` is the sorted, distinct
+    cutoff list the run was scored at."""
 
     per_query: list[QueryMetrics]
     recall_at_k: dict[int, float]
     mrr: float
     hit_at_1: float
+    precision_at_k: dict[int, float] = field(default_factory=dict)
+    ndcg_at_k: dict[int, float] = field(default_factory=dict)
+    skipped_unanswerable: int = 0
+    ks: list[int] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-ready form (app/cli.py's `eval --json`): `ks`, `aggregate`
+        and `per_query`. Cutoff-keyed dicts get string keys ("5", "10") --
+        JSON object keys are always strings."""
+
+        def _keyed(values: dict[int, float]) -> dict[str, float]:
+            return {str(k): v for k, v in sorted(values.items())}
+
+        per_query = []
+        for item in self.per_query:
+            row = asdict(item)
+            for name in ('recall_at_k', 'precision_at_k', 'ndcg_at_k'):
+                row[name] = _keyed(row[name])
+            per_query.append(row)
+        return {
+            'ks': list(self.ks),
+            'aggregate': {
+                'num_queries': len(self.per_query),
+                'skipped_unanswerable': self.skipped_unanswerable,
+                'recall_at_k': _keyed(self.recall_at_k),
+                'precision_at_k': _keyed(self.precision_at_k),
+                'ndcg_at_k': _keyed(self.ndcg_at_k),
+                'mrr': self.mrr,
+                'hit_at_1': self.hit_at_1,
+            },
+            'per_query': per_query,
+        }
 
 
 def _matches(item: RetrievedChunk, relevant: GoldenRelevant) -> bool:
@@ -141,6 +201,41 @@ def _first_relevant_rank(retrieved: list[RetrievedChunk], relevant: list[GoldenR
     return None
 
 
+def _gain_ranks(retrieved: list[RetrievedChunk], relevant: list[GoldenRelevant]) -> list[int]:
+    """1-based ranks that credit a relevance judgment, for nDCG: each
+    judgment is credited at most once and each hit credits at most one
+    judgment (a second chunk of an already-credited document-level judgment
+    gains nothing).
+
+    Hits are assigned to judgments by a maximum bipartite matching that
+    prefers earlier ranks (Kuhn's augmenting paths, ranks visited in order):
+    a hit is credited whenever SOME reassignment of the earlier hits frees a
+    judgment for it. Because DCG weights fall with rank, this maximizes DCG
+    and makes the score independent of the order of the judgments in the
+    golden set.
+    """
+    candidates = [[index for index, rel in enumerate(relevant) if _matches(item, rel)] for item in retrieved]
+    owner: dict[int, int] = {}  # judgment index -> 0-based position of the hit crediting it
+
+    def _augment(position: int, visited: set[int]) -> bool:
+        for index in candidates[position]:
+            if index in visited:
+                continue
+            visited.add(index)
+            if index not in owner or _augment(owner[index], visited):
+                owner[index] = position
+                return True
+        return False
+
+    return sorted(position + 1 for position in range(len(retrieved)) if candidates[position] and _augment(position, set()))
+
+
+def _ndcg_at_k(gain_ranks: list[int], num_relevant: int, k: int) -> float:
+    dcg = sum(1.0 / math.log2(rank + 1) for rank in gain_ranks if rank <= k)
+    ideal = sum(1.0 / math.log2(rank + 1) for rank in range(1, min(num_relevant, k) + 1))
+    return dcg / ideal if ideal > 0 else 0.0
+
+
 def evaluate(search_fn: SearchFn, golden: list[GoldenQuery], ks: list[int] = [5, 10]) -> EvaluationResult:
     """Run every GoldenQuery's query through `search_fn` and score the
     results against its `relevant` judgments.
@@ -152,7 +247,19 @@ def evaluate(search_fn: SearchFn, golden: list[GoldenQuery], ks: list[int] = [5,
     GoldenQuery.k-capped depth). Hit@1 = 1.0 if the single top-ranked result
     matches any judgment, else 0.0.
 
-    Raises ValueError if `golden` is empty (nothing to evaluate) or if any
+    Precision@k = (# of the top-k ranks whose hit matches ANY judgment) / k
+    -- always divided by k, even when fewer than k hits came back or the
+    query's own GoldenQuery.k caps the depth below k. nDCG@k uses binary
+    relevance where each judgment counts once (see _gain_ranks()): DCG =
+    sum of 1/log2(rank+1) over crediting ranks <= k, normalized by the
+    ideal DCG of min(# relevant judgments, k) hits at ranks 1..n.
+
+    Entries with `answer.answerable: false` are skipped entirely (no
+    search_fn call, no metrics) and only counted in `skipped_unanswerable`.
+
+    Raises ValueError if `golden` is empty (nothing to evaluate), if any
+    cutoff in `ks` is < 1 (Precision@k divides by k), if every
+    entry is unanswerable (nothing left to score), or if any answerable
     GoldenQuery has an empty `relevant` list (a judgment-less query can't
     produce a meaningful recall denominator -- that's a golden-set authoring
     bug, not a 0.0 score).
@@ -163,10 +270,16 @@ def evaluate(search_fn: SearchFn, golden: list[GoldenQuery], ks: list[int] = [5,
     distinct_ks = sorted(set(ks))
     if not distinct_ks:
         raise ValueError('ks must contain at least one cutoff')
+    if distinct_ks[0] < 1:
+        raise ValueError(f'cutoffs must be positive integers, got {distinct_ks[0]}')
     default_depth = max(distinct_ks)
 
     per_query: list[QueryMetrics] = []
+    skipped_unanswerable = 0
     for item in golden:
+        if not item.answerable:
+            skipped_unanswerable += 1
+            continue
         if not item.relevant:
             raise ValueError(f'golden query {item.query!r} has an empty relevant list')
 
@@ -179,6 +292,13 @@ def evaluate(search_fn: SearchFn, golden: list[GoldenQuery], ks: list[int] = [5,
             hit_count = sum(1 for rel in item.relevant if any(_matches(r, rel) for r in top))
             recall_at_k[k] = hit_count / len(item.relevant)
 
+        precision_at_k = {
+            k: sum(1 for r in retrieved[:k] if any(_matches(r, rel) for rel in item.relevant)) / k
+            for k in distinct_ks
+        }
+        gain_ranks = _gain_ranks(retrieved, item.relevant)
+        ndcg_at_k = {k: _ndcg_at_k(gain_ranks, len(item.relevant), k) for k in distinct_ks}
+
         rank = _first_relevant_rank(retrieved, item.relevant)
         mrr = 1.0 / rank if rank is not None else 0.0
         hit_at_1 = 1.0 if retrieved and any(_matches(retrieved[0], rel) for rel in item.relevant) else 0.0
@@ -190,19 +310,30 @@ def evaluate(search_fn: SearchFn, golden: list[GoldenQuery], ks: list[int] = [5,
                 recall_at_k=recall_at_k,
                 mrr=mrr,
                 hit_at_1=hit_at_1,
+                precision_at_k=precision_at_k,
+                ndcg_at_k=ndcg_at_k,
             )
         )
+
+    if not per_query:
+        raise ValueError('golden set has no answerable queries -- nothing to evaluate')
 
     n = len(per_query)
     aggregate_recall = {k: sum(q.recall_at_k[k] for q in per_query) / n for k in distinct_ks}
     aggregate_mrr = sum(q.mrr for q in per_query) / n
     aggregate_hit_at_1 = sum(q.hit_at_1 for q in per_query) / n
+    aggregate_precision = {k: sum(q.precision_at_k[k] for q in per_query) / n for k in distinct_ks}
+    aggregate_ndcg = {k: sum(q.ndcg_at_k[k] for q in per_query) / n for k in distinct_ks}
 
     return EvaluationResult(
         per_query=per_query,
         recall_at_k=aggregate_recall,
         mrr=aggregate_mrr,
         hit_at_1=aggregate_hit_at_1,
+        precision_at_k=aggregate_precision,
+        ndcg_at_k=aggregate_ndcg,
+        skipped_unanswerable=skipped_unanswerable,
+        ks=distinct_ks,
     )
 
 
@@ -226,14 +357,24 @@ def _parse_query(raw: Any) -> GoldenQuery:
     query = raw.get('query')
     if not isinstance(query, str) or not query:
         raise ValueError(f'golden set entry has a missing/invalid query: {raw!r}')
+    answer = raw.get('answer')
+    if answer is not None:
+        if not isinstance(answer, dict):
+            raise ValueError(f'golden query {query!r} has an answer block that is not a mapping: {answer!r}')
+        answerable = answer.get('answerable', True)
+        if not isinstance(answerable, bool):
+            raise ValueError(f'golden query {query!r} has a non-boolean answer.answerable: {answerable!r}')
+    unanswerable = answer is not None and answer.get('answerable') is False
     relevant_raw = raw.get('relevant')
-    if not isinstance(relevant_raw, list) or not relevant_raw:
+    if unanswerable and relevant_raw is None:
+        relevant_raw = []
+    if not isinstance(relevant_raw, list) or (not relevant_raw and not unanswerable):
         raise ValueError(f'golden query {query!r} has a missing/empty relevant list')
     relevant = [_parse_relevant(entry, query=query) for entry in relevant_raw]
     k = raw.get('k')
     if k is not None and (not isinstance(k, int) or isinstance(k, bool) or k < 1):
         raise ValueError(f'golden query {query!r} has an invalid k: {k!r} (expected a positive integer or omitted)')
-    return GoldenQuery(query=query, relevant=relevant, k=k)
+    return GoldenQuery(query=query, relevant=relevant, k=k, answer=answer)
 
 
 def load_golden(path: str | Path) -> list[GoldenQuery]:
