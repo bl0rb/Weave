@@ -11,6 +11,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.26] - 2026-11-17
+
+### Added
+- **Answer feedback and knowledge gaps**: chat answers can be rated *Hilfreich*, *Falsch* or
+  *Veraltet* (optional comment). Weave-API stores the rating (migration api `0009`) and forwards
+  it, together with every question the bot could not answer from sources, anonymously to Ingest
+  (`POST /api/v1/quality/signals`, service token `KNOWLEDGE_INGEST_API_TOKEN`). Ingest bundles
+  similar unanswered questions per knowledge space and turns them, wrong/outdated ratings, due
+  reviews and possible contradictions into **Prüfaufgaben** for the owners and members of the
+  space (portal page `/pruefaufgaben`, quality summary; migration `0062`).
+  `QUALITY_SIGNALS_ENABLED=false` on Weave-API stops forwarding.
+- **Open sources at the cited passage**: citation markers and source cards in the chat open the
+  cited chunk between its neighbours, within the reader's own rights (Retrieval
+  `POST /api/v1/passage`, Weave-API `GET /v1/sources/passage`).
+- **Answer evaluation**: the retrieval eval harness adds Precision@k, nDCG@k, `--json` and
+  `answer:` blocks in golden files; `python -m app.eval_cli answers` in Runtime compares models
+  and scores retrieval, correctness and grounding separately.
+- **Review dates and reminders**: documents get a review date from frontmatter `review_due` or a
+  space's review interval; a tick opens a Prüfaufgabe and sends the new webhook event
+  `document.review_due` (migration `0063`).
+- **Version comparison** section by section with a plain-language summary
+  (`/reviews/[id]/changes`), **topic subscriptions and a change feed** (`/aenderungen`), and
+  **possible contradictions** between similar passages, reported by Knowledge after indexing.
+- **Amazon S3 Vectors as optional vector index** (ADR 0010): `KNOWLEDGE_VECTOR_BACKEND` /
+  `RETRIEVAL_VECTOR_BACKEND` = `pgvector` (default) or `s3vectors`; Knowledge mirrors embeddings
+  (`python -m app.cli s3vectors init|sync|status`), Retrieval rechecks every candidate in Postgres
+  and falls back to pgvector on errors. Rollout order and IAM in `docs/betrieb.md` §7.8.
+- **Admin statistics** on the admin overview: documents, versions, releases, storage per
+  backend, chunks, embedding models, knowledge spaces, memory summaries, users, teams and review
+  tasks (`GET /api/v1/admin/statistics`, Knowledge `GET /api/v1/internal/stats`).
+
 ## [0.7.25] - 2026-11-16
 
 ### Added

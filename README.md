@@ -32,7 +32,7 @@ evaluated before any data or budget leaves the building.
 does not decide anything. It answers questions from documents that someone
 deliberately published, and it shows its work.
 
-The current release is **v0.7.25** — nine services, running and tested end to
+The current release is **v0.7.26** — nine services, running and tested end to
 end, and each one can run as several replicas. The [wiki](https://github.com/bl0rb/Weave/wiki) is the place to
 start reading; this README covers the repository itself.
 
@@ -74,7 +74,7 @@ read ([ADR-0009](docs/adr/0009-wissensgedaechtnis.md)). Admins adjust mode, mode
 limits and watch coverage and LLM usage under *Administration › KI ›
 Wissensgedächtnis*.
 
-### Feedback, answer quality and freshness (unreleased)
+### New in v0.7.26: feedback, answer quality and freshness
 
 **Feedback and knowledge gaps.** Under every chat answer people mark it as
 *Hilfreich*, *Falsch* or *Veraltet*, optionally with a comment. Weave-API keeps
