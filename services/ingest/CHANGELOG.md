@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.28] - 2026-11-18
+
 ### Fixed
 - **Sources of agent answers**: a research agent that answers with only the facts array, a fenced
   JSON object or a sentence before it no longer puts raw JSON (`{"text": …, "source_refs": …}`)
