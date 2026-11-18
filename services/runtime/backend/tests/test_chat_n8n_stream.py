@@ -315,7 +315,7 @@ def test_keepalive_comment_is_emitted_while_the_flow_is_silent(monkeypatch):
     assert ': keepalive\n\n' in resp.text
     # the real events still arrive, in order, once the flow speaks
     events = _events(resp.text)
-    assert [event['type'] for event in events][-3:] == ['delta', 'sources', 'done']
+    assert [event['type'] for event in events][-4:] == ['delta', 'trace', 'sources', 'done']
 
 
 def test_internal_chat_stream_route_raw_sse_body_contains_the_keepalive_comment_line(monkeypatch):

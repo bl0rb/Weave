@@ -345,6 +345,71 @@ def test_agent_turn_streams_trace_then_deltas_then_sources_and_done(tmp_path, mo
     assert events[-1]['type'] == 'done'
 
 
+def test_agent_turn_stream_closing_trace_reports_the_agents_retrieval(tmp_path, monkeypatch):
+    # The opening trace cannot know the research; the closing one, right
+    # before `sources`, carries it: subagent details, the summed retrieval
+    # (through the reranker) and the answering model.
+    _write_bot(tmp_path, monkeypatch)
+    _script_fake_llm(monkeypatch, [
+        LLMToolResult(content=None, tool_calls=[_TOOL_CALL], model='fake-chat'),
+        LLMToolResult(content=_FINAL_ANSWER_JSON, tool_calls=None, model='fake-chat'),
+    ])
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _readable_collections())
+    search_body = {
+        'query': 'q', 'results': [_chunk(), _chunk(chunk_id=2)],
+        'trace': {
+            'vector_candidates': 40, 'fulltext_candidates': 12, 'fused': 45, 'reranked': 20, 'returned': 2,
+            'rerank_provider': 'local', 'rerank_model': 'bge-reranker', 'embedding_model': 'e5',
+            'timings_ms': {'rerank_ms': 30.0},
+        },
+    }
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _search_post(search_body))
+
+    response = client.post('/internal/chat/stream', json=_BODY, headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    events = _parse_sse_events(response.text)
+    assert [event['type'] for event in events][-3:] == ['trace', 'sources', 'done']
+    closing = events[-3]['trace']
+    assert closing['model'] == 'fake-chat'
+    assert {'agent_ms', 'llm_ms', 'total_ms'} <= set(closing['timings_ms'])
+
+    subagent = closing['agent']['subagents'][0]
+    assert subagent['name'] == 'IT Support'
+    assert subagent['queries'] == ['vpn setup']
+    assert (subagent['facts'], subagent['cited_hits'], subagent['hits']) == (1, 1, 2)
+    assert closing['agent']['budget_used'] == 1
+
+    retrieval = closing['retrieval']
+    assert (retrieval['candidates'], retrieval['used']) == (2, 1)
+    assert retrieval['collections'] == ['it-docs']
+    assert [(hit['chunk_id'], hit['used']) for hit in retrieval['hits']] == [(1, True), (2, False)]
+    assert retrieval['hits'][0]['scores']['rerank'] == 0.9
+    assert retrieval['search']['reranked'] == 20
+    assert retrieval['search']['rerank_model'] == 'bge-reranker'
+    assert retrieval['search']['returned'] == 2
+
+
+def test_agent_turn_bare_facts_array_keeps_its_source_refs(tmp_path, monkeypatch):
+    # Seen in production: the subagent answered with only the facts array.
+    # It used to reach the answer as raw JSON text without any citation.
+    _write_bot(tmp_path, monkeypatch)
+    bare = json.dumps([{'text': 'VPN nutzt WireGuard.', 'source_refs': [{'document_id': 'doc-1', 'chunk_id': 1}]}])
+    _script_fake_llm(monkeypatch, [
+        LLMToolResult(content=None, tool_calls=[_TOOL_CALL], model='fake-chat'),
+        LLMToolResult(content=bare, tool_calls=None, model='fake-chat'),
+    ])
+    monkeypatch.setattr('app.services.retrieval_client.httpx.get', _readable_collections())
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _search_post(_search_response(_chunk())))
+
+    body = client.post('/internal/chat', json=_BODY, headers=AUTH_HEADERS).json()
+
+    assert 'source_refs' not in body['answer']
+    assert body['trace']['agent']['subagents'][0]['cited_hits'] == 1
+    assert body['trace']['retrieval']['used'] == 1
+    assert body['trace']['model'] == 'fake-chat'
+
+
 def test_agent_turn_stream_emits_status_events_between_trace_and_first_delta(tmp_path, monkeypatch):
     # Rollout plan "Schritt 4 -- Administration und Streaming": a short,
     # transient progress line (e.g. 'IT Support wird durchsucht') must

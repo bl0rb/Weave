@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Sources of agent answers**: a research agent that answers with only the facts array, a fenced
+  JSON object or a sentence before it no longer puts raw JSON (`{"text": …, "source_refs": …}`)
+  into the answer's source list; its facts keep their citations. The answering model now sees the
+  cited documents next to each fact (`(evidence: vpn.pdf p. 3)`) instead of only the agent's name.
+- **Trace in the chat**: a streamed answer now ends with a complete trace (contract
+  `internal-chat.md`, additive): agent answers show their retrieval (hits, used, reranker, search
+  counts) instead of "No retrieval call for this turn", plus the answering model and
+  `llm_ms`/`total_ms`. Per research agent the trace shows its name, queries, facts, cited hits,
+  open points and the search budget. Weave-API stores the complete trace with the message.
+
 ## [0.7.27] - 2026-11-18
 
 ### Added

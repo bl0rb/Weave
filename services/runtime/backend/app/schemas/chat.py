@@ -415,6 +415,15 @@ class SubagentTrace(BaseModel):
     # ADR-0009 §10b: how many `memory_lookup` tool calls this subagent
     # made (0 whenever the memory is off or the tool was not offered).
     memory_lookups: int = 0
+    # Display name from the bot config (`None` if the subagent is gone).
+    name: str | None = None
+    # Facts the subagent returned, and how many of its hits they cite.
+    facts: int = 0
+    cited_hits: int = 0
+    # The queries it sent to Weave-Retrieval, in order, and its open
+    # points. Trace only: never part of a `status` event.
+    queries: list[str] = Field(default_factory=list)
+    open_points: list[str] = Field(default_factory=list)
 
 
 class AgentTrace(BaseModel):
@@ -508,7 +517,11 @@ class ChatResponse(BaseModel):
 
 
 class ChatStreamTraceEvent(BaseModel):
-    """Sent exactly once, before any `ChatStreamDeltaEvent` -- the same
+    """Sent first, before any `ChatStreamDeltaEvent`, and once more as the
+    closing event right before `sources` (bot_graph.py's `_finish`) with
+    the complete trace the blocking route returns -- agent research,
+    answering model, llm_ms/total_ms. A consumer keeps the last one. The
+    opening event is the same
     `ChatTrace` shape ChatResponse.trace carries, with one deliberate
     difference: `trace.timings_ms` here can only ever hold the metrics
     already known at this point in the pipeline (`router_ms`, and

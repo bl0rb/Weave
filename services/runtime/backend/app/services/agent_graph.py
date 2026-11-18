@@ -65,7 +65,7 @@ from langgraph.types import Send
 
 from app.schemas.bot import BotConfig, SubagentConfig
 from app.schemas.chat import AgentTrace, ChatStreamStatusEvent, Source, SubagentTrace
-from app.services.chat_common import _to_source
+from app.services.chat_common import _to_source, fact_with_evidence
 from app.services import agents as agents_service
 from app.services import llm as llm_service
 
@@ -492,7 +492,7 @@ def _combined_context_block(
         subagent = subagents_by_id.get(result.agent_id)
         name = subagent.name if subagent is not None else result.agent_id
         for fact in result.facts:
-            sections.append(f'[source {index}] ({name}) {fact.text}')
+            sections.append(f'[source {index}] ({name}) {fact_with_evidence(fact, result.hits)}')
             index += 1
     if contradictions:
         sections.append(
@@ -619,6 +619,25 @@ class GraphOutcome:
     sources: list[Source]
     guard_triggered: bool
     agent_trace: AgentTrace
+    # Every subagent result of the turn, superseded attempts included --
+    # for the turn's retrieval trace (chat.py's `agent_retrieval_trace`).
+    results: tuple[agents_service.SubagentResult, ...] = ()
+
+
+def subagent_trace(result: agents_service.SubagentResult, subagent: SubagentConfig | None) -> SubagentTrace:
+    """One subagent's `SubagentTrace`: what it searched for, what came back
+    and how much of it its facts actually cite. Never a prompt or a chunk
+    text."""
+    hit_keys = {(hit.document_id, hit.chunk_id) for hit in result.hits}
+    cited = {
+        (ref.document_id, ref.chunk_id) for fact in result.facts for ref in fact.source_refs
+    } & hit_keys
+    return SubagentTrace(
+        id=result.agent_id, status=result.status, searches_used=result.searches_used, hits=len(result.hits),
+        memory_lookups=result.memory_lookups, name=subagent.name if subagent is not None else None,
+        facts=len(result.facts), cited_hits=len(cited), queries=[search.query for search in result.searches],
+        open_points=list(result.open_points),
+    )
 
 
 def run_graph(
@@ -682,10 +701,7 @@ def run_graph(
 
     results: list[agents_service.SubagentResult] = final_state['results']
     subagent_traces = [
-        SubagentTrace(
-            id=result.agent_id, status=result.status, searches_used=result.searches_used, hits=len(result.hits),
-            memory_lookups=result.memory_lookups,
-        )
+        subagent_trace(result, subagents_by_id.get(result.agent_id))
         for result in _final_results_per_agent(results).values()
     ]
     budget_used = max(0, limits.budget_searches - int(final_state['budget']['searches_left']))
@@ -706,4 +722,5 @@ def run_graph(
         sources=sources,
         guard_triggered=guard_triggered,
         agent_trace=trace,
+        results=tuple(results),
     )

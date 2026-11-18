@@ -228,6 +228,8 @@ def _stream_and_persist(
                 yield ': keepalive\n\n'
                 continue
             if event_type == 'trace':
+                # The last one wins: Weave-Runtime closes the stream with
+                # the complete trace, right before `sources`.
                 trace = event.get('trace')
             elif event_type == 'delta':
                 answer_parts.append(event.get('text', ''))

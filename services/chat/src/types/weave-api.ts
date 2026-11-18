@@ -257,6 +257,13 @@ export interface SubagentTrace {
   status: string;
   searches_used: number;
   hits: number;
+  memory_lookups?: number;
+  // Added later; absent on traces persisted before then.
+  name?: string | null;
+  facts?: number;
+  cited_hits?: number;
+  queries?: string[];
+  open_points?: string[];
 }
 
 /**

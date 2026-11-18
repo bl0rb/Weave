@@ -592,12 +592,14 @@ def _agent_single(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
         message=f'{subagent.name} abgeschlossen',
     ))
     sources = chat_service._sources_from_result(result)
-    agent_trace = chat_service._agent_trace_for(bot, result)
+    agent_trace = chat_service._agent_trace_for(bot, result, subagent)
+    retrieval_trace = chat_service.agent_retrieval_trace(bot, [result])
 
     if bot.guard.require_sources and not sources:
         return {
             'timings_ms': timings, 'sources': [], 'guard': GuardTrace(triggered=True, reason='no_context'),
             'final_answer': bot.guard.no_context_reply, 'agent_trace': agent_trace,
+            'retrieval_trace': retrieval_trace,
         }
 
     writer(ChatStreamStatusEvent(stage='answering', message='Antwort wird formuliert'))
@@ -607,7 +609,10 @@ def _agent_single(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
         {'role': 'system', 'content': chat_service._facts_context_block(subagent, result)},
         {'role': 'user', 'content': state['message']},
     ]
-    return {'timings_ms': timings, 'sources': sources, 'messages': messages, 'agent_trace': agent_trace}
+    return {
+        'timings_ms': timings, 'sources': sources, 'messages': messages, 'agent_trace': agent_trace,
+        'retrieval_trace': retrieval_trace,
+    }
 
 
 def _agent_multi(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
@@ -640,6 +645,10 @@ def _agent_multi(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
         'guard': GuardTrace(triggered=True, reason='no_context') if outcome.guard_triggered else None,
         'final_answer': outcome.final_answer,
         'agent_trace': outcome.agent_trace,
+        'retrieval_trace': chat_service.agent_retrieval_trace(bot, outcome.results),
+        # The graph's own `answer` node called the main model, unless the
+        # guard answered instead.
+        'answer_model': None if outcome.guard_triggered else bot.model.model,
         # A non-guard outcome's full answer already went out as deltas.
         'streamed': ctx.streaming and not outcome.guard_triggered,
     }
@@ -694,6 +703,8 @@ def _generate(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
             return {'errored': True, 'streamed': True}
         return {
             'timings_ms': _timing(state, 'llm_ms', llm_start), 'streamed': True,
+            # Reported on the stream's closing `trace` event (`_finish`).
+            'answer_model': bot.model.model,
             **_cited(state, ''.join(parts)),
         }
 
@@ -702,9 +713,7 @@ def _generate(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
         **_cited(state, llm_result.content),
         'timings_ms': _timing(state, 'llm_ms', llm_start),
         'answer': llm_result.content,
-        # The blocking agent path never reported the answering model
-        # (`trace.model` is None for it) -- only the direct path does.
-        'answer_model': llm_result.model if state['branch'] in _DIRECT_BRANCHES else None,
+        'answer_model': llm_result.model,
     }
 
 
@@ -724,6 +733,13 @@ def _finish(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
     timings = _timing(state, 'total_ms', state['total_start'])
     sources = _with_notices(runtime.context.bot, state.get('sources') or [])
     if runtime.context.streaming and not state.get('errored'):
+        # The opening `trace` event (`_trace`) goes out before any answer
+        # work: an agent turn's searches, the answering model and
+        # llm_ms/total_ms are not known yet. This closing one carries the
+        # complete trace, the same `ChatTrace` the blocking route returns;
+        # a consumer keeps the last `trace` it saw.
+        final_trace = _build_trace({**state, 'timings_ms': timings}, model=state.get('answer_model'))
+        runtime.stream_writer(ChatStreamTraceEvent(trace=final_trace))
         runtime.stream_writer(ChatStreamSourcesEvent(sources=sources))
         runtime.stream_writer(ChatStreamDoneEvent())
     return {'timings_ms': timings, 'sources': sources}

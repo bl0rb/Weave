@@ -239,7 +239,6 @@ from app.schemas.chat import (
     RetrievalSearchTrace,
     RetrievalTrace,
     Source,
-    SubagentTrace,
 )
 from app.services import agent_graph as agent_graph_service
 from app.services import agents as agents_service
@@ -265,6 +264,7 @@ from app.services.chat_common import (  # noqa: F401 -- re-exported for tests/ap
     _images_for,
     _score_for,
     _to_source,
+    fact_with_evidence,
 )
 
 logger = logging.getLogger(__name__)
@@ -1612,7 +1612,7 @@ def _facts_context_block(subagent: SubagentConfig, result: agents_service.Subage
         'Answer using only the facts below; name any open points explicitly rather than guessing.'
     ]
     for index, fact in enumerate(result.facts, start=1):
-        sections.append(f'[source {index}] {fact.text}')
+        sections.append(f'[source {index}] {fact_with_evidence(fact, result.hits)}')
     if result.open_points:
         sections.append('Open points from the subagent: ' + '; '.join(result.open_points))
     return '\n\n'.join(sections)
@@ -1635,17 +1635,83 @@ def _sources_from_result(result: agents_service.SubagentResult) -> list[Source]:
     return sources
 
 
-def _agent_trace_for(bot: BotConfig, result: agents_service.SubagentResult) -> AgentTrace:
+def _agent_trace_for(
+    bot: BotConfig, result: agents_service.SubagentResult, subagent: SubagentConfig | None = None,
+) -> AgentTrace:
     return AgentTrace(
         mode='single',
-        subagents=[
-            SubagentTrace(
-                id=result.agent_id, status=result.status, searches_used=result.searches_used, hits=len(result.hits),
-                memory_lookups=result.memory_lookups,
-            )
-        ],
+        subagents=[agent_graph_service.subagent_trace(result, subagent)],
         budget=bot.agent.limits.budget_searches,
+        budget_used=result.searches_used,
     )
+
+
+_SEARCH_COUNT_KEYS = ('vector_candidates', 'fulltext_candidates', 'fused', 'reranked')
+_SEARCH_INFO_KEYS = ('rerank_provider', 'rerank_model', 'embedding_model', 'rrf_k', 'semantic_weight', 'lexical_weight')
+
+
+def _aggregate_search_trace(searches: list[agents_service.SearchRecord]) -> RetrievalSearchTrace | None:
+    """Weave-Retrieval's search traces of an agent turn's searches, summed:
+    candidate counts and timings add up, reranker/embedding details come
+    from the first search that reports them, `rerank_error` is set if any
+    search's reranking failed. `None` if the turn sent no search."""
+    if not searches:
+        return None
+    counts = dict.fromkeys(_SEARCH_COUNT_KEYS, 0)
+    info: dict = {}
+    timings: dict[str, float] = {}
+    rerank_error = False
+    for search in searches:
+        raw = search.trace or {}
+        for key in _SEARCH_COUNT_KEYS:
+            value = raw.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                counts[key] += value
+        for key in _SEARCH_INFO_KEYS:
+            if info.get(key) is None and raw.get(key) is not None:
+                info[key] = raw[key]
+        rerank_error = rerank_error or raw.get('rerank_error') is True
+        raw_timings = raw.get('timings_ms')
+        if isinstance(raw_timings, dict):
+            for key, value in raw_timings.items():
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    timings[key] = timings.get(key, 0.0) + float(value)
+    try:
+        return RetrievalSearchTrace.model_validate({
+            **counts, 'returned': sum(search.returned for search in searches), 'rerank_error': rerank_error,
+            **info, 'timings_ms': timings,
+        })
+    except ValidationError:
+        logger.warning('ignoring malformed Weave-Retrieval search trace')
+        return None
+
+
+def agent_retrieval_trace(
+    bot: BotConfig, results: 'list[agents_service.SubagentResult] | tuple[agents_service.SubagentResult, ...]',
+) -> RetrievalTrace | None:
+    """The `ChatTrace.retrieval` of an agent-mode turn: the subagents ran
+    the searches, so this sums them up -- every distinct hit (first
+    retrieval first), `used` = the hits a fact cites (the main answer only
+    sees facts), `collections` = what was actually searched, `search` = the
+    summed Weave-Retrieval traces (`_aggregate_search_trace`). `None` when
+    no subagent searched at all, which the UI shows as "no retrieval"."""
+    searches = [search for result in results for search in result.searches]
+    if not searches:
+        return None
+    seen: set[tuple[str, int]] = set()
+    hits: list[RetrievedChunk] = []
+    for result in results:
+        for chunk in result.hits:
+            key = (chunk.document_id, chunk.chunk_id)
+            if key not in seen:
+                seen.add(key)
+                hits.append(chunk)
+    cited = {(ref.document_id, ref.chunk_id) for result in results for fact in result.facts for ref in fact.source_refs}
+    used = [chunk for chunk in hits if (chunk.document_id, chunk.chunk_id) in cited]
+    collections = list(dict.fromkeys(slug for search in searches for slug in search.collections))
+    fields = _search_trace_fields(bot, hits, used)
+    fields['search'] = _aggregate_search_trace(searches)
+    return RetrievalTrace(candidates=len(hits), used=len(used), collections=collections, **fields)
 
 
 def _prepare_context(

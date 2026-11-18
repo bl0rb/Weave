@@ -442,3 +442,66 @@ def test_search_knowledge_tool_schema_has_no_identity_or_permission_fields():
     properties = schema['function']['parameters']['properties']
     assert set(properties) == {'query', 'collection', 'top_k', 'document_id'}
     assert schema['function']['parameters']['additionalProperties'] is False
+
+
+# --- answer shapes the model actually sends ------------------------------------
+
+_REF = {'document_id': 'doc-1', 'chunk_id': 1}
+_FACT = {'text': 'VPN uses WireGuard.', 'source_refs': [_REF]}
+
+
+def _hits_by_ref():
+    return {('doc-1', 1): _chunk()}
+
+
+def test_parse_accepts_a_bare_facts_array():
+    import json
+
+    facts, open_points = agents._parse_subagent_answer(json.dumps([_FACT]), _hits_by_ref())
+    assert [fact.text for fact in facts] == ['VPN uses WireGuard.']
+    assert facts[0].source_refs == [agents.SourceRef(document_id='doc-1', chunk_id=1, collection='it-docs')]
+    assert open_points == []
+
+
+def test_parse_accepts_a_fenced_object_and_a_sentence_before_it():
+    import json
+
+    payload = json.dumps({'facts': [_FACT], 'open_points': ['Kosten']})
+    for text in (f'```json\n{payload}\n```', f'Hier ist das Ergebnis:\n{payload}'):
+        facts, open_points = agents._parse_subagent_answer(text, _hits_by_ref())
+        assert [fact.text for fact in facts] == ['VPN uses WireGuard.'], text
+        assert facts[0].source_refs, text
+        assert open_points == ['Kosten'], text
+
+
+def test_parse_keeps_prose_with_brackets_as_prose():
+    text = 'Laut Handbuch [Kapitel 2] gilt {Variante A}.'
+    facts, open_points = agents._parse_subagent_answer(text, _hits_by_ref())
+    assert [fact.text for fact in facts] == [text]
+    assert facts[0].source_refs == []
+
+
+def test_run_subagent_records_each_search_for_the_trace():
+    from app.services.retrieval_client import SearchHits
+
+    scripted = [
+        LLMToolResult(content=None, tool_calls=[_tool_call()], model='fake-chat'),
+        LLMToolResult(content=_final_answer([_FACT]), tool_calls=None, model='fake-chat'),
+    ]
+    hits = SearchHits([_chunk()])
+    hits.trace = {'reranked': 5}
+
+    with patch('app.services.retrieval_client.search', return_value=hits):
+        result = agents.run_subagent(_BOT, _subagent(), 'q', ['it-docs'], FakeLLM(tool_responses=scripted), model='fake-chat')
+
+    assert result.searches == [
+        agents.SearchRecord(query='vpn setup', collections=['it-docs'], returned=1, trace={'reranked': 5})
+    ]
+
+
+def test_fact_with_evidence_names_the_cited_documents_for_the_answering_model():
+    from app.services.chat_common import fact_with_evidence
+
+    fact = agents.Fact(text='VPN uses WireGuard.', source_refs=[agents.SourceRef(document_id='doc-1', chunk_id=1)])
+    assert fact_with_evidence(fact, [_chunk()]) == 'VPN uses WireGuard. (evidence: vpn.pdf p. 1)'
+    assert fact_with_evidence(agents.Fact(text='Uncited.'), [_chunk()]) == 'Uncited.'

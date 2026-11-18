@@ -92,6 +92,27 @@ def _images_for(chunk: RetrievedChunk) -> list[str]:
     return list(urls)[:_MAX_IMAGES_PER_SOURCE]
 
 
+def fact_with_evidence(fact, hits: list[RetrievedChunk]) -> str:
+    """A subagent fact's text for the answering LLM, followed by the
+    documents its `source_refs` cite (`(evidence: vpn.pdf p. 3; ...)`).
+    Without them the answering model only sees the subagent's name next to
+    a fact and lists that name as the "source". LLM-prompt plumbing, so
+    English like `_context_block`'s labels; a fact citing nothing stays its
+    bare text."""
+    by_ref = {(hit.document_id, hit.chunk_id): hit for hit in hits}
+    labels: list[str] = []
+    for ref in fact.source_refs:
+        hit = by_ref.get((ref.document_id, ref.chunk_id))
+        if hit is None:
+            continue
+        label = hit.title or hit.original_filename or hit.document_id
+        if hit.page_start is not None:
+            label += f' p. {hit.page_start}'
+        if label not in labels:
+            labels.append(label)
+    return f'{fact.text} (evidence: {"; ".join(labels)})' if labels else fact.text
+
+
 def _to_source(chunk: RetrievedChunk) -> Source:
     return Source(
         # chunk.source is optional at the retrieval layer (a chunk whose

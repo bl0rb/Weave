@@ -30,6 +30,7 @@ error the model sees (bounded retries), never an exception to the user".
 
 import json
 import logging
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -212,6 +213,21 @@ class Fact:
 
 
 @dataclass(frozen=True)
+class SearchRecord:
+    """One `search_knowledge` call a subagent actually sent to Weave-Retrieval
+    -- for the turn's trace only (app/services/chat.py's
+    `agent_retrieval_trace`), never shown to the LLM. `trace` is
+    Weave-Retrieval's own `SearchResponse.trace` dict (`None` if it sent
+    none); `error` marks a call that failed (no hits, no trace)."""
+
+    query: str
+    collections: list[str]
+    returned: int
+    trace: dict | None = None
+    error: bool = False
+
+
+@dataclass(frozen=True)
 class SubagentResult:
     """`run_subagent`'s own return shape (rollout plan step D). `status`:
     `'complete'` (the subagent produced its own structured final answer
@@ -230,6 +246,43 @@ class SubagentResult:
     # ADR-0009 §10b: `memory_lookup` calls actually made (never budgeted
     # against `searches_used`, capped by `_MAX_MEMORY_LOOKUPS`).
     memory_lookups: int = 0
+    # Every search sent to Weave-Retrieval, in order -- trace only.
+    searches: list[SearchRecord] = field(default_factory=list)
+
+
+_JSON_FENCE_RE = re.compile(r'^\s*```[A-Za-z0-9_-]*[ \t]*\n?(.*?)\n?\s*```\s*$', re.DOTALL)
+
+
+def _load_subagent_json(text: str) -> dict | None:
+    """The subagent's structured answer as a dict, or `None` for plain text.
+
+    Models do not always reply with exactly the object the prompt asks
+    for: some wrap it in a markdown fence, put a sentence before it, or
+    return only the `facts` array. Each of those is accepted here -- a bare
+    array of fact objects counts as `{"facts": [...]}` -- so the facts keep
+    their `source_refs` instead of reaching the answer as raw JSON text.
+    Anything taken from INSIDE the text (fence content, an embedded
+    object/array) must look like the answer shape, so ordinary prose with a
+    bracket in it stays prose."""
+    candidates: list[tuple[str, bool]] = [(text, True)]
+    fenced = _JSON_FENCE_RE.match(text)
+    if fenced:
+        candidates.append((fenced.group(1), False))
+    for opener, closer in (('{', '}'), ('[', ']')):
+        start, end = text.find(opener), text.rfind(closer)
+        if 0 <= start < end:
+            candidates.append((text[start:end + 1], False))
+
+    for candidate, whole in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(parsed, list) and parsed and all(isinstance(item, dict) for item in parsed):
+            return {'facts': parsed}
+        if isinstance(parsed, dict) and (whole or 'facts' in parsed or 'open_points' in parsed):
+            return parsed
+    return None
 
 
 def _parse_subagent_answer(
@@ -250,12 +303,9 @@ def _parse_subagent_answer(
     `_filter_n8n_sources_by_scope` never trusts an external agent's own
     source claims unchecked.
     """
-    try:
-        parsed = json.loads(text)
-    except (ValueError, TypeError):
-        parsed = None
-
-    if not isinstance(parsed, dict):
+    # A fenced, prefixed or bare-array answer is unwrapped first.
+    parsed = _load_subagent_json(text)
+    if parsed is None:
         return ([Fact(text=text)] if text.strip() else []), []
 
     facts: list[Fact] = []
@@ -412,6 +462,7 @@ def run_subagent(
 
     hits: list[retrieval_client.RetrievedChunk] = []
     hits_by_ref: dict[tuple[str, int], retrieval_client.RetrievedChunk] = {}
+    searches: list[SearchRecord] = []
     searches_used = 0
     memory_lookups = 0
     attempts = 0
@@ -424,13 +475,13 @@ def run_subagent(
         if time.monotonic() >= deadline or (cancel is not None and cancel.is_set()):
             return _finish_on_budget_exhaustion(
                 llm_provider, messages, hits, hits_by_ref, searches_used, subagent.id, model, temperature,
-                memory_lookups=memory_lookups,
+                memory_lookups=memory_lookups, searches=searches,
             )
         attempts += 1
         if attempts > max_attempts:
             return _finish_on_budget_exhaustion(
                 llm_provider, messages, hits, hits_by_ref, searches_used, subagent.id, model, temperature,
-                memory_lookups=memory_lookups,
+                memory_lookups=memory_lookups, searches=searches,
             )
 
         try:
@@ -440,14 +491,14 @@ def run_subagent(
             status = 'partial' if (hits or searches_used) else 'failed'
             return SubagentResult(
                 agent_id=subagent.id, status=status, facts=[], open_points=[], hits=hits, searches_used=searches_used,
-                memory_lookups=memory_lookups,
+                memory_lookups=memory_lookups, searches=searches,
             )
 
         if not result.tool_calls:
             facts, open_points = _parse_subagent_answer(result.content or '', hits_by_ref)
             return SubagentResult(
                 agent_id=subagent.id, status='complete', facts=facts, open_points=open_points,
-                hits=hits, searches_used=searches_used, memory_lookups=memory_lookups,
+                hits=hits, searches_used=searches_used, memory_lookups=memory_lookups, searches=searches,
             )
 
         messages.append({
@@ -519,12 +570,18 @@ def run_subagent(
                 )
             except (retrieval_client.RetrievalUnavailable, retrieval_client.RetrievalError) as exc:
                 logger.warning('subagent %r search_knowledge failed: %s', subagent.id, exc)
+                searches.append(SearchRecord(query=query, collections=list(call_collections), returned=0, error=True))
                 messages.append({
                     'role': 'tool', 'tool_call_id': call.id,
                     'content': json.dumps({'error': 'search temporarily unavailable'}),
                 })
                 continue
 
+            raw_trace = getattr(chunks, 'trace', None)
+            searches.append(SearchRecord(
+                query=query, collections=list(call_collections), returned=len(chunks),
+                trace=raw_trace if isinstance(raw_trace, dict) else None,
+            ))
             for chunk in chunks:
                 key = (chunk.document_id, chunk.chunk_id)
                 if key not in hits_by_ref:
@@ -583,6 +640,7 @@ def _finish_on_budget_exhaustion(
     temperature: float | None,
     *,
     memory_lookups: int = 0,
+    searches: list[SearchRecord] | None = None,
 ) -> SubagentResult:
     """Ask the subagent's own LLM ONE more time -- with no tools offered,
     so it cannot keep researching past its own exhausted budget -- to
@@ -601,5 +659,5 @@ def _finish_on_budget_exhaustion(
     status = 'failed' if not facts and not hits else 'partial'
     return SubagentResult(
         agent_id=agent_id, status=status, facts=facts, open_points=open_points, hits=hits, searches_used=searches_used,
-        memory_lookups=memory_lookups,
+        memory_lookups=memory_lookups, searches=list(searches or []),
     )
