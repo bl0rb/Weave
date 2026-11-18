@@ -959,7 +959,7 @@ nirgendwohin schreibt, faellt erst auf, wenn eines gebraucht wird.
 {{- $p := $cnpg.barmanCloudPlugin -}}
 {{- if $p.enabled -}}
 {{- if $cnpg.backup.enabled -}}
-{{- fail "postgresql.cnpg.barmanCloudPlugin.enabled=true und postgresql.cnpg.backup.enabled=true. Der CNPG-Webhook lehnt einen WAL-Archiver-Plugin neben barmanObjectStore ab (\"Cannot enable a WAL archiver plugin when barmanObjectStore is configured\"). backup.enabled=false setzen -- das eingebaute Backup ist ohnehin veraltet und entfaellt mit CloudNativePG 1.31." -}}
+{{- fail "postgresql.cnpg.barmanCloudPlugin.enabled=true und postgresql.cnpg.backup.enabled=true. Das Chart erlaubt nur einen der beiden Wege; mit archiving=true lehnt auch der CNPG-Webhook einen WAL-Archiver-Plugin neben barmanObjectStore ab (\"Cannot enable a WAL archiver plugin when barmanObjectStore is configured\"). backup.enabled=false setzen -- das eingebaute Backup ist ohnehin veraltet und entfaellt mit CloudNativePG 1.31." -}}
 {{- end -}}
 {{- if not $p.destinationPath -}}
 {{- fail "postgresql.cnpg.barmanCloudPlugin.enabled=true, aber destinationPath ist leer. Ohne Ziel (z.B. s3://mein-bucket/) schreibt das Plugin nirgendwohin." -}}

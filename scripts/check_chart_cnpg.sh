@@ -9,7 +9,7 @@
 #   - bei abgeschaltetem Plugin barmancloud.cnpg.io nirgends vorkommt,
 #   - die Pruefungen in _helpers.tpl mit ihrer Meldung abbrechen.
 #
-# Aufruf: scripts/check_chart_cnpg.sh   (braucht helm im PATH)
+# Aufruf: scripts/check_chart_cnpg.sh   (braucht helm im PATH, python3 mit PyYAML)
 # Exit 0, wenn alle Faelle passen; sonst 1 und eine Liste.
 set -uo pipefail
 
@@ -39,6 +39,17 @@ render() {
 
 has() { grep -qF -- "$2" <<<"$out" || bad "$1: erwartet '$2'"; }
 lacks() { ! grep -qF -- "$2" <<<"$out" || bad "$1: unerwartet '$2'"; }
+# structure <beschreibung> <python-ausdruck>: prueft die Verschachtelung im
+# gerenderten Cluster (grep allein sieht nicht, unter welchem Schluessel ein
+# Feld steht). c ist spec des Clusters. Braucht python3 mit PyYAML.
+structure() {
+  python3 -c '
+import sys, yaml
+docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+c = next(d["spec"] for d in docs if d.get("kind") == "Cluster")
+sys.exit(0 if eval(sys.argv[1]) else 1)
+' "$2" <<<"$out" || bad "$1: Struktur '$2' stimmt nicht"
+}
 count() {
   local n
   n=$(grep -cF -- "$3" <<<"$out")
@@ -77,6 +88,10 @@ if render "$d" -f "$EX"; then
   has "$d" "instanceSidecarConfiguration:"
   lacks "$d" "kind: ScheduledBackup"
   lacks "$d" "minSyncReplicas"
+  structure "$d" 'c["postgresql"]["synchronous"] == {"method": "any", "number": 1, "dataDurability": "preferred"}'
+  structure "$d" 'c["affinity"]["topologyKey"] == "topology.kubernetes.io/zone" and c["affinity"]["podAntiAffinityType"] == "required"'
+  structure "$d" 'c["primaryUpdateMethod"] == "switchover"'
+  structure "$d" '[p["enabled"] for p in c["plugins"]] == [False]'
 fi
 
 d="Beispiel, Stufe 2 (archiving=true)"
@@ -86,6 +101,7 @@ if render "$d" -f "$EX" --set "$P.barmanCloudPlugin.archiving=true"; then
   has "$d" "isWALArchiver: true"
   has "$d" "suspend: true"
   has "$d" "schedule: \"0 0 2 * * *\""
+  structure "$d" 'c["plugins"] == [{"name": "barman-cloud.cloudnative-pg.io", "enabled": True, "isWALArchiver": True, "parameters": {"barmanObjectName": "weave-pg"}}]'
 fi
 
 d="Plugin aus"

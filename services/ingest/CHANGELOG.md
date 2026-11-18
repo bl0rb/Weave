@@ -19,7 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `barmanCloudPlugin`, which renders an `ObjectStore`, the `spec.plugins` entry and a
   `ScheduledBackup` (`method: plugin`), including SSE-KMS via `kmsKeyId`. The chart refuses to
   render `synchronous` together with `minSyncReplicas`/`maxSyncReplicas`, a `number` that is not
-  below the instance count, the plugin together with the built-in `backup`, an empty
+  below the instance count plus `standbyNamesPre`/`standbyNamesPost` (same rule as the CNPG
+  webhook), the plugin together with the built-in `backup`, an empty
   `destinationPath` and `kmsKeyId` without `encryption: aws:kms`. Defaults render exactly as
   before. Example: `deploy/charts/weave/examples/cnpg-ha-barman-cloud.yaml`.
 - PR CI lints and renders `deploy/charts/weave` (`scripts/check_chart_cnpg.sh`).
