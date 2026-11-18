@@ -383,6 +383,35 @@ def test_chat_stream_forwards_events_and_persists_the_assistant_message_once_at_
     assert conversation.title == 'Titel'
 
 
+def test_chat_stream_persists_the_closing_trace_event(db_session, runtime):
+    # Weave-Runtime sends a second, complete `trace` right before
+    # `sources`; the stored message keeps that one, not the opening one.
+    _user, raw_token = make_user_with_token(db_session, username='closing-trace', team='legal')
+    db_session.commit()
+    closing = {'type': 'trace', 'trace': {**TRACE_EVENT['trace'], 'timings_ms': {'router_ms': 1.0, 'total_ms': 9.0}}}
+    sent_events = [TRACE_EVENT, {'type': 'delta', 'text': 'Hallo'}, closing, SOURCES_EVENT, DONE_EVENT]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == '/internal/conversation-title':
+            return httpx.Response(200, json={'title': 'Titel'})
+        return httpx.Response(200, content=_sse_body(sent_events), headers={'content-type': 'text/event-stream'})
+
+    runtime.handle(handler)
+
+    response = client.post(
+        '/v1/chat/stream', json={'bot_id': 'legal-support', 'message': 'Hi'}, headers=auth_headers(raw_token)
+    )
+    assert response.status_code == 200
+    assert _parse_sse_events(response.text)[:4] == sent_events[:4]
+    conversation_id = uuid.UUID(response.headers['x-conversation-id'])
+    assistant = (
+        db_session.query(Message)
+        .filter(Message.conversation_id == conversation_id, Message.role == MessageRole.ASSISTANT)
+        .one()
+    )
+    assert assistant.trace == closing['trace']
+
+
 def test_chat_stream_sends_no_title_event_when_title_generation_fails(db_session, runtime):
     _, raw_token = make_user_with_token(db_session, username='own-stream-notitle')
     db_session.commit()

@@ -111,12 +111,14 @@ def test_stream_conversational_flow_emits_trace_then_multiple_deltas_then_source
     events = _parse_sse_events(resp.text)
     types = [event['type'] for event in events]
 
-    # trace first, done last, sources immediately before done -- and more
-    # than one delta in between (FakeLLM's own multi-delta chat_stream).
+    # trace first, done last, sources immediately before done, the closing
+    # trace right before sources -- and more than one delta in between
+    # (FakeLLM's own multi-delta chat_stream).
     assert types[0] == 'trace'
     assert types[-1] == 'done'
     assert types[-2] == 'sources'
-    delta_types = types[1:-2]
+    assert types[-3] == 'trace'
+    delta_types = types[1:-3]
     assert delta_types, 'expected at least one delta event'
     assert all(t == 'delta' for t in delta_types)
     assert len(delta_types) > 1, 'FakeLLM.chat_stream must split its reply into multiple deltas'
@@ -130,6 +132,11 @@ def test_stream_conversational_flow_emits_trace_then_multiple_deltas_then_source
     assert 'router_ms' in trace_event['trace']['timings_ms']
     assert 'llm_ms' not in trace_event['trace']['timings_ms']
     assert 'total_ms' not in trace_event['trace']['timings_ms']
+
+    # The closing trace carries what only the finished turn knows.
+    closing = events[-3]['trace']
+    assert closing['model'] == 'fake-chat'
+    assert {'router_ms', 'llm_ms', 'total_ms'} <= set(closing['timings_ms'])
 
     reconstructed = ''.join(event['text'] for event in events if event['type'] == 'delta')
     assert reconstructed == '[fake-llm] Hallo mein Freund, wie geht es dir heute?'
@@ -176,7 +183,14 @@ def test_stream_knowledge_flow_reconstructs_the_context_marked_answer_and_sends_
 
     # sources strictly after every delta, done strictly last.
     sources_index = events.index(sources_event)
-    assert all(events[i]['type'] == 'delta' for i in range(1, sources_index))
+    assert all(events[i]['type'] == 'delta' for i in range(1, sources_index - 1))
+    assert events[sources_index - 1]['type'] == 'trace'
+    closing_retrieval = events[sources_index - 1]['trace']['retrieval']
+    # The opening trace leaves the hit list to the closing one.
+    assert trace['retrieval']['hits'] == []
+    assert [hit['document_id'] for hit in closing_retrieval['hits']] == ['doc-1', 'doc-2']
+    assert {**closing_retrieval, 'hits': []} == trace['retrieval']
+    assert 'total_ms' in events[sources_index - 1]['trace']['timings_ms']
     assert events[-1]['type'] == 'done'
 
 

@@ -65,7 +65,7 @@ from langgraph.types import Send
 
 from app.schemas.bot import BotConfig, SubagentConfig
 from app.schemas.chat import AgentTrace, ChatStreamStatusEvent, Source, SubagentTrace
-from app.services.chat_common import _to_source
+from app.services.chat_common import _to_source, fact_with_evidence
 from app.services import agents as agents_service
 from app.services import llm as llm_service
 
@@ -165,6 +165,9 @@ class GraphState(TypedDict):
     budget: dict[str, float]
     final_answer: str | None
     guard_triggered: bool
+    # The model the `answer` node's LLM call reported (requested model when
+    # streaming); `None` when the guard answered.
+    answer_model: str | None
 
 
 def research_area_tool_schema(available: list[AvailableAgent]) -> dict:
@@ -466,16 +469,11 @@ def _detect_contradictions(results: list[agents_service.SubagentResult]) -> list
 
 
 def _dedup_sources(results: list[agents_service.SubagentResult], to_source) -> list[Source]:
-    seen: set[tuple[str, int]] = set()
-    sources: list[Source] = []
-    for result in results:
-        for chunk in result.hits:
-            key = (chunk.document_id, chunk.chunk_id)
-            if key in seen:
-                continue
-            seen.add(key)
-            sources.append(to_source(chunk))
-    return sources
+    """The turn's sources: every distinct hit a fact cites (the answer is
+    written from facts only), first-retrieved first -- or every distinct
+    hit when no fact cites any, so an answer never loses its sources only
+    because the subagents did not cite."""
+    return [to_source(chunk) for chunk in agents_service.cited_hits(results)]
 
 
 def _combined_context_block(
@@ -492,7 +490,7 @@ def _combined_context_block(
         subagent = subagents_by_id.get(result.agent_id)
         name = subagent.name if subagent is not None else result.agent_id
         for fact in result.facts:
-            sections.append(f'[source {index}] ({name}) {fact.text}')
+            sections.append(f'[source {index}] ({name}) {fact_with_evidence(fact, result.hits)}')
             index += 1
     if contradictions:
         sections.append(
@@ -530,7 +528,9 @@ def _answer(
         # Blocking callers (`handle_chat`, and `run_graph`'s own default)
         # have nowhere to forward incremental deltas to -- one plain
         # `chat()` call, exactly as before this rollout step.
-        answer = main_llm_provider.chat(messages, model=bot.model.model, temperature=bot.model.temperature).content
+        llm_result = main_llm_provider.chat(messages, model=bot.model.model, temperature=bot.model.temperature)
+        answer = llm_result.content
+        answer_model = llm_result.model
     else:
         # Streaming callers (`bot_graph._agent_multi`): push each
         # delta onto the SAME queue as it arrives, exactly like the
@@ -539,6 +539,7 @@ def _answer(
         # this module's own previously-documented Schritt-3 simplification
         # (one blocking `chat()` call, chunked back out after the fact).
         pieces: list[str] = []
+        answer_model = bot.model.model
         for delta in llm_service.iter_chat_stream(
             main_llm_provider, messages, model=bot.model.model, temperature=bot.model.temperature,
         ):
@@ -556,7 +557,7 @@ def _answer(
         gap_text = '\n\n' + '\n'.join(gap_notes)
         answer = answer + gap_text
         _emit(progress_cb, 'delta', gap_text)
-    return {'final_answer': answer, 'guard_triggered': False}
+    return {'final_answer': answer, 'guard_triggered': False, 'answer_model': answer_model}
 
 
 def _plan_node(state: GraphState, runtime: Runtime[AgentContext]) -> dict:
@@ -619,6 +620,24 @@ class GraphOutcome:
     sources: list[Source]
     guard_triggered: bool
     agent_trace: AgentTrace
+    # Every subagent result of the turn, superseded attempts included --
+    # for the turn's retrieval trace (chat.py's `agent_retrieval_trace`).
+    results: tuple[agents_service.SubagentResult, ...] = ()
+    answer_model: str | None = None
+
+
+def subagent_trace(result: agents_service.SubagentResult, subagent: SubagentConfig | None) -> SubagentTrace:
+    """One subagent's `SubagentTrace`: what it searched for, what came back
+    and how much of it its facts actually cite. Never a prompt or a chunk
+    text."""
+    # `_parse_subagent_answer` already dropped every ref that is not a hit.
+    cited = {(ref.document_id, ref.chunk_id) for fact in result.facts for ref in fact.source_refs}
+    return SubagentTrace(
+        id=result.agent_id, status=result.status, searches_used=result.searches_used, hits=len(result.hits),
+        memory_lookups=result.memory_lookups, name=subagent.name if subagent is not None else None,
+        facts=len(result.facts), cited_hits=len(cited), queries=[search.query for search in result.searches],
+        open_points=list(result.open_points),
+    )
 
 
 def run_graph(
@@ -675,6 +694,7 @@ def run_graph(
         'budget': {'searches_left': max(0, limits.budget_searches), 'deadline': deadline},
         'final_answer': None,
         'guard_triggered': False,
+        'answer_model': None,
     }
     final_state = COMPILED.invoke(
         initial_state, config=RunnableConfig(max_concurrency=max(1, limits.max_parallel)), context=context,
@@ -682,10 +702,7 @@ def run_graph(
 
     results: list[agents_service.SubagentResult] = final_state['results']
     subagent_traces = [
-        SubagentTrace(
-            id=result.agent_id, status=result.status, searches_used=result.searches_used, hits=len(result.hits),
-            memory_lookups=result.memory_lookups,
-        )
+        subagent_trace(result, subagents_by_id.get(result.agent_id))
         for result in _final_results_per_agent(results).values()
     ]
     budget_used = max(0, limits.budget_searches - int(final_state['budget']['searches_left']))
@@ -706,4 +723,6 @@ def run_graph(
         sources=sources,
         guard_triggered=guard_triggered,
         agent_trace=trace,
+        results=tuple(results),
+        answer_model=None if guard_triggered else final_state.get('answer_model'),
     )

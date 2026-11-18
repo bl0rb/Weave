@@ -288,9 +288,10 @@ def chat_stream(
     Returns an iterator of already-JSON-decoded event dicts, one per SSE
     `data: ...` line Weave-Runtime sends (contracts/internal-chat.md's
     stream section, and Weave-Runtime's own app/schemas/chat.py
-    ChatStreamEvent union): `{"type": "trace", "trace": {...}}` exactly
-    once first, then zero or more `{"type": "delta", "text": ...}`, then
-    either `{"type": "sources", "sources": [...]}` + `{"type": "done"}` or
+    ChatStreamEvent union): `{"type": "trace", "trace": {...}}` first,
+    then zero or more `{"type": "delta", "text": ...}`, then either a
+    closing `trace` (the complete one) + `{"type": "sources", "sources":
+    [...]}` + `{"type": "done"}` or
     a single terminal `{"type": "error", "detail": ...}` in their place. A
     sixth, synthetic `{"type": "keepalive"}` marker may also appear anywhere
     before a terminal event -- see `_iter_chat_stream_events` below for

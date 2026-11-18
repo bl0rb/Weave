@@ -215,18 +215,39 @@ export function TracePanel({ trace }: { trace: ChatTrace }) {
           {trace.agent ? (
             <div className="flex flex-col gap-1">
               <span className="font-medium">{t('chat.trace.agent.label', { mode: trace.agent.mode })}</span>
-              <div className="flex flex-wrap gap-1.5">
-                {trace.agent.subagents.map((subagent) => (
-                  <Tag key={subagent.id}>
-                    {t('chat.trace.agent.subagent', {
-                      id: subagent.id,
-                      status: subagent.status,
-                      searches: subagent.searches_used,
-                      hits: subagent.hits,
-                    })}
-                  </Tag>
-                ))}
-                {trace.agent.mode === 'graph' ? (
+              {trace.agent.subagents.map((subagent) => (
+                // One block per subagent: what it searched for, what came
+                // back and how much of it its facts cite -- a subagent
+                // with hits but no cited hit points at an answer the
+                // runtime could not tie to a source.
+                <div key={subagent.id} className="flex flex-col gap-1">
+                  <div className="flex flex-wrap gap-1.5">
+                    <Tag>
+                      {t('chat.trace.agent.subagent', {
+                        id: subagent.name || subagent.id,
+                        status: subagent.status,
+                        searches: subagent.searches_used,
+                        hits: subagent.hits,
+                      })}
+                    </Tag>
+                    {subagent.facts !== undefined ? (
+                      <Tag>{t('chat.trace.agent.facts', { facts: subagent.facts, cited: subagent.cited_hits ?? 0 })}</Tag>
+                    ) : null}
+                  </div>
+                  {subagent.queries && subagent.queries.length > 0 ? (
+                    <div className="break-words">
+                      {t('chat.trace.agent.queries', { value: subagent.queries.map((query) => `"${query}"`).join(', ') })}
+                    </div>
+                  ) : null}
+                  {subagent.open_points && subagent.open_points.length > 0 ? (
+                    <div className="break-words">
+                      {t('chat.trace.agent.openPoints', { value: subagent.open_points.join('; ') })}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+              {trace.agent.mode === 'graph' ? (
+                <div className="flex flex-wrap gap-1.5">
                   <Tag>
                     {t('chat.trace.agent.followups', {
                       count: trace.agent.followups,
@@ -234,8 +255,8 @@ export function TracePanel({ trace }: { trace: ChatTrace }) {
                       budget: trace.agent.budget,
                     })}
                   </Tag>
-                ) : null}
-              </div>
+                </div>
+              ) : null}
             </div>
           ) : null}
 

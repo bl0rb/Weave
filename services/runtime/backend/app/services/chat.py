@@ -239,7 +239,6 @@ from app.schemas.chat import (
     RetrievalSearchTrace,
     RetrievalTrace,
     Source,
-    SubagentTrace,
 )
 from app.services import agent_graph as agent_graph_service
 from app.services import agents as agents_service
@@ -265,6 +264,7 @@ from app.services.chat_common import (  # noqa: F401 -- re-exported for tests/ap
     _images_for,
     _score_for,
     _to_source,
+    fact_with_evidence,
 )
 
 logger = logging.getLogger(__name__)
@@ -1612,40 +1612,107 @@ def _facts_context_block(subagent: SubagentConfig, result: agents_service.Subage
         'Answer using only the facts below; name any open points explicitly rather than guessing.'
     ]
     for index, fact in enumerate(result.facts, start=1):
-        sections.append(f'[source {index}] {fact.text}')
+        sections.append(f'[source {index}] {fact_with_evidence(fact, result.hits)}')
     if result.open_points:
         sections.append('Open points from the subagent: ' + '; '.join(result.open_points))
     return '\n\n'.join(sections)
 
 
 def _sources_from_result(result: agents_service.SubagentResult) -> list[Source]:
-    """The combined, deduplicated (by `(document_id, chunk_id)`) `Source`
-    list for every hit a subagent actually retrieved -- rollout plan step 5's
-    "Die endgültige Antwort trägt die kombinierten Quellen", built the same
-    way `_to_source` already does for a direct retrieval turn. Order
-    follows `SubagentResult.hits`' own order (first-retrieved-first)."""
-    seen: set[tuple[str, int]] = set()
-    sources: list[Source] = []
-    for chunk in result.hits:
-        key = (chunk.document_id, chunk.chunk_id)
-        if key in seen:
-            continue
-        seen.add(key)
-        sources.append(_to_source(chunk))
-    return sources
+    """The deduplicated (by `(document_id, chunk_id)`) `Source` list of a
+    subagent's hits that its facts cite -- every hit when no fact cites any
+    (`agents.cited_hits`). Rollout plan step 5's "Die endgültige Antwort
+    trägt die kombinierten Quellen", built the same way `_to_source` does
+    for a direct retrieval turn, first-retrieved first."""
+    return [_to_source(chunk) for chunk in agents_service.cited_hits([result])]
 
 
-def _agent_trace_for(bot: BotConfig, result: agents_service.SubagentResult) -> AgentTrace:
+def _agent_trace_for(
+    bot: BotConfig, result: agents_service.SubagentResult, subagent: SubagentConfig | None = None,
+) -> AgentTrace:
     return AgentTrace(
         mode='single',
-        subagents=[
-            SubagentTrace(
-                id=result.agent_id, status=result.status, searches_used=result.searches_used, hits=len(result.hits),
-                memory_lookups=result.memory_lookups,
-            )
-        ],
+        subagents=[agent_graph_service.subagent_trace(result, subagent)],
         budget=bot.agent.limits.budget_searches,
     )
+
+
+_SEARCH_COUNT_KEYS = ('vector_candidates', 'fulltext_candidates', 'fused', 'reranked')
+_SEARCH_INFO_KEYS = ('rerank_provider', 'rerank_model', 'embedding_model', 'rrf_k', 'semantic_weight', 'lexical_weight')
+
+
+def _aggregate_search_trace(searches: list[agents_service.SearchRecord]) -> RetrievalSearchTrace | None:
+    """Weave-Retrieval's search traces of an agent turn's searches, summed:
+    candidate counts, `returned` and timings add up, reranker/embedding
+    details come from the first search that reports them, `rerank_error` is
+    set if any search's reranking failed. Only searches that came back with
+    a trace count -- a failed search or an older Weave-Retrieval reports
+    none; `None` if not one did, rather than a trace of zeros."""
+    searches = [search for search in searches if isinstance(search.trace, dict)]
+    if not searches:
+        return None
+    counts = dict.fromkeys(_SEARCH_COUNT_KEYS, 0)
+    info: dict = {}
+    timings: dict[str, float] = {}
+    rerank_error = False
+    for search in searches:
+        raw = search.trace or {}
+        for key in _SEARCH_COUNT_KEYS:
+            value = raw.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                counts[key] += value
+        for key in _SEARCH_INFO_KEYS:
+            if info.get(key) is None and raw.get(key) is not None:
+                info[key] = raw[key]
+        rerank_error = rerank_error or raw.get('rerank_error') is True
+        raw_timings = raw.get('timings_ms')
+        if isinstance(raw_timings, dict):
+            for key, value in raw_timings.items():
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    timings[key] = timings.get(key, 0.0) + float(value)
+    try:
+        return RetrievalSearchTrace.model_validate({
+            **counts, 'returned': sum(search.returned for search in searches), 'rerank_error': rerank_error,
+            **info, 'timings_ms': timings,
+        })
+    except ValidationError:
+        logger.warning('ignoring malformed Weave-Retrieval search trace')
+        return None
+
+
+def agent_retrieval_trace(
+    bot: BotConfig, results: 'list[agents_service.SubagentResult] | tuple[agents_service.SubagentResult, ...]',
+) -> RetrievalTrace | None:
+    """The `ChatTrace.retrieval` of an agent-mode turn: the subagents ran
+    the searches, so this sums them up -- every distinct hit (best score
+    first, ranked by position), `used` = exactly the hits reported as the
+    turn's sources (`agents.cited_hits`), `collections` = what was actually searched, `search` = the
+    summed Weave-Retrieval traces (`_aggregate_search_trace`). `None` when
+    no subagent searched at all, which the UI shows as "no retrieval"."""
+    searches = [search for result in results for search in result.searches]
+    if not searches:
+        return None
+    seen: set[tuple[str, int]] = set()
+    hits: list[RetrievedChunk] = []
+    for result in results:
+        for chunk in result.hits:
+            key = (chunk.document_id, chunk.chunk_id)
+            if key not in seen:
+                seen.add(key)
+                hits.append(chunk)
+    # `used` = exactly the hits reported as the turn's sources.
+    used = agents_service.cited_hits(results)
+    collections = list(dict.fromkeys(slug for search in searches for slug in search.collections))
+    # Each hit's own rank is per search; across several searches the list is
+    # ordered by score and numbered by position instead.
+    hits.sort(key=lambda chunk: _score_for(chunk) if _score_for(chunk) is not None else float('-inf'), reverse=True)
+    fields = _search_trace_fields(bot, hits, used)
+    fields['hits'] = [hit.model_copy(update={'rank': position}) for position, hit in enumerate(fields['hits'], start=1)]
+    fields['search'] = _aggregate_search_trace(searches)
+    # The subagents choose their own top_k (capped by their limits); the
+    # bot's direct-RAG values were never sent.
+    fields['top_k'] = fields['final_k'] = None
+    return RetrievalTrace(candidates=len(hits), used=len(used), collections=collections, **fields)
 
 
 def _prepare_context(

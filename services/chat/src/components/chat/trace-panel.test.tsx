@@ -72,6 +72,31 @@ describe('TracePanel', () => {
     expect(screen.queryByText(/Folgerunde/)).toBeNull();
   });
 
+  it('shows a subagent by name with its queries, cited facts and open points', () => {
+    renderOpen(
+      makeTrace({
+        agent: {
+          mode: 'single',
+          subagents: [
+            {
+              id: 'fw', name: 'Feuerwehr', status: 'partial', searches_used: 2, hits: 6,
+              facts: 3, cited_hits: 2, queries: ['Heilfürsorge Hamburg', 'Beihilfe'], open_points: ['Fristen'],
+            },
+          ],
+          budget: 5,
+          plan: null,
+          followups: 0,
+          budget_used: 2,
+        },
+      })
+    );
+    expect(screen.getByText(/Feuerwehr: partial · 2 Suchen · 6 Treffer/)).toBeTruthy();
+    expect(screen.getByText(/3 Fakt\(en\) · 2 Treffer zitiert/)).toBeTruthy();
+    expect(screen.getByText('Suchanfragen: "Heilfürsorge Hamburg", "Beihilfe"')).toBeTruthy();
+    expect(screen.getByText('Offene Punkte: Fristen')).toBeTruthy();
+    expect(screen.queryByText(/Budget/)).toBeNull();
+  });
+
   it('renders the graph-mode followup/budget tag alongside per-subagent tags', () => {
     renderOpen(
       makeTrace({

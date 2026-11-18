@@ -229,6 +229,9 @@ export const chat = {
   'trace.n8n.noneDropped': 'keine Quellen außerhalb des erlaubten Umfangs verworfen',
   'trace.agent.label': 'Agent ({mode})',
   'trace.agent.subagent': '{id}: {status} · {searches} Suchen · {hits} Treffer',
+  'trace.agent.facts': '{facts} Fakt(en) · {cited} Treffer zitiert',
+  'trace.agent.queries': 'Suchanfragen: {value}',
+  'trace.agent.openPoints': 'Offene Punkte: {value}',
   'trace.agent.followups': '{count} Folgerunde(n) · Budget {used}/{budget}',
   'trace.timing': '{key}: {ms} ms',
 

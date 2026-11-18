@@ -30,6 +30,7 @@ error the model sees (bounded retries), never an exception to the user".
 
 import json
 import logging
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -212,6 +213,21 @@ class Fact:
 
 
 @dataclass(frozen=True)
+class SearchRecord:
+    """One `search_knowledge` call a subagent actually sent to Weave-Retrieval
+    -- for the turn's trace only (app/services/chat.py's
+    `agent_retrieval_trace`), never shown to the LLM. `trace` is
+    Weave-Retrieval's own `SearchResponse.trace` dict (`None` if it sent
+    none); `error` marks a call that failed (no hits, no trace)."""
+
+    query: str
+    collections: list[str]
+    returned: int
+    trace: dict | None = None
+    error: bool = False
+
+
+@dataclass(frozen=True)
 class SubagentResult:
     """`run_subagent`'s own return shape (rollout plan step D). `status`:
     `'complete'` (the subagent produced its own structured final answer
@@ -230,6 +246,94 @@ class SubagentResult:
     # ADR-0009 §10b: `memory_lookup` calls actually made (never budgeted
     # against `searches_used`, capped by `_MAX_MEMORY_LOOKUPS`).
     memory_lookups: int = 0
+    # Every search sent to Weave-Retrieval, in order -- trace only.
+    searches: list[SearchRecord] = field(default_factory=list)
+
+
+def cited_hits(results) -> list[retrieval_client.RetrievedChunk]:
+    """Every distinct hit (by `(document_id, chunk_id)`, first-retrieved
+    first) of `results` that a fact cites -- or every distinct hit when no
+    fact cites any. What an agent turn reports as its sources."""
+    seen: set[tuple[str, int]] = set()
+    distinct: list[retrieval_client.RetrievedChunk] = []
+    for result in results:
+        for chunk in result.hits:
+            key = (chunk.document_id, chunk.chunk_id)
+            if key not in seen:
+                seen.add(key)
+                distinct.append(chunk)
+    cited = {(ref.document_id, ref.chunk_id) for result in results for fact in result.facts for ref in fact.source_refs}
+    if not cited:
+        return distinct
+    return [chunk for chunk in distinct if (chunk.document_id, chunk.chunk_id) in cited]
+
+
+_JSON_FENCE_RE = re.compile(r'^\s*```[A-Za-z0-9_-]*[ \t]*\n?(.*?)\n?\s*```\s*$', re.DOTALL)
+_JSON_DECODER = json.JSONDecoder()
+_JSON_START_RE = re.compile(r'[\[{]')
+# How many `{`/`[` positions inside a prose reply are tried as JSON starts.
+_MAX_EMBEDDED_JSON_STARTS = 50
+
+
+def _as_answer_shape(parsed: object) -> dict | None:
+    """`parsed` as the answer object if it has the answer's shape: an object
+    with a `facts` or `open_points` list, a one-element array holding such
+    an object, or an array of fact objects (at least one with a string
+    `text`) -- which counts as `{"facts": [...]}`. Anything else: `None`."""
+    if isinstance(parsed, dict):
+        if isinstance(parsed.get('facts'), list) or isinstance(parsed.get('open_points'), list):
+            return parsed
+        return None
+    if isinstance(parsed, list) and parsed:
+        if len(parsed) == 1 and isinstance(parsed[0], dict) and _as_answer_shape(parsed[0]) is not None:
+            return parsed[0]
+        if any(isinstance(item, dict) and isinstance(item.get('text'), str) for item in parsed):
+            return {'facts': parsed}
+    return None
+
+
+def _load_subagent_json(text: str) -> tuple[dict | None, bool]:
+    """The subagent's structured answer and whether the WHOLE reply was it
+    (`(None, False)` for plain text).
+
+    Models do not always reply with exactly the object the prompt asks
+    for: some wrap it in a markdown fence, write a sentence before or after
+    it, or return only the `facts` array. Each of those is accepted, so the
+    facts keep their `source_refs` instead of reaching the answer as raw
+    JSON text. JSON found inside the reply must have the answer's shape
+    (`_as_answer_shape`); the first match wins. A whole reply that is a
+    JSON object is taken as before, whatever its keys."""
+    stripped = text.strip()
+    try:
+        parsed = json.loads(stripped)
+    except (ValueError, TypeError):
+        parsed = None
+    if isinstance(parsed, dict):
+        return parsed, True
+    shaped = _as_answer_shape(parsed)
+    if shaped is not None:
+        return shaped, True
+
+    fenced = _JSON_FENCE_RE.match(text)
+    if fenced:
+        try:
+            shaped = _as_answer_shape(json.loads(fenced.group(1)))
+        except (ValueError, TypeError):
+            shaped = None
+        if shaped is not None:
+            return shaped, False
+
+    for starts, match in enumerate(_JSON_START_RE.finditer(text), start=1):
+        if starts > _MAX_EMBEDDED_JSON_STARTS:
+            break
+        try:
+            candidate, _end = _JSON_DECODER.raw_decode(text, match.start())
+        except ValueError:
+            continue
+        shaped = _as_answer_shape(candidate)
+        if shaped is not None:
+            return shaped, False
+    return None, False
 
 
 def _parse_subagent_answer(
@@ -250,16 +354,21 @@ def _parse_subagent_answer(
     `_filter_n8n_sources_by_scope` never trusts an external agent's own
     source claims unchecked.
     """
-    try:
-        parsed = json.loads(text)
-    except (ValueError, TypeError):
-        parsed = None
-
-    if not isinstance(parsed, dict):
+    # A fenced, prefixed or bare-array answer is unwrapped first.
+    parsed, whole = _load_subagent_json(text)
+    if parsed is None:
         return ([Fact(text=text)] if text.strip() else []), []
 
+    # Only lists count: a string `facts`/`open_points` would otherwise be
+    # iterated character by character.
+    raw_facts = parsed.get('facts') if isinstance(parsed.get('facts'), list) else []
+    raw_open_points = parsed.get('open_points') if isinstance(parsed.get('open_points'), list) else []
     facts: list[Fact] = []
-    for raw_fact in parsed.get('facts') or []:
+    for raw_fact in raw_facts:
+        if isinstance(raw_fact, str) and raw_fact.strip():
+            # A fact given as a bare string: kept, it just cites nothing.
+            facts.append(Fact(text=raw_fact))
+            continue
         if not isinstance(raw_fact, dict):
             continue
         fact_text = raw_fact.get('text')
@@ -279,7 +388,12 @@ def _parse_subagent_answer(
             refs.append(SourceRef(document_id=document_id, chunk_id=chunk_id, collection=hit.collection))
         facts.append(Fact(text=fact_text, source_refs=refs))
 
-    open_points = [point for point in (parsed.get('open_points') or []) if isinstance(point, str) and point]
+    open_points = [point for point in raw_open_points if isinstance(point, str) and point]
+    if raw_facts and not facts and not open_points and not whole:
+        # JSON cut out of a longer reply whose facts were all unusable:
+        # keep the reply as text rather than lose it. An answer that is
+        # empty on purpose (`facts: []`) stays empty.
+        return [Fact(text=text)], []
     return facts, open_points
 
 
@@ -295,6 +409,11 @@ _MEMORY_LOOKUP_PROMPT = (
     ' For multi-part questions, call memory_lookup first to learn which knowledge spaces and documents cover '
     'the topic, then call search_knowledge per relevant document (document_id). Only search_knowledge results '
     'may be cited in source_refs; memory_lookup results are orientation data, never a source.'
+)
+
+_FORMAT_REMINDER_PROMPT = (
+    'Your reply was not the required JSON object. Reply again with ONLY the JSON object described above -- '
+    'every fact with the source_refs of the search results it is based on. No prose, no markdown fences.'
 )
 
 _BUDGET_EXHAUSTED_PROMPT = (
@@ -412,6 +531,7 @@ def run_subagent(
 
     hits: list[retrieval_client.RetrievedChunk] = []
     hits_by_ref: dict[tuple[str, int], retrieval_client.RetrievedChunk] = {}
+    searches: list[SearchRecord] = []
     searches_used = 0
     memory_lookups = 0
     attempts = 0
@@ -424,13 +544,13 @@ def run_subagent(
         if time.monotonic() >= deadline or (cancel is not None and cancel.is_set()):
             return _finish_on_budget_exhaustion(
                 llm_provider, messages, hits, hits_by_ref, searches_used, subagent.id, model, temperature,
-                memory_lookups=memory_lookups,
+                memory_lookups=memory_lookups, searches=searches,
             )
         attempts += 1
         if attempts > max_attempts:
             return _finish_on_budget_exhaustion(
                 llm_provider, messages, hits, hits_by_ref, searches_used, subagent.id, model, temperature,
-                memory_lookups=memory_lookups,
+                memory_lookups=memory_lookups, searches=searches,
             )
 
         try:
@@ -440,14 +560,17 @@ def run_subagent(
             status = 'partial' if (hits or searches_used) else 'failed'
             return SubagentResult(
                 agent_id=subagent.id, status=status, facts=[], open_points=[], hits=hits, searches_used=searches_used,
-                memory_lookups=memory_lookups,
+                memory_lookups=memory_lookups, searches=searches,
             )
 
         if not result.tool_calls:
-            facts, open_points = _parse_subagent_answer(result.content or '', hits_by_ref)
+            content = _reask_for_structured_answer(
+                llm_provider, messages, result.content or '', hits_by_ref, model, temperature, subagent.id,
+            )
+            facts, open_points = _parse_subagent_answer(content, hits_by_ref)
             return SubagentResult(
                 agent_id=subagent.id, status='complete', facts=facts, open_points=open_points,
-                hits=hits, searches_used=searches_used, memory_lookups=memory_lookups,
+                hits=hits, searches_used=searches_used, memory_lookups=memory_lookups, searches=searches,
             )
 
         messages.append({
@@ -519,12 +642,18 @@ def run_subagent(
                 )
             except (retrieval_client.RetrievalUnavailable, retrieval_client.RetrievalError) as exc:
                 logger.warning('subagent %r search_knowledge failed: %s', subagent.id, exc)
+                searches.append(SearchRecord(query=query, collections=list(call_collections), returned=0, error=True))
                 messages.append({
                     'role': 'tool', 'tool_call_id': call.id,
                     'content': json.dumps({'error': 'search temporarily unavailable'}),
                 })
                 continue
 
+            raw_trace = getattr(chunks, 'trace', None)
+            searches.append(SearchRecord(
+                query=query, collections=list(call_collections), returned=len(chunks),
+                trace=raw_trace if isinstance(raw_trace, dict) else None,
+            ))
             for chunk in chunks:
                 key = (chunk.document_id, chunk.chunk_id)
                 if key not in hits_by_ref:
@@ -543,6 +672,39 @@ def run_subagent(
                 ]
             }
             messages.append({'role': 'tool', 'tool_call_id': call.id, 'content': json.dumps(tool_payload)})
+
+
+def _reask_for_structured_answer(
+    llm_provider: llm_service.LLMProvider,
+    messages: list[dict],
+    content: str,
+    hits_by_ref: dict[tuple[str, int], retrieval_client.RetrievedChunk],
+    model: str,
+    temperature: float | None,
+    agent_id: str,
+) -> str:
+    """The subagent's final reply, asked for ONCE more (no tools) when it
+    searched but did not answer with the required JSON object -- prose
+    loses every citation, so one extra call is worth it. Returns the retry
+    if that one is structured, otherwise the original reply (which
+    `_parse_subagent_answer` then keeps as a plain-text fact)."""
+    if not hits_by_ref or not content.strip() or _load_subagent_json(content)[0] is not None:
+        return content
+    try:
+        retry = llm_provider.chat_with_tools(
+            messages + [
+                {'role': 'assistant', 'content': content},
+                {'role': 'user', 'content': _FORMAT_REMINDER_PROMPT},
+            ],
+            tools=[], model=model, temperature=temperature,
+        )
+    except llm_service.LLMError as exc:
+        logger.warning('subagent %r format re-ask failed: %s', agent_id, exc)
+        return content
+    retry_content = retry.content or ''
+    if _load_subagent_json(retry_content)[0] is None:
+        return content
+    return retry_content
 
 
 def _memory_lookup(
@@ -583,6 +745,7 @@ def _finish_on_budget_exhaustion(
     temperature: float | None,
     *,
     memory_lookups: int = 0,
+    searches: list[SearchRecord] | None = None,
 ) -> SubagentResult:
     """Ask the subagent's own LLM ONE more time -- with no tools offered,
     so it cannot keep researching past its own exhausted budget -- to
@@ -601,5 +764,5 @@ def _finish_on_budget_exhaustion(
     status = 'failed' if not facts and not hits else 'partial'
     return SubagentResult(
         agent_id=agent_id, status=status, facts=facts, open_points=open_points, hits=hits, searches_used=searches_used,
-        memory_lookups=memory_lookups,
+        memory_lookups=memory_lookups, searches=list(searches or []),
     )

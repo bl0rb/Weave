@@ -191,9 +191,14 @@ def test_streaming_trace_has_no_model_and_no_n8n_ms(monkeypatch):
     monkeypatch.setattr('app.services.n8n_client.httpx.stream', _stream_n8n_lines(*_sse({'type': 'done'})))
 
     resp = _post_stream('n8n-stream-open')
-    trace = _events(resp.text)[0]['trace']
+    events = _events(resp.text)
+    trace = events[0]['trace']
     assert trace['model'] is None
     assert 'n8n_ms' not in trace['timings_ms']
+    # The closing trace, like the blocking route, has it.
+    closing = [event for event in events if event['type'] == 'trace'][-1]['trace']
+    assert closing['model'] is None
+    assert {'n8n_ms', 'total_ms'} <= set(closing['timings_ms'])
 
 
 # --- require_sources buffering ------------------------------------------------
@@ -315,7 +320,7 @@ def test_keepalive_comment_is_emitted_while_the_flow_is_silent(monkeypatch):
     assert ': keepalive\n\n' in resp.text
     # the real events still arrive, in order, once the flow speaks
     events = _events(resp.text)
-    assert [event['type'] for event in events][-3:] == ['delta', 'sources', 'done']
+    assert [event['type'] for event in events][-4:] == ['delta', 'trace', 'sources', 'done']
 
 
 def test_internal_chat_stream_route_raw_sse_body_contains_the_keepalive_comment_line(monkeypatch):
