@@ -22,6 +22,8 @@ macht templates/db-bootstrap-job.yaml -- die Begruendung steht dort.
 {{- if eq .Values.postgresql.mode "cnpg" }}
 {{- include "weave.validate" . }}
 {{- include "weave.requireCnpgBackup" . }}
+{{- include "weave.requireCnpgSynchronous" . }}
+{{- include "weave.requireCnpgBarmanCloudPlugin" . }}
 {{- $cnpg := .Values.postgresql.cnpg }}
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
@@ -61,12 +63,30 @@ spec:
   {{- end }}
   enablePDB: {{ $cnpg.enablePDB }}
   primaryUpdateStrategy: {{ $cnpg.primaryUpdateStrategy }}
+  {{- with $cnpg.primaryUpdateMethod }}
+  primaryUpdateMethod: {{ . }}
+  {{- end }}
+  {{- with $cnpg.affinity }}
+  # Ohne topologyKey topology.kubernetes.io/zone und podAntiAffinityType
+  # required gibt es keine Garantie fuer verschiedene Zonen -- siehe
+  # postgresql.cnpg.affinity in values.yaml.
+  affinity:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $cnpg.topologySpreadConstraints }}
+  topologySpreadConstraints:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   postgresql:
     parameters:
       # Obergrenze der Budgetpruefung (postgresql.maxConnections).
       max_connections: {{ .Values.postgresql.maxConnections | quote }}
     {{- with $cnpg.pg_hba }}
     pg_hba:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with $cnpg.synchronous }}
+    synchronous:
       {{- toYaml . | nindent 6 }}
     {{- end }}
   bootstrap:
@@ -138,5 +158,20 @@ spec:
       data:
         compression: {{ $cnpg.backup.data.compression }}
     retentionPolicy: {{ $cnpg.backup.retentionPolicy | quote }}
+  {{- end }}
+  {{- with $cnpg.barmanCloudPlugin }}
+  {{- if .enabled }}
+  # WAL-Archiv und Basis-Backups ueber das Barman-Cloud-Plugin; Ziel und
+  # Anmeldung stehen im ObjectStore (templates/postgres-cnpg-barman-cloud.yaml).
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      enabled: {{ .archiving }}
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: {{ default (include "weave.cnpgClusterName" $) .objectStoreName | quote }}
+        {{- with .serverName }}
+        serverName: {{ . | quote }}
+        {{- end }}
+  {{- end }}
   {{- end }}
 {{- end }}

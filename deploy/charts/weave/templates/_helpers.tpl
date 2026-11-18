@@ -930,6 +930,50 @@ kein Backup -- und es faellt erst auf, wenn eines gebraucht wird.
 {{- end -}}
 
 {{/*
+Dieselben Regeln wie der CNPG-Webhook (internal/webhook/v1/cluster_webhook.go,
+validateConfiguration und validateSynchronousReplicaConfiguration), nur
+frueher: beim helm template statt erst beim Apply.
+*/}}
+{{- define "weave.requireCnpgSynchronous" -}}
+{{- $cnpg := .Values.postgresql.cnpg -}}
+{{- $sync := $cnpg.synchronous -}}
+{{- if $sync -}}
+{{- if or (gt (int $cnpg.minSyncReplicas) 0) (gt (int $cnpg.maxSyncReplicas) 0) -}}
+{{- fail (printf "postgresql.cnpg.synchronous ist gesetzt, zugleich aber minSyncReplicas=%v/maxSyncReplicas=%v. Der CNPG-Webhook lehnt altes und neues API zusammen ab. Entweder minSyncReplicas und maxSyncReplicas auf 0 setzen (empfohlen) oder synchronous leeren." $cnpg.minSyncReplicas $cnpg.maxSyncReplicas) -}}
+{{- end -}}
+{{- if hasKey $sync "number" -}}
+{{- $limit := add (int $cnpg.instances) (len (default list $sync.standbyNamesPre)) (len (default list $sync.standbyNamesPost)) -}}
+{{- if ge (int $sync.number) (int $limit) -}}
+{{- fail (printf "postgresql.cnpg.synchronous.number=%v, aber es gibt nur %v Kandidaten (instances=%v plus standbyNamesPre/Post). number muss kleiner sein, sonst lehnt der CNPG-Webhook den Cluster ab -- eine Instanz ist immer der Primary." $sync.number $limit $cnpg.instances) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Gleicher Grundsatz wie bei weave.requireCnpgBackup: ein Backup, das
+nirgendwohin schreibt, faellt erst auf, wenn eines gebraucht wird.
+*/}}
+{{- define "weave.requireCnpgBarmanCloudPlugin" -}}
+{{- $cnpg := .Values.postgresql.cnpg -}}
+{{- $p := $cnpg.barmanCloudPlugin -}}
+{{- if $p.enabled -}}
+{{- if $cnpg.backup.enabled -}}
+{{- fail "postgresql.cnpg.barmanCloudPlugin.enabled=true und postgresql.cnpg.backup.enabled=true. Der CNPG-Webhook lehnt einen WAL-Archiver-Plugin neben barmanObjectStore ab (\"Cannot enable a WAL archiver plugin when barmanObjectStore is configured\"). backup.enabled=false setzen -- das eingebaute Backup ist ohnehin veraltet und entfaellt mit CloudNativePG 1.31." -}}
+{{- end -}}
+{{- if not $p.destinationPath -}}
+{{- fail "postgresql.cnpg.barmanCloudPlugin.enabled=true, aber destinationPath ist leer. Ohne Ziel (z.B. s3://mein-bucket/) schreibt das Plugin nirgendwohin." -}}
+{{- end -}}
+{{- if and (not $p.inheritFromIAMRole) (not $p.s3CredentialsSecret.name) -}}
+{{- fail "postgresql.cnpg.barmanCloudPlugin.enabled=true mit inheritFromIAMRole=false, aber s3CredentialsSecret.name ist leer. Entweder inheritFromIAMRole=true setzen (Anmeldung ueber die IAM-Rolle des Cluster-ServiceAccounts, IRSA/Workload Identity) oder ein Secret mit Access-Key-ID und Secret-Access-Key hinterlegen. Dieses Chart legt dieses Secret nicht an." -}}
+{{- end -}}
+{{- if and $p.kmsKeyId (ne $p.encryption "aws:kms") -}}
+{{- fail (printf "postgresql.cnpg.barmanCloudPlugin.kmsKeyId ist gesetzt, encryption aber %q. Ein KMS-Key wirkt nur mit encryption: aws:kms." $p.encryption) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Sammelpruefung. Jedes Workload-Template ruft sie als erste Zeile auf, damit
 die Meldung kommt, egal welches Objekt zuerst gerendert wird.
 Usage: {{- include "weave.validate" . }}

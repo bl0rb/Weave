@@ -948,6 +948,23 @@ postgresql:
     # Compose-Stack benutzt dafuer pgvector/pgvector:pg16).
     imageName: ghcr.io/cloudnative-pg/postgresql:16
     instances: 3
+    # -> spec.affinity (CNPG AffinityConfiguration: enablePodAntiAffinity,
+    # topologyKey, podAntiAffinityType, nodeSelector, nodeAffinity,
+    # tolerations, additionalPodAntiAffinity, additionalPodAffinity). Leer
+    # heisst CNPG-Vorgabe: Anti-Affinity "preferred" ueber
+    # kubernetes.io/hostname -- das verteilt nur auf verschiedene KNOTEN, und
+    # nur als Wunsch. Verschiedene ZONEN sind erst mit
+    #   topologyKey: topology.kubernetes.io/zone
+    #   podAntiAffinityType: required
+    # garantiert. Dann braucht jede Instanz eine eigene Zone mit Knoten:
+    # instances groesser als die Zahl der Zonen laesst Pods auf Pending.
+    # Bei zonengebundenen Volumes (EBS, PD) muss die StorageClass
+    # volumeBindingMode: WaitForFirstConsumer haben, sonst entsteht das
+    # Volume womoeglich in einer anderen Zone als der Pod.
+    # Eine Aenderung startet die Instanzen nacheinander neu.
+    affinity: {}
+    # -> spec.topologySpreadConstraints. Leer = nicht gerendert.
+    topologySpreadConstraints: []
     # Auf das Cluster-Objekt selbst, zusaetzlich zu global.commonAnnotations.
     annotations: {}
     # Annotationen fuer den ServiceAccount, den der CNPG-Operator fuer DIESES
@@ -957,13 +974,28 @@ postgresql:
     # iam.gke.io/gcp-service-account o.ae.). Standortspezifisch, deshalb leer.
     serviceAccountTemplate:
       annotations: {}
-    # Synchrone Repliken. 0/0 heisst asynchrone Replikation.
+    # Synchrone Repliken, altes API. 0/0 heisst asynchrone Replikation.
+    # Empfohlen ist synchronous unten; beide schliessen sich aus (der
+    # CNPG-Webhook lehnt die Kombination ab, das Template bricht vorher ab).
     minSyncReplicas: 0
     maxSyncReplicas: 0
+    # -> spec.postgresql.synchronous (method, number, dataDurability,
+    # maxStandbyNamesFromCluster, standbyNamesPre, standbyNamesPost,
+    # failoverQuorum). Leer = nicht gerendert. Beispiel fuer zwei Instanzen,
+    # bei dem ein ausgefallener Standby die Schreibzugriffe NICHT blockiert:
+    #   method: any
+    #   number: 1
+    #   dataDurability: preferred
+    # number muss kleiner sein als instances + Anzahl standbyNamesPre/Post.
+    synchronous: {}
     enablePDB: true
     # unsupervised | supervised -- supervised heisst: der Switchover beim
     # Minor-Upgrade wartet auf einen manuellen Anstoss.
     primaryUpdateStrategy: unsupervised
+    # -> spec.primaryUpdateMethod: restart | switchover. Leer = nicht
+    # gerendert (CNPG-Vorgabe restart). switchover verlegt den Primary vor
+    # dem Update auf einen aktuellen Standby, braucht also instances > 1.
+    primaryUpdateMethod: ""
     # Zusaetzliche pg_hba-Zeilen, VOR den von CNPG erzeugten. Leer lassen,
     # solange nichts ausserhalb des Clusters direkt verbindet.
     pg_hba: []
@@ -999,6 +1031,11 @@ postgresql:
     monitoring:
       # Braucht den Prometheus-Operator im Cluster; deshalb per Vorgabe aus.
       enablePodMonitor: false
+    # Eingebautes Barman-Backup (spec.backup.barmanObjectStore).
+    # VERALTET: CloudNativePG 1.30 warnt, ab 1.31 entfaellt es ganz. Die
+    # Images -standard-/-minimal- bringen die Barman-Binaries nicht mehr mit.
+    # Fuer neue Installationen barmanCloudPlugin unten verwenden; beide
+    # schliessen sich aus.
     backup:
       enabled: false
       # z.B. s3://mein-bucket/weave -- ohne diesen Wert schlaegt das
@@ -1020,6 +1057,74 @@ postgresql:
         compression: gzip
       data:
         compression: gzip
+    # Backup ueber das Barman-Cloud-Plugin (plugin-barman-cloud). Setzt das
+    # Plugin im Cluster voraus, so wie postgresql.mode=cnpg den Operator.
+    # enabled rendert drei Dinge: einen ObjectStore (barmancloud.cnpg.io/v1),
+    # den Eintrag in spec.plugins am Cluster und ein ScheduledBackup mit
+    # method: plugin. Ist enabled aus, kommt die API-Gruppe
+    # barmancloud.cnpg.io nirgends vor.
+    barmanCloudPlugin:
+      enabled: false
+      # -> plugins[].enabled. Erlaubt einen Rollout in Stufen: erst den
+      # ObjectStore anlegen (false), dann einschalten (true). ACHTUNG:
+      # isWALArchiver: false ist KEIN Aus-Schalter, abgeschaltet wird nur
+      # hierueber. Der Wechsel von false auf true startet die Instanzen
+      # nacheinander neu (der Operator injiziert den Sidecar). Solange
+      # false gilt, wird kein ScheduledBackup gerendert: ohne WAL-Archiv
+      # waere ein Basis-Backup nicht verwendbar und liefe gegen das
+      # abgeschaltete Plugin.
+      archiving: true
+      # Leer = Clustername.
+      objectStoreName: ""
+      # -> plugins[].parameters.serverName. Leer = CNPG-Vorgabe
+      # (Clustername).
+      serverName: ""
+      retentionPolicy: 14d
+      # Pflicht, z.B. s3://mein-bucket/
+      destinationPath: ""
+      # Optional, z.B. https://s3.eu-central-1.amazonaws.com
+      endpointURL: ""
+      # true: Anmeldung ueber die IAM-Rolle des Cluster-ServiceAccounts
+      # (serviceAccountTemplate.annotations oben, IRSA/Workload Identity).
+      # false: s3CredentialsSecret muss gesetzt sein.
+      inheritFromIAMRole: true
+      # Secret mit Access-Key-ID und Secret-Access-Key. Dieses Chart legt es
+      # nicht an.
+      s3CredentialsSecret:
+        name: ""
+        accessKeyIdKey: ACCESS_KEY_ID
+        secretAccessKeyKey: ACCESS_SECRET_KEY
+      # Serverseitige Verschluesselung: "" (Bucket-Vorgabe) | AES256 | aws:kms
+      encryption: ""
+      # Das ObjectStore-CRD hat KEIN Feld fuer die KMS-Key-ID. Ist kmsKeyId
+      # gesetzt, haengt das Chart "--sse-kms-key-id=<kmsKeyId>" an
+      # wal.archiveAdditionalCommandArgs und data.additionalCommandArgs an.
+      # Verlangt encryption: aws:kms.
+      kmsKeyId: ""
+      wal:
+        compression: snappy
+      data:
+        compression: snappy
+      # -> ObjectStore.spec.instanceSidecarConfiguration.resources. Ohne
+      # Angabe greift oft eine niedrige LimitRange-Vorgabe, und
+      # barman-cloud-backup (Python/boto3) wird beim Basis-Backup
+      # OOM-gekillt.
+      sidecarResources: {}
+      # Auf den ObjectStore, z.B. argocd.argoproj.io/sync-wave, damit er vor
+      # dem Cluster angelegt wird.
+      objectStoreAnnotations: {}
+      scheduledBackup:
+        enabled: true
+        # 6 Felder, Sekunden zuerst.
+        schedule: "0 0 2 * * *"
+        suspend: false
+        # Erstes Basis-Backup direkt nach dem Anlegen.
+        immediate: true
+        # primary | prefer-standby
+        target: prefer-standby
+        # none | self | cluster
+        backupOwnerReference: self
+        annotations: {}
 
   bundled:
     # EVALUIERUNGSPFAD, KEIN HA-SETUP. Eine einzige Replik, ein PVC, kein

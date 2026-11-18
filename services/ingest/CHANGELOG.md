@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Helm chart `weave`, CNPG high availability and plugin backup** (`postgresql.mode: cnpg`):
+  `postgresql.cnpg.affinity` and `topologySpreadConstraints` (instances in different zones only
+  with `topologyKey: topology.kubernetes.io/zone` and `podAntiAffinityType: required`),
+  `primaryUpdateMethod`, `synchronous` (new CNPG API, e.g. `dataDurability: preferred`) and
+  `barmanCloudPlugin`, which renders an `ObjectStore`, the `spec.plugins` entry and a
+  `ScheduledBackup` (`method: plugin`), including SSE-KMS via `kmsKeyId`. The chart refuses to
+  render `synchronous` together with `minSyncReplicas`/`maxSyncReplicas`, a `number` that is not
+  below the instance count, the plugin together with the built-in `backup`, an empty
+  `destinationPath` and `kmsKeyId` without `encryption: aws:kms`. Defaults render exactly as
+  before. Example: `deploy/charts/weave/examples/cnpg-ha-barman-cloud.yaml`.
+- PR CI lints and renders `deploy/charts/weave` (`scripts/check_chart_cnpg.sh`).
+
+### Deprecated
+- `postgresql.cnpg.backup` (built-in `barmanObjectStore`): CloudNativePG 1.30 warns, 1.31 removes
+  it. Use `postgresql.cnpg.barmanCloudPlugin`.
+
+### Upgrade notes
+- Switching `barmanCloudPlugin.archiving` from `false` to `true` or changing `affinity` /
+  `topologySpreadConstraints` performs a rolling restart of the Postgres instances.
+- While `archiving` is `false`, no `ScheduledBackup` is rendered.
+
 ## [0.7.26] - 2026-11-17
 
 ### Added
