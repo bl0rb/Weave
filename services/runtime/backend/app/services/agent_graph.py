@@ -165,6 +165,9 @@ class GraphState(TypedDict):
     budget: dict[str, float]
     final_answer: str | None
     guard_triggered: bool
+    # The model the `answer` node's LLM call reported (requested model when
+    # streaming); `None` when the guard answered.
+    answer_model: str | None
 
 
 def research_area_tool_schema(available: list[AvailableAgent]) -> dict:
@@ -530,7 +533,9 @@ def _answer(
         # Blocking callers (`handle_chat`, and `run_graph`'s own default)
         # have nowhere to forward incremental deltas to -- one plain
         # `chat()` call, exactly as before this rollout step.
-        answer = main_llm_provider.chat(messages, model=bot.model.model, temperature=bot.model.temperature).content
+        llm_result = main_llm_provider.chat(messages, model=bot.model.model, temperature=bot.model.temperature)
+        answer = llm_result.content
+        answer_model = llm_result.model
     else:
         # Streaming callers (`bot_graph._agent_multi`): push each
         # delta onto the SAME queue as it arrives, exactly like the
@@ -539,6 +544,7 @@ def _answer(
         # this module's own previously-documented Schritt-3 simplification
         # (one blocking `chat()` call, chunked back out after the fact).
         pieces: list[str] = []
+        answer_model = bot.model.model
         for delta in llm_service.iter_chat_stream(
             main_llm_provider, messages, model=bot.model.model, temperature=bot.model.temperature,
         ):
@@ -556,7 +562,7 @@ def _answer(
         gap_text = '\n\n' + '\n'.join(gap_notes)
         answer = answer + gap_text
         _emit(progress_cb, 'delta', gap_text)
-    return {'final_answer': answer, 'guard_triggered': False}
+    return {'final_answer': answer, 'guard_triggered': False, 'answer_model': answer_model}
 
 
 def _plan_node(state: GraphState, runtime: Runtime[AgentContext]) -> dict:
@@ -622,6 +628,7 @@ class GraphOutcome:
     # Every subagent result of the turn, superseded attempts included --
     # for the turn's retrieval trace (chat.py's `agent_retrieval_trace`).
     results: tuple[agents_service.SubagentResult, ...] = ()
+    answer_model: str | None = None
 
 
 def subagent_trace(result: agents_service.SubagentResult, subagent: SubagentConfig | None) -> SubagentTrace:
@@ -694,6 +701,7 @@ def run_graph(
         'budget': {'searches_left': max(0, limits.budget_searches), 'deadline': deadline},
         'final_answer': None,
         'guard_triggered': False,
+        'answer_model': None,
     }
     final_state = COMPILED.invoke(
         initial_state, config=RunnableConfig(max_concurrency=max(1, limits.max_parallel)), context=context,
@@ -723,4 +731,5 @@ def run_graph(
         guard_triggered=guard_triggered,
         agent_trace=trace,
         results=tuple(results),
+        answer_model=None if guard_triggered else final_state.get('answer_model'),
     )

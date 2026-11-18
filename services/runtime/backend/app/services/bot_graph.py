@@ -504,6 +504,7 @@ def _n8n_call(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
     buffered: list[str] = []
     sources: list[Source] = []
     error_detail: str | None = None
+    n8n_start = time.perf_counter()
     try:
         if bot.n8n.streaming:
             for stream_event in n8n_client.run_flow_stream(
@@ -545,9 +546,10 @@ def _n8n_call(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
         else:
             error_detail = 'Der n8n-Agentenflow ist unerwartet fehlgeschlagen.'
 
+    timings = _timing(state, 'n8n_ms', n8n_start)
     if error_detail is not None:
         writer(ChatStreamErrorEvent(detail=error_detail))
-        return {'errored': True, 'streamed': True}
+        return {'errored': True, 'streamed': True, 'timings_ms': timings}
 
     kept_sources, dropped_count = chat_service._filter_n8n_sources_by_scope(sources, scope, bot_id=bot.id)
     if require_sources and not kept_sources:
@@ -555,13 +557,16 @@ def _n8n_call(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
             writer(ChatStreamDeltaEvent(text=delta))
         return {
             'sources': [], 'streamed': True, 'guard': GuardTrace(triggered=True, reason='no_context'),
-            'n8n_trace': N8nTrace(dropped_sources=dropped_count),
+            'n8n_trace': N8nTrace(dropped_sources=dropped_count), 'timings_ms': timings,
         }
     if require_sources:
         full_text = ''.join(buffered)
         if full_text:
             writer(ChatStreamDeltaEvent(text=full_text))
-    return {'sources': kept_sources, 'streamed': True, 'n8n_trace': N8nTrace(dropped_sources=dropped_count)}
+    return {
+        'sources': kept_sources, 'streamed': True, 'n8n_trace': N8nTrace(dropped_sources=dropped_count),
+        'timings_ms': timings,
+    }
 
 
 def _agent_single(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
@@ -646,9 +651,9 @@ def _agent_multi(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
         'final_answer': outcome.final_answer,
         'agent_trace': outcome.agent_trace,
         'retrieval_trace': chat_service.agent_retrieval_trace(bot, outcome.results),
-        # The graph's own `answer` node called the main model, unless the
-        # guard answered instead.
-        'answer_model': None if outcome.guard_triggered else bot.model.model,
+        # The model the graph's own `answer` node reported (`None` when
+        # the guard answered instead).
+        'answer_model': outcome.answer_model,
         # A non-guard outcome's full answer already went out as deltas.
         'streamed': ctx.streaming and not outcome.guard_triggered,
     }

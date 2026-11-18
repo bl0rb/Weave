@@ -378,7 +378,7 @@ def test_agent_turn_stream_closing_trace_reports_the_agents_retrieval(tmp_path, 
     assert subagent['name'] == 'IT Support'
     assert subagent['queries'] == ['vpn setup']
     assert (subagent['facts'], subagent['cited_hits'], subagent['hits']) == (1, 1, 2)
-    assert closing['agent']['budget_used'] == 1
+    assert retrieval_top_k_is_not_the_bots(closing)
 
     retrieval = closing['retrieval']
     assert (retrieval['candidates'], retrieval['used']) == (2, 1)
@@ -388,6 +388,12 @@ def test_agent_turn_stream_closing_trace_reports_the_agents_retrieval(tmp_path, 
     assert retrieval['search']['reranked'] == 20
     assert retrieval['search']['rerank_model'] == 'bge-reranker'
     assert retrieval['search']['returned'] == 2
+
+
+def retrieval_top_k_is_not_the_bots(trace: dict) -> bool:
+    # The subagents pick their own top_k; the bot's direct-RAG values were
+    # never sent, so the agent turn's retrieval trace reports none.
+    return trace['retrieval']['top_k'] is None and trace['retrieval']['final_k'] is None
 
 
 def test_agent_turn_bare_facts_array_keeps_its_source_refs(tmp_path, monkeypatch):

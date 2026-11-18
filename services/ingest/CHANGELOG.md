@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `internal-chat.md`, additive): agent answers show their retrieval (hits, used, reranker, search
   counts) instead of "No retrieval call for this turn", plus the answering model and
   `llm_ms`/`total_ms`. Per research agent the trace shows its name, queries, facts, cited hits,
-  open points and the search budget. Weave-API stores the complete trace with the message.
+  and open points. Weave-API stores the complete trace with the message.
 
 ## [0.7.27] - 2026-11-18
 

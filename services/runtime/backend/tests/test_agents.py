@@ -505,3 +505,35 @@ def test_fact_with_evidence_names_the_cited_documents_for_the_answering_model():
     fact = agents.Fact(text='VPN uses WireGuard.', source_refs=[agents.SourceRef(document_id='doc-1', chunk_id=1)])
     assert fact_with_evidence(fact, [_chunk()]) == 'VPN uses WireGuard. (evidence: vpn.pdf p. 1)'
     assert fact_with_evidence(agents.Fact(text='Uncited.'), [_chunk()]) == 'Uncited.'
+
+
+def test_parse_keeps_prose_that_merely_contains_a_json_array():
+    text = 'Die Heilfuersorge gilt fuer alle Beamten.\n\nQuellen: [{"document_id": "d1", "chunk_id": 1}]'
+    facts, _ = agents._parse_subagent_answer(text, _hits_by_ref())
+    assert [fact.text for fact in facts] == [text]
+
+
+def test_parse_finds_the_answer_object_despite_braces_after_it_or_a_second_object():
+    import json
+
+    payload = json.dumps({'facts': [_FACT], 'open_points': []})
+    for text in (f'Ergebnis: {payload} (Hinweis: {{siehe Anhang}})', f'{payload}\n{payload}'):
+        facts, _ = agents._parse_subagent_answer(text, _hits_by_ref())
+        assert [fact.text for fact in facts] == ['VPN uses WireGuard.'], text
+        assert facts[0].source_refs, text
+
+
+def test_parse_keeps_string_facts_and_unwraps_a_one_object_array():
+    import json
+
+    facts, _ = agents._parse_subagent_answer('```json\n{"facts": ["A gilt.", "B gilt."]}\n```', {})
+    assert [fact.text for fact in facts] == ['A gilt.', 'B gilt.']
+    facts, open_points = agents._parse_subagent_answer(json.dumps([{'facts': [_FACT], 'open_points': ['X']}]), _hits_by_ref())
+    assert [fact.text for fact in facts] == ['VPN uses WireGuard.']
+    assert open_points == ['X']
+
+
+def test_parse_keeps_an_array_without_fact_objects_as_text():
+    text = '[{"fact": "A gilt."}]'
+    facts, _ = agents._parse_subagent_answer(text, {})
+    assert [fact.text for fact in facts] == [text]

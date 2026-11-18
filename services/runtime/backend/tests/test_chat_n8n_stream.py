@@ -191,9 +191,14 @@ def test_streaming_trace_has_no_model_and_no_n8n_ms(monkeypatch):
     monkeypatch.setattr('app.services.n8n_client.httpx.stream', _stream_n8n_lines(*_sse({'type': 'done'})))
 
     resp = _post_stream('n8n-stream-open')
-    trace = _events(resp.text)[0]['trace']
+    events = _events(resp.text)
+    trace = events[0]['trace']
     assert trace['model'] is None
     assert 'n8n_ms' not in trace['timings_ms']
+    # The closing trace, like the blocking route, has it.
+    closing = [event for event in events if event['type'] == 'trace'][-1]['trace']
+    assert closing['model'] is None
+    assert {'n8n_ms', 'total_ms'} <= set(closing['timings_ms'])
 
 
 # --- require_sources buffering ------------------------------------------------

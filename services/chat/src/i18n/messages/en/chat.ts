@@ -228,7 +228,6 @@ export const chat: Record<keyof typeof de, string> = {
   'trace.agent.facts': '{facts} fact(s) · {cited} hit(s) cited',
   'trace.agent.queries': 'Queries: {value}',
   'trace.agent.openPoints': 'Open points: {value}',
-  'trace.agent.budget': 'Search budget {used}/{budget}',
   'trace.agent.followups': '{count} follow-up round(s) · budget {used}/{budget}',
   'trace.timing': '{key}: {ms} ms',
 

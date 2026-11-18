@@ -251,38 +251,74 @@ class SubagentResult:
 
 
 _JSON_FENCE_RE = re.compile(r'^\s*```[A-Za-z0-9_-]*[ \t]*\n?(.*?)\n?\s*```\s*$', re.DOTALL)
+_JSON_DECODER = json.JSONDecoder()
+# How many `{`/`[` positions inside a prose reply are tried as JSON starts.
+_MAX_EMBEDDED_JSON_STARTS = 50
 
 
-def _load_subagent_json(text: str) -> dict | None:
-    """The subagent's structured answer as a dict, or `None` for plain text.
+def _as_answer_shape(parsed: object) -> dict | None:
+    """`parsed` as the answer object if it has the answer's shape: an object
+    with a `facts` or `open_points` list, a one-element array holding such
+    an object, or an array of fact objects (at least one with a string
+    `text`) -- which counts as `{"facts": [...]}`. Anything else: `None`."""
+    if isinstance(parsed, dict):
+        if isinstance(parsed.get('facts'), list) or isinstance(parsed.get('open_points'), list):
+            return parsed
+        return None
+    if isinstance(parsed, list) and parsed:
+        if len(parsed) == 1 and isinstance(parsed[0], dict) and _as_answer_shape(parsed[0]) is not None:
+            return parsed[0]
+        if any(isinstance(item, dict) and isinstance(item.get('text'), str) for item in parsed):
+            return {'facts': parsed}
+    return None
+
+
+def _load_subagent_json(text: str) -> tuple[dict | None, bool]:
+    """The subagent's structured answer and whether the WHOLE reply was it
+    (`(None, False)` for plain text).
 
     Models do not always reply with exactly the object the prompt asks
-    for: some wrap it in a markdown fence, put a sentence before it, or
-    return only the `facts` array. Each of those is accepted here -- a bare
-    array of fact objects counts as `{"facts": [...]}` -- so the facts keep
-    their `source_refs` instead of reaching the answer as raw JSON text.
-    Anything taken from INSIDE the text (fence content, an embedded
-    object/array) must look like the answer shape, so ordinary prose with a
-    bracket in it stays prose."""
-    candidates: list[tuple[str, bool]] = [(text, True)]
+    for: some wrap it in a markdown fence, write a sentence before or after
+    it, or return only the `facts` array. Each of those is accepted, so the
+    facts keep their `source_refs` instead of reaching the answer as raw
+    JSON text. JSON found inside the reply must have the answer's shape
+    (`_as_answer_shape`); the first match wins. A whole reply that is a
+    JSON object is taken as before, whatever its keys."""
+    stripped = text.strip()
+    try:
+        parsed = json.loads(stripped)
+    except (ValueError, TypeError):
+        parsed = None
+    if isinstance(parsed, dict):
+        return parsed, True
+    shaped = _as_answer_shape(parsed)
+    if shaped is not None:
+        return shaped, True
+
     fenced = _JSON_FENCE_RE.match(text)
     if fenced:
-        candidates.append((fenced.group(1), False))
-    for opener, closer in (('{', '}'), ('[', ']')):
-        start, end = text.find(opener), text.rfind(closer)
-        if 0 <= start < end:
-            candidates.append((text[start:end + 1], False))
-
-    for candidate, whole in candidates:
         try:
-            parsed = json.loads(candidate)
+            shaped = _as_answer_shape(json.loads(fenced.group(1)))
         except (ValueError, TypeError):
+            shaped = None
+        if shaped is not None:
+            return shaped, False
+
+    starts = 0
+    for index, char in enumerate(text):
+        if char not in '{[':
             continue
-        if isinstance(parsed, list) and parsed and all(isinstance(item, dict) for item in parsed):
-            return {'facts': parsed}
-        if isinstance(parsed, dict) and (whole or 'facts' in parsed or 'open_points' in parsed):
-            return parsed
-    return None
+        starts += 1
+        if starts > _MAX_EMBEDDED_JSON_STARTS:
+            break
+        try:
+            candidate, _end = _JSON_DECODER.raw_decode(text, index)
+        except ValueError:
+            continue
+        shaped = _as_answer_shape(candidate)
+        if shaped is not None:
+            return shaped, False
+    return None, False
 
 
 def _parse_subagent_answer(
@@ -304,12 +340,16 @@ def _parse_subagent_answer(
     source claims unchecked.
     """
     # A fenced, prefixed or bare-array answer is unwrapped first.
-    parsed = _load_subagent_json(text)
+    parsed, whole = _load_subagent_json(text)
     if parsed is None:
         return ([Fact(text=text)] if text.strip() else []), []
 
     facts: list[Fact] = []
     for raw_fact in parsed.get('facts') or []:
+        if isinstance(raw_fact, str) and raw_fact.strip():
+            # A fact given as a bare string: kept, it just cites nothing.
+            facts.append(Fact(text=raw_fact))
+            continue
         if not isinstance(raw_fact, dict):
             continue
         fact_text = raw_fact.get('text')
@@ -330,6 +370,10 @@ def _parse_subagent_answer(
         facts.append(Fact(text=fact_text, source_refs=refs))
 
     open_points = [point for point in (parsed.get('open_points') or []) if isinstance(point, str) and point]
+    if not facts and not open_points and not whole and text.strip():
+        # JSON cut out of a longer reply that yielded nothing usable: keep
+        # the reply as text rather than lose it.
+        return [Fact(text=text)], []
     return facts, open_points
 
 

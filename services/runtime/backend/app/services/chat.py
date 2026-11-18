@@ -1642,7 +1642,6 @@ def _agent_trace_for(
         mode='single',
         subagents=[agent_graph_service.subagent_trace(result, subagent)],
         budget=bot.agent.limits.budget_searches,
-        budget_used=result.searches_used,
     )
 
 
@@ -1652,9 +1651,12 @@ _SEARCH_INFO_KEYS = ('rerank_provider', 'rerank_model', 'embedding_model', 'rrf_
 
 def _aggregate_search_trace(searches: list[agents_service.SearchRecord]) -> RetrievalSearchTrace | None:
     """Weave-Retrieval's search traces of an agent turn's searches, summed:
-    candidate counts and timings add up, reranker/embedding details come
-    from the first search that reports them, `rerank_error` is set if any
-    search's reranking failed. `None` if the turn sent no search."""
+    candidate counts, `returned` and timings add up, reranker/embedding
+    details come from the first search that reports them, `rerank_error` is
+    set if any search's reranking failed. Only searches that came back with
+    a trace count -- a failed search or an older Weave-Retrieval reports
+    none; `None` if not one did, rather than a trace of zeros."""
+    searches = [search for search in searches if isinstance(search.trace, dict)]
     if not searches:
         return None
     counts = dict.fromkeys(_SEARCH_COUNT_KEYS, 0)
@@ -1711,6 +1713,9 @@ def agent_retrieval_trace(
     collections = list(dict.fromkeys(slug for search in searches for slug in search.collections))
     fields = _search_trace_fields(bot, hits, used)
     fields['search'] = _aggregate_search_trace(searches)
+    # The subagents choose their own top_k (capped by their limits); the
+    # bot's direct-RAG values were never sent.
+    fields['top_k'] = fields['final_k'] = None
     return RetrievalTrace(candidates=len(hits), used=len(used), collections=collections, **fields)
 
 

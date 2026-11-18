@@ -246,8 +246,8 @@ export function TracePanel({ trace }: { trace: ChatTrace }) {
                   ) : null}
                 </div>
               ))}
-              <div className="flex flex-wrap gap-1.5">
-                {trace.agent.mode === 'graph' ? (
+              {trace.agent.mode === 'graph' ? (
+                <div className="flex flex-wrap gap-1.5">
                   <Tag>
                     {t('chat.trace.agent.followups', {
                       count: trace.agent.followups,
@@ -255,10 +255,8 @@ export function TracePanel({ trace }: { trace: ChatTrace }) {
                       budget: trace.agent.budget,
                     })}
                   </Tag>
-                ) : (
-                  <Tag>{t('chat.trace.agent.budget', { used: trace.agent.budget_used, budget: trace.agent.budget })}</Tag>
-                )}
-              </div>
+                </div>
+              ) : null}
             </div>
           ) : null}
 

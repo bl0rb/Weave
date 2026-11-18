@@ -232,7 +232,6 @@ export const chat = {
   'trace.agent.facts': '{facts} Fakt(en) · {cited} Treffer zitiert',
   'trace.agent.queries': 'Suchanfragen: {value}',
   'trace.agent.openPoints': 'Offene Punkte: {value}',
-  'trace.agent.budget': 'Suchbudget {used}/{budget}',
   'trace.agent.followups': '{count} Folgerunde(n) · Budget {used}/{budget}',
   'trace.timing': '{key}: {ms} ms',
 

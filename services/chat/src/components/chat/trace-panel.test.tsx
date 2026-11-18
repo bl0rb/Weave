@@ -94,7 +94,7 @@ describe('TracePanel', () => {
     expect(screen.getByText(/3 Fakt\(en\) · 2 Treffer zitiert/)).toBeTruthy();
     expect(screen.getByText('Suchanfragen: "Heilfürsorge Hamburg", "Beihilfe"')).toBeTruthy();
     expect(screen.getByText('Offene Punkte: Fristen')).toBeTruthy();
-    expect(screen.getByText('Suchbudget 2/5')).toBeTruthy();
+    expect(screen.queryByText(/Budget/)).toBeNull();
   });
 
   it('renders the graph-mode followup/budget tag alongside per-subagent tags', () => {
