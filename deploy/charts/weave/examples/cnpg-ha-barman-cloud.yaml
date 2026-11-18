@@ -1,0 +1,46 @@
+# CNPG mit zwei Instanzen in verschiedenen Zonen, synchroner Replikation
+# ("preferred": ein ausgefallener Standby blockiert keine Schreibzugriffe) und
+# Backup nach S3 mit SSE-KMS ueber das Barman-Cloud-Plugin.
+#
+# Beispiel und Render-Test (scripts/check_chart_cnpg.sh, PR-CI). Alle Namen
+# in spitzen Klammern sind Platzhalter: Bucket, Rolle und KMS-Key sind Sache
+# des Standorts.
+#
+#   helm template weave deploy/charts/weave \
+#     -f deploy/charts/weave/examples/cnpg-ha-barman-cloud.yaml
+secrets:
+  existingSecret: weave-platform-secrets
+
+postgresql:
+  mode: cnpg
+  cnpg:
+    instances: 2
+    enablePDB: true
+    primaryUpdateMethod: switchover
+    affinity:
+      enablePodAntiAffinity: true
+      topologyKey: topology.kubernetes.io/zone
+      podAntiAffinityType: required
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: preferred
+    superuserSecret:
+      name: weave-pg-superuser
+    serviceAccountTemplate:
+      annotations:
+        eks.amazonaws.com/role-arn: arn:aws:iam::<account>:role/<rolle>
+    barmanCloudPlugin:
+      enabled: true
+      # Stufe 1: ObjectStore anlegen, Plugin noch aus. Danach auf true
+      # stellen -- das startet die Instanzen nacheinander neu.
+      archiving: false
+      destinationPath: s3://<bucket>/
+      endpointURL: https://s3.eu-central-1.amazonaws.com
+      encryption: aws:kms
+      kmsKeyId: alias/<key>
+      sidecarResources:
+        requests: {cpu: 20m, memory: 128Mi}
+        limits: {memory: 512Mi}
+      scheduledBackup:
+        suspend: true

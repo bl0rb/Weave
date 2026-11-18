@@ -106,6 +106,19 @@ jobs:
       - name: Run platform configuration tests
         run: pytest -q scripts/tests
 
+      - name: Install Helm
+        run: |
+          curl -fsSL https://get.helm.sh/helm-v3.16.2-linux-amd64.tar.gz -o helm.tgz
+          echo "9318379b847e333460d33d291d4c088156299a26cd93d570a7f5d0c36e50b5bb  helm.tgz" | sha256sum -c -
+          tar -xzf helm.tgz
+          sudo mv linux-amd64/helm /usr/local/bin/helm
+          helm version --short
+
+      # deploy/charts/weave: lint, Beispiel fuer CNPG-HA mit Plugin-Backup
+      # rendern, Pruefungen in _helpers.tpl muessen abbrechen.
+      - name: Lint and render platform Helm chart (CNPG)
+        run: ./scripts/check_chart_cnpg.sh
+
       - name: Validate central Compose configuration syntax
         run: |
           eval "$(python - <<'PY'

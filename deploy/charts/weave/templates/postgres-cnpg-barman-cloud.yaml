@@ -1,0 +1,120 @@
+{{/*
+Backup des CNPG-Clusters ueber das Barman-Cloud-Plugin (plugin-barman-cloud).
+
+Rendert nur bei postgresql.mode=cnpg UND postgresql.cnpg.barmanCloudPlugin.enabled.
+Sonst entsteht hier nichts, und die API-Gruppe barmancloud.cnpg.io wird
+nirgends referenziert -- gleicher Grundsatz wie in postgres-cnpg-cluster.yaml:
+dieses Chart setzt weder CloudNativePG noch das Plugin voraus. Ist der Block
+an, MUSS das Plugin im Cluster installiert sein; es bringt das CRD ObjectStore
+mit.
+
+Den Eintrag in spec.plugins am Cluster rendert postgres-cnpg-cluster.yaml,
+die Pruefungen stehen in weave.requireCnpgBarmanCloudPlugin.
+*/}}
+{{- if eq .Values.postgresql.mode "cnpg" }}
+{{- $cnpg := .Values.postgresql.cnpg }}
+{{- $p := $cnpg.barmanCloudPlugin }}
+{{- if $p.enabled }}
+{{- include "weave.validate" . }}
+{{- include "weave.requireCnpgBarmanCloudPlugin" . }}
+{{- $clusterName := include "weave.cnpgClusterName" . }}
+{{- $kmsArg := "" }}
+{{- with $p.kmsKeyId }}
+{{- $kmsArg = printf "--sse-kms-key-id=%s" . }}
+{{- end }}
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: {{ default $clusterName $p.objectStoreName }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "postgres") | nindent 4 }}
+  {{- $ann := include "weave.annotations" (dict "ctx" $ "extra" $p.objectStoreAnnotations) }}
+  {{- with $ann }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $p.retentionPolicy }}
+  retentionPolicy: {{ . | quote }}
+  {{- end }}
+  configuration:
+    destinationPath: {{ $p.destinationPath | quote }}
+    {{- with $p.endpointURL }}
+    endpointURL: {{ . | quote }}
+    {{- end }}
+    {{- if $p.inheritFromIAMRole }}
+    # Anmeldung ueber die IAM-Rolle des Cluster-ServiceAccounts
+    # (postgresql.cnpg.serviceAccountTemplate.annotations). Der Sidecar laeuft
+    # im Instanz-Pod und benutzt dessen ServiceAccount.
+    s3Credentials:
+      inheritFromIAMRole: true
+    {{- else }}
+    s3Credentials:
+      accessKeyId:
+        name: {{ $p.s3CredentialsSecret.name | quote }}
+        key: {{ $p.s3CredentialsSecret.accessKeyIdKey | quote }}
+      secretAccessKey:
+        name: {{ $p.s3CredentialsSecret.name | quote }}
+        key: {{ $p.s3CredentialsSecret.secretAccessKeyKey | quote }}
+    {{- end }}
+    wal:
+      {{- with $p.wal.compression }}
+      compression: {{ . }}
+      {{- end }}
+      {{- with $p.encryption }}
+      encryption: {{ . | quote }}
+      {{- end }}
+      {{- with $kmsArg }}
+      # Das CRD hat kein Feld fuer die KMS-Key-ID; barman-cloud-wal-archive
+      # bekommt sie als Argument.
+      archiveAdditionalCommandArgs:
+        - {{ . | quote }}
+      {{- end }}
+    data:
+      {{- with $p.data.compression }}
+      compression: {{ . }}
+      {{- end }}
+      {{- with $p.encryption }}
+      encryption: {{ . | quote }}
+      {{- end }}
+      {{- with $kmsArg }}
+      additionalCommandArgs:
+        - {{ . | quote }}
+      {{- end }}
+  {{- with $p.sidecarResources }}
+  instanceSidecarConfiguration:
+    resources:
+      {{- toYaml . | nindent 6 }}
+  {{- end }}
+{{- /*
+Ohne WAL-Archiv (archiving=false) waere ein Basis-Backup nicht verwendbar
+und liefe gegen das abgeschaltete Plugin -- dann kein ScheduledBackup.
+*/}}
+{{- if and $p.archiving $p.scheduledBackup.enabled }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: {{ $clusterName }}
+  labels:
+    {{- include "weave.labels" (dict "ctx" $ "component" "postgres") | nindent 4 }}
+  {{- $sbAnn := include "weave.annotations" (dict "ctx" $ "extra" $p.scheduledBackup.annotations) }}
+  {{- with $sbAnn }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  # 6 Felder, Sekunden zuerst.
+  schedule: {{ $p.scheduledBackup.schedule | quote }}
+  suspend: {{ $p.scheduledBackup.suspend }}
+  immediate: {{ $p.scheduledBackup.immediate }}
+  backupOwnerReference: {{ $p.scheduledBackup.backupOwnerReference }}
+  target: {{ $p.scheduledBackup.target }}
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+  cluster:
+    name: {{ $clusterName }}
+{{- end }}
+{{- end }}
+{{- end }}
