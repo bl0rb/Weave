@@ -185,7 +185,11 @@ def test_stream_knowledge_flow_reconstructs_the_context_marked_answer_and_sends_
     sources_index = events.index(sources_event)
     assert all(events[i]['type'] == 'delta' for i in range(1, sources_index - 1))
     assert events[sources_index - 1]['type'] == 'trace'
-    assert events[sources_index - 1]['trace']['retrieval'] == trace['retrieval']
+    closing_retrieval = events[sources_index - 1]['trace']['retrieval']
+    # The opening trace leaves the hit list to the closing one.
+    assert trace['retrieval']['hits'] == []
+    assert [hit['document_id'] for hit in closing_retrieval['hits']] == ['doc-1', 'doc-2']
+    assert {**closing_retrieval, 'hits': []} == trace['retrieval']
     assert 'total_ms' in events[sources_index - 1]['trace']['timings_ms']
     assert events[-1]['type'] == 'done'
 

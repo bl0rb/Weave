@@ -456,7 +456,11 @@ def _trace(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
             if state.get('final_answer') is None and state['branch'] in _DIRECT_BRANCHES
             else None
         )
-        runtime.stream_writer(ChatStreamTraceEvent(trace=_build_trace(state, model=model)))
+        opening = _build_trace(state, model=model)
+        if opening.retrieval is not None and opening.retrieval.hits:
+            # The hit list goes out once, with the closing trace (`_finish`).
+            opening = opening.model_copy(update={'retrieval': opening.retrieval.model_copy(update={'hits': []})})
+        runtime.stream_writer(ChatStreamTraceEvent(trace=opening))
     return {}
 
 

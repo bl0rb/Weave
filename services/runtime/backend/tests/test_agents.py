@@ -537,3 +537,56 @@ def test_parse_keeps_an_array_without_fact_objects_as_text():
     text = '[{"fact": "A gilt."}]'
     facts, _ = agents._parse_subagent_answer(text, {})
     assert [fact.text for fact in facts] == [text]
+
+
+def test_parse_ignores_a_facts_value_that_is_not_a_list():
+    facts, open_points = agents._parse_subagent_answer('{"facts": "A gilt.", "open_points": "X"}', {})
+    assert (facts, open_points) == ([], [])
+
+
+def test_parse_keeps_an_intentionally_empty_fenced_answer_empty():
+    for text in ('```json\n{"facts": [], "open_points": []}\n```', 'Ergebnis: {"facts": [], "open_points": []}'):
+        assert agents._parse_subagent_answer(text, {}) == ([], []), text
+
+
+def test_cited_hits_are_the_sources_and_all_hits_when_nothing_is_cited():
+    cited = agents.SubagentResult(
+        agent_id='a', status='complete', facts=[_FACT_OBJ], open_points=[],
+        hits=[_chunk(), _chunk(chunk_id=2)], searches_used=1,
+    )
+    assert [chunk.chunk_id for chunk in agents.cited_hits([cited])] == [1]
+    uncited = agents.SubagentResult(
+        agent_id='a', status='complete', facts=[agents.Fact(text='x')], open_points=[],
+        hits=[_chunk(), _chunk(chunk_id=2)], searches_used=1,
+    )
+    assert [chunk.chunk_id for chunk in agents.cited_hits([uncited])] == [1, 2]
+
+
+_FACT_OBJ = agents.Fact(text='VPN uses WireGuard.', source_refs=[agents.SourceRef(document_id='doc-1', chunk_id=1)])
+
+
+def test_prose_after_searching_is_asked_for_once_more_and_keeps_its_citations():
+    scripted = [
+        LLMToolResult(content=None, tool_calls=[_tool_call()], model='fake-chat'),
+        LLMToolResult(content='VPN nutzt WireGuard.', tool_calls=None, model='fake-chat'),
+        LLMToolResult(content=_final_answer([_FACT]), tool_calls=None, model='fake-chat'),
+    ]
+    fake_llm = FakeLLM(tool_responses=scripted)
+
+    with patch('app.services.retrieval_client.search', return_value=[_chunk()]):
+        result = agents.run_subagent(_BOT, _subagent(), 'q', ['it-docs'], fake_llm, model='fake-chat')
+
+    assert [fact.text for fact in result.facts] == ['VPN uses WireGuard.']
+    assert result.facts[0].source_refs
+
+
+def test_prose_stays_when_the_re_ask_is_prose_too():
+    scripted = [
+        LLMToolResult(content=None, tool_calls=[_tool_call()], model='fake-chat'),
+        LLMToolResult(content='VPN nutzt WireGuard.', tool_calls=None, model='fake-chat'),
+        LLMToolResult(content='Immer noch Prosa.', tool_calls=None, model='fake-chat'),
+    ]
+    with patch('app.services.retrieval_client.search', return_value=[_chunk()]):
+        result = agents.run_subagent(_BOT, _subagent(), 'q', ['it-docs'], FakeLLM(tool_responses=scripted), model='fake-chat')
+
+    assert [fact.text for fact in result.facts] == ['VPN nutzt WireGuard.']

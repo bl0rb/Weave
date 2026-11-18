@@ -1619,20 +1619,12 @@ def _facts_context_block(subagent: SubagentConfig, result: agents_service.Subage
 
 
 def _sources_from_result(result: agents_service.SubagentResult) -> list[Source]:
-    """The combined, deduplicated (by `(document_id, chunk_id)`) `Source`
-    list for every hit a subagent actually retrieved -- rollout plan step 5's
-    "Die endgültige Antwort trägt die kombinierten Quellen", built the same
-    way `_to_source` already does for a direct retrieval turn. Order
-    follows `SubagentResult.hits`' own order (first-retrieved-first)."""
-    seen: set[tuple[str, int]] = set()
-    sources: list[Source] = []
-    for chunk in result.hits:
-        key = (chunk.document_id, chunk.chunk_id)
-        if key in seen:
-            continue
-        seen.add(key)
-        sources.append(_to_source(chunk))
-    return sources
+    """The deduplicated (by `(document_id, chunk_id)`) `Source` list of a
+    subagent's hits that its facts cite -- every hit when no fact cites any
+    (`agents.cited_hits`). Rollout plan step 5's "Die endgültige Antwort
+    trägt die kombinierten Quellen", built the same way `_to_source` does
+    for a direct retrieval turn, first-retrieved first."""
+    return [_to_source(chunk) for chunk in agents_service.cited_hits([result])]
 
 
 def _agent_trace_for(
@@ -1692,9 +1684,9 @@ def agent_retrieval_trace(
     bot: BotConfig, results: 'list[agents_service.SubagentResult] | tuple[agents_service.SubagentResult, ...]',
 ) -> RetrievalTrace | None:
     """The `ChatTrace.retrieval` of an agent-mode turn: the subagents ran
-    the searches, so this sums them up -- every distinct hit (first
-    retrieval first), `used` = the hits a fact cites (the main answer only
-    sees facts), `collections` = what was actually searched, `search` = the
+    the searches, so this sums them up -- every distinct hit (best score
+    first, ranked by position), `used` = exactly the hits reported as the
+    turn's sources (`agents.cited_hits`), `collections` = what was actually searched, `search` = the
     summed Weave-Retrieval traces (`_aggregate_search_trace`). `None` when
     no subagent searched at all, which the UI shows as "no retrieval"."""
     searches = [search for result in results for search in result.searches]
@@ -1708,10 +1700,14 @@ def agent_retrieval_trace(
             if key not in seen:
                 seen.add(key)
                 hits.append(chunk)
-    cited = {(ref.document_id, ref.chunk_id) for result in results for fact in result.facts for ref in fact.source_refs}
-    used = [chunk for chunk in hits if (chunk.document_id, chunk.chunk_id) in cited]
+    # `used` = exactly the hits reported as the turn's sources.
+    used = agents_service.cited_hits(results)
     collections = list(dict.fromkeys(slug for search in searches for slug in search.collections))
+    # Each hit's own rank is per search; across several searches the list is
+    # ordered by score and numbered by position instead.
+    hits.sort(key=lambda chunk: _score_for(chunk) if _score_for(chunk) is not None else float('-inf'), reverse=True)
     fields = _search_trace_fields(bot, hits, used)
+    fields['hits'] = [hit.model_copy(update={'rank': position}) for position, hit in enumerate(fields['hits'], start=1)]
     fields['search'] = _aggregate_search_trace(searches)
     # The subagents choose their own top_k (capped by their limits); the
     # bot's direct-RAG values were never sent.

@@ -469,16 +469,11 @@ def _detect_contradictions(results: list[agents_service.SubagentResult]) -> list
 
 
 def _dedup_sources(results: list[agents_service.SubagentResult], to_source) -> list[Source]:
-    seen: set[tuple[str, int]] = set()
-    sources: list[Source] = []
-    for result in results:
-        for chunk in result.hits:
-            key = (chunk.document_id, chunk.chunk_id)
-            if key in seen:
-                continue
-            seen.add(key)
-            sources.append(to_source(chunk))
-    return sources
+    """The turn's sources: every distinct hit a fact cites (the answer is
+    written from facts only), first-retrieved first -- or every distinct
+    hit when no fact cites any, so an answer never loses its sources only
+    because the subagents did not cite."""
+    return [to_source(chunk) for chunk in agents_service.cited_hits(results)]
 
 
 def _combined_context_block(
@@ -635,10 +630,8 @@ def subagent_trace(result: agents_service.SubagentResult, subagent: SubagentConf
     """One subagent's `SubagentTrace`: what it searched for, what came back
     and how much of it its facts actually cite. Never a prompt or a chunk
     text."""
-    hit_keys = {(hit.document_id, hit.chunk_id) for hit in result.hits}
-    cited = {
-        (ref.document_id, ref.chunk_id) for fact in result.facts for ref in fact.source_refs
-    } & hit_keys
+    # `_parse_subagent_answer` already dropped every ref that is not a hit.
+    cited = {(ref.document_id, ref.chunk_id) for fact in result.facts for ref in fact.source_refs}
     return SubagentTrace(
         id=result.agent_id, status=result.status, searches_used=result.searches_used, hits=len(result.hits),
         memory_lookups=result.memory_lookups, name=subagent.name if subagent is not None else None,

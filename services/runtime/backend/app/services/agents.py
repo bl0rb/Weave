@@ -250,8 +250,27 @@ class SubagentResult:
     searches: list[SearchRecord] = field(default_factory=list)
 
 
+def cited_hits(results) -> list[retrieval_client.RetrievedChunk]:
+    """Every distinct hit (by `(document_id, chunk_id)`, first-retrieved
+    first) of `results` that a fact cites -- or every distinct hit when no
+    fact cites any. What an agent turn reports as its sources."""
+    seen: set[tuple[str, int]] = set()
+    distinct: list[retrieval_client.RetrievedChunk] = []
+    for result in results:
+        for chunk in result.hits:
+            key = (chunk.document_id, chunk.chunk_id)
+            if key not in seen:
+                seen.add(key)
+                distinct.append(chunk)
+    cited = {(ref.document_id, ref.chunk_id) for result in results for fact in result.facts for ref in fact.source_refs}
+    if not cited:
+        return distinct
+    return [chunk for chunk in distinct if (chunk.document_id, chunk.chunk_id) in cited]
+
+
 _JSON_FENCE_RE = re.compile(r'^\s*```[A-Za-z0-9_-]*[ \t]*\n?(.*?)\n?\s*```\s*$', re.DOTALL)
 _JSON_DECODER = json.JSONDecoder()
+_JSON_START_RE = re.compile(r'[\[{]')
 # How many `{`/`[` positions inside a prose reply are tried as JSON starts.
 _MAX_EMBEDDED_JSON_STARTS = 50
 
@@ -304,15 +323,11 @@ def _load_subagent_json(text: str) -> tuple[dict | None, bool]:
         if shaped is not None:
             return shaped, False
 
-    starts = 0
-    for index, char in enumerate(text):
-        if char not in '{[':
-            continue
-        starts += 1
+    for starts, match in enumerate(_JSON_START_RE.finditer(text), start=1):
         if starts > _MAX_EMBEDDED_JSON_STARTS:
             break
         try:
-            candidate, _end = _JSON_DECODER.raw_decode(text, index)
+            candidate, _end = _JSON_DECODER.raw_decode(text, match.start())
         except ValueError:
             continue
         shaped = _as_answer_shape(candidate)
@@ -344,8 +359,12 @@ def _parse_subagent_answer(
     if parsed is None:
         return ([Fact(text=text)] if text.strip() else []), []
 
+    # Only lists count: a string `facts`/`open_points` would otherwise be
+    # iterated character by character.
+    raw_facts = parsed.get('facts') if isinstance(parsed.get('facts'), list) else []
+    raw_open_points = parsed.get('open_points') if isinstance(parsed.get('open_points'), list) else []
     facts: list[Fact] = []
-    for raw_fact in parsed.get('facts') or []:
+    for raw_fact in raw_facts:
         if isinstance(raw_fact, str) and raw_fact.strip():
             # A fact given as a bare string: kept, it just cites nothing.
             facts.append(Fact(text=raw_fact))
@@ -369,10 +388,11 @@ def _parse_subagent_answer(
             refs.append(SourceRef(document_id=document_id, chunk_id=chunk_id, collection=hit.collection))
         facts.append(Fact(text=fact_text, source_refs=refs))
 
-    open_points = [point for point in (parsed.get('open_points') or []) if isinstance(point, str) and point]
-    if not facts and not open_points and not whole and text.strip():
-        # JSON cut out of a longer reply that yielded nothing usable: keep
-        # the reply as text rather than lose it.
+    open_points = [point for point in raw_open_points if isinstance(point, str) and point]
+    if raw_facts and not facts and not open_points and not whole:
+        # JSON cut out of a longer reply whose facts were all unusable:
+        # keep the reply as text rather than lose it. An answer that is
+        # empty on purpose (`facts: []`) stays empty.
         return [Fact(text=text)], []
     return facts, open_points
 
@@ -389,6 +409,11 @@ _MEMORY_LOOKUP_PROMPT = (
     ' For multi-part questions, call memory_lookup first to learn which knowledge spaces and documents cover '
     'the topic, then call search_knowledge per relevant document (document_id). Only search_knowledge results '
     'may be cited in source_refs; memory_lookup results are orientation data, never a source.'
+)
+
+_FORMAT_REMINDER_PROMPT = (
+    'Your reply was not the required JSON object. Reply again with ONLY the JSON object described above -- '
+    'every fact with the source_refs of the search results it is based on. No prose, no markdown fences.'
 )
 
 _BUDGET_EXHAUSTED_PROMPT = (
@@ -539,7 +564,10 @@ def run_subagent(
             )
 
         if not result.tool_calls:
-            facts, open_points = _parse_subagent_answer(result.content or '', hits_by_ref)
+            content = _reask_for_structured_answer(
+                llm_provider, messages, result.content or '', hits_by_ref, model, temperature, subagent.id,
+            )
+            facts, open_points = _parse_subagent_answer(content, hits_by_ref)
             return SubagentResult(
                 agent_id=subagent.id, status='complete', facts=facts, open_points=open_points,
                 hits=hits, searches_used=searches_used, memory_lookups=memory_lookups, searches=searches,
@@ -644,6 +672,39 @@ def run_subagent(
                 ]
             }
             messages.append({'role': 'tool', 'tool_call_id': call.id, 'content': json.dumps(tool_payload)})
+
+
+def _reask_for_structured_answer(
+    llm_provider: llm_service.LLMProvider,
+    messages: list[dict],
+    content: str,
+    hits_by_ref: dict[tuple[str, int], retrieval_client.RetrievedChunk],
+    model: str,
+    temperature: float | None,
+    agent_id: str,
+) -> str:
+    """The subagent's final reply, asked for ONCE more (no tools) when it
+    searched but did not answer with the required JSON object -- prose
+    loses every citation, so one extra call is worth it. Returns the retry
+    if that one is structured, otherwise the original reply (which
+    `_parse_subagent_answer` then keeps as a plain-text fact)."""
+    if not hits_by_ref or not content.strip() or _load_subagent_json(content)[0] is not None:
+        return content
+    try:
+        retry = llm_provider.chat_with_tools(
+            messages + [
+                {'role': 'assistant', 'content': content},
+                {'role': 'user', 'content': _FORMAT_REMINDER_PROMPT},
+            ],
+            tools=[], model=model, temperature=temperature,
+        )
+    except llm_service.LLMError as exc:
+        logger.warning('subagent %r format re-ask failed: %s', agent_id, exc)
+        return content
+    retry_content = retry.content or ''
+    if _load_subagent_json(retry_content)[0] is None:
+        return content
+    return retry_content
 
 
 def _memory_lookup(

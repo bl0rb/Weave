@@ -185,6 +185,69 @@ def test_multi_agent_turn_runs_both_subagents_and_returns_one_sourced_answer(tmp
     assert '[context:2]' in body['answer']
 
 
+def _two_agent_scripts(it_answer: str):
+    return [
+        [LLMToolResult(content=None, tool_calls=_RESEARCH_AREA_PLAN, model='fake-chat')],  # main bot: plan
+        [
+            LLMToolResult(content=None, tool_calls=[ToolCall(id='s1', name='search_knowledge', arguments={'query': 'kündigung'})], model='fake-chat'),
+            LLMToolResult(content=it_answer, tool_calls=None, model='fake-chat'),
+        ],
+        [
+            LLMToolResult(content=None, tool_calls=[ToolCall(id='s2', name='search_knowledge', arguments={'query': 'urlaub'})], model='fake-chat'),
+            LLMToolResult(content=_final_answer_json('Urlaubsanspruch 30 Tage.', 'doc-hr', 2), tool_calls=None, model='fake-chat'),
+        ],
+    ]
+
+
+def _two_collections(monkeypatch, it_results: list[dict]):
+    monkeypatch.setattr(
+        'app.services.retrieval_client.httpx.get',
+        _readable_collections(_collection('it-docs', 'IT Docs'), _collection('hr-docs', 'HR Docs')),
+    )
+    monkeypatch.setattr('app.services.retrieval_client.httpx.post', _search_by_collection({
+        'it-docs': _search_response(*it_results),
+        'hr-docs': _search_response(_chunk('doc-hr', 2, 'hr-docs', 'HR content')),
+    }))
+
+
+def test_multi_agent_stream_closing_trace_reports_retrieval_subagents_and_model(tmp_path, monkeypatch):
+    _write_bot(tmp_path, monkeypatch)
+    _script_get_llm_calls(monkeypatch, _two_agent_scripts(_final_answer_json('Kündigungsfrist 4 Wochen.', 'doc-it', 1)))
+    _two_collections(monkeypatch, [_chunk('doc-it', 1, 'it-docs', 'IT content'), _chunk('doc-it', 3, 'it-docs', 'IT extra')])
+
+    response = client.post('/internal/chat/stream', json=_BODY, headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    events = _parse_sse_events(response.text)
+    assert events[0]['trace']['agent'] is None
+    assert [event['type'] for event in events][-3:] == ['trace', 'sources', 'done']
+    closing = events[-3]['trace']
+    assert closing['model'] == 'fake-chat'
+    subagents = {item['id']: item for item in closing['agent']['subagents']}
+    assert subagents['it-support']['name'] == 'IT Support'
+    assert subagents['it-support']['queries'] == ['kündigung']
+    assert (subagents['it-support']['hits'], subagents['it-support']['cited_hits']) == (2, 1)
+    retrieval = closing['retrieval']
+    assert set(retrieval['collections']) == {'it-docs', 'hr-docs'}
+    assert (retrieval['candidates'], retrieval['used']) == (3, 2)
+    # One list across both searches: ranked by position, never twice #1.
+    assert [hit['rank'] for hit in retrieval['hits']] == [1, 2, 3]
+    # Only the cited hits are the answer's sources (doc-it chunk 3 is not).
+    sources = events[-2]['sources']
+    assert {(source['document_id'], source['chunk_id']) for source in sources} == {('doc-it', 1), ('doc-hr', 2)}
+
+
+def test_multi_agent_blocking_trace_reports_the_answer_model(tmp_path, monkeypatch):
+    _write_bot(tmp_path, monkeypatch)
+    _script_get_llm_calls(monkeypatch, _two_agent_scripts(_final_answer_json('Kündigungsfrist 4 Wochen.', 'doc-it', 1)))
+    _two_collections(monkeypatch, [_chunk('doc-it', 1, 'it-docs', 'IT content')])
+
+    body = client.post('/internal/chat', json=_BODY, headers=AUTH_HEADERS).json()
+
+    assert body['trace']['model'] == 'fake-chat'
+    assert body['trace']['retrieval']['used'] == 2
+
+
 def test_multi_agent_turn_guard_fires_when_no_subagent_finds_anything(tmp_path, monkeypatch):
     _write_bot(tmp_path, monkeypatch)
     empty_answer = LLMToolResult(content=json.dumps({'facts': [], 'open_points': []}), tool_calls=None, model='fake-chat')
