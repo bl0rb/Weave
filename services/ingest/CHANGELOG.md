@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.27] - 2026-11-18
+
 ### Added
 - **Helm chart `weave`, CNPG high availability and plugin backup** (`postgresql.mode: cnpg`):
   `postgresql.cnpg.affinity` and `topologySpreadConstraints` (instances in different zones only
