@@ -690,8 +690,8 @@ def list_portal_documents(
     elif effective_review_state == 'failed':
         query = query.where(or_(Job.status == JobStatus.FAILED, DocumentRelease.status == 'failed'))
     elif effective_review_state == 'in_chat':
-        # Released and delivered to the chat -- the Übersicht's `in_chat`.
-        query = query.where(DocumentRelease.status == 'sent')
+        # Searched in chat -- the Übersicht's `in_chat`.
+        query = query.where(*document_freshness.in_chat_conditions())
     elif effective_review_state == 'review_due':
         query = query.where(*document_freshness.review_due_conditions(now))
     query = _apply_quality_grade_filter(query, quality_grade_expr, quality_grade)
@@ -723,7 +723,7 @@ def list_portal_documents(
     elif effective_review_state == 'failed':
         count_query = count_query.where(or_(Job.status == JobStatus.FAILED, DocumentRelease.status == 'failed'))
     elif effective_review_state == 'in_chat':
-        count_query = count_query.where(DocumentRelease.status == 'sent')
+        count_query = count_query.where(*document_freshness.in_chat_conditions())
     elif effective_review_state == 'review_due':
         count_query = count_query.where(*document_freshness.review_due_conditions(now))
     count_query = _apply_quality_grade_filter(count_query, quality_grade_expr, quality_grade)
@@ -813,7 +813,7 @@ def portal_stats(db=Depends(get_db), user: User = Depends(get_current_user)) -> 
     space_rows = db.execute(
         visible(select(
             Collection.id, Collection.name, Collection.slug, func.count(Job.id),
-            count_if(DocumentRelease.status == 'sent'), count_if(review_expr), count_if(failed_expr),
+            count_if(and_(*document_freshness.in_chat_conditions())), count_if(review_expr), count_if(failed_expr),
         ).select_from(Job))
         .group_by(Collection.id, Collection.name, Collection.slug)
         .order_by(Collection.name)

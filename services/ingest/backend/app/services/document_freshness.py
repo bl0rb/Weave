@@ -224,6 +224,37 @@ def withdrawn_exists():
     return select(KnowledgeWithdrawal.job_id).where(KnowledgeWithdrawal.job_id == Job.id).exists()
 
 
+def superseded_by_release():
+    """Recursive CTE of every job with a released later version anywhere in
+    its chain (successors of successors too, released or not in between):
+    the SQL form of has_newer_release.
+    UNION (not UNION ALL) stops on a cyclic previous_job_id chain."""
+    superseded = (
+        select(Job.previous_job_id.label('job_id'))
+        .join(DocumentRelease, DocumentRelease.job_id == Job.id)
+        .where(Job.previous_job_id.is_not(None))
+        .cte('superseded_by_release', recursive=True)
+    )
+    older = aliased(Job)
+    return superseded.union(
+        select(older.previous_job_id)
+        .where(older.id == superseded.c.job_id, older.previous_job_id.is_not(None))
+    )
+
+
+def in_chat_conditions() -> list:
+    """WHERE parts for 'released version that is searched in chat': delivered
+    to Knowledge, not withdrawn and not replaced by a later released version
+    (Knowledge's 'superseded'). The query must already (outer) join
+    DocumentRelease on Job. Shared by the portal's `in_chat` and the admin
+    statistics."""
+    return [
+        DocumentRelease.status == 'sent',
+        Job.id.not_in(select(superseded_by_release().c.job_id)),
+        ~withdrawn_exists(),
+    ]
+
+
 def review_due_conditions(now: datetime) -> list:
     """WHERE parts for 'current released version due by `now`'; the query
     must already (outer) join DocumentRelease on Job (portal list)."""

@@ -46,7 +46,7 @@ from app.schemas.admin_statistics import (
     KnowledgeStats,
     StorageBackendStatistics,
 )
-from app.services.document_freshness import withdrawn_exists
+from app.services.document_freshness import in_chat_conditions
 from app.services.security import enforce_rate_limit
 
 router = APIRouter(
@@ -62,24 +62,6 @@ _KNOWLEDGE_UNAVAILABLE = 'Die Statistik des Wissensdienstes konnte nicht abgeruf
 
 def _count_if(condition):
     return func.coalesce(func.sum(case((condition, 1), else_=0)), 0)
-
-
-def _superseded_by_release():
-    """Recursive CTE of every job with a released later version anywhere in
-    its chain (successors of successors too, released or not in between):
-    the SQL form of has_newer_release in app/services/document_freshness.py.
-    UNION (not UNION ALL) stops on a cyclic previous_job_id chain."""
-    superseded = (
-        select(Job.previous_job_id.label('job_id'))
-        .join(DocumentRelease, DocumentRelease.job_id == Job.id)
-        .where(Job.previous_job_id.is_not(None))
-        .cte('superseded_by_release', recursive=True)
-    )
-    older = aliased(Job)
-    return superseded.union(
-        select(older.previous_job_id)
-        .where(older.id == superseded.c.job_id, older.previous_job_id.is_not(None))
-    )
 
 
 def _document_statistics(db: Session, now: datetime) -> AdminDocumentStatistics:
@@ -102,10 +84,8 @@ def _document_statistics(db: Session, now: datetime) -> AdminDocumentStatistics:
         .join(DocumentRelease, DocumentRelease.job_id == Job.id)
         .where(
             not_benchmark,
-            # Delivered to Knowledge -- the portal's `in_chat` rule.
-            DocumentRelease.status == 'sent',
-            Job.id.not_in(select(_superseded_by_release().c.job_id)),
-            ~withdrawn_exists(),
+            # The portal's `in_chat` rule.
+            *in_chat_conditions(),
         )
     ) or 0
     recent = db.scalar(

@@ -1343,6 +1343,34 @@ def test_portal_stats_counts_spaces_review_wait_and_weekly_releases(monkeypatch)
     assert login_as(outsider.username).get('/api/v1/portal/stats').json()['spaces'] == []
 
 
+def test_portal_in_chat_excludes_superseded_and_withdrawn_releases(monkeypatch):
+    """A released version replaced by a later released version (also across
+    an unreleased one in between) or withdrawn is no longer searched in chat:
+    neither the 'in_chat' list nor the per-space stats count it."""
+    _configure(monkeypatch)
+    suffix = uuid.uuid4().hex[:8]
+    user = create_test_user(username=f'portal-inchat-{suffix}', email=f'portal-inchat-{suffix}@example.com')
+    collection = _collection(user.id)
+    a1, a2 = _job(user.id, collection), _job(user.id, collection)
+    b1, b2, b3 = _job(user.id, collection), _job(user.id, collection), _job(user.id, collection)
+    withdrawn = _job(user.id, collection)
+    with _db() as db:
+        db.get(Job, a2.id).previous_job_id = a1.id
+        db.get(Job, b2.id).previous_job_id = b1.id
+        db.get(Job, b3.id).previous_job_id = b2.id
+        for job in (a1, a2, b1, b3, withdrawn):
+            db.add(DocumentRelease(job_id=job.id, owner_id=user.id, markdown_snapshot='# x', markdown_sha256='0' * 64, payload={}, status='sent'))
+        db.add(KnowledgeWithdrawal(job_id=withdrawn.id, status='sent'))
+        db.commit()
+    authed = login_as(user.username)
+
+    response = authed.get('/api/v1/portal/documents', params={'review_state': 'in_chat', 'collection_id': collection.id})
+    assert response.status_code == 200, response.text
+    assert {item['id'] for item in response.json()['items']} == {a2.id, b3.id}
+    assert response.json()['total'] == 2
+    assert authed.get('/api/v1/portal/stats').json()['spaces'][0]['in_chat'] == 2
+
+
 def test_auto_release_import_jobs_releases_clean_pages_only(monkeypatch):
     _configure(monkeypatch)
     monkeypatch.setattr('app.api.portal.publication_tasks.deliver_release.delay', lambda release_id: None)
