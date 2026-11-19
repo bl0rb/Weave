@@ -88,6 +88,9 @@ class Settings(BaseSettings):
     # app/services/search.py search()). Same results either way; False runs
     # both legs sequentially on the request session.
     search_parallel_legs: bool = True
+    # Longest wait for the parallel fulltext leg before the request runs it
+    # itself (a worker waiting for a pooled connection, see search()).
+    search_parallel_wait_seconds: float = Field(default=2.0, gt=0)
     # Knowledge cards (POST /api/v1/memory include_cards): cards whose cosine
     # similarity to the query is below this are not returned.
     memory_card_min_similarity: float = 0.3

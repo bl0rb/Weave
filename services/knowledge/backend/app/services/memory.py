@@ -685,24 +685,46 @@ def drop_cards(db: Session, slug: str) -> None:
     )
 
 
-def delete_document_cards(db: Session, document_id) -> None:
-    """Delete the cards whose primary source is `document_id` (a withdrawal,
-    in the caller's transaction; does not commit) and mark their other source
-    documents' cards as not built, so those get the fact back on the next
-    build instead of losing it until they change themselves."""
-    others: set[uuid.UUID] = set()
-    for ids in db.scalars(select(KnowledgeCard.source_document_ids).where(KnowledgeCard.document_id == document_id)):
-        for value in ids or []:
-            try:
-                others.add(uuid.UUID(str(value)))
-            except ValueError:
-                continue
-    others.discard(document_id)
-    db.execute(delete(KnowledgeCard).where(KnowledgeCard.document_id == document_id))
-    if others:
-        db.execute(
-            update(KnowledgeMemory).where(KnowledgeMemory.document_id.in_(others)).values(cards_sha256=None)
-        )
+def _parse_uuid(value) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(str(value))
+    except ValueError:
+        return None
+
+
+def _hand_over(card: KnowledgeCard, kept: list[str], snapshots: dict | None = None) -> bool:
+    """Keep `card` with its remaining sources `kept`: a source that is no
+    longer the primary hands the card to the next remaining source instead
+    of deleting it (the fact still stands there, and deleting it would make
+    that source rebuild -- two documents sharing facts would then rebuild
+    each other forever). Returns False when no source is left (delete)."""
+    new_primary = next((primary for primary in map(_parse_uuid, kept) if primary is not None), None)
+    if new_primary is None:
+        return False
+    if card.source_document_ids != kept:
+        card.source_document_ids = kept
+    if str(card.document_id) not in kept:
+        card.document_id = new_primary
+        card.source_sha256 = (snapshots or {}).get(new_primary)
+    return True
+
+
+def delete_document_cards(db: Session, document: Document) -> None:
+    """A withdrawal, in the caller's transaction (flushes, does not commit):
+    the document leaves every card of its collection; a card it was the
+    primary source of goes to its next remaining source, or is deleted when
+    there is none."""
+    gone = str(document.id)
+    scope = KnowledgeCard.document_id == document.id
+    if document.collection_slug:
+        scope = or_(scope, KnowledgeCard.collection_slug == document.collection_slug)
+    for card in db.scalars(select(KnowledgeCard).options(defer(KnowledgeCard.embedding)).where(scope)).all():
+        sources = [str(value) for value in card.source_document_ids or []]
+        if gone not in sources and card.document_id != document.id:
+            continue
+        if not _hand_over(card, [value for value in sources if value != gone]):
+            db.delete(card)
+    db.flush()
 
 
 def _build_cards(
@@ -730,26 +752,14 @@ def _build_cards(
     for document in forget_documents:
         existing[document.id].cards_sha256 = None
     forget = {str(document.id) for document in forget_documents}
-    orphaned: set[str] = set()
     for card in db.scalars(
         select(KnowledgeCard).options(defer(KnowledgeCard.embedding)).where(KnowledgeCard.collection_slug == slug)
     ).all():
-        if str(card.document_id) in forget or str(card.document_id) not in indexed:
-            orphaned.update(card.source_document_ids or [])
-            db.delete(card)
-            continue
+        # Changed or gone sources leave the card; a rebuilt document adds
+        # itself back below if it still states the same fact.
         kept = [i for i in card.source_document_ids or [] if i in indexed and i not in forget]
-        if kept != card.source_document_ids:
-            card.source_document_ids = kept
-    # The card's other sources lost it with its primary document: their cards
-    # are built again (next run), or the fact would be gone until they change.
-    requeue = [
-        d for d in documents
-        if str(d.id) in orphaned and str(d.id) not in forget and existing.get(d.id) is not None
-        and existing[d.id].cards_sha256 is not None
-    ]
-    for document in requeue:
-        existing[document.id].cards_sha256 = None
+        if not _hand_over(card, kept, snapshots):
+            db.delete(card)
     db.commit()
 
     calls = failures = 0
@@ -791,7 +801,7 @@ def _build_cards(
             logger.warning('knowledge memory: cards for document %s failed', document.id, exc_info=True)
         finally:
             db.expire(document, ['markdown_body'])
-    return calls, failures, llm is not None and (len(needing) > len(batch) or bool(requeue)), error
+    return calls, failures, llm is not None and len(needing) > len(batch), error
 
 
 # --- Admin: metrics and manual rebuild (via Weave-Ingest) ----------------------

@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     retrieval_base_url: str = 'http://localhost:8002'
     retrieval_api_token: str = ''
     retrieval_timeout_seconds: float = 10.0
+    # Timeout of the combined knowledge-memory call (ADR-0009 §10d: ranking,
+    # cards, focused search and possibly the plain fallback search in one
+    # request, so up to about three searches). None = twice
+    # retrieval_timeout_seconds. A timeout there is followed by a plain
+    # search, so a too-tight value costs the user both waits.
+    retrieval_memory_timeout_seconds: float | None = None
     # Runtime-wide fallback for `bot.guard.min_score` (app/schemas/bot.py):
     # the minimum rerank score a retrieved chunk needs to reach the LLM,
     # used for every bot that leaves its own `guard.min_score` unset. None

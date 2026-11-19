@@ -493,9 +493,9 @@ def test_withdrawal_removes_the_cards(_llm_mode, monkeypatch):
         assert _cards(db) == []
 
 
-def test_a_card_whose_primary_changes_is_rebuilt_for_its_other_sources(_llm_mode):
-    """SPEC drops the card with its primary document; the other sources must
-    get it back instead of losing the fact until they change themselves."""
+def test_a_card_whose_primary_changes_moves_to_its_other_source_without_rebuilds(_llm_mode):
+    """The card goes to its remaining source instead of being deleted, so no
+    other document has to rebuild its cards."""
     model = _model(lambda text: [_card(answer='Die Bereichsleitung.')] if 'Bereichsleitung' in text else [_card()])
     with TestingSessionLocal() as db, patch('app.services.memory.httpx.get', return_value=_provider()), \
             patch('app.services.memory.httpx.post', side_effect=model):
@@ -505,25 +505,47 @@ def test_a_card_whose_primary_changes_is_rebuilt_for_its_other_sources(_llm_mode
         memory.touch(db, SLUG)
         memory.build_collection_memory(db, SLUG)
         [card] = _cards(db)
-        assert card.source_document_ids == [str(first.id), str(second.id)]
+        assert card.document_id == first.id and card.source_document_ids == [str(first.id), str(second.id)]
 
         first.frontmatter = {'_weave_markdown_sha256': 'c' * 64}
         first.markdown_body = '# Urlaub\n\nUrlaub genehmigt die Bereichsleitung.\n'
         db.commit()
         memory.touch(db, SLUG)
+        calls_before = len(model.card_calls)
         memory.build_collection_memory(db, SLUG)
-        assert [c.source_document_ids for c in _cards(db)] == [[str(first.id)]]
-        state = _rows(db, 'collection')[0]
-        assert state.dirty_since is not None  # the second document continues on the next tick
-        assert {r.document_id: r.cards_sha256 for r in _rows(db, 'document')}[second.id] is None
+        assert len(model.card_calls) == calls_before + 1  # only the changed document
+        assert sorted((c.answer, c.document_id, c.source_document_ids) for c in _cards(db)) == sorted([
+            ('Die Bereichsleitung.', first.id, [str(first.id)]),
+            ('Die Teamleitung.', second.id, [str(second.id)]),
+        ])
+        assert _rows(db, 'collection')[0].dirty_since is None
+        assert {r.document_id: r.cards_sha256 for r in _rows(db, 'document')}[second.id] == 'b' * 64
 
+
+def test_documents_sharing_facts_do_not_rebuild_each_other(_llm_mode):
+    """Two documents stating the same facts: a change to one must not send
+    the card builds back and forth between them."""
+    facts = [_card(), _card(question='Wer bucht Reisen?', answer='Das Reisebüro.')]
+    model = _model(lambda text: list(reversed(facts)) if 'b.pdf' in text else facts)
+    with TestingSessionLocal() as db, patch('app.services.memory.httpx.get', return_value=_provider()), \
+            patch('app.services.memory.httpx.post', side_effect=model):
+        _space(db)
+        first = _doc(db, name='a.pdf')
+        _doc(db, name='b.pdf')
+        memory.touch(db, SLUG)
         memory.build_collection_memory(db, SLUG)
-        assert sorted((c.answer, c.source_document_ids) for c in _cards(db)) == [
-            ('Die Bereichsleitung.', [str(first.id)]), ('Die Teamleitung.', [str(second.id)]),
-        ]
+        first.frontmatter = {'_weave_markdown_sha256': 'c' * 64}
+        db.commit()
+        memory.touch(db, SLUG)
+        memory.build_collection_memory(db, SLUG)
+        calls = len(model.card_calls)
+        assert _rows(db, 'collection')[0].dirty_since is None
+        memory.build_collection_memory(db, SLUG)
+        assert len(model.card_calls) == calls and len(_cards(db)) == 2
+        assert all(len(c.source_document_ids) == 2 for c in _cards(db))
 
 
-def test_withdrawing_a_cards_primary_rebuilds_it_for_its_other_sources(_llm_mode, monkeypatch):
+def test_withdrawing_a_cards_primary_hands_it_to_its_other_source(_llm_mode, monkeypatch):
     monkeypatch.setattr(settings, 'weave_ingest_webhook_secret', 'memory-test-secret')
     with TestingSessionLocal() as db, patch('app.services.memory.httpx.get', return_value=_provider()), \
             patch('app.services.memory.httpx.post', side_effect=_model([_card()])):
@@ -535,13 +557,9 @@ def test_withdrawing_a_cards_primary_rebuilds_it_for_its_other_sources(_llm_mode
         job_id, second_id = first.source_job_id, second.id
     assert _post({'event': 'document.withdrawn', 'job_id': job_id}).json()['status'] == 'withdrawn'
     with TestingSessionLocal() as db:
-        assert _cards(db) == []
-        assert [r.cards_sha256 for r in _rows(db, 'document')] == [None]
-        with patch('app.services.memory.httpx.get', return_value=_provider()), \
-                patch('app.services.memory.httpx.post', side_effect=_model([_card()])):
-            memory.build_collection_memory(db, SLUG)
         [card] = _cards(db)
         assert card.document_id == second_id and card.source_document_ids == [str(second_id)]
+        assert [r.cards_sha256 for r in _rows(db, 'document')] == ['b' * 64]
 
 
 def test_cards_share_the_per_run_document_budget(_llm_mode, monkeypatch):
@@ -579,6 +597,34 @@ def test_reindex_re_embeds_the_cards():
         [card] = _cards(db)
         assert card.embedding_model == 'neu' and card.embedding is not None
 
+
+
+def test_a_card_embedding_failure_does_not_fail_the_reindex():
+    from app.cli import _reindex_one
+    from app.services.embeddings import FakeEmbeddingProvider
+
+    class _CardsFail(FakeEmbeddingProvider):
+        def embed_batch(self, texts):
+            if any(text.startswith('F?') for text in texts):
+                raise RuntimeError('provider down')
+            return super().embed_batch(texts)
+
+    with TestingSessionLocal() as db:
+        _space(db)
+        document = _doc(db)
+        memory.touch(db, SLUG)
+        db.add(KnowledgeMemory(kind='document', collection_slug=SLUG, document_id=document.id, cards_sha256='b' * 64))
+        db.add(KnowledgeCard(
+            collection_slug=SLUG, document_id=document.id, source_document_ids=[str(document.id)],
+            card_sha256='d' * 64, question='F?', answer='A.', keywords=[], embedding_model='alt',
+        ))
+        state = _rows(db, 'collection')[0]
+        state.dirty_since = None
+        db.commit()
+        _reindex_one(db, document, _CardsFail(model_name='neu'))  # does not raise
+        db.commit()
+        assert [r.cards_sha256 for r in _rows(db, 'document')] == [None]
+        assert _rows(db, 'collection')[0].dirty_since is not None
 
 # --- admin: central settings, metrics, rebuild ---------------------------------
 

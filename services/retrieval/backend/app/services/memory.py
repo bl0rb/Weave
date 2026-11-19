@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 import re
 
-from sqlalchemy import Float, bindparam, select
+from sqlalchemy import Float, bindparam, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -311,15 +311,40 @@ def _chunk_search(
     return SearchResponse(query=request.query, results=results, trace=trace), None
 
 
+# pgvector applies the permission/space filters after the HNSW scan: with
+# the default scan only the ~40 globally nearest cards are considered, so a
+# caller of a small space could get none. Iterative scans (pgvector >= 0.8)
+# keep scanning until enough rows pass the filters; older versions only get
+# a wider ef_search. Each is tried on its own, an unknown setting is skipped.
+_CARD_SCAN_SETTINGS = ('SET LOCAL hnsw.iterative_scan = relaxed_order', 'SET LOCAL hnsw.ef_search = 200')
+
+
+def _widen_card_scan(db: Session) -> None:
+    for statement in _CARD_SCAN_SETTINGS:
+        try:
+            with db.begin_nested():
+                db.execute(text(statement))
+        except SQLAlchemyError:
+            logger.debug('memory: %r not supported here', statement)
+
+
 def _safe_cards(db: Session, request: MemoryRequest, query_vec: list[float]) -> list[MemoryCard]:
     """Cards are an optional orientation layer: a database without
-    Knowledge migration 0008 (rollout order) or a failing card query must
-    not cost the request its summaries and chunk search. The savepoint
-    keeps the Postgres transaction usable; the failure serves no cards."""
+    Knowledge migration 0008 (rollout order), a failing card query or a bad
+    card row must not cost the request its summaries and chunk search; the
+    failure serves no cards. Everything runs in a savepoint that is rolled
+    back afterwards (the card search only reads): that keeps the Postgres
+    transaction usable after an error and reverts the scan settings, so the
+    chunk searches that follow run unchanged."""
     try:
-        with db.begin_nested():
+        savepoint = db.begin_nested()
+        try:
+            if not _is_sqlite():
+                _widen_card_scan(db)
             return _cards(db, request, query_vec)
-    except SQLAlchemyError:
+        finally:
+            savepoint.rollback()
+    except Exception:  # noqa: BLE001 - see docstring
         logger.warning('memory: knowledge card search failed, serving no cards', exc_info=True)
         return []
 

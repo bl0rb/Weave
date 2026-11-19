@@ -821,6 +821,21 @@ def _fulltext_leg_own_session(bind: Engine, *args):
         return _fulltext_leg(session, *args)
 
 
+def _pool_has_headroom(bind: Engine) -> bool:
+    """Whether the engine's pool can hand the worker a second connection
+    without waiting. The request thread keeps its own connection while it
+    waits for the worker, so with an exhausted pool every request would wait
+    for a worker that waits for a connection (until the pool timeout).
+    Checked before submitting; racy by nature, hence also the bounded wait
+    in search()."""
+    pool = bind.pool
+    try:
+        limit = pool.size() + pool._max_overflow  # QueuePool
+        return pool._max_overflow < 0 or pool.checkedout() < limit
+    except (AttributeError, TypeError):
+        return True  # pools without a size (StaticPool, NullPool) never queue
+
+
 def search(
     db: Session, request: SearchRequest, *, refresh: bool = True, query_vec: list[float] | None = None,
 ) -> tuple[list[SearchResult], SearchTrace]:
@@ -860,7 +875,7 @@ def search(
     fulltext_args = (request.query, filters, allowed_teams, allowed_collections, top_k)
     bind = db.get_bind()
     fulltext_future = None
-    if settings.search_parallel_legs and isinstance(bind, Engine):
+    if settings.search_parallel_legs and isinstance(bind, Engine) and _pool_has_headroom(bind):
         fulltext_future = _executor.submit(_fulltext_leg_own_session, bind, *fulltext_args)
 
     start = time.perf_counter()
@@ -877,11 +892,14 @@ def search(
     fulltext = None
     # cancel() succeeds only for a job no worker has started yet (pool busy):
     # running it here is then never slower than waiting for a worker.
+    # The wait is bounded: a worker stuck waiting for a pooled connection
+    # must not hold the request up until the pool timeout.
     if fulltext_future is not None and not fulltext_future.cancel():
         try:
-            fulltext = fulltext_future.result()
-        except Exception:  # noqa: BLE001 - the request session can still answer
-            logger.warning('parallel fulltext leg failed, running it on the request session', exc_info=True)
+            fulltext = fulltext_future.result(timeout=settings.search_parallel_wait_seconds)
+        except Exception:  # noqa: BLE001 - incl. TimeoutError; the request session can still answer
+            logger.warning('parallel fulltext leg failed or timed out, running it on the request session',
+                           exc_info=True)
     if fulltext is None:
         fulltext = _fulltext_leg(db, *fulltext_args)
     fulltext_results, timings_ms['fulltext_search'] = fulltext

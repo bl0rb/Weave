@@ -381,3 +381,47 @@ def test_a_failing_card_search_serves_no_cards_but_keeps_the_rest(embeddings, mo
     body = response.json()
     assert body['cards'] == [] and len(body['documents']) == 1
     assert [r['text'] for r in body['search']['results']] == [_SPESEN]
+
+
+
+def test_a_bad_card_row_serves_no_cards_but_keeps_the_rest(embeddings, monkeypatch):
+    """Not only SQL errors: e.g. a malformed embedding breaking the scoring."""
+    with TestingSessionLocal() as db:
+        db.add(make_collection(slug='personal', name='Personal', memory_cards_enabled=True))
+        _summarized(db, 'personal', 'spesen.pdf', 'Spesen', chunk_text=_SPESEN, embedded=True)
+        db.commit()
+
+    def _broken(db, request, query_vec):
+        raise TypeError('embedding is not a list of floats')
+
+    monkeypatch.setattr(memory_service, '_card_candidates', _broken)
+    response = _memory(query=_SPESEN, allowed_collections=['personal'], include_cards=True, include_chunks=True)
+    assert response.status_code == 200, response.text
+    assert response.json()['cards'] == [] and len(response.json()['search']['results']) == 1
+
+
+def test_postgres_card_search_widens_the_hnsw_scan_inside_its_savepoint(monkeypatch):
+    statements = []
+
+    class _Savepoint:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def rollback(self):
+            statements.append('ROLLBACK SAVEPOINT')
+
+    class _Db:
+        def begin_nested(self):
+            return _Savepoint()
+
+        def execute(self, statement):
+            statements.append(str(statement))
+
+    monkeypatch.setattr(memory_service, '_is_sqlite', lambda: False)
+    monkeypatch.setattr(memory_service, '_cards', lambda db, request, vec: ['card'])
+    request = memory_service.MemoryRequest(query='x', allowed_collections=['a'], include_cards=True)
+    assert memory_service._safe_cards(_Db(), request, [0.0]) == ['card']
+    assert statements == [*memory_service._CARD_SCAN_SETTINGS, 'ROLLBACK SAVEPOINT']

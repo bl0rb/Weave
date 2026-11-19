@@ -446,8 +446,11 @@ def memory(
             payload['rerank'] = False
     if cards > 0:
         payload.update(include_cards=True, card_limit=cards)
+    timeout = settings.retrieval_timeout_seconds
+    if chunks is not None:
+        timeout = settings.retrieval_memory_timeout_seconds or 2 * settings.retrieval_timeout_seconds
     try:
-        response = httpx.post(url, headers=headers, json=payload, timeout=settings.retrieval_timeout_seconds)
+        response = httpx.post(url, headers=headers, json=payload, timeout=timeout)
     except httpx.HTTPError as exc:
         raise RetrievalUnavailable(f'Weave-Retrieval unreachable at {url!r}: {exc}') from exc
     if response.status_code >= 500:
