@@ -1012,6 +1012,9 @@ class Collection(Base):
     # A release sets the version's Job.review_due_at to now + interval unless
     # its frontmatter names `review_due` (app/services/document_freshness.py).
     review_interval_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Per-space switch for Knowledge's question/answer cards ("Wissenskarten",
+    # ADR 0009); default off. Carried to Knowledge via the registry sync.
+    memory_cards_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0', nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)

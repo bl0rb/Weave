@@ -144,6 +144,23 @@ it('sends a newly set review interval as a number', async () => {
   expect(JSON.parse(mutation?.[1]?.body as string)).toEqual({ name: 'Servicewissen', description: 'Anleitungen für den Service.', responsible_team_id: 't-service', review_interval_days: 180 });
 });
 
+it('toggles the knowledge cards, sending the flag only when changed', async () => {
+  json.mockImplementation(async (path, init) => init?.method === 'PATCH'
+    ? area
+    : path === '/api/v1/directory/teams' ? { items: [] } : { items: [{ ...area, memory_cards_enabled: true }] });
+  render(<KnowledgeSpaces />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Servicewissen umbenennen' }));
+  const cards = screen.getByRole('checkbox', { name: 'Wissenskarten' }) as HTMLInputElement;
+  expect(cards.checked).toBe(true);
+  expect(screen.getByText(/zu kurzen Frage-Antwort-Karten/)).toBeTruthy();
+  fireEvent.click(cards);
+  expect(cards.checked).toBe(false);
+  fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
+  await waitFor(() => expect(json.mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(true));
+  const mutation = json.mock.calls.find(([, init]) => init?.method === 'PATCH');
+  expect(JSON.parse(mutation?.[1]?.body as string)).toEqual({ name: 'Servicewissen', description: 'Anleitungen für den Service.', responsible_team_id: 't-service', memory_cards_enabled: false });
+});
+
 it('requires a confirmation before deleting an empty knowledge space', async () => {
   render(<KnowledgeSpaces />);
   fireEvent.click(await screen.findByRole('button', { name: 'Servicewissen löschen' }));

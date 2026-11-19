@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     Enum,
     ForeignKey,
@@ -15,6 +16,7 @@ from sqlalchemy import (
     TypeDecorator,
     Uuid,
     UniqueConstraint,
+    false,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -114,6 +116,11 @@ class Collection(Base):
     # `read_teams`, same "additive ACL, only meaningful when restricted"
     # semantics, never interpreted here.
     read_users: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    # Per-space switch for knowledge cards (KnowledgeCard), mirrored from the
+    # registry; a registry entry without it means OFF (fail closed).
+    memory_cards_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
     # Set to "now" on every upsert by sync_collections(), regardless of
     # whether any other field actually changed -- lets an operator (or a
     # future staleness check) tell a collection that is still being synced
@@ -352,3 +359,39 @@ class KnowledgeMemory(Base):
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     llm_calls: Mapped[int] = mapped_column(Integer, default=0, server_default='0', nullable=False)
     llm_failures: Mapped[int] = mapped_column(Integer, default=0, server_default='0', nullable=False)
+    # Document rows only: the snapshot sha the document's KnowledgeCards were
+    # last built for; NULL = not built (or invalidated).
+    cards_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class KnowledgeCard(Base):
+    """An FAQ/fact card (question, answer, keywords) derived by the LLM
+    from an indexed document, built by app/services/memory.py only for spaces
+    whose `Collection.memory_cards_enabled` is on. Read-only for
+    Weave-Retrieval through a JOIN on `documents` (`document_id`, the primary
+    source) with the chunk search's filter; `source_document_ids` lists every
+    document the same card was derived from (dedup by `card_sha256`)."""
+
+    __tablename__ = 'knowledge_cards'
+    __table_args__ = (
+        UniqueConstraint('collection_slug', 'card_sha256', name='uq_knowledge_cards_collection_card'),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    collection_slug: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey('documents.id', ondelete='CASCADE'), nullable=False, index=True
+    )
+    source_document_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    source_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    card_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    answer: Mapped[str] = mapped_column(Text, nullable=False)
+    keywords: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    embedding: Mapped[list[float] | None] = mapped_column(
+        VectorType(settings.embedding_dimension), nullable=True
+    )
+    embedding_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    generator: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    built_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

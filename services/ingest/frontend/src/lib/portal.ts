@@ -23,6 +23,8 @@ export type KnowledgeSpace = {
   created_by: { id: string; username: string } | null; responsible_team: TeamRef | null;
   /** Periodic content review in days; null = no periodic review. Only owners and admins may change it. */
   review_interval_days?: number | null;
+  /** Knowledge question/answer cards ("Wissenskarten") for this space; off by default. Only owners and admins may change it. */
+  memory_cards_enabled?: boolean;
 };
 export type Publication = { id: string; created_at: string; status: 'pending' | 'sent' | 'failed'; error_message: string | null; released_by: string | null };
 export type PortalSource = {

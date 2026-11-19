@@ -45,9 +45,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.db import SessionLocal
-from app.models.models import Chunk, Document, DocumentStatus
+from app.models.models import Chunk, Document, DocumentStatus, KnowledgeCard
 from app.services.collection_sync import CollectionSyncError, fetch_job_collections
-from app.services import vector_index
+from app.services import memory, vector_index
 from app.services.embeddings import EmbeddingProvider, embed_chunks, get_provider
 
 logger = logging.getLogger(__name__)
@@ -80,6 +80,11 @@ def _reindex_one(db: Session, document: Document, provider: EmbeddingProvider) -
         ).scalars().all()
     )
     embed_chunks(db, document, chunks, provider)
+    # Knowledge cards share the chunks' embedding model (Retrieval filters on it).
+    memory.embed_cards(
+        list(db.execute(select(KnowledgeCard).where(KnowledgeCard.document_id == document.id)).scalars().all()),
+        provider,
+    )
 
 
 def reindex(

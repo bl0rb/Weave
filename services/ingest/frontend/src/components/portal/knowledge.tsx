@@ -137,6 +137,9 @@ function KnowledgeSpaceEditor({ space, onClose, onSaved }: { space: KnowledgeSpa
   // Periodic review in days; '' = none. Only sent when changed (explicit null switches it off).
   const initialInterval = space.review_interval_days ? String(space.review_interval_days) : '';
   const [reviewInterval, setReviewInterval] = useState(initialInterval);
+  // Knowledge cards switch; only sent when changed.
+  const initialMemoryCards = Boolean(space.memory_cards_enabled);
+  const [memoryCards, setMemoryCards] = useState(initialMemoryCards);
   const [teams, setTeams] = useState<DirectoryTeam[]>(space.responsible_team ? [{ ...space.responsible_team, member_count: 0 }] : []);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -156,6 +159,7 @@ function KnowledgeSpaceEditor({ space, onClose, onSaved }: { space: KnowledgeSpa
         ...jsonBody({
           name: name.trim(), description: purpose.trim(), responsible_team_id: responsibleTeam,
           ...(reviewInterval.trim() !== initialInterval ? { review_interval_days: intervalValue } : {}),
+          ...(memoryCards !== initialMemoryCards ? { memory_cards_enabled: memoryCards } : {}),
         }), method: 'PATCH',
       });
       await onSaved();
@@ -172,6 +176,8 @@ function KnowledgeSpaceEditor({ space, onClose, onSaved }: { space: KnowledgeSpa
       </select></label>
       <label className="block text-sm font-medium text-slate-700">{t('portal.spaces.reviewIntervalLabel')}<input type="number" inputMode="numeric" min={1} max={3650} step={1} className={inputClass} value={reviewInterval} placeholder={t('portal.spaces.reviewIntervalPlaceholder')} aria-describedby="space-review-interval-hint" aria-invalid={!intervalValid || undefined} onChange={event => setReviewInterval(event.target.value)} /></label>
       <p id="space-review-interval-hint" className={`-mt-2 text-xs ${intervalValid ? 'text-[var(--muted)]' : 'text-[var(--err)]'}`}>{intervalValid ? t('portal.spaces.reviewIntervalHint') : t('portal.spaces.reviewIntervalInvalid')}</p>
+      <label className="flex items-start gap-2 text-sm font-medium text-slate-700"><input type="checkbox" className="mt-1" checked={memoryCards} aria-describedby="space-memory-cards-hint" onChange={event => setMemoryCards(event.target.checked)} />{t('portal.spaces.memoryCardsLabel')}</label>
+      <p id="space-memory-cards-hint" className="-mt-2 text-xs text-[var(--muted)]">{t('portal.spaces.memoryCardsHint')}</p>
       <div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" onClick={onClose} disabled={saving}>{t('common.cancel')}</Button><Button type="submit" disabled={saving || !name.trim() || !purpose.trim() || !intervalValid}>{saving ? t('portal.access.dialog.saving') : t('common.save')}</Button></div>
     </form>
   </Modal>;

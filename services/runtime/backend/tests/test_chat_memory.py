@@ -54,6 +54,12 @@ def _retrieval(monkeypatch, memory_response):
     return calls
 
 
+def _memory_with_search(search: dict, focus_documents=None, cards=None, memory=MEMORY) -> dict:
+    """A Weave-Retrieval that runs the chunk search in the memory call
+    (`include_chunks`) and returns it embedded."""
+    return {**memory, 'search': search, 'focus_documents': focus_documents, 'cards': cards or []}
+
+
 # --- router -------------------------------------------------------------------
 
 
@@ -110,6 +116,8 @@ def test_overview_turn_answers_from_memory_with_sources(memory_on, monkeypatch):
     payload = calls[0][1]
     assert payload['allowed_collections'] == ['vertraege', '__none__']  # the same scope a knowledge turn gets
     assert payload['query'] == OVERVIEW_QUESTION
+    # The overview call asks for no chunks/cards: the default body is unchanged.
+    assert set(payload) == {'query', 'allowed_collections', 'allowed_teams', 'collection', 'limit'}
 
     assert '[context:2]' in body['answer']
     overview, document = body['sources']
@@ -186,18 +194,21 @@ KNOWLEDGE_BODY = {**BODY, 'message': KNOWLEDGE_QUESTION}
 
 
 def test_knowledge_turn_focuses_the_chunk_search_on_the_memory_documents(memory_on, monkeypatch):
-    calls = _retrieval(monkeypatch, _FakeResponse(200, MEMORY))
+    search = {**_search_response(_chunk()), 'trace': {'vector_candidates': 3, 'returned': 1}}
+    calls = _retrieval(monkeypatch, _FakeResponse(200, _memory_with_search(search, ['doc-1'])))
     body = client.post('/internal/chat', json=KNOWLEDGE_BODY, headers=AUTH_HEADERS).json()
 
-    assert [name for name, _ in calls] == ['memory', 'search']
-    memory_payload, search_payload = calls[0][1], calls[1][1]
-    # Same question, same scope and team axis for both calls -- the memory
-    # is read with exactly the chunk search's permission inputs.
-    assert memory_payload['query'] == search_payload['query'] == KNOWLEDGE_QUESTION
-    assert memory_payload['allowed_collections'] == search_payload['allowed_collections'] == ['vertraege', '__none__']
-    assert memory_payload['allowed_teams'] == search_payload['allowed_teams']
+    # One call: the memory runs the (focused) chunk search itself.
+    assert [name for name, _ in calls] == ['memory']
+    memory_payload = calls[0][1]
+    bot = _bot_without_filters('legal-support')
+    assert memory_payload['query'] == KNOWLEDGE_QUESTION
+    assert memory_payload['allowed_collections'] == ['vertraege', '__none__']
     assert memory_payload['limit'] == 5
-    assert search_payload['filters'] == {'document_ids': ['doc-1']}
+    assert memory_payload['include_chunks'] is True and memory_payload['include_cards'] is True
+    assert memory_payload['card_limit'] == 5
+    assert (memory_payload['top_k'], memory_payload['final_k']) == (bot.retrieval.top_k, bot.retrieval.final_k)
+    assert 'rerank' not in memory_payload  # only sent when off, like search()
 
     trace = body['trace']
     assert trace['intent'] == 'knowledge' and trace['guard'] is None
@@ -209,7 +220,22 @@ def test_knowledge_turn_focuses_the_chunk_search_on_the_memory_documents(memory_
     assert '[context:1]' in body['answer']
 
 
+def test_memory_answering_with_the_unfocused_search_needs_no_second_call(memory_on, monkeypatch):
+    search = {**_search_response(_chunk(document_id='doc-9')), 'trace': {'vector_candidates': 9, 'returned': 1}}
+    calls = _retrieval(monkeypatch, _FakeResponse(200, _memory_with_search(search, None)))
+    body = client.post('/internal/chat', json=KNOWLEDGE_BODY, headers=AUTH_HEADERS).json()
+    assert [name for name, _ in calls] == ['memory']
+    assert body['trace']['retrieval']['focus_documents'] is None
+    assert body['sources'][0]['document_id'] == 'doc-9' and body['trace']['guard'] is None
+    # The trace describes the search the memory actually used.
+    assert [hit['document_id'] for hit in body['trace']['retrieval']['hits']] == ['doc-9']
+    assert body['trace']['retrieval']['search']['vector_candidates'] == 9
+    assert 'memory_ms' in body['trace']['timings_ms']
+
+
 def test_focused_search_without_hits_retries_unfocused(memory_on, monkeypatch):
+    """An older Weave-Retrieval ignores `include_chunks` (no `search` key):
+    the runtime searches itself, focused first, then unfocused."""
     calls = []
 
     def _post(url, headers=None, json=None, timeout=None):
@@ -236,6 +262,8 @@ def test_focused_search_without_hits_retries_unfocused(memory_on, monkeypatch):
     _FakeResponse(200, {'collections': [], 'documents': []}),
     _FakeResponse(404, {'detail': 'Not Found'}),
     _FakeResponse(503, {'detail': 'down'}),
+    # A malformed embedded search is treated like an outage.
+    _FakeResponse(200, {'collections': [], 'documents': [], 'search': {'results': 'bad'}, 'focus_documents': None}),
 ])
 def test_empty_or_unavailable_memory_searches_exactly_as_before(memory_on, monkeypatch, memory_response):
     calls = _retrieval(monkeypatch, memory_response)
@@ -243,6 +271,38 @@ def test_empty_or_unavailable_memory_searches_exactly_as_before(memory_on, monke
     assert [name for name, _ in calls] == ['memory', 'search']
     assert calls[1][1]['filters'] is None
     assert body['trace']['retrieval']['focus_documents'] is None and body['trace']['guard'] is None
+
+
+def test_guard_stays_when_the_memory_search_finds_nothing(memory_on, monkeypatch):
+    calls = _retrieval(monkeypatch, _FakeResponse(200, _memory_with_search(_search_response(), None)))
+    body = client.post('/internal/chat', json=KNOWLEDGE_BODY, headers=AUTH_HEADERS).json()
+    assert [name for name, _ in calls] == ['memory']
+    assert body['trace']['guard'] == {'triggered': True, 'reason': 'no_context', 'topic': None}
+    assert body['sources'] == []
+
+
+def test_knowledge_cards_are_shown_in_the_orientation_block(monkeypatch):
+    from app.services import chat as chat_service
+
+    cards = [{
+        'card_id': 1, 'collection': 'vertraege', 'question': 'Wie lang ist die Kündigungsfrist?',
+        'answer': 'Drei Monate zum Quartalsende.', 'keywords': [], 'document_id': 'doc-1',
+        'source_document_ids': ['doc-1'], 'score': 0.8,
+    }]
+    _retrieval(monkeypatch, _FakeResponse(200, _memory_with_search(_search_response(_chunk()), ['doc-1'], cards)))
+    bot = _bot_without_filters('legal-support')
+    user = chat_service.ChatUser(id='u-1', team='legal')
+    focus, orientation, hits = chat_service._memory_focus(bot, user, 'q', ['vertraege'], chunks={'top_k': None})
+    assert focus == ['doc-1'] and [hit.document_id for hit in hits] == ['doc-1']
+    assert '- Q: Wie lang ist die Kündigungsfrist? A: Drei Monate zum Quartalsende.' in orientation
+    assert 'not citable' in orientation.split('Knowledge cards')[1]
+
+    # Cards alone (no document summaries) still make an orientation block.
+    _retrieval(monkeypatch, _FakeResponse(200, _memory_with_search(
+        _search_response(_chunk()), ['doc-1'], cards, memory={'collections': [], 'documents': []},
+    )))
+    focus, orientation, _ = chat_service._memory_focus(bot, user, 'q', ['vertraege'], chunks={'top_k': None})
+    assert focus == ['doc-1'] and 'Q: Wie lang ist die Kündigungsfrist?' in orientation
 
 
 def test_guard_stays_when_the_focused_and_unfocused_search_find_nothing(memory_on, monkeypatch):
@@ -330,6 +390,17 @@ def test_a_bot_without_rerank_asks_retrieval_to_skip_it(memory_on, monkeypatch):
     client.post('/internal/chat', json={**BODY, 'message': 'Wie lang ist die Kündigungsfrist?'}, headers=AUTH_HEADERS)
     searches = [payload for name, payload in calls if name == 'search']
     assert searches and all(payload['rerank'] is False for payload in searches)
+
+
+def test_a_bot_without_rerank_passes_it_to_the_memory_search(memory_on, monkeypatch):
+    def _bot_without_rerank(bot_id):
+        bot = _bot_without_filters(bot_id)
+        return bot.model_copy(update={'retrieval': bot.retrieval.model_copy(update={'rerank': False})})
+
+    monkeypatch.setattr('app.services.chat.load_bot', _bot_without_rerank)
+    calls = _retrieval(monkeypatch, _FakeResponse(200, _memory_with_search(_search_response(_chunk()), ['doc-1'])))
+    client.post('/internal/chat', json=KNOWLEDGE_BODY, headers=AUTH_HEADERS)
+    assert [name for name, _ in calls] == ['memory'] and calls[0][1]['rerank'] is False
 
 
 def test_a_bot_router_mode_overrides_the_runtime_wide_one(memory_on, monkeypatch):

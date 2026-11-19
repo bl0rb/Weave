@@ -1552,5 +1552,7 @@ export const portal: Record<keyof typeof de, string> = {
   'spaces.reviewIntervalInvalid': 'Enter a whole number between 1 and 3650, or leave the field empty.',
   'spaces.reviewIntervalLine': 'Documents become due for review every day.|Documents become due for review every {count} days.',
   'spaces.reviewIntervalNone': 'No periodic review planned.',
+  'spaces.memoryCardsLabel': 'Knowledge cards',
+  'spaces.memoryCardsHint': 'When on, Weave condenses the released documents of this space into short question-and-answer cards. They help the chat find the right documents faster. Requires the knowledge memory to run in LLM mode.',
   'spaces.reviewDueLink': 'Due reviews',
 };

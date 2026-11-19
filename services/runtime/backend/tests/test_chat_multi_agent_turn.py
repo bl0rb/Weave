@@ -223,6 +223,8 @@ def test_multi_agent_stream_closing_trace_reports_retrieval_subagents_and_model(
     assert [event['type'] for event in events][-3:] == ['trace', 'sources', 'done']
     closing = events[-3]['trace']
     assert closing['model'] == 'fake-chat'
+    # The answer deltas come through the agent graph's progress callback.
+    assert closing['timings_ms']['ttft_ms'] <= closing['timings_ms']['total_ms']
     subagents = {item['id']: item for item in closing['agent']['subagents']}
     assert subagents['it-support']['name'] == 'IT Support'
     assert subagents['it-support']['queries'] == ['kündigung']

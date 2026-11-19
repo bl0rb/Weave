@@ -520,16 +520,18 @@ class ChatStreamTraceEvent(BaseModel):
     """Sent first, before any `ChatStreamDeltaEvent`, and once more as the
     closing event right before `sources` (bot_graph.py's `_finish`) with
     the complete trace the blocking route returns -- agent research,
-    answering model, llm_ms/total_ms. A consumer keeps the last one. The
-    opening event is the same
+    answering model, llm_ms/total_ms, and `ttft_ms` (time from the start
+    of the turn to the first `delta` written, on any path; absent when no
+    delta went out and on the blocking route). A consumer keeps the last
+    one. The opening event is the same
     `ChatTrace` shape ChatResponse.trace carries, with one deliberate
     difference: `trace.timings_ms` here can only ever hold the metrics
-    already known at this point in the pipeline (`router_ms`, and
-    `retrieval_ms` when a knowledge turn actually ran) -- `llm_ms`/
-    `total_ms` both depend on generation finishing, which by definition
-    hasn't happened yet when THIS event goes out (see ChatTrace's own
+    already known at this point in the pipeline (`prepare_context_ms`,
+    `router_ms`, and `retrieval_ms` when a knowledge turn actually ran) --
+    `llm_ms`/`ttft_ms`/`total_ms` all depend on generation, which by
+    definition hasn't happened yet when THIS event goes out (see ChatTrace's own
     docstring, which describes the non-streaming response's stricter
-    "always present" guarantee for both keys; that guarantee does not carry
+    "always present" guarantee for llm_ms/total_ms; that guarantee does not carry
     over to this event)."""
 
     type: Literal['trace'] = 'trace'

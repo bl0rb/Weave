@@ -1550,5 +1550,7 @@ export const portal = {
   'spaces.reviewIntervalInvalid': 'Gib eine ganze Zahl zwischen 1 und 3650 ein oder lass das Feld leer.',
   'spaces.reviewIntervalLine': 'Dokumente werden jeden Tag zur Prüfung fällig.|Dokumente werden alle {count} Tage zur Prüfung fällig.',
   'spaces.reviewIntervalNone': 'Keine regelmäßige Prüfung geplant.',
+  'spaces.memoryCardsLabel': 'Wissenskarten',
+  'spaces.memoryCardsHint': 'Wenn aktiv, verdichtet Weave die freigegebenen Dokumente dieses Bereichs zu kurzen Frage-Antwort-Karten. Sie helfen dem Chat, schneller die passenden Dokumente zu finden. Setzt voraus, dass das Wissensgedächtnis im LLM-Modus läuft.',
   'spaces.reviewDueLink': 'Fällige Prüfungen',
 } as const;

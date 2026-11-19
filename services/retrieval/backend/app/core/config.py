@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     # right width to map it correctly.
     embedding_dimension: int = 1536
     embedding_batch_size: int = 64
+    # In-process LRU+TTL cache of query embeddings (app/services/embeddings.py
+    # embed_query): a repeated query skips the provider call. Keyed by the
+    # query text plus provider/base_url/model/dimension read per call, so a
+    # central provider change never serves a stale vector. 0 disables it.
+    embedding_query_cache_size: int = Field(default=512, ge=0)
+    embedding_query_cache_ttl_seconds: float = Field(default=600, ge=0)
 
     # --- Reranker (see app/services -- filled in a later stage). 'none'
     # skips reranking entirely: RRF-fused results are returned as-is,
@@ -77,6 +83,14 @@ class Settings(BaseSettings):
     rrf_k: int = 60
     semantic_weight: float = 0.5
     lexical_weight: float = 0.5
+    # Run the fulltext leg on a second DB session in a small worker pool while
+    # the request thread embeds the query and runs the vector leg (see
+    # app/services/search.py search()). Same results either way; False runs
+    # both legs sequentially on the request session.
+    search_parallel_legs: bool = True
+    # Knowledge cards (POST /api/v1/memory include_cards): cards whose cosine
+    # similarity to the query is below this are not returned.
+    memory_card_min_similarity: float = 0.3
 
     # --- DB connection pool (SQLAlchemy QueuePool; see app/core/db.py).
     # Only applied for a real server backend (postgres) -- sqlite's default

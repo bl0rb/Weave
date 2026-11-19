@@ -383,6 +383,7 @@ def _handle_withdrawal(db: Session, raw_payload: dict, raw_body: bytes) -> Respo
         db.execute(delete(Chunk).where(Chunk.document_id == document.id))
         # ADR-0009: the summary goes with the document, in the same transaction.
         db.execute(delete(KnowledgeMemory).where(KnowledgeMemory.document_id == document.id))
+        memory.delete_document_cards(db, document.id)
         db.delete(document)
     db.commit()
     if vector_keys:

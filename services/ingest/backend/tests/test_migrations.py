@@ -1833,3 +1833,29 @@ def test_0063_document_freshness_round_trip(tmp_path, monkeypatch):
     command.upgrade(cfg, 'head')
     assert {'topic_subscriptions', 'change_notifications'} <= set(inspect(engine).get_table_names())
     engine.dispose()
+
+
+def test_0064_memory_cards_round_trip(tmp_path, monkeypatch):
+    db_url = f'sqlite:///{tmp_path / "memory_cards.db"}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+    engine = create_engine(db_url, future=True)
+    _build_legacy_metadata().create_all(bind=engine)
+    cfg = _alembic_config()
+    command.stamp(cfg, '0003_job_markdown_versions')
+    command.upgrade(cfg, '0063_document_freshness')
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO collections (id, slug, name, email, department, folder, subfolder, visibility, created_at, updated_at) VALUES ('c1', 'space', 'Space', '', '', '', '', 'restricted', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"))
+    command.upgrade(cfg, '0064_memory_cards')
+    column = {column['name']: column for column in inspect(engine).get_columns('collections')}['memory_cards_enabled']
+    assert column['nullable'] is False
+    with engine.begin() as conn:
+        # Existing spaces default to off (server_default false).
+        assert conn.execute(text("SELECT memory_cards_enabled FROM collections WHERE id = 'c1'")).scalar_one() == 0
+    command.downgrade(cfg, '0063_document_freshness')
+    columns = {column['name'] for column in inspect(engine).get_columns('collections')}
+    assert 'memory_cards_enabled' not in columns and 'review_interval_days' in columns
+    with engine.begin() as conn:
+        assert conn.execute(text("SELECT slug FROM collections WHERE id = 'c1'")).scalar_one() == 'space'
+    command.upgrade(cfg, 'head')
+    assert 'memory_cards_enabled' in {column['name'] for column in inspect(engine).get_columns('collections')}
+    engine.dispose()
