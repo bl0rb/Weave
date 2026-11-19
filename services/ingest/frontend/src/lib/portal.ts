@@ -181,10 +181,10 @@ export function loadImportScopes(collectionId: string): Promise<ImportScopesResp
  * numbered pipeline: 1 Verarbeitung -> 2 Prüfung -> 3 Indexierung -> 4 Im
  * Chat, with Fehler called out separately rather than as a fifth step.
  */
-export type PipelineStage = 'processing' | 'review' | 'indexing' | 'ready' | 'error' | 'decided';
+export type PipelineStage = 'processing' | 'review' | 'indexing' | 'ready' | 'error' | 'decided' | 'superseded';
 
-/** Numbered steps only — 'error' is shown as a separate, unnumbered chip (see the design reference above); 'decided' (parked/skipped) is in no step. */
-export function pipelineSteps(locale: Locale = DEFAULT_LOCALE): { value: Exclude<PipelineStage, 'error' | 'decided'>; step: number; label: string; hint: string }[] {
+/** Numbered steps only — 'error' is shown as a separate, unnumbered chip (see the design reference above); 'decided' (parked/skipped) and 'superseded' (replaced by a newer release) are in no step. */
+export function pipelineSteps(locale: Locale = DEFAULT_LOCALE): { value: Exclude<PipelineStage, 'error' | 'decided' | 'superseded'>; step: number; label: string; hint: string }[] {
   const automatic = translate(locale, 'portal.pipeline.hint.automatic');
   return [
     { value: 'processing', step: 1, label: translate(locale, 'portal.pipeline.processing.label'), hint: automatic },
@@ -201,7 +201,9 @@ export function pipelineSteps(locale: Locale = DEFAULT_LOCALE): { value: Exclude
  * placed in 'indexing' (not 'ready') — the caller can pass one from
  * {@link useIndexingStatus} for an accurate 'ready' vs 'indexing' split.
  * An unreleased document the reviewer parked or skipped is 'decided': it no
- * longer waits for a review.
+ * longer waits for a review. A release Knowledge reports as replaced by a
+ * newer release of the same document is 'superseded': it is done, not
+ * still indexing.
  */
 export function pipelineStage(document: PortalDocument, live?: IndexingItem): PipelineStage {
   if (document.status === 'PENDING' || document.status === 'RUNNING') return 'processing';
@@ -209,13 +211,14 @@ export function pipelineStage(document: PortalDocument, live?: IndexingItem): Pi
   if (!document.release) return document.review_decision === 'skipped' || document.review_decision === 'parked' ? 'decided' : 'review';
   const { delivery, indexing } = currentReleaseStatus(document.release, live);
   if (isIndexReady(indexing)) return 'ready';
+  if (indexing?.state === 'superseded') return 'superseded';
   if (delivery === 'failed' || indexing?.state === 'failed' || indexing?.state === 'blocked' || indexing?.state === 'incomplete' || indexing?.state === 'mismatch') return 'error';
   return 'indexing';
 }
 
 /** Tallies documents per {@link PipelineStage} — shared by the Übersicht stat tiles, the Wissensbereiche cards and the Dokumente filter bar. */
 export function summarizePipeline(documents: PortalDocument[], live: Record<string, IndexingItem> = {}): Record<PipelineStage, number> {
-  const counts: Record<PipelineStage, number> = { processing: 0, review: 0, indexing: 0, ready: 0, error: 0, decided: 0 };
+  const counts: Record<PipelineStage, number> = { processing: 0, review: 0, indexing: 0, ready: 0, error: 0, decided: 0, superseded: 0 };
   for (const document of documents) counts[pipelineStage(document, live[document.id])] += 1;
   return counts;
 }

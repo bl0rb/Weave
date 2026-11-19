@@ -41,6 +41,7 @@ export const portal: Record<keyof typeof de, string> = {
   'documents.standHelp.review': 'Waiting for your review. Only after release does the document reach the chat.',
   'documents.standHelp.indexing': 'Released and being prepared for the chat search automatically.',
   'documents.standHelp.ready': 'Findable in chat for everyone with access.',
+  'documents.standHelp.superseded': 'A newer version of the document was released. This version is no longer searched in chat.',
   'documents.standHelp.parked': 'Deliberately set aside to decide later. Not listed under “To review”.',
   'documents.standHelp.skipped': 'Deliberately not released. Will not reach the chat.',
   'documents.standHelp.error': 'Processing or delivery to the chat failed. “Technical details” shows why.',

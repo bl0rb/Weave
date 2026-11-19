@@ -40,6 +40,7 @@ export const portal = {
   'documents.standHelp.review': 'Wartet auf deine Prüfung. Erst nach der Freigabe kommt das Dokument in den Chat.',
   'documents.standHelp.indexing': 'Freigegeben und wird gerade automatisch für die Chat-Suche aufbereitet.',
   'documents.standHelp.ready': 'Für alle Berechtigten im Chat auffindbar.',
+  'documents.standHelp.superseded': 'Eine neuere Version des Dokuments wurde freigegeben. Diese Version wird im Chat nicht mehr durchsucht.',
   'documents.standHelp.parked': 'Bewusst zurückgestellt, um später zu entscheiden. Erscheint nicht unter „Zu prüfen“.',
   'documents.standHelp.skipped': 'Bewusst nicht freigegeben. Kommt nicht in den Chat.',
   'documents.standHelp.error': 'Verarbeitung oder Übergabe an den Chat ist fehlgeschlagen. „Technische Details“ zeigt den Grund.',
