@@ -418,3 +418,22 @@ def test_list_collections_malformed_item_raises_retrieval_unavailable():
     with patch('app.services.retrieval_client.httpx.get', return_value=_FakeResponse(200, [{'slug': 'vertraege'}])):
         with pytest.raises(RetrievalUnavailable):
             list_collections('legal')
+
+
+def test_memory_with_chunks_gets_its_own_longer_timeout(monkeypatch):
+    """The combined call runs several searches: twice the search timeout by
+    default, or retrieval_memory_timeout_seconds; a plain memory call keeps
+    the search timeout."""
+    from app.services import retrieval_client
+
+    body = {'collections': [], 'documents': []}
+    monkeypatch.setattr(settings, 'retrieval_timeout_seconds', 4.0)
+    monkeypatch.setattr(settings, 'retrieval_memory_timeout_seconds', None)
+    with patch('app.services.retrieval_client.httpx.post', return_value=_FakeResponse(200, body)) as mock_post:
+        retrieval_client.memory('x', allowed_collections=['a'])
+        assert mock_post.call_args.kwargs['timeout'] == 4.0
+        retrieval_client.memory('x', allowed_collections=['a'], chunks={'top_k': None, 'final_k': None})
+        assert mock_post.call_args.kwargs['timeout'] == 8.0
+        monkeypatch.setattr(settings, 'retrieval_memory_timeout_seconds', 15.0)
+        retrieval_client.memory('x', allowed_collections=['a'], chunks={'top_k': None, 'final_k': None})
+        assert mock_post.call_args.kwargs['timeout'] == 15.0

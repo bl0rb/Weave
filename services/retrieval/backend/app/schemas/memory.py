@@ -8,6 +8,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.schemas.search import SearchResponse
+
 
 class MemoryRequest(BaseModel):
     query: str = Field(min_length=1)
@@ -16,6 +18,16 @@ class MemoryRequest(BaseModel):
     # Refinement within allowed_collections, like SearchFilters.collection.
     collection: str | None = None
     limit: int = Field(default=8, ge=1, le=50)
+    # One-call path (ADR-0009): also run the chunk search, focused on the
+    # documents (and card sources) found here, with the same parameters as
+    # POST /api/v1/search; the query is embedded once for everything.
+    include_chunks: bool = False
+    top_k: int | None = Field(default=None, ge=1, le=200)
+    final_k: int | None = Field(default=None, ge=1, le=200)
+    rerank: bool = True
+    # Knowledge cards of spaces that have them switched on.
+    include_cards: bool = False
+    card_limit: int = Field(default=5, ge=1, le=20)
 
 
 class MemoryDocumentRef(BaseModel):
@@ -57,6 +69,25 @@ class MemoryDocument(BaseModel):
     built_at: datetime | None = None
 
 
+class MemoryCard(BaseModel):
+    """An FAQ/fact card. Orientation only: the answer is generated, the
+    citable text is in the chunks of `source_document_ids`."""
+
+    card_id: int
+    collection: str
+    question: str
+    answer: str
+    keywords: list[str] = []
+    document_id: str
+    source_document_ids: list[str]
+    score: float
+
+
 class MemoryResponse(BaseModel):
     collections: list[MemoryCollection] = []
     documents: list[MemoryDocument] = []
+    cards: list[MemoryCard] = []
+    # include_chunks only: the chunk search, and the documents it was focused
+    # on (None = the plain unfocused search ran).
+    search: SearchResponse | None = None
+    focus_documents: list[str] | None = None

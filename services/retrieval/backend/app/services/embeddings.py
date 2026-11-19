@@ -37,7 +37,9 @@ import hashlib
 import logging
 import math
 import random
+import threading
 import time
+from collections import OrderedDict
 from typing import Protocol
 
 import httpx
@@ -293,10 +295,57 @@ def get_provider() -> EmbeddingProvider:
     )
 
 
+# Query-embedding cache: thread-safe LRU + TTL (search() runs in FastAPI's
+# threadpool). Only successful embeddings are stored, and callers always get
+# a copy, never the cached list itself.
+_query_cache: OrderedDict[tuple, tuple[float, list[float]]] = OrderedDict()
+_query_cache_lock = threading.Lock()
+
+
+def _now() -> float:
+    return time.monotonic()
+
+
+def clear_query_cache() -> None:
+    with _query_cache_lock:
+        _query_cache.clear()
+
+
 def embed_query(text: str) -> list[float]:
     """Embed one search query with whatever provider settings.embedding_provider
     names -- the single entry point app/services/search.py's search() calls.
     A thin convenience wrapper around get_provider().embed_query(text) so
     callers don't need to hold a provider instance across a request at all.
+
+    Repeated queries are served from the in-process cache
+    (settings.embedding_query_cache_size/_ttl_seconds; size 0 disables it).
+    The key is the exact query text -- providers are whitespace/case
+    sensitive, so a hit returns exactly what a miss would -- plus the
+    provider identity read per call, because refresh_control_plane() can
+    switch provider/model/dimension at runtime.
     """
-    return get_provider().embed_query(text)
+    size = settings.embedding_query_cache_size
+    ttl = settings.embedding_query_cache_ttl_seconds
+    if size <= 0 or ttl <= 0:
+        return get_provider().embed_query(text)
+    key = (
+        text,
+        settings.embedding_provider.strip().lower(),
+        settings.embedding_base_url,
+        settings.embedding_model,
+        settings.embedding_dimension,
+    )
+    with _query_cache_lock:
+        entry = _query_cache.get(key)
+        if entry is not None:
+            if _now() - entry[0] < ttl:
+                _query_cache.move_to_end(key)
+                return list(entry[1])
+            del _query_cache[key]
+    vector = get_provider().embed_query(text)
+    with _query_cache_lock:
+        _query_cache[key] = (_now(), list(vector))
+        _query_cache.move_to_end(key)
+        while len(_query_cache) > size:
+            _query_cache.popitem(last=False)
+    return vector

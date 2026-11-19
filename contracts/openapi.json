@@ -2278,6 +2278,11 @@
             "title": "Grants",
             "type": "array"
           },
+          "memory_cards_enabled": {
+            "default": false,
+            "title": "Memory Cards Enabled",
+            "type": "boolean"
+          },
           "name": {
             "default": "",
             "title": "Name",
@@ -2483,6 +2488,11 @@
             ],
             "title": "Description"
           },
+          "memory_cards_enabled": {
+            "default": false,
+            "title": "Memory Cards Enabled",
+            "type": "boolean"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -2593,6 +2603,11 @@
             },
             "title": "Job Ids",
             "type": "array"
+          },
+          "memory_cards_enabled": {
+            "default": false,
+            "title": "Memory Cards Enabled",
+            "type": "boolean"
           },
           "name": {
             "title": "Name",
@@ -2767,6 +2782,17 @@
               }
             ],
             "title": "Grants"
+          },
+          "memory_cards_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Cards Enabled"
           },
           "name": {
             "anyOf": [
@@ -17830,7 +17856,7 @@
     },
     "/api/v1/collections/registry": {
       "get": {
-        "description": "Sync source for Weave-Knowledge's `collections` registry table (see\nthe Collections contract in README.md) and, transitively, for\nWeave-Retrieval's per-team read authorization -- NOT scoped by the\ncaller's own visibility (unlike GET /collections above): a sync\nconsumer needs the full registry to answer \"which collections can team\nX read\" for every team, not just the collections the syncing token's\nown user happens to own or share a team with.\n\nAdmin-only (`require_admin`, not just `get_current_user`): unlike GET\n/collections/{id} or a single job, this single call hands back every\ncollection's slug + full `read_teams` ACL in one response -- the\ncomplete cross-team access map of the system. Any authenticated user\nbeing able to enumerate that would itself be an information leak (which\nteams can read which collections, system-wide), even though no document\ncontent or job data is ever included. Weave-Knowledge's own sync token\nmust therefore belong to an admin account (see README's Collections\nsection).\n\nDeliberately never returns anything document-shaped: no job_ids, no\nfolder/subfolder/email/department, no document content of any kind --\nonly the ACL/identity fields the contract defines\n(CollectionRegistryEntry): slug/name/description plus `visibility` (the\nsingle authoritative public/restricted flag) and the two additive ACLs,\n`read_teams`/`read_users`, computed from the grants (ADR 0008).",
+        "description": "Sync source for Weave-Knowledge's `collections` registry table (see\nthe Collections contract in README.md) and, transitively, for\nWeave-Retrieval's per-team read authorization -- NOT scoped by the\ncaller's own visibility (unlike GET /collections above): a sync\nconsumer needs the full registry to answer \"which collections can team\nX read\" for every team, not just the collections the syncing token's\nown user happens to own or share a team with.\n\nAdmin-only (`require_admin`, not just `get_current_user`): unlike GET\n/collections/{id} or a single job, this single call hands back every\ncollection's slug + full `read_teams` ACL in one response -- the\ncomplete cross-team access map of the system. Any authenticated user\nbeing able to enumerate that would itself be an information leak (which\nteams can read which collections, system-wide), even though no document\ncontent or job data is ever included. Weave-Knowledge's own sync token\nmust therefore belong to an admin account (see README's Collections\nsection).\n\nDeliberately never returns anything document-shaped: no job_ids, no\nfolder/subfolder/email/department, no document content of any kind --\nonly the ACL/identity fields the contract defines\n(CollectionRegistryEntry): slug/name/description plus `visibility` (the\nsingle authoritative public/restricted flag) and the two additive ACLs,\n`read_teams`/`read_users`, computed from the grants (ADR 0008), plus\n`memory_cards_enabled`, the per-space switch for Knowledge's cards.",
         "operationId": "get_collections_registry_api_v1_collections_registry_get",
         "responses": {
           "200": {
@@ -21788,7 +21814,7 @@
         "summary": "Get Review Task"
       },
       "patch": {
-        "description": "Assign, take over, close or reopen a task. done/dismissed record\nwho resolved it and when; done on a `review_due` task also confirms the\ndocument's review (`_confirms_review`). A closed task can only be reopened while no\nother active task covers the same cluster (409 otherwise).",
+        "description": "Assign, take over, close or reopen a task. done/dismissed record\nwho resolved it and when; done on a `review_due` task also confirms the\ndocument's review (`_confirms_review`). A closed task can only be\nreopened while no other active task covers the same cluster (409\notherwise).",
         "operationId": "update_review_task_api_v1_portal_review_tasks__task_id__patch",
         "parameters": [
           {

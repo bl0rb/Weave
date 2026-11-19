@@ -356,8 +356,50 @@ def test_collections_registry_lists_every_collection_unfiltered_by_visibility():
         # owner is named too.
         'read_teams': [team_name],
         'read_users': [owner.id],
+        # Per-space Knowledge cards switch, off unless the owner turns it on.
+        'memory_cards_enabled': False,
     }
-    assert set(entry.keys()) == {'slug', 'name', 'description', 'visibility', 'read_teams', 'read_users'}
+    assert set(entry.keys()) == {
+        'slug', 'name', 'description', 'visibility', 'read_teams', 'read_users', 'memory_cards_enabled',
+    }
+
+    collection_id = create_resp.json()['collection_id']
+    assert owner_client.patch(f'/api/v1/collections/{collection_id}', json={'memory_cards_enabled': True}).status_code == 200
+    items = admin_client.get('/api/v1/collections/registry').json()['items']
+    assert next(item for item in items if item['slug'] == slug)['memory_cards_enabled'] is True
+
+
+def test_collection_memory_cards_switch_is_owner_only_and_defaults_off():
+    """`memory_cards_enabled` (Knowledge's question/answer cards per space):
+    off by default, settable on create, PATCH only applies it when sent and
+    only for owners/admins -- members get the same 403 as any other PATCH."""
+    team_id = _make_team('cards-team')
+    owner = _user('cards-owner', team_id=team_id)
+    member = _user('cards-member', team_id=team_id)
+    owner_client = login_as(owner.username)
+
+    created = _create(owner_client, f'Karten {uuid.uuid4().hex[:6]}', team_id=team_id)
+    assert created.status_code == 200, created.text
+    assert created.json()['memory_cards_enabled'] is False
+    url = f"/api/v1/collections/{created.json()['collection_id']}"
+
+    response = owner_client.patch(url, json={'memory_cards_enabled': True})
+    assert response.status_code == 200, response.text
+    assert response.json()['memory_cards_enabled'] is True
+    # Omitted (or null) leaves it unchanged.
+    assert owner_client.patch(url, json={'name': 'Karten neu'}).json()['memory_cards_enabled'] is True
+    assert owner_client.patch(url, json={'memory_cards_enabled': None}).json()['memory_cards_enabled'] is True
+    assert owner_client.get(url).json()['memory_cards_enabled'] is True
+
+    member_client = login_as(member.username)
+    assert member_client.patch(url, json={'memory_cards_enabled': False}).status_code == 403
+    assert owner_client.get(url).json()['memory_cards_enabled'] is True
+    assert owner_client.patch(url, json={'memory_cards_enabled': False}).json()['memory_cards_enabled'] is False
+
+    enabled = _create(owner_client, f'Karten an {uuid.uuid4().hex[:6]}', memory_cards_enabled=True)
+    assert enabled.status_code == 200, enabled.text
+    listed = {item['collection_id']: item for item in owner_client.get('/api/v1/collections').json()['items']}
+    assert listed[enabled.json()['collection_id']]['memory_cards_enabled'] is True
 
 
 

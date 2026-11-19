@@ -130,13 +130,17 @@ def test_stream_conversational_flow_emits_trace_then_multiple_deltas_then_source
     # llm_ms/total_ms cannot be known before the first delta -- see
     # ChatStreamTraceEvent's own docstring.
     assert 'router_ms' in trace_event['trace']['timings_ms']
+    assert 'prepare_context_ms' in trace_event['trace']['timings_ms']
     assert 'llm_ms' not in trace_event['trace']['timings_ms']
+    assert 'ttft_ms' not in trace_event['trace']['timings_ms']
     assert 'total_ms' not in trace_event['trace']['timings_ms']
 
     # The closing trace carries what only the finished turn knows.
     closing = events[-3]['trace']
     assert closing['model'] == 'fake-chat'
-    assert {'router_ms', 'llm_ms', 'total_ms'} <= set(closing['timings_ms'])
+    timings = closing['timings_ms']
+    assert {'prepare_context_ms', 'router_ms', 'llm_ms', 'ttft_ms', 'total_ms'} <= set(timings)
+    assert 0 <= timings['prepare_context_ms'] <= timings['ttft_ms'] <= timings['total_ms']
 
     reconstructed = ''.join(event['text'] for event in events if event['type'] == 'delta')
     assert reconstructed == '[fake-llm] Hallo mein Freund, wie geht es dir heute?'

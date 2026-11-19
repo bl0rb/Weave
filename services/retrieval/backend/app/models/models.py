@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     Enum,
     ForeignKey,
@@ -41,6 +42,7 @@ from sqlalchemy import (
     TypeDecorator,
     UniqueConstraint,
     Uuid,
+    false,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -133,6 +135,13 @@ class Collection(Base):
     # `visibility == 'restricted'`, a person-level ACL alongside
     # `read_teams`; also ignored when the collection is public.
     read_users: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    # Per-space switch for knowledge cards (KnowledgeCard below), mirrored
+    # from the registry by Weave-Knowledge; only the card search reads it.
+    # Deferred so a plain select(Collection) keeps working against a
+    # Weave-Knowledge database that has not migrated the column yet.
+    memory_cards_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False, deferred=True
+    )
     synced_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
     )
@@ -268,3 +277,38 @@ class KnowledgeMemory(Base):
     built_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     dirty_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     building_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class KnowledgeCard(Base):
+    """Read model of Weave-Knowledge's `knowledge_cards` table: FAQ/fact
+    cards (question, answer, keywords, embedding of question + answer)
+    built only for spaces whose `Collection.memory_cards_enabled` is on.
+    No permission of its own -- app/services/memory.py reads cards only
+    JOINed to `documents` on `document_id` (the primary source) through
+    apply_filters(), and drops a card unless every `source_document_ids`
+    entry is visible under the same filter (fail closed).
+    """
+
+    __tablename__ = 'knowledge_cards'
+    __table_args__ = (
+        UniqueConstraint('collection_slug', 'card_sha256', name='uq_knowledge_cards_collection_card'),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    collection_slug: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey('documents.id', ondelete='CASCADE'), nullable=False, index=True
+    )
+    source_document_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    source_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    card_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    answer: Mapped[str] = mapped_column(Text, nullable=False)
+    keywords: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    embedding: Mapped[list[float] | None] = mapped_column(
+        VectorType(settings.embedding_dimension), nullable=True
+    )
+    embedding_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    generator: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    built_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

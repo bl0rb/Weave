@@ -512,6 +512,7 @@ def _collection_to_response(
         subfolder=collection.subfolder,
         job_ids=job_ids or [],
         review_interval_days=collection.review_interval_days,
+        memory_cards_enabled=collection.memory_cards_enabled,
     )
 
 
@@ -1060,6 +1061,7 @@ def create_collection(
         subfolder=subfolder_clean,
         password_hash=password_hash,
         review_interval_days=payload.review_interval_days,
+        memory_cards_enabled=payload.memory_cards_enabled,
     )
     # The creator is always an owner (ADR 0008).
     collection.grants.append(CollectionGrant(user_id=user.id, role=CollectionRole.OWNER))
@@ -1120,7 +1122,8 @@ def get_collections_registry(
     only the ACL/identity fields the contract defines
     (CollectionRegistryEntry): slug/name/description plus `visibility` (the
     single authoritative public/restricted flag) and the two additive ACLs,
-    `read_teams`/`read_users`, computed from the grants (ADR 0008).
+    `read_teams`/`read_users`, computed from the grants (ADR 0008), plus
+    `memory_cards_enabled`, the per-space switch for Knowledge's cards.
     """
     collections = db.scalars(select(Collection).order_by(Collection.slug)).all()
     items = []
@@ -1133,6 +1136,7 @@ def get_collections_registry(
             visibility=collection.visibility,
             read_teams=read_teams,
             read_users=read_users,
+            memory_cards_enabled=collection.memory_cards_enabled,
         ))
     return CollectionRegistryResponse(items=items)
 
@@ -1227,6 +1231,8 @@ def update_collection(
     if 'review_interval_days' in payload.model_fields_set:
         # Owner rights already required above (_require_collection_owner_control).
         collection.review_interval_days = payload.review_interval_days
+    if payload.memory_cards_enabled is not None:
+        collection.memory_cards_enabled = payload.memory_cards_enabled
 
     db.commit()
     try:

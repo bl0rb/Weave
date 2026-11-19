@@ -338,3 +338,41 @@ def test_0007_knowledge_memory_migration_round_trip(tmp_path, monkeypatch):
     assert 'knowledge_memory' not in inspect(engine).get_table_names()
     command.upgrade(cfg, 'head')
     assert 'knowledge_memory' in inspect(engine).get_table_names()
+
+
+def test_0008_knowledge_cards_migration_round_trip(tmp_path, monkeypatch):
+    db_url = f'sqlite:///{tmp_path / "migration_scratch_0008.db"}'
+    monkeypatch.setattr(settings, 'database_url', db_url)
+    cfg = _alembic_config()
+
+    command.upgrade(cfg, 'head')
+    engine = create_engine(db_url, future=True)
+    insp = inspect(engine)
+    assert {
+        'id', 'collection_slug', 'document_id', 'source_document_ids', 'source_sha256', 'card_sha256', 'question',
+        'answer', 'keywords', 'embedding', 'embedding_model', 'generator', 'model', 'built_at',
+    } <= {c['name'] for c in insp.get_columns('knowledge_cards')}
+    assert any(fk['referred_table'] == 'documents' for fk in insp.get_foreign_keys('knowledge_cards'))
+    assert any(
+        set(uq['column_names']) == {'collection_slug', 'card_sha256'} for uq in insp.get_unique_constraints('knowledge_cards')
+    )
+    assert 'memory_cards_enabled' in {c['name'] for c in insp.get_columns('collections')}
+    assert 'cards_sha256' in {c['name'] for c in insp.get_columns('knowledge_memory')}
+    collections = Table('collections', MetaData(), autoload_with=engine)
+    with engine.begin() as conn:
+        conn.execute(insert(collections).values(slug='s', name='S', read_teams=[], synced_at=datetime.now(timezone.utc)))
+        assert conn.execute(select(collections.c.memory_cards_enabled)).scalar_one() is False  # default OFF
+
+    command.downgrade(cfg, '0007_knowledge_memory')
+    insp = inspect(engine)
+    assert 'knowledge_cards' not in insp.get_table_names()
+    assert 'memory_cards_enabled' not in {c['name'] for c in insp.get_columns('collections')}
+    assert 'cards_sha256' not in {c['name'] for c in insp.get_columns('knowledge_memory')}
+    command.upgrade(cfg, 'head')
+    assert 'knowledge_cards' in inspect(engine).get_table_names()
+
+
+def test_0008_creates_hnsw_index_on_card_embeddings():
+    source = (BACKEND_DIR / 'alembic' / 'versions' / '0008_knowledge_cards.py').read_text()
+    assert 'ix_knowledge_cards_embedding_hnsw' in source and 'vector_cosine_ops' in source
+    assert 'settings.embedding_dimension' in source

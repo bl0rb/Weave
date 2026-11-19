@@ -180,6 +180,9 @@ def test_incremental_deltas_are_forwarded_as_soon_as_they_arrive(monkeypatch):
     assert ''.join(event['text'] for event in delta_events) == 'Drei Vertraege.'
     sources_event = next(event for event in events if event['type'] == 'sources')
     assert [s['document_id'] for s in sources_event['sources']] == ['d']
+    # The forwarded n8n deltas count as the first answer token.
+    closing = [event for event in events if event['type'] == 'trace'][-1]['trace']
+    assert closing['timings_ms']['ttft_ms'] <= closing['timings_ms']['total_ms']
 
 
 def test_streaming_trace_has_no_model_and_no_n8n_ms(monkeypatch):
@@ -199,6 +202,7 @@ def test_streaming_trace_has_no_model_and_no_n8n_ms(monkeypatch):
     closing = [event for event in events if event['type'] == 'trace'][-1]['trace']
     assert closing['model'] is None
     assert {'n8n_ms', 'total_ms'} <= set(closing['timings_ms'])
+    assert 'ttft_ms' not in closing['timings_ms']  # no delta went out
 
 
 # --- require_sources buffering ------------------------------------------------

@@ -13,7 +13,7 @@ import pytest
 
 from app.api import events as events_module
 from app.core.config import settings
-from app.models.models import Collection, Document, DocumentStatus, IngestEvent, KnowledgeMemory
+from app.models.models import Collection, Document, DocumentStatus, IngestEvent, KnowledgeCard, KnowledgeMemory
 from app.services import memory
 from app.services.collection_sync import sync_collections
 from app.workers import memory_tasks
@@ -37,6 +37,7 @@ def _memory_on(monkeypatch):
     monkeypatch.setattr(events_module, 'SessionLocal', TestingSessionLocal)
     yield
     with TestingSessionLocal() as db:
+        db.query(KnowledgeCard).delete()
         db.query(KnowledgeMemory).delete()
         db.query(Document).delete()
         db.query(Collection).delete()
@@ -320,6 +321,310 @@ def test_registry_sync_marks_renamed_and_forgets_deleted_collections(monkeypatch
         rows = _rows(db, 'collection')
         assert [(row.collection_slug, row.dirty_since is not None) for row in rows] == [(SLUG, True)]
 
+
+# --- knowledge cards (per-space switch) ----------------------------------------
+
+
+def _space(db, slug=SLUG, cards=True):
+    db.add(Collection(slug=slug, name=slug.title(), memory_cards_enabled=cards, synced_at=datetime.now(timezone.utc)))
+    db.commit()
+
+
+def _card(question='Wer genehmigt Urlaub?', answer='Die Teamleitung.', keywords=None):
+    return {'question': question, 'answer': answer, 'keywords': keywords or ['Urlaub']}
+
+
+def _model(cards=None, fail_cards=False):
+    """httpx.post side effect answering by prompt: summary, overview or cards."""
+    calls = []
+
+    def answer(url, **kwargs):
+        system, user = (message['content'] for message in kwargs['json']['messages'])
+        if system == memory._CARDS_SYSTEM:
+            calls.append(user)
+            if fail_cards:
+                return _llm_answer('kein json')
+            return _llm_answer(json.dumps({'cards': cards(user) if callable(cards) else cards}))
+        if system == memory._DOCUMENT_SYSTEM:
+            return _llm_answer(json.dumps({'title': 'T', 'document_type': 'Richtlinie', 'summary': 'S.', 'key_points': []}))
+        return _llm_answer(json.dumps({'summary': 'Übersicht.', 'topics': []}))
+
+    answer.card_calls = calls
+    return answer
+
+
+def _cards(db, slug=SLUG):
+    return db.query(KnowledgeCard).filter_by(collection_slug=slug).order_by(KnowledgeCard.id).all()
+
+
+def test_cards_are_built_only_for_enabled_spaces_in_llm_mode(_llm_mode):
+    many = [_card(f'Frage {i}?', f'Antwort {i}.', [f'k{j}' for j in range(9)]) for i in range(7)]
+    model = _model(many)
+    with TestingSessionLocal() as db, patch('app.services.memory.httpx.get', return_value=_provider()), \
+            patch('app.services.memory.httpx.post', side_effect=model):
+        _space(db)
+        _space(db, 'andere', cards=False)
+        document = _doc(db)
+        _doc(db, slug='andere')
+        for slug in (SLUG, 'andere'):
+            memory.touch(db, slug)
+            memory.build_collection_memory(db, slug)
+
+        cards = _cards(db)
+        assert len(cards) == memory._MAX_CARDS_PER_DOCUMENT
+        assert all(len(card.keywords) == 6 for card in cards)
+        card = cards[0]
+        assert (card.question, card.answer, card.document_id) == ('Frage 0?', 'Antwort 0.', document.id)
+        assert card.source_document_ids == [str(document.id)] and card.source_sha256 == 'b' * 64
+        assert (card.generator, card.model, card.embedding_model) == ('llm', 'm-1', settings.embedding_model)
+        assert len(card.embedding) == settings.embedding_dimension
+        assert _rows(db, 'document')[0].cards_sha256 == 'b' * 64
+        assert _cards(db, 'andere') == [] and len(model.card_calls) == 1
+        assert memory.memory_status(db)['cards'] == memory._MAX_CARDS_PER_DOCUMENT
+
+        # Unchanged: no further card call.
+        memory.touch(db, SLUG)
+        memory.build_collection_memory(db, SLUG)
+        assert len(model.card_calls) == 1
+
+
+def test_no_cards_without_the_llm_mode():
+    with TestingSessionLocal() as db, patch('app.services.memory.httpx.post') as post:
+        _space(db)
+        _doc(db)
+        memory.touch(db, SLUG)
+        memory.build_collection_memory(db, SLUG)
+        assert _cards(db) == [] and _rows(db, 'document')[0].cards_sha256 is None
+        post.assert_not_called()
+
+
+def test_identical_cards_merge_their_sources_and_lose_removed_documents(_llm_mode):
+    with TestingSessionLocal() as db, patch('app.services.memory.httpx.get', return_value=_provider()), \
+            patch('app.services.memory.httpx.post', side_effect=_model([_card(), _card('  wer GENEHMIGT urlaub? ', 'Die  Teamleitung.')])):
+        _space(db)
+        first = _doc(db, name='a.pdf')
+        second = _doc(db, name='b.pdf')
+        memory.touch(db, SLUG)
+        memory.build_collection_memory(db, SLUG)
+        [card] = _cards(db)
+        assert card.document_id == first.id
+        assert card.source_document_ids == [str(first.id), str(second.id)]
+
+        second.status = DocumentStatus.SUPERSEDED
+        db.commit()
+        memory.touch(db, SLUG)
+        memory.build_collection_memory(db, SLUG)
+        [card] = _cards(db)
+        assert card.source_document_ids == [str(first.id)]
+
+        first.status = DocumentStatus.SUPERSEDED  # the primary source is gone: so is the card
+        db.commit()
+        memory.touch(db, SLUG)
+        memory.build_collection_memory(db, SLUG)
+        assert _cards(db) == []
+
+
+def test_cards_are_rebuilt_when_the_document_changes(_llm_mode):
+    model = _model(lambda text: [_card(answer='Neu: die Bereichsleitung.' if 'Bereichsleitung' in text else 'Die Teamleitung.')])
+    with TestingSessionLocal() as db, patch('app.services.memory.httpx.get', return_value=_provider()), \
+            patch('app.services.memory.httpx.post', side_effect=model):
+        _space(db)
+        document = _doc(db)
+        memory.touch(db, SLUG)
+        memory.build_collection_memory(db, SLUG)
+        assert [card.answer for card in _cards(db)] == ['Die Teamleitung.']
+
+        document.frontmatter = {'_weave_markdown_sha256': 'c' * 64}
+        document.markdown_body = '# Urlaub\n\nUrlaub genehmigt ab sofort die Bereichsleitung.\n'
+        db.commit()
+        memory.touch(db, SLUG)
+        memory.build_collection_memory(db, SLUG)
+        assert [(card.answer, card.source_sha256) for card in _cards(db)] == [('Neu: die Bereichsleitung.', 'c' * 64)]
+        assert _rows(db, 'document')[0].cards_sha256 == 'c' * 64 and len(model.card_calls) == 2
+
+        assert memory.request_rebuild(db) == 1
+        assert _rows(db, 'document')[0].cards_sha256 is None
+
+
+def test_card_failure_keeps_the_summaries(_llm_mode):
+    with TestingSessionLocal() as db, patch('app.services.memory.httpx.get', return_value=_provider()), \
+            patch('app.services.memory.httpx.post', side_effect=_model(fail_cards=True)):
+        _space(db)
+        document = _doc(db)
+        memory.touch(db, SLUG)
+        memory.build_collection_memory(db, SLUG)
+        row = _rows(db, 'document')[0]
+        assert row.generator == 'llm' and row.cards_sha256 is None
+        assert _cards(db) == []
+        state = _rows(db, 'collection')[0]
+        assert (state.llm_calls, state.llm_failures) == (3, 1)  # summary, cards (failed), overview
+        assert state.generator == 'llm' and state.built_at is not None
+        db.refresh(document)
+        assert document.status == DocumentStatus.INDEXED
+
+
+def test_switching_a_space_off_deletes_its_cards(_llm_mode):
+    with TestingSessionLocal() as db, patch('app.services.memory.httpx.get', return_value=_provider()), \
+            patch('app.services.memory.httpx.post', side_effect=_model([_card()])):
+        _space(db)
+        _doc(db)
+        memory.touch(db, SLUG)
+        memory.build_collection_memory(db, SLUG)
+        assert len(_cards(db)) == 1
+        db.get(Collection, SLUG).memory_cards_enabled = False
+        db.commit()
+        memory.touch(db, SLUG)
+        memory.build_collection_memory(db, SLUG)
+        assert _cards(db) == [] and _rows(db, 'document')[0].cards_sha256 is None
+
+
+def test_withdrawal_removes_the_cards(_llm_mode, monkeypatch):
+    monkeypatch.setattr(settings, 'weave_ingest_webhook_secret', 'memory-test-secret')
+    with TestingSessionLocal() as db, patch('app.services.memory.httpx.get', return_value=_provider()), \
+            patch('app.services.memory.httpx.post', side_effect=_model([_card()])):
+        _space(db)
+        document = _doc(db)
+        memory.touch(db, SLUG)
+        memory.build_collection_memory(db, SLUG)
+        assert len(_cards(db)) == 1
+        job_id = document.source_job_id
+    assert _post({'event': 'document.withdrawn', 'job_id': job_id}).json()['status'] == 'withdrawn'
+    with TestingSessionLocal() as db:
+        assert _cards(db) == []
+
+
+def test_a_card_whose_primary_changes_moves_to_its_other_source_without_rebuilds(_llm_mode):
+    """The card goes to its remaining source instead of being deleted, so no
+    other document has to rebuild its cards."""
+    model = _model(lambda text: [_card(answer='Die Bereichsleitung.')] if 'Bereichsleitung' in text else [_card()])
+    with TestingSessionLocal() as db, patch('app.services.memory.httpx.get', return_value=_provider()), \
+            patch('app.services.memory.httpx.post', side_effect=model):
+        _space(db)
+        first = _doc(db, name='a.pdf')
+        second = _doc(db, name='b.pdf')
+        memory.touch(db, SLUG)
+        memory.build_collection_memory(db, SLUG)
+        [card] = _cards(db)
+        assert card.document_id == first.id and card.source_document_ids == [str(first.id), str(second.id)]
+
+        first.frontmatter = {'_weave_markdown_sha256': 'c' * 64}
+        first.markdown_body = '# Urlaub\n\nUrlaub genehmigt die Bereichsleitung.\n'
+        db.commit()
+        memory.touch(db, SLUG)
+        calls_before = len(model.card_calls)
+        memory.build_collection_memory(db, SLUG)
+        assert len(model.card_calls) == calls_before + 1  # only the changed document
+        assert sorted((c.answer, c.document_id, c.source_document_ids) for c in _cards(db)) == sorted([
+            ('Die Bereichsleitung.', first.id, [str(first.id)]),
+            ('Die Teamleitung.', second.id, [str(second.id)]),
+        ])
+        assert _rows(db, 'collection')[0].dirty_since is None
+        assert {r.document_id: r.cards_sha256 for r in _rows(db, 'document')}[second.id] == 'b' * 64
+
+
+def test_documents_sharing_facts_do_not_rebuild_each_other(_llm_mode):
+    """Two documents stating the same facts: a change to one must not send
+    the card builds back and forth between them."""
+    facts = [_card(), _card(question='Wer bucht Reisen?', answer='Das Reisebüro.')]
+    model = _model(lambda text: list(reversed(facts)) if 'b.pdf' in text else facts)
+    with TestingSessionLocal() as db, patch('app.services.memory.httpx.get', return_value=_provider()), \
+            patch('app.services.memory.httpx.post', side_effect=model):
+        _space(db)
+        first = _doc(db, name='a.pdf')
+        _doc(db, name='b.pdf')
+        memory.touch(db, SLUG)
+        memory.build_collection_memory(db, SLUG)
+        first.frontmatter = {'_weave_markdown_sha256': 'c' * 64}
+        db.commit()
+        memory.touch(db, SLUG)
+        memory.build_collection_memory(db, SLUG)
+        calls = len(model.card_calls)
+        assert _rows(db, 'collection')[0].dirty_since is None
+        memory.build_collection_memory(db, SLUG)
+        assert len(model.card_calls) == calls and len(_cards(db)) == 2
+        assert all(len(c.source_document_ids) == 2 for c in _cards(db))
+
+
+def test_withdrawing_a_cards_primary_hands_it_to_its_other_source(_llm_mode, monkeypatch):
+    monkeypatch.setattr(settings, 'weave_ingest_webhook_secret', 'memory-test-secret')
+    with TestingSessionLocal() as db, patch('app.services.memory.httpx.get', return_value=_provider()), \
+            patch('app.services.memory.httpx.post', side_effect=_model([_card()])):
+        _space(db)
+        first = _doc(db, name='a.pdf')
+        second = _doc(db, name='b.pdf')
+        memory.touch(db, SLUG)
+        memory.build_collection_memory(db, SLUG)
+        job_id, second_id = first.source_job_id, second.id
+    assert _post({'event': 'document.withdrawn', 'job_id': job_id}).json()['status'] == 'withdrawn'
+    with TestingSessionLocal() as db:
+        [card] = _cards(db)
+        assert card.document_id == second_id and card.source_document_ids == [str(second_id)]
+        assert [r.cards_sha256 for r in _rows(db, 'document')] == ['b' * 64]
+
+
+def test_cards_share_the_per_run_document_budget(_llm_mode, monkeypatch):
+    monkeypatch.setattr(settings, 'memory_max_documents_per_run', 1)
+    model = _model([_card()])
+    with TestingSessionLocal() as db, patch('app.services.memory.httpx.get', return_value=_provider()), \
+            patch('app.services.memory.httpx.post', side_effect=model):
+        _space(db)
+        _doc(db, name='a.pdf')
+        _doc(db, name='b.pdf')
+        memory.touch(db, SLUG)
+        runs = 0
+        while _rows(db, 'collection')[0].dirty_since is not None:
+            memory.build_collection_memory(db, SLUG)
+            runs += 1
+            assert runs <= 6
+        # Two summary runs (the second leaves no budget for cards), then one card document per run.
+        assert runs == 4 and len(model.card_calls) == 2
+        assert all(r.cards_sha256 == 'b' * 64 for r in _rows(db, 'document'))
+
+
+def test_reindex_re_embeds_the_cards():
+    from app.cli import _reindex_one
+    from app.services.embeddings import FakeEmbeddingProvider
+
+    with TestingSessionLocal() as db:
+        document = _doc(db)
+        db.add(KnowledgeCard(
+            collection_slug=SLUG, document_id=document.id, source_document_ids=[str(document.id)],
+            card_sha256='d' * 64, question='F?', answer='A.', keywords=[], embedding_model='alt',
+        ))
+        db.commit()
+        _reindex_one(db, document, FakeEmbeddingProvider(model_name='neu'))
+        db.commit()
+        [card] = _cards(db)
+        assert card.embedding_model == 'neu' and card.embedding is not None
+
+
+
+def test_a_card_embedding_failure_does_not_fail_the_reindex():
+    from app.cli import _reindex_one
+    from app.services.embeddings import FakeEmbeddingProvider
+
+    class _CardsFail(FakeEmbeddingProvider):
+        def embed_batch(self, texts):
+            if any(text.startswith('F?') for text in texts):
+                raise RuntimeError('provider down')
+            return super().embed_batch(texts)
+
+    with TestingSessionLocal() as db:
+        _space(db)
+        document = _doc(db)
+        memory.touch(db, SLUG)
+        db.add(KnowledgeMemory(kind='document', collection_slug=SLUG, document_id=document.id, cards_sha256='b' * 64))
+        db.add(KnowledgeCard(
+            collection_slug=SLUG, document_id=document.id, source_document_ids=[str(document.id)],
+            card_sha256='d' * 64, question='F?', answer='A.', keywords=[], embedding_model='alt',
+        ))
+        state = _rows(db, 'collection')[0]
+        state.dirty_since = None
+        db.commit()
+        _reindex_one(db, document, _CardsFail(model_name='neu'))  # does not raise
+        db.commit()
+        assert [r.cards_sha256 for r in _rows(db, 'document')] == [None]
+        assert _rows(db, 'collection')[0].dirty_since is not None
 
 # --- admin: central settings, metrics, rebuild ---------------------------------
 

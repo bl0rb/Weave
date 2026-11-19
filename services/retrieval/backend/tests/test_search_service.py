@@ -16,6 +16,7 @@ against some other, unrelated fake vector.
 """
 
 from types import SimpleNamespace
+import threading
 
 import pytest
 
@@ -689,6 +690,124 @@ def test_search_pipeline_end_to_end(corpus):
     assert set(trace.timings_ms.keys()) == {'embed', 'vector_search', 'fulltext_search', 'fuse', 'rerank'}
     assert all(value >= 0 for value in trace.timings_ms.values())
 
+
+def _snapshot(results, trace):
+    """Everything a caller sees, minus the wall-clock timing values."""
+    return (
+        [(r.chunk_id, r.document_id, r.rank, r.scores.model_dump()) for r in results],
+        trace.model_dump(exclude={'timings_ms'}),
+        list(trace.timings_ms),
+    )
+
+
+def test_search_with_a_given_query_vec_skips_the_embedding(corpus, monkeypatch):
+    request = SearchRequest(query=_HIT_TEXT, allowed_teams=['Kundenservice'], top_k=10)
+    expected = _snapshot(*search_service.search(corpus.db, request))
+
+    def _no_embedding(text):
+        raise AssertionError('query_vec was given, nothing may be embedded')
+
+    monkeypatch.setattr(search_service, 'embed_query', _no_embedding)
+    got = _snapshot(*search_service.search(corpus.db, request, query_vec=_embed(_HIT_TEXT)))
+    assert got == expected
+
+
+def test_parallel_and_sequential_legs_return_identical_results(corpus, monkeypatch):
+    request = SearchRequest(query=_HIT_TEXT, allowed_teams=['Kundenservice'], top_k=10)
+    workers = []
+    started = threading.Event()
+    real_leg = search_service._fulltext_leg_own_session
+    real_vector = search_service.vector_search_traced
+
+    def _counting_leg(*args):
+        workers.append(args)
+        started.set()
+        return real_leg(*args)
+
+    def _vector_after_worker_start(*args):
+        # Otherwise a fast vector leg may cancel the not-yet-started worker
+        # (the busy-pool fallback) and this test would be timing dependent.
+        started.wait(timeout=5)
+        return real_vector(*args)
+
+    monkeypatch.setattr(search_service, '_fulltext_leg_own_session', _counting_leg)
+    monkeypatch.setattr(settings, 'search_parallel_legs', False)
+    sequential = _snapshot(*search_service.search(corpus.db, request))
+    assert workers == []
+
+    monkeypatch.setattr(search_service, 'vector_search_traced', _vector_after_worker_start)
+    monkeypatch.setattr(settings, 'search_parallel_legs', True)
+    parallel = _snapshot(*search_service.search(corpus.db, request))
+    assert len(workers) == 1
+    assert parallel == sequential
+    assert parallel[2] == ['embed', 'vector_search', 'fulltext_search', 'fuse', 'rerank']
+    assert parallel[1]['fulltext_candidates'] >= 1
+
+
+def test_parallel_fulltext_failure_falls_back_to_the_request_session(corpus, monkeypatch):
+    request = SearchRequest(query=_HIT_TEXT, allowed_teams=['Kundenservice'], top_k=10)
+    monkeypatch.setattr(settings, 'search_parallel_legs', False)
+    expected = _snapshot(*search_service.search(corpus.db, request))
+
+    def _broken_leg(*args):
+        raise RuntimeError('worker session failed')
+
+    monkeypatch.setattr(settings, 'search_parallel_legs', True)
+    monkeypatch.setattr(search_service, '_fulltext_leg_own_session', _broken_leg)
+    assert _snapshot(*search_service.search(corpus.db, request)) == expected
+
+
+
+def test_parallel_fulltext_is_skipped_when_the_pool_is_exhausted(corpus, monkeypatch):
+    request = SearchRequest(query=_HIT_TEXT, allowed_teams=['Kundenservice'], top_k=10)
+    monkeypatch.setattr(settings, 'search_parallel_legs', False)
+    expected = _snapshot(*search_service.search(corpus.db, request))
+    workers = []
+    monkeypatch.setattr(search_service, '_fulltext_leg_own_session', lambda *args: workers.append(args))
+    monkeypatch.setattr(search_service, '_pool_has_headroom', lambda bind: False)
+    monkeypatch.setattr(settings, 'search_parallel_legs', True)
+    assert _snapshot(*search_service.search(corpus.db, request)) == expected
+    assert workers == []
+
+
+def test_a_slow_parallel_fulltext_leg_is_not_waited_for(corpus, monkeypatch):
+    request = SearchRequest(query=_HIT_TEXT, allowed_teams=['Kundenservice'], top_k=10)
+    monkeypatch.setattr(settings, 'search_parallel_legs', False)
+    expected = _snapshot(*search_service.search(corpus.db, request))
+    release = threading.Event()
+    started = threading.Event()
+
+    def _stuck_leg(*args):  # e.g. waiting for a pooled connection
+        started.set()
+        release.wait(timeout=5)
+        raise RuntimeError('pool timeout')
+
+    real_vector = search_service.vector_search_traced
+
+    def _vector_after_worker_start(*args):
+        started.wait(timeout=5)
+        return real_vector(*args)
+
+    monkeypatch.setattr(search_service, '_fulltext_leg_own_session', _stuck_leg)
+    monkeypatch.setattr(search_service, 'vector_search_traced', _vector_after_worker_start)
+    monkeypatch.setattr(settings, 'search_parallel_legs', True)
+    monkeypatch.setattr(settings, 'search_parallel_wait_seconds', 0.05)
+    try:
+        assert _snapshot(*search_service.search(corpus.db, request)) == expected
+    finally:
+        release.set()
+
+
+def test_pool_headroom_follows_checked_out_connections():
+    from types import SimpleNamespace as NS
+
+    def engine(checked_out, size=2, overflow=1):
+        return NS(pool=NS(size=lambda: size, _max_overflow=overflow, checkedout=lambda: checked_out))
+
+    assert search_service._pool_has_headroom(engine(2)) is True
+    assert search_service._pool_has_headroom(engine(3)) is False
+    assert search_service._pool_has_headroom(engine(50, overflow=-1)) is True
+    assert search_service._pool_has_headroom(NS(pool=NS())) is True
 
 def test_search_pipeline_keeps_fused_top_k_not_final_k(corpus):
     """search() keeps the fused top `top_k`, not `final_k` -- trimming to

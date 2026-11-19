@@ -458,3 +458,70 @@ def test_fetch_job_collections_raises_collection_sync_error(monkeypatch, respons
     with patch('app.services.collection_sync.httpx.get', return_value=response):
         with pytest.raises(CollectionSyncError):
             fetch_job_collections(['job-1'])
+
+
+# --- memory_cards_enabled (per-space knowledge cards) -----------------------------
+
+
+def test_sync_mirrors_memory_cards_enabled_and_defaults_to_off(monkeypatch):
+    monkeypatch.setattr(settings, 'weave_ingest_base_url', 'https://weave.local')
+    payload = [{'slug': 'an', 'memory_cards_enabled': True}, {'slug': 'alt'}, {'slug': 'kaputt', 'memory_cards_enabled': 'ja'}]
+    with patch('app.services.collection_sync.httpx.get', return_value=_FakeResponse(200, payload)):
+        db = _db()
+        try:
+            sync_collections(db)
+        finally:
+            db.close()
+
+    db = _db()
+    try:
+        assert {c.slug: c.memory_cards_enabled for c in db.query(Collection).all()} == {
+            'an': True, 'alt': False, 'kaputt': False,
+        }
+    finally:
+        db.close()
+
+
+def test_sync_switching_cards_off_deletes_them_and_on_marks_the_space(monkeypatch):
+    import uuid
+
+    from app.models.models import Document, DocumentStatus, KnowledgeCard, KnowledgeMemory
+
+    monkeypatch.setattr(settings, 'weave_ingest_base_url', 'https://weave.local')
+    now = datetime.now(timezone.utc)
+    db = _db()
+    try:
+        db.add_all([
+            Collection(slug='aus', name='aus', memory_cards_enabled=True, synced_at=now),
+            Collection(slug='an', name='an', memory_cards_enabled=False, synced_at=now),
+            Collection(slug='weg', name='weg', memory_cards_enabled=True, synced_at=now),
+        ])
+        for slug in ('aus', 'an', 'weg'):
+            document = Document(
+                source_job_id=str(uuid.uuid4()), content_sha256='a' * 64, engine='paddleocr', collection_slug=slug,
+                processed_at=now, status=DocumentStatus.INDEXED,
+            )
+            db.add(document)
+            db.flush()
+            db.add(KnowledgeMemory(kind='document', collection_slug=slug, document_id=document.id, cards_sha256='b' * 64))
+            db.add(KnowledgeMemory(kind='collection', collection_slug=slug))
+            db.add(KnowledgeCard(
+                collection_slug=slug, document_id=document.id, source_document_ids=[str(document.id)],
+                card_sha256='c' * 64, question='F?', answer='A.', keywords=[],
+            ))
+        db.commit()
+        payload = [{'slug': 'aus', 'memory_cards_enabled': False}, {'slug': 'an', 'memory_cards_enabled': True}]
+        with patch('app.services.collection_sync.httpx.get', return_value=_FakeResponse(200, payload)):
+            sync_collections(db)
+
+        assert {card.collection_slug for card in db.query(KnowledgeCard).all()} == {'an'}
+        documents = {row.collection_slug: row.cards_sha256 for row in db.query(KnowledgeMemory).filter_by(kind='document')}
+        assert documents == {'aus': None, 'an': 'b' * 64}
+        states = {row.collection_slug: row.dirty_since is not None for row in db.query(KnowledgeMemory).filter_by(kind='collection')}
+        assert states == {'aus': False, 'an': True}
+    finally:
+        db.query(KnowledgeCard).delete()
+        db.query(KnowledgeMemory).delete()
+        db.query(Document).delete()
+        db.commit()
+        db.close()

@@ -58,12 +58,13 @@ const VIEW_EMPTY: Record<DocumentView, MessageKey> = {
 
 /** "Stand" of one document: the pipeline stage, with parked and skipped told apart. */
 type Stand = Exclude<PipelineStage, 'decided'> | 'parked' | 'skipped';
-const STANDS: Stand[] = ['processing', 'review', 'indexing', 'ready', 'parked', 'skipped', 'error'];
+const STANDS: Stand[] = ['processing', 'review', 'indexing', 'ready', 'superseded', 'parked', 'skipped', 'error'];
 const STAND_LABEL: Record<Stand, MessageKey> = {
   processing: 'portal.pipeline.processing.label',
   review: 'portal.pipeline.review.label',
   indexing: 'portal.pipeline.indexing.label',
   ready: 'portal.pipeline.ready.label',
+  superseded: 'portal.indexing.superseded.label',
   parked: 'portal.documents.state.parked',
   skipped: 'portal.documents.state.skipped',
   error: 'common.error',
@@ -102,7 +103,7 @@ function fileTypeLabel(document: PortalDocument): string {
 function actionFor(document: PortalDocument, stand: Stand, t: (key: MessageKey) => string) {
   switch (stand) {
     case 'review': case 'parked': case 'skipped': return <Link className={buttonVariants({ size: 'sm' })} href={`/reviews/${document.id}`}>{t('portal.tasks.reviewAction')}</Link>;
-    case 'ready': case 'indexing': return <Link className={buttonVariants({ size: 'sm', variant: 'outline' })} href={documentUrl(document)}>{t('common.view')}</Link>;
+    case 'ready': case 'indexing': case 'superseded': return <Link className={buttonVariants({ size: 'sm', variant: 'outline' })} href={documentUrl(document)}>{t('common.view')}</Link>;
     default: return null;
   }
 }

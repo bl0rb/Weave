@@ -1,5 +1,6 @@
 """Hybrid-search pipeline: metadata filtering, parallel vector + fulltext
-retrieval, Reciprocal Rank Fusion, optional reranking, and result assembly.
+retrieval (settings.search_parallel_legs, see search()), Reciprocal Rank
+Fusion, optional reranking, and result assembly.
 
 Reranking (settings.rerank_provider, see app/services/reranker.py) is the
 pipeline's last step: the RRF-fused top `top_k` candidates ("kept" below)
@@ -41,11 +42,13 @@ import re
 import time
 import uuid
 import httpx
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from sqlalchemy import Float, Select, Text, and_, bindparam, cast, func, literal_column, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import array as pg_array
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -790,7 +793,52 @@ def _rerank(
     return [(by_chunk_id[candidate.chunk_id], score) for candidate, score in scored_candidates], False
 
 
-def search(db: Session, request: SearchRequest, *, refresh: bool = True) -> tuple[list[SearchResult], SearchTrace]:
+# --- parallel fulltext leg -----------------------------------------------------------
+
+# Small and bounded on purpose: every parallel search holds a second pooled
+# DB connection while its fulltext leg runs (settings.db_pool_size/
+# db_max_overflow), so only that one leg goes off-thread and a busy pool
+# makes search() fall back to the sequential path instead of queueing.
+_PARALLEL_WORKERS = 4
+_executor = ThreadPoolExecutor(max_workers=_PARALLEL_WORKERS, thread_name_prefix='search-fulltext')
+
+
+def _fulltext_leg(db: Session, query: str, filters, allowed_teams, allowed_collections, limit: int):
+    """fulltext_search() plus its own elapsed time, for timings_ms."""
+    start = time.perf_counter()
+    results = fulltext_search(db, query, filters, allowed_teams, allowed_collections, limit)
+    return results, (time.perf_counter() - start) * 1000
+
+
+def _fulltext_leg_own_session(bind: Engine, *args):
+    """The fulltext leg on a second Session -- a Session is not thread-safe.
+    It is bound to the request session's own engine (never SessionLocal: the
+    test suite overrides get_db with another engine). The returned chunks are
+    detached once it closes, which is safe: Chunk has no relationships or
+    deferred columns, rrf_fuse() keys on chunk.id and search() loads the
+    Documents on the request session."""
+    with Session(bind=bind, autoflush=False, expire_on_commit=False) as session:
+        return _fulltext_leg(session, *args)
+
+
+def _pool_has_headroom(bind: Engine) -> bool:
+    """Whether the engine's pool can hand the worker a second connection
+    without waiting. The request thread keeps its own connection while it
+    waits for the worker, so with an exhausted pool every request would wait
+    for a worker that waits for a connection (until the pool timeout).
+    Checked before submitting; racy by nature, hence also the bounded wait
+    in search()."""
+    pool = bind.pool
+    try:
+        limit = pool.size() + pool._max_overflow  # QueuePool
+        return pool._max_overflow < 0 or pool.checkedout() < limit
+    except (AttributeError, TypeError):
+        return True  # pools without a size (StaticPool, NullPool) never queue
+
+
+def search(
+    db: Session, request: SearchRequest, *, refresh: bool = True, query_vec: list[float] | None = None,
+) -> tuple[list[SearchResult], SearchTrace]:
     """Run the full hybrid-search pipeline for one request: embed the query,
     run the vector and fulltext legs (each capped at `top_k` candidates),
     fuse them with RRF, keep the fused top `top_k`, rerank that pool
@@ -804,6 +852,16 @@ def search(db: Session, request: SearchRequest, *, refresh: bool = True) -> tupl
     the response envelope (echoing `request.query` back) is the API layer's
     job, not this service's. `refresh=False` skips refresh_control_plane()
     for a caller (app/api/search.py) that already refreshed before validating.
+    `query_vec` is an already computed embedding of `request.query` (the
+    one-call memory path embeds once for several searches); the embed step
+    is then skipped.
+
+    With settings.search_parallel_legs the fulltext leg (it does not need
+    the embedding) runs on a second session in a worker while this thread
+    embeds and runs the vector leg. Results and timings_ms keys are the same
+    as sequentially; a worker error, a busy worker pool or a session not
+    bound to an Engine runs fulltext on the request session instead. The
+    second session only sees committed rows.
     """
     if refresh:
         refresh_control_plane()
@@ -814,8 +872,15 @@ def search(db: Session, request: SearchRequest, *, refresh: bool = True) -> tupl
     allowed_teams = request.allowed_teams
     allowed_collections = request.allowed_collections
 
+    fulltext_args = (request.query, filters, allowed_teams, allowed_collections, top_k)
+    bind = db.get_bind()
+    fulltext_future = None
+    if settings.search_parallel_legs and isinstance(bind, Engine) and _pool_has_headroom(bind):
+        fulltext_future = _executor.submit(_fulltext_leg_own_session, bind, *fulltext_args)
+
     start = time.perf_counter()
-    query_vec = embed_query(request.query)
+    if query_vec is None:
+        query_vec = embed_query(request.query)
     timings_ms['embed'] = (time.perf_counter() - start) * 1000
 
     start = time.perf_counter()
@@ -824,9 +889,20 @@ def search(db: Session, request: SearchRequest, *, refresh: bool = True) -> tupl
     )
     timings_ms['vector_search'] = (time.perf_counter() - start) * 1000
 
-    start = time.perf_counter()
-    fulltext_results = fulltext_search(db, request.query, filters, allowed_teams, allowed_collections, top_k)
-    timings_ms['fulltext_search'] = (time.perf_counter() - start) * 1000
+    fulltext = None
+    # cancel() succeeds only for a job no worker has started yet (pool busy):
+    # running it here is then never slower than waiting for a worker.
+    # The wait is bounded: a worker stuck waiting for a pooled connection
+    # must not hold the request up until the pool timeout.
+    if fulltext_future is not None and not fulltext_future.cancel():
+        try:
+            fulltext = fulltext_future.result(timeout=settings.search_parallel_wait_seconds)
+        except Exception:  # noqa: BLE001 - incl. TimeoutError; the request session can still answer
+            logger.warning('parallel fulltext leg failed or timed out, running it on the request session',
+                           exc_info=True)
+    if fulltext is None:
+        fulltext = _fulltext_leg(db, *fulltext_args)
+    fulltext_results, timings_ms['fulltext_search'] = fulltext
 
     start = time.perf_counter()
     fused = rrf_fuse(vector_results, fulltext_results, settings.rrf_k)

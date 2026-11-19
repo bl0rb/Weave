@@ -20,6 +20,7 @@ imports it, is visible everywhere for the rest of the process.
 import uuid
 from datetime import datetime, timezone
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -32,6 +33,7 @@ settings.retrieval_api_token = TEST_TOKEN
 from app.core.db import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.models import Chunk, Collection, Document  # noqa: E402
+from app.services.embeddings import clear_query_cache  # noqa: E402
 
 TEST_DB = 'sqlite:///./test.db'
 engine = create_engine(TEST_DB, future=True)
@@ -54,6 +56,14 @@ app.dependency_overrides[get_db] = override_get_db
 client = TestClient(app)
 
 AUTH_HEADERS = {'Authorization': f'Bearer {TEST_TOKEN}'}
+
+
+@pytest.fixture(autouse=True)
+def _fresh_query_embedding_cache():
+    """No test sees a query vector cached by another one."""
+    clear_query_cache()
+    yield
+    clear_query_cache()
 
 
 def make_document(**overrides) -> Document:

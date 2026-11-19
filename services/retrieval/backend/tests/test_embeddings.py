@@ -12,10 +12,12 @@ import httpx
 import pytest
 
 from app.core.config import settings
+from app.services import embeddings as embeddings_module
 from app.services.embeddings import (
     EmbeddingProviderError,
     FakeEmbeddingProvider,
     OpenAICompatibleProvider,
+    embed_query,
     get_provider,
 )
 
@@ -195,3 +197,86 @@ def test_get_provider_unknown_raises(monkeypatch):
     monkeypatch.setattr(settings, 'embedding_provider', 'bogus')
     with pytest.raises(ValueError):
         get_provider()
+
+
+# --- embed_query() cache ----------------------------------------------------------
+
+class _CountingProvider:
+    def __init__(self, fail_first: bool = False):
+        self.calls = []
+        self._fail_first = fail_first
+
+    def embed_query(self, text: str) -> list[float]:
+        self.calls.append(text)
+        if self._fail_first and len(self.calls) == 1:
+            raise EmbeddingProviderError('down')
+        return [float(len(self.calls)), 0.5]
+
+
+@pytest.fixture
+def counting(monkeypatch):
+    provider = _CountingProvider()
+    monkeypatch.setattr(embeddings_module, 'get_provider', lambda: provider)
+    return provider
+
+
+def test_embed_query_cache_hit_returns_a_copy(counting):
+    first = embed_query('Urlaub beantragen')
+    first.append(99.0)  # a caller mutating its vector must not touch the cache
+    second = embed_query('Urlaub beantragen')
+    assert second == [1.0, 0.5]
+    assert counting.calls == ['Urlaub beantragen']
+    embed_query('Urlaub  beantragen')  # different text, different vector: a miss
+    assert len(counting.calls) == 2
+
+
+def test_embed_query_cache_expires_after_ttl(counting, monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(embeddings_module, '_now', lambda: clock[0])
+    monkeypatch.setattr(settings, 'embedding_query_cache_ttl_seconds', 600)
+    embed_query('q')
+    clock[0] += 599
+    embed_query('q')
+    assert len(counting.calls) == 1
+    clock[0] += 2
+    assert embed_query('q') == [2.0, 0.5]
+    assert len(counting.calls) == 2
+
+
+@pytest.mark.parametrize('name, value', [
+    ('embedding_model', 'other-model'),
+    ('embedding_provider', 'openai'),
+    ('embedding_base_url', 'http://other'),
+    ('embedding_dimension', 3),
+])
+def test_embed_query_cache_misses_after_a_provider_change(counting, monkeypatch, name, value):
+    embed_query('q')
+    monkeypatch.setattr(settings, name, value)
+    assert embed_query('q') == [2.0, 0.5]
+    assert len(counting.calls) == 2
+
+
+def test_embed_query_cache_size_zero_disables_and_lru_evicts(counting, monkeypatch):
+    monkeypatch.setattr(settings, 'embedding_query_cache_size', 0)
+    embed_query('a')
+    embed_query('a')
+    assert len(counting.calls) == 2
+
+    monkeypatch.setattr(settings, 'embedding_query_cache_size', 2)
+    embed_query('a')  # 3
+    embed_query('b')  # 4
+    embed_query('a')  # hit, 'a' becomes most recent
+    embed_query('c')  # 5, evicts 'b'
+    embed_query('a')  # hit
+    embed_query('b')  # 6
+    assert counting.calls == ['a', 'a', 'a', 'b', 'c', 'b']
+
+
+def test_embed_query_failures_are_not_cached(monkeypatch):
+    provider = _CountingProvider(fail_first=True)
+    monkeypatch.setattr(embeddings_module, 'get_provider', lambda: provider)
+    with pytest.raises(EmbeddingProviderError):
+        embed_query('q')
+    assert embed_query('q') == [2.0, 0.5]
+    assert embed_query('q') == [2.0, 0.5]
+    assert len(provider.calls) == 2

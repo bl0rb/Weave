@@ -96,6 +96,11 @@ describe('pipelineStage', () => {
     expect(pipelineStage({ ...document, release: released }, live)).toBe('error');
   });
 
+  it('buckets a release replaced by a newer one as superseded, not indexing', () => {
+    const live: IndexingItem = { job_id: document.id, release: released, indexing: { state: 'superseded', indexed_at: null, chunk_count: 0 } };
+    expect(pipelineStage({ ...document, release: released }, live)).toBe('superseded');
+  });
+
   it('buckets a failed release delivery as error', () => {
     expect(pipelineStage({ ...document, release: { ...released, status: 'failed' } })).toBe('error');
   });
@@ -109,7 +114,7 @@ describe('summarizePipeline', () => {
       { ...document, id: '3' },
       { ...document, id: '4', review_decision: 'parked' },
     ]);
-    expect(counts).toEqual({ processing: 1, review: 1, indexing: 0, ready: 0, error: 1, decided: 1 });
+    expect(counts).toEqual({ processing: 1, review: 1, indexing: 0, ready: 0, error: 1, decided: 1, superseded: 0 });
   });
 });
 

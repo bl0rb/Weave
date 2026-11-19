@@ -54,6 +54,8 @@ class CollectionCreateRequest(BaseModel):
     # Periodic content review in days (app/services/document_freshness.py);
     # None = no periodic review.
     review_interval_days: int | None = Field(default=None, ge=1, le=3650)
+    # Knowledge question/answer cards for this space (default off).
+    memory_cards_enabled: bool = False
 
 
 class CollectionUpdateRequest(BaseModel):
@@ -75,6 +77,7 @@ class CollectionUpdateRequest(BaseModel):
     responsible_team_id: str | None = None
     grants: list[CollectionGrantInput] | None = None
     review_interval_days: int | None = Field(default=None, ge=1, le=3650)
+    memory_cards_enabled: bool | None = None
 
 
 class CollectionGrantResponse(BaseModel):
@@ -116,6 +119,7 @@ class CollectionResponse(BaseModel):
     subfolder: str = ''
     job_ids: list[str] = Field(default_factory=list)
     review_interval_days: int | None = None
+    memory_cards_enabled: bool = False
 
 
 class CollectionListResponse(BaseModel):
@@ -134,6 +138,9 @@ class CollectionRegistryEntry(BaseModel):
     visibility: CollectionVisibility
     read_teams: list[str] = Field(default_factory=list)
     read_users: list[str] = Field(default_factory=list)
+    # Per-space switch for Knowledge's question/answer cards; a consumer
+    # treats a missing field as False (fail closed).
+    memory_cards_enabled: bool = False
 
 
 class CollectionRegistryResponse(BaseModel):

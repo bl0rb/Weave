@@ -124,7 +124,8 @@ def test_conversational_flow_answers_via_the_llm_with_no_retrieval_and_no_source
     assert trace['guard'] is None
     assert trace['model'] == 'fake-chat'
     assert trace['router_mode'] == 'rules'
-    assert set(trace['timings_ms']) >= {'router_ms', 'llm_ms', 'total_ms'}
+    assert set(trace['timings_ms']) >= {'prepare_context_ms', 'router_ms', 'llm_ms', 'total_ms'}
+    assert 'ttft_ms' not in trace['timings_ms']  # streaming only
 
 
 def test_available_knowledge_question_is_answered_from_the_overview_without_retrieval(monkeypatch):

@@ -319,6 +319,13 @@ def search(
     except ValueError as exc:
         raise RetrievalUnavailable(f'Weave-Retrieval returned a non-JSON response for POST {url}') from exc
 
+    return _parse_search_hits(data, url)
+
+
+def _parse_search_hits(data, url: str) -> SearchHits:
+    """A Weave-Retrieval `SearchResponse` body (from `search()`, or embedded
+    in a `memory()` response) as SearchHits. Raises RetrievalUnavailable
+    for a malformed body."""
     results = data.get('results') if isinstance(data, dict) else None
     if not isinstance(results, list):
         raise RetrievalUnavailable(f"Weave-Retrieval response is missing a 'results' list for POST {url}")
@@ -408,21 +415,42 @@ def memory(
     allowed_teams: list[str] | None = None,
     collection: str | None = None,
     limit: int = 8,
+    chunks: dict | None = None,
+    cards: int = 0,
 ) -> dict:
     """POST `{settings.retrieval_base_url}/api/v1/memory` (ADR-0009): the
     knowledge memory -- collection overviews and document summaries -- for
     an overview question, scoped by exactly the same permission inputs as
     `search()`. `allowed_collections` is required (Weave-Retrieval refuses
     an unrestricted call). Returns `{'collections': [...], 'documents':
-    [...]}` as plain dicts. Same error mapping as `search()`."""
+    [...]}` as plain dicts. Same error mapping as `search()`.
+
+    `chunks` (keys `top_k`/`final_k`/`rerank`, as `search()` takes them)
+    asks for the chunk search in the same call (`include_chunks`): the
+    memory focuses it on the documents it names and falls back to the
+    plain search itself. `cards > 0` asks for up to that many knowledge
+    cards (`include_cards`). Both are only sent when set, so a default
+    request body stays unchanged. The result additionally carries
+    `'search'` (SearchHits, None when the response has none -- not asked,
+    or an older Retrieval that ignores `include_chunks`), `'focus_documents'`
+    (None = no focus applied) and `'cards'` (plain dicts)."""
     url = f'{settings.retrieval_base_url.rstrip("/")}/api/v1/memory'
     headers = {'Authorization': f'Bearer {settings.retrieval_api_token}', 'Content-Type': 'application/json'}
     payload = {
         'query': query, 'allowed_collections': allowed_collections, 'allowed_teams': allowed_teams,
         'collection': collection, 'limit': limit,
     }
+    if chunks is not None:
+        payload.update(include_chunks=True, top_k=chunks.get('top_k'), final_k=chunks.get('final_k'))
+        if chunks.get('rerank') is False:
+            payload['rerank'] = False
+    if cards > 0:
+        payload.update(include_cards=True, card_limit=cards)
+    timeout = settings.retrieval_timeout_seconds
+    if chunks is not None:
+        timeout = settings.retrieval_memory_timeout_seconds or 2 * settings.retrieval_timeout_seconds
     try:
-        response = httpx.post(url, headers=headers, json=payload, timeout=settings.retrieval_timeout_seconds)
+        response = httpx.post(url, headers=headers, json=payload, timeout=timeout)
     except httpx.HTTPError as exc:
         raise RetrievalUnavailable(f'Weave-Retrieval unreachable at {url!r}: {exc}') from exc
     if response.status_code >= 500:
@@ -446,4 +474,12 @@ def memory(
         or not all(isinstance(item, dict) for item in [*data['collections'], *data['documents']])
     ):
         raise RetrievalUnavailable(f'Weave-Retrieval returned a malformed memory response for POST {url}')
-    return {'collections': data['collections'], 'documents': data['documents']}
+    search_data = data.get('search')
+    focus = data.get('focus_documents')
+    cards_data = data.get('cards')
+    return {
+        'collections': data['collections'], 'documents': data['documents'],
+        'search': _parse_search_hits(search_data, url) if search_data is not None else None,
+        'focus_documents': [str(item) for item in focus] if isinstance(focus, list) else None,
+        'cards': [item for item in cards_data if isinstance(item, dict)] if isinstance(cards_data, list) else [],
+    }

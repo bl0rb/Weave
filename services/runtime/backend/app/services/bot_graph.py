@@ -43,7 +43,7 @@ streaming) and `generate` must not emit it again.
 
 import threading
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, TypedDict
 
 from langchain_core.runnables import RunnableConfig
@@ -100,6 +100,11 @@ class TurnContext:
     # rejected answer to it (asked again whatever the intent).
     intake_pending: bool = False
     intake_retry: bool = False
+    # `perf_counter()` of the first answer `delta` written to the client
+    # (`_write_delta`), on whichever path wrote it -- a mutable holder
+    # because the n8n and multi-agent nodes write deltas long before they
+    # return their state. `_finish` turns it into `ttft_ms`.
+    first_delta_at: list[float] = field(default_factory=list)
 
 
 class TurnState(TypedDict, total=False):
@@ -152,6 +157,15 @@ _INTAKE_INTENTS = frozenset({'knowledge', 'complex'})
 
 def _timing(state: TurnState, key: str, start: float) -> dict[str, float]:
     return {**state['timings_ms'], key: _elapsed_ms(start)}
+
+
+def _write_delta(runtime: Runtime[TurnContext], text: str) -> None:
+    """Every answer `delta` goes out through here, so the first one's
+    time is recorded for `ttft_ms` (see `TurnContext.first_delta_at`)."""
+    first = runtime.context.first_delta_at
+    if not first:
+        first.append(time.perf_counter())
+    runtime.stream_writer(ChatStreamDeltaEvent(text=text))
 
 
 # --- route ------------------------------------------------------------------
@@ -519,7 +533,7 @@ def _n8n_call(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
                         if require_sources:
                             buffered.append(stream_event.text)
                         else:
-                            writer(ChatStreamDeltaEvent(text=stream_event.text))
+                            _write_delta(runtime, stream_event.text)
                 elif isinstance(stream_event, n8n_client.N8nStreamSources):
                     sources = stream_event.sources
                 elif isinstance(stream_event, n8n_client.N8nStreamError):
@@ -537,7 +551,7 @@ def _n8n_call(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
                 if require_sources:
                     buffered.append(result.answer)
                 else:
-                    writer(ChatStreamDeltaEvent(text=result.answer))
+                    _write_delta(runtime, result.answer)
             sources = result.sources
     except Exception as exc:  # noqa: BLE001 -- 200/text-event-stream is already committed; in-band error only
         # The exception text names the webhook_url and may quote raw n8n
@@ -558,7 +572,7 @@ def _n8n_call(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
     kept_sources, dropped_count = chat_service._filter_n8n_sources_by_scope(sources, scope, bot_id=bot.id)
     if require_sources and not kept_sources:
         for delta in llm_service.iter_text_deltas(bot.guard.no_context_reply):
-            writer(ChatStreamDeltaEvent(text=delta))
+            _write_delta(runtime, delta)
         return {
             'sources': [], 'streamed': True, 'guard': GuardTrace(triggered=True, reason='no_context'),
             'n8n_trace': N8nTrace(dropped_sources=dropped_count), 'timings_ms': timings,
@@ -566,7 +580,7 @@ def _n8n_call(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
     if require_sources:
         full_text = ''.join(buffered)
         if full_text:
-            writer(ChatStreamDeltaEvent(text=full_text))
+            _write_delta(runtime, full_text)
     return {
         'sources': kept_sources, 'streamed': True, 'n8n_trace': N8nTrace(dropped_sources=dropped_count),
         'timings_ms': timings,
@@ -639,7 +653,7 @@ def _agent_multi(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
         if kind == 'status':
             writer(payload)
         elif kind == 'delta':
-            writer(ChatStreamDeltaEvent(text=payload))
+            _write_delta(runtime, payload)
 
     agent_start = time.perf_counter()
     outcome = agent_graph_service.run_graph(
@@ -689,7 +703,7 @@ def _generate(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
             else:
                 deltas = llm_service.iter_text_deltas(final_answer)
             for delta in deltas:
-                writer(ChatStreamDeltaEvent(text=delta))
+                _write_delta(runtime, delta)
         return {'streamed': True}
 
     messages = state['messages']
@@ -702,7 +716,7 @@ def _generate(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
                 ctx.llm_provider, messages, model=bot.model.model, temperature=bot.model.temperature,
             ):
                 parts.append(delta)
-                writer(ChatStreamDeltaEvent(text=delta))
+                _write_delta(runtime, delta)
         except llm_service.LLMError as exc:
             if state['branch'] in _AGENT_BRANCHES:
                 # The agent paths report any failure with their own fixed
@@ -739,6 +753,14 @@ def _with_notices(bot, sources: list[Source]) -> list[Source]:
 
 
 def _finish(state: TurnState, runtime: Runtime[TurnContext]) -> dict:
+    first_delta_at = runtime.context.first_delta_at
+    if runtime.context.streaming and first_delta_at:
+        # Time to the first answer token the client saw, measured like
+        # `total_ms` from the start of `_prepare_context`; absent on the
+        # blocking route and when no delta went out.
+        state = {**state, 'timings_ms': {
+            **state['timings_ms'], 'ttft_ms': (first_delta_at[0] - state['total_start']) * 1000,
+        }}
     timings = _timing(state, 'total_ms', state['total_start'])
     sources = _with_notices(runtime.context.bot, state.get('sources') or [])
     if runtime.context.streaming and not state.get('errored'):
@@ -797,8 +819,12 @@ def _build_graph():
 COMPILED = _build_graph()
 
 
-def initial_state(message: str, history: list[dict[str, str]], total_start: float) -> TurnState:
-    return {'message': message, 'history': history, 'timings_ms': {}, 'total_start': total_start}
+def initial_state(
+    message: str, history: list[dict[str, str]], total_start: float, timings: dict[str, float] | None = None,
+) -> TurnState:
+    """`timings` seeds `timings_ms` with what was measured before the graph
+    runs (`prepare_context_ms`, chat.py's `_prepare_context`)."""
+    return {'message': message, 'history': history, 'timings_ms': dict(timings or {}), 'total_start': total_start}
 
 
 def run_config() -> RunnableConfig:

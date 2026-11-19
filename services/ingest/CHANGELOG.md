@@ -11,6 +11,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.29] - 2026-11-19
+
+### Added
+- **Knowledge cards per knowledge space** (ADR-0009 §13, "Wissenskarten"): a new owner-only switch
+  in the space's edit dialog (`memory_cards_enabled`, default off, carried to Knowledge by the
+  registry sync). In memory mode `llm`, Knowledge condenses each released document into up to five
+  question/answer cards (table `knowledge_cards`, embedded like the chunks). Retrieval returns them
+  only through the same permission filter as the search and drops a card unless all its source
+  documents are visible. The chat uses them for orientation and focus only; sources stay chunks.
+- **Timings in the chat trace**: `prepare_context_ms` on every turn and `ttft_ms` (time to the first
+  answer token) on streamed answers (contract `internal-chat.md`, additive).
+
+### Changed
+- **One call for memory and search** (ADR-0009 §10d): with the knowledge memory on, Runtime gets the
+  orientation and the chunk search from a single `POST /api/v1/memory` (`include_chunks`) with one
+  embedding instead of two to three calls. The memory's ranking search runs without reranking, with
+  a pool of 20. Runtime gives that call its own timeout (`RETRIEVAL_MEMORY_TIMEOUT_SECONDS`, default
+  twice the search timeout) and keeps the old two-call path for an older Retrieval.
+- **Faster search in Retrieval**: an in-process cache for query embeddings
+  (`EMBEDDING_QUERY_CACHE_SIZE` 512, `EMBEDDING_QUERY_CACHE_TTL_SECONDS` 600), and the fulltext leg
+  runs in parallel with embedding and vector search when the connection pool has a free connection
+  (`SEARCH_PARALLEL_LEGS`, `SEARCH_PARALLEL_WAIT_SECONDS`).
+
+### Fixed
+- **Knowledge spaces**: documents replaced by a newer version no longer count as "indexing" on the
+  space card; the documents status filter has its own "Replaced by a newer version" option.
+- **"In chat"** (documents filter, its count and the per-space number on the overview) no longer
+  counts versions replaced by a newer release or withdrawn from the chat.
+
+### Upgrade notes
+- New migrations: Ingest `0064_memory_cards`, Knowledge `0008_knowledge_cards`. Roll out Knowledge
+  before Runtime; without `0008` Retrieval serves no cards and everything else keeps working.
+- Without `ALTER DEFAULT PRIVILEGES` for the read-only role: `GRANT SELECT ON knowledge_cards TO
+  weave_retrieval_ro;` (contract `chunk-store.md`).
+- Cards are only built with the knowledge memory in mode `llm` and the switch on for the space.
+
 ## [0.7.28] - 2026-11-18
 
 ### Fixed

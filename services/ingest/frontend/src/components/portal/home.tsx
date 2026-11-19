@@ -46,6 +46,7 @@ function cssVar(color: string): CSSProperties {
 
 // 'decided' (parked/skipped) is labelled via documentState.
 const ACTIVITY_LABEL: Record<Exclude<PipelineStage, 'decided'>, MessageKey> = {
+  superseded: 'portal.indexing.superseded.label',
   processing: 'portal.home.activity.processing',
   review: 'portal.documents.state.readyForReview',
   indexing: 'portal.indexing.released.label',
@@ -59,6 +60,7 @@ const ACTIVITY_COLOR: Record<PipelineStage, string> = {
   ready: 'var(--ok)',
   error: 'var(--err)',
   decided: 'var(--muted)',
+  superseded: 'var(--muted)',
 };
 
 export function PortalHome() {
@@ -105,7 +107,7 @@ export function PortalHome() {
   const stageOf = useCallback((document: PortalDocument) => pipelineStage(document, live[document.id]), [live]);
 
   const counts = useMemo(() => {
-    const totals: Record<PipelineStage, number> = { processing: 0, review: 0, indexing: 0, ready: 0, error: 0, decided: 0 };
+    const totals: Record<PipelineStage, number> = { processing: 0, review: 0, indexing: 0, ready: 0, error: 0, decided: 0, superseded: 0 };
     for (const document of documents ?? []) totals[stageOf(document)] += 1;
     return totals;
   }, [documents, stageOf]);

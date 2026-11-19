@@ -82,6 +82,7 @@ Extrahiert aus Weave-Knowledges `backend/app/models/models.py` (`class Collectio
 | `visibility` | `varchar(20)` | nein | `'public'` | **Das massgebliche Sichtbarkeits-Flag** — `'public'`: jeder darf lesen, unabhaengig von `read_teams`/`read_users`. `'restricted'`: nur `read_teams`/`read_users` (plus, ausschliesslich bei Weave-Ingest selbst, Owner/Manager/Admin) duerfen lesen; ein `'restricted'` Eintrag ohne jede `read_teams`/`read_users`-Eintragung ist fuer niemanden lesbar (fail closed). Ersetzt die fruehere implizite Regel "leeres `read_teams` = oeffentlich". Durchgesetzt wird das ausschliesslich von Weave-Retrieval — Weave-Knowledge spiegelt den Wert nur, wertet ihn nirgends selbst aus. |
 | `read_teams` | `json` (`list[str]`) | nein | `[]` | Team-Slugs, die diese Collection lesen duerfen, wenn `visibility == 'restricted'` ist. Wird bei `visibility == 'public'` nicht ausgewertet. Durchgesetzt ausschliesslich von Weave-Retrieval. |
 | `read_users` | `json` (`list[str]`) | nein | `[]` | Personenbezogenes Gegenstueck zu `read_teams`: Weave-Ingest-Nutzer-IDs (als Strings), die diese Collection einzeln lesen duerfen, wenn `visibility == 'restricted'` ist. Additiv zu `read_teams`, nicht exklusiv. Durchgesetzt ausschliesslich von Weave-Retrieval. |
+| `memory_cards_enabled` | `boolean` | nein | `false` | Schalter pro Wissensbereich fuer Wissenskarten (ADR-0009 §13, Migration `0008_knowledge_cards`). Owner ist Weave-Ingest; ein Registry-Eintrag ohne das Feld gilt als `false` (fail closed). Ausschalten loescht alle Karten des Bereichs, Einschalten baut sie beim naechsten Lauf. Ausgewertet nur von Weave-Retrievals Kartensuche. |
 | `synced_at` | `timestamptz` | nein | — | Zeitpunkt des letzten erfolgreichen Upserts dieser Zeile durch `app/services/collection_sync.py`. |
 
 Kein FK von `documents.collection_slug` auf `collections.slug` (siehe oben) — ein frisch erzeugtes Dokument mit brandneuer Collection kann kurzzeitig existieren, bevor der naechste Sync-Tick (oder ein einmaliger Lazy-Reload, siehe `app/api/events.py`) die Registry nachzieht. Ein fehlender Registry-Eintrag darf laut Vertrag niemals die Indizierung eines Dokuments verhindern — nur die Sichtbarkeit in der Suche ist betroffen, und die liegt bei Weave-Retrieval.
@@ -89,7 +90,8 @@ Kein FK von `documents.collection_slug` auf `collections.slug` (siehe oben) — 
 ### Sync-Richtung
 
 ```
-Weave-Ingest (Owner: slug, name, description, visibility, read_teams, read_users)
+Weave-Ingest (Owner: slug, name, description, visibility, read_teams, read_users,
+              memory_cards_enabled)
       |  GET /api/v1/collections/registry  (Bearer WEAVE_INGEST_API_TOKEN)
       v
 Weave-Knowledge  --  app/services/collection_sync.py::sync_collections()
@@ -148,8 +150,31 @@ Extrahiert aus Weave-Knowledges `backend/app/models/models.py` (`class Knowledge
 | `built_at`, `dirty_since`, `building_since` | `timestamptz` | ja | Aufbauzeitpunkt bzw. Entprell-/Sperrzustand (nur `collection`). |
 | `last_run_at`, `last_duration_ms`, `last_error` | `timestamptz`, `integer`, `text` | ja | Nur `collection`: letzter Lauf, seine Dauer und sein letzter Fehler (Kennzahlen für die Administration). |
 | `llm_calls`, `llm_failures` | `integer` | nein | Nur `collection`: kumulierte Modellaufrufe und davon auf extraktiv zurückgefallene. |
+| `cards_sha256` | `varchar(64)` | ja | Nur `document`: Snapshot-Hash, für den die Wissenskarten des Dokuments zuletzt gebaut wurden; `NULL` = nicht gebaut oder ungültig (Neuaufbau, Bereich ausgeschaltet, Modellfehler). Wird von Weave-Retrieval nicht gelesen. |
 
 **Rechte:** Die Tabelle trägt keine eigene Berechtigung. Weave-Retrieval liest `document`-Zeilen ausschliesslich per `JOIN documents` durch dieselbe `apply_filters()`-Bedingung wie die Chunk-Suche und `collection`-Zeilen ausschliesslich für Slugs aus `allowed_collections`; der Übersichtstext wird nur ausgegeben, solange alle `source_document_ids` noch `indexed` im selben Bereich sind. Dokumente ohne Collection erhalten kein Gedächtnis.
+
+## Tabelle `knowledge_cards`
+
+Extrahiert aus Weave-Knowledges `backend/app/models/models.py` (`class KnowledgeCard`) + `backend/alembic/versions/0008_knowledge_cards.py`. Wissenskarten nach [ADR-0009 §13](../docs/adr/0009-wissensgedaechtnis.md): kurze Frage/Antwort-Paare, verdichtet aus freigegebenen Dokumenten eines Wissensbereichs. Geschrieben ausschliesslich von Weave-Knowledge, gelesen von Weave-Retrieval (`POST /api/v1/memory` mit `include_cards`).
+
+| Spalte | Typ | Nullable | Bedeutung |
+|---|---|---|---|
+| `id` | `integer` (PK) | nein | |
+| `collection_slug` | `varchar(255)`, indexiert | nein | Wissensbereich der Karte. |
+| `document_id` | `uuid` (FK `documents.id`, `ON DELETE CASCADE`), indexiert | nein | Primärquelle; über sie läuft die Berechtigung. |
+| `source_document_ids` | `json` (`list[str]`) | nein | Alle Dokumente, aus denen die Karte stammt (Duplikate werden zusammengeführt). |
+| `source_sha256` | `varchar(64)` | ja | Snapshot-Hash der Primärquelle beim Aufbau. |
+| `card_sha256` | `varchar(64)` | nein | Hash von normalisierter Frage und Antwort; `UNIQUE (collection_slug, card_sha256)` (`uq_knowledge_cards_collection_card`). |
+| `question`, `answer` | `text` | nein | Die Frage, die die Karte beantwortet (≤ 200 Zeichen), und die Antwort (≤ 400 Zeichen). |
+| `keywords` | `json` (`list[str]`) | nein | Bis zu 6 Stichworte. |
+| `embedding` | `vector(EMBEDDING_DIMENSION)` (SQLite: `json`) | ja | Embedding von Frage und Antwort (durch Zeilenumbruch getrennt) mit Provider und Modell der Chunks; Postgres: HNSW-Index `ix_knowledge_cards_embedding_hnsw` (`vector_cosine_ops`). |
+| `embedding_model` | `varchar(255)` | ja | Modell des Embeddings. |
+| `generator`, `model`, `built_at` | `varchar`, `varchar`, `timestamptz` | ja | `llm`, verwendetes Modell, Aufbauzeitpunkt. |
+
+**Aufbau:** nur im Modus `llm`, mit zentraler LLM-Konfiguration und eingeschaltetem `collections.memory_cards_enabled`; höchstens 5 Karten pro Dokument, im selben Budget pro Lauf wie die Zusammenfassungen. **Quellen und Löschen:** Ein Dokument, das sich ändert, zurückgezogen wird (gleiche Transaktion) oder nicht mehr `indexed` ist, verlässt `source_document_ids` jeder Karte seines Bereichs; war es die Primärquelle, übernimmt die nächste verbleibende Quelle (`document_id`), erst ohne verbleibende Quelle wird die Karte gelöscht. Ein neu aufgebautes Dokument trägt sich bei gleicher Aussage wieder ein. Beim Entfernen oder Ausschalten des Bereichs werden alle Karten gelöscht. Schlägt beim Reindex das Embedding der Karten fehl, werden sie neu aufgebaut, die Chunks sind davon nicht betroffen.
+
+**Rechte:** keine eigene Berechtigung. Weave-Retrieval liest Karten ausschliesslich per `JOIN documents` auf `document_id` durch dieselbe `apply_filters()`-Bedingung wie die Chunk-Suche, nur bei `collections.memory_cards_enabled IS TRUE`, `documents.collection_slug = knowledge_cards.collection_slug` und dem konfigurierten `embedding_model`. Eine Karte entfällt, sobald eine ihrer `source_document_ids` unter derselben Bedingung nicht sichtbar oder nicht `indexed` ist. Karten sind Orientierung, nie eine zitierbare Quelle.
 
 ## Optionaler Vektorindex: Amazon S3 Vectors
 
@@ -201,6 +226,8 @@ GRANT USAGE ON SCHEMA public TO weave_retrieval_ro;
 GRANT SELECT ON documents, chunks, collections TO weave_retrieval_ro;
 -- Seit ADR-0009 (entfaellt mit der DEFAULT-PRIVILEGES-Zeile unten):
 GRANT SELECT ON knowledge_memory TO weave_retrieval_ro;
+-- Seit ADR-0009 §13 (entfaellt ebenso):
+GRANT SELECT ON knowledge_cards TO weave_retrieval_ro;
 
 -- Optional, damit ein zukuenftig additiv hinzugefuegtes Read-Model
 -- (siehe "Versionierungsregel" unten) nicht erst einen manuellen GRANT
@@ -232,3 +259,4 @@ Lokale Entwicklung und die Pytest-Suite beider Services laufen gegen eine lokale
 - **Additiv, weiterhin v1 (2026-09-24):** `collections.visibility` (NOT NULL, Default `'public'`) und `collections.read_users` (NOT NULL, Default `[]`) hinzugefuegt — Wissensbereiche sind jetzt zusaetzlich zu oeffentlich/Team auch an einzelne Personen teilbar. `visibility` ersetzt die fruehere implizite "leeres `read_teams` = oeffentlich"-Regel als massgebliches Sichtbarkeits-Flag (siehe "Tabelle `collections`" oben); `read_users` ist das personenbezogene Gegenstueck zu `read_teams`. Ein Sync-Payload eines aelteren Weave-Ingest ohne diese beiden Felder wird von Weave-Knowledge so interpretiert, als kaeme er von einer Version mit der alten Regel (`visibility = 'public' if not read_teams else 'restricted'`, `read_users = []`) — additiv, kein Versionssprung: ein bereits laufendes Weave-Retrieval, das `visibility`/`read_users` noch nicht auswertet, funktioniert unveraendert weiter (es wertet dann weiterhin nur `read_teams` aus, mit dem alten leer-heisst-oeffentlich-Verhalten fuer JEDE Collection, nicht mehr nur fuer eine `'public'`-markierte).
 - **Additiv, weiterhin v1 (2026-10-18):** Tabelle `knowledge_memory` (Wissensgedächtnis, ADR-0009) hinzugefügt — neue Tabelle im Sinn der Versionierungsregel, kein Versionssprung. Ein Weave-Retrieval, das sie nicht kennt, funktioniert unverändert; `POST /api/v1/memory` liefert dann nichts, und Runtime fällt auf die Chunk-Suche zurück.
 - **Additiv, weiterhin v1 (2026-11-17):** Optionaler Vektorindex Amazon S3 Vectors (`VECTOR_BACKEND=s3vectors`, siehe "Optionaler Vektorindex: Amazon S3 Vectors" oben) — eine abgeleitete Kopie der Chunk-Embeddings ausserhalb von Postgres, kein Schema- und kein Versionssprung. Weave-Knowledge ist der einzige Schreiber, Weave-Retrieval fragt nur ab und prueft jeden Treffer in Postgres nach; Postgres bleibt massgeblich. Mit dem Default `pgvector` aendert sich nichts.
+- **Additiv, weiterhin v1 (2026-11-19):** Tabelle `knowledge_cards`, Spalten `collections.memory_cards_enabled` (NOT NULL, Default `false`) und `knowledge_memory.cards_sha256` (nullable), Migration `0008_knowledge_cards` (ADR-0009 §13). Ein Weave-Retrieval, das sie nicht kennt, funktioniert unverändert. Eine Kartensuche gegen eine Datenbank ohne `0008` liefert keine Karten (Savepoint, Warnung im Log), der Rest der Anfrage bleibt unberührt; die Migration sollte trotzdem vor Weave-Runtime ausgerollt werden.

@@ -39,15 +39,16 @@ import argparse
 import logging
 import sys
 import uuid
+from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.db import SessionLocal
-from app.models.models import Chunk, Document, DocumentStatus
+from app.models.models import Chunk, Document, DocumentStatus, KnowledgeCard, KnowledgeMemory
 from app.services.collection_sync import CollectionSyncError, fetch_job_collections
-from app.services import vector_index
+from app.services import memory, vector_index
 from app.services.embeddings import EmbeddingProvider, embed_chunks, get_provider
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,28 @@ def _reindex_one(db: Session, document: Document, provider: EmbeddingProvider) -
         ).scalars().all()
     )
     embed_chunks(db, document, chunks, provider)
+    # Knowledge cards share the chunks' embedding model (Retrieval filters on
+    # it). They are optional: a failure here must not fail the chunks' own
+    # re-embedding -- the document's cards are rebuilt by the memory instead.
+    cards = list(db.execute(select(KnowledgeCard).where(KnowledgeCard.document_id == document.id)).scalars().all())
+    try:
+        memory.embed_cards(cards, provider)
+    except Exception:  # noqa: BLE001 - see comment above
+        logger.warning('reindex: re-embedding the knowledge cards of %s failed, rebuilding them', document.id,
+                       exc_info=True)
+        db.execute(
+            update(KnowledgeMemory).where(KnowledgeMemory.document_id == document.id).values(cards_sha256=None)
+        )
+        # Committed with the chunks by the caller (memory.touch would commit itself).
+        db.execute(
+            update(KnowledgeMemory)
+            .where(
+                KnowledgeMemory.kind == memory.KIND_COLLECTION,
+                KnowledgeMemory.collection_slug == document.collection_slug,
+                KnowledgeMemory.dirty_since.is_(None),
+            )
+            .values(dirty_since=datetime.now(timezone.utc))
+        )
 
 
 def reindex(

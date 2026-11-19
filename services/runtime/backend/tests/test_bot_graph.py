@@ -108,6 +108,37 @@ def test_trace_node_names_the_model_only_on_the_direct_path():
     assert written[0].trace.timings_ms == {'router_ms': 1.0}
 
 
+def _runtime(written, *, streaming=True):
+    class _Runtime:
+        context = bot_graph.TurnContext(
+            bot=_bot(), user=ChatUser(id='u'), requested_collections=None, readable_slugs=None,
+            llm_provider=FakeLLM(), main_llm_factory=FakeLLM, memory=False, streaming=streaming,
+            cancel=threading.Event(),
+        )
+        stream_writer = staticmethod(written.append)
+
+    return _Runtime()
+
+
+def test_ttft_covers_pre_decided_answers_and_only_streaming_turns():
+    base = {
+        'timings_ms': {'prepare_context_ms': 1.0}, 'total_start': 0.0, 'branch': 'knowledge',
+        'decision': _decision('knowledge', needs_retrieval=True),
+    }
+    runtime = _runtime([])
+    bot_graph._generate({**base, 'final_answer': 'guard reply'}, runtime)
+    finished = bot_graph._finish(base, runtime)
+    assert list(finished['timings_ms']) == ['prepare_context_ms', 'ttft_ms', 'total_ms']
+    assert finished['timings_ms']['ttft_ms'] <= finished['timings_ms']['total_ms']
+
+    # No delta written (e.g. an empty n8n answer) -> no ttft_ms.
+    assert 'ttft_ms' not in bot_graph._finish(base, _runtime([]))['timings_ms']
+    # The blocking route has none either.
+    blocking = _runtime([], streaming=False)
+    bot_graph._generate({**base, 'final_answer': 'guard reply'}, blocking)
+    assert 'ttft_ms' not in bot_graph._finish(base, blocking)['timings_ms']
+
+
 def test_timings_are_merged_never_mutated():
     state = {'timings_ms': {'router_ms': 1.0}, 'total_start': 0.0}
     merged = bot_graph._timing(state, 'llm_ms', 0.0)

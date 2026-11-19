@@ -35,7 +35,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.models import Collection, KnowledgeMemory
+from app.models.models import Collection, KnowledgeCard, KnowledgeMemory
 from app.services import memory
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ class CollectionSyncError(Exception):
     """Raised for any failure fetching or parsing the registry response --
     a transport error, a non-2xx status, or a response shaped unlike the
     contract's `{'items': [{slug, name, description, visibility, read_teams,
-    read_users}, ...]}` (see `_extract_registry_items` below for why a bare
+    read_users, memory_cards_enabled}, ...]}` (see `_extract_registry_items` below for why a bare
     list is still tolerated defensively).
 
     Deliberately a single flat exception type (unlike ingest_client's
@@ -102,7 +102,9 @@ def sync_collections(db: Session, *, timeout: float = _DEFAULT_TIMEOUT_SECONDS) 
     present. An older Weave-Ingest's registry response may omit them
     entirely: `visibility` then falls back to 'public' if the entry's
     `read_teams` is empty, else 'restricted' (the pre-`visibility`
-    contract), and `read_users` falls back to `[]`.
+    contract), and `read_users` falls back to `[]`. A missing
+    `memory_cards_enabled` means OFF (fail closed); switching it off deletes
+    the space's knowledge cards, switching it on marks the space for a build.
 
     Returns the number of collections in the upstream response (post-sync
     row count of `collections`). Raises CollectionSyncError on any failure;
@@ -129,6 +131,8 @@ def sync_collections(db: Session, *, timeout: float = _DEFAULT_TIMEOUT_SECONDS) 
     now = datetime.now(timezone.utc)
     seen_slugs: set[str] = set()
     renamed: list[str] = []
+    cards_on: list[str] = []
+    cards_off: list[str] = []
     for entry in items:
         if not isinstance(entry, dict) or 'slug' not in entry:
             raise CollectionSyncError(f'{url!r} returned a malformed entry: {entry!r}')
@@ -149,6 +153,10 @@ def sync_collections(db: Session, *, timeout: float = _DEFAULT_TIMEOUT_SECONDS) 
         # `read_teams` above, not any stale previous value.
         collection.visibility = entry.get('visibility') or ('public' if not collection.read_teams else 'restricted')
         collection.read_users = entry.get('read_users') or []
+        cards_enabled = entry.get('memory_cards_enabled') is True
+        if cards_enabled != bool(collection.memory_cards_enabled):
+            (cards_on if cards_enabled else cards_off).append(slug)
+        collection.memory_cards_enabled = cards_enabled
         collection.synced_at = now
 
     # Full-mirror semantics: drop any local row the upstream response no
@@ -164,10 +172,14 @@ def sync_collections(db: Session, *, timeout: float = _DEFAULT_TIMEOUT_SECONDS) 
     for row in stale:
         db.delete(row)
         db.execute(delete(KnowledgeMemory).where(KnowledgeMemory.collection_slug == row.slug))
+        db.execute(delete(KnowledgeCard).where(KnowledgeCard.collection_slug == row.slug))
+    for slug in cards_off:
+        memory.drop_cards(db, slug)
 
     db.commit()
-    # ADR-0009: a new name or description changes the collection's overview.
-    for slug in renamed:
+    # ADR-0009: a new name or description changes the collection's overview;
+    # switching cards on builds them on the next run.
+    for slug in dict.fromkeys(renamed + cards_on):
         memory.touch(db, slug)
     logger.info('collection sync: upserted %d collection(s), removed %d stale row(s)', len(seen_slugs), len(stale))
     return len(seen_slugs)
