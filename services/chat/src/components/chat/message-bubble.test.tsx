@@ -250,3 +250,28 @@ describe('MessageBubble answer formatting', () => {
     expect(html('```\n• kein Punkt\nzweite Zeile\n```')).toContain('<code>• kein Punkt\nzweite Zeile\n</code>');
   });
 });
+
+describe('MessageBubble model-written source list', () => {
+  afterEach(() => cleanup());
+
+  it('collapses a "Quellen" section the answer ends with', () => {
+    const message: UiMessage = {
+      ...makeMessage([]),
+      streaming: false,
+      content: 'Die Heilfürsorge trägt der Dienstherr.\n\n**Quellen**\n\n- [source 1] Handbuch (evidence: handbuch.pdf)',
+    };
+    const { container } = render(<MessageBubble message={message} />);
+    const details = container.querySelector('details.chat-answer-sources') as HTMLDetailsElement;
+    expect(details).not.toBeNull();
+    expect(details.open).toBe(false);
+    expect(details.querySelector('summary')?.textContent).toBe('Quellen');
+    expect(details.textContent).toContain('handbuch.pdf');
+    expect(screen.getByText('Die Heilfürsorge trägt der Dienstherr.').closest('details')).toBeNull();
+  });
+
+  it('leaves an answer without a source section unchanged', () => {
+    const message: UiMessage = { ...makeMessage([]), streaming: false, content: 'Nur Text.' };
+    const { container } = render(<MessageBubble message={message} />);
+    expect(container.querySelector('details')).toBeNull();
+  });
+});

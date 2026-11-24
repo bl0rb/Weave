@@ -379,6 +379,11 @@ a.portal-tile:hover { border-color: var(--line-2); box-shadow: 0 4px 14px rgb(20
 .portal-tile-label::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--c, var(--accent)); flex-shrink: 0; }
 .portal-tile strong { display: block; margin-top: 6px; font-size: 26px; font-weight: 650; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
 .portal-tile small { display: block; margin-top: 2px; font-size: 12.5px; color: var(--muted); }
+/* The arrow marks the tile as a link to its filtered document list. */
+.portal-tile small svg { display: inline-block; margin-left: 4px; vertical-align: -2px; transition: transform .15s; }
+a.portal-tile:hover small, a.portal-tile:focus-visible small { color: var(--ink); }
+a.portal-tile:hover small svg, a.portal-tile:focus-visible small svg { transform: translateX(2px); }
+@media (prefers-reduced-motion: reduce) { .portal-tile small svg { transition: none; } }
 .portal-overview-grid { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(280px, 1fr); gap: var(--portal-gap); align-items: start; }
 .portal-pill { display: inline-grid; place-items: center; min-width: 22px; height: 21px; padding: 0 7px; border-radius: 999px; background: var(--warn-bg); color: var(--warn); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .portal-pill-err { background: var(--err-bg); color: var(--err); }

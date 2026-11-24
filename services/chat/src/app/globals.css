@@ -250,6 +250,16 @@ body {
 }
 
 /*
+ * The transcript (message-list.tsx) fades out over its last 2rem instead of
+ * being cut off hard at the disclaimer / composer below it. Its bottom
+ * padding matches, so the last answer is fully visible once scrolled down.
+ */
+.chat-message-log {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2rem), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 2rem), transparent);
+}
+
+/*
  * Three-column chat shell (rail | main | sources panel) — breakpoints match
  * the design prototype's own (docs/design-proposals/06-loom-rc/style.css):
  * the sources panel gives way to the inline per-answer sources below

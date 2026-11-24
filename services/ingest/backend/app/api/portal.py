@@ -361,8 +361,15 @@ def _source(
                 label = 'E-Mail-Anhang'
             return PortalDocumentSource(kind='mail', label=label, path=None, url=None, **_provenance(job, uploaded_by))
         return PortalDocumentSource(kind='unknown', label='Unbekannte Herkunft', path=None, url=None)
+    # 'inbox' is only the storage fallback for an upload without a folder
+    # (every portal upload), not a place worth showing as its origin.
+    folder = _job_folder_path(job)
     return PortalDocumentSource(
-        kind='upload', label='Hochgeladen', path=_job_folder_path(job), url=None, **_provenance(job, uploaded_by)
+        kind='upload',
+        label='Hochgeladen',
+        path=None if folder == 'inbox' else folder,
+        url=None,
+        **_provenance(job, uploaded_by),
     )
 
 
@@ -503,7 +510,23 @@ def _item(
         release=_summary(release, released_by),
         source=source if source is not None else _source(job, page_state, mail, uploaded_by),
         review_decision=_review_decision(job),
+        error_message=_failure_reason(job),
     )
+
+
+# The list shows the reason in a table cell; the full text stays on /jobs/{id}.
+_FAILURE_REASON_MAX_CHARS = 300
+
+
+def _failure_reason(job: Job) -> str | None:
+    if job.status != JobStatus.FAILED:
+        return None
+    message = ' '.join((job.error_message or '').split())
+    if not message:
+        return None
+    if len(message) > _FAILURE_REASON_MAX_CHARS:
+        return message[: _FAILURE_REASON_MAX_CHARS - 1].rstrip() + '…'
+    return message
 
 
 def _load_visible_job(db, job_id: str, user: User, *, for_update: bool = False) -> Job:

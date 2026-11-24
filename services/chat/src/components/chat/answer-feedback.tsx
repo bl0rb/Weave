@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import { Clock, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { Flag, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { deleteJson, putJson } from '@/lib/api-client';
 import { useI18n } from '@/i18n/provider';
@@ -14,7 +14,8 @@ const COMMENT_MAX_LENGTH = 2000;
 const RATINGS: Array<{ rating: FeedbackRating; label: MessageKey; Icon: typeof ThumbsUp }> = [
   { rating: 'helpful', label: 'chat.feedback.helpful', Icon: ThumbsUp },
   { rating: 'wrong', label: 'chat.feedback.wrong', Icon: ThumbsDown },
-  { rating: 'outdated', label: 'chat.feedback.outdated', Icon: Clock },
+  // Stored as `outdated` (Weave-API's rating enum); shown as „Prüfung anfordern“.
+  { rating: 'outdated', label: 'chat.feedback.outdated', Icon: Flag },
 ];
 
 type Notice = 'thanks' | 'removed' | 'failed' | null;
@@ -30,14 +31,16 @@ interface AnswerFeedbackProps {
 
 /**
  * The feedback row under a finished answer: „Hilfreich“, „Falsch“,
- * „Veraltet“ as toggle buttons (`aria-pressed`), saved right away via
- * PUT /api/messages/{id}/feedback (Weave-API's
+ * „Prüfung anfordern“ (stored as `outdated`) as toggle buttons
+ * (`aria-pressed`), saved right away via PUT /api/messages/{id}/feedback
+ * (Weave-API's
  * PUT /v1/messages/{message_id}/feedback); clicking the active rating
- * again withdraws it (DELETE). After „Falsch“/„Veraltet“ an optional
+ * again withdraws it (DELETE). After „Falsch“/„Prüfung anfordern“ an optional
  * comment field opens — the rating itself is already stored, so leaving
  * the comment out loses nothing; sending one re-saves the same rating with
- * it. Weave-API forwards the rating anonymously to the knowledge owners'
- * review tasks — the user's identity never leaves Weave-API.
+ * it. Weave-API forwards the rating anonymously to the review tasks of the
+ * cited knowledge spaces, which their owners and members see in the
+ * portal — the user's identity never leaves Weave-API.
  */
 export function AnswerFeedback({ messageId, feedback, onChange }: AnswerFeedbackProps) {
   const { t } = useI18n();

@@ -39,6 +39,8 @@ export type PortalDocument = {
   collection_id: string; collection_name: string; created_at: string;
   quality_grade: string | null; quality_recommendation: string | null; can_release: boolean; release: Publication | null;
   source: PortalSource; review_decision: string | null;
+  /** Why processing stopped, only for a FAILED document (shortened; the full text is on /jobs/{id}). */
+  error_message?: string | null;
 };
 export type DocumentPage = { items: PortalDocument[]; total: number };
 /** One entry of GET /api/v1/portal/collections/{id}/import-scopes -- a distinct Confluence import scope among the space's visible documents. `edit_run_id` is the caller's own newest run of the scope (set only when can_edit), which may differ from the scope's newest run. */
@@ -139,7 +141,7 @@ export function documentState(document: PortalDocument, live?: IndexingItem, loc
   }
   if (document.review_decision === 'skipped') return { label: translate(locale, 'portal.documents.state.skipped'), tone: 'neutral' };
   if (document.review_decision === 'parked') return { label: translate(locale, 'portal.documents.state.parked'), tone: 'neutral' };
-  if (document.status === 'FAILED') return { label: translate(locale, 'portal.documents.state.failed'), tone: 'error' };
+  if (document.status === 'FAILED') return { label: translate(locale, 'portal.documents.state.failed'), tone: 'error', hint: document.error_message || undefined };
   if (document.status === 'RUNNING') return { label: translate(locale, 'portal.documents.state.running'), tone: 'working' };
   if (document.status === 'PENDING') return { label: translate(locale, 'portal.documents.state.pending'), tone: 'neutral' };
   if (document.quality_grade?.toUpperCase() === 'C') return { label: translate(locale, 'portal.documents.state.qualityC'), tone: 'warning' };

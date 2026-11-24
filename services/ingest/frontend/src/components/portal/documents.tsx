@@ -28,7 +28,7 @@ import {
 } from '@/lib/portal';
 import { useI18n } from '@/i18n/provider';
 import type { MessageKey } from '@/i18n/messages';
-import { BulkActionBar, EmptyState, InfoTip, Notice, Pagination, PortalPage, useBulkSelection } from './shared';
+import { BulkActionBar, EmptyState, InfoTip, Notice, Pagination, PortalPage, SourceLabel, useBulkSelection } from './shared';
 
 /** Bounds the list to the most recent N documents matching the server-side filters (view, space, search, grade, source); only "Stand" is filtered client-side, because it depends on the live indexing status. */
 const DOCUMENTS_FETCH_LIMIT = 200;
@@ -325,7 +325,7 @@ export function PortalDocuments({ initial = {} }: { initial?: DocumentsInitialFi
                     const state = documentState(document, live[document.id], locale);
                     return (
                       <tr key={document.id}>
-                        <td><div className="portal-document-link"><input type="checkbox" aria-label={t('portal.documents.selectRow', { filename: document.original_filename })} checked={bulk.selectedIds.has(document.id)} onChange={() => bulk.toggle(document.id)} /><span className="portal-filetype">{fileTypeLabel(document)}</span><span>{document.original_filename}{document.source?.label && <small className="block text-xs text-[var(--muted)]">{document.source.url ? <a href={document.source.url} target="_blank" rel="noopener noreferrer">{document.source.label}</a> : `${document.source.label}${document.source.path ? `: ${document.source.path}` : ''}`}</small>}</span></div></td>
+                        <td><div className="portal-document-link"><input type="checkbox" aria-label={t('portal.documents.selectRow', { filename: document.original_filename })} checked={bulk.selectedIds.has(document.id)} onChange={() => bulk.toggle(document.id)} /><span className="portal-filetype">{fileTypeLabel(document)}</span><span>{document.original_filename}{document.source?.label && <small className="block text-xs text-[var(--muted)]"><SourceLabel source={document.source} /></small>}</span></div></td>
                         <td><span className="portal-space-tag" style={cssVar(spaceColorVar(document.collection_id))}>{document.collection_name}</span></td>
                         <td><span aria-live="polite" className={`portal-badge portal-badge-${state.tone}`}>{state.label}</span>{state.hint && <span className="mt-1 block max-w-[280px] text-xs leading-5 text-[var(--muted)]">{state.hint}</span>}</td>
                         <td>{document.quality_grade ? document.quality_grade.toUpperCase() : <span className="text-[var(--muted)]" title={t('portal.documents.noGrade')}>–</span>}</td>

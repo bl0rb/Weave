@@ -36,7 +36,7 @@ describe('AnswerFeedback', () => {
   it('renders the three ratings as unpressed toggle buttons in a labelled group', () => {
     render(<AnswerFeedback messageId={42} feedback={null} />);
     expect(screen.getByRole('group', { name: 'Wie hilfreich war diese Antwort?' })).toBeTruthy();
-    for (const name of ['Hilfreich', 'Falsch', 'Veraltet']) expect(button(name).getAttribute('aria-pressed')).toBe('false');
+    for (const name of ['Hilfreich', 'Falsch', 'Prüfung anfordern']) expect(button(name).getAttribute('aria-pressed')).toBe('false');
     expect(screen.queryByLabelText('Was ist falsch oder veraltet? (optional)')).toBeNull();
   });
 
@@ -97,9 +97,9 @@ describe('AnswerFeedback', () => {
     fireEvent.click(button('Falsch'));
     fireEvent.change(await screen.findByLabelText('Was ist falsch oder veraltet? (optional)'), { target: { value: 'alt' } });
 
-    fireEvent.click(button('Veraltet'));
+    fireEvent.click(button('Prüfung anfordern'));
 
-    await waitFor(() => expect(button('Veraltet').getAttribute('aria-pressed')).toBe('true'));
+    await waitFor(() => expect(button('Prüfung anfordern').getAttribute('aria-pressed')).toBe('true'));
     expect(button('Falsch').getAttribute('aria-pressed')).toBe('false');
     expect(fetchMock.mock.calls.map(([, init]) => init?.method)).toEqual(['PUT', 'PUT']);
     expect(JSON.parse(fetchMock.mock.calls[1][1]?.body as string)).toEqual({ rating: 'outdated', comment: 'alt' });
@@ -108,7 +108,7 @@ describe('AnswerFeedback', () => {
   it('lets a stored negative rating get a comment later, prefilled with the stored one', async () => {
     stubFeedbackApi();
     render(<AnswerFeedback messageId={42} feedback={{ rating: 'outdated', comment: 'Stand 2024', updated_at: 'x' }} />);
-    expect(button('Veraltet').getAttribute('aria-pressed')).toBe('true');
+    expect(button('Prüfung anfordern').getAttribute('aria-pressed')).toBe('true');
     expect(screen.queryByLabelText('Was ist falsch oder veraltet? (optional)')).toBeNull();
 
     fireEvent.click(button('Kommentar ergänzen'));

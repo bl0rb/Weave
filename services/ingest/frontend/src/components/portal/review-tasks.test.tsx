@@ -159,7 +159,7 @@ describe('ReviewTasks', () => {
     await waitFor(() => expect(detailPanel()).toBeTruthy());
     const panel = detailPanel();
     expect(within(panel).getByText('1 × falsch')).toBeTruthy();
-    expect(within(panel).getByText('1 × veraltet')).toBeTruthy();
+    expect(within(panel).getByText('1 × Prüfung angefordert')).toBeTruthy();
     expect(within(panel).getByText('Der Betrag ist 28 €')).toBeTruthy();
     expect(within(panel).getByText('Das Tagegeld beträgt 24 €.')).toBeTruthy();
     expect(within(panel).getByText(/Reisekosten › Tagegeld/)).toBeTruthy();

@@ -1182,6 +1182,50 @@ def test_portal_document_source_reflects_upload_folder(monkeypatch):
     assert item['source']['path'] == 'Kunden/Vertraege'
 
 
+def test_portal_document_list_names_failure_reason():
+    user = create_test_user(
+        username=f'portal-failed-{uuid.uuid4().hex[:8]}',
+        email=f'portal-failed-{uuid.uuid4().hex[:8]}@example.com',
+    )
+    collection = _collection(user.id)
+    failed = _job(user.id, collection)
+    finished = _job(user.id, collection)
+    with _db() as db:
+        row = db.get(Job, failed.id)
+        row.status = JobStatus.FAILED
+        row.error_message = 'OCR failed:\n  page 3 could not be read ' + 'x' * 400
+        db.get(Job, finished.id).error_message = 'stale warning'
+        db.commit()
+    authed = login_as(user.username)
+
+    listing = authed.get('/api/v1/portal/documents', params={'collection_id': collection.id}).json()
+    items = {item['id']: item for item in listing['items']}
+    reason = items[failed.id]['error_message']
+    assert reason.startswith('OCR failed: page 3 could not be read x')
+    assert len(reason) == 300 and reason.endswith('…')
+    # Only a failed document carries a reason.
+    assert items[finished.id]['error_message'] is None
+
+
+def test_portal_document_source_hides_inbox_fallback(monkeypatch):
+    # A portal upload has no folder: its storage fallback 'inbox' is no origin.
+    user = create_test_user(
+        username=f'portal-inbox-{uuid.uuid4().hex[:8]}',
+        email=f'portal-inbox-{uuid.uuid4().hex[:8]}@example.com',
+    )
+    collection = _collection(user.id)
+    job = _job(user.id, collection)
+    authed = login_as(user.username)
+
+    detail = authed.get(f'/api/v1/portal/documents/{job.id}').json()
+    assert _where(detail['source']) == {'kind': 'upload', 'label': 'Hochgeladen', 'path': None, 'url': None}
+    assert detail['source']['uploaded_by'] == user.username
+    listing = authed.get('/api/v1/portal/documents', params={'collection_id': collection.id}).json()
+    item = next(item for item in listing['items'] if item['id'] == job.id)
+    assert item['source']['path'] is None
+    assert item['source']['uploaded_by'] == user.username
+
+
 def test_portal_document_source_reflects_confluence_page(monkeypatch):
     user = create_test_user(
         username=f'portal-confluence-{uuid.uuid4().hex[:8]}',
