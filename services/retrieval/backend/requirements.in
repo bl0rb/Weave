@@ -13,12 +13,12 @@
 # has no worker queue (search is synchronous, see README) and owns no
 # schema of its own to migrate (it is the read-only side of the shared
 # chunk-store contract, never the writer).
-fastapi==0.162.0
+fastapi==0.165.0
 uvicorn[standard]==0.54.0
-pydantic==2.14.2
-pydantic-settings==2.16.2
-sqlalchemy==2.1.8
-psycopg[binary]==3.3.8
+pydantic==2.14.3
+pydantic-settings==2.16.3
+sqlalchemy==2.1.9
+psycopg[binary]==3.3.9
 pgvector==0.5.1
 pytest==9.2.0
 httpx==0.28.1
@@ -27,4 +27,4 @@ PyYAML==6.0.3
 # 's3vectors', see app/services/vector_index.py). Pinned identical to
 # Weave-Ingest's and Weave-Knowledge's boto3; imported lazily, so the
 # pgvector default never loads it.
-boto3==1.43.124
+boto3==1.44.6

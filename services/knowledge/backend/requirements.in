@@ -6,15 +6,15 @@
 # Version pins for packages shared with Weave-Ingest are kept identical to
 # backend/requirements.in there, so the two services stay on the same
 # fastapi/sqlalchemy/celery/etc. major.minor across the Weave system.
-fastapi==0.162.0
+fastapi==0.165.0
 uvicorn[standard]==0.54.0
-pydantic==2.14.2
-pydantic-settings==2.16.2
-sqlalchemy==2.1.8
-psycopg[binary]==3.3.8
+pydantic==2.14.3
+pydantic-settings==2.16.3
+sqlalchemy==2.1.9
+psycopg[binary]==3.3.9
 pgvector==0.5.1
 alembic==1.20.1
-celery==5.6.3
+celery==5.7.0
 redis==8.1.0
 pytest==9.2.0
 httpx==0.28.1
@@ -23,4 +23,4 @@ PyYAML==6.0.3
 # app/services/vector_index.py) -- imported lazily, never in pgvector mode.
 # Same pin as Weave-Ingest's requirements.in; needs the bundled `s3vectors`
 # service model.
-boto3==1.43.124
+boto3==1.44.6
