@@ -143,22 +143,22 @@ export function PortalHome() {
           <Link className="portal-tile" style={cssVar('var(--warn)')} href={documentsLink({ ansicht: 'review' })}>
             <span className="portal-tile-label">{t('portal.home.tile.review.label')}</span>
             <strong>{documents === null ? '–' : counts.review}</strong>
-            <small>{t('portal.home.tile.review.hint')}</small>
+            <small>{t('portal.home.tile.review.hint')}<ArrowRight size={14} aria-hidden="true" /></small>
           </Link>
           <Link className="portal-tile" style={cssVar('var(--proc)')} href={documentsLink({ stand: 'processing' })}>
             <span className="portal-tile-label">{t('portal.home.tile.processing.label')}</span>
             <strong>{documents === null ? '–' : counts.processing}</strong>
-            <small>{t('portal.home.tile.processing.hint')}</small>
+            <small>{t('portal.home.tile.processing.hint')}<ArrowRight size={14} aria-hidden="true" /></small>
           </Link>
           <Link className="portal-tile" style={cssVar('var(--err)')} href={documentsLink({ ansicht: 'failed' })}>
             <span className="portal-tile-label">{t('common.error')}</span>
             <strong>{documents === null ? '–' : counts.error}</strong>
-            <small>{t('portal.home.tile.error.hint')}</small>
+            <small>{t('portal.home.tile.error.hint')}<ArrowRight size={14} aria-hidden="true" /></small>
           </Link>
           <Link className="portal-tile" style={cssVar('var(--ok)')} href={documentsLink({ stand: 'ready' })}>
             <span className="portal-tile-label">{t('portal.home.tile.ready.label')}</span>
             <strong>{documents === null ? '–' : counts.ready}</strong>
-            <small>{t('portal.pipeline.ready.hint')}</small>
+            <small>{t('portal.pipeline.ready.hint')}<ArrowRight size={14} aria-hidden="true" /></small>
           </Link>
         </div>
       </section>

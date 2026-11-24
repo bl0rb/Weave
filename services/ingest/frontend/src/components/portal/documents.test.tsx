@@ -197,3 +197,15 @@ it('counts every view and filters by a Confluence import scope linked from a spa
   expect(screen.queryByTestId('import-scope-filter')).toBeNull();
   expect(window.location.search).not.toContain('import=');
 });
+
+it('names the uploader under an uploaded document instead of a storage folder', async () => {
+  const uploaded = { ...document, source: { kind: 'upload', label: 'Hochgeladen', path: null, url: null, uploaded_by: 'anna' } };
+  json.mockImplementation(async path => {
+    if (typeof path === 'string' && path.startsWith('/api/v1/portal/documents')) return { items: [uploaded], total: 1 };
+    if (typeof path === 'string' && path.startsWith('/api/v1/portal/indexing-status')) return { items: [] };
+    return { items: [area] };
+  });
+  render(<PortalDocuments />);
+  expect(await screen.findByText('Hochgeladen von anna')).toBeTruthy();
+  expect(screen.queryByText(/inbox/)).toBeNull();
+});

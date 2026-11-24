@@ -36,8 +36,8 @@ describe('AnswerFeedback', () => {
   it('renders the three ratings as unpressed toggle buttons in a labelled group', () => {
     render(<AnswerFeedback messageId={42} feedback={null} />);
     expect(screen.getByRole('group', { name: 'Wie hilfreich war diese Antwort?' })).toBeTruthy();
-    for (const name of ['Hilfreich', 'Falsch', 'Veraltet']) expect(button(name).getAttribute('aria-pressed')).toBe('false');
-    expect(screen.queryByLabelText('Was ist falsch oder veraltet? (optional)')).toBeNull();
+    for (const name of ['Hilfreich', 'Falsch', 'Prüfung anfordern']) expect(button(name).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.queryByLabelText('Was ist falsch oder soll geprüft werden? (optional)')).toBeNull();
   });
 
   it('saves „Hilfreich“ right away, marks it pressed and thanks the user', async () => {
@@ -55,7 +55,7 @@ describe('AnswerFeedback', () => {
     expect(JSON.parse(init?.body as string)).toEqual({ rating: 'helpful', comment: null });
     expect(onChange).toHaveBeenCalledWith({ rating: 'helpful', comment: null, updated_at: '2026-11-17T10:00:00Z' });
     // No comment field for a positive rating.
-    expect(screen.queryByLabelText('Was ist falsch oder veraltet? (optional)')).toBeNull();
+    expect(screen.queryByLabelText('Was ist falsch oder soll geprüft werden? (optional)')).toBeNull();
   });
 
   it('withdraws the rating (DELETE) when the active rating is clicked again', async () => {
@@ -78,7 +78,7 @@ describe('AnswerFeedback', () => {
     render(<AnswerFeedback messageId={42} feedback={null} />);
 
     fireEvent.click(button('Falsch'));
-    const field = (await screen.findByLabelText('Was ist falsch oder veraltet? (optional)')) as HTMLTextAreaElement;
+    const field = (await screen.findByLabelText('Was ist falsch oder soll geprüft werden? (optional)')) as HTMLTextAreaElement;
     expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toEqual({ rating: 'wrong', comment: null });
     expect(field.maxLength).toBe(2000);
 
@@ -87,7 +87,7 @@ describe('AnswerFeedback', () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(JSON.parse(fetchMock.mock.calls[1][1]?.body as string)).toEqual({ rating: 'wrong', comment: 'Die Frist beträgt 14 Tage.' });
-    await waitFor(() => expect(screen.queryByLabelText('Was ist falsch oder veraltet? (optional)')).toBeNull());
+    await waitFor(() => expect(screen.queryByLabelText('Was ist falsch oder soll geprüft werden? (optional)')).toBeNull());
     expect(button('Falsch').getAttribute('aria-pressed')).toBe('true');
   });
 
@@ -95,11 +95,11 @@ describe('AnswerFeedback', () => {
     const fetchMock = stubFeedbackApi();
     render(<AnswerFeedback messageId={42} feedback={null} />);
     fireEvent.click(button('Falsch'));
-    fireEvent.change(await screen.findByLabelText('Was ist falsch oder veraltet? (optional)'), { target: { value: 'alt' } });
+    fireEvent.change(await screen.findByLabelText('Was ist falsch oder soll geprüft werden? (optional)'), { target: { value: 'alt' } });
 
-    fireEvent.click(button('Veraltet'));
+    fireEvent.click(button('Prüfung anfordern'));
 
-    await waitFor(() => expect(button('Veraltet').getAttribute('aria-pressed')).toBe('true'));
+    await waitFor(() => expect(button('Prüfung anfordern').getAttribute('aria-pressed')).toBe('true'));
     expect(button('Falsch').getAttribute('aria-pressed')).toBe('false');
     expect(fetchMock.mock.calls.map(([, init]) => init?.method)).toEqual(['PUT', 'PUT']);
     expect(JSON.parse(fetchMock.mock.calls[1][1]?.body as string)).toEqual({ rating: 'outdated', comment: 'alt' });
@@ -108,12 +108,12 @@ describe('AnswerFeedback', () => {
   it('lets a stored negative rating get a comment later, prefilled with the stored one', async () => {
     stubFeedbackApi();
     render(<AnswerFeedback messageId={42} feedback={{ rating: 'outdated', comment: 'Stand 2024', updated_at: 'x' }} />);
-    expect(button('Veraltet').getAttribute('aria-pressed')).toBe('true');
-    expect(screen.queryByLabelText('Was ist falsch oder veraltet? (optional)')).toBeNull();
+    expect(button('Prüfung anfordern').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.queryByLabelText('Was ist falsch oder soll geprüft werden? (optional)')).toBeNull();
 
     fireEvent.click(button('Kommentar ergänzen'));
 
-    expect((screen.getByLabelText('Was ist falsch oder veraltet? (optional)') as HTMLTextAreaElement).value).toBe('Stand 2024');
+    expect((screen.getByLabelText('Was ist falsch oder soll geprüft werden? (optional)') as HTMLTextAreaElement).value).toBe('Stand 2024');
   });
 
   it('keeps the previous state and shows an error when saving fails', async () => {

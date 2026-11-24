@@ -668,9 +668,9 @@ describe('ChatApp answer feedback', () => {
     expect(screen.queryByRole('button', { name: 'Hilfreich' })).toBeNull();
 
     await act(async () => finish!());
-    fireEvent.click(await screen.findByRole('button', { name: 'Veraltet' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Prüfung anfordern' }));
 
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Veraltet' }).getAttribute('aria-pressed')).toBe('true'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Prüfung anfordern' }).getAttribute('aria-pressed')).toBe('true'));
     const call = fetchMock.mock.calls.find(([req]) => String(req).endsWith('/api/messages/42/feedback'))!;
     expect(call[1]?.method).toBe('PUT');
   });

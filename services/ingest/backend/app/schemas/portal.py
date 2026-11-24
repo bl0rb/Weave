@@ -52,6 +52,9 @@ class PortalDocumentItem(BaseModel):
     # 'parked' when it was set aside to decide later (see app/api/portal.py's
     # _review_decision()); None otherwise.
     review_decision: str | None = None
+    # Why processing stopped (Job.error_message), only for a FAILED document;
+    # the same text the job detail page (/jobs/{id}) shows, shortened.
+    error_message: str | None = None
 
 
 class PortalDocumentListResponse(BaseModel):

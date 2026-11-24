@@ -53,7 +53,7 @@ export function MessageList({
     // sequentially-appended transcript, implicitly `aria-live="polite"` —
     // announces a finished turn without re-reading the whole history on
     // every render (design target 5, "aria-live for new answers").
-    <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-4 py-4" role="log" aria-label={t('chat.messageList.landmarkLabel')}>
+    <div className="chat-message-log flex flex-1 flex-col gap-3 overflow-y-auto px-4 pb-8 pt-4" role="log" aria-label={t('chat.messageList.landmarkLabel')}>
       {messages.map((message) => (
         <MessageBubble
           key={message.id}

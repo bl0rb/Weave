@@ -2,7 +2,7 @@ import { useMemo, useState, type ImgHTMLAttributes } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
-import { PanelRight } from 'lucide-react';
+import { ChevronRight, PanelRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { UiAgentStatus, UiMessage } from '@/lib/chat-types';
 import { SourceCards } from '@/components/chat/source-cards';
@@ -13,7 +13,7 @@ import { ErrorBanner } from '@/components/chat/error-banner';
 import { toProxiedImageUrl } from '@/lib/portal-artifact-url';
 import { useI18n } from '@/i18n/provider';
 import { answerSpaces, citedSourcesByRef, spaceColor } from '@/lib/knowledge-spaces';
-import { normalizeAnswerMarkdown, remarkChatBreaks } from '@/lib/markdown';
+import { normalizeAnswerMarkdown, remarkChatBreaks, splitAnswerSources } from '@/lib/markdown';
 import { AnswerCitationsContext, AnswerSpacesFooter, CitationHighlightProvider, CitationSpan, rehypeCitations } from '@/components/chat/citations';
 import type { MessageKey } from '@/i18n/messages';
 import { AnswerFeedback } from '@/components/chat/answer-feedback';
@@ -28,6 +28,18 @@ function AnswerImage({ src, alt }: ImgHTMLAttributes<HTMLImageElement>) {
   if (!src || typeof src !== 'string') return null;
   // eslint-disable-next-line @next/next/no-img-element -- proxied, per-message remote image, not a static asset
   return <img src={toProxiedImageUrl(src)} alt={alt ?? ''} className="max-w-full rounded-lg" />;
+}
+
+function AnswerMarkdown({ content, citedRefs }: { content: string; citedRefs: Set<number> }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm, remarkChatBreaks]}
+      rehypePlugins={[rehypeSanitize, [rehypeCitations, { refs: citedRefs }]]}
+      components={{ img: AnswerImage, span: CitationSpan }}
+    >
+      {content}
+    </ReactMarkdown>
+  );
 }
 
 interface MessageBubbleProps {
@@ -96,6 +108,10 @@ export function MessageBubble({
     return { messageId: message.id, byRef, colorByRef, mixed, showSources };
   }, [isUser, message.id, message.sources, spaces, showSources]);
   const citedRefs = useMemo(() => new Set(citations.byRef.keys()), [citations]);
+  const answer = useMemo(
+    () => splitAnswerSources(isUser ? '' : normalizeAnswerMarkdown(message.content)),
+    [isUser, message.content]
+  );
 
   return (
     <CitationHighlightProvider>
@@ -129,13 +145,20 @@ export function MessageBubble({
         ) : message.content ? (
           <div className="prose-chat">
             <AnswerCitationsContext.Provider value={citations}>
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm, remarkChatBreaks]}
-                rehypePlugins={[rehypeSanitize, [rehypeCitations, { refs: citedRefs }]]}
-                components={{ img: AnswerImage, span: CitationSpan }}
-              >
-                {normalizeAnswerMarkdown(message.content)}
-              </ReactMarkdown>
+              <AnswerMarkdown content={answer.body} citedRefs={citedRefs} />
+              {/* A source list the model wrote into the answer itself stays
+                  collapsed: the source cards below already carry it. */}
+              {answer.sourcesLabel ? (
+                <details className="chat-answer-sources group mt-3 border-t border-[var(--line)] pt-2">
+                  <summary className="flex w-fit cursor-pointer list-none items-center gap-1 text-xs font-medium text-[var(--muted)] hover:text-[var(--ink)] [&::-webkit-details-marker]:hidden">
+                    <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90 motion-reduce:transition-none" aria-hidden="true" />
+                    {answer.sourcesLabel}
+                  </summary>
+                  <div className="mt-2 text-[13px] text-[var(--muted)]">
+                    <AnswerMarkdown content={answer.sources} citedRefs={citedRefs} />
+                  </div>
+                </details>
+              ) : null}
             </AnswerCitationsContext.Provider>
           </div>
         ) : message.streaming ? (

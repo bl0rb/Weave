@@ -12,6 +12,10 @@ describe('publication state', () => {
     expect(documentState(sent).label).not.toMatch(/aktiv|verfügbar/i);
   });
   it('keeps quality blocks visible', () => { expect(documentState({ ...document, quality_recommendation: 'block' }).tone).toBe('error'); });
+  it('shows why a failed document stopped', () => {
+    expect(documentState({ ...document, status: 'FAILED', error_message: 'OCR failed on page 3' })).toEqual({ label: 'Verarbeitung fehlgeschlagen', tone: 'error', hint: 'OCR failed on page 3' });
+    expect(documentState({ ...document, status: 'FAILED', error_message: null }).hint).toBeUndefined();
+  });
   it('shows skipped documents as neutral', () => { expect(documentState({ ...document, review_decision: 'skipped' })).toEqual({ label: 'Übersprungen', tone: 'neutral' }); });
   it('does not expose internal errors or tokens', () => { expect(portalError(new ApiError(500, 'secret-key=example SQL error'))).not.toContain('secret'); });
 });
