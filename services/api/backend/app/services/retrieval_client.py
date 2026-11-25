@@ -67,7 +67,7 @@ def _client() -> httpx.Client:
     return httpx.Client(base_url=settings.retrieval_base_url, headers=headers, timeout=timeout)
 
 
-def list_collections(*, team: str | list[str] | None, user: str | None = None) -> list:
+def list_collections(*, team: str | list[str] | None, user: str | None = None, explicit: bool = False) -> list:
     """GET /api/v1/collections?team=<team>&user=<user> -- the collections
     `team` (and, when given, the individually-shared-with `user`) may read,
     verbatim from Weave-Retrieval (that service's own `CollectionOut`:
@@ -80,11 +80,18 @@ def list_collections(*, team: str | list[str] | None, user: str | None = None) -
     Weave-Ingest user id (app/services/ingest_identity.py's
     `ingest_subject`) and is omitted the same way when unknown -- there is
     no per-person grant to resolve without it, so the call falls back to
-    team/public collections only."""
+    team/public collections only.
+
+    `explicit=True` asks for only the collections a grant actually names
+    the caller in (public ones without such a grant left out) -- see
+    `has_explicit_collection_access` below."""
     params = {'teams': team} if isinstance(team, list) else ({'team': team} if team is not None else None)
     if user is not None:
         params = dict(params) if params is not None else {}
         params['user'] = user
+    if explicit:
+        params = dict(params) if params is not None else {}
+        params['explicit'] = 'true'
 
     try:
         with _client() as client:
@@ -101,6 +108,14 @@ def list_collections(*, team: str | list[str] | None, user: str | None = None) -
         return response.json()
     except ValueError as exc:
         raise RetrievalClientError('Weave-Retrieval returned a non-JSON response for GET /api/v1/collections') from exc
+
+
+def has_explicit_collection_access(*, team: str | list[str] | None, user: str | None) -> bool:
+    """Whether at least one knowledge space grants the caller access by
+    name -- a person grant on `user` or a team grant on one of `team`.
+    Public spaces alone do not count. Raises `RetrievalClientError` like
+    `list_collections` when Weave-Retrieval cannot answer."""
+    return bool(list_collections(team=team, user=user, explicit=True))
 
 
 def release_collection(release_id: str) -> str | None:

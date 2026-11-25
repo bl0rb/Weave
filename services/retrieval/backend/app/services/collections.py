@@ -29,7 +29,12 @@ _RELEASE_ID_KEY = '_weave_release_id'
 
 
 def readable_collections(
-    db: Session, team: str | None = None, *, teams: list[str] | None = None, user: str | None = None
+    db: Session,
+    team: str | None = None,
+    *,
+    teams: list[str] | None = None,
+    user: str | None = None,
+    explicit: bool = False,
 ) -> list[Collection]:
     """Every `Collection` row the caller is allowed to read, per the
     contract's three-part rule: a collection is readable when it is PUBLIC
@@ -48,6 +53,12 @@ def readable_collections(
     restricted rows' ACLs -- a missing id is never treated as a wildcard
     match against `read_users`.
 
+    `explicit=True` drops the PUBLIC rule: only collections whose
+    `read_teams`/`read_users` actually name the caller (an explicit person
+    or team grant, whatever the visibility). Weave-API uses it to turn away
+    non-admins who hold no grant at all -- a public space alone does not
+    count as access there.
+
     `read_teams`/`read_users` are JSON columns (see app/models/models.py's
     Collection), so "does it list `team`/`user`" can't be expressed as a
     single portable SQL predicate across both dialects the way
@@ -63,7 +74,7 @@ def readable_collections(
     return [
         collection
         for collection in collections
-        if collection.visibility == 'public'
+        if (not explicit and collection.visibility == 'public')
         or memberships.intersection(collection.read_teams or [])
         or (user is not None and user in (collection.read_users or []))
     ]

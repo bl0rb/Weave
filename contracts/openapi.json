@@ -13059,6 +13059,17 @@
             "title": "Is Active",
             "type": "boolean"
           },
+          "knowledge_access": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledge Access"
+          },
           "locale": {
             "anyOf": [
               {

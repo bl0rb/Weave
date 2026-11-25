@@ -10,6 +10,12 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
 
     app_name: str = 'Weave Ingest API'
+    # Interactive API docs: Swagger UI (/docs), ReDoc (/redoc) and the
+    # OpenAPI schema (/openapi.json). On by default; false answers 404 on
+    # all three (app/main.py's api_docs_urls), e.g. for a public production
+    # host that should not list its routes.
+    api_docs_enabled: bool = True
+
     database_url: str = ''
     postgres_host: str = ''
     postgres_port: int = 5432

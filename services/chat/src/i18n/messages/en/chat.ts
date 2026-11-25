@@ -123,6 +123,11 @@ export const chat: Record<keyof typeof de, string> = {
   'sourceCards.toggle': 'Sources ({count})',
   'sourceCards.sourceLabel': 'Source: {value}',
 
+  // components/chat/chat-app.tsx (start screen)
+  'hero.title': 'What would you like to know?',
+  'hero.titleWithBot': 'What would you like to ask {name}?',
+  'hero.subtitle': 'Pick an assistant and knowledge spaces below, then ask your first question.',
+
   // components/chat/message-list.tsx
   'messageList.empty': 'No messages yet — ask your first question below.',
   'messageList.landmarkLabel': 'Conversation',
@@ -250,4 +255,9 @@ export const chat: Record<keyof typeof de, string> = {
   'login.ssoError.gatewayUnreachable': 'Weave API was unreachable during SSO login. Please try again shortly.',
   'login.ssoError.default':
     'Logging in via SSO failed. Please try again or sign in with your personal token instead.',
+
+  // components/chat/chat-app.tsx (no knowledge-space grant)
+  'noAccess.title': 'No access to knowledge spaces',
+  'noAccess.text': 'Your account has not been granted access to any knowledge space yet. Please ask an administrator to grant you access to a knowledge space.',
+  'noAccess.logout': 'Log out',
 };

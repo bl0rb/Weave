@@ -163,3 +163,33 @@ def test_release_collection_resolves_the_documents_space():
         db.query(Document).delete()
         db.commit()
         db.close()
+
+
+# --- explicit parameter ----------------------------------------------------------
+
+
+def test_collections_explicit_returns_only_spaces_naming_the_caller():
+    """`explicit=true` ignores the public rule: only an actual team or person
+    grant counts -- also on a public space that additionally names the team."""
+    _seed(
+        make_collection(slug='public-docs', name='Public Docs', read_teams=[]),
+        make_collection(slug='public-with-team', name='Public With Team', read_teams=['Engineering']),
+        make_collection(slug='eng-docs', name='Eng Docs', visibility='restricted', read_teams=['Engineering']),
+        make_collection(
+            slug='shared-with-me', name='Shared With Me', visibility='restricted', read_teams=[], read_users=['user-123']
+        ),
+    )
+    try:
+        resp = client.get(
+            '/api/v1/collections', params={'team': 'Engineering', 'explicit': 'true'}, headers=AUTH_HEADERS
+        )
+        assert resp.status_code == 200
+        assert {c['slug'] for c in resp.json()} == {'public-with-team', 'eng-docs'}
+
+        resp = client.get('/api/v1/collections', params={'user': 'user-123', 'explicit': 'true'}, headers=AUTH_HEADERS)
+        assert {c['slug'] for c in resp.json()} == {'shared-with-me'}
+
+        resp = client.get('/api/v1/collections', params={'team': 'Nobody', 'explicit': 'true'}, headers=AUTH_HEADERS)
+        assert resp.json() == []
+    finally:
+        _cleanup()

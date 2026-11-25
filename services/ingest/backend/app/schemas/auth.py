@@ -36,6 +36,9 @@ class UserResponse(BaseModel):
     role_from_oidc: bool = False
     created_at: datetime
     locale: Literal['de', 'en'] | None = None
+    # Set only on GET/PATCH /auth/me: false for a non-admin without any
+    # explicit knowledge-space grant, who is turned away from the portal.
+    knowledge_access: bool | None = None
 
     model_config = {'from_attributes': True}
 

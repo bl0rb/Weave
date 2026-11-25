@@ -15,6 +15,7 @@
 export type ErrorKind =
   | 'invalid_token'
   | 'auth_expired'
+  | 'no_access'
   | 'gateway_unreachable'
   | 'rate_limited'
   | 'conversation_not_found'
@@ -36,6 +37,7 @@ export interface MappedError {
 const MESSAGES: Record<ErrorKind, string> = {
   invalid_token: 'Das Token wurde nicht akzeptiert. Bitte prüfe es und versuche es erneut.',
   auth_expired: 'Deine Anmeldung ist abgelaufen oder ungültig. Bitte melde dich erneut an.',
+  no_access: 'Dein Konto hat keine Freigabe für einen Wissensbereich.',
   gateway_unreachable: 'Weave-API ist gerade nicht erreichbar. Bitte versuche es in Kürze erneut.',
   rate_limited: 'Zu viele Anfragen kurz hintereinander. Bitte warte einen Moment und versuche es erneut.',
   // FINDING 5: this used to promise "Es wird stattdessen eine neue
@@ -83,7 +85,13 @@ export function classifyHttpStatus(status: number, context?: 'chat'): ErrorKind 
   return 'unknown';
 }
 
+/** Weave-API's 403 detail for a non-admin without any knowledge-space grant
+ * (backend/app/core/auth.py's `NO_KNOWLEDGE_ACCESS_DETAIL`) — taken over
+ * verbatim, it is the only thing telling this 403 apart from any other. */
+export const NO_KNOWLEDGE_ACCESS_DETAIL = 'No knowledge space access';
+
 export function errorForHttpStatus(status: number, detail: string | null, context?: 'chat'): MappedError {
+  if (status === 403 && detail === NO_KNOWLEDGE_ACCESS_DETAIL) return mappedError('no_access', detail);
   return mappedError(classifyHttpStatus(status, context), detail);
 }
 

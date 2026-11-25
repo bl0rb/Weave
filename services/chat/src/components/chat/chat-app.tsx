@@ -10,6 +10,7 @@ import { SourcesPanel } from '@/components/chat/sources-panel';
 import { CitationHighlightProvider } from '@/components/chat/citations';
 import { PassageDialogProvider } from '@/components/chat/passage-dialog';
 import { ErrorBanner } from '@/components/chat/error-banner';
+import { NoAccess } from '@/components/chat/no-access';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/i18n/provider';
 import { deleteJson, getJson, postJson } from '@/lib/api-client';
@@ -55,6 +56,8 @@ export function ChatApp() {
 
   const [bots, setBots] = useState<Bot[] | null>(null);
   const [botsError, setBotsError] = useState<MappedError | null>(null);
+  // Weave-API's 403 for a non-admin without any knowledge-space grant.
+  const [noAccess, setNoAccess] = useState(false);
   const [collections, setCollections] = useState<Collection[] | null>(null);
   const [collectionsError, setCollectionsError] = useState<MappedError | null>(null);
   // The composer's knowledge-space (scope-picker) selection — a real
@@ -123,6 +126,7 @@ export function ChatApp() {
     } else {
       setConversationsError(result.error);
       if (result.error.kind === 'auth_expired') router.replace('/login');
+      if (result.error.kind === 'no_access') setNoAccess(true);
     }
   }, [router]);
 
@@ -144,6 +148,10 @@ export function ChatApp() {
         setBotsError(botsResult.error);
         if (botsResult.error.kind === 'auth_expired') {
           router.replace('/login');
+          return;
+        }
+        if (botsResult.error.kind === 'no_access') {
+          setNoAccess(true);
           return;
         }
       }
@@ -555,6 +563,21 @@ export function ChatApp() {
     (selectedSourceMessageId ? assistantMessages.find((message) => message.id === selectedSourceMessageId) : null) ??
     latestAnsweredMessage;
 
+  const isEmptyConversation = messages.length === 0;
+
+  const disclaimer = selectedBot?.disclaimer ? (
+    <p
+      role="note"
+      aria-label={t('chat.disclaimer.label')}
+      className="mx-auto flex w-full max-w-[48rem] items-start gap-2 rounded-[var(--radius-control)] bg-[var(--warn-bg)] px-3 py-1.5 text-xs font-medium text-[var(--warn)]"
+    >
+      <Info className="mt-px h-3.5 w-3.5 flex-none" aria-hidden="true" />
+      <span>{selectedBot.disclaimer}</span>
+    </p>
+  ) : null;
+
+  if (noAccess) return <NoAccess />;
+
   return (
     <CitationHighlightProvider spaceNames={spaceNames}>
     <PassageDialogProvider>
@@ -619,36 +642,42 @@ export function ChatApp() {
           </div>
         ) : null}
 
-        <MessageList
-          messages={messages}
-          assistantName={selectedBot?.name}
-          onResetScopeAndRetry={handleResetScopeAndRetry}
-          onClarifyOption={(text) => {
-            void sendTurn(text, selectedCollections);
-          }}
-          selectedSourceMessageId={sourcesPanelShown ? (activeSourceMessage?.id ?? null) : null}
-          onSelectForSourcesPanel={(id) => {
-            setSelectedSourceMessageId(id);
-            setSourcesPanelOpen(true);
-          }}
-          showSources={showSources}
-          onFeedbackChange={(id, feedback) => updateMessage(id, (m) => ({ ...m, feedback }))}
-        />
-
-        {selectedBot?.disclaimer ? (
-          <div className="flex-none px-3 sm:px-6">
-            <p
-              role="note"
-              aria-label={t('chat.disclaimer.label')}
-              className="mx-auto flex max-w-[48rem] items-start gap-2 rounded-[var(--radius-control)] bg-[var(--warn-bg)] px-3 py-1.5 text-xs font-medium text-[var(--warn)]"
-            >
-              <Info className="mt-px h-3.5 w-3.5 flex-none" aria-hidden="true" />
-              <span>{selectedBot.disclaimer}</span>
+        {/* Empty conversation = start screen: greeting above, composer
+            vertically centered between two flexible spacers. The Composer
+            stays at the same tree position in both layouts so it is never
+            remounted (keeps focus and the textarea node across the first
+            send) -- only its variant changes. */}
+        {isEmptyConversation ? (
+          <div className="flex flex-1 flex-col justify-end px-3 pb-8 pt-6 sm:px-6">
+            <h2 className="text-balance text-center text-[1.75rem] font-semibold leading-tight tracking-tight sm:text-[2.5rem]">
+              {selectedBot ? t('chat.hero.titleWithBot', { name: selectedBot.name }) : t('chat.hero.title')}
+            </h2>
+            <p className="mx-auto mt-3 line-clamp-2 max-w-[36rem] text-center text-[15px] text-[var(--muted)]">
+              {selectedBot?.description || t('chat.hero.subtitle')}
             </p>
           </div>
-        ) : null}
+        ) : (
+          <MessageList
+            messages={messages}
+            assistantName={selectedBot?.name}
+            onResetScopeAndRetry={handleResetScopeAndRetry}
+            onClarifyOption={(text) => {
+              void sendTurn(text, selectedCollections);
+            }}
+            selectedSourceMessageId={sourcesPanelShown ? (activeSourceMessage?.id ?? null) : null}
+            onSelectForSourcesPanel={(id) => {
+              setSelectedSourceMessageId(id);
+              setSourcesPanelOpen(true);
+            }}
+            showSources={showSources}
+            onFeedbackChange={(id, feedback) => updateMessage(id, (m) => ({ ...m, feedback }))}
+          />
+        )}
+
+        {disclaimer ? <div className="flex-none px-3 pb-2 sm:px-6">{disclaimer}</div> : null}
 
         <Composer
+          variant={isEmptyConversation ? 'hero' : 'docked'}
           value={draft}
           onChange={setDraft}
           onSend={handleSend}
@@ -665,6 +694,8 @@ export function ChatApp() {
           onToggleCollection={handleToggleCollection}
           onClearCollections={handleClearCollections}
         />
+
+        {isEmptyConversation ? <div className="min-h-0 flex-[1.4]" aria-hidden="true" /> : null}
       </main>
 
       {sourcesPanelShown ? (

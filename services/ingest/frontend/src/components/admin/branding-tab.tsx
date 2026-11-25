@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useId, useRef, useState } from 'react';
-import { LoaderCircle, Trash2, Upload } from 'lucide-react';
+import { LoaderCircle, RotateCcw, Trash2, Upload } from 'lucide-react';
 
 import { useBranding } from '@/components/branding-provider';
 import { Button } from '@/components/ui/button';
@@ -165,20 +165,22 @@ function ColorField({
   const { t } = useI18n();
   const id = useId();
   const messageId = `${id}-message`;
+  // Swatch, hex field and reset share one bordered box (`.branding-color-field`
+  // in globals.css, which also shields both inputs from the generic
+  // full-width `.portal-page` field rule).
   return (
     <div className="text-[13px] font-semibold text-[var(--ink-2)]">
       <label htmlFor={id}>{label}</label>
-      <div className="mt-1.5 flex items-center gap-2">
+      <div className="branding-color-field" data-invalid={error ? 'true' : undefined}>
         <input
           type="color"
           aria-label={t('admin.branding.colors.picker', { label })}
           value={normalizeHexColor(value) ?? fallback}
           onChange={event => onChange(event.target.value.toLowerCase())}
-          className="h-10 w-12 flex-shrink-0 cursor-pointer rounded-lg border border-[var(--line-2)] bg-[var(--surface)] p-1"
         />
         <input
           id={id}
-          className="ui-control min-w-0 flex-1 font-mono"
+          type="text"
           value={value}
           placeholder={t('admin.branding.colors.placeholder')}
           onChange={event => onChange(event.target.value)}
@@ -188,7 +190,16 @@ function ColorField({
           aria-invalid={error ? true : undefined}
           aria-describedby={messageId}
         />
-        <Button type="button" variant="outline" onClick={() => onChange('')} disabled={value === ''} aria-label={t('admin.branding.colors.resetLabel', { label })}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="flex-shrink-0 gap-1.5 text-[var(--muted)] hover:text-[var(--ink)]"
+          onClick={() => onChange('')}
+          disabled={value === ''}
+          aria-label={t('admin.branding.colors.resetLabel', { label })}
+        >
+          <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
           {t('admin.branding.colors.reset')}
         </Button>
       </div>

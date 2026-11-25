@@ -18,6 +18,7 @@ from app.database.session import get_db
 from app.models.models import ApiToken
 from app.models.models import Session as SessionModel
 from app.models.models import User, UserRole
+from app.services.collection_access import has_explicit_grant
 from app.services.security import hash_session_token
 
 SESSION_COOKIE_NAME = 'weave_ingest_session'
@@ -125,6 +126,31 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
         session.expires_at = min(now + SESSION_SLIDING_WINDOW, _aware_utc(session.created_at) + SESSION_ABSOLUTE_CAP)
         db.commit()
 
+    return user
+
+
+# 403 detail for a browser session of a non-admin without any knowledge-space
+# grant; the portal shows its "no access" screen on `knowledge_access: false`
+# from GET /auth/me instead of relying on this string.
+NO_KNOWLEDGE_ACCESS_DETAIL = 'No knowledge space access'
+
+
+def require_knowledge_access(
+    request: Request, user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> User:
+    """`get_current_user` plus the portal access gate: a browser session of
+    a non-admin who holds no explicit grant on any knowledge space
+    (`has_explicit_grant`; a public space alone is not enough) gets 403 on
+    every portal router. Personal API tokens (`Authorization: Bearer pd_...`)
+    are deliberately left as they are -- the gate is about the portal UI;
+    Weave-API applies the same rule to chat sessions and chat API keys.
+    /auth/* stays on plain `get_current_user`, so such a user can still see
+    who they are (and that they have no access) and log out."""
+    scheme, _, token = (request.headers.get('authorization') or '').partition(' ')
+    if scheme.lower() == 'bearer' and token.strip():
+        return user
+    if not has_explicit_grant(db, user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=NO_KNOWLEDGE_ACCESS_DETAIL)
     return user
 
 

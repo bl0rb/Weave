@@ -18,10 +18,13 @@ same client.
 
 import time
 
+import pytest
+from fastapi import Depends
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
+from app.api.deps import get_current_user, require_knowledge_access
 from app.core.config import settings
 from app.database.session import get_db
 from app.main import app
@@ -171,6 +174,21 @@ def override_get_db():
 
 
 app.dependency_overrides[get_db] = override_get_db
+
+
+def _knowledge_access_granted(user: User = Depends(get_current_user)) -> User:
+    return user
+
+
+@pytest.fixture(autouse=True)
+def _grant_knowledge_access():
+    """The portal routers sit behind deps.require_knowledge_access (no
+    explicit knowledge-space grant -> 403 for a non-admin browser session).
+    Tests about other behaviour skip that gate -- authentication itself still
+    runs; tests/test_knowledge_access.py removes this override to cover it."""
+    app.dependency_overrides[require_knowledge_access] = _knowledge_access_granted
+    yield
+    app.dependency_overrides.pop(require_knowledge_access, None)
 
 # Browsers always send Origin on a state-changing request; origin_guard now
 # relies on that (a cookie-carrying POST without Origin or Referer is treated

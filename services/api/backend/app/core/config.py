@@ -222,6 +222,12 @@ class Settings(BaseSettings):
     # so the chat hides the button. Tokens issued earlier keep working.
     self_service_api_tokens_enabled: bool = False
 
+    # --- Interactive API docs: Swagger UI (/docs), ReDoc (/redoc) and the
+    # OpenAPI schema (/openapi.json). On by default; false answers 404 on
+    # all three (app/main.py's api_docs_urls), e.g. for a public production
+    # host that should not list its routes.
+    api_docs_enabled: bool = True
+
     # --- Federated login via Weave-Ingest (app/api/auth.py's
     # /v1/auth/ingest/login + /callback, app/services/ingest_identity.py).
     #

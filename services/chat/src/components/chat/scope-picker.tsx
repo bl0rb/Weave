@@ -79,13 +79,13 @@ export function ScopePicker({
         aria-expanded={open}
         aria-controls={menuId}
         className={cn(
-          'inline-flex h-9 min-h-[40px] items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:border-[var(--accent)] focus-visible:ring-[3px] focus-visible:ring-[var(--accent-soft)] sm:min-h-0',
+          'inline-flex h-9 min-h-[40px] items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:border-[var(--accent)] focus-visible:ring-[3px] focus-visible:ring-[var(--accent-soft)] sm:min-h-0',
           open
             ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-ink,var(--accent))]'
-            : 'border-[var(--line-2)] bg-[var(--surface-2)] text-[var(--muted)] hover:bg-[var(--surface)]'
+            : 'border-[var(--line)] bg-transparent text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--ink)]'
         )}
       >
-        <Layers className="h-3.5 w-3.5 text-[var(--accent)]" aria-hidden="true" />
+        <Layers className="h-4 w-4 text-[var(--accent)]" aria-hidden="true" />
         <span className="sr-only">{t('chat.scope.srLabel')}</span>
         <span className="max-w-[10rem] truncate">{label}</span>
         <ChevronDown className="h-3 w-3" aria-hidden="true" />

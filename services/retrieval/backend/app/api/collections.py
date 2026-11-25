@@ -31,6 +31,7 @@ def list_collections(
     team: str | None = Query(default=None),
     teams: list[str] | None = Query(default=None),
     user: str | None = Query(default=None),
+    explicit: bool = Query(default=False),
     db: Session = Depends(get_db),
 ) -> list[CollectionOut]:
     # No `team` query param at all -- not merely an empty string -- means
@@ -41,7 +42,9 @@ def list_collections(
     # "every collection", only ever a narrower view than passing a real
     # team would give. `user`, when given, is the caller's Weave-Ingest
     # user id, checked against a restricted collection's `read_users`.
-    collections = readable_collections(db, team, teams=teams, user=user)
+    # `explicit=true` leaves public collections out unless a grant names the
+    # caller (Weave-API's "any knowledge access at all" check).
+    collections = readable_collections(db, team, teams=teams, user=user, explicit=explicit)
     return [
         CollectionOut(slug=c.slug, name=c.name, description=c.description, public=c.visibility == 'public')
         for c in collections

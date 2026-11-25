@@ -99,6 +99,21 @@ def owns_any_collection(db: Session, user: User) -> bool:
     ) is not None
 
 
+def has_explicit_grant(db: Session, user: User) -> bool:
+    """Admins always; everyone else only with at least one grant that names
+    them or one of their teams, on any knowledge space and with any role.
+    `visibility=public` alone does not count -- this is the "may use the
+    portal and the chat at all" gate (deps.require_knowledge_access, and
+    Weave-API's own check against the registry mirror of these grants)."""
+    if user.role == UserRole.ADMIN:
+        return True
+    condition = CollectionGrant.user_id == user.id
+    team_ids = list(user_team_roles(db, user))
+    if team_ids:
+        condition = or_(condition, CollectionGrant.team_id.in_(team_ids))
+    return db.scalar(select(CollectionGrant.id).where(condition).limit(1)) is not None
+
+
 def registry_acl(collection: Collection) -> tuple[list[str], list[str]]:
     """``(read_teams, read_users)`` for the Collections registry contract:
     every role includes reading, so every granted team name and person id."""
