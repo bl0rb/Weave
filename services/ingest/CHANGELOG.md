@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.32] - 2026-11-25
+
+### Fixed
+- **Chat CI**: the passage dialog test waits for the scroll to the cited chunk instead of checking
+  right away, which made it fail at random. Test-only change; the services are unchanged from 0.7.31.
+
 ## [0.7.31] - 2026-11-25
 
 ### Added
