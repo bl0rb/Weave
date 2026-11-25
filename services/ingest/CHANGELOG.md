@@ -11,6 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.30] - 2026-11-24
+
+### Added
+- **Failure reason in the portal**: the documents list carries `error_message` for a failed
+  document (one line, at most 300 characters) and shows it under the "Processing failed" badge.
+  Only members of the space see it, the same people who could already read it on `/jobs/{id}`.
+
+### Changed
+- **Chat sources collapsed**: a source list the model writes at the end of its answer ("Quellen",
+  "Sources", …) is shown collapsed under a toggle; the source cards below the answer are unchanged.
+  The message list fades out at its bottom edge instead of being cut off at the disclaimer.
+- **"Request review" instead of "Outdated"**: the chat feedback action and the review-task texts in
+  the portal now say "Prüfung anfordern" / "Prüfung angefordert". The stored rating stays
+  `outdated`, so the API, database and existing ratings are unchanged.
+- **Uploader instead of "inbox"**: an uploaded document shows "Uploaded by <name>" in the documents
+  lists. `inbox`, the storage fallback for an upload without a folder, is no longer sent as its
+  path; a real folder from the document browser is still shown.
+- **Home tiles** show an arrow, marking them as links to the filtered documents list.
+
 ## [0.7.29] - 2026-11-19
 
 ### Added
