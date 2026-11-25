@@ -218,6 +218,8 @@ DEVIATIONS: dict[str, dict[str, Deviation]] = {
             "INGEST_WORKER_CONCURRENCY",
             "CHAT_CONFIG_SERVICE_TOKEN",
             "TOOLS_INTROSPECTION_TOKEN",
+            # Swagger UI /docs, /redoc, /openapi.json: liest nur das Backend.
+            "API_DOCS_ENABLED",
             # MCP-OAuth-Pruefung: liest nur das Backend
             # (POST /api/v1/internal/mcp-oauth/introspect).
             "MCP_OAUTH_PROVIDER_SLUG",
