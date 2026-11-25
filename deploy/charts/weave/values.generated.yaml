@@ -31,6 +31,7 @@
 
 config:
   api:
+    API_DOCS_ENABLED: "true"
     API_PORT: "8004"
     CHAT_PUBLIC_URL: "http://localhost:3001"
     HISTORY_MAX_MESSAGES: "20"
@@ -68,6 +69,7 @@ config:
     EMBEDDINGS_THREADS: "0"
     WEAVE_EMBEDDINGS_TAG: "latest"
   ingest:
+    API_DOCS_ENABLED: "true"
     BACKEND_PORT: "8000"
     BOOTSTRAP_ADMIN_EMAIL: ""
     BOOTSTRAP_ADMIN_USERNAME: ""

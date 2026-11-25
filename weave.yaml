@@ -112,6 +112,22 @@ shared:
       Once an admin saves the settings under Administration › KI ›
       Wissensgedächtnis, those win over this value in both services.
 
+  API_DOCS_ENABLED:
+    secret: false
+    value: true
+    type: bool
+    required: false
+    targets:
+      - {service: ingest, var: API_DOCS_ENABLED}
+      - {service: api, var: API_DOCS_ENABLED}
+    comment: >
+      Interactive API docs of Weave-Ingest and Weave-API: Swagger UI (/docs),
+      ReDoc (/redoc) and the OpenAPI schema (/openapi.json). true (default)
+      serves them; false answers 404 on all three, e.g. on a public
+      production host that should not list its routes (admin routes
+      included). Only the listing is hidden -- every route keeps its own
+      authentication either way. One value for both services.
+
   # --- Postgres cluster credentials -----------------------------------------
   # Not called out in docs/betrieb.md section 5 (that section is about
   # application-level secrets between the nine services) but structurally

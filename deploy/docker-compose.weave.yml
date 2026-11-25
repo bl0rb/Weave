@@ -325,6 +325,8 @@ services:
       S3_SSE: ${S3_SSE:-}
       S3_KMS_KEY_ID: ${S3_KMS_KEY_ID:-}
       PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+      # Swagger UI /docs, /redoc, /openapi.json -- see weave.yaml.
+      API_DOCS_ENABLED: ${API_DOCS_ENABLED:-true}
       CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:3000"]}
       # --- Identity provider for the rest of the platform (OPTIONAL).
       # Weave-API borrows this service's users, teams and OIDC connections
@@ -989,6 +991,8 @@ services:
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-30}
       HISTORY_MAX_MESSAGES: ${HISTORY_MAX_MESSAGES:-20}
       MAX_REQUEST_BODY_BYTES: ${MAX_REQUEST_BODY_BYTES:-1048576}
+      # Swagger UI /docs, /redoc, /openapi.json -- see weave.yaml.
+      API_DOCS_ENABLED: ${API_DOCS_ENABLED:-true}
       # --- OIDC browser-session login (OPTIONAL, additive -- see
       # services/api/.env.example and services/api/backend/app/core/config.py).
       # This adds a

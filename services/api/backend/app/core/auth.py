@@ -32,7 +32,8 @@ from app.core.db import get_db
 from app.core.security import hash_session_token
 from app.models.models import ApiToken, User
 from app.models.models import Session as SessionModel
-from app.services.ingest_identity import IngestIdentityError, fetch_identity
+from app.services.ingest_identity import IngestIdentityError, fetch_identity, ingest_subject
+from app.services.retrieval_client import RetrievalClientError, has_explicit_collection_access
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,27 @@ def _refresh_ingest_identity(db: Session, user: User) -> User | None:
     return user
 
 
+# 403 detail for a non-admin without any knowledge-space grant. The chat UI
+# matches on this exact string (services/chat/src/lib/errors.ts) to show its
+# "no access" screen instead of a generic error.
+NO_KNOWLEDGE_ACCESS_DETAIL = 'No knowledge space access'
+
+
+def has_knowledge_access(user: User) -> bool:
+    """Admins always; everyone else only with at least one EXPLICIT grant
+    (person or team) on a knowledge space -- a public space alone is not
+    enough. Asked of Weave-Retrieval, the same read authority chat and
+    search use, so this gate and what the user could actually read never
+    disagree. Raises 503 when Retrieval cannot answer: fail closed, never
+    "allowed because we could not check"."""
+    if user.is_admin:
+        return True
+    try:
+        return has_explicit_collection_access(team=user.effective_teams, user=ingest_subject(user.oidc_subject))
+    except RetrievalClientError:
+        raise HTTPException(status_code=503, detail='Access authority unavailable') from None
+
+
 def resolve_api_token(db: Session, raw_token: str, *, refresh: bool = True) -> User | None:
     """Resolve a raw bearer token to its User, or `None` if it's unknown,
     expired, or belongs to a disabled user -- every failure mode collapsed
@@ -150,7 +172,15 @@ def resolve_api_token(db: Session, raw_token: str, *, refresh: bool = True) -> U
         token.last_used_at = now
         db.commit()
 
-    return _refresh_ingest_identity(db, user) if refresh else user
+    if not refresh:
+        return user
+    refreshed = _refresh_ingest_identity(db, user)
+    # Only the refresh=True caller (POST /internal/tokens/introspect, i.e.
+    # Weave-Tools/MCP) lands here: a token of a non-admin without any
+    # knowledge-space grant is reported inactive, same as an unknown one.
+    if refreshed is None or not has_knowledge_access(refreshed):
+        return None
+    return refreshed
 
 
 def _authenticate_session_cookie(request: Request, db: Session) -> User:
@@ -234,10 +264,17 @@ def refresh_credential_user(db: Session, user: User) -> User:
     re-read team/admin/locale from Weave-Ingest (per request, so a change
     there takes effect immediately) and reject an account Weave-Ingest no
     longer knows -- or a direct-OIDC account next to the Ingest handoff --
-    with the same generic 401."""
+    with the same generic 401; then reject a non-admin without any
+    knowledge-space grant with 403 (`has_knowledge_access`)."""
     refreshed = _refresh_ingest_identity(db, user)
     if refreshed is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Not authenticated')
+    # Authenticated but not authorised for anything: a non-admin without a
+    # single knowledge-space grant is turned away on every route behind this
+    # dependency -- chat UI session and personal API token alike. 403, not
+    # 401, so the chat UI can tell "no access" from "log in again".
+    if not has_knowledge_access(refreshed):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=NO_KNOWLEDGE_ACCESS_DETAIL)
     return refreshed
 
 

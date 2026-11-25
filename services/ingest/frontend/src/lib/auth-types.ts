@@ -24,6 +24,10 @@ export interface AuthUser {
   role_from_oidc?: boolean;
   created_at: string;
   locale: Locale | null;
+  /** Only on GET/PATCH /auth/me: false for a non-admin without any explicit
+   * knowledge-space grant -- the backend then answers 403 on every portal
+   * route and app-chrome.tsx shows the "no access" screen instead. */
+  knowledge_access?: boolean | null;
 }
 
 /** TeamResponse from the backend. */

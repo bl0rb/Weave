@@ -96,7 +96,17 @@ class BodySizeLimitMiddleware:
         await response(scope, receive, send)
 
 
-app = FastAPI(title=settings.app_name)
+def api_docs_urls(enabled: bool) -> dict[str, str | None]:
+    """Swagger UI (/docs), ReDoc (/redoc) and the OpenAPI schema
+    (/openapi.json): FastAPI's defaults when enabled, all three 404 otherwise.
+    Off only hides the route list (admin routes included) from whoever can
+    reach the service -- every route keeps its own auth either way."""
+    if enabled:
+        return {'docs_url': '/docs', 'redoc_url': '/redoc', 'openapi_url': '/openapi.json'}
+    return {'docs_url': None, 'redoc_url': None, 'openapi_url': None}
+
+
+app = FastAPI(title=settings.app_name, **api_docs_urls(settings.api_docs_enabled))
 app.add_middleware(BodySizeLimitMiddleware)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
 if settings.oidc_issuer and settings.oidc_client_id and settings.ingest_login_url and settings.ingest_api_url:

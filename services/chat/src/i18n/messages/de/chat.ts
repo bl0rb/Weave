@@ -125,6 +125,11 @@ export const chat = {
   'sourceCards.toggle': 'Belege ({count})',
   'sourceCards.sourceLabel': 'Quelle: {value}',
 
+  // components/chat/chat-app.tsx (start screen)
+  'hero.title': 'Was möchtest du wissen?',
+  'hero.titleWithBot': 'Was möchtest du {name} fragen?',
+  'hero.subtitle': 'Wähle unten Assistent und Wissensbereiche und stelle deine erste Frage.',
+
   // components/chat/message-list.tsx
   'messageList.empty': 'Noch keine Nachrichten — stelle unten deine erste Frage.',
   'messageList.landmarkLabel': 'Gespräch',
@@ -257,4 +262,9 @@ export const chat = {
     'Weave-API war während der SSO-Anmeldung nicht erreichbar. Bitte versuche es in Kürze erneut.',
   'login.ssoError.default':
     'Die Anmeldung über SSO ist fehlgeschlagen. Bitte versuche es erneut oder melde dich mit deinem Personal-Token an.',
+
+  // components/chat/chat-app.tsx (no knowledge-space grant)
+  'noAccess.title': 'Kein Zugriff auf Wissensbereiche',
+  'noAccess.text': 'Dein Konto hat noch keine Freigabe für einen Wissensbereich. Bitte wende dich an eine Administratorin oder einen Administrator, damit du für einen Wissensbereich freigeschaltet wirst.',
+  'noAccess.logout': 'Abmelden',
 } as const;

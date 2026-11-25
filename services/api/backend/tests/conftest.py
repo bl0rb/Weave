@@ -55,6 +55,15 @@ def _reset_rate_limiter():
 
 
 @pytest.fixture(autouse=True)
+def _grant_knowledge_access(monkeypatch):
+    """Every authenticated request asks Weave-Retrieval whether the caller
+    holds any knowledge-space grant (app/core/auth.py's
+    has_knowledge_access). Tests about other behaviour run as a user who
+    does; tests/test_knowledge_access.py re-patches this to cover the gate."""
+    monkeypatch.setattr('app.core.auth.has_explicit_collection_access', lambda **_: True)
+
+
+@pytest.fixture(autouse=True)
 def _clean_tables():
     """Truncate every table between tests so row-scoping assertions (e.g.
     "a fresh user sees zero conversations") never depend on test order."""

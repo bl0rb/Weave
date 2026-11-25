@@ -218,8 +218,8 @@ export function AccessTeamsStep({ draft, disabled }: { draft: AccessDraft; disab
     .filter(team => !needle || team.name.toLowerCase().includes(needle))
     .sort((a, b) => Number(Boolean(draft.teamRoles[b.id])) - Number(Boolean(draft.teamRoles[a.id])) || a.name.localeCompare(b.name));
   return <section aria-label={t('portal.access.dialog.step.teams')}>
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <input type="search" autoComplete="off" className="ui-control max-w-sm flex-1" placeholder={t('portal.access.dialog.teamFilter')} aria-label={t('portal.access.dialog.teamFilterAria')}
+    <div className="portal-access-teams-bar">
+      <input type="search" autoComplete="off" className="ui-control" placeholder={t('portal.access.dialog.teamFilter')} aria-label={t('portal.access.dialog.teamFilterAria')}
         value={filter} disabled={disabled} onChange={event => setFilter(event.target.value)} />
       <span className="text-[13px] text-[var(--muted)]" aria-live="polite">{t('portal.access.dialog.selectedCount', { count: draft.selectedTeams.length })}</span>
     </div>

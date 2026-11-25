@@ -18,6 +18,19 @@ In einer lokalen Docker-Compose-Umgebung (`deploy/docker-compose.weave.yml`) lau
 
 Alle Antworten sind JSON, sofern nicht anders angegeben (Streaming-Endpunkte liefern `text/event-stream`).
 
+## Swagger UI / OpenAPI
+
+Weave-Ingest und Weave-API liefern ihre Schnittstellen interaktiv aus — direkt im Browser ausprobierbar:
+
+| Dienst | Swagger UI | ReDoc | OpenAPI-Schema |
+|---|---|---|---|
+| Weave-Ingest | `https://ingest.example.com/docs` | `/redoc` | `/openapi.json` |
+| Weave-API | `https://weave.example.com/docs` | `/redoc` | `/openapi.json` |
+
+Lokal (Compose): `http://localhost:8000/docs` (Ingest) und `http://localhost:8004/docs` (API). Im Kubernetes-Cluster sind beide Dienste nur erreichbar, wenn `ingress.ingestBackend` bzw. `ingress.api` eingeschaltet ist; zum Ausprobieren genügt `kubectl port-forward svc/<release>-ingest-backend 8000:8000`.
+
+Die Swagger UI dient vor allem als vollständige, stets aktuelle Routen- und Schema-Übersicht. Ein **Authorize**-Knopf fehlt bisher (die Dienste deklarieren kein Security-Schema im OpenAPI-Dokument); geschützte Endpunkte ruft man daher mit `curl` bzw. einem HTTP-Client und `Authorization: Bearer <Token>` auf (siehe [Authentifizierung](#authentifizierung)). Abschalten lässt sich die Dokumentation mit `API_DOCS_ENABLED=false` in `weave.yaml` (gilt für beide Dienste) — dann antworten `/docs`, `/redoc` und `/openapi.json` mit `404`. Das verbirgt nur die Routenliste; die Authentifizierung der Endpunkte selbst bleibt unverändert.
+
 ## Was geht per API
 
 | Ich möchte … | Dienst | Endpunkt |
@@ -60,6 +73,8 @@ Zwei Zugangswege, die beide zur selben `Authorization`-Prüfung führen:
    ```
 
 2. **Browser-Session (für Menschen in einer eigenen Chat-Oberfläche).** Nur nutzbar, wenn der Betreiber OIDC konfiguriert hat (`GET /v1/auth/oidc/login` → Provider-Login → `GET /v1/auth/oidc/callback` setzt ein httpOnly-Session-Cookie `weave_api_session`). Für eine eigene, auf einer anderen Domain laufende UI gibt es einen Cross-Origin-Übergabemechanismus (`return_to` + `POST /v1/auth/session/exchange`). Für serverseitige Integrationen ist der Personal-API-Token-Weg der richtige.
+
+> **Zugriff nur mit Freigabe:** Personen ohne Admin-Rolle brauchen mindestens eine **explizite** Freigabe (persönlich oder über eine Gruppe, beliebige Rolle) auf einen Wissensbereich. Ein öffentlicher Wissensbereich allein reicht nicht. Ohne Freigabe antwortet jede angemeldete Route mit `403` und `{"detail": "No knowledge space access"}` — für die Browser-Session ebenso wie für ein Personal-API-Token. Auch Weave-Tools/MCP behandelt ein solches Token als ungültig. Die Prüfung läuft bei jeder Anfrage: Eine neu erteilte Freigabe wirkt, sobald Weave-Retrieval sie übernommen hat. Im Portal (Weave-Ingest) gilt dieselbe Regel für die Browser-Session; persönliche `pd_`-Tokens von Weave-Ingest sind davon nicht betroffen.
 
 > **Wichtig:** Ein Bearer-Token hat auf jeder Route Vorrang vor einem Session-Cookie. Fehlt der `Authorization`-Header oder ist er nicht `Bearer …`-förmig, wird stattdessen das Session-Cookie geprüft.
 

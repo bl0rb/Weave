@@ -40,7 +40,7 @@ from app.api.retrieval_provider import router_maintenance as retrieval_provider_
 from app.api.technical_identities import router_admin as technical_identities_admin_router
 from app.api.technical_identities import router_internal as technical_identities_internal_router
 from app.api.mcp_oauth import router as mcp_oauth_router
-from app.api.deps import get_current_user, origin_guard
+from app.api.deps import origin_guard, require_knowledge_access
 from app.api.import_routes import router as import_router
 from app.api.source_catalog import router as source_catalog_router
 from app.api.portal import router as portal_router
@@ -56,7 +56,18 @@ from app.database.session import SessionLocal, get_db
 from app.schemas.jobs import HealthResponse
 from app.services.security import _rate_limit_redis
 
-app = FastAPI(title=settings.app_name)
+def api_docs_urls(enabled: bool) -> dict[str, str | None]:
+    """Swagger UI (/docs), ReDoc (/redoc) and the OpenAPI schema
+    (/openapi.json): FastAPI's defaults when enabled, all three 404 otherwise.
+    Off only hides the route list (admin routes included) from whoever can
+    reach the service -- every route keeps its own auth either way.
+    scripts/export_openapi.py calls app.openapi() directly and is unaffected."""
+    if enabled:
+        return {'docs_url': '/docs', 'redoc_url': '/redoc', 'openapi_url': '/openapi.json'}
+    return {'docs_url': None, 'redoc_url': None, 'openapi_url': None}
+
+
+app = FastAPI(title=settings.app_name, **api_docs_urls(settings.api_docs_enabled))
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
 app.add_middleware(
     CORSMiddleware,
@@ -122,7 +133,8 @@ app.include_router(chat_provider_bot_admin_router)
 app.include_router(chat_provider_internal_router)
 app.include_router(managed_bots_admin_router)
 app.include_router(managed_bots_internal_router)
-app.include_router(managed_bots_owner_router)
+# Own bots ("Meine Bots" in the portal): portal surface, same access gate.
+app.include_router(managed_bots_owner_router, dependencies=[Depends(require_knowledge_access)])
 app.include_router(system_status_router)
 app.include_router(system_status_admin_router)
 app.include_router(retrieval_provider_admin_router)
@@ -150,33 +162,33 @@ app.include_router(quality_service_router)
 # paddle settings, ...) now requires a valid session. Step 3 layers
 # per-row visibility scoping (owner/team) on top of this; this is just the
 # authentication gate itself.
-app.include_router(router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
+app.include_router(router, dependencies=[Depends(require_knowledge_access), Depends(origin_guard)])
 
 # Confluence import surface (/api/v1/import/...): same session + CSRF gate as
 # the main router; the module itself adds the IMPORT_ENABLED kill-switch.
-app.include_router(import_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
+app.include_router(import_router, dependencies=[Depends(require_knowledge_access), Depends(origin_guard)])
 
 # Shared source catalog (/api/v1/source-catalog): readable by every signed-in
 # user, managed by admins (checked inside the module).
-app.include_router(source_catalog_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
+app.include_router(source_catalog_router, dependencies=[Depends(require_knowledge_access), Depends(origin_guard)])
 
 # User-facing VL-connections list: same session + CSRF gate as the main
 # router, no separate kill-switch.
-app.include_router(vl_connections_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
+app.include_router(vl_connections_router, dependencies=[Depends(require_knowledge_access), Depends(origin_guard)])
 
 # Outbound webhook surface (/api/v1/webhooks/...): same session + CSRF gate
 # as the main router; the module itself adds the WEBHOOKS_ENABLED kill-switch
 # (mirrors import_router's registration).
-app.include_router(webhook_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
+app.include_router(webhook_router, dependencies=[Depends(require_knowledge_access), Depends(origin_guard)])
 
 # Knowledge portal publication surface: authenticated reads and approvals,
 # with the same CSRF guard as the other state-changing API routers.
-app.include_router(portal_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
-app.include_router(portal_management_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
-app.include_router(portal_indexing_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
+app.include_router(portal_router, dependencies=[Depends(require_knowledge_access), Depends(origin_guard)])
+app.include_router(portal_management_router, dependencies=[Depends(require_knowledge_access), Depends(origin_guard)])
+app.include_router(portal_indexing_router, dependencies=[Depends(require_knowledge_access), Depends(origin_guard)])
 # Prüfaufgaben inbox + quality summary (/api/v1/portal/review-tasks,
 # /api/v1/portal/quality/summary): per-space visibility inside the module.
-app.include_router(review_tasks_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
+app.include_router(review_tasks_router, dependencies=[Depends(require_knowledge_access), Depends(origin_guard)])
 # Aktualität & Änderungen: review dates, version diff, topic subscriptions
 # and the change feed (app/api/document_freshness.py).
-app.include_router(document_freshness_router, dependencies=[Depends(get_current_user), Depends(origin_guard)])
+app.include_router(document_freshness_router, dependencies=[Depends(require_knowledge_access), Depends(origin_guard)])

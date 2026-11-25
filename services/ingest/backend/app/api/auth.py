@@ -102,7 +102,7 @@ from app.schemas.auth import (
     WorkerLogListResponse,
 )
 from app.services import paddle_service
-from app.services.collection_access import team_grant_collection_slugs
+from app.services.collection_access import has_explicit_grant, team_grant_collection_slugs
 from app.services.oidc import (
     OIDCError,
     exchange_code_for_tokens,
@@ -504,7 +504,15 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)) 
 
 @router_authenticated.get('/me', response_model=UserResponse)
 def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> UserResponse:
-    return _user_response(user, db)
+    return _me_response(user, db)
+
+
+def _me_response(user: User, db: Session) -> UserResponse:
+    # Only the caller's own view carries `knowledge_access`: the portal shows
+    # its "no access" screen on false (deps.require_knowledge_access).
+    response = _user_response(user, db)
+    response.knowledge_access = has_explicit_grant(db, user)
+    return response
 
 
 @router_authenticated.patch('/me', response_model=UserResponse)
@@ -516,7 +524,7 @@ def update_me(
     (email, role, team, ...) stays admin-only via /auth/admin/users."""
     user.locale = payload.locale
     db.commit()
-    return _user_response(user, db)
+    return _me_response(user, db)
 
 
 # --- authenticated: personal API bearer tokens ---------------------------------
