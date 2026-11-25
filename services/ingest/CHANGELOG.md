@@ -11,6 +11,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.31] - 2026-11-25
+
+### Added
+- **Knowledge access required**: a non-admin needs at least one explicit grant (person or team, any
+  role) on a knowledge space to use the chat and the portal; a public space alone is not enough.
+  Weave-API answers `403 "No knowledge space access"` for such a browser session and personal API
+  token, and token introspection reports the token inactive, so Weave-Tools/MCP rejects it too.
+  The portal answers 403 on its routers for such a browser session (`/auth/*` stays reachable;
+  `GET /auth/me` carries `knowledge_access`). Portal `pd_` tokens and technical identities are not
+  affected. Chat and portal show a "no access" screen with sign-out. Retrieval's
+  `GET /api/v1/collections` takes `explicit=true` for this check (additive).
+- **`API_DOCS_ENABLED`** (weave.yaml, default `true`) for Weave-Ingest and Weave-API: serves
+  Swagger UI (`/docs`), ReDoc (`/redoc`) and `/openapi.json`; `false` answers 404 on all three.
+  The API reference gained a "Swagger UI / OpenAPI" section.
+
+### Changed
+- **Chat start screen**: an empty conversation shows a centered greeting with the composer in the
+  middle; the composer is a larger rounded card with quiet assistant/model selects and a round send
+  button. It stays one mounted component, so focus survives the first send.
+
+### Fixed
+- **Appearance tab**: the colour fields no longer stretch to full width and overlap; swatch, hex
+  code and reset sit in one field.
+- **Access dialog and bot sharing**: the role select no longer turns into a full-width block,
+  checkboxes and radios are centred, the group filter lines up with its count; grants are shown as
+  one framed list.
+
+### Upgrade notes
+- Every non-admin without an explicit grant loses chat, chat-API and portal access with this
+  release. Grant access (or make the account an admin) before rolling out. Weave-API now asks
+  Retrieval on every authenticated request; roll out Retrieval before Weave-API.
+
 ## [0.7.29] - 2026-11-19
 
 ### Added
