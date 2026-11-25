@@ -158,7 +158,8 @@ describe('PassageDialog', () => {
     expect(dialog.getAttribute('aria-modal')).toBe('true');
     expect(cited.textContent).toBe('Das Tagegeld beträgt 28 Euro pro Tag.');
     expect(cited.className).toContain('passage-target');
-    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+    // The scroll runs in a passive effect after the commit that findByRole saw.
+    await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled());
     expect(dialog.textContent).toContain('Vorheriger Abschnitt.');
     expect(dialog.textContent).toContain('Nächster Abschnitt.');
     expect(screen.getByText('Version 3 · Seiten 4–5')).toBeTruthy();
